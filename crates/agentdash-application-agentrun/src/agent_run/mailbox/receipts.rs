@@ -1,3 +1,4 @@
+use super::commands::AgentRunMailboxMoveCommandResult;
 use super::*;
 
 impl<'a> AgentRunMailboxService<'a> {
@@ -29,6 +30,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 })
             }),
             "message_id": command.message_id,
+            "after_message_id": command.after_message_id,
         }))?;
         claim_agent_run_command_receipt(
             self.command_receipt_repo,
@@ -94,6 +96,7 @@ impl<'a> AgentRunMailboxService<'a> {
         let result_json = serde_json::json!({
             "outcome": outcome.as_str(),
             "mailbox_message_id": message.map(|message| message.id),
+            "order_key": message.map(|message| message.order_key),
         });
         let stored = self
             .command_receipt_repo
@@ -141,15 +144,10 @@ impl<'a> AgentRunMailboxService<'a> {
             Some(message_id) => self.mailbox_repo.get_message(message_id).await?,
             None => None,
         };
-        let outcome = mailbox_message
-            .as_ref()
-            .map(outcome_from_message)
-            .or_else(|| {
-                record
-                    .result_json
-                    .as_ref()
-                    .and_then(outcome_from_result_json)
-            })
+        let result_json = record.result_json.as_ref();
+        let outcome = result_json
+            .and_then(outcome_from_result_json)
+            .or_else(|| mailbox_message.as_ref().map(outcome_from_message))
             .unwrap_or(AgentRunMailboxCommandOutcome::Queued);
         let accepted_refs = match record.accepted_refs.clone() {
             Some(refs) => Some(refs),
@@ -179,6 +177,30 @@ impl<'a> AgentRunMailboxService<'a> {
             mailbox_message,
             accepted_refs,
             runtime_state,
+        })
+    }
+
+    pub(super) async fn replay_duplicate_move_command(
+        &self,
+        record: agentdash_domain::workflow::AgentRunCommandReceipt,
+    ) -> Result<AgentRunMailboxMoveCommandResult, WorkflowApplicationError> {
+        let order_key = record
+            .result_json
+            .as_ref()
+            .and_then(order_key_from_result_json)
+            .ok_or_else(|| {
+                WorkflowApplicationError::Conflict(
+                    "mailbox move command 缺少稳定 order_key".to_string(),
+                )
+            })?;
+        let result = self.replay_duplicate_command(record, None).await?;
+        Ok(AgentRunMailboxMoveCommandResult {
+            command_receipt: result.command_receipt,
+            outcome: result.outcome,
+            mailbox_message: result.mailbox_message,
+            accepted_refs: result.accepted_refs,
+            runtime_state: result.runtime_state,
+            order_key,
         })
     }
 
@@ -218,9 +240,14 @@ pub(crate) fn outcome_from_result_json(
         "queued" => Some(AgentRunMailboxCommandOutcome::Queued),
         "steered" => Some(AgentRunMailboxCommandOutcome::Steered),
         "deleted" => Some(AgentRunMailboxCommandOutcome::Deleted),
+        "moved" => Some(AgentRunMailboxCommandOutcome::Moved),
         "resumed" => Some(AgentRunMailboxCommandOutcome::Resumed),
         "blocked" => Some(AgentRunMailboxCommandOutcome::Blocked),
         "failed" => Some(AgentRunMailboxCommandOutcome::Failed),
         _ => None,
     }
+}
+
+pub(crate) fn order_key_from_result_json(value: &serde_json::Value) -> Option<i64> {
+    value.get("order_key").and_then(serde_json::Value::as_i64)
 }

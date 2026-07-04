@@ -85,6 +85,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
 
         match command {
             AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage { .. }
+            | AgentRunWorkspaceCommandPrecondition::MoveMailboxMessage { .. }
             | AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { .. }
             | AgentRunWorkspaceCommandPrecondition::ResumeMailbox { .. }
             | AgentRunWorkspaceCommandPrecondition::Cancel { .. } => {
@@ -297,6 +298,9 @@ pub enum AgentRunWorkspaceCommandPrecondition {
     DeleteMailboxMessage {
         command: AgentRunCommandPreconditionModel,
     },
+    MoveMailboxMessage {
+        command: AgentRunCommandPreconditionModel,
+    },
     PromoteMailboxMessage {
         command: AgentRunCommandPreconditionModel,
     },
@@ -314,6 +318,9 @@ impl AgentRunWorkspaceCommandPrecondition {
             AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage { .. } => {
                 ConversationCommandKindModel::DeleteMailboxMessage
             }
+            AgentRunWorkspaceCommandPrecondition::MoveMailboxMessage { .. } => {
+                ConversationCommandKindModel::MoveMailboxMessage
+            }
             AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { .. } => {
                 ConversationCommandKindModel::PromoteMailboxMessage
             }
@@ -329,6 +336,7 @@ impl AgentRunWorkspaceCommandPrecondition {
     fn command_precondition(&self) -> &AgentRunCommandPreconditionModel {
         match self {
             AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage { command }
+            | AgentRunWorkspaceCommandPrecondition::MoveMailboxMessage { command }
             | AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { command }
             | AgentRunWorkspaceCommandPrecondition::ResumeMailbox { command }
             | AgentRunWorkspaceCommandPrecondition::Cancel { command } => command,

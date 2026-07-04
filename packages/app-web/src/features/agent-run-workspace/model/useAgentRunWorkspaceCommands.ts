@@ -500,17 +500,32 @@ export function useAgentRunWorkspaceCommands(
   const handleMoveMailboxMessage = useCallback(async (messageId: string, afterMessageId: string | null) => {
     if (!currentRunId || !currentAgentId) return;
     try {
+      const moveCommand = mailboxRowCommand(chatCommandState.commands.commands, "move_mailbox_message");
+      if (!moveCommand?.enabled) {
+        refreshWorkspaceProjection();
+        return;
+      }
       await moveAgentRunMailboxMessage(
         currentRunId,
         currentAgentId,
         messageId,
-        { after_message_id: afterMessageId ?? undefined },
+        {
+          ...commandRequest(moveCommand),
+          after_message_id: afterMessageId ?? undefined,
+        },
       );
       refreshWorkspaceProjection();
-    } catch {
+    } catch (error) {
+      refreshAfterStaleAgentRunCommandError(error);
       refreshWorkspaceProjection();
     }
-  }, [currentAgentId, currentRunId, refreshWorkspaceProjection]);
+  }, [
+    chatCommandState.commands.commands,
+    currentAgentId,
+    currentRunId,
+    refreshAfterStaleAgentRunCommandError,
+    refreshWorkspaceProjection,
+  ]);
 
   const handleForkFromMessageRef = useCallback(async (forkPointRef: SessionMessageRefDto) => {
     if (!currentRunId || !currentAgentId) {

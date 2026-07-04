@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   apiDeleteMock: vi.fn(),
   apiGetMock: vi.fn(),
   apiPostMock: vi.fn(),
+  apiPutMock: vi.fn(),
 }));
 
 vi.mock("../api/client", () => ({
@@ -11,6 +12,7 @@ vi.mock("../api/client", () => ({
     delete: mocks.apiDeleteMock,
     get: mocks.apiGetMock,
     post: mocks.apiPostMock,
+    put: mocks.apiPutMock,
   },
 }));
 
@@ -18,6 +20,7 @@ import {
   cancelAgentRun,
   deleteAgentRunMailboxMessage,
   forkAgentRun,
+  moveAgentRunMailboxMessage,
   promoteAgentRunMailboxMessage,
   resumeAgentRunMailbox,
   submitAgentRunForkInput,
@@ -53,6 +56,8 @@ describe("lifecycle message service", () => {
       command_receipt: { id: "receipt-1", status: "accepted" },
       outcome: "queued",
     });
+    mocks.apiPutMock.mockReset();
+    mocks.apiPutMock.mockResolvedValue({ ok: true, order_key: 12 });
   });
 
   it("submits composer input through the AgentRun composer endpoint", async () => {
@@ -147,6 +152,23 @@ describe("lifecycle message service", () => {
       {
         command: command("resume_mailbox"),
         client_command_id: "resume-mailbox-1",
+      },
+    );
+  });
+
+  it("moves mailbox messages with command precondition through the AgentRun mailbox endpoint", async () => {
+    await moveAgentRunMailboxMessage("run/1", "agent/1", "message/1", {
+      command: command("move_mailbox_message"),
+      client_command_id: "move-message-1",
+      after_message_id: "message/0",
+    });
+
+    expect(mocks.apiPutMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/mailbox/messages/message%2F1/move",
+      {
+        command: command("move_mailbox_message"),
+        client_command_id: "move-message-1",
+        after_message_id: "message/0",
       },
     );
   });

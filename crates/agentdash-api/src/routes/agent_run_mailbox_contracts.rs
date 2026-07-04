@@ -83,6 +83,7 @@ pub(crate) fn mailbox_command_outcome_view(
         AppMailboxCommandOutcome::Queued => AgentRunMessageCommandOutcome::Queued,
         AppMailboxCommandOutcome::Steered => AgentRunMessageCommandOutcome::Steered,
         AppMailboxCommandOutcome::Deleted => AgentRunMessageCommandOutcome::Deleted,
+        AppMailboxCommandOutcome::Moved => AgentRunMessageCommandOutcome::Moved,
         AppMailboxCommandOutcome::Resumed => AgentRunMessageCommandOutcome::Resumed,
         AppMailboxCommandOutcome::Blocked => AgentRunMessageCommandOutcome::Blocked,
         AppMailboxCommandOutcome::Failed => AgentRunMessageCommandOutcome::Failed,

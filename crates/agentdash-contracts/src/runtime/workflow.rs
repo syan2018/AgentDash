@@ -1050,6 +1050,7 @@ pub enum ConversationCommandKind {
     SubmitMessage,
     PromoteMailboxMessage,
     DeleteMailboxMessage,
+    MoveMailboxMessage,
     ResumeMailbox,
     Cancel,
 }

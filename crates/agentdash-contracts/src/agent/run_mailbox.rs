@@ -153,6 +153,8 @@ pub struct MailboxMessageView {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunMailboxMoveRequest {
+    pub client_command_id: String,
+    pub command: AgentRunCommandPreconditionView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub after_message_id: Option<String>,
@@ -263,6 +265,7 @@ pub enum AgentRunMessageCommandOutcome {
     Queued,
     Steered,
     Deleted,
+    Moved,
     Resumed,
     Blocked,
     Failed,

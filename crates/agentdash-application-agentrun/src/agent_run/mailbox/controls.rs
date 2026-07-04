@@ -1,3 +1,4 @@
+use super::commands::AgentRunMailboxMoveCommandResult;
 use super::target::{
     base_refs, ensure_command_target, ensure_message_owner, is_terminal_message_status,
 };
@@ -20,6 +21,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 command.runtime_session_id,
             ),
             message_id: command.message_id,
+            after_message_id: command.after_message_id,
             client_command_id: command.client_command_id,
         })
         .await
@@ -106,6 +108,7 @@ impl<'a> AgentRunMailboxService<'a> {
                     command.runtime_session_id,
                 ),
                 message_id: command.message_id,
+                after_message_id: command.after_message_id,
                 client_command_id: command.client_command_id,
             },
             _identity,
@@ -202,6 +205,7 @@ impl<'a> AgentRunMailboxService<'a> {
                     command.runtime_session_id,
                 ),
                 message_id: command.message_id,
+                after_message_id: command.after_message_id,
                 client_command_id: command.client_command_id,
             },
             identity,
@@ -295,11 +299,46 @@ impl<'a> AgentRunMailboxService<'a> {
 
     pub async fn move_message(
         &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        message_id: Uuid,
-        after_message_id: Option<Uuid>,
-    ) -> Result<AgentRunMailboxMessage, WorkflowApplicationError> {
+        command: AgentRunMailboxControlCommand,
+    ) -> Result<AgentRunMailboxMoveCommandResult, WorkflowApplicationError> {
+        let (run, agent, frame) = self
+            .resolve_control_plane_for_delivery(&command.runtime_session_id)
+            .await?;
+        ensure_command_target(&run, &agent, command.run_id, command.agent_id)?;
+        self.move_message_for_target(AgentRunMailboxControlTargetCommand {
+            target: AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+                run.id,
+                agent.id,
+                frame.id,
+                command.runtime_session_id,
+            ),
+            message_id: command.message_id,
+            after_message_id: command.after_message_id,
+            client_command_id: command.client_command_id,
+        })
+        .await
+    }
+
+    pub async fn move_message_for_target(
+        &self,
+        command: AgentRunMailboxControlTargetCommand,
+    ) -> Result<AgentRunMailboxMoveCommandResult, WorkflowApplicationError> {
+        let message_id = command.message_id.ok_or_else(|| {
+            WorkflowApplicationError::BadRequest("message_id 不能为空".to_string())
+        })?;
+        let after_message_id = command.after_message_id;
+        if after_message_id == Some(message_id) {
+            return Err(WorkflowApplicationError::BadRequest(
+                "anchor message 不能是当前重排序消息".to_string(),
+            ));
+        }
+        let command_target = self.resolve_command_target(command.target.clone()).await?;
+        let claim = self
+            .claim_control_receipt(&command, AgentRunCommandKind::MailboxMove, "mailbox_move")
+            .await?;
+        if claim.duplicate {
+            return self.replay_duplicate_move_command(claim.record).await;
+        }
         let target = self
             .mailbox_repo
             .get_message(message_id)
@@ -307,7 +346,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!("mailbox message 不存在: {message_id}"))
             })?;
-        ensure_message_owner(&target, run_id, agent_id)?;
+        ensure_message_owner(&target, command_target.run.id, command_target.agent.id)?;
         if target.origin != MailboxMessageOrigin::User {
             return Err(WorkflowApplicationError::BadRequest(
                 "只能对 User 来源的消息重排序".to_string(),
@@ -334,7 +373,7 @@ impl<'a> AgentRunMailboxService<'a> {
                         "anchor message 不存在: {anchor_id}"
                     ))
                 })?;
-            ensure_message_owner(&anchor, run_id, agent_id)?;
+            ensure_message_owner(&anchor, command_target.run.id, command_target.agent.id)?;
             if is_terminal_message_status(&anchor.status) {
                 return Err(WorkflowApplicationError::Conflict(
                     "anchor 消息已被消费，请刷新列表".to_string(),
@@ -342,10 +381,40 @@ impl<'a> AgentRunMailboxService<'a> {
             }
         }
 
-        Ok(self
+        let moved = self
             .mailbox_repo
-            .move_message_after(message_id, after_message_id, run_id, agent_id)
-            .await?)
+            .move_message_after(
+                message_id,
+                after_message_id,
+                command_target.run.id,
+                command_target.agent.id,
+            )
+            .await?;
+        let accepted_refs = Some(base_refs(
+            &command_target.run,
+            &command_target.agent,
+            Some(&command_target.frame),
+            &command_target.message_stream.runtime_session_id,
+        ));
+        let receipt = self
+            .accepted_command_receipt(
+                claim.record.id,
+                AgentRunMailboxCommandOutcome::Moved,
+                &moved,
+                accepted_refs.clone(),
+            )
+            .await?;
+        let order_key = moved.order_key;
+        Ok(AgentRunMailboxMoveCommandResult {
+            command_receipt: receipt,
+            outcome: AgentRunMailboxCommandOutcome::Moved,
+            mailbox_message: Some(moved),
+            accepted_refs,
+            runtime_state: self
+                .inspect_state_optional(&command_target.message_stream.runtime_session_id)
+                .await,
+            order_key,
+        })
     }
 
     pub async fn get_message_content(

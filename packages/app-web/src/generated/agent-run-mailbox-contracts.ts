@@ -34,13 +34,13 @@ export type AgentRunForkSubmitRequest = { input: Array<UserInput>, client_comman
 
 export type AgentRunMailboxMessageContentView = { id: string, input: JsonValue, };
 
-export type AgentRunMailboxMoveRequest = { after_message_id?: string, };
+export type AgentRunMailboxMoveRequest = { client_command_id: string, command: AgentRunCommandPreconditionView, after_message_id?: string, };
 
 export type AgentRunMailboxView = { state: MailboxStateView, messages: Array<MailboxMessageView>, };
 
 export type AgentRunMessageAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref?: AgentFrameRefDto, runtime_session_ref?: RuntimeSessionRefDto, agent_run_turn_id?: string, protocol_turn_id?: string, };
 
-export type AgentRunMessageCommandOutcome = "launched" | "queued" | "steered" | "deleted" | "resumed" | "blocked" | "failed";
+export type AgentRunMessageCommandOutcome = "launched" | "queued" | "steered" | "deleted" | "moved" | "resumed" | "blocked" | "failed";
 
 export type AgentRunMessageCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunMessageCommandOutcome, mailbox_message?: MailboxMessageView, accepted_refs?: AgentRunMessageAcceptedRefs, runtime_state?: RuntimeSessionCommandStateDto, fork?: AgentRunForkOutcomeView, };
 
@@ -56,7 +56,7 @@ export type BackendSelectionRequestDto = { mode: BackendSelectionModeDto, backen
 
 export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary" | "agent_run_turn_boundary" | "manual_resume";
 
-export type ConversationCommandKind = "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "resume_mailbox" | "cancel";
+export type ConversationCommandKind = "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "move_mailbox_message" | "resume_mailbox" | "cancel";
 
 export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, runtime_session_id?: string, active_turn_id?: string, };
 

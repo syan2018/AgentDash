@@ -124,6 +124,7 @@ pub enum ConversationCommandKindModel {
     SubmitMessage,
     PromoteMailboxMessage,
     DeleteMailboxMessage,
+    MoveMailboxMessage,
     ResumeMailbox,
     Cancel,
 }
@@ -758,6 +759,18 @@ fn conversation_commands(
         ),
         command_view(
             input,
+            ConversationCommandKindModel::MoveMailboxMessage,
+            snapshot_id,
+            input.mailbox_visible_message_count > 0,
+            "当前没有可移动的 mailbox message。",
+            Some("command_unavailable"),
+            None,
+            false,
+            "ignored",
+            vec![ConversationCommandPlacementModel::MailboxRow],
+        ),
+        command_view(
+            input,
             ConversationCommandKindModel::ResumeMailbox,
             snapshot_id,
             mailbox_can_resume,
@@ -879,6 +892,7 @@ pub fn conversation_command_id_for(kind: ConversationCommandKindModel) -> &'stat
         ConversationCommandKindModel::SubmitMessage => "submit_message",
         ConversationCommandKindModel::PromoteMailboxMessage => "promote_mailbox_message",
         ConversationCommandKindModel::DeleteMailboxMessage => "delete_mailbox_message",
+        ConversationCommandKindModel::MoveMailboxMessage => "move_mailbox_message",
         ConversationCommandKindModel::ResumeMailbox => "resume_mailbox",
         ConversationCommandKindModel::Cancel => "cancel",
     }

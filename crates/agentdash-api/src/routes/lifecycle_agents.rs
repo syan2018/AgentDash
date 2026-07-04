@@ -945,6 +945,7 @@ async fn delete_agent_run_mailbox_message(
             agent_id: context.agent.id,
             runtime_session_id,
             message_id: Some(message_id),
+            after_message_id: None,
             client_command_id: body.client_command_id,
         })
         .await
@@ -989,6 +990,7 @@ async fn resume_agent_run_mailbox(
                 agent_id: context.agent.id,
                 runtime_session_id,
                 message_id: None,
+                after_message_id: None,
                 client_command_id: body.client_command_id,
             },
             Some(current_user),
@@ -1036,6 +1038,7 @@ async fn promote_agent_run_mailbox_message(
                 agent_id: context.agent.id,
                 runtime_session_id,
                 message_id: Some(message_id),
+                after_message_id: None,
                 client_command_id: body.client_command_id,
             },
             Some(current_user),
@@ -1059,24 +1062,42 @@ async fn move_agent_run_mailbox_message(
         ProjectPermission::Use,
     )
     .await?;
+    let runtime_session_id = context.delivery_runtime_session_id.clone().ok_or_else(|| {
+        ApiError::Conflict(format!(
+            "AgentRun {} / {} 缺少 delivery runtime",
+            context.run.id, context.agent.id
+        ))
+    })?;
+    let agent_run_repos = state.repos.to_agent_run_repository_set();
+    agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
+        .ensure_command_allowed(
+            command_policy_context(&context, &runtime_session_id),
+            app_workspace::AgentRunWorkspaceCommandPrecondition::MoveMailboxMessage {
+                command: command_precondition_to_application(body.command.clone()),
+            },
+        )
+        .await
+        .map_err(command_policy_error)?;
     let message_id = parse_uuid(&message_id, "message_id")?;
     let after_message_id = body
         .after_message_id
         .as_deref()
         .map(|id| parse_uuid(id, "after_message_id"))
         .transpose()?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let updated = agent_run_mailbox_service(state.as_ref(), &agent_run_repos)
-        .move_message(
-            context.run.id,
-            context.agent.id,
-            message_id,
+    let result = agent_run_mailbox_service(state.as_ref(), &agent_run_repos)
+        .move_message(AgentRunMailboxControlCommand {
+            run_id: context.run.id,
+            agent_id: context.agent.id,
+            runtime_session_id,
+            message_id: Some(message_id),
             after_message_id,
-        )
+            client_command_id: body.client_command_id,
+        })
         .await
         .map_err(ApiError::from)?;
+    let order_key = result.order_key;
     Ok(Json(
-        serde_json::json!({ "ok": true, "order_key": updated.order_key }),
+        serde_json::json!({ "ok": true, "order_key": order_key }),
     ))
 }
 
@@ -2095,6 +2116,9 @@ fn conversation_command_kind_to_contract(
         app_agent_run::ConversationCommandKindModel::DeleteMailboxMessage => {
             ConversationCommandKind::DeleteMailboxMessage
         }
+        app_agent_run::ConversationCommandKindModel::MoveMailboxMessage => {
+            ConversationCommandKind::MoveMailboxMessage
+        }
         app_agent_run::ConversationCommandKindModel::ResumeMailbox => {
             ConversationCommandKind::ResumeMailbox
         }
@@ -2114,6 +2138,9 @@ fn conversation_command_kind_to_application(
         }
         ConversationCommandKind::DeleteMailboxMessage => {
             app_agent_run::ConversationCommandKindModel::DeleteMailboxMessage
+        }
+        ConversationCommandKind::MoveMailboxMessage => {
+            app_agent_run::ConversationCommandKindModel::MoveMailboxMessage
         }
         ConversationCommandKind::ResumeMailbox => {
             app_agent_run::ConversationCommandKindModel::ResumeMailbox

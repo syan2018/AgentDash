@@ -81,3 +81,44 @@ D-003, D-005, D-010, D-011, D-013, D-016, D-017, D-019
 ### Migration Risk For Merge
 
 `0041_drop_lifecycle_run_context_view_projection.sql` is already present and no additional WI-10 migration file was added in this worker. Main-session merge should still keep migration ordering stable with other Batch A workers and run `pnpm run migration:guard` after all migration-touching diffs are combined.
+
+## WI-06 Ledger Entry 2026-07-04 / Worker C1
+
+### Schema Changes
+
+| Migration | Change | Decision mapping |
+| --- | --- | --- |
+| None in this worker | WI-06 code aligned with the existing 0044 shape: `agent_run_delivery_bindings` is current delivery state and `runtime_session_execution_anchors` remains immutable launch evidence. | D-010: current delivery binding belongs to AgentRun state; anchor is insert-once evidence. |
+
+### Redundant Table / Field Ledger
+
+| Candidate | Conclusion | Canonical replacement or qualification |
+| --- | --- | --- |
+| `lifecycle_agents.current_delivery_*` | Deletion remains completed by 0044 | `agent_run_delivery_bindings` keyed by `(run_id, agent_id)` owns current delivery state. |
+| Anchor coordinate rewrite on runtime session conflict | Removed from fork materialization | `RuntimeSessionExecutionAnchor` create-once semantics plus coordinate conflict detection preserve evidence immutability. |
+| Latest-updated anchor selection | Removed from test fake repository surfaces and absent from production repository trait | Delivery selection resolves `AgentRunDeliveryBinding` first, then validates the matching anchor. |
+
+### Migration Risk For Merge
+
+No WI-06 migration was added. If later cleanup drops immutable anchor `updated_at` or renames runtime trace tables, that migration should sequence after mailbox/runtime FK work so delivery binding and anchor FKs keep one canonical runtime trace target.
+
+## WI-04 Ledger Entry 2026-07-04 / Worker B2
+
+### Schema Changes
+
+| Migration | Change | Decision mapping |
+| --- | --- | --- |
+| `crates/agentdash-infrastructure/migrations/0047_agent_run_mailbox_delivery_runtime_ref.sql` | Renames `agent_run_mailbox_messages.runtime_session_id` and `agent_run_mailbox_states.runtime_session_id` to `delivery_runtime_session_id`; recreates both RuntimeSession FKs as nullable `runtime_sessions(id) ON DELETE SET NULL`; recreates reverse delivery-runtime indexes with delivery naming. | D-005: mailbox owner is AgentRun, not RuntimeSession. D-006: command receipt, queue item, and runtime delivery evidence are separate facts. D-017: mailbox remains a child table because queue claim, ordering, recovery, and scan paths require indexed rows and row locks. |
+
+### Redundant Table / Field Ledger
+
+| Candidate | Conclusion | Canonical replacement or qualification |
+| --- | --- | --- |
+| `agent_run_mailbox_messages.runtime_session_id` | Renamed and downgraded from owner-shaped field to nullable delivery trace ref | `agent_run_mailbox_messages.delivery_runtime_session_id`; durable owner remains `run_id + agent_id`, and claim/recover/order paths do not filter by runtime session. |
+| `agent_run_mailbox_states.runtime_session_id` | Renamed and downgraded from owner-shaped field to nullable delivery trace ref | `agent_run_mailbox_states.delivery_runtime_session_id`; state remains keyed by `(run_id, agent_id)` for pause and backend preference. |
+| `agent_run_mailbox_messages` | Retained as AgentRun queue child table | D-017 qualification: priority/order scan, claim lease, recovery, payload cleanup, and queue lifecycle need a physical table. |
+| `agent_run_mailbox_states` | Retained as AgentRun queue state child table | D-017 qualification: pause/resume/backend preference are keyed state for an AgentRun agent and are updated independently from message rows. |
+
+### Migration Risk For Merge
+
+`0047_agent_run_mailbox_delivery_runtime_ref.sql` sequences after runtime trace table rename `0045` and fork lineage cleanup `0046`. It intentionally does not create a DeliveryAttempt table; lease/attempt/accepted refs remain embedded in mailbox rows until WI-05 can split delivery attempts without double-writing partial state.

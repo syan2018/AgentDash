@@ -56,17 +56,16 @@ D-016, D-018
 - Rust 编译和 application service tests。
 - 依赖图人工 review：每个 use case 的 deps 不跨越无关领域。
 
-## 2026-07-05 Worker E2 Progress
+## Implementation Record 2026-07-05
 
-- AgentRun fork service constructor now accepts `AgentRunForkRepos`; API route helpers unwrap `AgentRunRepositorySet` at the composition boundary.
-- AgentRun workspace query and command policy now expose use-case deps structs; `AgentRunRepositorySet` remains only in their `from_repository_set` wiring helpers.
-- AgentRun presentation read model now stores explicit frame/run/agent/anchor repository ports instead of cloning `AgentRunRepositorySet`.
-- Project agent context construction no longer requires a repository set; workspace lookup takes the workspace repository port directly.
-- Remaining AgentRun `from_repository_set` helpers are accepted composition/fixture adapters. Workspace query still depends on several repositories because it composes the workspace shell, mailbox state, frame runtime, resource surface, and list projection; further splitting is a possible follow-up if these views diverge.
+- AgentRun use cases expose named dependency structs such as `AgentRunForkRepos`, workspace deps, command-policy deps, delivery selection deps, and terminal callback deps. API routes assemble those structs at `AppState` composition boundaries.
+- `AgentRunRepositorySet`, `RepositorySet::to_agent_run_repository_set`, and AgentRun `from_repository_set` adapters were deleted because AgentRun services now declare their required ports directly.
+- `agentdash-application-lifecycle::RepositorySet` and the lifecycle `repository_set.rs` module were deleted. Lifecycle run command, orchestrator, read model, runtime provider, advance-node tool, and surface projector now receive named deps or already-assembled collaborators.
+- `WaitActivityService::from_repository_set` was deleted. Session bootstrap constructs `WaitActivityDeps` / `WaitActivityRepositories`, so the runtime tool provider sees only the wait sources it needs.
+- `RepositorySet::to_workflow_repository_set` remains only as an application composition helper for the workflow crate. Lifecycle services no longer store or pass a full repository set.
 
-## 2026-07-05 Worker R1a Implementation Record
+## Final Validation 2026-07-05
 
-- API AgentRun routes now assemble named use-case dependency structs directly from `AppState.repos`; route helpers no longer create or pass `AgentRunRepositorySet`.
-- `AgentRunMailboxTerminalCallback` now receives `AgentRunMailboxTerminalCallbackDeps`, keeping session bootstrap as the composition root while the callback service path sees named ports.
-- `AgentRunRepositorySet` and its main `RepositorySet::to_agent_run_repository_set` projection were removed because AgentRun use cases now declare their dependencies through purpose-named deps structs.
-- Delivery runtime selection callers in canvas diagnostics and companion mailbox delivery now list the five required repositories explicitly, so runtime delivery lookup no longer depends on an AgentRun-wide aggregate set.
+- `rg "WaitActivityService::from_repository_set|from_repository_set|AgentRunRepositorySet|to_agent_run_repository_set|agentdash_application_lifecycle::RepositorySet|to_lifecycle_repository_set|LifecycleRepositorySet"` over AgentRun/Lifecycle/API affected paths has no matches.
+- `cargo check -p agentdash-application -p agentdash-application-lifecycle -p agentdash-application-workflow -p agentdash-api` passed.
+- Targeted tests passed for `wait_activity`, lifecycle read model/surface projector, workflow executor launcher, API lifecycle/workflow/app_state/bootstrap routes.

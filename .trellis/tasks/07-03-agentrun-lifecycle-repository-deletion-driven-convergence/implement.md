@@ -12,6 +12,16 @@
 
 本文件保留全局阶段顺序，用于说明重构推进节奏；具体分派、验收和执行追踪以工作项文件为准。
 
+## Dispatch Protocol
+
+本任务在 Trellis sub-agent dispatch 模式下执行。主会话负责恢复上下文、选择工作项、派发、接收结果、更新必要的 spec/task artifact、提交和收口；代码实现和变更检查默认由 `trellis-implement` / `trellis-check` sub-agent 完成。
+
+每轮恢复上下文时先运行 `get_context.py` 和 `get_context.py --mode phase`，确认 active task、分支、dirty state 和当前 workflow step；随后按顺序读取 `prd.md`、`design.md`、`implement.md`、`decisions.md`、`inventory.md`、`target-state.md`、`work-items/README.md`，再读取本轮锚定的 `work-items/WI-*.md`。
+
+每个派发 prompt 以 `Active task: .trellis/tasks/07-03-agentrun-lifecycle-repository-deletion-driven-convergence` 开头，并声明 worker 已经是对应的 `trellis-implement` 或 `trellis-check` 角色。派发内容必须绑定具体工作项、decision IDs、允许写入范围、需要读取的 task artifacts/jsonl/spec、验证命令、完成报告格式和交付风险。
+
+`trellis-implement` 负责按锚定工作项完成实现并运行 scoped lint/typecheck。`trellis-check` 负责检查同一工作项 diff，按同一写入边界直接修复机械问题，并重新运行验证。进入最终任务收口前，最后一轮 `trellis-check` 必须从工作项局部检查升级为全任务 affected-scope 检查。
+
 ## Work Item Mapping
 
 | Phase | Work item |

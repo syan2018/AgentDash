@@ -20,7 +20,7 @@ use crate::session::effects_service::SessionEffectsService;
 use crate::session::eventing::SessionEventingService;
 use crate::session::hooks_service::SessionHookService;
 use crate::session::hub::SessionRuntimeInner;
-use crate::session::persistence::SessionStoreSet;
+use crate::session::persistence::SessionLaunchStores;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
 use crate::session::runtime_transition_service::SessionRuntimeTransitionService;
@@ -36,7 +36,7 @@ use agentdash_application_ports::backend_transport::RelayPromptTransport;
 pub(in crate::session) struct SessionLaunchDeps {
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) turn_supervisor: TurnSupervisor,
-    pub(super) stores: SessionStoreSet,
+    pub(super) stores: SessionLaunchStores,
     pub(super) frame_launch_envelope_provider:
         Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopePort>>>,
     accepted_launch_commit_port:
@@ -67,7 +67,7 @@ impl SessionLaunchDeps {
             connector: inner.connector.clone(),
             runtime_registry: inner.runtime_registry.clone(),
             turn_supervisor: inner.turn_supervisor.clone(),
-            stores: inner.stores.clone(),
+            stores: inner.stores.launch_stores(),
             frame_launch_envelope_provider: inner.frame_launch_envelope_provider.clone(),
             accepted_launch_commit_port: inner.accepted_launch_commit_port.clone(),
             hook_effect_handler_registry: inner.hook_effect_handler_registry.clone(),
@@ -246,7 +246,7 @@ pub(super) struct ConnectorStartDeps {
 
 #[derive(Clone)]
 pub(super) struct TurnCommitDeps {
-    pub(super) stores: SessionStoreSet,
+    pub(super) stores: SessionLaunchStores,
     pub(super) eventing: SessionEventingService,
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) accepted_launch_commit: Arc<dyn AcceptedLaunchCommitPort>,

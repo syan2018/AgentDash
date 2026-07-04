@@ -13,16 +13,16 @@ use super::compaction_checkpoint::{
     CompactionCheckpointError, projection_entries_from_checkpoint_records,
     suffix_start_event_seq_from_compaction,
 };
-use super::persistence::{PersistedSessionEvent, SessionStoreSet};
+use super::persistence::{ContextProjectionStores, PersistedSessionEvent};
 use super::transcript_restore::build_raw_projected_transcript_from_filtered_events;
 
 #[derive(Clone)]
 pub struct ContextProjector {
-    stores: SessionStoreSet,
+    stores: ContextProjectionStores,
 }
 
 impl ContextProjector {
-    pub fn new(stores: SessionStoreSet) -> Self {
+    pub(in crate::session) fn new(stores: ContextProjectionStores) -> Self {
         Self { stores }
     }
 
@@ -365,7 +365,7 @@ mod tests {
     use super::super::memory_persistence::MemoryRuntimeTraceStore;
     use super::super::persistence::{
         NewCompactionProjectionCommit, SessionCompactionRecord, SessionCompactionStore,
-        SessionMetaStore, SessionProjectionSegmentRecord, SessionProjectionStore,
+        SessionMetaStore, SessionProjectionSegmentRecord, SessionProjectionStore, SessionStoreSet,
     };
     use super::super::types::{ExecutionStatus, SessionMeta, TitleSource};
     use super::*;
@@ -671,7 +671,7 @@ mod tests {
     async fn build_model_context_reads_only_suffix_with_active_compaction() {
         let persistence = Arc::new(MemoryRuntimeTraceStore::default());
         let (stores, spy) = seed_session_with_compaction(&persistence).await;
-        let projector = ContextProjector::new(stores);
+        let projector = ContextProjector::new(stores.projection_stores());
 
         let envelope = projector
             .build_model_context("sess-ctx")
@@ -718,7 +718,7 @@ mod tests {
         // 改造后产物必须与"全量读取后过滤"的参考实现等价。
         let persistence = Arc::new(MemoryRuntimeTraceStore::default());
         let (stores, _spy) = seed_session_with_compaction(&persistence).await;
-        let projector = ContextProjector::new(stores);
+        let projector = ContextProjector::new(stores.projection_stores());
         let actual = projector
             .build_model_context("sess-ctx")
             .await

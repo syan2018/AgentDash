@@ -8,9 +8,9 @@ use super::context_projector::ContextProjector;
 use super::hub_support::{TurnTerminalKind, parse_turn_terminal_event_from_envelope};
 use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
-    SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
+    SessionBranchingStores, SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
     SessionLineageRelationKind, SessionLineageStatus, SessionProjectionHeadRecord,
-    SessionProjectionSegmentRecord, SessionStoreSet,
+    SessionProjectionSegmentRecord,
 };
 use super::types::{ExecutionStatus, SessionMeta, TitleSource};
 
@@ -54,11 +54,11 @@ pub struct SessionLineageView {
 
 #[derive(Clone)]
 pub struct SessionBranchingService {
-    stores: SessionStoreSet,
+    stores: SessionBranchingStores,
 }
 
 impl SessionBranchingService {
-    pub fn new(stores: SessionStoreSet) -> Self {
+    pub(in crate::session) fn new(stores: SessionBranchingStores) -> Self {
         Self { stores }
     }
 
@@ -77,7 +77,7 @@ impl SessionBranchingService {
 
         let fork_point = self.resolve_fork_point(&request).await?;
         let relation_kind = SessionLineageRelationKind::Fork;
-        let projector = ContextProjector::new(self.stores.clone());
+        let projector = ContextProjector::new(self.stores.projection_stores());
         let parent_context = if let Some(compaction_id) = fork_point.compaction_id.as_deref() {
             projector
                 .build_model_context_from_compaction(
@@ -608,11 +608,11 @@ fn platform_source() -> SourceInfo {
 }
 
 async fn resolve_message_ref_event_seq(
-    stores: &SessionStoreSet,
+    stores: &SessionBranchingStores,
     session_id: &str,
     message_ref: &MessageRef,
 ) -> io::Result<u64> {
-    let transcript = ContextProjector::new(stores.clone())
+    let transcript = ContextProjector::new(stores.projection_stores())
         .build_projected_transcript(session_id)
         .await?;
     let (index, entry) = transcript
@@ -793,7 +793,9 @@ mod tests {
     use async_trait::async_trait;
 
     use super::*;
-    use crate::session::memory_persistence::MemoryRuntimeTraceStore;
+    use crate::session::{
+        memory_persistence::MemoryRuntimeTraceStore, persistence::SessionStoreSet,
+    };
 
     fn test_stores() -> (Arc<MemoryRuntimeTraceStore>, SessionStoreSet) {
         let persistence = Arc::new(MemoryRuntimeTraceStore::default());
@@ -1068,7 +1070,7 @@ mod tests {
             .await
             .expect("应能写入 parent message");
 
-        let service = SessionBranchingService::new(stores.clone());
+        let service = SessionBranchingService::new(stores.branching_stores());
         let result = service
             .fork_session(basic_fork_request("parent"))
             .await
@@ -1090,7 +1092,7 @@ mod tests {
             .await
             .expect("应能继续写入 parent");
 
-        let child_context = ContextProjector::new(stores)
+        let child_context = ContextProjector::new(stores.projection_stores())
             .build_model_context(&result.child_session.id)
             .await
             .expect("应能恢复 child context");
@@ -1122,7 +1124,7 @@ mod tests {
             .await
             .expect("应能写入 second message");
 
-        let service = SessionBranchingService::new(stores.clone());
+        let service = SessionBranchingService::new(stores.branching_stores());
         let rollback = service
             .rollback_model_projection(SessionProjectionRollbackRequest {
                 session_id: "session".to_string(),
@@ -1155,7 +1157,7 @@ mod tests {
             .expect("应能读取事件");
         assert_eq!(all_events.len(), 3);
 
-        let context = ContextProjector::new(stores)
+        let context = ContextProjector::new(stores.projection_stores())
             .build_model_context("session")
             .await
             .expect("应能按 rollback head 恢复 context");
@@ -1177,7 +1179,7 @@ mod tests {
             .await
             .expect("应能写入 parent message");
 
-        let service = SessionBranchingService::new(stores.clone());
+        let service = SessionBranchingService::new(stores.branching_stores());
         let mut request = basic_fork_request("parent");
         request.fork_point_ref = Some(MessageRef {
             turn_id: "turn-1".to_string(),
@@ -1200,7 +1202,7 @@ mod tests {
             .fork_session(request)
             .await
             .expect("completed turn message ref fork 应成功");
-        let context = ContextProjector::new(stores)
+        let context = ContextProjector::new(stores.projection_stores())
             .build_model_context(&completed.child_session.id)
             .await
             .expect("应能恢复 child context");
@@ -1233,11 +1235,11 @@ mod tests {
             entry_index: 0,
         });
 
-        let completed = SessionBranchingService::new(stores.clone())
+        let completed = SessionBranchingService::new(stores.branching_stores())
             .fork_session(request)
             .await
             .expect("platform turn_terminal completed 应允许 fork");
-        let context = ContextProjector::new(stores)
+        let context = ContextProjector::new(stores.projection_stores())
             .build_model_context(&completed.child_session.id)
             .await
             .expect("应能恢复 child context");
@@ -1284,7 +1286,7 @@ mod tests {
             entry_index: 1,
         });
 
-        let result = SessionBranchingService::new(stores)
+        let result = SessionBranchingService::new(stores.branching_stores())
             .fork_session(request)
             .await;
         assert!(matches!(
@@ -1392,7 +1394,7 @@ mod tests {
         });
         request.fork_point_compaction_id = Some("compact-1".to_string());
 
-        let result = SessionBranchingService::new(stores)
+        let result = SessionBranchingService::new(stores.branching_stores())
             .fork_session(request)
             .await;
         assert!(matches!(
@@ -1427,7 +1429,7 @@ mod tests {
             lineage: persistence.clone(),
         };
 
-        let result = SessionBranchingService::new(failing_stores)
+        let result = SessionBranchingService::new(failing_stores.branching_stores())
             .fork_session(basic_fork_request("parent"))
             .await;
         assert!(matches!(

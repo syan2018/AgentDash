@@ -29,19 +29,19 @@ use agentdash_spi::hooks::ExecutionHookProvider;
 impl SessionRuntimeInner {
     pub fn core_service(&self) -> super::super::core::SessionCoreService {
         super::super::core::SessionCoreService::new(
-            self.stores.clone(),
+            self.stores.core_stores(),
             self.runtime_registry.clone(),
             self.connector.clone(),
         )
     }
 
     pub fn branching_service(&self) -> super::super::branching::SessionBranchingService {
-        super::super::branching::SessionBranchingService::new(self.stores.clone())
+        super::super::branching::SessionBranchingService::new(self.stores.branching_stores())
     }
 
     pub fn eventing_service(&self) -> super::super::eventing::SessionEventingService {
         super::super::eventing::SessionEventingService::new(
-            self.stores.clone(),
+            self.stores.eventing_stores(),
             self.runtime_registry.clone(),
             self.connector.clone(),
         )
@@ -49,7 +49,7 @@ impl SessionRuntimeInner {
 
     pub fn runtime_service(&self) -> super::super::runtime_control::SessionRuntimeService {
         super::super::runtime_control::SessionRuntimeService::new(
-            self.stores.clone(),
+            self.stores.runtime_control_stores(),
             self.turn_supervisor.clone(),
             self.eventing_service(),
             self.connector.clone(),

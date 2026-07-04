@@ -22,6 +22,47 @@ pub struct SessionStoreSet {
     pub lineage: Arc<dyn SessionLineageStore>,
 }
 
+#[derive(Clone)]
+pub(crate) struct SessionCoreStores {
+    pub(crate) meta: Arc<dyn SessionMetaStore>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ContextProjectionStores {
+    pub(crate) events: Arc<dyn SessionEventStore>,
+    pub(crate) compactions: Arc<dyn SessionCompactionStore>,
+    pub(crate) projections: Arc<dyn SessionProjectionStore>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionEventingStores {
+    pub(crate) meta: Arc<dyn SessionMetaStore>,
+    pub(crate) events: Arc<dyn SessionEventStore>,
+    pub(crate) compactions: Arc<dyn SessionCompactionStore>,
+    pub(crate) projections: Arc<dyn SessionProjectionStore>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionBranchingStores {
+    pub(crate) meta: Arc<dyn SessionMetaStore>,
+    pub(crate) events: Arc<dyn SessionEventStore>,
+    pub(crate) compactions: Arc<dyn SessionCompactionStore>,
+    pub(crate) projections: Arc<dyn SessionProjectionStore>,
+    pub(crate) lineage: Arc<dyn SessionLineageStore>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionRuntimeControlStores {
+    pub(crate) meta: Arc<dyn SessionMetaStore>,
+    pub(crate) events: Arc<dyn SessionEventStore>,
+}
+
+#[derive(Clone)]
+pub(in crate::session) struct SessionLaunchStores {
+    pub(super) meta: Arc<dyn SessionMetaStore>,
+    pub(super) runtime_commands: Arc<dyn SessionRuntimeCommandStore>,
+}
+
 impl SessionStoreSet {
     pub fn new(
         meta: Arc<dyn SessionMetaStore>,
@@ -40,6 +81,54 @@ impl SessionStoreSet {
             compactions,
             projections,
             lineage,
+        }
+    }
+
+    pub(crate) fn core_stores(&self) -> SessionCoreStores {
+        SessionCoreStores {
+            meta: self.meta.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn projection_stores(&self) -> ContextProjectionStores {
+        ContextProjectionStores {
+            events: self.events.clone(),
+            compactions: self.compactions.clone(),
+            projections: self.projections.clone(),
+        }
+    }
+
+    pub(crate) fn eventing_stores(&self) -> SessionEventingStores {
+        SessionEventingStores {
+            meta: self.meta.clone(),
+            events: self.events.clone(),
+            compactions: self.compactions.clone(),
+            projections: self.projections.clone(),
+        }
+    }
+
+    pub(crate) fn branching_stores(&self) -> SessionBranchingStores {
+        SessionBranchingStores {
+            meta: self.meta.clone(),
+            events: self.events.clone(),
+            compactions: self.compactions.clone(),
+            projections: self.projections.clone(),
+            lineage: self.lineage.clone(),
+        }
+    }
+
+    pub(crate) fn runtime_control_stores(&self) -> SessionRuntimeControlStores {
+        SessionRuntimeControlStores {
+            meta: self.meta.clone(),
+            events: self.events.clone(),
+        }
+    }
+
+    pub(in crate::session) fn launch_stores(&self) -> SessionLaunchStores {
+        SessionLaunchStores {
+            meta: self.meta.clone(),
+            runtime_commands: self.runtime_commands.clone(),
         }
     }
 
@@ -64,5 +153,25 @@ impl SessionStoreSet {
             store.clone(),
             store,
         )
+    }
+}
+
+impl SessionEventingStores {
+    pub(crate) fn projection_stores(&self) -> ContextProjectionStores {
+        ContextProjectionStores {
+            events: self.events.clone(),
+            compactions: self.compactions.clone(),
+            projections: self.projections.clone(),
+        }
+    }
+}
+
+impl SessionBranchingStores {
+    pub(crate) fn projection_stores(&self) -> ContextProjectionStores {
+        ContextProjectionStores {
+            events: self.events.clone(),
+            compactions: self.compactions.clone(),
+            projections: self.projections.clone(),
+        }
     }
 }

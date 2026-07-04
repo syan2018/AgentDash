@@ -26,8 +26,8 @@ use super::hub_support::{
 };
 use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
-    SessionCompactionRecord, SessionCompactionStatus, SessionEventPage,
-    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionStoreSet,
+    SessionCompactionRecord, SessionCompactionStatus, SessionEventPage, SessionEventingStores,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
 };
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::transcript_restore::build_raw_projected_transcript_from_events;
@@ -54,14 +54,14 @@ fn ephemeral_runtime_epoch() -> u64 {
 
 #[derive(Clone)]
 pub struct SessionEventingService {
-    stores: SessionStoreSet,
+    stores: SessionEventingStores,
     runtime_registry: SessionRuntimeRegistry,
     connector: Arc<dyn agentdash_spi::AgentConnector>,
 }
 
 impl SessionEventingService {
     pub(super) fn new(
-        stores: SessionStoreSet,
+        stores: SessionEventingStores,
         runtime_registry: SessionRuntimeRegistry,
         connector: Arc<dyn agentdash_spi::AgentConnector>,
     ) -> Self {
@@ -425,7 +425,7 @@ impl SessionEventingService {
         &self,
         session_id: &str,
     ) -> io::Result<agentdash_agent_types::AgentContextEnvelope> {
-        let mut envelope = ContextProjector::new(self.stores.clone())
+        let mut envelope = ContextProjector::new(self.stores.projection_stores())
             .build_model_context(session_id)
             .await?;
         self.apply_session_rewind_boundary(session_id, &mut envelope)
@@ -1683,7 +1683,7 @@ mod tests {
 
     fn test_eventing_service(stores: SessionStoreSet) -> SessionEventingService {
         SessionEventingService::new(
-            stores,
+            stores.eventing_stores(),
             SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new()))),
             Arc::new(NoopConnector),
         )

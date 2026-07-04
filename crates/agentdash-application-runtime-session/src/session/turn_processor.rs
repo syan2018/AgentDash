@@ -391,7 +391,7 @@ mod tests {
         let deps = SessionTurnProcessorDeps {
             turn_supervisor: supervisor,
             eventing: SessionEventingService::new(
-                stores.clone(),
+                stores.eventing_stores(),
                 registry.clone(),
                 Arc::new(NoopConnector),
             ),
@@ -487,7 +487,7 @@ mod tests {
         let deps = SessionTurnProcessorDeps {
             turn_supervisor: supervisor.clone(),
             eventing: SessionEventingService::new(
-                stores.clone(),
+                stores.eventing_stores(),
                 registry.clone(),
                 Arc::new(NoopConnector),
             ),

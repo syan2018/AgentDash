@@ -137,7 +137,7 @@ export function useAgentRunWorkspaceState({
 
     try {
       const workspace = await fetchAgentRunWorkspace(rid, aid);
-      const runtimeSessionId = workspace.delivery_runtime_ref?.runtime_session_id ?? null;
+      const runtimeSessionId = workspace.delivery_trace_meta?.runtime_session_ref.runtime_session_id ?? null;
       const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
 
       if (!canCommit()) return workspace;

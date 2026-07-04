@@ -1732,9 +1732,6 @@ fn list_child_from_projection(
         shell: shell_model_to_contract(projection.shell),
         subagent_count,
         children: Vec::new(),
-        delivery_runtime_ref: projection
-            .delivery_runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
     }
 }
 
@@ -1759,9 +1756,6 @@ fn list_entry_from_projection(
         run_status: lifecycle_run_status_to_contract(run.status),
         subagent_count,
         children,
-        delivery_runtime_ref: projection
-            .delivery_runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
         delivery_trace_meta: projection
             .delivery_trace_meta
             .map(workspace_trace_meta_to_contract),
@@ -1808,9 +1802,6 @@ fn agent_run_workspace_view(
             last_turn_id: snapshot.shell.last_turn_id,
             last_activity_at: snapshot.shell.last_activity_at,
         },
-        delivery_runtime_ref: snapshot
-            .delivery_runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
         delivery_trace_meta: snapshot
             .delivery_trace_meta
             .map(workspace_trace_meta_to_contract),
@@ -1910,10 +1901,6 @@ fn conversation_to_contract(
                     frame_id: frame.frame_id,
                     revision: frame.revision,
                 }),
-            delivery_runtime_ref: conversation
-                .lifecycle_context
-                .delivery_runtime_session_id
-                .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
             subject_associations: conversation
                 .lifecycle_context
                 .subject_associations

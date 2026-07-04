@@ -33,7 +33,7 @@ export type AgentConversationFeedSnapshot = { run_ref: LifecycleRunRefDto, agent
 
 export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, };
 
-export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
+export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
 
 export type AgentConversationMessageRefView = { turn_id: string, entry_index: number, };
 
@@ -99,7 +99,7 @@ subagent_count: number,
 /**
  * 递归内联的下一层直接子 Agent，支持列表内任意深度展开（深度上限兜底）。
  */
-children: Array<AgentRunListChild>, delivery_runtime_ref?: RuntimeSessionRefDto, };
+children: Array<AgentRunListChild>, };
 
 export type AgentRunOwnershipView = { run_created_by_user_id: string, agent_created_by_user_id: string, current_user_controls_run: boolean, };
 
@@ -142,7 +142,7 @@ subagent_count: number,
 /**
  * 该主 Run 的直接子 Agent（一跳），已内联 shell 状态，前端免懒加载。
  */
-children: Array<AgentRunListChild>, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
+children: Array<AgentRunListChild>, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
 
 export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<AgentRunWorkspaceListEntry>,
 /**
@@ -152,7 +152,7 @@ next_cursor?: string, };
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_runtime_ref?: RuntimeSessionRefDto, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot,
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot,
 /**
  * lineage 父节点：本 Run 若为 subagent 则指向其父，供"隶属于"跳转。
  */

@@ -34,6 +34,15 @@ const ownership: AgentRunOwnershipView = {
   current_user_controls_run: true,
 };
 
+const deliveryTraceMeta = {
+  runtime_session_ref: { runtime_session_id: "session-1" },
+  last_event_seq: 1n,
+  trace_title: "Workspace",
+  trace_title_source: "session_meta",
+  delivery_status: "running",
+  updated_at: 1783000000000n,
+};
+
 function workspaceView(
   controlStatus: AgentRunWorkspaceView["control_plane"]["status"],
   commands: ConversationCommandView[] = [],
@@ -50,7 +59,7 @@ function workspaceView(
       delivery_status: controlStatus,
       last_activity_at: "2026-06-12T00:00:00.000Z",
     },
-    delivery_runtime_ref: { runtime_session_id: "session-1" },
+    delivery_trace_meta: deliveryTraceMeta,
     control_plane: { status: controlStatus, ownership },
     subject_associations: [],
     children: [],
@@ -62,7 +71,6 @@ function workspaceView(
         project_id: "project-1",
       },
       lifecycle_context: {
-        delivery_runtime_ref: { runtime_session_id: "session-1" },
         subject_associations: [],
       },
       execution: {

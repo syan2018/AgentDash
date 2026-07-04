@@ -1212,9 +1212,6 @@ pub struct AgentConversationLifecycleContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub frame_ref: Option<AgentFrameRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
     #[serde(default)]
     pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
 }
@@ -1373,9 +1370,6 @@ pub struct AgentRunWorkspaceView {
     pub agent_ref: AgentRunRefDto,
     pub project_id: String,
     pub shell: AgentRunWorkspaceShell,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery_trace_meta: Option<RuntimeSessionTraceMeta>,
@@ -1689,9 +1683,6 @@ pub struct AgentRunListChild {
     /// 递归内联的下一层直接子 Agent，支持列表内任意深度展开（深度上限兜底）。
     #[serde(default)]
     pub children: Vec<AgentRunListChild>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1716,9 +1707,6 @@ pub struct AgentRunWorkspaceListEntry {
     /// 该主 Run 的直接子 Agent（一跳），已内联 shell 状态，前端免懒加载。
     #[serde(default)]
     pub children: Vec<AgentRunListChild>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub delivery_trace_meta: Option<RuntimeSessionTraceMeta>,

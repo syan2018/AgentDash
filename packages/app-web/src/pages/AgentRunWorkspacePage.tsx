@@ -497,10 +497,9 @@ export function AgentRunWorkspacePage({
       state: {
         agent_id: agentRunDetailTarget.agentId,
         frame_id: agentRunDetailTarget.frameId,
-        runtime_session_id: deliveryRuntimeSessionId,
       },
     });
-  }, [agentRunDetailTarget, deliveryRuntimeSessionId, navigate]);
+  }, [agentRunDetailTarget, navigate]);
 
   const backButtonLabel = effectiveReturnTarget?.owner_type === "project"
     ? "返回项目"

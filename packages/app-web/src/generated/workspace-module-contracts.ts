@@ -61,10 +61,6 @@ export type WorkspaceModuleOperationReadinessKind = "ready" | "missing_runtime_g
  */
 export type WorkspaceModulePresentRequest = { module_id: string, view_key: string,
 /**
- * 可选展示上下文；HTTP 用户打开只校验归属，Agent 工具路径负责运行时授权。
- */
-runtime_session_id?: string | null,
-/**
  * 可选 delivery trace context；HTTP user-open 不依赖它写事件。
  */
 turn_id?: string | null, payload?: JsonValue | null, };

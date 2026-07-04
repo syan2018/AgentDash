@@ -468,8 +468,8 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO lifecycle_runs \
-             (id,project_id,topology,context,orchestrations,view_projection,status,execution_log,created_at,updated_at,last_activity_at) \
-             VALUES ($1,$2,'plain','{}','[]',NULL,'\"ready\"','[]',now(),now(),now())",
+             (id,project_id,topology,orchestrations,status,execution_log,created_at,updated_at,last_activity_at) \
+             VALUES ($1,$2,'plain','[]','\"ready\"','[]',now(),now(),now())",
         )
         .bind(run_id.to_string())
         .bind(project_id.to_string())

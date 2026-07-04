@@ -29,7 +29,7 @@ Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersisten
 
 ### 2. 聚合整体持久化必须原子
 
-例如 `WorkspaceRepository` 在同一事务内写 `workspaces` 与 `workspace_bindings`。`LifecycleRunRepository` 在同一聚合边界内写 lifecycle context、orchestrations、tasks 与 view projection；`StoryRepository` 只写 Story 自身字段与上下文。
+例如 `WorkspaceRepository` 在同一事务内写 `workspaces` 与 `workspace_bindings`。`LifecycleRunRepository` 在同一聚合边界内写 orchestrations、tasks 与 execution log；`StoryRepository` 只写 Story 自身字段与上下文。
 
 ### 3. 跨聚合一致性使用显式 Command Port
 

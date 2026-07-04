@@ -12,38 +12,6 @@ use super::{
     InputPortDefinition, OutputPortDefinition, RuntimeSessionPolicy, TransitionCondition,
 };
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct LifecycleContext {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub main_agent_run_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub agent_runs: Vec<AgentRunRef>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub frame_refs: Vec<AgentFrameRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub permission_scope: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct AgentRunRef {
-    pub agent_run_id: Uuid,
-    pub role: String,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_frame_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_agent_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct AgentFrameRef {
-    pub frame_id: Uuid,
-    pub agent_run_id: Uuid,
-    pub revision: i32,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OrchestrationInstance {
     pub orchestration_id: Uuid,

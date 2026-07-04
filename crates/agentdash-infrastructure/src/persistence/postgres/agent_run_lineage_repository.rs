@@ -111,10 +111,8 @@ async fn materialize_forked_agent_run_tx(
     pool: &PgPool,
     input: AgentRunForkMaterializationInput,
 ) -> Result<AgentRunForkMaterializationResult, DomainError> {
-    let mut child_run =
+    let child_run =
         LifecycleRun::new_plain_for_user(input.parent_run.project_id, &input.forked_by_user_id);
-    child_run.context = input.parent_run.context.clone();
-    child_run.view_projection = input.parent_run.view_projection.clone();
 
     let mut child_agent = LifecycleAgent::new_root_for_user(
         child_run.id,
@@ -328,9 +326,9 @@ async fn insert_lifecycle_run_tx(
 ) -> Result<(), DomainError> {
     sqlx::query(
         r#"INSERT INTO lifecycle_runs
-            (id,project_id,created_by_user_id,topology,context,orchestrations,tasks,
-             view_projection,status,execution_log,created_at,updated_at,last_activity_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+            (id,project_id,created_by_user_id,topology,orchestrations,tasks,
+             status,execution_log,created_at,updated_at,last_activity_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
     )
     .bind(run.id.to_string())
     .bind(run.project_id.to_string())
@@ -339,10 +337,8 @@ async fn insert_lifecycle_run_tx(
         agentdash_domain::workflow::LifecycleRunTopology::Plain => "plain",
         agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph => "workflow_graph",
     })
-    .bind(serde_json::to_string(&run.context)?)
     .bind(serde_json::to_string(&run.orchestrations)?)
     .bind(serde_json::to_string(&run.tasks)?)
-    .bind(opt_json_str(&run.view_projection)?)
     .bind(serde_json::to_string(&run.status)?)
     .bind(serde_json::to_string(&run.execution_log)?)
     .bind(run.created_at)

@@ -11,7 +11,6 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `AgentProcedure` | 单个 Agent Activity 的 behavior / capability / context / hook / port 契约 |
 | `WorkflowGraph` | 可执行 Activity DAG definition |
 | `LifecycleRun` | tracked life process / control ledger |
-| `LifecycleContext` | `LifecycleRun` 内的上下文快照，保存主 AgentRun、AgentRun refs、AgentFrame refs、权限和预算摘要 |
 | `OrchestrationInstance` | `LifecycleRun` 内部 0..N 个编排状态容器，保存 plan snapshot、runtime node state、dispatch 摘要和 state exchange snapshot；`orchestration_id` 是运行实例身份 |
 | `OrchestrationPlanSnapshot` | 静态 graph、workflow script 或 run artifact 编译后的不可变 runtime plan |
 | `LifecycleRunTopology` | run 的控制面拓扑：`plain` 表示普通 Agent runtime，`workflow_graph` 表示显式 Activity graph runtime |
@@ -29,7 +28,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 
 - `WorkflowGraph` 是 workflow 运行、编辑和观察的主模型。
 - `LifecycleRun` 是 tracked life process / control ledger；同一 run 可以包含 0..N 个 `OrchestrationInstance`。
-- `LifecycleRun.context`、`LifecycleRun.orchestrations`、`LifecycleRun.view_projection` 是 orchestration contract 的 owning aggregate 字段；command/service 通过 aggregate 写入这些字段，repository 只做整体持久化。
+- `LifecycleRun.orchestrations`、`LifecycleRun.tasks`、`LifecycleRun.execution_log` 是 Lifecycle control ledger 的 owning aggregate 字段；command/service 通过 aggregate 写入这些字段，repository 只做整体持久化。
 - `OrchestrationInstance.orchestration_id` 是唯一运行实例身份；definition source / asset provenance 只能作为 plan metadata 或审计信息，不参与 scheduler、terminal callback、trace anchor 的节点坐标。
 - 静态 `WorkflowGraph`、workflow script 或 run artifact 进入 runtime 前先由 application 层 compiler 生成 `OrchestrationPlanSnapshot(plan_digest=sha256:...)`；compiler blocking diagnostics 发生在 run/orchestration 创建前。
 - Runtime node key 必须包含 `orchestration_id + node_path + attempt`，避免同一 Lifecycle 内多个 orchestration 的节点冲突。
@@ -118,7 +117,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 
 ### 1. Scope / Trigger
 
-- Trigger: 为 `LifecycleRun` 增加或消费 `context`、`orchestrations`、`view_projection` 字段，或修改 `OrchestrationInstance` / `OrchestrationPlanSnapshot` / `RuntimeNodeState` 等合同。
+- Trigger: 为 `LifecycleRun` 增加或消费 `orchestrations`、`tasks`、`execution_log` 字段，或修改 `OrchestrationInstance` / `OrchestrationPlanSnapshot` / `RuntimeNodeState` 等合同。
 - Scope: domain value objects、`LifecycleRun` aggregate、`LifecycleRunRepository`、workflow runtime 事实源边界。
 
 ### 2. Signatures
@@ -127,16 +126,15 @@ Domain aggregate:
 
 ```rust
 pub struct LifecycleRun {
-    pub context: LifecycleContext,
     pub orchestrations: Vec<OrchestrationInstance>,
-    pub view_projection: Option<serde_json::Value>,
+    pub tasks: Vec<LifecycleTaskPlanItem>,
+    pub execution_log: Vec<LifecycleExecutionEntry>,
 }
 ```
 
 Aggregate methods:
 
 ```rust
-set_lifecycle_context(context: LifecycleContext)
 add_orchestration(orchestration: OrchestrationInstance) -> bool
 replace_orchestration(orchestration: OrchestrationInstance) -> Option<OrchestrationInstance>
 orchestration_by_id(orchestration_id: Uuid) -> Option<&OrchestrationInstance>
@@ -145,25 +143,25 @@ orchestration_by_id(orchestration_id: Uuid) -> Option<&OrchestrationInstance>
 PostgreSQL columns on `lifecycle_runs`:
 
 ```sql
-context text DEFAULT '{}'::text NOT NULL
 orchestrations text DEFAULT '[]'::text NOT NULL
-view_projection text
+tasks text DEFAULT '[]'::text NOT NULL
+execution_log text DEFAULT '[]'::text NOT NULL
 ```
 
 ### 3. Contracts
 
-- `context` 保存 Lifecycle 级上下文引用，不内嵌完整 AgentFrame surface。
 - `orchestrations` 保存同一 Lifecycle 内 0..N 个内部编排实例；`orchestration_id` 是运行实例身份。definition source、asset revision、script digest 等 provenance 可以保存在 plan metadata 或可选审计字段中，但不替代 `orchestration_id`。
+- `tasks` 保存 run-scoped durable task plan facts；它随 LifecycleRun aggregate 整体读写，subject reverse lookup 由 `LifecycleSubjectAssociation` 提供。
+- `execution_log` 保存 run-scoped control-plane execution ledger；需要 append conflict safety、分页或审计不可变 event identity 时再拆独立 event table。
 - `OrchestrationPlanSnapshot.plan_digest` 是 compiled plan 内容身份；runtime、journal 和 projection 按 digest 判断 plan 合同，不使用 graph instance UUID 作为 plan 身份。
 - graph-backed dispatch 创建 `OrchestrationInstance` 时，直接 materialize entry ready nodes、dispatch ready queue 和空 `StateExchangeSnapshot`。
-- `view_projection` 是 read projection 占位，command/service 不从该字段反向推导 runtime state。
 - Scheduler、terminal callback 与 projection 消费 orchestration runtime node state。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| `LifecycleRun` constructor 创建 plain / workflow_graph run | `context={}`、`orchestrations=[]`、`view_projection=None` |
+| `LifecycleRun` constructor 创建 plain / workflow_graph run | `orchestrations=[]`、`tasks=[]`、`execution_log=[]` |
 | `add_orchestration` 收到重复 `orchestration_id` | 返回 `false`，不修改 aggregate |
 | `replace_orchestration` 找不到 `orchestration_id` | 返回 `None` |
 | repository 读取无效 `orchestrations` JSON 文本 | 返回带 `lifecycle_runs.orchestrations` 上下文的 `DomainError` |
@@ -172,8 +170,8 @@ view_projection text
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `LifecycleRunRepository` create/update/select 对 `context`、`orchestrations`、`view_projection` 做整体 roundtrip。
-- Base: plain run 没有 orchestration instance，但仍能保存空 context 和空数组。
+- Good: `LifecycleRunRepository` create/update/select 对 `orchestrations`、`tasks`、`execution_log` 做整体 roundtrip。
+- Base: plain run 没有 orchestration instance，但仍能保存空数组。
 - Good: 同一 run 内 root workflow、append workflow、review flow 或 dynamic script 分别拥有独立 `orchestration_id`，从而共享 Lifecycle 容器但隔离 runtime node state。
 
 ### 6. Tests Required

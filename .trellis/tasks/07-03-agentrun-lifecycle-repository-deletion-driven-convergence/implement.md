@@ -44,94 +44,67 @@
 
 ## Current Execution Position
 
-已提交的拆除基线：
+截至 commit `2cf181f2 refactor(accepted): 收束 RuntimeSession accepted 边界`，A-E 主体拆迁已经完成：
 
-- Runtime trace 表已破坏式重命名为 `runtime_session_*`。
-- AgentRun 产品 DTO / application read model / frontend workspace 主链路已移除 `RuntimeSession` 产品 identity 依赖。
-- AgentRun product fork lineage 已删除 parent/child runtime session 字段。
-- anchor 旧测试/支持入口已收束到 immutable create 语义。
-- AgentFrame canonical surface 清点已补齐。
+- `RuntimeSession` 已从产品身份降级为 internal trace/delivery substrate，trace 表已破坏式重命名为 `runtime_session_*`。
+- AgentRun 产品 DTO、application read model、frontend workspace 主链路已不再以 `RuntimeSession` 作为用户认知 identity。
+- AgentRun start/fork admission、mailbox owner、delivery binding anchor、accepted boundary、fork baseline、AgentFrame context delivery 和 product surface cleanup 已按工作项提交。
+- Lifecycle `NodeStarted` 现在由 accepted turn fact 推进；dispatch/materialization 仅 claim node。
+- `RepositorySet` 已从多数业务服务 constructor 中拆除，但 AppState/bootstrap/少量 route helper 仍有组合根残留，需要最终拆迁扫尾。
+- WI-12 ledger 已记录 mailbox、delivery binding、fork baseline、lifecycle storage 等迁移结论，但 AgentFrame physical surface、transition evidence、final migration guard 仍需收口。
 
-剩余工作不再按“局部打磨”推进，而按拆迁面推进。每个拆迁面先删除错误事实源、错误 owner、错误入口或错误 service-locator 组合，再把必要能力重新耦合到目标事实边界。提交顺序按合流顺序排列；并行 worker 只负责互不重叠的写入集合。
+剩余执行不再重跑全局 review，也不再围绕已完成批次微调。当前只执行 R 批次：把最后的组合根残留、产品命名残留、数据库物理形态和长期 spec 一次性清掉。每个 R worker 必须直接删除或收束旧概念；如果只发现无法删除的事实，必须写明保留资格并补到 WI-12 或 spec，不允许留下“以后再看”的松散状态。
 
-## Aggressive Parallel Demolition Plan
+## Remaining Parallel Demolition Plan From `2cf181f2`
 
-### Batch A: Runtime Substrate And Lifecycle Storage
+### Batch R1: Repository Composition Final Demolition
 
-目标：把 RuntimeSession 彻底留在 trace substrate，清理 Lifecycle 中不满足独立事实资格的存储形态。
+目标：删除业务 route / use case 对大 `RepositorySet` 的直接认知，只允许 composition root 或 bootstrap 以明确 dependency struct 组装依赖。
 
-并行 worker：
+| Worker | Role | WI | 写入范围 | 互斥边界 | 验证 | 合流 |
+| --- | --- | --- | --- | --- | --- | --- |
+| R1a Backend composition | `trellis-implement` | WI-11 | `crates/agentdash-api/src/app_state.rs`, `crates/agentdash-api/src/agent_run_mailbox.rs`, `crates/agentdash-api/src/routes/lifecycle_agents.rs`, API route helper deps,必要的 application deps structs/tests | frontend/contracts、migration、AgentFrame physical schema、runtime trace store | `cargo fmt --check`; `cargo check -p agentdash-api -p agentdash-application -p agentdash-application-agentrun -p agentdash-application-lifecycle`; targeted route/service tests | R1a 返回后立即派同范围 `trellis-check`，通过后提交 |
 
-| Worker | WI | 写入范围 | 互斥边界 | 验证 |
-| --- | --- | --- | --- | --- |
-| A1 Runtime store拆分 | WI-02 | `crates/*runtime*`, `crates/agentdash-application-ports/src/**session**`, runtime trace store tests | migration 文件、contracts、frontend、Lifecycle storage | `cargo check` 覆盖 runtime/application-ports/infrastructure；runtime trace store tests |
-| A2 Lifecycle storage拆迁 | WI-10 | Lifecycle repository/service/storage files、`work-items/WI-10*`、必要 migration ledger | runtime session store、AgentRun command/mailbox、contracts/frontend | lifecycle storage tests；`cargo check` 覆盖 lifecycle/infrastructure |
+R1a 不得把 `RepositorySet` 换成另一个未命名 service locator。允许保留的唯一形态是 composition root 拥有聚合后的 app state；业务函数和 service constructor 必须看到具名依赖。
 
-合流顺序：A1 先提交 runtime substrate 拆分；A2 后提交 Lifecycle storage 删除/降级。涉及 migration 的实体文件由主会话串行合流，WI-12 ledger 同步更新。
+### Batch R2: Product Trace Naming And Frontend Boundary
 
-### Batch B: Command Queue Owner And Admission Boundary
+目标：产品 UI 只表达 AgentRun / delivery trace，不再把 raw RuntimeSession 当作可操作工作区实体；保留的 runtime id 必须只出现在 trace/diagnostic/terminal connector 边界。
 
-目标：把用户命令链路拆成 `CommandReceipt -> AgentRun queue item -> RuntimeDeliveryOperation`，同时把 start/fork admission 收束成单一用例边界。
+| Worker | Role | WI | 写入范围 | 互斥边界 | 验证 | 合流 |
+| --- | --- | --- | --- | --- | --- | --- |
+| R2a Frontend product boundary | `trellis-implement` | WI-09 | `packages/app-web/src/**`, generated contract consumer naming tests, frontend-only docs in WI-09 if needed | backend API contracts、migration、AppState/repository deps | `pnpm --filter app-web run lint`; `pnpm run frontend:check`; app-web targeted tests touched by workspace/control plane | 可与 R1a/R3a 并行；若发现必须改 backend contract，停止并回报主会话串行切分 |
 
-并行 worker：
+R2a 的验收不是把所有 `runtime_session_id` 字符串删光，而是让产品层命名和 gate 不再以 session identity 做主体判断。诊断 trace、terminal connector 和 generated DTO 中的 trace ref 可以保留，但调用点必须语义清晰。
 
-| Worker | WI | 写入范围 | 互斥边界 | 验证 |
-| --- | --- | --- | --- | --- |
-| B1 Admission边界 | WI-03 | AgentRun/ProjectAgent start/fork admission service、API start/fork glue、start/fork tests | mailbox owner migration、delivery accepted boundary | start/fork service tests；API route tests；`cargo check` 覆盖 application-agentrun/api |
-| B2 Mailbox/command拆迁 | WI-04 | AgentRun command、mailbox repository/port/service、mailbox tests、相关 migration ledger | AgentRun start/fork admission internals、public generated contracts | command/mailbox unit tests；`cargo check` 覆盖 application-agentrun/infrastructure |
+### Batch R3: Database Physical Design Final Demolition
 
-合流顺序：B1 先稳定 admission 用例边界和 start/fork 合同；B2 再删除 mailbox 对 runtime owner 的残留并接入 admission 后的 command/queue 语义。B2 可以并行准备不触碰 admission internals 的 owner cleanup；一旦需要消费新的 admission port，等待 B1 提交后继续。
+目标：按 D-016/D-017 和 WI-12 ledger 清理仍过分冗余的表/列/索引：能作为父事实 child 的合并或降级，只有独立查询、并发更新、反向索引或重建成本合理的状态才保留独立表。
 
-### Batch C: Delivery Binding, Accepted Boundary, AgentFrame
+| Worker | Role | WI | 写入范围 | 互斥边界 | 验证 | 合流 |
+| --- | --- | --- | --- | --- | --- | --- |
+| R3a Physical schema sweep | `trellis-implement` | WI-07, WI-12 | `crates/agentdash-domain/src/workflow/agent_frame*`, `crates/agentdash-infrastructure/src/persistence/**agent_frame**`, `crates/agentdash-infrastructure/src/persistence/**session**`, `crates/agentdash-infrastructure/migrations/**`, `work-items/WI-07*`, `work-items/WI-12*` | API AppState/repository cleanup、frontend product cleanup、public contract regeneration unless explicitly required | migration guard; AgentFrame/session repository tests; `cargo check -p agentdash-domain -p agentdash-infrastructure -p agentdash-application-runtime-session -p agentdash-application-agentrun`; `git diff --check` | R3a schema/migration diff 必须由主会话单独合流；若与 R1/R2 返回顺序冲突，migration commit 串行优先 |
 
-目标：把 current delivery、accepted turn、frame/context delivery 改成单线提交边界。
+R3a 优先处理三类残留：`agent_frames` split write surface 是否合并为 canonical document、`agent_frame_transitions` 是否仍有独立事实资格、fork/runtime diagnostic index 是否仍有 SQL 查询资格。无法删除的表必须给出 file:line 级保留理由和未来重建来源。
 
-并行 worker：
+### Batch R4: Spec And Full Task Check
 
-| Worker | WI | 写入范围 | 互斥边界 | 验证 |
-| --- | --- | --- | --- | --- |
-| C1 Delivery binding | WI-06 | delivery binding port/state、anchor read/write 使用点、LifecycleAgent current delivery 清理、相关 migration ledger | AgentFrame canonical surface mutation、accepted turn transaction | delivery binding tests；anchor repository tests |
-| C2 AgentFrame/ContextDelivery | WI-07 | AgentFrame repository/service/surface doc、ContextDelivery input fact、frame/context tests | delivery binding state schema、Lifecycle node advancement | frame/context tests；`cargo check` 覆盖 domain/application/infrastructure |
+目标：把最终事实边界固化到长期规范，并用一个 full-scope checker 证明当前任务可以执行收口。
 
-合流顺序：C1 先提交 current delivery / anchor 拆分；C2 后提交 frame/context delivery。完成后必须派一个跨 WI-06/WI-07 的 `trellis-check`，因为这批决定 accepted boundary 的事实归属。
-
-### Batch D: Accepted Turn And Fork Recomposition
-
-目标：用真实 accepted boundary 重新耦合 command、queue、frame、Lifecycle node，再把 fork 绑定到 AgentRunForkRecord。
-
-并行 worker：
-
-| Worker | WI | 写入范围 | 互斥边界 | 验证 |
-| --- | --- | --- | --- | --- |
-| D1 Accepted boundary | WI-05 | accepted turn transaction、frame commit integration、Lifecycle node started advance、accepted tests | fork lineage materialization | accepted/launch/terminal tests；Lifecycle node tests |
-| D2 Fork recomposition | WI-08 | AgentRunForkRecord、fork replay/materialization、fork DTO/result cache cleanup | accepted transaction internals、runtime trace store | fork service/API tests；lineage repository tests |
-
-合流顺序：D1 提交后，D2 按新的 accepted/baseline 语义补齐 fork。若 D2 需要已提交的 accepted boundary，先让 D1 落地，不保留 fork 的旧 runtime-first 路径。
-
-### Batch E: Product Surface And Repository Composition Cleanup
-
-目标：删除最后的产品面 RuntimeSession 泄漏、projection 混名和业务层大仓储集合。
-
-并行 worker：
-
-| Worker | WI | 写入范围 | 互斥边界 | 验证 |
-| --- | --- | --- | --- | --- |
-| E1 API/frontend/product identity | WI-09 | API product routes/contracts/frontend product state/tests | runtime diagnostic route、repository deps structs | `pnpm run frontend:check`；API tests；contract generation if touched |
-| E2 RepositorySet cleanup | WI-11 | application service constructors、deps structs、composition root wiring/tests | public contracts、migration | `cargo check` affected crates；constructor/service tests |
-
-合流顺序：E1 先删除产品 surface 泄漏；E2 后按稳定 surface 收窄依赖。最后派 full-scope `trellis-check` 覆盖 C-001 到 C-013。
-
-### Batch F: Migration And Final Verification
-
-目标：让 schema、FK/cascade、table qualification 和端到端链路与目标架构一致。
-
-串行收口：
-
-| Step | WI | 内容 | 验证 |
+| Step | Role | 内容 | 验证/输出 |
 | --- | --- | --- | --- |
-| F1 Migration ledger | WI-12 | 汇总各批次 migration、冗余表删除/合并/降级结论 | `pnpm run migration:guard`；migration-specific tests |
-| F2 Spec update | 全部 | 把新的事实边界写入 `.trellis/spec/` 中长期有效的规范 | spec diff review |
-| F3 Final check | 全部 | affected packages full-scope check，端到端链路验证 | cargo/pnpm/API/frontend/migration/check diff |
+| R4a Spec update | main 或 `trellis-implement` | 更新 `.trellis/spec/`：AgentRun/Lifecycle/RuntimeSession/AgentFrame/Mailbox/repository composition 的最终事实边界 | spec diff 只记录为什么这么做，不记录历史错误清单 |
+| R4b Full check | `trellis-check` | 全任务 affected-scope 检查，允许在范围内修复遗漏 | cargo fmt/check, targeted Rust tests, migration guard, contracts check, frontend check, app-web targeted/full tests, `git diff --check` |
+| R4c Final commit gate | main | 按 R1/R2/R3/R4 主题顺序提交；最后只剩 PR gate | clean worktree; task work-items records complete |
+
+## Dispatch Discipline From Now On
+
+1. 主会话先确认 clean worktree，再同时派发 R1a/R2a/R3a。主会话等待期间只做不写代码的协调，避免破坏 worker diff。
+2. 每个 implement worker 返回后，主会话先看 `git status` 和 changed paths；若写入范围符合矩阵，立即派同范围 `trellis-check`。
+3. 每个 check worker 可以在同一范围内修复问题；check 通过后主会话立刻提交该主题，不等其它 worker。
+4. migration、generated contracts、public API surface 永远串行合流；并行 worker 触碰这些边界时必须停下汇报。
+5. 批次内不允许重复全局 review。所有发现都必须落到“删除/合并/降级/具名保留”的四类结论之一。
+6. R1/R2/R3 全部提交后才进入 R4。R4 只做长期 spec、最终 affected checks 和任务收口，不再新增架构概念。
 
 ## Execution Discipline
 

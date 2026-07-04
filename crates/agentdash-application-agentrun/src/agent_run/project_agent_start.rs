@@ -319,7 +319,7 @@ impl<'a> ProjectAgentRunStartService<'a> {
         }
     }
 
-    pub async fn start_run(
+    pub(crate) async fn start_run(
         &self,
         mut command: ProjectAgentRunStartCommand,
     ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError> {
@@ -2541,7 +2541,9 @@ mod tests {
             initial_message: &dyn ProjectAgentRunInitialMailboxPort,
         ) -> Result<ProjectAgentRunStartDispatch, WorkflowApplicationError> {
             let service = self.service_with_initial_mailbox(initial_message);
-            service.start_run(command).await
+            crate::agent_run::AgentRunAdmissionService::for_project_agent_start(service)
+                .admit_project_agent_start(command)
+                .await
         }
     }
 

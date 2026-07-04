@@ -17,12 +17,12 @@ use agentdash_application_agentrun::agent_run::{
     AgentConversationMessageRoleModel,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCommandReceiptView,
-    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteRepos, AgentRunForkCommand,
-    AgentRunForkCommandResult, AgentRunForkService, AgentRunForkSubmitCommand,
-    AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
-    AgentRunTerminalLaunchTarget, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService,
-    ProjectAgentRunStartRepos,
+    AgentRunAdmissionService, AgentRunCancelCommand, AgentRunCancelCommandService,
+    AgentRunCommandReceiptView, AgentRunDeleteCommand, AgentRunDeleteCommandService,
+    AgentRunDeleteRepos, AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkService,
+    AgentRunForkSubmitCommand, AgentRunMailboxControlCommand, AgentRunMailboxService,
+    AgentRunMailboxUserMessageCommand, AgentRunTerminalLaunchTarget, DeliveryRuntimeSelectionError,
+    DeliveryRuntimeSelectionService, ProjectAgentRunStartRepos,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
@@ -725,11 +725,11 @@ pub async fn submit_agent_run_composer_input(
         .transpose()
         .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
     if context.run.created_by_user_id != current_user.user_id {
-        let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+        let admission = agent_run_fork_admission_service(state.as_ref(), &agent_run_repos);
         let current_user_id = current_user.user_id.clone();
         let client_command_id = req.client_command_id.clone();
-        let response = service
-            .fork_submit(AgentRunForkSubmitCommand {
+        let response = admission
+            .admit_fork_submit(AgentRunForkSubmitCommand {
                 parent_run_id: context.run.id,
                 parent_agent_id: context.agent.id,
                 current_user_id: current_user_id.clone(),
@@ -805,12 +805,12 @@ async fn fork_agent_run(
     )
     .await?;
     let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+    let admission = agent_run_fork_admission_service(state.as_ref(), &agent_run_repos);
     let current_user_id = current_user.user_id.clone();
     let client_command_id = req.client_command_id.clone();
     let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
-    let result = service
-        .explicit_fork(AgentRunForkCommand {
+    let result = admission
+        .admit_explicit_fork(AgentRunForkCommand {
             parent_run_id: context.run.id,
             parent_agent_id: context.agent.id,
             current_user_id: current_user_id.clone(),
@@ -863,12 +863,12 @@ async fn fork_submit_agent_run(
         .transpose()
         .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
     let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let service = agent_run_fork_service(state.as_ref(), &agent_run_repos);
+    let admission = agent_run_fork_admission_service(state.as_ref(), &agent_run_repos);
     let current_user_id = current_user.user_id.clone();
     let client_command_id = req.client_command_id.clone();
     let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
-    let result = service
-        .fork_submit(AgentRunForkSubmitCommand {
+    let result = admission
+        .admit_fork_submit(AgentRunForkSubmitCommand {
             parent_run_id: context.run.id,
             parent_agent_id: context.agent.id,
             current_user_id: current_user_id.clone(),
@@ -2407,6 +2407,13 @@ fn agent_run_fork_service<'a>(
         agent_run_session_core(state.services.session_core.clone()),
         agent_run_mailbox_service(state, agent_run_repos),
     )
+}
+
+fn agent_run_fork_admission_service<'a>(
+    state: &AppState,
+    agent_run_repos: &'a AgentRunRepositorySet,
+) -> AgentRunAdmissionService<'a> {
+    AgentRunAdmissionService::for_fork(agent_run_fork_service(state, agent_run_repos))
 }
 
 fn agent_run_fork_submit_message_response(

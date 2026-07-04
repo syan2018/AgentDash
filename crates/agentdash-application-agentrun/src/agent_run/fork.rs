@@ -133,14 +133,14 @@ impl<'a> AgentRunForkService<'a> {
         }
     }
 
-    pub async fn explicit_fork(
+    pub(crate) async fn explicit_fork(
         &self,
         command: AgentRunForkCommand,
     ) -> Result<AgentRunForkCommandResult, WorkflowApplicationError> {
         self.execute(command.into_execution(None)).await
     }
 
-    pub async fn fork_submit(
+    pub(crate) async fn fork_submit(
         &self,
         command: AgentRunForkSubmitCommand,
     ) -> Result<AgentRunForkCommandResult, WorkflowApplicationError> {
@@ -855,7 +855,7 @@ fn workflow_error_from_selection_error(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
     use agentdash_agent_protocol::{
         BackboneEnvelope, SourceInfo, UserInputBlock, UserInputSubmissionKind,
@@ -863,7 +863,7 @@ mod tests {
     };
     use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
     use agentdash_application_runtime_session::session::{
-        SessionBranchingService, TitleSource,
+        SessionRuntimeBuilder, TitleSource,
         persistence::{
             AgentFrameTransitionRecord, CompactionProjectionCommitResult,
             NewCompactionProjectionCommit, NewTerminalEffectRecord, PersistedSessionEvent,
@@ -885,9 +885,13 @@ mod tests {
         LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
         RuntimeSessionExecutionAnchorRepository,
     };
-    use agentdash_spi::ConnectorError;
     use agentdash_spi::session_persistence::ExecutionStatus;
+    use agentdash_spi::{
+        AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+        ExecutionContext, ExecutionStream, PromptPayload,
+    };
     use tokio::sync::Mutex;
+    use tokio_stream::wrappers::ReceiverStream;
 
     use super::*;
     use crate::agent_run::command_receipt::digest_command_request;
@@ -910,8 +914,8 @@ mod tests {
         let fixture = ForkFixture::new().await;
 
         let result = fixture
-            .service()
-            .explicit_fork(AgentRunForkCommand {
+            .admission()
+            .admit_explicit_fork(AgentRunForkCommand {
                 parent_run_id: fixture.parent_run.id,
                 parent_agent_id: fixture.parent_agent.id,
                 current_user_id: "user-child".to_string(),
@@ -991,8 +995,8 @@ mod tests {
         let fixture = ForkFixture::new().await;
 
         let result = fixture
-            .service()
-            .fork_submit(AgentRunForkSubmitCommand {
+            .admission()
+            .admit_fork_submit(AgentRunForkSubmitCommand {
                 parent_run_id: fixture.parent_run.id,
                 parent_agent_id: fixture.parent_agent.id,
                 current_user_id: "fork-user".to_string(),
@@ -1060,8 +1064,8 @@ mod tests {
             client_command_id: "fork-replay".to_string(),
         };
         let first = fixture
-            .service()
-            .explicit_fork(command.clone())
+            .admission()
+            .admit_explicit_fork(command.clone())
             .await
             .expect("first fork");
         let receipts = fixture.receipts_for_client("fork-replay").await;
@@ -1072,8 +1076,8 @@ mod tests {
         assert!(result_json.get("lineage").is_none());
 
         let replay = fixture
-            .service()
-            .explicit_fork(command)
+            .admission()
+            .admit_explicit_fork(command)
             .await
             .expect("replay fork");
 
@@ -1134,8 +1138,8 @@ mod tests {
             .expect("store result");
 
         let error = fixture
-            .service()
-            .explicit_fork(command)
+            .admission()
+            .admit_explicit_fork(command)
             .await
             .expect_err("canonical lineage is required for replay");
 
@@ -1168,8 +1172,8 @@ mod tests {
             .await;
 
         let error = fixture
-            .service()
-            .explicit_fork(command)
+            .admission()
+            .admit_explicit_fork(command)
             .await
             .expect_err("pending duplicate conflicts");
 
@@ -1205,8 +1209,8 @@ mod tests {
             .expect("mark failed");
 
         let error = fixture
-            .service()
-            .explicit_fork(command)
+            .admission()
+            .admit_explicit_fork(command)
             .await
             .expect_err("terminal failure replays");
 
@@ -1225,8 +1229,8 @@ mod tests {
             .await;
 
         let error = fixture
-            .service()
-            .explicit_fork(AgentRunForkCommand {
+            .admission()
+            .admit_explicit_fork(AgentRunForkCommand {
                 parent_run_id: fixture.parent_run.id,
                 parent_agent_id: fixture.parent_agent.id,
                 current_user_id: "user-child".to_string(),
@@ -1381,12 +1385,22 @@ mod tests {
                 SessionEventingService::new(self.eventing.clone()),
                 SessionLaunchService::new(self.launch.clone()),
             );
+            let branching = SessionRuntimeBuilder::new_with_hooks_and_stores(
+                Arc::new(NoopConnector),
+                None,
+                self.session_store.store_set(),
+            )
+            .branching_service();
             AgentRunForkService::from_repos(
                 repos,
-                SessionBranchingService::new(self.session_store.store_set()),
+                branching,
                 SessionCoreService::new(self.core.clone()),
                 mailbox,
             )
+        }
+
+        fn admission(&self) -> crate::agent_run::AgentRunAdmissionService<'_> {
+            crate::agent_run::AgentRunAdmissionService::for_fork(self.service())
         }
 
         async fn seed_pending_fork_receipt(
@@ -1440,6 +1454,68 @@ mod tests {
                 .into_iter()
                 .filter(|receipt| receipt.client_command_id == client_command_id)
                 .collect()
+        }
+    }
+
+    struct NoopConnector;
+
+    #[async_trait::async_trait]
+    impl AgentConnector for NoopConnector {
+        fn connector_id(&self) -> &'static str {
+            "noop"
+        }
+
+        fn connector_type(&self) -> ConnectorType {
+            ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> ConnectorCapabilities {
+            ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: ExecutionContext,
+        ) -> Result<ExecutionStream, ConnectorError> {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(Box::pin(ReceiverStream::new(rx)))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
         }
     }
 

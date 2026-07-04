@@ -1,3 +1,4 @@
+mod admission;
 mod cancel_command;
 pub(crate) mod command_receipt;
 mod conversation_feed;
@@ -23,6 +24,7 @@ mod runtime_surface_update;
 mod runtime_target;
 pub mod workspace;
 
+pub use admission::AgentRunAdmissionService;
 pub use cancel_command::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCancelRuntimePort,
 };

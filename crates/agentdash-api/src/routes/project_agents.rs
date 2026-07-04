@@ -8,9 +8,10 @@ use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_launch,
 };
 use agentdash_application_agentrun::agent_run::{
-    ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
-    ConversationModelConfigSourceModel, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
-    ProjectAgentRunStartService, ResolvedProjectAgentContext, build_project_agent_context,
+    AgentRunAdmissionService, ConversationEffectiveExecutorConfigModel,
+    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
+    ProjectAgentRunStartCommand, ProjectAgentRunStartRepos, ProjectAgentRunStartService,
+    ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_domain::{
     agent::ProjectAgent, common::AgentPresetConfig, inline_file::InlineFileOwnerKind,
@@ -200,14 +201,15 @@ pub async fn create_project_agent_run(
         agent_run_session_eventing(state.services.session_eventing.clone()),
         agent_run_session_launch(state.services.session_launch.clone()),
     );
+    let admission = AgentRunAdmissionService::for_project_agent_start(service);
     diag!(Info, Subsystem::Api,
 
         project_id = %project_id,
         project_agent_id = %project_agent_id,
-        "ProjectAgent run start service dispatching"
+        "ProjectAgent run admission dispatching"
     );
-    let dispatch = service
-        .start_run(ProjectAgentRunStartCommand {
+    let dispatch = admission
+        .admit_project_agent_start(ProjectAgentRunStartCommand {
             project_id,
             project_agent_id,
             input: req.input,
@@ -227,7 +229,7 @@ pub async fn create_project_agent_run(
         agent_id = %dispatch.agent_id,
         runtime_session_id = %dispatch.runtime_session_id,
         initial_outcome = ?dispatch.initial_message.outcome,
-        "ProjectAgent run start service returned"
+        "ProjectAgent run admission returned"
     );
 
     let agent_context = build_project_agent_context(&agent_run_repos, &dispatch.project_agent)

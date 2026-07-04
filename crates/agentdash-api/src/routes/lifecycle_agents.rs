@@ -1235,7 +1235,7 @@ async fn resolve_agent_run_terminal_launch_target(
     .await?;
     let runtime_session_id = delivery_runtime_session_from_agent_run_context(&context)?;
     let launch_target =
-        resolve_terminal_launch_target_for_runtime_session(&state, &runtime_session_id).await?;
+        resolve_terminal_launch_target_for_runtime_session(state, &runtime_session_id).await?;
     if launch_target.project_id != context.run.project_id {
         return Err(ApiError::Conflict(format!(
             "AgentRun {} / {} 与 terminal runtime surface Project 不一致",

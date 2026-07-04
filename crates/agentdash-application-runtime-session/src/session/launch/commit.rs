@@ -66,25 +66,24 @@ impl TurnCommitter {
         )
         .await;
 
-        if let Some(record) = prepared.context_delivery_record.as_ref() {
-            if let Err(error) = self
+        if let Some(record) = prepared.context_delivery_record.as_ref()
+            && let Err(error) = self
                 .deps
                 .eventing
                 .emit_context_delivery_record(session_id, Some(turn_id), record)
                 .await
                 .map(|_| ())
                 .map_err(|error| connector_commit_error("ContextDeliveryRecord 提交失败", error))
-            {
-                return Err(self
-                    .fail_accepted_boundary(
-                        session_id,
-                        &prepared.source,
-                        turn_id,
-                        "context delivery record commit",
-                        error,
-                    )
-                    .await);
-            }
+        {
+            return Err(self
+                .fail_accepted_boundary(
+                    session_id,
+                    &prepared.source,
+                    turn_id,
+                    "context delivery record commit",
+                    error,
+                )
+                .await);
         }
 
         for frame in &prepared.pending_transition_application.context_frames {

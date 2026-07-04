@@ -136,36 +136,30 @@ fn build_raw_projected_transcript_from_iter<'a>(
                     state.content.push(part);
                 }
             }
-            BackboneEvent::AgentMessageDelta(delta) => {
-                if !delta.delta.is_empty() {
-                    let key = restored_assistant_key(event, Some(&delta.item_id));
-                    let state = assistant_messages
-                        .entry(key)
-                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
-                    state.content.push(ContentPart::text(&delta.delta));
-                }
+            BackboneEvent::AgentMessageDelta(delta) if !delta.delta.is_empty() => {
+                let key = restored_assistant_key(event, Some(&delta.item_id));
+                let state = assistant_messages
+                    .entry(key)
+                    .or_insert_with(|| RestoredAssistantMessageState::new(event));
+                state.content.push(ContentPart::text(&delta.delta));
             }
-            BackboneEvent::ReasoningTextDelta(delta) => {
-                if !delta.delta.is_empty() {
-                    let key = restored_assistant_key(event, Some(&delta.item_id));
-                    let state = assistant_messages
-                        .entry(key)
-                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
-                    state
-                        .content
-                        .push(ContentPart::reasoning(&delta.delta, None, None));
-                }
+            BackboneEvent::ReasoningTextDelta(delta) if !delta.delta.is_empty() => {
+                let key = restored_assistant_key(event, Some(&delta.item_id));
+                let state = assistant_messages
+                    .entry(key)
+                    .or_insert_with(|| RestoredAssistantMessageState::new(event));
+                state
+                    .content
+                    .push(ContentPart::reasoning(&delta.delta, None, None));
             }
-            BackboneEvent::ReasoningSummaryDelta(delta) => {
-                if !delta.delta.is_empty() {
-                    let key = restored_assistant_key(event, Some(&delta.item_id));
-                    let state = assistant_messages
-                        .entry(key)
-                        .or_insert_with(|| RestoredAssistantMessageState::new(event));
-                    state
-                        .content
-                        .push(ContentPart::reasoning(&delta.delta, None, None));
-                }
+            BackboneEvent::ReasoningSummaryDelta(delta) if !delta.delta.is_empty() => {
+                let key = restored_assistant_key(event, Some(&delta.item_id));
+                let state = assistant_messages
+                    .entry(key)
+                    .or_insert_with(|| RestoredAssistantMessageState::new(event));
+                state
+                    .content
+                    .push(ContentPart::reasoning(&delta.delta, None, None));
             }
             BackboneEvent::ItemStarted(ItemStartedNotification { item, .. })
             | BackboneEvent::ItemUpdated(ItemUpdatedNotification { item, .. }) => {

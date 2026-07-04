@@ -30,7 +30,7 @@ use super::tool_context::{
     CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
 };
 use super::{
-    CompanionGateControlService, CompanionHumanResponseMailboxDelivery,
+    CompanionGateControlRepos, CompanionGateControlService, CompanionHumanResponseMailboxDelivery,
     CompanionHumanResponseMailboxDeliveryCommand, CompanionParentMailboxDelivery,
     CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
     CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
@@ -155,13 +155,15 @@ impl<'a> CompanionGateControlFactory<'a> {
         session_services: &SessionToolServices,
     ) -> CompanionGateControlService {
         CompanionGateControlService::with_session_eventing(
-            self.repos.lifecycle_gate_repo.clone(),
-            self.repos.lifecycle_run_repo.clone(),
-            self.repos.agent_frame_repo.clone(),
-            self.repos.lifecycle_agent_repo.clone(),
-            self.repos.execution_anchor_repo.clone(),
-            self.repos.agent_run_delivery_binding_repo.clone(),
-            self.repos.agent_lineage_repo.clone(),
+            CompanionGateControlRepos {
+                gate_repo: self.repos.lifecycle_gate_repo.clone(),
+                run_repo: self.repos.lifecycle_run_repo.clone(),
+                frame_repo: self.repos.agent_frame_repo.clone(),
+                agent_repo: self.repos.lifecycle_agent_repo.clone(),
+                anchor_repo: self.repos.execution_anchor_repo.clone(),
+                delivery_binding_repo: self.repos.agent_run_delivery_binding_repo.clone(),
+                lineage_repo: self.repos.agent_lineage_repo.clone(),
+            },
             session_services.eventing.clone(),
         )
         .with_parent_mailbox_delivery(Arc::new(AgentRunCompanionMailboxDelivery::new(

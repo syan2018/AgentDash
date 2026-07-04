@@ -111,9 +111,10 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
   coordinate，原因是 task view、terminal effect artifact/status 和 journey node lookup 都需要消费同一
   runtime node identity，同时保留 RuntimeSession trace 下钻能力。
 - Workflow AgentCall node materialization 归属 `LifecycleDispatchService::materialize_workflow_agent_node`。
-  node launcher 只解析 ready-node policy、调用 materialization use case、提交 `NodeStarted` reducer event
-  和返回 executor refs；原因是 LifecycleAgent、AgentFrame、RuntimeSession 和 anchor 的创建必须和
-  plain / ProjectAgent dispatch 共享同一套控制面事实闭包。
+  node launcher 只解析 ready-node policy、调用 materialization use case、提交 `NodeClaimed` reducer event
+  和返回 executor refs；RuntimeSession accepted turn 后再由 lifecycle advance 提交 `NodeStarted`。原因是
+  LifecycleAgent、AgentFrame、RuntimeSession 和 anchor 的创建必须和 plain / ProjectAgent dispatch
+  共享同一套控制面事实闭包，而 running 状态属于真实 accepted turn 边界。
 - `LifecycleGateResolver` 是 gate transition 的 application owner。resolver 只推进 gate durable fact，并返回 delivery / notification intent；Companion mailbox、session event、Workflow HumanGate response 等外部投递由 adapter 消费 intent，原因是 gate state、human decision fact 与通知投递需要保持同一状态语言但不共享同一个 transport。
 - `LifecycleDispatchService` 保持 public facade，内部通过 `lifecycle::dispatch` owner services 编排。`RunOrchestrationStarter` 拥有 graph planning 与 run/orchestration start，`AgentRuntimeMaterializer` 拥有 LifecycleAgent / RuntimeSession / AgentFrame / anchor materialization，`SubjectAssociationWriter` 拥有 subject refs，`LifecycleRelationWriter` 拥有 lineage 与 gate opening，`OrchestrationReducerBridge` 拥有 reducer event 持久化。这样 dispatch facade 可以保持业务入口稳定，同时让每类副作用只有一个内部 owner。
 

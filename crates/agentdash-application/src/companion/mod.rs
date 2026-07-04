@@ -8,7 +8,8 @@ pub(crate) mod tool_context;
 pub mod tools;
 
 pub use gate_control::{
-    CompanionGateControlService, CompanionGateRespondResult, CompanionHumanResponseMailboxDelivery,
+    CompanionGateControlDeps, CompanionGateControlRepos, CompanionGateControlService,
+    CompanionGateRespondResult, CompanionHumanResponseMailboxDelivery,
     CompanionHumanResponseMailboxDeliveryCommand, CompanionParentMailboxDelivery,
     CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
     CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,

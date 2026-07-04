@@ -79,12 +79,7 @@ impl RuntimeGateway {
 
         for provider in &self.dynamic_providers {
             if provider.action_kind() == context.action_kind() {
-                actions.extend(
-                    provider
-                        .discover_actions(&actor, &context)
-                        .await?
-                        .into_iter(),
-                );
+                actions.extend(provider.discover_actions(&actor, &context).await?);
             }
         }
         actions.sort_by(|left, right| left.action_key.cmp(&right.action_key));

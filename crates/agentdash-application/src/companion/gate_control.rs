@@ -363,26 +363,34 @@ pub struct CompanionGateControlService {
     human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
 }
 
+#[derive(Clone)]
+pub struct CompanionGateControlRepos {
+    pub gate_repo: Arc<dyn LifecycleGateRepository>,
+    pub run_repo: Arc<dyn LifecycleRunRepository>,
+    pub frame_repo: Arc<dyn AgentFrameRepository>,
+    pub agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    pub lineage_repo: Arc<dyn AgentLineageRepository>,
+}
+
+pub struct CompanionGateControlDeps {
+    pub repos: CompanionGateControlRepos,
+    pub delivery: Arc<dyn CompanionGateNotificationDelivery>,
+}
+
 impl CompanionGateControlService {
-    pub fn new(
-        gate_repo: Arc<dyn LifecycleGateRepository>,
-        run_repo: Arc<dyn LifecycleRunRepository>,
-        frame_repo: Arc<dyn AgentFrameRepository>,
-        agent_repo: Arc<dyn LifecycleAgentRepository>,
-        anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-        lineage_repo: Arc<dyn AgentLineageRepository>,
-        delivery: Arc<dyn CompanionGateNotificationDelivery>,
-    ) -> Self {
+    pub fn new(deps: CompanionGateControlDeps) -> Self {
+        let CompanionGateControlDeps { repos, delivery } = deps;
         Self {
-            gate_resolver: LifecycleGateResolver::new(gate_repo.clone()),
-            gate_repo,
-            run_repo,
-            frame_repo,
-            agent_repo,
-            anchor_repo,
-            delivery_binding_repo,
-            lineage_repo,
+            gate_resolver: LifecycleGateResolver::new(repos.gate_repo.clone()),
+            gate_repo: repos.gate_repo,
+            run_repo: repos.run_repo,
+            frame_repo: repos.frame_repo,
+            agent_repo: repos.agent_repo,
+            anchor_repo: repos.anchor_repo,
+            delivery_binding_repo: repos.delivery_binding_repo,
+            lineage_repo: repos.lineage_repo,
             delivery,
             parent_mailbox_delivery: Arc::new(NoopCompanionParentMailboxDelivery),
             human_response_mailbox_delivery: Arc::new(NoopCompanionHumanResponseMailboxDelivery),
@@ -406,25 +414,13 @@ impl CompanionGateControlService {
     }
 
     pub fn with_session_eventing(
-        gate_repo: Arc<dyn LifecycleGateRepository>,
-        run_repo: Arc<dyn LifecycleRunRepository>,
-        frame_repo: Arc<dyn AgentFrameRepository>,
-        agent_repo: Arc<dyn LifecycleAgentRepository>,
-        anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-        lineage_repo: Arc<dyn AgentLineageRepository>,
+        repos: CompanionGateControlRepos,
         eventing: SessionEventingService,
     ) -> Self {
-        Self::new(
-            gate_repo,
-            run_repo,
-            frame_repo,
-            agent_repo,
-            anchor_repo,
-            delivery_binding_repo,
-            lineage_repo,
-            Arc::new(SessionEventingCompanionGateDelivery::new(eventing)),
-        )
+        Self::new(CompanionGateControlDeps {
+            repos,
+            delivery: Arc::new(SessionEventingCompanionGateDelivery::new(eventing)),
+        })
     }
 
     pub async fn respond(
@@ -571,10 +567,10 @@ impl CompanionGateControlService {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("companion");
         let parent_delivery_runtime_session_id = self
-            .select_current_delivery_runtime_session_id(lineage.run_id, parent_agent_id)
+            .select_bound_delivery_runtime_session_id(lineage.run_id, parent_agent_id)
             .await?;
         let child_delivery_runtime_session_id = self
-            .validate_current_delivery_runtime_session_id(
+            .validate_bound_delivery_runtime_session_id(
                 lineage.run_id,
                 child_frame.agent_id,
                 &child_runtime_session_id,
@@ -709,7 +705,7 @@ impl CompanionGateControlService {
             ApplicationError::Conflict("lineage 中 parent_agent_id 为空".to_string())
         })?;
         let child_delivery_runtime_session_id = self
-            .validate_current_delivery_runtime_session_id(
+            .validate_bound_delivery_runtime_session_id(
                 child_anchor.run_id,
                 child_frame.agent_id,
                 &command.child_runtime_session_id,
@@ -866,7 +862,7 @@ impl CompanionGateControlService {
             )));
         }
         let parent_delivery_runtime_session_id = self
-            .validate_current_delivery_runtime_session_id(
+            .validate_bound_delivery_runtime_session_id(
                 parent_anchor.run_id,
                 parent_frame.agent_id,
                 &command.parent_runtime_session_id,
@@ -895,7 +891,7 @@ impl CompanionGateControlService {
                 ))
             })?;
         let child_delivery_runtime_session_id = self
-            .validate_current_delivery_runtime_session_id(
+            .validate_bound_delivery_runtime_session_id(
                 parent_anchor.run_id,
                 child_agent_id,
                 &child_delivery_runtime_session_id,
@@ -1012,11 +1008,11 @@ impl CompanionGateControlService {
             )));
         }
 
-        self.select_current_delivery_runtime_session_id(gate.run_id, frame.agent_id)
+        self.select_bound_delivery_runtime_session_id(gate.run_id, frame.agent_id)
             .await
     }
 
-    async fn select_current_delivery_runtime_session_id(
+    async fn select_bound_delivery_runtime_session_id(
         &self,
         run_id: Uuid,
         agent_id: Uuid,
@@ -1027,7 +1023,7 @@ impl CompanionGateControlService {
             .map(|selection| selection.runtime_session_id))
     }
 
-    async fn validate_current_delivery_runtime_session_id(
+    async fn validate_bound_delivery_runtime_session_id(
         &self,
         run_id: Uuid,
         agent_id: Uuid,
@@ -1797,16 +1793,18 @@ mod tests {
             frame_repo.as_ref(),
             run_id,
         ));
-        CompanionGateControlService::new(
-            gate_repo,
-            Arc::new(MemoryRunRepo::with_run(run_id, project_id)),
-            frame_repo,
-            agent_repo,
-            anchor_repo,
-            delivery_binding_repo,
-            lineage_repo,
+        CompanionGateControlService::new(CompanionGateControlDeps {
+            repos: CompanionGateControlRepos {
+                gate_repo,
+                run_repo: Arc::new(MemoryRunRepo::with_run(run_id, project_id)),
+                frame_repo,
+                agent_repo,
+                anchor_repo,
+                delivery_binding_repo,
+                lineage_repo,
+            },
             delivery,
-        )
+        })
         .with_parent_mailbox_delivery(parent_mailbox_delivery)
         .with_human_response_mailbox_delivery(human_mailbox_delivery)
     }

@@ -24,7 +24,7 @@ pub struct WorkflowGraph {
 - compiler 输出 `OrchestrationPlanSnapshot(plan_digest=...)`；blocking diagnostics 在创建 orchestration 前返回给调用方。
 - `LifecycleRun.add_orchestration` 直接保存 `OrchestrationInstance`，entry rules materialize 为 `RuntimeNodeState(status=Ready)` 与 ready queue。
 - node status、inputs、outputs、executor refs、trace refs、error、cache refs 和 state exchange 都由 common orchestration runtime reducer 写入。
-- Agent / Function / LocalEffect / HumanGate executor 统一提交 `NodeStarted` 与 terminal node event；同步完成的 executor 也要先记录 started，再记录 completed/failed。
+- Agent executor materialization 先提交 `NodeClaimed`，RuntimeSession accepted turn 后由 lifecycle advance 提交 `NodeStarted`。Function / LocalEffect / HumanGate executor 在真实执行开始时提交 `NodeStarted` 与 terminal node event；同步完成的 executor 也要先记录 started，再记录 completed/failed。
 - Runtime session 反查节点时走 `RuntimeSessionExecutionAnchor -> LifecycleRun -> OrchestrationInstance -> RuntimeNodeState`。
 - Active workflow projection 从 `LifecycleRun.orchestrations[]` 派生，供 API / frontend / VFS / hook 查询同一事实源。
 

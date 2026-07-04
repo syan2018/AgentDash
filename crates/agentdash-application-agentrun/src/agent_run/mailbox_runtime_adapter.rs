@@ -214,20 +214,18 @@ impl MailboxBoundaryStage<'_> {
             Ok(outcomes) if !outcomes.is_empty() => {
                 self.emit_mailbox_state_changed("steer_consumed").await;
             }
-            Err(error) => {
-                if !matches!(error, WorkflowApplicationError::NotFound(_)) {
-                    let diagnostic_context = DiagnosticErrorContext::new(
-                        "agent_run.mailbox_runtime_adapter",
-                        "schedule_agent_loop_turn_boundary",
-                    );
-                    diag_error!(Warn, Subsystem::AgentRun,
-                        context = &diagnostic_context,
-                        error = &error,
-                        runtime_session_id = %self.runtime_session_id,
-                        trigger = "agent_loop_turn_boundary",
-                        "AgentRun mailbox AgentLoopTurnBoundary scheduling failed"
-                    );
-                }
+            Err(error) if !matches!(error, WorkflowApplicationError::NotFound(_)) => {
+                let diagnostic_context = DiagnosticErrorContext::new(
+                    "agent_run.mailbox_runtime_adapter",
+                    "schedule_agent_loop_turn_boundary",
+                );
+                diag_error!(Warn, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
+                    runtime_session_id = %self.runtime_session_id,
+                    trigger = "agent_loop_turn_boundary",
+                    "AgentRun mailbox AgentLoopTurnBoundary scheduling failed"
+                );
             }
             _ => {}
         }

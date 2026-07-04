@@ -48,6 +48,17 @@ pub struct AgentRunAcceptedLaunchCommitDeps {
     pub hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
 }
 
+struct CurrentFrameLaunchCommitContext<'a> {
+    frame_repo: &'a dyn AgentFrameRepository,
+    anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    agent_repo: &'a dyn LifecycleAgentRepository,
+    delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
+    lifecycle_advance: &'a dyn AcceptedTurnLifecycleAdvancePort,
+    runtime_session_id: &'a str,
+    turn_id: &'a str,
+    accepted_capability_state: &'a CapabilityState,
+}
+
 impl AgentRunAcceptedLaunchCommitAdapter {
     pub fn new(deps: AgentRunAcceptedLaunchCommitDeps) -> Self {
         Self {
@@ -128,16 +139,16 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 .await;
         }
 
-        self.commit_revision_from_current_frame(
-            frame_repo.as_ref(),
-            anchor_repo.as_ref(),
-            agent_repo.as_ref(),
-            delivery_binding_repo.as_ref(),
-            lifecycle_advance.as_ref(),
-            input.runtime_session_id.as_str(),
-            input.turn_id.as_str(),
-            &input.accepted_capability_state,
-        )
+        self.commit_revision_from_current_frame(CurrentFrameLaunchCommitContext {
+            frame_repo: frame_repo.as_ref(),
+            anchor_repo: anchor_repo.as_ref(),
+            agent_repo: agent_repo.as_ref(),
+            delivery_binding_repo: delivery_binding_repo.as_ref(),
+            lifecycle_advance: lifecycle_advance.as_ref(),
+            runtime_session_id: input.runtime_session_id.as_str(),
+            turn_id: input.turn_id.as_str(),
+            accepted_capability_state: &input.accepted_capability_state,
+        })
         .await
     }
 
@@ -212,15 +223,18 @@ impl AgentRunAcceptedLaunchCommitAdapter {
 
     async fn commit_revision_from_current_frame(
         &self,
-        frame_repo: &dyn AgentFrameRepository,
-        anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
-        agent_repo: &dyn LifecycleAgentRepository,
-        delivery_binding_repo: &dyn AgentRunDeliveryBindingRepository,
-        lifecycle_advance: &dyn AcceptedTurnLifecycleAdvancePort,
-        runtime_session_id: &str,
-        turn_id: &str,
-        accepted_capability_state: &CapabilityState,
+        context: CurrentFrameLaunchCommitContext<'_>,
     ) -> Result<AcceptedLaunchCommitOutcome, ConnectorError> {
+        let CurrentFrameLaunchCommitContext {
+            frame_repo,
+            anchor_repo,
+            agent_repo,
+            delivery_binding_repo,
+            lifecycle_advance,
+            runtime_session_id,
+            turn_id,
+            accepted_capability_state,
+        } = context;
         let (anchor, current_frame) = match resolve_current_agent_frame_for_runtime_session(
             runtime_session_id,
             anchor_repo,

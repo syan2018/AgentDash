@@ -16,9 +16,10 @@ use agentdash_domain::backend::{
 };
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunCommandClaim, AgentRunCommandReceipt,
-    AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunLineage,
-    AgentRunLineageRepository, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRun, LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
+    AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunDeliveryBinding,
+    AgentRunDeliveryBindingRepository, AgentRunLineage, AgentRunLineageRepository,
+    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+    LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository,
 };
 use chrono::Utc;
@@ -161,6 +162,7 @@ pub(crate) struct MemoryAgentRunForkMaterialization {
     agents: Arc<MemoryLifecycleAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
     anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+    delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
     lineages: Arc<MemoryAgentRunLineageRepository>,
     fail_message: Mutex<Option<String>>,
 }
@@ -171,6 +173,7 @@ impl MemoryAgentRunForkMaterialization {
         agents: Arc<MemoryLifecycleAgentRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
         anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
         lineages: Arc<MemoryAgentRunLineageRepository>,
     ) -> Self {
         Self {
@@ -178,6 +181,7 @@ impl MemoryAgentRunForkMaterialization {
             agents,
             frames,
             anchors,
+            delivery_bindings,
             lineages,
             fail_message: Mutex::new(None),
         }
@@ -237,7 +241,7 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             child_agent.id,
         );
         anchor.created_by_kind = "agent_run_fork".to_string();
-        child_agent.bind_current_delivery_from_anchor(
+        let delivery_binding = AgentRunDeliveryBinding::from_anchor(
             &anchor,
             DeliveryBindingStatus::Ready,
             anchor.updated_at,
@@ -270,6 +274,10 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             .map_err(materialization_error)?;
         self.anchors
             .create_once(&anchor)
+            .await
+            .map_err(materialization_error)?;
+        self.delivery_bindings
+            .upsert(&delivery_binding)
             .await
             .map_err(materialization_error)?;
         self.lineages
@@ -449,6 +457,60 @@ impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAn
             .filter(|anchor| runtime_session_ids.contains(&anchor.runtime_session_id))
             .cloned()
             .collect())
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct MemoryAgentRunDeliveryBindingRepository {
+    bindings: Mutex<Vec<AgentRunDeliveryBinding>>,
+}
+
+#[async_trait::async_trait]
+impl AgentRunDeliveryBindingRepository for MemoryAgentRunDeliveryBindingRepository {
+    async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
+        let mut bindings = self.bindings.lock().await;
+        if let Some(existing) = bindings
+            .iter_mut()
+            .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
+        {
+            *existing = binding.clone();
+        } else {
+            bindings.push(binding.clone());
+        }
+        Ok(())
+    }
+
+    async fn get_current(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
+        Ok(self
+            .bindings
+            .lock()
+            .await
+            .iter()
+            .find(|binding| binding.run_id == run_id && binding.agent_id == agent_id)
+            .cloned())
+    }
+
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
+        Ok(self
+            .bindings
+            .lock()
+            .await
+            .iter()
+            .filter(|binding| binding.run_id == run_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+        self.bindings
+            .lock()
+            .await
+            .retain(|binding| binding.runtime_session_id != runtime_session_id);
+        Ok(())
     }
 }
 

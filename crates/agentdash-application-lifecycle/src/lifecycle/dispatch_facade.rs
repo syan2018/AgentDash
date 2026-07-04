@@ -8,9 +8,9 @@ use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreatio
 use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLaunchDispatchResult, AgentLineageRepository,
-    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
-    WorkflowGraphRepository,
+    AgentRunDeliveryBindingRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 use async_trait::async_trait;
 
@@ -25,6 +25,7 @@ pub struct LifecycleDispatchFacade<'a> {
     gate_repo: &'a dyn LifecycleGateRepository,
     lineage_repo: &'a dyn AgentLineageRepository,
     anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
     runtime_session_creator: &'a dyn RuntimeSessionCreationPort,
     frame_construction: &'a dyn AgentRunFrameConstructionPort,
     workflow_agent_frame_materialization: Option<&'a dyn WorkflowAgentNodeFrameMaterializationPort>,
@@ -41,6 +42,7 @@ impl<'a> LifecycleDispatchFacade<'a> {
         gate_repo: &'a dyn LifecycleGateRepository,
         lineage_repo: &'a dyn AgentLineageRepository,
         anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+        delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
         runtime_session_creator: &'a dyn RuntimeSessionCreationPort,
         frame_construction: &'a dyn AgentRunFrameConstructionPort,
     ) -> Self {
@@ -53,6 +55,7 @@ impl<'a> LifecycleDispatchFacade<'a> {
             gate_repo,
             lineage_repo,
             anchor_repo,
+            delivery_binding_repo,
             runtime_session_creator,
             frame_construction,
             workflow_agent_frame_materialization: None,
@@ -78,6 +81,7 @@ impl<'a> LifecycleDispatchFacade<'a> {
             self.lineage_repo,
         )
         .with_anchor_repo(self.anchor_repo)
+        .with_delivery_binding_repo(self.delivery_binding_repo)
         .with_runtime_session_creator(self.runtime_session_creator)
         .with_frame_construction_port(self.frame_construction);
         if let Some(port) = self.workflow_agent_frame_materialization {

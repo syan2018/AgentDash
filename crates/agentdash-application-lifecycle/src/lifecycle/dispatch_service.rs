@@ -11,9 +11,10 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
+    AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryBindingRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphRepository,
 };
 use agentdash_domain::workflow::{
     AgentLaunchDispatchResult, AgentLaunchIntent, ExecutionDispatchResult, ExecutionIntent,
@@ -103,6 +104,7 @@ pub struct LifecycleDispatchService<'a> {
     gate_repo: &'a dyn LifecycleGateRepository,
     lineage_repo: &'a dyn AgentLineageRepository,
     anchor_repo: Option<&'a dyn RuntimeSessionExecutionAnchorRepository>,
+    delivery_binding_repo: Option<&'a dyn AgentRunDeliveryBindingRepository>,
     runtime_session_creator:
         Option<&'a dyn runtime_session_delivery_port::RuntimeSessionCreationPort>,
     frame_construction:
@@ -131,6 +133,7 @@ impl<'a> LifecycleDispatchService<'a> {
             gate_repo,
             lineage_repo,
             anchor_repo: None,
+            delivery_binding_repo: None,
             runtime_session_creator: None,
             frame_construction: None,
             workflow_agent_frame_materialization: None,
@@ -143,6 +146,14 @@ impl<'a> LifecycleDispatchService<'a> {
         repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     ) -> Self {
         self.anchor_repo = Some(repo);
+        self
+    }
+
+    pub fn with_delivery_binding_repo(
+        mut self,
+        repo: &'a dyn AgentRunDeliveryBindingRepository,
+    ) -> Self {
+        self.delivery_binding_repo = Some(repo);
         self
     }
 
@@ -340,6 +351,7 @@ impl<'a> LifecycleDispatchService<'a> {
         AgentRuntimeMaterializer::new(
             self.agent_repo,
             self.anchor_repo,
+            self.delivery_binding_repo,
             self.runtime_session_creator,
             self.frame_construction,
             self.workflow_agent_frame_materialization,
@@ -943,6 +955,63 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct InMemoryDeliveryBindingRepo {
+        items: Mutex<Vec<AgentRunDeliveryBinding>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRunDeliveryBindingRepository for InMemoryDeliveryBindingRepo {
+        async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
+            let mut items = self.items.lock().unwrap();
+            if let Some(existing) = items
+                .iter_mut()
+                .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
+            {
+                *existing = binding.clone();
+            } else {
+                items.push(binding.clone());
+            }
+            Ok(())
+        }
+
+        async fn get_current(
+            &self,
+            run_id: Uuid,
+            agent_id: Uuid,
+        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|item| item.run_id == run_id && item.agent_id == agent_id)
+                .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|item| item.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.items
+                .lock()
+                .unwrap()
+                .retain(|item| item.runtime_session_id != runtime_session_id);
+            Ok(())
+        }
+    }
+
     // ─── Helper ──────────────────────────────────────────────────────────
 
     #[allow(clippy::too_many_arguments)]
@@ -1076,6 +1145,7 @@ mod tests {
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let anchor_repo = InMemoryExecutionAnchorRepo::default();
+        let delivery_binding_repo = InMemoryDeliveryBindingRepo::default();
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1086,7 +1156,8 @@ mod tests {
             &lineage_repo,
             &runtime_session_creator,
         )
-        .with_anchor_repo(&anchor_repo);
+        .with_anchor_repo(&anchor_repo)
+        .with_delivery_binding_repo(&delivery_binding_repo);
 
         let result = service
             .launch_agent(&new_project_agent_intent(project_id))
@@ -1107,6 +1178,13 @@ mod tests {
         let anchors = anchor_repo.items.lock().unwrap().clone();
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[0].orchestration_id, None);
+        let bindings = delivery_binding_repo.items.lock().unwrap().clone();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(
+            bindings[0].runtime_session_id,
+            anchors[0].runtime_session_id
+        );
+        assert_eq!(bindings[0].status, DeliveryBindingStatus::Ready);
     }
 
     #[tokio::test]
@@ -1163,6 +1241,7 @@ mod tests {
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let anchor_repo = InMemoryExecutionAnchorRepo::default();
+        let delivery_binding_repo = InMemoryDeliveryBindingRepo::default();
         seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
@@ -1174,7 +1253,8 @@ mod tests {
             &lineage_repo,
             &runtime_session_creator,
         )
-        .with_anchor_repo(&anchor_repo);
+        .with_anchor_repo(&anchor_repo)
+        .with_delivery_binding_repo(&delivery_binding_repo);
 
         let mut intent = new_task_execution_intent(project_id, task_id);
         intent.workflow_graph_ref = Some(test_workflow_graph_ref(project_id));
@@ -1225,6 +1305,11 @@ mod tests {
         );
         assert_eq!(anchors[0].node_path.as_deref(), Some(TEST_ACTIVITY_KEY));
         assert_eq!(anchors[0].node_attempt, Some(1));
+        let bindings = delivery_binding_repo.items.lock().unwrap().clone();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].runtime_session_id, session_id.to_string());
+        assert_eq!(bindings[0].node_path.as_deref(), Some(TEST_ACTIVITY_KEY));
+        assert_eq!(bindings[0].node_attempt, Some(1));
         assert_eq!(result.subject_execution_ref.subject_ref.kind, "task");
         assert_eq!(result.subject_execution_ref.subject_ref.id, task_id);
     }

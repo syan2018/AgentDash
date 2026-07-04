@@ -59,6 +59,7 @@ impl LifecycleRunCommandService {
             self.repos.agent_lineage_repo.as_ref(),
         )
         .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
+        .with_delivery_binding_repo(self.repos.agent_run_delivery_binding_repo.as_ref())
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref())
         .with_frame_construction_port(self.repos.agent_frame_construction.as_ref());
         let dispatch_result = dispatch_service

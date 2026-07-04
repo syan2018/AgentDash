@@ -129,6 +129,7 @@ fn companion_mailbox_service_from_runtime(
         repos.project_agent_repo.as_ref(),
         repos.agent_frame_repo.as_ref(),
         repos.execution_anchor_repo.as_ref(),
+        repos.agent_run_delivery_binding_repo.as_ref(),
         repos.project_backend_access_repo.as_ref(),
         repos.agent_run_command_receipt_repo.as_ref(),
         repos.agent_run_mailbox_repo.as_ref(),
@@ -158,6 +159,7 @@ impl<'a> CompanionGateControlFactory<'a> {
             self.repos.agent_frame_repo.clone(),
             self.repos.lifecycle_agent_repo.clone(),
             self.repos.execution_anchor_repo.clone(),
+            self.repos.agent_run_delivery_binding_repo.clone(),
             self.repos.agent_lineage_repo.clone(),
             session_services.eventing.clone(),
         )

@@ -13,8 +13,8 @@ use agentdash_domain::permission::{
     PermissionGrantVfsPathScope,
 };
 use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunDeliveryBindingRepository, LifecycleAgentRepository,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{
     AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
@@ -62,6 +62,7 @@ pub struct AgentRunRuntimeSurfaceQuery {
     run_repo: Arc<dyn LifecycleRunRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
+    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
@@ -71,6 +72,7 @@ pub struct AgentRunRuntimeSurfaceQueryDeps {
     pub run_repo: Arc<dyn LifecycleRunRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
+    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
@@ -223,6 +225,7 @@ impl AgentRunRuntimeSurfaceQuery {
             run_repo: deps.run_repo,
             agent_repo: deps.agent_repo,
             frame_repo: deps.frame_repo,
+            delivery_binding_repo: deps.delivery_binding_repo,
             permission_grant_repo: deps.permission_grant_repo,
         }
     }
@@ -495,6 +498,7 @@ impl AgentRunRuntimeSurfaceQueryPort for AgentRunRuntimeSurfaceQuery {
                 lifecycle_agents: self.agent_repo.as_ref(),
                 agent_frames: self.frame_repo.as_ref(),
                 execution_anchors: self.anchor_repo.as_ref(),
+                delivery_bindings: self.delivery_binding_repo.as_ref(),
             })
             .select_current_delivery(run_id, agent_id)
             .await
@@ -1137,14 +1141,15 @@ mod tests {
         PermissionGrantVfsPathScope, PolicyDecision, PolicyOutcome,
     };
     use agentdash_domain::workflow::{
-        AgentFrame, AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleRun,
-        RuntimeSessionExecutionAnchor,
+        AgentFrame, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository, AgentSource,
+        DeliveryBindingStatus, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
     };
     use agentdash_spi::{AgentConfig, McpTransportConfig, ToolCluster};
     use chrono::{DateTime, Utc};
     use tokio::sync::Mutex;
 
     use super::*;
+    use crate::test_support::MemoryAgentRunDeliveryBindingRepository;
 
     #[derive(Default)]
     struct TestFrameRepo {
@@ -1516,6 +1521,7 @@ mod tests {
         run_repo: Arc<TestRunRepo>,
         agent_repo: Arc<TestAgentRepo>,
         frame_repo: Arc<TestFrameRepo>,
+        delivery_binding_repo: Arc<MemoryAgentRunDeliveryBindingRepository>,
         permission_grant_repo: Arc<TestPermissionGrantRepo>,
         run_id: Uuid,
         project_id: Uuid,
@@ -1528,11 +1534,12 @@ mod tests {
         let run_repo = Arc::new(TestRunRepo::default());
         let agent_repo = Arc::new(TestAgentRepo::default());
         let frame_repo = Arc::new(TestFrameRepo::default());
+        let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
         let permission_grant_repo = Arc::new(TestPermissionGrantRepo::default());
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
         let run_id = run.id;
-        let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
+        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
         let agent_id = agent.id;
         let launch_frame = frame(
             agent_id,
@@ -1546,7 +1553,7 @@ mod tests {
             launch_frame_id,
             agent_id,
         );
-        agent.bind_current_delivery_from_anchor(
+        let binding = AgentRunDeliveryBinding::from_anchor(
             &anchor,
             DeliveryBindingStatus::Running,
             anchor.updated_at,
@@ -1555,11 +1562,16 @@ mod tests {
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.insert(launch_frame).await;
         anchor_repo.create_once(&anchor).await.expect("anchor");
+        delivery_binding_repo
+            .upsert(&binding)
+            .await
+            .expect("binding");
         let query = AgentRunRuntimeSurfaceQuery::new(AgentRunRuntimeSurfaceQueryDeps {
             anchor_repo: anchor_repo.clone(),
             run_repo: run_repo.clone(),
             agent_repo: agent_repo.clone(),
             frame_repo: frame_repo.clone(),
+            delivery_binding_repo: delivery_binding_repo.clone(),
             permission_grant_repo: permission_grant_repo.clone(),
         });
         Fixture {
@@ -1568,6 +1580,7 @@ mod tests {
             run_repo,
             agent_repo,
             frame_repo,
+            delivery_binding_repo,
             permission_grant_repo,
             run_id,
             project_id,
@@ -1870,6 +1883,7 @@ mod tests {
                 run_repo: fixture.run_repo.clone(),
                 agent_repo: fixture.agent_repo.clone(),
                 frame_repo: fixture.frame_repo.clone(),
+                delivery_binding_repo: fixture.delivery_binding_repo.clone(),
                 permission_grant_repo: fixture.permission_grant_repo.clone(),
             },
         ));
@@ -1934,6 +1948,7 @@ mod tests {
                 run_repo: fixture.run_repo.clone(),
                 agent_repo: fixture.agent_repo.clone(),
                 frame_repo: fixture.frame_repo.clone(),
+                delivery_binding_repo: fixture.delivery_binding_repo.clone(),
                 permission_grant_repo: fixture.permission_grant_repo.clone(),
             },
         ));

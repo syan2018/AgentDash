@@ -1,7 +1,8 @@
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunDeliveryBindingRepository, DeliveryBindingStatus, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -47,14 +48,8 @@ pub enum DeliveryRuntimeSelectionError {
         agent_id: Uuid,
         actual_run_id: Uuid,
     },
-    #[error("LifecycleAgent {agent_id} 缺少 current delivery binding")]
+    #[error("AgentRun {run_id}/LifecycleAgent {agent_id} 缺少 current delivery binding")]
     CurrentDeliveryMissing { run_id: Uuid, agent_id: Uuid },
-    #[error("LifecycleAgent {agent_id} 的 current delivery binding 缺少字段 {field}")]
-    BindingIncomplete {
-        run_id: Uuid,
-        agent_id: Uuid,
-        field: &'static str,
-    },
     #[error("RuntimeSessionExecutionAnchor {runtime_session_id} 不存在")]
     AnchorMissing { runtime_session_id: String },
     #[error(
@@ -114,6 +109,7 @@ pub struct DeliveryRuntimeSelectionRepositories<'a> {
     pub lifecycle_agents: &'a dyn LifecycleAgentRepository,
     pub agent_frames: &'a dyn AgentFrameRepository,
     pub execution_anchors: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    pub delivery_bindings: &'a dyn AgentRunDeliveryBindingRepository,
 }
 
 impl<'a> DeliveryRuntimeSelectionRepositories<'a> {
@@ -123,6 +119,7 @@ impl<'a> DeliveryRuntimeSelectionRepositories<'a> {
             lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
             agent_frames: repos.agent_frame_repo.as_ref(),
             execution_anchors: repos.execution_anchor_repo.as_ref(),
+            delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
         }
     }
 }
@@ -160,9 +157,11 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
     ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
         self.ensure_run(run_id).await?;
         let agent = self.load_agent_for_run(run_id, agent_id).await?;
-        let binding = agent
-            .current_delivery
-            .clone()
+        let binding = self
+            .repos
+            .delivery_bindings
+            .get_current(run_id, agent_id)
+            .await?
             .ok_or(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { run_id, agent_id })?;
         let expected_anchor = self
             .repos
@@ -333,16 +332,16 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,
-        LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
-        RuntimeSessionExecutionAnchorRepository,
+        AgentFrame, AgentFrameRepository, AgentRunDeliveryBinding, AgentSource, LifecycleAgent,
+        LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
     };
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::test_support::{
-        MemoryAgentFrameRepository, MemoryLifecycleAgentRepository,
-        MemoryRuntimeSessionExecutionAnchorRepository,
+        MemoryAgentFrameRepository, MemoryAgentRunDeliveryBindingRepository,
+        MemoryLifecycleAgentRepository, MemoryRuntimeSessionExecutionAnchorRepository,
     };
 
     #[derive(Default)]
@@ -411,6 +410,7 @@ mod tests {
         agents: Arc<MemoryLifecycleAgentRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
         anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
     }
 
     impl SelectionFixture {
@@ -420,6 +420,7 @@ mod tests {
                 agents: Arc::new(MemoryLifecycleAgentRepository::default()),
                 frames: Arc::new(MemoryAgentFrameRepository::default()),
                 anchors: Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default()),
+                delivery_bindings: Arc::new(MemoryAgentRunDeliveryBindingRepository::default()),
             }
         }
 
@@ -429,6 +430,7 @@ mod tests {
                 lifecycle_agents: self.agents.as_ref(),
                 agent_frames: self.frames.as_ref(),
                 execution_anchors: self.anchors.as_ref(),
+                delivery_bindings: self.delivery_bindings.as_ref(),
             })
         }
 
@@ -444,8 +446,7 @@ mod tests {
             let run = LifecycleRun::new_plain(Uuid::new_v4());
             self.runs.create(&run).await.expect("create run");
 
-            let mut agent =
-                LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+            let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
             let launch_frame = AgentFrame::new_initial(agent.id);
             let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
             let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
@@ -454,7 +455,7 @@ mod tests {
                 launch_frame.id,
                 agent.id,
             );
-            agent.bind_current_delivery_from_anchor(
+            let binding = AgentRunDeliveryBinding::from_anchor(
                 &anchor,
                 DeliveryBindingStatus::Running,
                 anchor.updated_at,
@@ -469,6 +470,10 @@ mod tests {
                 .await
                 .expect("current frame");
             self.anchors.create_once(&anchor).await.expect("anchor");
+            self.delivery_bindings
+                .upsert(&binding)
+                .await
+                .expect("binding");
             self.agents.create(&agent).await.expect("agent");
 
             (run, agent, launch_frame, current_frame, anchor)

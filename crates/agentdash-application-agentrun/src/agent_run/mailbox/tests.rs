@@ -18,8 +18,9 @@ use agentdash_domain::backend::{
 };
 use agentdash_domain::workflow::{
     AgentFrame, AgentRunCommandKind, AgentRunCommandReceiptRepository, AgentRunCommandStatus,
-    AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleRun, LifecycleRunRepository,
-    NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
+    AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository, AgentSource, DeliveryBindingStatus,
+    LifecycleAgent, LifecycleRun, LifecycleRunRepository, NewAgentRunCommandReceipt,
+    RuntimeSessionExecutionAnchor,
 };
 use agentdash_spi::ConnectorError;
 use agentdash_spi::session_persistence::{SessionEventPage, SessionMeta};
@@ -32,7 +33,8 @@ use crate::agent_run::runtime_session_boundary::{
 };
 use crate::test_support::{
     MemoryAgentFrameRepository, MemoryAgentRunCommandReceiptRepository,
-    MemoryLifecycleAgentRepository, MemoryRuntimeSessionExecutionAnchorRepository,
+    MemoryAgentRunDeliveryBindingRepository, MemoryLifecycleAgentRepository,
+    MemoryRuntimeSessionExecutionAnchorRepository,
 };
 
 #[test]
@@ -519,6 +521,7 @@ struct MailboxSteeringFixture {
     project_agents: Arc<MemoryProjectAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
     anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+    delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
     backend_access: Arc<MemoryProjectBackendAccessRepository>,
     receipts: Arc<MemoryAgentRunCommandReceiptRepository>,
     mailbox: Arc<MemoryMailboxRepository>,
@@ -540,6 +543,7 @@ impl MailboxSteeringFixture {
         let project_agents = Arc::new(MemoryProjectAgentRepository);
         let frames = Arc::new(MemoryAgentFrameRepository::default());
         let anchors = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+        let delivery_bindings = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
         let backend_access = Arc::new(MemoryProjectBackendAccessRepository::default());
         let receipts = Arc::new(MemoryAgentRunCommandReceiptRepository::default());
         let mailbox = Arc::new(MemoryMailboxRepository::default());
@@ -548,7 +552,7 @@ impl MailboxSteeringFixture {
 
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         runs.create(&run).await.expect("run");
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let launch_frame = AgentFrame::new_initial(agent.id);
         let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
         let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
@@ -557,7 +561,7 @@ impl MailboxSteeringFixture {
             launch_frame.id,
             agent.id,
         );
-        agent.bind_current_delivery_from_anchor(
+        let binding = AgentRunDeliveryBinding::from_anchor(
             &anchor,
             DeliveryBindingStatus::Running,
             anchor.updated_at,
@@ -565,6 +569,7 @@ impl MailboxSteeringFixture {
         frames.create(&launch_frame).await.expect("launch frame");
         frames.create(&current_frame).await.expect("current frame");
         anchors.create_once(&anchor).await.expect("anchor");
+        delivery_bindings.upsert(&binding).await.expect("binding");
         agents.create(&agent).await.expect("agent");
 
         Self {
@@ -573,6 +578,7 @@ impl MailboxSteeringFixture {
             project_agents,
             frames,
             anchors,
+            delivery_bindings,
             backend_access,
             receipts,
             mailbox,
@@ -602,6 +608,7 @@ impl MailboxSteeringFixture {
             self.project_agents.as_ref(),
             self.frames.as_ref(),
             self.anchors.as_ref(),
+            self.delivery_bindings.as_ref(),
             self.backend_access.as_ref(),
             self.receipts.as_ref(),
             self.mailbox.as_ref(),

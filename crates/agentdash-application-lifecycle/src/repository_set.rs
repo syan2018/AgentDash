@@ -32,8 +32,8 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
     WorkflowTemplateInstallRepository,
 };
@@ -76,6 +76,7 @@ pub struct RepositorySet {
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
@@ -129,6 +130,7 @@ impl WorkflowAgentNodeMaterializationPort for LifecycleWorkflowAgentNodeMaterial
             self.repos.agent_lineage_repo.as_ref(),
         )
         .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
+        .with_delivery_binding_repo(self.repos.agent_run_delivery_binding_repo.as_ref())
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref())
         .with_frame_construction_port(self.repos.agent_frame_construction.as_ref())
         .with_workflow_agent_frame_materialization_port(

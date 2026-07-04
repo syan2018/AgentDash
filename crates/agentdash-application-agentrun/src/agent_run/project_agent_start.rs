@@ -15,8 +15,8 @@ use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
-    AgentRunCommandReceiptRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
 };
 use agentdash_domain::workflow::{AgentLaunchDispatchResult, AgentRunCommandReceipt};
@@ -109,6 +109,7 @@ pub struct ProjectAgentRunStartRepos<'a> {
     pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
     pub agent_lineage_repo: &'a dyn AgentLineageRepository,
     pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    pub delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
     pub project_backend_access_repo: &'a dyn ProjectBackendAccessRepository,
     pub command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     pub mailbox_repo: &'a dyn AgentRunMailboxRepository,
@@ -129,6 +130,7 @@ impl<'a> ProjectAgentRunStartRepos<'a> {
             lifecycle_gate_repo: repos.lifecycle_gate_repo.as_ref(),
             agent_lineage_repo: repos.agent_lineage_repo.as_ref(),
             execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
+            delivery_binding_repo: repos.agent_run_delivery_binding_repo.as_ref(),
             project_backend_access_repo: repos.project_backend_access_repo.as_ref(),
             command_receipt_repo: repos.agent_run_command_receipt_repo.as_ref(),
             mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
@@ -151,6 +153,7 @@ impl<'a> ProjectAgentRunStartRepos<'a> {
             self.project_agent_repo,
             self.agent_frame_repo,
             self.execution_anchor_repo,
+            self.delivery_binding_repo,
             self.project_backend_access_repo,
             self.command_receipt_repo,
             self.mailbox_repo,
@@ -608,6 +611,10 @@ impl<'a> ProjectAgentRunStartService<'a> {
             .execution_anchor_repo
             .delete_by_session(runtime_session_id)
             .await?;
+        self.repos
+            .delivery_binding_repo
+            .delete_by_session(runtime_session_id)
+            .await?;
         self.cleanup.delete_session(runtime_session_id).await?;
         self.repos.lifecycle_run_repo.delete(run_id).await?;
         Ok(())
@@ -897,7 +904,9 @@ fn validate_project_agent_subject_ref(
 mod tests {
     use super::*;
     use crate::agent_run::runtime_session_boundary::{ExecutionStatus, TitleSource};
-    use crate::test_support::MemoryAgentRunCommandReceiptRepository;
+    use crate::test_support::{
+        MemoryAgentRunCommandReceiptRepository, MemoryAgentRunDeliveryBindingRepository,
+    };
     use agentdash_domain::DomainError;
     use agentdash_domain::agent_run_mailbox::{
         AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
@@ -907,8 +916,9 @@ mod tests {
     };
     use agentdash_domain::backend::{ProjectBackendAccess, ProjectBackendAccessStatus};
     use agentdash_domain::workflow::{
-        AgentFrame, AgentLineage, AgentRuntimeRefs, AgentSource, LifecycleAgent, LifecycleGate,
-        LifecycleRun, LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
+        AgentFrame, AgentLineage, AgentRunDeliveryBinding, AgentRuntimeRefs, AgentSource,
+        DeliveryBindingStatus, LifecycleAgent, LifecycleGate, LifecycleRun,
+        LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
     };
     use chrono::Utc;
     use std::collections::HashMap;
@@ -1952,6 +1962,7 @@ mod tests {
         lifecycle_run_repo: &'a RunRepo,
         lifecycle_agent_repo: &'a AgentRepo,
         execution_anchor_repo: &'a AnchorRepo,
+        delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
         runtime_session_creator: &'a RuntimeCreator,
         agent_frame_construction: &'a FrameRepo,
     }
@@ -1961,6 +1972,7 @@ mod tests {
             lifecycle_run_repo: &'a RunRepo,
             lifecycle_agent_repo: &'a AgentRepo,
             execution_anchor_repo: &'a AnchorRepo,
+            delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
             runtime_session_creator: &'a RuntimeCreator,
             agent_frame_construction: &'a FrameRepo,
         ) -> Self {
@@ -1968,6 +1980,7 @@ mod tests {
                 lifecycle_run_repo,
                 lifecycle_agent_repo,
                 execution_anchor_repo,
+                delivery_binding_repo,
                 runtime_session_creator,
                 agent_frame_construction,
             }
@@ -2034,6 +2047,12 @@ mod tests {
                 agent.id,
             );
             self.execution_anchor_repo.create_once(&anchor).await?;
+            let binding = AgentRunDeliveryBinding::from_anchor(
+                &anchor,
+                DeliveryBindingStatus::Ready,
+                anchor.updated_at,
+            );
+            self.delivery_binding_repo.upsert(&binding).await?;
 
             Ok(AgentLaunchDispatchResult {
                 runtime_refs: AgentRuntimeRefs::new(run.id, agent.id, frame_id, None),
@@ -2242,6 +2261,7 @@ mod tests {
         anchor_repo: AnchorRepo,
         access_repo: AccessRepo,
         command_receipt_repo: MemoryAgentRunCommandReceiptRepository,
+        delivery_binding_repo: MemoryAgentRunDeliveryBindingRepository,
         mailbox_repo: MailboxRepo,
         runtime_creator: RuntimeCreator,
     }
@@ -2266,6 +2286,7 @@ mod tests {
                 anchor_repo: AnchorRepo::default(),
                 access_repo: AccessRepo::default(),
                 command_receipt_repo: MemoryAgentRunCommandReceiptRepository::default(),
+                delivery_binding_repo: MemoryAgentRunDeliveryBindingRepository::default(),
                 mailbox_repo: MailboxRepo::default(),
                 runtime_creator: RuntimeCreator::default(),
             }
@@ -2285,6 +2306,7 @@ mod tests {
                     execution_anchor_repo: &self.anchor_repo,
                     project_backend_access_repo: &self.access_repo,
                     command_receipt_repo: &self.command_receipt_repo,
+                    delivery_binding_repo: &self.delivery_binding_repo,
                     mailbox_repo: &self.mailbox_repo,
                     runtime_session_creator: &self.runtime_creator,
                     agent_frame_construction: &self.frame_repo,
@@ -2327,6 +2349,7 @@ mod tests {
                 &self.run_repo,
                 &self.agent_repo,
                 &self.anchor_repo,
+                &self.delivery_binding_repo,
                 &self.runtime_creator,
                 &self.frame_repo,
             )
@@ -2352,12 +2375,14 @@ mod tests {
         let anchor_repo = AnchorRepo::default();
         let access_repo = AccessRepo::default();
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
+        let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
         let lifecycle_launch = TestProjectAgentLifecycleLaunch::new(
             &run_repo,
             &agent_repo,
             &anchor_repo,
+            &delivery_binding_repo,
             &runtime_creator,
             &frame_repo,
         );
@@ -2372,6 +2397,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                delivery_binding_repo: &delivery_binding_repo,
                 project_backend_access_repo: &access_repo,
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
@@ -2528,12 +2554,14 @@ mod tests {
         let anchor_repo = AnchorRepo::default();
         let access_repo = AccessRepo::default();
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
+        let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
         let lifecycle_launch = TestProjectAgentLifecycleLaunch::new(
             &run_repo,
             &agent_repo,
             &anchor_repo,
+            &delivery_binding_repo,
             &runtime_creator,
             &frame_repo,
         );
@@ -2548,6 +2576,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                delivery_binding_repo: &delivery_binding_repo,
                 project_backend_access_repo: &access_repo,
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
@@ -2606,12 +2635,14 @@ mod tests {
         let anchor_repo = AnchorRepo::default();
         let access_repo = AccessRepo::default();
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
+        let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
         let lifecycle_launch = TestProjectAgentLifecycleLaunch::new(
             &run_repo,
             &agent_repo,
             &anchor_repo,
+            &delivery_binding_repo,
             &runtime_creator,
             &frame_repo,
         );
@@ -2626,6 +2657,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                delivery_binding_repo: &delivery_binding_repo,
                 project_backend_access_repo: &access_repo,
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,
@@ -2696,12 +2728,14 @@ mod tests {
         let anchor_repo = AnchorRepo::default();
         let access_repo = AccessRepo::default();
         let command_receipt_repo = MemoryAgentRunCommandReceiptRepository::default();
+        let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
         let mailbox_repo = MailboxRepo::default();
         let runtime_creator = RuntimeCreator::default();
         let lifecycle_launch = TestProjectAgentLifecycleLaunch::new(
             &run_repo,
             &agent_repo,
             &anchor_repo,
+            &delivery_binding_repo,
             &runtime_creator,
             &frame_repo,
         );
@@ -2716,6 +2750,7 @@ mod tests {
                 lifecycle_gate_repo: &gate_repo,
                 agent_lineage_repo: &lineage_repo,
                 execution_anchor_repo: &anchor_repo,
+                delivery_binding_repo: &delivery_binding_repo,
                 project_backend_access_repo: &access_repo,
                 command_receipt_repo: &command_receipt_repo,
                 mailbox_repo: &mailbox_repo,

@@ -92,9 +92,9 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - artifact edge 自动提供 flow dependency，原因是数据依赖本身已经表达执行顺序，重复 flow edge 会制造两套 dependency 事实。
 - `RuntimeSessionExecutionAnchor` 是 runtime trace/delivery refs 的 create-once launch evidence 和 read
   model projection 来源，原因是运行时 trace 反查需要稳定索引，且 frame revision surface 变化时 anchor
-  坐标仍保持稳定。AgentRun current delivery selection 从 `LifecycleAgent.current_delivery` 绑定出发，并用
-  anchor 校验 run / agent / launch frame / orchestration node 坐标，原因是 current delivery 表达当前业务绑定，
-  anchor 表达 runtime trace 到控制面坐标的不可变证据。
+  坐标仍保持稳定。AgentRun current delivery selection 从 AgentRun-owned delivery binding 出发，并用
+  anchor 校验 run / agent / launch frame / orchestration node 坐标，原因是 current delivery 是运行中的
+  AgentRun 状态绑定，anchor 表达 runtime trace 到控制面坐标的不可变证据。
 - AgentRun conversation snapshot 以 run / agent / current frame / delivery anchor / runtime execution state /
   mailbox projection / model config / resource surface 生成 command view，原因是用户工作台命令需要同时验证
   lifecycle 控制面、active AgentRunTurn、mailbox envelope、模型解析和 connector capability。`RuntimeSession` 继续作为 delivery /

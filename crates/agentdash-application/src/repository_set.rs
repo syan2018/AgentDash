@@ -38,10 +38,10 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunCommandReceiptRepository, AgentRunLineageRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
-    WorkflowTemplateInstallRepository,
+    AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, AgentRunLineageRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 use async_trait::async_trait;
@@ -89,6 +89,7 @@ pub struct RepositorySet {
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     pub agent_run_lineage_repo: Arc<dyn AgentRunLineageRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
@@ -141,6 +142,7 @@ impl RepositorySet {
             agent_lineage_repo: self.agent_lineage_repo.clone(),
             agent_run_lineage_repo: self.agent_run_lineage_repo.clone(),
             execution_anchor_repo: self.execution_anchor_repo.clone(),
+            agent_run_delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
             agent_run_command_receipt_repo: self.agent_run_command_receipt_repo.clone(),
             agent_run_mailbox_repo: self.agent_run_mailbox_repo.clone(),
             runtime_session_creator: self.runtime_session_creator.clone(),
@@ -188,6 +190,7 @@ impl RepositorySet {
             lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
             agent_lineage_repo: self.agent_lineage_repo.clone(),
             execution_anchor_repo: self.execution_anchor_repo.clone(),
+            agent_run_delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
             agent_run_command_receipt_repo: self.agent_run_command_receipt_repo.clone(),
             agent_run_mailbox_repo: self.agent_run_mailbox_repo.clone(),
             runtime_session_creator: self.runtime_session_creator.clone(),
@@ -245,6 +248,7 @@ pub struct LifecycleProjectAgentLaunchAdapter {
     gate_repo: Arc<dyn LifecycleGateRepository>,
     lineage_repo: Arc<dyn AgentLineageRepository>,
     anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
@@ -260,6 +264,7 @@ impl LifecycleProjectAgentLaunchAdapter {
         gate_repo: Arc<dyn LifecycleGateRepository>,
         lineage_repo: Arc<dyn AgentLineageRepository>,
         anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
         runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
         frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     ) -> Self {
@@ -272,6 +277,7 @@ impl LifecycleProjectAgentLaunchAdapter {
             gate_repo,
             lineage_repo,
             anchor_repo,
+            delivery_binding_repo,
             runtime_session_creator,
             frame_construction,
         }
@@ -296,6 +302,7 @@ impl ProjectAgentLifecycleLaunchPort for LifecycleProjectAgentLaunchAdapter {
             self.gate_repo.as_ref(),
             self.lineage_repo.as_ref(),
             self.anchor_repo.as_ref(),
+            self.delivery_binding_repo.as_ref(),
             self.runtime_session_creator.as_ref(),
             self.frame_construction.as_ref(),
         );

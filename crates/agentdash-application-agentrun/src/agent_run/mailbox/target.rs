@@ -43,6 +43,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 lifecycle_agents: self.lifecycle_agent_repo,
                 agent_frames: self.agent_frame_repo,
                 execution_anchors: self.execution_anchor_repo,
+                delivery_bindings: self.delivery_binding_repo,
             })
             .select_current_delivery(run_id, agent_id)
             .await

@@ -11,8 +11,9 @@ use agentdash_domain::agent_run_mailbox::{AgentRunMailboxMessage, MailboxSourceI
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
     AgentRunCommandReceipt, AgentRunCommandReceiptRepository, AgentRunCommandStatus,
-    AgentRunLineage, AgentRunLineageRepository, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentRunDeliveryBindingRepository, AgentRunLineage, AgentRunLineageRepository, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::AgentConfig;
 use agentdash_spi::platform::auth::AuthIdentity;
@@ -38,6 +39,7 @@ pub struct AgentRunForkRepos<'a> {
     pub lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     pub agent_frame_repo: &'a dyn AgentFrameRepository,
     pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    pub delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
     pub agent_run_command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     pub agent_run_mailbox_repo: &'a dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository,
     pub agent_run_lineage_repo: &'a dyn AgentRunLineageRepository,
@@ -51,6 +53,7 @@ impl<'a> AgentRunForkRepos<'a> {
             lifecycle_agent_repo: repos.lifecycle_agent_repo.as_ref(),
             agent_frame_repo: repos.agent_frame_repo.as_ref(),
             execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
+            delivery_binding_repo: repos.agent_run_delivery_binding_repo.as_ref(),
             agent_run_command_receipt_repo: repos.agent_run_command_receipt_repo.as_ref(),
             agent_run_mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
             agent_run_lineage_repo: repos.agent_run_lineage_repo.as_ref(),
@@ -541,6 +544,7 @@ impl<'a> AgentRunForkService<'a> {
                 lifecycle_agents: self.repos.lifecycle_agent_repo,
                 agent_frames: self.repos.agent_frame_repo,
                 execution_anchors: self.repos.execution_anchor_repo,
+                delivery_bindings: self.repos.delivery_binding_repo,
             })
             .select_current_delivery(run.id, agent.id)
             .await
@@ -925,8 +929,9 @@ mod tests {
     use agentdash_domain::agent_run_mailbox::MailboxMessageStatus;
     use agentdash_domain::workflow::{
         AgentFrame, AgentFrameRepository, AgentRunCommandKind, AgentRunCommandReceipt,
-        AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunLineageRepository,
-        AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+        AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunDeliveryBinding,
+        AgentRunDeliveryBindingRepository, AgentRunLineageRepository, AgentSource,
+        DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
         LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
         RuntimeSessionExecutionAnchorRepository,
     };
@@ -944,9 +949,9 @@ mod tests {
     };
     use crate::test_support::{
         MemoryAgentFrameRepository, MemoryAgentRunCommandReceiptRepository,
-        MemoryAgentRunForkMaterialization, MemoryAgentRunLineageRepository,
-        MemoryAgentRunMailboxRepository, MemoryLifecycleAgentRepository,
-        MemoryLifecycleRunRepository, MemoryProjectAgentRepository,
+        MemoryAgentRunDeliveryBindingRepository, MemoryAgentRunForkMaterialization,
+        MemoryAgentRunLineageRepository, MemoryAgentRunMailboxRepository,
+        MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository, MemoryProjectAgentRepository,
         MemoryProjectBackendAccessRepository, MemoryRuntimeSessionExecutionAnchorRepository,
     };
 
@@ -989,11 +994,14 @@ mod tests {
             .expect("read child agent")
             .expect("child agent");
         assert_eq!(child_agent.created_by_user_id, "user-child");
+        let child_binding = fixture
+            .delivery_bindings
+            .get_current(result.child_refs.run_id, result.child_refs.agent_id)
+            .await
+            .expect("read child binding")
+            .expect("child binding");
         assert_eq!(
-            child_agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.runtime_session_id.as_str()),
+            Some(child_binding.runtime_session_id.as_str()),
             result.child_refs.runtime_session_id.as_deref()
         );
 
@@ -1070,17 +1078,14 @@ mod tests {
                 .await
                 .is_empty()
         );
-        let parent_after = fixture
-            .agents
-            .get(fixture.parent_agent.id)
+        let parent_binding = fixture
+            .delivery_bindings
+            .get_current(fixture.parent_run.id, fixture.parent_agent.id)
             .await
-            .expect("read parent")
-            .expect("parent");
+            .expect("read parent binding")
+            .expect("parent binding");
         assert_eq!(
-            parent_after
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.runtime_session_id.as_str()),
+            Some(parent_binding.runtime_session_id.as_str()),
             Some(fixture.parent_runtime_session_id.as_str())
         );
         assert!(matches!(
@@ -1225,6 +1230,7 @@ mod tests {
         project_agents: Arc<MemoryProjectAgentRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
         anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
         backend_access: Arc<MemoryProjectBackendAccessRepository>,
         receipts: Arc<MemoryAgentRunCommandReceiptRepository>,
         mailbox: Arc<MemoryAgentRunMailboxRepository>,
@@ -1248,6 +1254,7 @@ mod tests {
             let project_agents = Arc::new(MemoryProjectAgentRepository::default());
             let frames = Arc::new(MemoryAgentFrameRepository::default());
             let anchors = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+            let delivery_bindings = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
             let backend_access = Arc::new(MemoryProjectBackendAccessRepository::default());
             let receipts = Arc::new(MemoryAgentRunCommandReceiptRepository::default());
             let mailbox = Arc::new(MemoryAgentRunMailboxRepository::default());
@@ -1257,6 +1264,7 @@ mod tests {
                 agents.clone(),
                 frames.clone(),
                 anchors.clone(),
+                delivery_bindings.clone(),
                 lineages.clone(),
             ));
             let session_store = Arc::new(TestSessionStore::default());
@@ -1273,7 +1281,7 @@ mod tests {
 
             let parent_run = LifecycleRun::new_plain_for_user(Uuid::new_v4(), "parent-owner");
             runs.create(&parent_run).await.expect("parent run");
-            let mut parent_agent = LifecycleAgent::new_root_for_user(
+            let parent_agent = LifecycleAgent::new_root_for_user(
                 parent_run.id,
                 parent_run.project_id,
                 AgentSource::ProjectAgent,
@@ -1287,7 +1295,7 @@ mod tests {
                 launch_frame.id,
                 parent_agent.id,
             );
-            parent_agent.bind_current_delivery_from_anchor(
+            let parent_binding = AgentRunDeliveryBinding::from_anchor(
                 &anchor,
                 DeliveryBindingStatus::Ready,
                 anchor.updated_at,
@@ -1295,6 +1303,10 @@ mod tests {
             frames.create(&launch_frame).await.expect("launch frame");
             frames.create(&parent_frame).await.expect("parent frame");
             anchors.create_once(&anchor).await.expect("anchor");
+            delivery_bindings
+                .upsert(&parent_binding)
+                .await
+                .expect("parent binding");
             agents.create(&parent_agent).await.expect("parent agent");
 
             Self {
@@ -1303,6 +1315,7 @@ mod tests {
                 project_agents,
                 frames,
                 anchors,
+                delivery_bindings,
                 backend_access,
                 receipts,
                 mailbox,
@@ -1326,6 +1339,7 @@ mod tests {
                 lifecycle_agent_repo: self.agents.as_ref(),
                 agent_frame_repo: self.frames.as_ref(),
                 execution_anchor_repo: self.anchors.as_ref(),
+                delivery_binding_repo: self.delivery_bindings.as_ref(),
                 agent_run_command_receipt_repo: self.receipts.as_ref(),
                 agent_run_mailbox_repo: self.mailbox.as_ref(),
                 agent_run_lineage_repo: self.lineages.as_ref(),
@@ -1337,6 +1351,7 @@ mod tests {
                 self.project_agents.as_ref(),
                 self.frames.as_ref(),
                 self.anchors.as_ref(),
+                self.delivery_bindings.as_ref(),
                 self.backend_access.as_ref(),
                 self.receipts.as_ref(),
                 self.mailbox.as_ref(),

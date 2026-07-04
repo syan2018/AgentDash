@@ -215,15 +215,16 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         &self,
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
     ) -> Result<Option<DeliveryRuntimeSelection>, AgentRunWorkspaceCommandPolicyError> {
-        if context.agent.current_delivery.is_none() {
-            return Ok(None);
-        }
-        DeliveryRuntimeSelectionService::from_repository_set(self.repos)
+        match DeliveryRuntimeSelectionService::from_repository_set(self.repos)
             .select_current_delivery(context.run.id, context.agent.id)
             .await
-            .map(Some)
-            .map_err(workflow_error_from_selection_error)
-            .map_err(AgentRunWorkspaceCommandPolicyError::from)
+        {
+            Ok(selection) => Ok(Some(selection)),
+            Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
+            Err(error) => Err(AgentRunWorkspaceCommandPolicyError::from(
+                workflow_error_from_selection_error(error),
+            )),
+        }
     }
 
     async fn resolve_current_frame(

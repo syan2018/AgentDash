@@ -15,8 +15,8 @@ use agentdash_domain::agent_run_mailbox::{
 };
 use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunCommandReceiptRepository, LifecycleAgentRepository,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{
     AfterTurnInput, AgentMessage, AgentRuntimeError, BeforeStopInput,
@@ -41,6 +41,7 @@ pub struct AgentRunMailboxRuntimeBoundaryDeps {
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
     pub command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
@@ -327,6 +328,7 @@ fn mailbox_service_from_deps(
         deps.project_agent_repo.as_ref(),
         deps.agent_frame_repo.as_ref(),
         deps.execution_anchor_repo.as_ref(),
+        deps.delivery_binding_repo.as_ref(),
         deps.project_backend_access_repo.as_ref(),
         deps.command_receipt_repo.as_ref(),
         deps.mailbox_repo.as_ref(),

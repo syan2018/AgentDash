@@ -5,8 +5,8 @@ use agentdash_application_ports::agent_run_fork_materialization::{
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentRunLineage, AgentRunLineageRepository, DeliveryBindingStatus, LifecycleAgent,
-    LifecycleRun, RuntimeSessionExecutionAnchor,
+    AgentFrame, AgentRunDeliveryBinding, AgentRunLineage, AgentRunLineageRepository,
+    DeliveryBindingStatus, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -148,11 +148,8 @@ async fn materialize_forked_agent_run_tx(
     );
     anchor.created_by_kind = "agent_run_fork".to_string();
 
-    child_agent.bind_current_delivery_from_anchor(
-        &anchor,
-        DeliveryBindingStatus::Ready,
-        chrono::Utc::now(),
-    );
+    let delivery_binding =
+        AgentRunDeliveryBinding::from_anchor(&anchor, DeliveryBindingStatus::Ready, Utc::now());
 
     let lineage = AgentRunLineage::new_fork(
         input.parent_run.id,
@@ -202,6 +199,11 @@ async fn materialize_forked_agent_run_tx(
         .await
         .inspect_err(|error| {
             log_agent_run_fork_materialization_error("upsert_execution_anchor", &context, error);
+        })?;
+    upsert_delivery_binding_tx(&mut tx, &delivery_binding)
+        .await
+        .inspect_err(|error| {
+            log_agent_run_fork_materialization_error("upsert_delivery_binding", &context, error);
         })?;
     insert_agent_run_lineage_tx(&mut tx, &lineage)
         .await
@@ -354,14 +356,11 @@ async fn insert_lifecycle_agent_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     agent: &LifecycleAgent,
 ) -> Result<(), DomainError> {
-    let delivery = agent.current_delivery.as_ref();
     sqlx::query(
         r#"INSERT INTO lifecycle_agents
-            (id,run_id,project_id,created_by_user_id,source,project_agent_id,status,bootstrap_status,
-             current_delivery_runtime_session_id,current_delivery_launch_frame_id,
-             current_delivery_orchestration_id,current_delivery_node_path,current_delivery_node_attempt,
-             current_delivery_status,current_delivery_observed_at,created_at,updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"#,
+            (id,run_id,project_id,created_by_user_id,source,project_agent_id,
+             status,bootstrap_status,created_at,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
     )
     .bind(agent.id.to_string())
     .bind(agent.run_id.to_string())
@@ -371,18 +370,46 @@ async fn insert_lifecycle_agent_tx(
     .bind(agent.project_agent_id.map(|id| id.to_string()))
     .bind(&agent.status)
     .bind(&agent.bootstrap_status)
-    .bind(delivery.map(|binding| binding.runtime_session_id.clone()))
-    .bind(delivery.map(|binding| binding.launch_frame_id.to_string()))
-    .bind(delivery.and_then(|binding| binding.orchestration_id.map(|id| id.to_string())))
-    .bind(delivery.and_then(|binding| binding.node_path.clone()))
-    .bind(delivery.and_then(|binding| binding.node_attempt.map(|value| value as i32)))
-    .bind(delivery.map(|binding| binding.status.as_str().to_string()))
-    .bind(delivery.map(|binding| binding.observed_at))
     .bind(agent.created_at)
     .bind(agent.updated_at)
     .execute(&mut **tx)
     .await
     .map_err(|error| sql_err_for("lifecycle_agents", error))?;
+    Ok(())
+}
+
+async fn upsert_delivery_binding_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    binding: &AgentRunDeliveryBinding,
+) -> Result<(), DomainError> {
+    sqlx::query(
+        r#"INSERT INTO agent_run_delivery_bindings
+            (run_id,agent_id,runtime_session_id,launch_frame_id,orchestration_id,
+             node_path,node_attempt,status,observed_at,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           ON CONFLICT (run_id, agent_id) DO UPDATE SET
+               runtime_session_id = EXCLUDED.runtime_session_id,
+               launch_frame_id = EXCLUDED.launch_frame_id,
+               orchestration_id = EXCLUDED.orchestration_id,
+               node_path = EXCLUDED.node_path,
+               node_attempt = EXCLUDED.node_attempt,
+               status = EXCLUDED.status,
+               observed_at = EXCLUDED.observed_at,
+               updated_at = EXCLUDED.updated_at"#,
+    )
+    .bind(binding.run_id.to_string())
+    .bind(binding.agent_id.to_string())
+    .bind(&binding.runtime_session_id)
+    .bind(binding.launch_frame_id.to_string())
+    .bind(binding.orchestration_id.map(|id| id.to_string()))
+    .bind(&binding.node_path)
+    .bind(binding.node_attempt.map(|value| value as i32))
+    .bind(binding.status.as_str())
+    .bind(binding.observed_at)
+    .bind(binding.updated_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| sql_err_for("agent_run_delivery_bindings", error))?;
     Ok(())
 }
 

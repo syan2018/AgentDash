@@ -20,14 +20,14 @@ use agentdash_application_shared_library::{
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
     PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
-    PostgresAgentRunForkMaterialization, PostgresAgentRunLineageRepository,
-    PostgresAgentRunMailboxRepository, PostgresAuthSessionRepository,
-    PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
-    PostgresCanvasRuntimeStateRepository, PostgresExtensionPackageArtifactRepository,
-    PostgresInlineFileRepository, PostgresLifecycleAgentRepository,
-    PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
-    PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
-    PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    PostgresAgentRunDeliveryBindingRepository, PostgresAgentRunForkMaterialization,
+    PostgresAgentRunLineageRepository, PostgresAgentRunMailboxRepository,
+    PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
+    PostgresBackendRepository, PostgresCanvasRepository, PostgresCanvasRuntimeStateRepository,
+    PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
+    PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
+    PostgresLifecycleSubjectAssociationRepository, PostgresLlmProviderCredentialRepository,
+    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository,
@@ -143,6 +143,8 @@ pub(crate) async fn build_repositories(
             pool.clone(),
         ),
     );
+    let agent_run_delivery_binding_repo =
+        Arc::new(PostgresAgentRunDeliveryBindingRepository::new(pool.clone()));
     let agent_run_command_receipt_repo =
         Arc::new(PostgresAgentRunCommandReceiptRepository::new(pool.clone()));
     let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
@@ -168,6 +170,7 @@ pub(crate) async fn build_repositories(
         lifecycle_gate_repo.clone(),
         agent_lineage_repo.clone(),
         execution_anchor_repo.clone(),
+        agent_run_delivery_binding_repo.clone(),
         runtime_session_creator.clone(),
         agent_frame_construction.clone(),
     ));
@@ -211,6 +214,7 @@ pub(crate) async fn build_repositories(
         agent_lineage_repo: agent_lineage_repo.clone(),
         agent_run_lineage_repo: agent_run_lineage_repo.clone(),
         execution_anchor_repo: execution_anchor_repo.clone(),
+        agent_run_delivery_binding_repo: agent_run_delivery_binding_repo.clone(),
         agent_run_command_receipt_repo: agent_run_command_receipt_repo.clone(),
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),

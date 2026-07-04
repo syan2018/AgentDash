@@ -282,6 +282,7 @@ impl AppState {
                 run_repo: repos.lifecycle_run_repo.clone(),
                 agent_repo: repos.lifecycle_agent_repo.clone(),
                 frame_repo: repos.agent_frame_repo.clone(),
+                delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
                 permission_grant_repo: repos.permission_grant_repo.clone(),
             },
         ));
@@ -395,6 +396,7 @@ impl AppState {
                 repos.lifecycle_agent_repo.clone(),
                 repos.agent_frame_repo.clone(),
                 repos.execution_anchor_repo.clone(),
+                repos.agent_run_delivery_binding_repo.clone(),
             ),
         );
 

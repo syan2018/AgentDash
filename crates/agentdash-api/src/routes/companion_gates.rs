@@ -54,6 +54,7 @@ pub async fn respond_companion_gate(
         state.repos.agent_frame_repo.clone(),
         state.repos.lifecycle_agent_repo.clone(),
         state.repos.execution_anchor_repo.clone(),
+        state.repos.agent_run_delivery_binding_repo.clone(),
         state.repos.agent_lineage_repo.clone(),
         state.services.session_eventing.clone(),
     )

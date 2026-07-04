@@ -2,6 +2,7 @@ use uuid::Uuid;
 
 use super::agent_frame::AgentFrame;
 use super::agent_lineage::AgentLineage;
+use super::agent_run_delivery_binding::AgentRunDeliveryBinding;
 use super::agent_run_lineage::AgentRunLineage;
 use super::entity::{AgentProcedure, LifecycleRun, WorkflowGraph};
 use super::lifecycle_agent::LifecycleAgent;
@@ -77,6 +78,18 @@ pub trait LifecycleAgentRepository: Send + Sync {
     async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError>;
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError>;
     async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait AgentRunDeliveryBindingRepository: Send + Sync {
+    async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError>;
+    async fn get_current(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Option<AgentRunDeliveryBinding>, DomainError>;
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunDeliveryBinding>, DomainError>;
+    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
 }
 
 #[async_trait::async_trait]

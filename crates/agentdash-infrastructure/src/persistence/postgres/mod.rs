@@ -1,5 +1,6 @@
 mod agent_repository;
 mod agent_run_command_receipt_repository;
+mod agent_run_delivery_binding_repository;
 mod agent_run_lineage_repository;
 mod agent_run_mailbox_repository;
 mod auth_session_repository;
@@ -146,6 +147,7 @@ fn database_constraint_message(
 
 pub use agent_repository::PostgresProjectAgentRepository;
 pub use agent_run_command_receipt_repository::PostgresAgentRunCommandReceiptRepository;
+pub use agent_run_delivery_binding_repository::PostgresAgentRunDeliveryBindingRepository;
 pub use agent_run_lineage_repository::{
     PostgresAgentRunForkMaterialization, PostgresAgentRunLineageRepository,
 };

@@ -306,6 +306,7 @@ pub(crate) async fn build_session_runtime(
             run_repo: repos.lifecycle_run_repo.clone(),
             agent_repo: repos.lifecycle_agent_repo.clone(),
             frame_repo: repos.agent_frame_repo.clone(),
+            delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
             permission_grant_repo: repos.permission_grant_repo.clone(),
         },
     ));
@@ -363,6 +364,7 @@ pub(crate) async fn build_session_runtime(
         .set_accepted_launch_commit_port(accepted_launch_commit_port(
             Some(repos.agent_frame_repo.clone()),
             Some(repos.execution_anchor_repo.clone()),
+            Some(repos.agent_run_delivery_binding_repo.clone()),
             Some(repos.lifecycle_agent_repo.clone()),
             Some(accepted_launch_hook_sync),
         ))
@@ -373,6 +375,7 @@ pub(crate) async fn build_session_runtime(
         project_agent_repo: repos.project_agent_repo.clone(),
         agent_frame_repo: repos.agent_frame_repo.clone(),
         execution_anchor_repo: repos.execution_anchor_repo.clone(),
+        delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
         project_backend_access_repo: repos.project_backend_access_repo.clone(),
         command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
         mailbox_repo: repos.agent_run_mailbox_repo.clone(),

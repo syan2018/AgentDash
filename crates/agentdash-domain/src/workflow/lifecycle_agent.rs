@@ -1,10 +1,7 @@
-use std::str::FromStr;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use uuid::Uuid;
-
-use super::runtime_session_anchor::RuntimeSessionExecutionAnchor;
 
 /// Agent 的创建/启动来源 —— 在 agent **出生时**确定一次，此后不再变更。
 ///
@@ -66,95 +63,6 @@ impl FromStr for AgentSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeliveryBindingStatus {
-    Ready,
-    Running,
-    Terminal,
-    Lost,
-    FrameMissing,
-    DeliveryMissing,
-}
-
-impl DeliveryBindingStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DeliveryBindingStatus::Ready => "ready",
-            DeliveryBindingStatus::Running => "running",
-            DeliveryBindingStatus::Terminal => "terminal",
-            DeliveryBindingStatus::Lost => "lost",
-            DeliveryBindingStatus::FrameMissing => "frame_missing",
-            DeliveryBindingStatus::DeliveryMissing => "delivery_missing",
-        }
-    }
-}
-
-impl std::fmt::Display for DeliveryBindingStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeliveryBindingStatusParseError;
-
-impl std::fmt::Display for DeliveryBindingStatusParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("invalid delivery binding status")
-    }
-}
-
-impl std::error::Error for DeliveryBindingStatusParseError {}
-
-impl FromStr for DeliveryBindingStatus {
-    type Err = DeliveryBindingStatusParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ready" => Ok(DeliveryBindingStatus::Ready),
-            "running" => Ok(DeliveryBindingStatus::Running),
-            "terminal" => Ok(DeliveryBindingStatus::Terminal),
-            "lost" => Ok(DeliveryBindingStatus::Lost),
-            "frame_missing" => Ok(DeliveryBindingStatus::FrameMissing),
-            "delivery_missing" => Ok(DeliveryBindingStatus::DeliveryMissing),
-            _ => Err(DeliveryBindingStatusParseError),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LifecycleAgentCurrentDeliveryBinding {
-    pub runtime_session_id: String,
-    pub launch_frame_id: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub orchestration_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_attempt: Option<u32>,
-    pub status: DeliveryBindingStatus,
-    pub observed_at: DateTime<Utc>,
-}
-
-impl LifecycleAgentCurrentDeliveryBinding {
-    pub fn from_anchor(
-        anchor: &RuntimeSessionExecutionAnchor,
-        status: DeliveryBindingStatus,
-        observed_at: DateTime<Utc>,
-    ) -> Self {
-        Self {
-            runtime_session_id: anchor.runtime_session_id.clone(),
-            launch_frame_id: anchor.launch_frame_id,
-            orchestration_id: anchor.orchestration_id,
-            node_path: anchor.node_path.clone(),
-            node_attempt: anchor.node_attempt,
-            status,
-            observed_at,
-        }
-    }
-}
-
 /// Agent bootstrap 状态 — 控制首轮 owner context 注入是否完成。
 pub mod bootstrap_status {
     pub const PENDING: &str = "pending";
@@ -183,8 +91,6 @@ pub struct LifecycleAgent {
     /// "pending" = 等待首次 bootstrap；"bootstrapped" = 已完成；"not_applicable" = 不需要。
     #[serde(default = "default_bootstrap_status")]
     pub bootstrap_status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_delivery: Option<LifecycleAgentCurrentDeliveryBinding>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -216,7 +122,6 @@ impl LifecycleAgent {
             project_agent_id: None,
             status: "active".to_string(),
             bootstrap_status: bootstrap_status::PENDING.to_string(),
-            current_delivery: None,
             created_at: now,
             updated_at: now,
         }
@@ -230,20 +135,6 @@ impl LifecycleAgent {
     pub fn with_bootstrap_status(mut self, status: &str) -> Self {
         self.bootstrap_status = status.to_string();
         self
-    }
-
-    pub fn bind_current_delivery_from_anchor(
-        &mut self,
-        anchor: &RuntimeSessionExecutionAnchor,
-        status: DeliveryBindingStatus,
-        observed_at: DateTime<Utc>,
-    ) {
-        self.current_delivery = Some(LifecycleAgentCurrentDeliveryBinding::from_anchor(
-            anchor,
-            status,
-            observed_at,
-        ));
-        self.updated_at = Utc::now();
     }
 
     pub fn mark_bootstrapped(&mut self) {
@@ -335,61 +226,5 @@ mod agent_source_tests {
             blank_agent.created_by_user_id,
             LifecycleAgent::SYSTEM_CREATED_BY_USER_ID
         );
-    }
-}
-
-#[cfg(test)]
-mod lifecycle_agent_current_delivery_tests {
-    use super::*;
-
-    #[test]
-    fn delivery_binding_status_slug_round_trips() {
-        for status in [
-            DeliveryBindingStatus::Ready,
-            DeliveryBindingStatus::Running,
-            DeliveryBindingStatus::Terminal,
-            DeliveryBindingStatus::Lost,
-            DeliveryBindingStatus::FrameMissing,
-            DeliveryBindingStatus::DeliveryMissing,
-        ] {
-            assert_eq!(
-                DeliveryBindingStatus::from_str(status.as_str()).unwrap(),
-                status
-            );
-        }
-        assert!(DeliveryBindingStatus::from_str("canceling").is_err());
-    }
-
-    #[test]
-    fn bind_current_delivery_from_anchor_preserves_launch_evidence() {
-        let run_id = Uuid::new_v4();
-        let project_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let launch_frame_id = Uuid::new_v4();
-        let orchestration_id = Uuid::new_v4();
-        let observed_at = Utc::now();
-        let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::WorkflowAgent);
-        agent.id = agent_id;
-
-        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            "runtime-a",
-            run_id,
-            launch_frame_id,
-            agent_id,
-            orchestration_id,
-            "root.plan",
-            2,
-        );
-
-        agent.bind_current_delivery_from_anchor(&anchor, DeliveryBindingStatus::Ready, observed_at);
-
-        let binding = agent.current_delivery.expect("binding");
-        assert_eq!(binding.runtime_session_id, "runtime-a");
-        assert_eq!(binding.launch_frame_id, launch_frame_id);
-        assert_eq!(binding.orchestration_id, Some(orchestration_id));
-        assert_eq!(binding.node_path.as_deref(), Some("root.plan"));
-        assert_eq!(binding.node_attempt, Some(2));
-        assert_eq!(binding.status, DeliveryBindingStatus::Ready);
-        assert_eq!(binding.observed_at, observed_at);
     }
 }

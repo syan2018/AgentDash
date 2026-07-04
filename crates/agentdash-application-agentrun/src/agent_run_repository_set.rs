@@ -28,10 +28,10 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunCommandReceiptRepository, AgentRunLineageRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
-    WorkflowTemplateInstallRepository,
+    AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, AgentRunLineageRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 
@@ -73,6 +73,7 @@ pub struct AgentRunRepositorySet {
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     pub agent_run_lineage_repo: Arc<dyn AgentRunLineageRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,

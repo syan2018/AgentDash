@@ -352,14 +352,14 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         run: &LifecycleRun,
         agent: &LifecycleAgent,
     ) -> Result<Option<DeliveryRuntimeSelection>, WorkflowApplicationError> {
-        if agent.current_delivery.is_none() {
-            return Ok(None);
-        }
-        DeliveryRuntimeSelectionService::from_repository_set(self.repos)
+        match DeliveryRuntimeSelectionService::from_repository_set(self.repos)
             .select_current_delivery(run.id, agent.id)
             .await
-            .map(Some)
-            .map_err(workflow_error_from_selection_error)
+        {
+            Ok(selection) => Ok(Some(selection)),
+            Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
+            Err(error) => Err(workflow_error_from_selection_error(error)),
+        }
     }
 
     async fn resolve_agent_run_frame_vfs(

@@ -37,9 +37,9 @@ Canvas snapshot、Extension runtime、Terminal target、VFS surface、RuntimeGat
 
 `RuntimeSessionExecutionAnchor` 是 create-once launch evidence。同一个 `runtime_session_id`
 只能锚定一组 run / agent / launch frame / orchestration node 坐标；重复创建相同坐标是幂等事实确认。
-AgentRun current delivery selection 从 `LifecycleAgent.current_delivery` 出发，再读取对应 anchor 校验
-run、agent、launch frame 与 node coordinate，原因是 current delivery 表达当前业务绑定，而 anchor
-表达 runtime trace 到控制面坐标的不可变证据。
+AgentRun current delivery selection 从 AgentRun-owned delivery binding 出发，再读取对应 anchor 校验
+run、agent、launch frame 与 node coordinate，原因是 current delivery 是运行中的 AgentRun 状态绑定，
+而 anchor 表达 runtime trace 到控制面坐标的不可变证据。
 
 三个查询语义保持分离：
 

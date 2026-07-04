@@ -19,8 +19,9 @@ use agentdash_domain::agent_run_mailbox::{
 use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
-    AgentRunCommandReceiptRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{AgentConfig, AgentMessage, ContentPart};
@@ -71,6 +72,7 @@ pub struct AgentRunMailboxService<'a> {
     project_agent_repo: &'a dyn ProjectAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
     execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
     project_backend_access_repo: &'a dyn ProjectBackendAccessRepository,
     command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     mailbox_repo: &'a dyn AgentRunMailboxRepository,
@@ -88,6 +90,7 @@ impl<'a> AgentRunMailboxService<'a> {
         project_agent_repo: &'a dyn ProjectAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
         execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+        delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
         project_backend_access_repo: &'a dyn ProjectBackendAccessRepository,
         command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
         mailbox_repo: &'a dyn AgentRunMailboxRepository,
@@ -102,6 +105,7 @@ impl<'a> AgentRunMailboxService<'a> {
             project_agent_repo,
             agent_frame_repo,
             execution_anchor_repo,
+            delivery_binding_repo,
             project_backend_access_repo,
             command_receipt_repo,
             mailbox_repo,

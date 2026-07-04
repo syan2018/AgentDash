@@ -1161,6 +1161,10 @@ async fn cancel_agent_run(
         )
         .await
         .map_err(command_policy_error)?;
+    let delivery_selection = DeliveryRuntimeSelectionService::from_repository_set(&agent_run_repos)
+        .select_current_delivery(context.run.id, context.agent.id)
+        .await
+        .map_err(delivery_runtime_selection_error)?;
     let cancel_runtime = agent_run_session_cancel_runtime(state.services.session_runtime.clone());
     let receipt = AgentRunCancelCommandService::new(
         state.repos.agent_run_command_receipt_repo.as_ref(),
@@ -1169,11 +1173,7 @@ async fn cancel_agent_run(
     .cancel(AgentRunCancelCommand {
         run_id: context.run.id,
         agent_id: context.agent.id,
-        frame_id: context
-            .agent
-            .current_delivery
-            .as_ref()
-            .map(|delivery| delivery.launch_frame_id),
+        frame_id: Some(delivery_selection.launch_frame_id),
         runtime_session_id,
         client_command_id: body.client_command_id,
         reason: None,
@@ -2582,10 +2582,10 @@ mod tests {
     use agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionRepositories;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunLineage, AgentSource,
-        DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
-        LifecycleRunRepository, RuntimeSessionExecutionAnchor,
-        RuntimeSessionExecutionAnchorRepository,
+        AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunDeliveryBinding,
+        AgentRunDeliveryBindingRepository, AgentRunLineage, AgentSource, DeliveryBindingStatus,
+        LifecycleAgent, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
     };
     use tokio::sync::Mutex;
 
@@ -2877,16 +2877,21 @@ mod tests {
 
     #[async_trait::async_trait]
     impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAnchorRepository {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
             let mut anchors = self.anchors.lock().await;
             if let Some(existing) = anchors
-                .iter_mut()
+                .iter()
                 .find(|item| item.runtime_session_id == anchor.runtime_session_id)
             {
-                *existing = anchor.clone();
-            } else {
-                anchors.push(anchor.clone());
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
             }
+            anchors.push(anchor.clone());
             Ok(())
         }
 
@@ -2952,19 +2957,62 @@ mod tests {
                 .cloned()
                 .collect())
         }
+    }
 
-        async fn latest_updated_anchor_for_agent(
+    #[derive(Default)]
+    struct MemoryAgentRunDeliveryBindingRepository {
+        bindings: Mutex<Vec<AgentRunDeliveryBinding>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRunDeliveryBindingRepository for MemoryAgentRunDeliveryBindingRepository {
+        async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
+            let mut bindings = self.bindings.lock().await;
+            if let Some(existing) = bindings
+                .iter_mut()
+                .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
+            {
+                *existing = binding.clone();
+            } else {
+                bindings.push(binding.clone());
+            }
+            Ok(())
+        }
+
+        async fn get_current(
             &self,
+            run_id: Uuid,
             agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
             Ok(self
-                .anchors
+                .bindings
                 .lock()
                 .await
                 .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
+                .find(|item| item.run_id == run_id && item.agent_id == agent_id)
                 .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .await
+                .iter()
+                .filter(|item| item.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.bindings
+                .lock()
+                .await
+                .retain(|item| item.runtime_session_id != runtime_session_id);
+            Ok(())
         }
     }
 
@@ -2974,6 +3022,7 @@ mod tests {
         agents: MemoryLifecycleAgentRepository,
         frames: MemoryAgentFrameRepository,
         anchors: MemoryRuntimeSessionExecutionAnchorRepository,
+        delivery_bindings: MemoryAgentRunDeliveryBindingRepository,
     }
 
     impl DeliverySelectionFixture {
@@ -2983,12 +3032,13 @@ mod tests {
                 lifecycle_agents: &self.agents,
                 agent_frames: &self.frames,
                 execution_anchors: &self.anchors,
+                delivery_bindings: &self.delivery_bindings,
             })
         }
     }
 
     #[tokio::test]
-    async fn delivery_runtime_session_context_ignores_old_anchor_without_current_delivery() {
+    async fn delivery_runtime_session_context_ignores_anchor_without_binding() {
         let fixture = DeliverySelectionFixture::default();
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
@@ -3015,7 +3065,7 @@ mod tests {
         fixture.agents.create(&agent).await.expect("agent");
         fixture
             .anchors
-            .upsert(&old_anchor)
+            .create_once(&old_anchor)
             .await
             .expect("old anchor");
 
@@ -3031,10 +3081,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delivery_runtime_session_context_uses_current_delivery_not_latest_anchor() {
+    async fn delivery_runtime_session_context_uses_binding_not_latest_anchor() {
         let fixture = DeliverySelectionFixture::default();
         let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let current_launch_frame = AgentFrame::new_initial(agent.id);
         let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
 
@@ -3052,7 +3102,7 @@ mod tests {
             agent.id,
         );
         latest_anchor.updated_at = Utc::now();
-        agent.bind_current_delivery_from_anchor(
+        let current_binding = AgentRunDeliveryBinding::from_anchor(
             &current_anchor,
             DeliveryBindingStatus::Running,
             current_anchor.updated_at,
@@ -3072,14 +3122,19 @@ mod tests {
         fixture.agents.create(&agent).await.expect("agent");
         fixture
             .anchors
-            .upsert(&latest_anchor)
+            .create_once(&latest_anchor)
             .await
             .expect("latest anchor");
         fixture
             .anchors
-            .upsert(&current_anchor)
+            .create_once(&current_anchor)
             .await
             .expect("current anchor");
+        fixture
+            .delivery_bindings
+            .upsert(&current_binding)
+            .await
+            .expect("current binding");
 
         let runtime_session_id = delivery_runtime_session_for_agent_run_from_selection(
             fixture.service(),
@@ -3261,7 +3316,7 @@ mod tests {
         let state = agentdash_domain::agent_run_mailbox::AgentRunMailboxState {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
-            runtime_session_id: "runtime-1".to_string(),
+            runtime_session_id: Some("runtime-1".to_string()),
             paused: true,
             pause_reason: Some("turn_interrupted".to_string()),
             pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
@@ -3284,7 +3339,7 @@ mod tests {
         let state = agentdash_domain::agent_run_mailbox::AgentRunMailboxState {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
-            runtime_session_id: "runtime-1".to_string(),
+            runtime_session_id: Some("runtime-1".to_string()),
             paused: true,
             pause_reason: Some("turn_interrupted".to_string()),
             pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),

@@ -346,9 +346,12 @@ fn mailbox_message_accepted_refs(
             agent_id: message.agent_id.to_string(),
         },
         frame_ref: None,
-        runtime_session_ref: Some(RuntimeSessionRefDto {
-            runtime_session_id: message.runtime_session_id.clone(),
-        }),
+        runtime_session_ref: message
+            .runtime_session_id
+            .as_ref()
+            .map(|runtime_session_id| RuntimeSessionRefDto {
+                runtime_session_id: runtime_session_id.clone(),
+            }),
         agent_run_turn_id: message.accepted_agent_run_turn_id.clone(),
         protocol_turn_id: message.accepted_protocol_turn_id.clone(),
     })

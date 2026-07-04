@@ -3,7 +3,7 @@
 //! 单一所有者：API 路由层不再内联投影逻辑，统一通过本模块构建 read model，
 //! 确保 `runtime_trace_refs`、`subject_associations` 等字段始终被正确填充。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -18,7 +18,7 @@ pub use agentdash_application_ports::lifecycle_read_model::{
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentLineage, ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
+    AgentLineage, AgentRunDeliveryBinding, ExecutorRunRef as DomainExecutorRunRef, LifecycleAgent,
     LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
     LifecycleRunStatus as DomainLifecycleRunStatus,
     LifecycleRunTopology as DomainLifecycleRunTopology, LifecycleSubjectAssociation,
@@ -88,10 +88,14 @@ pub async fn build_lifecycle_run_view_with_preloaded(
     let orchestrations = orchestration_views(run);
     let active_runtime_node_refs = active_runtime_node_refs(run);
     let runtime_trace_refs = collect_runtime_trace_refs(repos, run.id).await?;
+    let delivery_bindings = repos
+        .agent_run_delivery_binding_repo
+        .list_by_run(run.id)
+        .await?;
 
     Ok(assemble_lifecycle_run_view(
         run,
-        lifecycle_agent_views(&agents),
+        lifecycle_agent_views(&agents, &delivery_bindings),
         subject_associations
             .iter()
             .map(association_to_view)
@@ -127,10 +131,16 @@ pub async fn build_subject_execution_view(
 
     for run in &runs {
         let agents = repos.lifecycle_agent_repo.list_by_run(run.id).await?;
+        let delivery_bindings = repos
+            .agent_run_delivery_binding_repo
+            .list_by_run(run.id)
+            .await?;
+        let delivery_bindings_by_agent = delivery_bindings_by_agent(&delivery_bindings);
 
         if current_agent.is_none() {
-            current_agent =
-                select_current_agent(&associations, &agents).map(lifecycle_agent_to_view);
+            current_agent = select_current_agent(&associations, &agents).map(|agent| {
+                lifecycle_agent_to_view(agent, delivery_bindings_by_agent.get(&agent.id).copied())
+            });
         }
 
         run_views.push(build_lifecycle_run_view_with_preloaded(repos, run, agents).await?);
@@ -372,8 +382,10 @@ pub fn association_to_view(
     }
 }
 
-pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> AgentRunView {
-    let current_delivery = agent.current_delivery.as_ref();
+pub fn lifecycle_agent_to_view(
+    agent: &LifecycleAgent,
+    current_delivery: Option<&AgentRunDeliveryBinding>,
+) -> AgentRunView {
     AgentRunView {
         agent_ref: AgentRunRefView {
             run_id: agent.run_id.to_string(),
@@ -392,8 +404,26 @@ pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> AgentRunView {
     }
 }
 
-fn lifecycle_agent_views(agents: &[LifecycleAgent]) -> Vec<AgentRunView> {
-    agents.iter().map(lifecycle_agent_to_view).collect()
+fn lifecycle_agent_views(
+    agents: &[LifecycleAgent],
+    delivery_bindings: &[AgentRunDeliveryBinding],
+) -> Vec<AgentRunView> {
+    let delivery_bindings_by_agent = delivery_bindings_by_agent(delivery_bindings);
+    agents
+        .iter()
+        .map(|agent| {
+            lifecycle_agent_to_view(agent, delivery_bindings_by_agent.get(&agent.id).copied())
+        })
+        .collect()
+}
+
+fn delivery_bindings_by_agent(
+    delivery_bindings: &[AgentRunDeliveryBinding],
+) -> HashMap<Uuid, &AgentRunDeliveryBinding> {
+    delivery_bindings
+        .iter()
+        .map(|binding| (binding.agent_id, binding))
+        .collect()
 }
 
 // ── Internal pure helpers ──────────────────────────────────────
@@ -788,7 +818,7 @@ mod tests {
     #[test]
     fn lifecycle_agent_view_uses_current_delivery_not_raw_latest_anchor() {
         let run = LifecycleRun::new_plain(Uuid::new_v4());
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let launch_frame_id = Uuid::new_v4();
         let current_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "runtime-current-delivery",
@@ -802,13 +832,13 @@ mod tests {
             launch_frame_id,
             agent.id,
         );
-        agent.bind_current_delivery_from_anchor(
+        let binding = AgentRunDeliveryBinding::from_anchor(
             &current_anchor,
             DeliveryBindingStatus::Running,
             current_anchor.updated_at,
         );
 
-        let view = lifecycle_agent_to_view(&agent);
+        let view = lifecycle_agent_to_view(&agent, Some(&binding));
 
         assert_eq!(
             view.delivery_runtime_ref
@@ -830,7 +860,7 @@ mod tests {
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
 
-        let view = lifecycle_agent_to_view(&agent);
+        let view = lifecycle_agent_to_view(&agent, None);
 
         assert!(view.delivery_runtime_ref.is_none());
         assert!(view.last_delivery_status.is_none());

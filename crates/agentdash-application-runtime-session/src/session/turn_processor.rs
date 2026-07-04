@@ -383,7 +383,7 @@ mod tests {
         assert!(registry.has_active_turn(session_id).await);
 
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let base_stores = SessionStoreSet::from_persistence(persistence);
+        let base_stores = SessionStoreSet::from_shared_store(persistence);
         let stores = SessionStoreSet {
             events: Arc::new(FailingEventStore),
             ..base_stores
@@ -467,7 +467,7 @@ mod tests {
         assert!(registry.has_active_turn(session_id).await);
 
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&SessionMeta {

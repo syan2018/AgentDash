@@ -68,7 +68,8 @@ impl SessionHookService {
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         if self
             .hub
-            .persistence
+            .stores
+            .meta
             .get_session_meta(&target.delivery_runtime_session_id)
             .await
             .map_err(std::io::Error::from)?

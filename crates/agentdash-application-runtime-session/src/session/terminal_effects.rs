@@ -511,7 +511,7 @@ mod tests {
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
     use crate::session::types::{ExecutionStatus, SessionMeta, TitleSource};
-    use crate::session::{MemorySessionPersistence, SessionMetaStore};
+    use crate::session::{MemorySessionPersistence, SessionMetaStore, SessionStoreSet};
 
     #[test]
     fn terminal_effect_status_round_trips_wire_values() {
@@ -556,10 +556,10 @@ mod tests {
             .await
             .expect("session should be created");
 
-        let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
+        let hub = SessionRuntimeInner::new_with_hooks_and_stores(
             Arc::new(NoopConnector),
             None,
-            persistence.clone(),
+            SessionStoreSet::from_shared_store(persistence.clone()),
         );
         let executed = Arc::new(Mutex::new(Vec::<String>::new()));
         hub.set_hook_effect_handler_registry(Arc::new(RecordingHookEffectRegistry {

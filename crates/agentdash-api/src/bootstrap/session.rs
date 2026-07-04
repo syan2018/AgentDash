@@ -33,8 +33,8 @@ use agentdash_application_runtime_session::session::terminal_cache::SessionTermi
 use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
     SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
-    SessionLaunchService, SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService,
-    SessionRuntimeTransitionService, SessionTerminalCallback, SessionTitleService,
+    SessionLaunchService, SessionRuntimeBuilder, SessionRuntimeService,
+    SessionRuntimeTransitionService, SessionStoreSet, SessionTerminalCallback, SessionTitleService,
     SessionToolResultCache, SessionToolResultCachePut,
 };
 use agentdash_application_vfs::tools::RuntimeVfsState;
@@ -179,7 +179,7 @@ fn convert_effective_capability_view(
 
 pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
-    pub session_persistence: Arc<dyn SessionPersistence>,
+    pub session_stores: SessionStoreSet,
     pub tool_result_cache: Arc<SessionToolResultCache>,
     pub backend_registry: Arc<BackendRegistry>,
     pub vfs_service: Arc<VfsService>,
@@ -222,7 +222,7 @@ pub(crate) async fn build_session_runtime(
 ) -> Result<SessionBootstrapOutput> {
     let SessionBootstrapInput {
         repos,
-        session_persistence,
+        session_stores,
         tool_result_cache,
         backend_registry,
         vfs_service,
@@ -324,10 +324,10 @@ pub(crate) async fn build_session_runtime(
         repos.permission_grant_repo.clone(),
     );
 
-    let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
+    let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_stores(
         connector.clone(),
         Some(hook_provider.clone()),
-        session_persistence,
+        session_stores,
     )
     .with_vfs_service(vfs_service.clone())
     .with_extra_skill_dirs(extra_skill_dirs.clone())

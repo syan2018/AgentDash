@@ -195,6 +195,7 @@ impl AppState {
         let repos = repository_bootstrap.repos;
         let auth_session_service = repository_bootstrap.auth_session_service;
         let session_persistence = repository_bootstrap.session_persistence;
+        let session_stores = repository_bootstrap.session_stores;
         let tool_result_cache =
             agentdash_application_runtime_session::session::SessionToolResultCache::new();
         let extension_package_artifact_storage =
@@ -238,7 +239,7 @@ impl AppState {
         let session_bootstrap = crate::bootstrap::session::build_session_runtime(
             crate::bootstrap::session::SessionBootstrapInput {
                 repos: repos.clone(),
-                session_persistence: session_persistence.clone(),
+                session_stores,
                 tool_result_cache: tool_result_cache.clone(),
                 backend_registry: backend_registry.clone(),
                 vfs_service: vfs_service.clone(),

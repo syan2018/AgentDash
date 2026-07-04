@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_application_runtime_session::session::{
-    SessionExecutionState, SessionRuntimeServices,
+    SessionExecutionState, SessionRuntimeServices, SessionStoreSet,
 };
 use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
@@ -581,10 +581,11 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool).await?;
         let session_repo = Arc::new(PostgresSessionRepository::new(db_runtime.pool.clone()));
         session_repo.initialize().await?;
-        let session_runtime = SessionRuntimeServices::new_with_hooks_and_persistence(
+        let session_stores = SessionStoreSet::from_shared_store(session_repo);
+        let session_runtime = SessionRuntimeServices::new_with_hooks_and_stores(
             connector.clone(),
             None,
-            session_repo,
+            session_stores,
         );
 
         if let Err(error) = session_runtime.runtime.recover_interrupted_sessions().await {

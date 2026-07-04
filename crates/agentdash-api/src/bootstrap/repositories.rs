@@ -12,7 +12,7 @@ use agentdash_application_agentrun::agent_run::frame::{
 use agentdash_application_lifecycle::{
     AgentRunLifecycleSurfaceProjector, SessionPersistenceRuntimeSessionCreator,
 };
-use agentdash_application_runtime_session::session::SessionPersistence;
+use agentdash_application_runtime_session::session::SessionStoreSet;
 use agentdash_application_shared_library::{
     BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
     SeedBuiltinLibraryAssetsInput, SharedLibraryService,
@@ -37,10 +37,12 @@ use agentdash_infrastructure::{
     PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
+use agentdash_spi::session_persistence::SessionPersistence;
 
 pub(crate) struct RepositoryBootstrapOutput {
     pub repos: RepositorySet,
     pub session_persistence: Arc<dyn SessionPersistence>,
+    pub session_stores: SessionStoreSet,
     pub auth_session_service: Arc<AuthSessionService>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
 }
@@ -65,6 +67,7 @@ pub(crate) async fn build_repositories(
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
 
     let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
+    let session_stores = SessionStoreSet::from_shared_store(session_repo.clone());
     let runtime_session_creator = Arc::new(SessionPersistenceRuntimeSessionCreator::new(
         session_repo.clone(),
     ));
@@ -242,6 +245,7 @@ pub(crate) async fn build_repositories(
     Ok(RepositoryBootstrapOutput {
         repos,
         session_persistence: session_repo,
+        session_stores,
         auth_session_service,
         extension_package_artifact_storage: Arc::new(
             FilesystemExtensionPackageArtifactStorage::default(),

@@ -88,8 +88,8 @@ pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
     PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
     SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
-    SessionLineageStore, SessionMetaStore, SessionPersistence, SessionProjectionStore,
-    SessionRuntimeCommandStore, SessionTerminalEffectStore,
+    SessionLineageStore, SessionMetaStore, SessionProjectionStore, SessionRuntimeCommandStore,
+    SessionStoreSet, SessionTerminalEffectStore,
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,

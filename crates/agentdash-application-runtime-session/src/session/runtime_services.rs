@@ -9,7 +9,7 @@ use super::core::SessionCoreService;
 use super::eventing::SessionEventingService;
 use super::hub::SessionRuntimeInner;
 use super::launch::SessionLaunchService;
-use super::persistence::SessionPersistence;
+use super::persistence::SessionStoreSet;
 use super::runtime_control::SessionRuntimeService;
 
 #[derive(Clone)]
@@ -23,16 +23,13 @@ pub struct SessionRuntimeServices {
 }
 
 impl SessionRuntimeServices {
-    pub fn new_with_hooks_and_persistence(
+    pub fn new_with_hooks_and_stores(
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
-        persistence: Arc<dyn SessionPersistence>,
+        stores: SessionStoreSet,
     ) -> Self {
-        let inner = SessionRuntimeInner::new_with_hooks_and_persistence(
-            connector,
-            hook_provider,
-            persistence,
-        );
+        let inner =
+            SessionRuntimeInner::new_with_hooks_and_stores(connector, hook_provider, stores);
         Self::from_inner(&inner)
     }
 

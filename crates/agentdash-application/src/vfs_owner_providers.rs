@@ -5,10 +5,11 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::routine::RoutineExecutionRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::workflow::LifecycleRunRepository;
+use agentdash_spi::session_persistence::SessionPersistence;
 
 use crate::canvas::CanvasFsMountProvider;
 use crate::lifecycle::LifecycleMountProvider;
-use crate::session::{SessionPersistence, SessionToolResultCache};
+use crate::session::SessionToolResultCache;
 use crate::vfs::provider::MountProviderRegistryBuilder;
 use crate::vfs::{InlineFsMountProvider, RoutineMountProvider, SkillAssetFsMountProvider};
 

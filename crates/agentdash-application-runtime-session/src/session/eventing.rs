@@ -1884,7 +1884,7 @@ mod tests {
     async fn source_session_title_projects_to_session_meta() {
         let session_id = "sess-source-title";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -1937,7 +1937,7 @@ mod tests {
     async fn source_session_title_does_not_overwrite_user_title() {
         let session_id = "sess-user-title";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         let mut meta = test_meta(session_id, TitleSource::User);
         meta.title = "Pinned title".to_string();
         stores
@@ -1966,7 +1966,7 @@ mod tests {
     async fn source_session_title_ignores_preview_title() {
         let session_id = "sess-preview-title";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -1996,7 +1996,7 @@ mod tests {
     async fn context_compacted_missing_summary_or_boundary_is_not_persisted() {
         let session_id = "sess-bad-context-compaction";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2058,7 +2058,7 @@ mod tests {
     async fn executor_context_compacted_is_telemetry_and_does_not_advance_projection_head() {
         let session_id = "sess-external-compact";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2099,7 +2099,7 @@ mod tests {
     async fn session_rewind_marker_excludes_failed_turn_from_model_context() {
         let session_id = "sess-rewind-projection";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2240,7 +2240,7 @@ mod tests {
     async fn multiple_session_rewind_markers_exclude_all_failed_turns_from_model_context() {
         let session_id = "sess-multiple-rewind-projection";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2374,7 +2374,7 @@ mod tests {
         let session_id = "sess-append-guard-tool";
         let sentinel = "SENTINEL_TOOL_OUTPUT_SHOULD_NOT_PERSIST";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2430,7 +2430,7 @@ mod tests {
         let session_id = "sess-append-guard-terminal";
         let sentinel = "SENTINEL_TERMINAL_OUTPUT_SHOULD_NOT_PERSIST";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2474,7 +2474,7 @@ mod tests {
     async fn append_guard_leaves_small_events_unchanged() {
         let session_id = "sess-append-guard-small";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2510,7 +2510,7 @@ mod tests {
     async fn ephemeral_event_broadcasts_without_durable_append() {
         let session_id = "sess-ephemeral-delta";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2560,7 +2560,7 @@ mod tests {
     async fn provider_attempt_status_is_live_only() {
         let session_id = "sess-ephemeral-provider-status";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2624,7 +2624,7 @@ mod tests {
     async fn matched_silent_hook_trace_is_live_only() {
         let session_id = "sess-ephemeral-hook-trace";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2671,7 +2671,7 @@ mod tests {
     async fn actionful_hook_trace_is_durable() {
         let session_id = "sess-durable-hook-trace";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2704,7 +2704,7 @@ mod tests {
     async fn ephemeral_seq_is_monotonic_and_cleared_on_turn_terminal() {
         let session_id = "sess-ephemeral-clear";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2776,7 +2776,7 @@ mod tests {
     async fn durable_event_still_appends() {
         let session_id = "sess-durable-still-appends";
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let stores = SessionStoreSet::from_shared_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))

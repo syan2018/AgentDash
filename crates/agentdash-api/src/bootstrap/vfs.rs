@@ -4,11 +4,12 @@ use std::sync::Arc;
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::vfs_owner_providers::MountProviderRegistryBuilderOwnerExt;
-use agentdash_application_runtime_session::session::{SessionPersistence, SessionToolResultCache};
+use agentdash_application_runtime_session::session::SessionToolResultCache;
 use agentdash_application_vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application_vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
 use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
+use agentdash_spi::session_persistence::SessionPersistence;
 
 use crate::mount_providers::RelayFsMountProvider;
 use crate::relay::registry::BackendRegistry;

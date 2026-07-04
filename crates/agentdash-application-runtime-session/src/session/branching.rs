@@ -797,7 +797,7 @@ mod tests {
 
     fn test_stores() -> (Arc<MemorySessionPersistence>, SessionStoreSet) {
         let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence.clone());
+        let stores = SessionStoreSet::from_shared_store(persistence.clone());
         (persistence, stores)
     }
 

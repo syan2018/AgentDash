@@ -6,10 +6,10 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
+use agentdash_application_agentrun::agent_run::AgentRunTerminalLaunchTarget;
 use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
 use agentdash_relay::*;
 
-use crate::agent_run_runtime_surface::resolve_terminal_launch_target_for_api;
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::relay::registry::BackendCommandError;
@@ -37,7 +37,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
         .route(
             "/sessions/{id}/terminals",
-            axum::routing::get(list_terminals).post(spawn_terminal),
+            axum::routing::get(list_terminals),
         )
         .route("/terminals/{id}/input", axum::routing::post(terminal_input))
         .route(
@@ -47,13 +47,12 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route("/terminals/{id}", axum::routing::delete(terminal_kill))
 }
 
-pub async fn spawn_terminal(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-    Json(body): Json<SpawnTerminalBody>,
+pub(crate) async fn spawn_terminal_for_runtime_session(
+    state: &Arc<AppState>,
+    session_id: &str,
+    target: AgentRunTerminalLaunchTarget,
+    body: SpawnTerminalBody,
 ) -> Result<Response, ApiError> {
-    let target = resolve_terminal_launch_target_for_api(&state, &current_user, &session_id).await?;
     if !state
         .services
         .backend_registry
@@ -61,7 +60,7 @@ pub async fn spawn_terminal(
         .await
     {
         return Err(ApiError::Conflict(format!(
-            "Session 默认 workspace 所属 Backend 当前不在线: {}",
+            "RuntimeSession 默认 workspace 所属 Backend 当前不在线: {}",
             target.backend_id
         )));
     }
@@ -69,7 +68,7 @@ pub async fn spawn_terminal(
     let terminal_id = RelayMessage::new_id("term");
     let payload = TerminalSpawnPayload {
         terminal_id: terminal_id.clone(),
-        session_id: session_id.clone(),
+        session_id: session_id.to_string(),
         mount_root_ref: target.mount_root_ref,
         cwd: body.cwd,
         shell: body.shell,
@@ -79,7 +78,7 @@ pub async fn spawn_terminal(
 
     // 预注册到 cache，避免 event_tx 事件到达时 cache 尚未就绪的 race condition
     state.services.terminal_cache.register_terminal(
-        &session_id,
+        session_id,
         &terminal_id,
         &target.backend_id,
         None,
@@ -109,6 +108,7 @@ pub async fn spawn_terminal(
             }
             Ok(Json(serde_json::json!({
                 "terminal_id": resp.terminal_id,
+                "runtime_session_id": session_id,
                 "process_id": resp.process_id,
             }))
             .into_response())

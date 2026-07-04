@@ -29,6 +29,12 @@ pub(crate) struct ApiCurrentRuntimeSurfaceWithBackend {
     pub runtime_backend_anchor: RuntimeBackendAnchor,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ApiTerminalLaunchTarget {
+    pub project_id: Uuid,
+    pub target: AgentRunTerminalLaunchTarget,
+}
+
 pub(crate) async fn resolve_current_runtime_surface_for_api(
     state: &Arc<AppState>,
     current_user: &AuthIdentity,
@@ -122,11 +128,10 @@ pub(crate) fn ensure_current_runtime_surface_project_matches(
     Ok(())
 }
 
-pub(crate) async fn resolve_terminal_launch_target_for_api(
+pub(crate) async fn resolve_terminal_launch_target_for_runtime_session(
     state: &Arc<AppState>,
-    current_user: &AuthIdentity,
     session_id: &str,
-) -> Result<AgentRunTerminalLaunchTarget, ApiError> {
+) -> Result<ApiTerminalLaunchTarget, ApiError> {
     ensure_runtime_session_exists(state, session_id).await?;
     let runtime_surface = state
         .services
@@ -137,15 +142,10 @@ pub(crate) async fn resolve_terminal_launch_target_for_api(
         )
         .await
         .map_err(runtime_surface_query_error_to_api)?;
-    load_project_with_permission(
-        state.as_ref(),
-        current_user,
-        runtime_surface.surface.project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    terminal_launch_target_from_current_surface(&runtime_surface)
-        .map_err(terminal_launch_target_error_to_api)
+    let project_id = runtime_surface.surface.project_id;
+    let target = terminal_launch_target_from_current_surface(&runtime_surface)
+        .map_err(terminal_launch_target_error_to_api)?;
+    Ok(ApiTerminalLaunchTarget { project_id, target })
 }
 
 async fn ensure_runtime_session_exists(

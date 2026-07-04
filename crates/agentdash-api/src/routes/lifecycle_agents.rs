@@ -21,9 +21,11 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteRepos, AgentRunForkCommand,
     AgentRunForkCommandResult, AgentRunForkService, AgentRunForkSubmitCommand,
     AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
-    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, ProjectAgentRunStartRepos,
+    AgentRunTerminalLaunchTarget, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService,
+    ProjectAgentRunStartRepos,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
+use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
     AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
@@ -65,8 +67,10 @@ use uuid::Uuid;
 
 use crate::dto::{
     ContextAuditQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionEventsQuery,
+    SpawnTerminalBody,
 };
 use crate::{
+    agent_run_runtime_surface::resolve_terminal_launch_target_for_runtime_session,
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::{
@@ -75,7 +79,7 @@ use crate::{
             backend_selection_input, command_receipt_view, mailbox_command_outcome_view,
             mailbox_message_view, mailbox_message_visible, mailbox_state_view,
         },
-        sessions,
+        sessions, terminals,
         vfs_surfaces::dto as vfs_surface_dto,
     },
     rpc::{ApiError, ApiErrorWithCode},
@@ -153,6 +157,11 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/events",
             axum::routing::get(list_agent_run_runtime_events),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals",
+            axum::routing::get(list_agent_run_runtime_terminals)
+                .post(spawn_agent_run_runtime_terminal),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
@@ -1194,6 +1203,59 @@ async fn list_agent_run_runtime_events(
         sessions::load_runtime_session_events_page(state.as_ref(), &runtime_session_id, query)
             .await?,
     ))
+}
+
+async fn list_agent_run_runtime_terminals(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<Vec<TerminalState>>, ApiError> {
+    let (runtime_session_id, _) =
+        resolve_agent_run_terminal_launch_target(&state, &current_user, &run_id, &agent_id).await?;
+    Ok(Json(
+        state
+            .services
+            .terminal_cache
+            .list_terminals(&runtime_session_id),
+    ))
+}
+
+async fn spawn_agent_run_runtime_terminal(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<SpawnTerminalBody>,
+) -> Result<impl IntoResponse, ApiError> {
+    let (runtime_session_id, launch_target) =
+        resolve_agent_run_terminal_launch_target(&state, &current_user, &run_id, &agent_id).await?;
+    terminals::spawn_terminal_for_runtime_session(&state, &runtime_session_id, launch_target, body)
+        .await
+}
+
+async fn resolve_agent_run_terminal_launch_target(
+    state: &Arc<AppState>,
+    current_user: &agentdash_integration_api::AuthIdentity,
+    run_id: &str,
+    agent_id: &str,
+) -> Result<(String, AgentRunTerminalLaunchTarget), ApiError> {
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        current_user,
+        run_id,
+        agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let runtime_session_id = delivery_runtime_session_from_agent_run_context(&context)?;
+    let launch_target =
+        resolve_terminal_launch_target_for_runtime_session(&state, &runtime_session_id).await?;
+    if launch_target.project_id != context.run.project_id {
+        return Err(ApiError::Conflict(format!(
+            "AgentRun {} / {} 与 terminal runtime surface Project 不一致",
+            context.run.id, context.agent.id
+        )));
+    }
+    Ok((runtime_session_id, launch_target.target))
 }
 
 async fn get_agent_run_runtime_context_projection(

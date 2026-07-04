@@ -366,6 +366,12 @@ pub(crate) async fn build_session_runtime(
             Some(repos.execution_anchor_repo.clone()),
             Some(repos.agent_run_delivery_binding_repo.clone()),
             Some(repos.lifecycle_agent_repo.clone()),
+            Some(
+                agentdash_application_lifecycle::accepted_turn_lifecycle_advance_port(
+                    repos.execution_anchor_repo.clone(),
+                    repos.lifecycle_run_repo.clone(),
+                ),
+            ),
             Some(accepted_launch_hook_sync),
         ))
         .await;

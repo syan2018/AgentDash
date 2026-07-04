@@ -216,7 +216,7 @@ pub trait AcceptedLaunchCommitPort: Send + Sync {
     async fn commit_accepted_launch(
         &self,
         input: AcceptedLaunchCommitInput,
-    ) -> AcceptedLaunchCommitOutcome;
+    ) -> Result<AcceptedLaunchCommitOutcome, agentdash_spi::ConnectorError>;
 }
 
 #[async_trait]

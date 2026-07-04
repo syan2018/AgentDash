@@ -4,15 +4,14 @@ use std::sync::Arc;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityPort;
 use agentdash_application_ports::frame_launch_envelope::{
-    AcceptedLaunchCommitInput, AcceptedLaunchCommitOutcome, AcceptedLaunchCommitPort,
-    SharedFrameLaunchEnvelopePort,
+    AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
 };
 use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
 use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxRuntimePort;
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_domain::settings::SettingsRepository;
-use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
+use agentdash_spi::{AgentConnector, ConnectorError};
 
 use crate::context::SharedContextAuditBus;
 use crate::session::core::SessionCoreService;
@@ -145,12 +144,17 @@ impl SessionLaunchDeps {
 
     pub(super) async fn current_accepted_launch_commit_port(
         &self,
-    ) -> Arc<dyn AcceptedLaunchCommitPort> {
+    ) -> Result<Arc<dyn AcceptedLaunchCommitPort>, ConnectorError> {
         self.accepted_launch_commit_port
             .read()
             .await
             .clone()
-            .unwrap_or_else(|| Arc::new(NoopAcceptedLaunchCommitPort))
+            .ok_or_else(|| {
+                ConnectorError::Runtime(
+                    "accepted_launch_commit_port 未注入，拒绝 RuntimeSession accepted launch"
+                        .to_string(),
+                )
+            })
     }
 
     pub(super) fn ingestion(&self) -> StreamIngestionDeps {
@@ -159,24 +163,6 @@ impl SessionLaunchDeps {
             eventing: self.eventing.clone(),
             effects: self.effects.clone(),
         }
-    }
-}
-
-struct NoopAcceptedLaunchCommitPort;
-
-#[async_trait::async_trait]
-impl AcceptedLaunchCommitPort for NoopAcceptedLaunchCommitPort {
-    async fn agent_needs_bootstrap(&self, _runtime_session_id: &str) -> bool {
-        false
-    }
-
-    async fn mark_agent_bootstrapped(&self, _runtime_session_id: &str) {}
-
-    async fn commit_accepted_launch(
-        &self,
-        _input: AcceptedLaunchCommitInput,
-    ) -> AcceptedLaunchCommitOutcome {
-        AcceptedLaunchCommitOutcome::empty()
     }
 }
 

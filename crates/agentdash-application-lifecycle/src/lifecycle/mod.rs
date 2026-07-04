@@ -1,3 +1,4 @@
+mod accepted_turn_lifecycle;
 pub(crate) mod activity_activation;
 mod completion;
 mod dispatch;
@@ -19,6 +20,9 @@ pub(crate) mod vfs_catalog;
 pub(crate) mod vfs_mount;
 pub mod vfs_provider;
 
+pub use accepted_turn_lifecycle::{
+    AcceptedTurnLifecycleAdvanceService, accepted_turn_lifecycle_advance_port,
+};
 pub(crate) use activity_activation::ActivityActivation;
 pub use agentdash_application_workflow::WorkflowApplicationError;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};

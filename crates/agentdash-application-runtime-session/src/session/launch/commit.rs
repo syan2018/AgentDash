@@ -2,6 +2,7 @@ use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, S
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchCommitInput;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_spi::{ConnectorError, McpServerReadinessSummary};
+use std::fmt::Display;
 
 use super::connector_start::ConnectorAcceptedTurn;
 use super::deps::TurnCommitDeps;
@@ -13,7 +14,7 @@ use crate::session::persistence::SessionRuntimeCommandStore;
 use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource};
 
 /// Accepted-after-commit boundary: connector accepted 后的 user/start/context/runtime
-/// facts 已提交。Frame/bootstrap accepted 在本 stage 内作为独立副作用提交。
+/// facts 与 AgentRun accepted 控制面提交均已成功。
 pub(in crate::session) struct CommittedTurn {
     pub accepted: ConnectorAcceptedTurn,
 }
@@ -37,14 +38,26 @@ impl TurnCommitter {
         let session_id = prepared.session_id.as_str();
         let turn_id = prepared.turn_id.as_str();
 
-        self.commit_accepted_launch_events(
-            session_id,
-            &prepared.source,
-            turn_id,
-            &prepared.resolved_payload,
-            prepared.started_at_ms,
-        )
-        .await;
+        if let Err(error) = self
+            .commit_accepted_launch_events(
+                session_id,
+                &prepared.source,
+                turn_id,
+                &prepared.resolved_payload,
+                prepared.started_at_ms,
+            )
+            .await
+        {
+            return Err(self
+                .fail_accepted_boundary(
+                    session_id,
+                    &prepared.source,
+                    turn_id,
+                    "accepted launch events commit",
+                    error,
+                )
+                .await);
+        }
 
         self.commit_mcp_readiness_notice(
             session_id,
@@ -54,26 +67,65 @@ impl TurnCommitter {
         .await;
 
         if let Some(record) = prepared.context_delivery_record.as_ref() {
-            let _ = self
+            if let Err(error) = self
                 .deps
                 .eventing
                 .emit_context_delivery_record(session_id, Some(turn_id), record)
-                .await;
+                .await
+                .map(|_| ())
+                .map_err(|error| connector_commit_error("ContextDeliveryRecord 提交失败", error))
+            {
+                return Err(self
+                    .fail_accepted_boundary(
+                        session_id,
+                        &prepared.source,
+                        turn_id,
+                        "context delivery record commit",
+                        error,
+                    )
+                    .await);
+            }
         }
 
         for frame in &prepared.pending_transition_application.context_frames {
-            let _ = self
+            if let Err(error) = self
                 .deps
                 .eventing
                 .emit_context_frame(session_id, Some(turn_id), frame)
-                .await;
+                .await
+                .map(|_| ())
+                .map_err(|error| connector_commit_error("pending context_frame 提交失败", error))
+            {
+                return Err(self
+                    .fail_accepted_boundary(
+                        session_id,
+                        &prepared.source,
+                        turn_id,
+                        "pending context frame commit",
+                        error,
+                    )
+                    .await);
+            }
         }
         for frame in &prepared.accepted_context_frames_to_emit {
-            let _ = self
+            if let Err(error) = self
                 .deps
                 .eventing
                 .emit_context_frame(session_id, Some(turn_id), frame)
-                .await;
+                .await
+                .map(|_| ())
+                .map_err(|error| connector_commit_error("accepted context_frame 提交失败", error))
+            {
+                return Err(self
+                    .fail_accepted_boundary(
+                        session_id,
+                        &prepared.source,
+                        turn_id,
+                        "accepted context frame commit",
+                        error,
+                    )
+                    .await);
+            }
         }
 
         apply_turn_start_meta(
@@ -83,7 +135,24 @@ impl TurnCommitter {
             prepared.is_owner_bootstrap,
             &prepared.title_hint,
         );
-        let _ = self.deps.stores.meta.save_session_meta(session_meta).await;
+        if let Err(error) = self
+            .deps
+            .stores
+            .meta
+            .save_session_meta(session_meta)
+            .await
+            .map_err(|error| connector_commit_error("session meta accepted 状态提交失败", error))
+        {
+            return Err(self
+                .fail_accepted_boundary(
+                    session_id,
+                    &prepared.source,
+                    turn_id,
+                    "session meta commit",
+                    error,
+                )
+                .await);
+        }
 
         if let Err(error) = commit_runtime_commands_applied(
             &*self.deps.stores.runtime_commands,
@@ -92,23 +161,15 @@ impl TurnCommitter {
         )
         .await
         {
-            self.deps
-                .turn_supervisor
-                .clear_turn_and_hook(session_id)
-                .await;
-            let failed = build_turn_terminal_envelope(
-                session_id,
-                &prepared.source,
-                turn_id,
-                TurnTerminalKind::Failed,
-                Some(error.to_string()),
-            );
-            let _ = self
-                .deps
-                .eventing
-                .persist_notification(session_id, failed)
-                .await;
-            return Err(error);
+            return Err(self
+                .fail_accepted_boundary(
+                    session_id,
+                    &prepared.source,
+                    turn_id,
+                    "runtime commands applied commit",
+                    error,
+                )
+                .await);
         }
 
         let is_first_turn = session_meta.last_event_seq <= 1;
@@ -121,7 +182,7 @@ impl TurnCommitter {
                 .await;
         }
 
-        let outcome = self
+        let outcome = match self
             .deps
             .accepted_launch_commit
             .commit_accepted_launch(AcceptedLaunchCommitInput {
@@ -130,7 +191,21 @@ impl TurnCommitter {
                 pending_frame: prepared.pending_frame.clone(),
                 accepted_capability_state: prepared.accepted_capability_state.clone(),
             })
-            .await;
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return Err(self
+                    .fail_accepted_boundary(
+                        session_id,
+                        &prepared.source,
+                        turn_id,
+                        "AgentRun accepted launch commit",
+                        error,
+                    )
+                    .await);
+            }
+        };
         for diagnostic in outcome.diagnostics {
             diag!(
                 Warn,
@@ -154,7 +229,7 @@ impl TurnCommitter {
         turn_id: &str,
         resolved_payload: &ResolvedPromptPayload,
         started_at_ms: i64,
-    ) {
+    ) -> Result<(), ConnectorError> {
         // 直接使用 resolve 阶段已转换好的 canonical 输入，不再二次 round-trip ContentBlock。
         if !resolved_payload.input.is_empty() {
             let envelope = build_user_input_submitted_envelope(
@@ -165,19 +240,20 @@ impl TurnCommitter {
                 agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
                 resolved_payload.input.clone(),
             );
-            let _ = self
-                .deps
+            self.deps
                 .eventing
                 .persist_notification(session_id, envelope)
-                .await;
+                .await
+                .map_err(|error| connector_commit_error("user_input_submitted 提交失败", error))?;
         }
 
         let started = build_turn_started_envelope(session_id, source, turn_id, started_at_ms);
-        let _ = self
-            .deps
+        self.deps
             .eventing
             .persist_notification(session_id, started)
-            .await;
+            .await
+            .map_err(|error| connector_commit_error("turn_started 提交失败", error))?;
+        Ok(())
     }
 
     async fn commit_mcp_readiness_notice(
@@ -212,6 +288,53 @@ impl TurnCommitter {
             .persist_notification(session_id, envelope)
             .await;
     }
+
+    async fn fail_accepted_boundary(
+        &self,
+        session_id: &str,
+        source: &SourceInfo,
+        turn_id: &str,
+        stage: &'static str,
+        error: ConnectorError,
+    ) -> ConnectorError {
+        let error_message = error.to_string();
+        self.deps
+            .turn_supervisor
+            .clear_turn_and_hook(session_id)
+            .await;
+        let failed = build_turn_terminal_envelope(
+            session_id,
+            source,
+            turn_id,
+            TurnTerminalKind::Failed,
+            Some(error_message.clone()),
+        );
+        if let Err(failed_error) = self
+            .deps
+            .eventing
+            .persist_notification(session_id, failed)
+            .await
+        {
+            let context =
+                DiagnosticErrorContext::new("session.launch.commit", "accepted_boundary_failed");
+            diag_error!(
+                Warn,
+                Subsystem::SessionLaunch,
+                context = &context,
+                error = &failed_error,
+                session_id = %session_id,
+                turn_id = %turn_id,
+                stage = stage,
+                accepted_boundary_error = %error_message,
+                "accepted boundary 失败后写入 failed terminal 事件失败"
+            );
+        }
+        error
+    }
+}
+
+fn connector_commit_error(stage: &str, error: impl Display) -> ConnectorError {
+    ConnectorError::Runtime(format!("{stage}: {error}"))
 }
 
 fn apply_turn_start_meta(

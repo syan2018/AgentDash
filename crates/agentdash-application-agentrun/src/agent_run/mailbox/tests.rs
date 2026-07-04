@@ -510,6 +510,51 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
 }
 
 #[tokio::test]
+async fn mailbox_launch_failure_marks_message_and_receipt_failed_without_accepted_refs() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+    *fixture.core.state.lock().await = SessionExecutionState::Idle;
+    let message = fixture
+        .seed_message(
+            "launch-accepted-boundary-failure",
+            MailboxDelivery::LaunchOrContinueTurn,
+            None,
+        )
+        .await;
+    let target = AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+        fixture.run.id,
+        fixture.agent.id,
+        fixture.current_frame.id,
+        fixture.runtime_session_id.clone(),
+    );
+
+    let outcomes = fixture
+        .service_with_launch(Arc::new(FailingLaunchPort))
+        .schedule_for_target(
+            target,
+            AgentRunMailboxScheduleTrigger::AgentRunTurnBoundary,
+            None,
+        )
+        .await
+        .expect("scheduler drain");
+
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].outcome, AgentRunMailboxCommandOutcome::Failed);
+    assert!(outcomes[0].accepted_refs.is_none());
+    let updated = fixture.mailbox.message(message.id).await;
+    assert_eq!(updated.status, MailboxMessageStatus::Failed);
+    assert!(updated.accepted_agent_run_turn_id.is_none());
+    assert!(updated.accepted_protocol_turn_id.is_none());
+    assert_error_contains(&updated, "accepted launch control-plane commit failed");
+    assert_receipt_terminal_failed(
+        fixture.receipts.as_ref(),
+        message.command_receipt_id.unwrap(),
+        "accepted launch control-plane commit failed",
+    )
+    .await;
+    assert!(!fixture.mailbox.cleaned(message.id).await);
+}
+
+#[tokio::test]
 async fn mailbox_steering_expected_turn_guard_is_consistent() {
     let delegate = MailboxSteeringFixture::new(false).await;
     let delegate_message = delegate
@@ -669,6 +714,13 @@ impl MailboxSteeringFixture {
     }
 
     fn service(&self) -> AgentRunMailboxService<'_> {
+        self.service_with_launch(self.launch.clone())
+    }
+
+    fn service_with_launch(
+        &self,
+        launch: Arc<dyn RuntimeSessionLaunchPort>,
+    ) -> AgentRunMailboxService<'_> {
         AgentRunMailboxService::new(
             self.runs.as_ref(),
             self.agents.as_ref(),
@@ -682,7 +734,7 @@ impl MailboxSteeringFixture {
             SessionCoreService::new(self.core.clone()),
             SessionControlService::new(self.control.clone()),
             SessionEventingService::new(self.eventing.clone()),
-            SessionLaunchService::new(self.launch.clone()),
+            SessionLaunchService::new(launch),
         )
     }
 
@@ -1361,6 +1413,22 @@ impl RuntimeSessionLaunchPort for TestLaunchPort {
     }
 }
 
+struct FailingLaunchPort;
+
+#[async_trait::async_trait]
+impl RuntimeSessionLaunchPort for FailingLaunchPort {
+    async fn launch_command_in_task(
+        &self,
+        _session_id: String,
+        _command: LaunchCommand,
+        _planning_input: LaunchPlanningInput,
+    ) -> Result<String, WorkflowApplicationError> {
+        Err(WorkflowApplicationError::Internal(
+            "accepted launch control-plane commit failed".to_string(),
+        ))
+    }
+}
+
 fn mailbox_message(
     run_id: Uuid,
     agent_id: Uuid,
@@ -1484,5 +1552,27 @@ async fn assert_receipt_accepted(
             .as_ref()
             .and_then(|refs| refs.agent_run_turn_id.as_deref()),
         accepted_turn_id
+    );
+}
+
+async fn assert_receipt_terminal_failed(
+    receipts: &dyn AgentRunCommandReceiptRepository,
+    receipt_id: Uuid,
+    expected_error: &str,
+) {
+    let receipt = receipts
+        .get(receipt_id)
+        .await
+        .expect("receipt read")
+        .expect("receipt");
+    assert_eq!(receipt.status, AgentRunCommandStatus::TerminalFailed);
+    assert!(receipt.accepted_refs.is_none());
+    assert!(
+        receipt
+            .error_message
+            .as_deref()
+            .is_some_and(|error| error.contains(expected_error)),
+        "expected receipt error to contain {expected_error}, got {:?}",
+        receipt.error_message
     );
 }

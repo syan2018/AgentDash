@@ -177,6 +177,11 @@ fn plan_node_phase_path(node: &PlanNode) -> Vec<String> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrchestrationRuntimeEvent {
+    NodeClaimed {
+        node_path: String,
+        attempt: u32,
+        timestamp: DateTime<Utc>,
+    },
     NodeStarted {
         node_path: String,
         attempt: u32,
@@ -300,6 +305,24 @@ fn apply_orchestration_event_inner(
     let mut outcome = OrchestrationRuntimeApplyOutcome::default();
 
     match event {
+        OrchestrationRuntimeEvent::NodeClaimed {
+            node_path,
+            attempt,
+            timestamp: _,
+        } => {
+            let Some(node) = find_runtime_node_mut(&mut instance.node_tree, &node_path, attempt)
+            else {
+                return Err(OrchestrationRuntimeError::NodeNotFound { node_path, attempt });
+            };
+            if is_terminal_status(node.status) {
+                return Ok(outcome);
+            }
+            let node_id = node.node_id.clone();
+            node.status = RuntimeNodeStatus::Claiming;
+            node.completed_at = None;
+            node.error = None;
+            remove_ready_node(instance, &node_id);
+        }
         OrchestrationRuntimeEvent::NodeStarted {
             node_path,
             attempt,
@@ -1236,6 +1259,35 @@ mod tests {
             }]
         );
         assert!(entry.started_at.is_some());
+    }
+
+    #[test]
+    fn orchestration_runtime_node_claimed_removes_ready_without_starting_trace() {
+        let source_ref = workflow_source();
+        let mut orchestration =
+            activate_root_orchestration(source_ref.clone(), plan_snapshot(source_ref));
+
+        let outcome = apply_orchestration_event(
+            &mut orchestration,
+            OrchestrationRuntimeEvent::NodeClaimed {
+                node_path: "entry".to_string(),
+                attempt: 1,
+                timestamp: Utc::now(),
+            },
+        )
+        .expect("node claimed");
+
+        assert!(outcome.activated_node_ids.is_empty());
+        assert!(orchestration.dispatch.ready_node_ids.is_empty());
+        let entry = orchestration
+            .node_tree
+            .iter()
+            .find(|node| node.node_id == "entry")
+            .expect("entry node");
+        assert_eq!(entry.status, RuntimeNodeStatus::Claiming);
+        assert_eq!(entry.executor_run_ref, None);
+        assert!(entry.trace_refs.is_empty());
+        assert!(entry.started_at.is_none());
     }
 
     #[test]

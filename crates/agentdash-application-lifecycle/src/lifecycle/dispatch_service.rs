@@ -408,7 +408,7 @@ impl<'a> LifecycleDispatchService<'a> {
             )
             .await?;
         self.orchestration_reducer_bridge()
-            .mark_node_started(prepared.run, &prepared.orchestration_binding, &materialized)
+            .mark_node_claimed(prepared.run, &prepared.orchestration_binding, &materialized)
             .await?;
 
         Ok(DispatchFacts {
@@ -1271,21 +1271,11 @@ mod tests {
         let session_id = result.delivery_runtime_ref.expect("runtime session");
         assert_eq!(
             orchestration.node_tree[0].status,
-            RuntimeNodeStatus::Running
+            RuntimeNodeStatus::Claiming
         );
-        assert_eq!(
-            orchestration.node_tree[0].executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: session_id.to_string()
-            })
-        );
-        assert_eq!(
-            orchestration.node_tree[0].trace_refs,
-            vec![RuntimeTraceRef::RuntimeSession {
-                session_id: session_id.to_string()
-            }]
-        );
-        assert!(orchestration.node_tree[0].started_at.is_some());
+        assert_eq!(orchestration.node_tree[0].executor_run_ref, None);
+        assert!(orchestration.node_tree[0].trace_refs.is_empty());
+        assert!(orchestration.node_tree[0].started_at.is_none());
 
         let frames = frame_repo.items.lock().unwrap().clone();
         assert_eq!(frames.len(), 1);
@@ -1356,23 +1346,13 @@ mod tests {
         ));
         assert!(orchestration.activation.ready_node_ids.is_empty());
         assert!(orchestration.dispatch.ready_node_ids.is_empty());
-        let session_id = result.delivery_runtime_ref.expect("runtime session");
+        assert!(result.delivery_runtime_ref.is_some());
         assert_eq!(
             orchestration.node_tree[0].status,
-            RuntimeNodeStatus::Running
+            RuntimeNodeStatus::Claiming
         );
-        assert_eq!(
-            orchestration.node_tree[0].executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: session_id.to_string()
-            })
-        );
-        assert_eq!(
-            orchestration.node_tree[0].trace_refs,
-            vec![RuntimeTraceRef::RuntimeSession {
-                session_id: session_id.to_string()
-            }]
-        );
+        assert_eq!(orchestration.node_tree[0].executor_run_ref, None);
+        assert!(orchestration.node_tree[0].trace_refs.is_empty());
     }
 
     #[tokio::test]

@@ -13,7 +13,7 @@ mod runtime_session_anchor;
 mod validation;
 mod value_objects;
 
-pub use agent_frame::AgentFrame;
+pub use agent_frame::{AgentFrame, AgentFrameSurfaceDocument};
 pub use agent_lineage::AgentLineage;
 pub use agent_run_delivery_binding::{AgentRunDeliveryBinding, DeliveryBindingStatus};
 pub use agent_run_lineage::AgentRunLineage;

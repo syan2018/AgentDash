@@ -142,3 +142,30 @@ No WI-06 migration was added. If later cleanup drops immutable anchor `updated_a
 ### Migration Risk For Merge
 
 `0048_agent_run_lineage_baseline_refs.sql` sequences after runtime provenance columns were dropped in `0046` and after mailbox runtime ref renaming in `0047`. Main-session merge should keep migration numbering serialized with any concurrent WI-07 AgentFrame surface migration.
+
+## R3a Ledger Entry 2026-07-05 / Database Physical Design Final Demolition
+
+### Schema Changes
+
+| Migration | Change | Decision mapping |
+| --- | --- | --- |
+| `crates/agentdash-infrastructure/migrations/0049_agent_frame_surface_document.sql` | Adds `agent_frames.surface`, backfills it from existing AgentFrame split surface columns, and drops redundant indexes `idx_agent_frames_agent_id`, `idx_agent_frame_transitions_run_phase`, and `idx_agent_run_mailbox_states_delivery_runtime_ref`. | D-011: AgentFrame revision owns capability/cognition surface. D-016/D-017: split columns do not qualify as independent facts and are downgraded to projections of one canonical surface document; indexes without live query, lock, claim, scan, or reverse-lookup qualification are deleted. |
+
+### Redundant Table / Field / Index Ledger
+
+| Candidate | Conclusion | Canonical replacement or qualification |
+| --- | --- | --- |
+| `agent_frames.surface` | Merged canonical document | Canonical AgentFrame revision surface now lives in one JSON document. Repository writes derive split physical columns from this document, and reads project the document back to old domain fields while application/API consumers are still being narrowed. |
+| `agent_frames.effective_capability_json`, `context_slice_json`, `vfs_surface_json`, `mcp_surface_json`, `execution_profile_json`, `visible_canvas_mount_ids_json`, `visible_workspace_module_refs_json` | Downgraded to projection columns | These columns are no longer repository-level write sources. They are kept only because application/API consumers outside R3a still read field-shaped projections; future removal source is `agent_frames.surface`. |
+| `agent_frame_transitions` | Kept for now | Session delivery still writes and reads it as part of `RuntimeCommandRecord`: `crates/agentdash-infrastructure/src/persistence/postgres/session_repository.rs:689` accepts the transition record, `:729` inserts `agent_frame_transitions`, `:777` inserts `runtime_session_delivery_commands.frame_transition_id`, `:807`/`:861` select command rows, and `:819`/`:873` join transitions by command FK. Reconstruction in `crates/agentdash-infrastructure/src/persistence/session_core.rs:148` reads both rows, validates delivery/transition identity at `:163`, and rebuilds the transition at `:193`. Final replacement path: move `target_frame_id`, `capability_keys_json`, `transition_json`, and turn linkage into the accepted input / ContextDeliveryRecord fact consumed by runtime delivery, then let `runtime_session_delivery_commands` reference that accepted fact directly before dropping this table. |
+| `runtime_session_delivery_commands` | Kept | Runtime command status, retry/error timestamps, and delivery payload are updated independently from AgentFrame revisions and still need queryable pending/status rows. |
+| `idx_agent_frames_agent_id` | Deleted | The unique `(agent_id, revision)` constraint already supports agent-scoped frame lookup and revision ordering; no independent query path requires a second `agent_id` index. |
+| `idx_agent_frame_transitions_run_phase` | Deleted | No live repository query filters transitions by `(run_id, phase_node)`; delivery command reads join by `runtime_session_delivery_commands.frame_transition_id` to transition primary key. |
+| `idx_agent_run_mailbox_states_delivery_runtime_ref` | Deleted | Mailbox state is keyed and updated by `(run_id, agent_id)`; nullable delivery runtime ref is trace evidence, not a reverse lookup path. |
+| `idx_agent_frame_transitions_target_frame` | Kept | The FK from transition to target frame still uses this index for target-frame cleanup/audit while `agent_frame_transitions` remains a physical delivery command child fact. |
+| `idx_agent_run_mailbox_messages_delivery_runtime_status` | Kept | Mailbox messages remain the recoverable AgentRun queue child table; delivery runtime/status scan is the retained diagnostic/recovery surface for message rows, unlike mailbox state runtime refs. |
+| `idx_agent_run_lineages_parent_runtime` / `idx_agent_run_lineages_child_runtime` | Deletion remains covered by `0046_agent_run_lineage_product_refs.sql` | RuntimeSession lineage refs were trace provenance and are already removed from product fork storage. |
+
+### Migration Risk For Merge
+
+`0049_agent_frame_surface_document.sql` intentionally keeps split AgentFrame columns as projections because public/application readers outside this worker still consume those field names. The next schema demolition slice can delete the split columns after the application boundary reads `AgentFrameSurfaceDocument` directly and all direct `agent_frames` inserts bind `surface`.

@@ -129,6 +129,7 @@ async fn materialize_forked_agent_run_tx(
 
     let mut child_frame =
         AgentFrame::new_revision(child_agent.id, 1, "agent_run_fork_materialization");
+    child_frame.surface = Some(input.parent_frame.surface_document());
     child_frame.effective_capability_json = input.parent_frame.effective_capability_json.clone();
     child_frame.context_slice_json = input.parent_frame.context_slice_json.clone();
     child_frame.vfs_surface_json = input.parent_frame.vfs_surface_json.clone();
@@ -432,23 +433,25 @@ async fn insert_agent_frame_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     frame: &AgentFrame,
 ) -> Result<(), DomainError> {
+    let surface = frame.surface_document();
     sqlx::query(
         r#"INSERT INTO agent_frames
-            (id,agent_id,revision,effective_capability_json,context_slice_json,vfs_surface_json,
+            (id,agent_id,revision,surface,effective_capability_json,context_slice_json,vfs_surface_json,
              mcp_surface_json,visible_canvas_mount_ids_json,visible_workspace_module_refs_json,
              execution_profile_json,created_by_kind,created_by_id,created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
     )
     .bind(frame.id.to_string())
     .bind(frame.agent_id.to_string())
     .bind(frame.revision)
-    .bind(opt_json_str(&frame.effective_capability_json)?)
-    .bind(opt_json_str(&frame.context_slice_json)?)
-    .bind(opt_json_str(&frame.vfs_surface_json)?)
-    .bind(opt_json_str(&frame.mcp_surface_json)?)
-    .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
-    .bind(opt_json_str(&frame.visible_workspace_module_refs_json)?)
-    .bind(opt_json_str(&frame.execution_profile_json)?)
+    .bind(surface_json_str(frame)?)
+    .bind(opt_json_str(&surface.capability_state)?)
+    .bind(opt_json_str(&surface.context_slice)?)
+    .bind(opt_json_str(&surface.vfs_surface)?)
+    .bind(opt_json_str(&surface.mcp_surface)?)
+    .bind(opt_json_str(&surface.visible_canvas_mount_ids)?)
+    .bind(opt_json_str(&surface.visible_workspace_module_refs)?)
+    .bind(opt_json_str(&surface.execution_profile)?)
     .bind(&frame.created_by_kind)
     .bind(&frame.created_by_id)
     .bind(frame.created_at)
@@ -627,6 +630,12 @@ fn opt_json_str(value: &Option<Value>) -> Result<Option<String>, DomainError> {
         .map(serde_json::to_string)
         .transpose()
         .map_err(Into::into)
+}
+
+fn surface_json_str(frame: &AgentFrame) -> Result<String, DomainError> {
+    serde_json::to_string(&frame.surface_document()).map_err(|error| {
+        DomainError::InvalidConfig(format!("agent_frames.surface JSON 无效: {error}"))
+    })
 }
 
 fn parse_optional_json(raw: Option<String>, column: &str) -> Result<Option<Value>, DomainError> {

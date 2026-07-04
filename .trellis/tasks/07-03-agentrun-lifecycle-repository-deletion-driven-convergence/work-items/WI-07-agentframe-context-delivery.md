@@ -82,3 +82,24 @@ Remaining boundary for WI-05 / C1:
 - `append_visible` 已无 crates 命中；验收 grep 仍列出 split physical surface columns，后续 schema/canonical surface slice 需要把这些列降为生成投影或移出写源。
 - `AgentRunEffectiveCapabilityAdapter` 与 permission/companion 读路径仍存在 `get_current(agent_id)`；当前 C2 保持不改 current delivery binding/anchor 文件，后续 accepted boundary 应消费 C1 的 current delivery binding API 来定位 applied frame。
 - `context_compacted` 的直接 compaction frame 投影仍由 eventing 派生，它已不参与本次 turn accepted input record；后续 ContextFrame 全量收口需要把 compaction emission 纳入同类 accepted fact。
+
+## Implementation Record - 2026-07-05 R3a
+
+- 新增 `AgentFrameSurfaceDocument`，把 capability、context slice、VFS、MCP、execution profile、visible canvas/module refs 收进同一 canonical revision surface document。
+- `AgentFrameRepository` 写入时从 `surface_document()` 派生 split physical columns；读取时优先使用 `agent_frames.surface` 并回填 split fields 作为只读投影，避免 repository 层继续把多列当成并列写源。
+- fork materialization 复制 parent frame 时同时复制 canonical surface document，使 fork child frame 不绕过新写源。
+- migration `0049_agent_frame_surface_document.sql` 回填 `agent_frames.surface`，并保留旧 split columns 为物理投影列；后续 application/API 边界消费 `AgentFrameSurfaceDocument` 后，可以删除这些 split projection columns。
+
+Validation run:
+
+- `cargo test -p agentdash-domain agent_frame --lib`
+- `cargo test -p agentdash-infrastructure persistence::postgres::lifecycle_anchor_repository::tests --lib`
+- `cargo test -p agentdash-infrastructure persistence::postgres::session_repository::tests --lib`
+- `cargo test -p agentdash-infrastructure persistence::postgres::agent_run_lineage_repository::tests::agent_run_lineage_row_maps_json_and_refs --lib`
+- `cargo test -p agentdash-infrastructure persistence::postgres::agent_run_delivery_binding_repository::tests::upsert_get_list_and_delete_by_session_round_trip --lib`
+- `cargo test -p agentdash-infrastructure persistence::postgres::agent_run_mailbox_repository::tests::nullable_runtime_ref_claims_by_agentrun_owner_and_records_delivery_ref --lib`
+- `cargo test -p agentdash-infrastructure persistence::postgres::agent_run_mailbox_repository::tests::deleting_runtime_session_nulls_ref_without_deleting_mailbox_message --lib`
+- `cargo fmt --check`
+- `cargo check -p agentdash-domain -p agentdash-infrastructure -p agentdash-application-runtime-session -p agentdash-application-agentrun`
+- `node scripts/check-migration-history.js`
+- `git diff --check`

@@ -26,7 +26,7 @@ pub(crate) fn mailbox_item_from_message(message: &AgentRunMailboxMessage) -> Wai
             "mailbox_message_id": message.id.to_string(),
             "run_id": message.run_id.to_string(),
             "agent_id": message.agent_id.to_string(),
-            "runtime_session_id": message.runtime_session_id,
+            "delivery_runtime_session_id": message.delivery_runtime_session_id,
             "source_namespace": message.source.namespace,
             "source_kind": message.source.kind,
             "source_ref": message.source.source_ref,

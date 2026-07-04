@@ -97,9 +97,9 @@ impl PostgresAgentRunMailboxRepository {
     }
 }
 
-const MAILBOX_COLS: &str = "id,run_id,agent_id,runtime_session_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,consuming_agent_run_turn_id,expected_active_agent_run_turn_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,command_receipt_id,payload_json,executor_config_json,launch_planning_input,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
-const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.runtime_session_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.queued_agent_run_turn_id,m.consuming_agent_run_turn_id,m.expected_active_agent_run_turn_id,m.accepted_agent_run_turn_id,m.accepted_protocol_turn_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.command_receipt_id,m.payload_json,m.executor_config_json,m.launch_planning_input,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
-const STATE_COLS: &str = "run_id,agent_id,runtime_session_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at";
+const MAILBOX_COLS: &str = "id,run_id,agent_id,delivery_runtime_session_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,consuming_agent_run_turn_id,expected_active_agent_run_turn_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,command_receipt_id,payload_json,executor_config_json,launch_planning_input,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
+const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.delivery_runtime_session_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.queued_agent_run_turn_id,m.consuming_agent_run_turn_id,m.expected_active_agent_run_turn_id,m.accepted_agent_run_turn_id,m.accepted_protocol_turn_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.command_receipt_id,m.payload_json,m.executor_config_json,m.launch_planning_input,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
+const STATE_COLS: &str = "run_id,agent_id,delivery_runtime_session_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at";
 
 #[async_trait::async_trait]
 impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
@@ -118,7 +118,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         )?;
         sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
             "INSERT INTO agent_run_mailbox_messages \
-             (id,run_id,agent_id,runtime_session_id,origin,source_namespace,source_kind,source_ref,\
+             (id,run_id,agent_id,delivery_runtime_session_id,origin,source_namespace,source_kind,source_ref,\
               source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,\
               delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,queued_agent_run_turn_id,\
               expected_active_agent_run_turn_id,command_receipt_id,payload_json,executor_config_json,launch_planning_input,\
@@ -129,7 +129,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .bind(id.to_string())
         .bind(message.run_id.to_string())
         .bind(message.agent_id.to_string())
-        .bind(message.runtime_session_id)
+        .bind(message.delivery_runtime_session_id)
         .bind(message.origin.as_str())
         .bind(message.source.namespace)
         .bind(message.source.kind)
@@ -248,14 +248,14 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
                  FOR UPDATE SKIP LOCKED\
              ) \
              UPDATE agent_run_mailbox_messages m SET \
-                 runtime_session_id=COALESCE($3,runtime_session_id),\
+                 delivery_runtime_session_id=COALESCE($3,delivery_runtime_session_id),\
                  status=$7,claim_token=$8,claimed_at=$9,claim_expires_at=$10,\
                  attempt_count=attempt_count+1,updated_at=$9,last_error=NULL \
              FROM picked WHERE m.id=picked.id RETURNING {MAILBOX_COLS_M}"
         ))
         .bind(request.run_id.to_string())
         .bind(request.agent_id.to_string())
-        .bind(request.runtime_session_id)
+        .bind(request.delivery_runtime_session_id)
         .bind(barriers)
         .bind(drain_mode)
         .bind(request.limit)
@@ -416,7 +416,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
+        delivery_runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
@@ -439,17 +439,17 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?;
         let state = sqlx::query_as::<_, AgentRunMailboxStateRow>(&format!(
             "INSERT INTO agent_run_mailbox_states \
-             (run_id,agent_id,runtime_session_id,paused,pause_reason,pause_message,updated_at) \
+             (run_id,agent_id,delivery_runtime_session_id,paused,pause_reason,pause_message,updated_at) \
              VALUES ($1,$2,$3,true,$4,$5,$6) \
              ON CONFLICT (run_id,agent_id) DO UPDATE SET \
-               runtime_session_id=EXCLUDED.runtime_session_id,paused=true,\
+               delivery_runtime_session_id=EXCLUDED.delivery_runtime_session_id,paused=true,\
                pause_reason=EXCLUDED.pause_reason,pause_message=EXCLUDED.pause_message,\
                updated_at=EXCLUDED.updated_at \
              RETURNING {STATE_COLS}"
         ))
         .bind(run_id.to_string())
         .bind(agent_id.to_string())
-        .bind(runtime_session_id)
+        .bind(delivery_runtime_session_id)
         .bind(reason)
         .bind(message)
         .bind(now)
@@ -465,7 +465,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
+        delivery_runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(db_err)?;
@@ -485,16 +485,16 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         .map_err(|error| sql_err_for("agent_run_mailbox_messages", error))?;
         let state = sqlx::query_as::<_, AgentRunMailboxStateRow>(&format!(
             "INSERT INTO agent_run_mailbox_states \
-             (run_id,agent_id,runtime_session_id,paused,pause_reason,pause_message,updated_at) \
+             (run_id,agent_id,delivery_runtime_session_id,paused,pause_reason,pause_message,updated_at) \
              VALUES ($1,$2,$3,false,NULL,NULL,$4) \
              ON CONFLICT (run_id,agent_id) DO UPDATE SET \
-               runtime_session_id=EXCLUDED.runtime_session_id,paused=false,\
+               delivery_runtime_session_id=EXCLUDED.delivery_runtime_session_id,paused=false,\
                pause_reason=NULL,pause_message=NULL,updated_at=EXCLUDED.updated_at \
              RETURNING {STATE_COLS}"
         ))
         .bind(run_id.to_string())
         .bind(agent_id.to_string())
-        .bind(runtime_session_id)
+        .bind(delivery_runtime_session_id)
         .bind(now)
         .fetch_one(&mut *tx)
         .await
@@ -525,23 +525,23 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
+        delivery_runtime_session_id: Option<String>,
         preference: Value,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let now = Utc::now();
         sqlx::query_as::<_, AgentRunMailboxStateRow>(&format!(
             "INSERT INTO agent_run_mailbox_states \
-             (run_id,agent_id,runtime_session_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at) \
+             (run_id,agent_id,delivery_runtime_session_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at) \
              VALUES ($1,$2,$3,false,NULL,NULL,$4,$5) \
              ON CONFLICT (run_id,agent_id) DO UPDATE SET \
-               runtime_session_id=EXCLUDED.runtime_session_id,\
+               delivery_runtime_session_id=EXCLUDED.delivery_runtime_session_id,\
                backend_selection_preference=EXCLUDED.backend_selection_preference,\
                updated_at=EXCLUDED.updated_at \
              RETURNING {STATE_COLS}"
         ))
         .bind(run_id.to_string())
         .bind(agent_id.to_string())
-        .bind(runtime_session_id)
+        .bind(delivery_runtime_session_id)
         .bind(preference)
         .bind(now)
         .fetch_one(&self.pool)
@@ -681,7 +681,7 @@ struct AgentRunMailboxMessageRow {
     id: String,
     run_id: String,
     agent_id: String,
-    runtime_session_id: Option<String>,
+    delivery_runtime_session_id: Option<String>,
     origin: String,
     source_namespace: String,
     source_kind: String,
@@ -730,7 +730,7 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
             id: parse_uuid(&row.id, "agent_run_mailbox_message")?,
             run_id: parse_uuid(&row.run_id, "lifecycle_run")?,
             agent_id: parse_uuid(&row.agent_id, "lifecycle_agent")?,
-            runtime_session_id: row.runtime_session_id,
+            delivery_runtime_session_id: row.delivery_runtime_session_id,
             origin: MailboxMessageOrigin::try_from(row.origin.as_str())?,
             source: MailboxSourceIdentity {
                 namespace: row.source_namespace,
@@ -789,7 +789,7 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
 struct AgentRunMailboxStateRow {
     run_id: String,
     agent_id: String,
-    runtime_session_id: Option<String>,
+    delivery_runtime_session_id: Option<String>,
     paused: bool,
     pause_reason: Option<String>,
     pause_message: Option<String>,
@@ -804,7 +804,7 @@ impl TryFrom<AgentRunMailboxStateRow> for AgentRunMailboxState {
         Ok(Self {
             run_id: parse_uuid(&row.run_id, "lifecycle_run")?,
             agent_id: parse_uuid(&row.agent_id, "lifecycle_agent")?,
-            runtime_session_id: row.runtime_session_id,
+            delivery_runtime_session_id: row.delivery_runtime_session_id,
             paused: row.paused,
             pause_reason: row.pause_reason,
             pause_message: row.pause_message,
@@ -899,7 +899,7 @@ mod tests {
         NewAgentRunMailboxMessage {
             run_id,
             agent_id,
-            runtime_session_id: Some(session_id.to_string()),
+            delivery_runtime_session_id: Some(session_id.to_string()),
             origin: MailboxMessageOrigin::User,
             source: MailboxSourceIdentity::composer(),
             delivery: MailboxDelivery::LaunchOrContinueTurn,
@@ -968,7 +968,7 @@ mod tests {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(session_id),
+                delivery_runtime_session_id: Some(session_id),
                 barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
                 drain_mode: Some(MailboxDrainMode::One),
                 limit: 1,
@@ -1002,18 +1002,18 @@ mod tests {
             MailboxDrainMode::One,
             "nullable-runtime-message",
         );
-        message.runtime_session_id = None;
+        message.delivery_runtime_session_id = None;
         let created = repo
             .create_message(message)
             .await
             .expect("create message without runtime ref");
-        assert!(created.runtime_session_id.is_none());
+        assert!(created.delivery_runtime_session_id.is_none());
 
         let claimed = repo
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(session_id.clone()),
+                delivery_runtime_session_id: Some(session_id.clone()),
                 barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
                 drain_mode: Some(MailboxDrainMode::One),
                 limit: 1,
@@ -1025,7 +1025,7 @@ mod tests {
         assert_eq!(claimed.len(), 1);
         assert_eq!(claimed[0].id, created.id);
         assert_eq!(
-            claimed[0].runtime_session_id.as_deref(),
+            claimed[0].delivery_runtime_session_id.as_deref(),
             Some(session_id.as_str())
         );
     }
@@ -1055,7 +1055,7 @@ mod tests {
             .await
             .expect("create message with runtime ref");
         assert_eq!(
-            created.runtime_session_id.as_deref(),
+            created.delivery_runtime_session_id.as_deref(),
             Some(session_id.as_str())
         );
 
@@ -1070,7 +1070,7 @@ mod tests {
             .await
             .expect("load message after runtime session delete")
             .expect("mailbox message survives runtime session delete");
-        assert!(loaded.runtime_session_id.is_none());
+        assert!(loaded.delivery_runtime_session_id.is_none());
     }
 
     #[tokio::test]
@@ -1119,7 +1119,7 @@ mod tests {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(session_id.clone()),
+                delivery_runtime_session_id: Some(session_id.clone()),
                 barriers: vec![ConsumptionBarrier::AgentLoopTurnBoundary],
                 drain_mode: Some(MailboxDrainMode::All),
                 limit: 10,
@@ -1144,7 +1144,7 @@ mod tests {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(session_id.clone()),
+                delivery_runtime_session_id: Some(session_id.clone()),
                 barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
                 drain_mode: Some(MailboxDrainMode::One),
                 limit: 1,
@@ -1162,7 +1162,7 @@ mod tests {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(session_id),
+                delivery_runtime_session_id: Some(session_id),
                 barriers: vec![ConsumptionBarrier::AgentLoopTurnBoundary],
                 drain_mode: Some(MailboxDrainMode::All),
                 limit: 10,
@@ -1204,7 +1204,7 @@ mod tests {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(session_id.clone()),
+                delivery_runtime_session_id: Some(session_id.clone()),
                 barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
                 drain_mode: Some(MailboxDrainMode::One),
                 limit: 1,
@@ -1239,7 +1239,7 @@ mod tests {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(session_id),
+                delivery_runtime_session_id: Some(session_id),
                 barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
                 drain_mode: Some(MailboxDrainMode::One),
                 limit: 1,
@@ -1290,7 +1290,7 @@ mod tests {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(session_id.clone()),
+                delivery_runtime_session_id: Some(session_id.clone()),
                 barriers: vec![ConsumptionBarrier::AgentLoopTurnBoundary],
                 drain_mode: Some(MailboxDrainMode::All),
                 limit: 1,

@@ -1055,8 +1055,8 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
             {
                 continue;
             }
-            if let Some(runtime_session_id) = request.runtime_session_id.clone() {
-                message.runtime_session_id = Some(runtime_session_id);
+            if let Some(runtime_session_id) = request.delivery_runtime_session_id.clone() {
+                message.delivery_runtime_session_id = Some(runtime_session_id);
             }
             message.status = MailboxMessageStatus::Consuming;
             message.claim_token = Some(request.claim_token);
@@ -1169,7 +1169,7 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id,
+            delivery_runtime_session_id: runtime_session_id,
             paused: true,
             pause_reason: Some(reason),
             pause_message: message,
@@ -1192,7 +1192,7 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id,
+            delivery_runtime_session_id: runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
@@ -1230,7 +1230,7 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id,
+            delivery_runtime_session_id: runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
@@ -1374,7 +1374,7 @@ fn mailbox_message(
         id: Uuid::new_v4(),
         run_id,
         agent_id,
-        runtime_session_id: Some(runtime_session_id.to_string()),
+        delivery_runtime_session_id: Some(runtime_session_id.to_string()),
         origin: MailboxMessageOrigin::User,
         source: MailboxSourceIdentity::composer(),
         delivery,
@@ -1414,7 +1414,7 @@ fn message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailboxMessag
         id: Uuid::new_v4(),
         run_id: message.run_id,
         agent_id: message.agent_id,
-        runtime_session_id: message.runtime_session_id,
+        delivery_runtime_session_id: message.delivery_runtime_session_id,
         origin: message.origin,
         source: message.source,
         delivery: message.delivery,

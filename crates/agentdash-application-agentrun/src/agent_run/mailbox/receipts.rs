@@ -70,7 +70,7 @@ impl<'a> AgentRunMailboxService<'a> {
         let refs = match accepted_refs {
             Some(refs) => refs,
             None => match message {
-                Some(message) => match message.runtime_session_id.as_deref() {
+                Some(message) => match message.delivery_runtime_session_id.as_deref() {
                     Some(runtime_session_id) => {
                         self.base_refs_for_runtime(
                             message.run_id,
@@ -168,7 +168,7 @@ impl<'a> AgentRunMailboxService<'a> {
                     agent_id: message.agent_id,
                     frame_id: Some(frame.id),
                     frame_revision: Some(frame.revision),
-                    runtime_session_id: message.runtime_session_id.clone(),
+                    runtime_session_id: message.delivery_runtime_session_id.clone(),
                     agent_run_turn_id: message.accepted_agent_run_turn_id.clone(),
                     protocol_turn_id: message.accepted_protocol_turn_id.clone(),
                 }),
@@ -176,7 +176,7 @@ impl<'a> AgentRunMailboxService<'a> {
             },
         };
         let runtime_state = match mailbox_message.as_ref() {
-            Some(message) => match message.runtime_session_id.as_deref() {
+            Some(message) => match message.delivery_runtime_session_id.as_deref() {
                 Some(runtime_session_id) => self.inspect_state_optional(runtime_session_id).await,
                 None => None,
             },

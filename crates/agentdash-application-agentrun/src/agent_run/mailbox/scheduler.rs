@@ -15,10 +15,10 @@ struct SteeringDeliveryResult {
     agent_message: Option<AgentMessage>,
 }
 
-fn required_message_runtime_session_id(
+fn required_message_delivery_runtime_session_id(
     message: &AgentRunMailboxMessage,
 ) -> Result<String, WorkflowApplicationError> {
-    message.runtime_session_id.clone().ok_or_else(|| {
+    message.delivery_runtime_session_id.clone().ok_or_else(|| {
         WorkflowApplicationError::Conflict(format!(
             "mailbox message {} 尚未绑定 delivery runtime ref",
             message.id
@@ -26,9 +26,9 @@ fn required_message_runtime_session_id(
     })
 }
 
-fn message_runtime_session_label(message: &AgentRunMailboxMessage) -> &str {
+fn message_delivery_runtime_session_label(message: &AgentRunMailboxMessage) -> &str {
     message
-        .runtime_session_id
+        .delivery_runtime_session_id
         .as_deref()
         .unwrap_or("<unassigned>")
 }
@@ -254,7 +254,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(runtime_session_id.to_string()),
+                delivery_runtime_session_id: Some(runtime_session_id.to_string()),
                 barriers,
                 drain_mode,
                 limit,
@@ -307,7 +307,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(runtime_session_id.to_string()),
+                delivery_runtime_session_id: Some(runtime_session_id.to_string()),
                 barriers: vec![ConsumptionBarrier::AgentRunTurnBoundary],
                 drain_mode,
                 limit,
@@ -341,7 +341,7 @@ impl<'a> AgentRunMailboxService<'a> {
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
         diag!(Debug, Subsystem::AgentRun,
 
-            runtime_session_id = %message_runtime_session_label(&message),
+            runtime_session_id = %message_delivery_runtime_session_label(&message),
             mailbox_message_id = %message.id,
             delivery = ?message.delivery,
             barrier = ?message.barrier,
@@ -350,7 +350,7 @@ impl<'a> AgentRunMailboxService<'a> {
         );
         match &message.delivery {
             MailboxDelivery::LaunchOrContinueTurn => {
-                let runtime_session_id = required_message_runtime_session_id(&message)?;
+                let runtime_session_id = required_message_delivery_runtime_session_id(&message)?;
                 let execution_state = self
                     .session_core
                     .inspect_session_execution_state(&runtime_session_id)
@@ -393,7 +393,7 @@ impl<'a> AgentRunMailboxService<'a> {
         message: AgentRunMailboxMessage,
         identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
-        let runtime_session_id = required_message_runtime_session_id(&message)?;
+        let runtime_session_id = required_message_delivery_runtime_session_id(&message)?;
         diag!(Debug, Subsystem::AgentRun,
 
             runtime_session_id = %runtime_session_id,
@@ -509,7 +509,7 @@ impl<'a> AgentRunMailboxService<'a> {
         message: AgentRunMailboxMessage,
         mode: SteeringDeliveryMode,
     ) -> Result<SteeringDeliveryResult, WorkflowApplicationError> {
-        let runtime_session_id = required_message_runtime_session_id(&message)?;
+        let runtime_session_id = required_message_delivery_runtime_session_id(&message)?;
         let input = message_input(&message)?;
         let (run, agent, frame) = self
             .resolve_control_plane_for_delivery(&runtime_session_id)
@@ -681,7 +681,7 @@ impl<'a> AgentRunMailboxService<'a> {
         message: AgentRunMailboxMessage,
         launch_source: String,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
-        let runtime_session_id = required_message_runtime_session_id(&message)?;
+        let runtime_session_id = required_message_delivery_runtime_session_id(&message)?;
         let input = message_input(&message)?;
         let command = match launch_source.as_str() {
             "hook_auto_resume" => LaunchCommand::hook_auto_resume_input(LaunchPromptInput {

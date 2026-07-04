@@ -122,3 +122,23 @@ No WI-06 migration was added. If later cleanup drops immutable anchor `updated_a
 ### Migration Risk For Merge
 
 `0047_agent_run_mailbox_delivery_runtime_ref.sql` sequences after runtime trace table rename `0045` and fork lineage cleanup `0046`. It intentionally does not create a DeliveryAttempt table; lease/attempt/accepted refs remain embedded in mailbox rows until WI-05 can split delivery attempts without double-writing partial state.
+
+## WI-08 Ledger Entry 2026-07-05 / Worker D2
+
+### Schema Changes
+
+| Migration | Change | Decision mapping |
+| --- | --- | --- |
+| `crates/agentdash-infrastructure/migrations/0048_agent_run_lineage_baseline_refs.sql` | Adds `parent_frame_id`, `parent_frame_revision`, `child_frame_id`, and `child_frame_revision` to `agent_run_lineages`. | D-013: product fork uses the AgentRun fork record as canonical fact. D-017: frame baseline belongs on the retained child lineage table because duplicate replay, child lookup, parent audit, and fork provenance need a durable product record independent of RuntimeSession trace storage. |
+
+### Redundant Table / Field Ledger
+
+| Candidate | Conclusion | Canonical replacement or qualification |
+| --- | --- | --- |
+| Receipt `result_json` parent/child/redirect fork refs | Downgraded to idempotent outcome ref storage | Canonical parent/child fork refs come from `agent_run_lineages`; receipt state keeps command outcome and mailbox outcome refs for idempotent replay. |
+| `agent_run_lineages.parent_runtime_session_id` / `agent_run_lineages.child_runtime_session_id` | Deletion remains covered by `0046_agent_run_lineage_product_refs.sql` | RuntimeSession lineage is trace provenance. Product fork replay reads `agent_run_lineages` by child run/agent and reconstructs parent/child AgentRun refs from that record. |
+| `agent_run_lineages` | Retained as AgentRun child lineage table | The table has a unique child `(run_id, agent_id)` record, parent lookup index, fork owner, fixed fork point, and parent/child frame baseline fields needed for replay and audit. |
+
+### Migration Risk For Merge
+
+`0048_agent_run_lineage_baseline_refs.sql` sequences after runtime provenance columns were dropped in `0046` and after mailbox runtime ref renaming in `0047`. Main-session merge should keep migration numbering serialized with any concurrent WI-07 AgentFrame surface migration.

@@ -93,6 +93,30 @@ flowchart TD
 - 写入路径互不重叠，或者一个 worker 只写 `research/` / task artifact，另一个 worker 写代码。
 - 两个 worker 不共享 migration 文件、contract/generated 文件、同一 public API surface 或同一 application service 构造函数。
 - 主会话能为每个 worker 指定独立 check 范围，并在合流时按主题顺序提交。
+- 每个 worker 的派发 brief 已声明锚定 WI、允许写入路径、互斥路径、验证命令和完成报告格式。
+- check worker 的输入必须绑定单个已合流 diff；如果同一批次返回多个代码 diff，主会话先按主题分批 stage/commit，再派发对应 check。
+
+## Parallel Batch Protocol
+
+主会话按批次派发并行 worker，而不是让多个 worker 共享一个隐式任务面。每个批次包含：
+
+- **Batch intent**：本批次要删除或收束的旧事实源 / 旧组合方式。
+- **Worker matrix**：每个 worker 的 WI、角色、允许写入路径、只读上下文、互斥路径和验证命令。
+- **Merge order**：返回后按哪个主题先检查、先提交；migration、generated contract、public API surface 始终由主会话串行合流。
+- **Check placement**：实现 worker 返回后立即派 `trellis-check` 审同一 WI 的 diff；长链路工作在中段插入 check，不等最终全局 review。
+- **Abort condition**：worker 发现需要触碰互斥路径、依赖未提交中间结构、或当前代码事实推翻工作项假设时，只回报发现，由主会话重新切分。
+
+推荐并行形态：
+
+- 一个实现 worker 写代码，另一个 research worker 只写 `research/` 或 migration ledger。
+- 两个实现 worker 分别处理不同 crate / 不同 use case，且不触碰同一 public API、migration、generated contract 或 service constructor。
+- 实现 worker 运行时，主会话只做只读准备或处理不重叠的已返回结果。
+
+合流顺序：
+
+- 先合流并检查代码 diff，再提交同一 WI 的主题 commit。
+- research / task artifact 单独提交，除非它是对应代码 diff 的必要验收记录。
+- 并行批次结束时工作区应回到 clean，再启动下一批次。
 
 典型批次：
 

@@ -155,7 +155,7 @@ export function AgentRunWorkspacePage({
   });
 
   const runtimeControl: AgentRunWorkspaceView | null = agentRunWorkspaceState.workspace;
-  const deliveryRuntimeSessionId = agentRunWorkspaceState.runtime_session_id;
+  const deliveryTraceSessionId = agentRunWorkspaceState.trace_session_id;
   const draftWorkspaceTitle =
     draftProjectAgent?.display_name
     ?? traceAgentContext?.display_name
@@ -187,7 +187,7 @@ export function AgentRunWorkspacePage({
   const hasIdentityBar =
     !isProjectAgentDraft
     && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
-  const activeHookRuntime = agentRunWorkspaceState.hook_runtime?.runtime_adapter_session_id === deliveryRuntimeSessionId
+  const activeHookRuntime = agentRunWorkspaceState.hook_runtime?.runtime_adapter_session_id === deliveryTraceSessionId
     ? agentRunWorkspaceState.hook_runtime
     : null;
   const deliveryRuntimeSurface = agentRunWorkspaceState.runtime_surface;
@@ -486,11 +486,6 @@ export function AgentRunWorkspacePage({
     navigate(`/story/${effectiveReturnTarget.story_id}`);
   }, [effectiveReturnTarget, navigate, selectProject]);
 
-  const handleCopyRuntimeSessionId = useCallback(async () => {
-    if (!deliveryRuntimeSessionId) return;
-    try { await navigator.clipboard.writeText(deliveryRuntimeSessionId); } catch { /* noop */ }
-  }, [deliveryRuntimeSessionId]);
-
   const handleOpenRunDetail = useCallback(() => {
     if (!agentRunDetailTarget) return;
     navigate(`/run/${agentRunDetailTarget.runId}`, {
@@ -506,12 +501,11 @@ export function AgentRunWorkspacePage({
     : effectiveReturnTarget?.owner_type === "task"
       ? "返回任务"
       : "返回 Story";
-  const hasDeliveryRuntime = deliveryRuntimeSessionId !== null;
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
     sessionId: null,
     runtimeSessionId: null,
-    traceSessionId: deliveryRuntimeSessionId,
+    traceSessionId: deliveryTraceSessionId,
     agentRunRuntimeTarget,
     sessionMeta: runtimeControl?.delivery_trace_meta
       ? {
@@ -542,7 +536,7 @@ export function AgentRunWorkspacePage({
     sessionCapabilities,
   }), [
     ownerProjectId,
-    deliveryRuntimeSessionId,
+    deliveryTraceSessionId,
     agentRunRuntimeTarget,
     runtimeControl,
     agentRunWorkspaceState.status,
@@ -645,16 +639,6 @@ export function AgentRunWorkspacePage({
             >
               运行详情
             </button>
-          )}
-          {hasDeliveryRuntime && (
-            <>
-              <span className="hidden rounded-[8px] border border-border bg-secondary px-2.5 py-1 text-xs font-mono text-muted-foreground lg:inline">
-                {deliveryRuntimeSessionId.slice(0, 12)}…
-              </span>
-              <button type="button" onClick={() => void handleCopyRuntimeSessionId()} className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="复制 RuntimeSession ID">
-                复制
-              </button>
-            </>
           )}
           <button
             type="button"

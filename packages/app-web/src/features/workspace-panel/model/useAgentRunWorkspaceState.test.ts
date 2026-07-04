@@ -93,7 +93,7 @@ function loadedState(): AgentRunWorkspaceProjectionState {
     source_key: "agentrun:run-1:agent-1",
     status: "ready",
     workspace,
-    runtime_session_id: "session-1",
+    trace_session_id: "session-1",
     runtime_surface: runtimeSurface,
     frame: frameRuntime,
   };
@@ -150,7 +150,7 @@ describe("AgentRun workspace refresh state", () => {
     expect(agentRunWorkspaceResourceSurface(snapshotWorkspace)).toBe(runtimeSurface);
   });
 
-  it("初始加载成功后触发 refresh 时 pending 期间保留 runtime identity 与 workspace", () => {
+  it("初始加载成功后触发 refresh 时 pending 期间保留 trace identity 与 workspace", () => {
     const refreshing = beginAgentRunWorkspaceStateLoad(
       loadedState(),
       "run-1",
@@ -160,14 +160,14 @@ describe("AgentRun workspace refresh state", () => {
     );
 
     expect(refreshing.status).toBe("refreshing");
-    expect(refreshing.runtime_session_id).toBe("session-1");
+    expect(refreshing.trace_session_id).toBe("session-1");
     expect(refreshing.workspace).toBe(workspace);
     expect(refreshing.runtime_surface).toBe(runtimeSurface);
     expect(refreshing.frame).toBe(frameRuntime);
     expect(refreshing.error).toBeNull();
   });
 
-  it("refresh 失败时不清空上一帧 runtime identity", () => {
+  it("refresh 失败时不清空上一帧 trace identity", () => {
     const refreshing = beginAgentRunWorkspaceStateLoad(
       loadedState(),
       "run-1",
@@ -186,7 +186,7 @@ describe("AgentRun workspace refresh state", () => {
 
     expect(failed.status).toBe("error");
     expect(failed.error).toBe("refresh failed");
-    expect(failed.runtime_session_id).toBe("session-1");
+    expect(failed.trace_session_id).toBe("session-1");
     expect(failed.workspace).toBe(workspace);
     expect(failed.runtime_surface).toBe(runtimeSurface);
     expect(failed.frame).toBe(frameRuntime);

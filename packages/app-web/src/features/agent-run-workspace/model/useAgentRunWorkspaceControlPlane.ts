@@ -62,7 +62,7 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
 
 interface UseAgentRunWorkspaceControlPlaneResult {
   runtimeControl: AgentRunWorkspaceView | null;
-  deliveryRuntimeSessionId: string | null;
+  traceSessionId: string | null;
   chatModel: SessionChatModel;
   chatIntents: SessionChatViewIntents;
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
@@ -101,7 +101,7 @@ export function useAgentRunWorkspaceControlPlane({
   }>({ scopeKey: null, config: null });
 
   const runtimeControl = agentRunWorkspaceState.workspace;
-  const deliveryRuntimeSessionId = agentRunWorkspaceState.runtime_session_id;
+  const traceSessionId = agentRunWorkspaceState.trace_session_id;
 
   const executorOverrideScopeKey = isProjectAgentDraft
     ? `draft:${draftProjectId ?? ""}:${draftProjectAgentKey ?? ""}`
@@ -371,8 +371,8 @@ export function useAgentRunWorkspaceControlPlane({
   ]);
 
   const handleMessageSent = useCallback(() => {
-    applyControlPlaneEffectPlan(planAgentRunMessageSent(deliveryRuntimeSessionId));
-  }, [applyControlPlaneEffectPlan, deliveryRuntimeSessionId]);
+    applyControlPlaneEffectPlan(planAgentRunMessageSent(traceSessionId));
+  }, [applyControlPlaneEffectPlan, traceSessionId]);
 
   const refreshStatusBarTasks = useCallback(() => {
     if (currentRunId && currentAgentId) {
@@ -402,7 +402,7 @@ export function useAgentRunWorkspaceControlPlane({
 
   return {
     runtimeControl,
-    deliveryRuntimeSessionId,
+    traceSessionId,
     chatModel,
     chatIntents,
     refreshAgentRunWorkspaceState,

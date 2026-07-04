@@ -13,7 +13,7 @@ export interface AgentRunWorkspaceProjectionState {
   source_key: string | null;
   status: SessionRuntimeStateStatus;
   workspace: AgentRunWorkspaceView | null;
-  runtime_session_id: string | null;
+  trace_session_id: string | null;
   runtime_surface: ResolvedVfsSurface | null;
   hook_runtime: AgentFrameHookRuntimeInfo | null;
   frame: AgentFrameRuntimeView | null;
@@ -36,7 +36,7 @@ export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceProjectionState 
     source_key: null,
     status: "idle",
     workspace: null,
-    runtime_session_id: null,
+    trace_session_id: null,
     runtime_surface: null,
     hook_runtime: null,
     frame: null,
@@ -137,7 +137,7 @@ export function useAgentRunWorkspaceState({
 
     try {
       const workspace = await fetchAgentRunWorkspace(rid, aid);
-      const runtimeSessionId = workspace.delivery_trace_meta?.runtime_session_ref.runtime_session_id ?? null;
+      const traceSessionId = workspace.delivery_trace_meta?.runtime_session_ref.runtime_session_id ?? null;
       const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
 
       if (!canCommit()) return workspace;
@@ -153,7 +153,7 @@ export function useAgentRunWorkspaceState({
         source_key: skey,
         status: "ready",
         workspace,
-        runtime_session_id: runtimeSessionId,
+        trace_session_id: traceSessionId,
         runtime_surface: runtimeSurface,
         hook_runtime: null,
         frame: workspace.frame_runtime ?? null,

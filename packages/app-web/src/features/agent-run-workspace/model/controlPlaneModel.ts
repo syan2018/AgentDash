@@ -68,12 +68,12 @@ export function resolveAgentRunSubmitCommand(
 }
 
 export function planAgentRunMessageSent(
-  deliveryRuntimeSessionId: string | null,
+  traceSessionId: string | null,
 ): AgentRunControlPlaneEffectPlan {
   return {
     refreshWorkspaceState: true,
     refreshAgentRunListReason: "message_sent",
-    ...(deliveryRuntimeSessionId
+    ...(traceSessionId
       ? { hookRuntimeRefresh: { reason: "message_sent", immediate: true } }
       : {}),
   };

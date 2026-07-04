@@ -111,6 +111,8 @@ async fn materialize_forked_agent_run_tx(
     pool: &PgPool,
     input: AgentRunForkMaterializationInput,
 ) -> Result<AgentRunForkMaterializationResult, DomainError> {
+    let parent_runtime_session_id = input.parent_runtime_session_id.clone();
+    let child_runtime_session_id = input.child_runtime_session_id.clone();
     let child_run =
         LifecycleRun::new_plain_for_user(input.parent_run.project_id, &input.forked_by_user_id);
 
@@ -141,7 +143,7 @@ async fn materialize_forked_agent_run_tx(
     child_frame.created_by_id = Some(input.forked_by_user_id.clone());
 
     let mut anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-        input.child_runtime_session_id.clone(),
+        child_runtime_session_id.clone(),
         child_run.id,
         child_frame.id,
         child_agent.id,
@@ -158,8 +160,6 @@ async fn materialize_forked_agent_run_tx(
         child_agent.id,
         input.fork_point_event_seq,
         input.fork_point_ref_json,
-        input.parent_runtime_session_id,
-        input.child_runtime_session_id,
         input.forked_by_user_id,
         input.metadata_json,
     );
@@ -168,11 +168,11 @@ async fn materialize_forked_agent_run_tx(
         parent_run_id: input.parent_run.id,
         parent_agent_id: input.parent_agent.id,
         parent_frame_id: input.parent_frame.id,
-        parent_runtime_session_id: lineage.parent_runtime_session_id.clone(),
+        parent_runtime_session_id,
         child_run_id: child_run.id,
         child_agent_id: child_agent.id,
         child_frame_id: child_frame.id,
-        child_runtime_session_id: lineage.child_runtime_session_id.clone(),
+        child_runtime_session_id: child_runtime_session_id.clone(),
         lineage_id: lineage.id,
         forked_by_user_id: lineage.forked_by_user_id.clone(),
     };
@@ -218,6 +218,7 @@ async fn materialize_forked_agent_run_tx(
         child_run,
         child_agent,
         child_frame,
+        child_runtime_session_id,
         lineage,
     })
 }
@@ -279,8 +280,6 @@ async fn insert_agent_run_lineage(
         .bind(&lineage.relation_kind)
         .bind(option_u64_to_i64(lineage.fork_point_event_seq)?)
         .bind(opt_json_str(&lineage.fork_point_ref_json)?)
-        .bind(&lineage.parent_runtime_session_id)
-        .bind(&lineage.child_runtime_session_id)
         .bind(&lineage.forked_by_user_id)
         .bind(opt_json_str(&lineage.metadata_json)?)
         .bind(lineage.created_at)
@@ -303,8 +302,6 @@ async fn insert_agent_run_lineage_tx(
         .bind(&lineage.relation_kind)
         .bind(option_u64_to_i64(lineage.fork_point_event_seq)?)
         .bind(opt_json_str(&lineage.fork_point_ref_json)?)
-        .bind(&lineage.parent_runtime_session_id)
-        .bind(&lineage.child_runtime_session_id)
         .bind(&lineage.forked_by_user_id)
         .bind(opt_json_str(&lineage.metadata_json)?)
         .bind(lineage.created_at)
@@ -317,9 +314,8 @@ async fn insert_agent_run_lineage_tx(
 fn agent_run_lineage_insert_sql() -> &'static str {
     r#"INSERT INTO agent_run_lineages
         (id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,
-         fork_point_event_seq,fork_point_ref,parent_runtime_session_id,child_runtime_session_id,
-         forked_by_user_id,metadata,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#
+         fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#
 }
 
 async fn insert_lifecycle_run_tx(
@@ -478,7 +474,7 @@ async fn upsert_anchor_tx(
     Ok(())
 }
 
-const AGENT_RUN_LINEAGE_COLS: &str = "id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,fork_point_event_seq,fork_point_ref,parent_runtime_session_id,child_runtime_session_id,forked_by_user_id,metadata,created_at";
+const AGENT_RUN_LINEAGE_COLS: &str = "id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at";
 
 #[derive(sqlx::FromRow)]
 struct AgentRunLineageRow {
@@ -490,8 +486,6 @@ struct AgentRunLineageRow {
     relation_kind: String,
     fork_point_event_seq: Option<i64>,
     fork_point_ref: Option<String>,
-    parent_runtime_session_id: String,
-    child_runtime_session_id: String,
     forked_by_user_id: String,
     metadata: Option<String>,
     created_at: DateTime<Utc>,
@@ -513,8 +507,6 @@ impl TryFrom<AgentRunLineageRow> for AgentRunLineage {
             relation_kind: row.relation_kind,
             fork_point_event_seq: option_i64_to_u64(row.fork_point_event_seq)?,
             fork_point_ref_json: parse_optional_json(row.fork_point_ref, "fork_point_ref")?,
-            parent_runtime_session_id: row.parent_runtime_session_id,
-            child_runtime_session_id: row.child_runtime_session_id,
             forked_by_user_id: row.forked_by_user_id,
             metadata_json: parse_optional_json(row.metadata, "metadata")?,
             created_at: row.created_at,
@@ -590,8 +582,6 @@ mod tests {
             relation_kind: "fork".to_string(),
             fork_point_event_seq: Some(42),
             fork_point_ref: Some(json!({ "turn_id": "turn-1", "entry_index": 3 }).to_string()),
-            parent_runtime_session_id: "runtime-parent".to_string(),
-            child_runtime_session_id: "runtime-child".to_string(),
             forked_by_user_id: "user-child".to_string(),
             metadata: Some(json!({ "reason": "explore" }).to_string()),
             created_at,
@@ -608,8 +598,6 @@ mod tests {
             lineage.fork_point_ref_json,
             Some(json!({ "turn_id": "turn-1", "entry_index": 3 }))
         );
-        assert_eq!(lineage.parent_runtime_session_id, "runtime-parent");
-        assert_eq!(lineage.child_runtime_session_id, "runtime-child");
         assert_eq!(lineage.forked_by_user_id, "user-child");
         assert_eq!(lineage.metadata_json, Some(json!({ "reason": "explore" })));
         assert_eq!(lineage.created_at, created_at);
@@ -626,8 +614,6 @@ mod tests {
             relation_kind: "fork".to_string(),
             fork_point_event_seq: Some(-1),
             fork_point_ref: None,
-            parent_runtime_session_id: "runtime-parent".to_string(),
-            child_runtime_session_id: "runtime-child".to_string(),
             forked_by_user_id: "user-child".to_string(),
             metadata: None,
             created_at: Utc::now(),

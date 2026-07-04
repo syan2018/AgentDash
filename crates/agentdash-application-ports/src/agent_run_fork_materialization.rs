@@ -22,6 +22,7 @@ pub struct AgentRunForkMaterializationResult {
     pub child_run: LifecycleRun,
     pub child_agent: LifecycleAgent,
     pub child_frame: AgentFrame,
+    pub child_runtime_session_id: String,
     pub lineage: AgentRunLineage,
 }
 
@@ -32,7 +33,7 @@ impl AgentRunForkMaterializationResult {
             agent_id: self.child_agent.id,
             frame_id: Some(self.child_frame.id),
             frame_revision: Some(self.child_frame.revision),
-            runtime_session_id: Some(self.lineage.child_runtime_session_id.clone()),
+            runtime_session_id: Some(self.child_runtime_session_id.clone()),
             agent_run_turn_id: None,
             protocol_turn_id: None,
         }

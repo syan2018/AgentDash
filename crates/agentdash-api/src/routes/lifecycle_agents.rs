@@ -2649,8 +2649,6 @@ mod tests {
             child_agent_id,
             Some(12),
             Some(serde_json::to_value(&fork_point_ref).expect("message ref should serialize")),
-            "parent-runtime",
-            "child-runtime",
             "user-a",
             Some(serde_json::json!({ "source": "api-test" })),
         );

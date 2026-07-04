@@ -350,7 +350,7 @@ impl<'a> AgentRunForkService<'a> {
                         materialized.child_run.id,
                         materialized.child_agent.id,
                         materialized.child_frame.id,
-                        materialized.lineage.child_runtime_session_id.clone(),
+                        materialized.child_runtime_session_id.clone(),
                     ),
                     source: MailboxSourceIdentity::composer(),
                     schedule_on_submit: true,
@@ -369,7 +369,7 @@ impl<'a> AgentRunForkService<'a> {
                         "child_mailbox_submit",
                         &log_context,
                         Some(&parent),
-                        Some(&materialized.lineage.child_runtime_session_id),
+                        Some(&materialized.child_runtime_session_id),
                         &error,
                     );
                     mark_command_terminal_failed(
@@ -400,7 +400,7 @@ impl<'a> AgentRunForkService<'a> {
                         "receipt_attach_mailbox_message",
                         &log_context,
                         Some(&parent),
-                        Some(&materialized.lineage.child_runtime_session_id),
+                        Some(&materialized.child_runtime_session_id),
                         error,
                     );
                 })?;
@@ -415,7 +415,7 @@ impl<'a> AgentRunForkService<'a> {
                     "receipt_mark_accepted",
                     &log_context,
                     Some(&parent),
-                    Some(&materialized.lineage.child_runtime_session_id),
+                    Some(&materialized.child_runtime_session_id),
                     error,
                 );
             })?;
@@ -435,7 +435,7 @@ impl<'a> AgentRunForkService<'a> {
                     "receipt_store_result",
                     &log_context,
                     Some(&parent),
-                    Some(&materialized.lineage.child_runtime_session_id),
+                    Some(&materialized.child_runtime_session_id),
                     error,
                 );
             })?;
@@ -961,14 +961,16 @@ mod tests {
             .await
             .expect("read lineage")
             .expect("lineage");
-        assert_eq!(
-            lineage.child_runtime_session_id,
-            result.lineage.child_runtime_session_id
-        );
+        assert_eq!(lineage.id, result.lineage.id);
 
+        let child_runtime_session_id = result
+            .child_refs
+            .runtime_session_id
+            .as_deref()
+            .expect("child accepted refs should include runtime trace");
         let runtime_lineage = fixture
             .session_store
-            .get_session_lineage(&result.lineage.child_runtime_session_id)
+            .get_session_lineage(child_runtime_session_id)
             .await
             .expect("runtime lineage")
             .expect("runtime lineage");
@@ -1013,7 +1015,7 @@ mod tests {
         assert_eq!(child_messages.len(), 1);
         assert_eq!(
             child_messages[0].runtime_session_id.as_deref(),
-            Some(result.lineage.child_runtime_session_id.as_str())
+            result.child_refs.runtime_session_id.as_deref()
         );
         assert_eq!(child_messages[0].status, MailboxMessageStatus::Dispatched);
         assert_eq!(

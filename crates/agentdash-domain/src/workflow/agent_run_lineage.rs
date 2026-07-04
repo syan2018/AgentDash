@@ -6,7 +6,7 @@ use uuid::Uuid;
 /// Cross-run AgentRun provenance relation.
 ///
 /// `AgentLineage` remains the same-run agent control tree. This model links a
-/// forked child AgentRun back to the parent AgentRun/runtime trace boundary that
+/// forked child AgentRun back to the parent AgentRun product fork boundary that
 /// produced it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AgentRunLineage {
@@ -20,8 +20,6 @@ pub struct AgentRunLineage {
     pub fork_point_event_seq: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_point_ref_json: Option<Value>,
-    pub parent_runtime_session_id: String,
-    pub child_runtime_session_id: String,
     pub forked_by_user_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata_json: Option<Value>,
@@ -37,8 +35,6 @@ impl AgentRunLineage {
         child_agent_id: Uuid,
         fork_point_event_seq: Option<u64>,
         fork_point_ref_json: Option<Value>,
-        parent_runtime_session_id: impl Into<String>,
-        child_runtime_session_id: impl Into<String>,
         forked_by_user_id: impl Into<String>,
         metadata_json: Option<Value>,
     ) -> Self {
@@ -51,8 +47,6 @@ impl AgentRunLineage {
             relation_kind: "fork".to_string(),
             fork_point_event_seq,
             fork_point_ref_json,
-            parent_runtime_session_id: parent_runtime_session_id.into(),
-            child_runtime_session_id: child_runtime_session_id.into(),
             forked_by_user_id: normalize_user_id(forked_by_user_id),
             metadata_json,
             created_at: Utc::now(),

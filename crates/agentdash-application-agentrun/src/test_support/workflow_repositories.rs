@@ -202,6 +202,7 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             return Err(AgentRunForkMaterializationError::Internal { message });
         }
 
+        let child_runtime_session_id = input.child_runtime_session_id.clone();
         let mut child_run =
             LifecycleRun::new_plain_for_user(input.parent_run.project_id, &input.forked_by_user_id);
         child_run.topology = input.parent_run.topology;
@@ -235,7 +236,7 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
         child_frame.created_by_id = Some(input.forked_by_user_id.clone());
 
         let mut anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            input.child_runtime_session_id.clone(),
+            child_runtime_session_id.clone(),
             child_run.id,
             child_frame.id,
             child_agent.id,
@@ -254,8 +255,6 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             child_agent.id,
             input.fork_point_event_seq,
             input.fork_point_ref_json,
-            input.parent_runtime_session_id,
-            input.child_runtime_session_id,
             input.forked_by_user_id,
             input.metadata_json,
         );
@@ -289,6 +288,7 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             child_run,
             child_agent,
             child_frame,
+            child_runtime_session_id,
             lineage,
         })
     }

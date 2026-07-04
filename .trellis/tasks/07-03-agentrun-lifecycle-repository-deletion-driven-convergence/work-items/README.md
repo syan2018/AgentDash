@@ -84,3 +84,18 @@ flowchart TD
 - 删除或内部化了哪些旧入口、旧字段、旧仓储组合。
 - 保留的表或 port 为什么满足 D-016 / D-017。
 - 验证命令和未覆盖风险。
+
+## Parallel Dispatch Rule
+
+并行派发以本索引的依赖图为第一约束，以实际写入路径为第二约束。满足以下条件时可以并行：
+
+- 工作项依赖已经满足，且不会提前消费尚未提交的中间结构。
+- 写入路径互不重叠，或者一个 worker 只写 `research/` / task artifact，另一个 worker 写代码。
+- 两个 worker 不共享 migration 文件、contract/generated 文件、同一 public API surface 或同一 application service 构造函数。
+- 主会话能为每个 worker 指定独立 check 范围，并在合流时按主题顺序提交。
+
+典型批次：
+
+- WI-02 runtime store cleanup 与 WI-10 Lifecycle storage research 可以并行，因为前者写 runtime-session 构造，后者先清点 Lifecycle storage 使用点。
+- WI-04 mailbox owner correction 与 WI-12 migration ledger 可以并行准备，但实际 migration 文件由主会话按提交顺序合流。
+- WI-06 delivery binding 与 WI-08 fork lineage 需要在 current delivery 语义稳定后再并行，否则 baseline 和 current selection 会互相影响。

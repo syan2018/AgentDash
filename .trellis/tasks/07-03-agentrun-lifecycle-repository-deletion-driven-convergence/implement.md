@@ -22,6 +22,10 @@
 
 `trellis-implement` 负责按锚定工作项完成实现并运行 scoped lint/typecheck。`trellis-check` 负责检查同一工作项 diff，按同一写入边界直接修复机械问题，并重新运行验证。进入最终任务收口前，最后一轮 `trellis-check` 必须从工作项局部检查升级为全任务 affected-scope 检查。
 
+并行派发以工作项和写入集合为边界。主会话可以同时派发互不重叠的 `trellis-implement` worker、只写 `research/` 的 `trellis-research` worker，或在实现 worker 运行时准备后续工作项上下文；同一接口、同一文件集合、同一 migration 链或同一提交边界内的实现保持串行。这样 check worker 看到的是稳定 diff，主会话也能按主题顺序提交，而不是让多个 worker 在同一事实边界上互相覆盖。
+
+并行批次必须在派发前写清每个 worker 的锚定 WI、允许写入路径、互斥路径、预期验证命令和完成后合流顺序。任一并行 worker 发现需要触碰另一个 worker 的写入范围时，先回报主会话，由主会话重新切分或改为串行。
+
 ## Work Item Mapping
 
 | Phase | Work item |

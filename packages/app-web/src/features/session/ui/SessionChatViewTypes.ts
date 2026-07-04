@@ -84,7 +84,6 @@ export interface SessionChatModel {
 
 export interface SessionChatSubmitIntent {
   command_id: string;
-  sessionId: string | null;
   prompt: string;
   executorConfig?: ExecutorConfig;
   backendSelection?: BackendSelectionRequestDto;

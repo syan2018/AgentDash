@@ -80,7 +80,6 @@ export interface UseAgentRunWorkspaceCommandsOptions {
 export interface UseAgentRunWorkspaceCommandsResult {
   handleAgentRunCommand: (
     command: AgentRunSessionCommand,
-    sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
     backendSelection?: BackendSelectionRequestDto,
@@ -232,7 +231,6 @@ export function useAgentRunWorkspaceCommands(
 
   const handleAgentRunCommand = useCallback(async (
     command: AgentRunSessionCommand,
-    _sessionId: string | null,
     prompt: string,
     executorConfig?: ExecutorConfig,
     backendSelection?: BackendSelectionRequestDto,

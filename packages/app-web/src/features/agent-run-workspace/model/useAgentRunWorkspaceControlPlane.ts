@@ -231,7 +231,6 @@ export function useAgentRunWorkspaceControlPlane({
     }
     await handleAgentRunCommand(
       resolution.command,
-      intent.sessionId,
       intent.prompt,
       intent.executorConfig,
       intent.backendSelection,

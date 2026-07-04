@@ -13,6 +13,16 @@ export type SessionTurnLifecycleEventType =
   | "turn_failed"
   | "turn_interrupted";
 
+export function isAgentRunWorkspaceActionRunning(input: {
+  executionStatus: string;
+  optimisticRunning: boolean;
+}): boolean {
+  return input.optimisticRunning ||
+    input.executionStatus === "starting_claimed" ||
+    input.executionStatus === "running_active" ||
+    input.executionStatus === "cancelling";
+}
+
 export function toExecutorConfigSource(
   defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null | undefined,
 ): ExecutorConfigSource | null {

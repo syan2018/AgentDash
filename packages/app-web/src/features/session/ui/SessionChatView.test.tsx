@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
-import { computeProjectionRefreshKey, extractTurnLifecycleEventType } from "./SessionChatViewModel";
+import {
+  computeProjectionRefreshKey,
+  extractTurnLifecycleEventType,
+  isAgentRunWorkspaceActionRunning,
+} from "./SessionChatViewModel";
 import {
   collectAllPlatformEvents,
   collectRenderableSystemEvents,
@@ -307,6 +311,27 @@ describe("isSessionComposerSubmitDisabled", () => {
       isCancelling: false,
       isSending: false,
     })).toBe(false);
+  });
+});
+
+describe("isAgentRunWorkspaceActionRunning", () => {
+  it("uses AgentRun execution projection without requiring a runtime trace session id", () => {
+    expect(isAgentRunWorkspaceActionRunning({
+      executionStatus: "running_active",
+      optimisticRunning: false,
+    })).toBe(true);
+    expect(isAgentRunWorkspaceActionRunning({
+      executionStatus: "ready",
+      optimisticRunning: true,
+    })).toBe(true);
+    expect(isAgentRunWorkspaceActionRunning({
+      executionStatus: "ready",
+      optimisticRunning: false,
+    })).toBe(false);
+    expect(isAgentRunWorkspaceActionRunning({
+      executionStatus: "cancelling",
+      optimisticRunning: false,
+    })).toBe(true);
   });
 });
 

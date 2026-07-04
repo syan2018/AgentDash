@@ -69,7 +69,6 @@ function resolvedModelConfig(): ConversationModelConfigView {
 function submitIntent(commandId: string): SessionChatSubmitIntent {
   return {
     command_id: commandId,
-    sessionId: "session-1",
     prompt: "继续",
   };
 }
@@ -171,8 +170,12 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("plans message, turn-end, and manual workspace-module refresh effects", () => {
-    expect(planAgentRunMessageSent(null)).toEqual({});
+    expect(planAgentRunMessageSent(null)).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "message_sent",
+    });
     expect(planAgentRunMessageSent("session-1")).toEqual({
+      refreshWorkspaceState: true,
       hookRuntimeRefresh: { reason: "message_sent", immediate: true },
       refreshAgentRunListReason: "message_sent",
     });

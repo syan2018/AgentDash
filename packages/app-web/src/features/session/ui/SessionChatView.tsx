@@ -31,6 +31,7 @@ import {
   collectAllPlatformEvents,
   collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
+  isAgentRunWorkspaceActionRunning,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
@@ -268,7 +269,7 @@ export function SessionChatView({
   // ─── 会话流 ──────────────────────────────────────────
 
   const streamSessionId = sessionId ?? "__placeholder__";
-  const hasSession = sessionId !== null;
+  const hasRuntimeTraceSession = sessionId !== null;
 
   const {
     displayItems,
@@ -286,7 +287,7 @@ export function SessionChatView({
   } = useSessionFeed({
     sessionId: streamSessionId,
     agentRunTarget,
-    enabled: hasSession,
+    enabled: hasRuntimeTraceSession,
   });
 
   const projectionRefreshKey = useMemo(
@@ -298,18 +299,17 @@ export function SessionChatView({
     [rawEvents, sessionId],
   );
   const canApplyLiveEventSideEffects =
-    hasSession &&
+    hasRuntimeTraceSession &&
     rawEventsBelongToCurrentSession &&
     rawEvents.length > 0 &&
     historyReplayBoundarySeq != null;
 
   // ─── Action running 检测 ──────────────────────────────
 
-  const snapshotExecutionActive = commandState.executionStatus === "starting_claimed" ||
-    commandState.executionStatus === "running_active" ||
-    commandState.executionStatus === "cancelling";
-
-  const targetActionRunning = hasSession && (snapshotExecutionActive || optimisticRunning);
+  const targetActionRunning = isAgentRunWorkspaceActionRunning({
+    executionStatus: commandState.executionStatus,
+    optimisticRunning,
+  });
 
   useEffect(() => {
     if (targetActionRunning) {
@@ -331,14 +331,7 @@ export function SessionChatView({
     if (actionRunningReleaseTimerRef.current) clearTimeout(actionRunningReleaseTimerRef.current);
   }, []);
 
-  const isActionRunning = hasSession && stableActionRunning;
-
-  useEffect(() => {
-    if (!hasSession) {
-      setOptimisticRunning(false);
-      optimisticRunningUntilRef.current = 0;
-    }
-  }, [hasSession]);
+  const isActionRunning = stableActionRunning;
 
   useEffect(() => {
     if (!optimisticRunning) return;
@@ -348,10 +341,13 @@ export function SessionChatView({
   }, [optimisticRunning]);
 
   useEffect(() => {
-    if (snapshotExecutionActive) return;
+    if (isAgentRunWorkspaceActionRunning({
+      executionStatus: commandState.executionStatus,
+      optimisticRunning: false,
+    })) return;
     optimisticRunningUntilRef.current = 0;
     setOptimisticRunning(false);
-  }, [snapshotExecutionActive]);
+  }, [commandState.executionStatus]);
 
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
@@ -468,7 +464,6 @@ export function SessionChatView({
     try {
       await commandActionRef.current({
         command_id: command.command_id,
-        sessionId,
         prompt: trimmed,
         executorConfig,
         imageAttachments: images.length > 0 ? images : undefined,
@@ -498,7 +493,6 @@ export function SessionChatView({
     imageAttach.attachments,
     isSending,
     onMessageSent,
-    sessionId,
   ]);
 
   const commandById = useCallback((commandId: string | undefined): SessionChatCommandModel | undefined => {
@@ -509,7 +503,6 @@ export function SessionChatView({
   const handleCancel = useCallback(async () => {
     const cancelCommand = commandState.cancelCommand;
     if (!cancelCommand?.enabled) return;
-    if (!hasSession || !sessionId) return;
     if (cancelInFlightRef.current) return;
     cancelInFlightRef.current = true;
     setSendError(null);
@@ -518,6 +511,7 @@ export function SessionChatView({
       if (cancelAction) {
         await cancelAction();
       } else {
+        if (!sessionId) return;
         await sendCancel();
       }
     } catch (e) {
@@ -526,7 +520,7 @@ export function SessionChatView({
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [cancelAction, commandState.cancelCommand, hasSession, sendCancel, sessionId]);
+  }, [cancelAction, commandState.cancelCommand, sendCancel, sessionId]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -621,14 +615,14 @@ export function SessionChatView({
 
   // ─── 派生状态 ────────────────────────────────────────
 
-  const connectionLabel = !hasSession
-    ? "待创建"
+  const connectionLabel = !hasRuntimeTraceSession
+    ? agentRunTarget ? "工作区待连接" : "待创建"
     : isConnected ? "已连接" : isLoading ? "连接中…" : "未连接";
-  const connectionColor = !hasSession
-    ? "bg-muted-foreground/40"
+  const connectionColor = !hasRuntimeTraceSession
+    ? agentRunTarget ? "bg-warning/70" : "bg-muted-foreground/40"
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
-  const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
+  const displayError = sendError ?? (hasRuntimeTraceSession ? wsError?.message : null) ?? null;
   const mailboxMessages = mailbox.messages;
 
   // ─── 渲染 ────────────────────────────────────────────
@@ -659,7 +653,7 @@ export function SessionChatView({
                 {displayError}
               </div>
             </div>
-            {wsError && !isConnected && hasSession && (
+            {wsError && !isConnected && hasRuntimeTraceSession && (
               <button type="button" onClick={reconnect} className="shrink-0 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
                 重新连接
               </button>
@@ -673,7 +667,7 @@ export function SessionChatView({
         displayItems={displayItems}
         turnSegments={turnSegments}
         agentRunTarget={agentRunTarget}
-        hasSession={hasSession}
+        hasRuntimeTraceSession={hasRuntimeTraceSession}
         isLoading={isLoading}
         sessionId={sessionId}
         streamingEntryId={streamingEntryId}
@@ -702,7 +696,7 @@ export function SessionChatView({
           discovered={discovered}
           execConfig={execConfig}
           fileRef={fileRef}
-          hasSession={hasSession}
+          hasRuntimeTraceSession={hasRuntimeTraceSession}
           inputPrefix={inputPrefix}
           toolbarSlot={inputToolbarSlot}
           inputValue={inputValue}

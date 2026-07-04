@@ -245,7 +245,7 @@ export function SessionChatStream({
   displayItems,
   turnSegments,
   agentRunTarget,
-  hasSession,
+  hasRuntimeTraceSession,
   isLoading,
   sessionId,
   streamingEntryId,
@@ -257,7 +257,7 @@ export function SessionChatStream({
   displayItems: SessionDisplayItem[];
   turnSegments?: TurnSegment[];
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  hasSession: boolean;
+  hasRuntimeTraceSession: boolean;
   isLoading: boolean;
   sessionId: string | null;
   streamingEntryId: string | null;
@@ -267,14 +267,14 @@ export function SessionChatStream({
 }) {
   return (
     <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
-      {hasSession && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
+      {hasRuntimeTraceSession && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
         <div className="flex h-full items-center justify-center">
           <div className="text-center">
             <div className="mx-auto h-8 w-8 animate-spin rounded-[12px] border-2 border-primary border-t-transparent" />
             <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
           </div>
         </div>
-      ) : (hasSession && displayItems.length > 0) || streamPrefixContent ? (
+      ) : (hasRuntimeTraceSession && displayItems.length > 0) || streamPrefixContent ? (
         <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
           {streamPrefixContent}
           {turnSegments && turnSegments.length > 0 ? (
@@ -310,10 +310,10 @@ export function SessionChatStream({
         <div className="flex h-full items-center justify-center">
           <div className="text-center">
             <div className="mx-auto mb-4 w-fit rounded-[8px] border border-dashed border-border bg-secondary px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Session
+              {agentRunTarget ? "Workspace" : "Session"}
             </div>
             <p className="text-sm text-muted-foreground">
-              {hasSession ? "会话已就绪，继续发送消息" : "输入 prompt 并发送开始会话"}
+              {hasRuntimeTraceSession ? "会话已就绪，继续发送消息" : "对话尚未开始，仍可发送可用命令"}
             </p>
           </div>
         </div>
@@ -593,7 +593,7 @@ export function SessionChatComposer({
   discovered,
   execConfig,
   fileRef,
-  hasSession,
+  hasRuntimeTraceSession,
   inputPrefix,
   toolbarSlot,
   inputValue,
@@ -625,7 +625,7 @@ export function SessionChatComposer({
   discovered: ExecutorDiscoveredState;
   execConfig: ExecutorConfigState;
   fileRef: FileReferenceState;
-  hasSession: boolean;
+  hasRuntimeTraceSession: boolean;
   inputPrefix?: ReactNode;
   toolbarSlot?: ReactNode;
   inputValue: string;
@@ -702,7 +702,7 @@ export function SessionChatComposer({
     <div className="shrink-0 pb-4 pt-2">
       <div className="mx-auto w-full max-w-4xl px-5">
         {/* Prompt 模板（无 session + draft 模式） */}
-        {!hasSession && !submitCommand?.enabled && promptTemplates && promptTemplates.length > 0 && (
+        {!hasRuntimeTraceSession && !submitCommand?.enabled && promptTemplates && promptTemplates.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {promptTemplates.map((tpl) => (
               <button

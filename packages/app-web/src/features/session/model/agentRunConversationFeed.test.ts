@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AgentConversationFeedSnapshot } from "../../../generated/workflow-contracts";
-import { agentRunConversationFeedEntries, agentRunConversationFeedEvents } from "./agentRunConversationFeed";
+import type { SessionEventEnvelope } from "./types";
+import {
+  agentRunConversationFeedEntries,
+  agentRunConversationFeedEvents,
+  normalizeAgentRunSessionEventIdentity,
+} from "./agentRunConversationFeed";
 
 function feed(messages: AgentConversationFeedSnapshot["messages"]): AgentConversationFeedSnapshot {
   return {
@@ -13,6 +18,38 @@ function feed(messages: AgentConversationFeedSnapshot["messages"]): AgentConvers
     runtime_replay_start_seq: 0,
     message_count: messages.length,
     messages,
+  };
+}
+
+function runtimeEvent(sessionId: string): SessionEventEnvelope {
+  return {
+    session_id: sessionId,
+    event_seq: 1,
+    occurred_at_ms: 1,
+    committed_at_ms: 1,
+    session_update_type: "agent_message_delta",
+    notification: {
+      sessionId,
+      source: {
+        connectorId: "test",
+        connectorType: "unit",
+        executorId: null,
+      },
+      trace: {
+        turnId: "turn-1",
+        entryIndex: 0,
+      },
+      observedAt: "2026-07-04T00:00:00.000Z",
+      event: {
+        type: "agent_message_delta",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "item-1",
+          delta: "hello",
+        },
+      },
+    },
   };
 }
 
@@ -91,6 +128,52 @@ describe("agentRunConversationFeedEntries", () => {
       { type: "text", text: "see image", text_elements: [] },
       { type: "image", url: "data:image/png;base64,abc123" },
     ]);
+  });
+
+  it("uses AgentRun scoped identity for synthetic thread/session ids", () => {
+    const events = agentRunConversationFeedEvents(feed([
+      {
+        message_ref: { turn_id: "turn-1", entry_index: 0 },
+        role: "user",
+        text: "hello",
+        content_parts: [{ type: "text", text: "hello" }],
+        origin: "event",
+        synthetic: false,
+        projection_kind: "canonical",
+        timestamp_ms: 1000,
+      },
+    ]));
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.session_id).toBe("agentrun:run-1:agent-1");
+    expect(events[0]?.session_id).not.toBe("sess-1");
+    expect(events[0]?.notification.sessionId).toBe("agentrun:run-1:agent-1");
+    const event = events[0]?.notification.event;
+    expect(event?.type).toBe("user_input_submitted");
+    if (event?.type !== "user_input_submitted") return;
+    expect(event.payload.threadId).toBe("agentrun:run-1:agent-1");
+  });
+
+  it("normalizes AgentRun scoped runtime events to the synthetic stream identity", () => {
+    const event = runtimeEvent("runtime-session-1");
+    const normalized = normalizeAgentRunSessionEventIdentity(event, {
+      runId: "run-1",
+      agentId: "agent-1",
+    });
+
+    expect(normalized.session_id).toBe("agentrun:run-1:agent-1");
+    expect(normalized.notification.sessionId).toBe("agentrun:run-1:agent-1");
+    expect(event.session_id).toBe("runtime-session-1");
+  });
+
+  it("keeps already normalized AgentRun runtime events by reference", () => {
+    const event = runtimeEvent("agentrun:run-1:agent-1");
+    const normalized = normalizeAgentRunSessionEventIdentity(event, {
+      runId: "run-1",
+      agentId: "agent-1",
+    });
+
+    expect(normalized).toBe(event);
   });
 
   it("keeps assistant tool calls and pairs them with tool results", () => {

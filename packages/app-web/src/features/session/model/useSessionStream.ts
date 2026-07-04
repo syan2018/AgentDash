@@ -22,7 +22,10 @@ import type {
   TokenUsageInfo,
 } from "./types";
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
-import { agentRunConversationFeedEntries } from "./agentRunConversationFeed";
+import {
+  agentRunConversationFeedEntries,
+  normalizeAgentRunSessionEventIdentity,
+} from "./agentRunConversationFeed";
 import {
   createInitialStreamState,
   reduceStreamState,
@@ -36,7 +39,7 @@ import {
 } from "./sessionPlatformEventDispatcher";
 
 export interface UseSessionStreamOptions {
-  sessionId: string;
+  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   /** 设为 false 时跳过连接，返回空的初始状态。默认 true。 */
   enabled?: boolean;
@@ -77,6 +80,8 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     onError,
   } = options;
   const normalizedInitialEntries = initialEntries ?? EMPTY_INITIAL_ENTRIES;
+  const rawSessionId = sessionId?.trim() || null;
+  const hasStreamTarget = agentRunTarget != null || rawSessionId != null;
 
   const [streamState, setStreamState] = useState<SessionStreamState>(() =>
     createInitialStreamState(normalizedInitialEntries),
@@ -178,7 +183,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
   useEffect(() => {
     mountedRef.current = true;
 
-    if (!enabled) {
+    if (!enabled || !hasStreamTarget) {
       setStreamState(createInitialStreamState(initialEntriesRef.current));
       setIsLoading(false);
       setError(null);
@@ -192,7 +197,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     const agentRunKey = agentRunTarget
       ? `${agentRunTarget.runId}:${agentRunTarget.agentId}`
       : "";
-    const sourceKey = `${sessionId}|${agentRunKey}|${endpoint ?? ""}`;
+    const sourceKey = `session:${rawSessionId ?? ""}|agentrun:${agentRunKey}|${endpoint ?? ""}`;
     const shouldResetState = sourceKeyRef.current !== sourceKey;
     sourceKeyRef.current = sourceKey;
 
@@ -220,6 +225,10 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     const start = async () => {
       let nextState = baseState;
       let afterSeq = shouldResetState ? 0 : baseState.lastAppliedSeq;
+      const normalizeEvents = (events: SessionEventEnvelope[]): SessionEventEnvelope[] => {
+        if (!agentRunTarget) return events;
+        return events.map((event) => normalizeAgentRunSessionEventIdentity(event, agentRunTarget));
+      };
 
       try {
         if (agentRunTarget && shouldResetState) {
@@ -240,9 +249,12 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
         while (!cancelled) {
           const page = agentRunTarget
             ? await fetchAgentRunRuntimeEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE)
-            : await fetchSessionEvents(sessionId, afterSeq, HISTORY_PAGE_SIZE);
-          projectSessionTerminalPlatformEvents(page.events, callbackRefs.current.onError);
-          nextState = reduceStreamState(nextState, page.events);
+            : rawSessionId
+              ? await fetchSessionEvents(rawSessionId, afterSeq, HISTORY_PAGE_SIZE)
+              : { events: [], next_after_seq: afterSeq, has_more: false };
+          const pageEvents = normalizeEvents(page.events);
+          projectSessionTerminalPlatformEvents(pageEvents, callbackRefs.current.onError);
+          nextState = reduceStreamState(nextState, pageEvents);
           afterSeq = page.next_after_seq;
           if (!mountedRef.current || cancelled) return;
           setStreamState(nextState);
@@ -258,13 +270,16 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
         }
 
         transportRef.current = createSessionStreamTransport({
-          sessionId,
+          sessionId: rawSessionId,
           agentRunTarget,
           endpoint,
           sinceId: nextState.lastAppliedSeq,
           onEvent: (event) => {
             if (!mountedRef.current) return;
-            enqueueEventRef.current(event);
+            const normalizedEvent = agentRunTarget
+              ? normalizeAgentRunSessionEventIdentity(event, agentRunTarget)
+              : event;
+            enqueueEventRef.current(normalizedEvent);
           },
           onEphemeralEpoch: (epoch) => {
             if (!mountedRef.current) return;
@@ -343,6 +358,8 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     enabled,
     endpoint,
     flushPendingEvents,
+    hasStreamTarget,
+    rawSessionId,
     sessionId,
   ]);
 

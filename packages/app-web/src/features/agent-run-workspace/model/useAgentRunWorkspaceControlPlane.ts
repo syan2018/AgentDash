@@ -281,7 +281,7 @@ export function useAgentRunWorkspaceControlPlane({
   }, [handleMoveMailboxMessage, refreshAgentRunList]);
 
   const chatModel = useMemo<SessionChatModel>(() => ({
-    sessionId: deliveryRuntimeSessionId,
+    sessionId: null,
     executorHint,
     agentDefaults: draftProjectAgent?.effective_executor_config
       ?? runtimeControl?.conversation?.model_config.effective_executor_config
@@ -297,7 +297,6 @@ export function useAgentRunWorkspaceControlPlane({
     conversationMailbox,
     currentAgentId,
     currentRunId,
-    deliveryRuntimeSessionId,
     draftProjectAgent?.effective_executor_config,
     executorHint,
     executorStateKey,

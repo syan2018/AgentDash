@@ -84,7 +84,7 @@ function getItemKey(item: SessionDisplayItem): string {
  * - hover 出轻量摘要（百分比 / 当前·上限 / 最近输入输出 / 估算）
  * - 点击向上展开锚定圆环的浮层，渲染完整明细（构成 / 消息明细 / Top Tools / segments）
  *
- * 只要存在会话就渲染（即便用量数据尚未到达，也能点开看投影明细），
+ * 只要存在 AgentRun target 或 raw session trace 就渲染（即便用量数据尚未到达，也能点开看投影明细），
  * 因此入口在 GUI 上始终可见、可发现。
  */
 function ContextUsageRing({
@@ -121,8 +121,8 @@ function ContextUsageRing({
     };
   }, [open]);
 
-  // 没有会话可查时不渲染入口
-  if (!sessionId) return null;
+  // 没有上下文投影目标时不渲染入口
+  if (!agentRunTarget && !sessionId) return null;
 
   const maxTokens = usage ? usage.effectiveContextWindow ?? usage.modelContextWindow : undefined;
   const currentContextTokens = usage?.currentContextTokens ?? 0;

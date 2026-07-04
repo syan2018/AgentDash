@@ -11,6 +11,40 @@ type FeedMessage = AgentConversationFeedSnapshot["messages"][number];
 type FeedContentPart = NonNullable<FeedMessage["content_parts"]>[number];
 type FeedToolCall = NonNullable<FeedMessage["tool_calls"]>[number];
 
+export interface AgentRunStreamIdentityTarget {
+  runId: string;
+  agentId: string;
+}
+
+export function agentRunSyntheticSessionId(target: AgentRunStreamIdentityTarget): string {
+  return `agentrun:${target.runId}:${target.agentId}`;
+}
+
+function agentRunThreadId(feed: AgentConversationFeedSnapshot): string {
+  return agentRunSyntheticSessionId({
+    runId: feed.run_ref.run_id,
+    agentId: feed.agent_ref.agent_id,
+  });
+}
+
+export function normalizeAgentRunSessionEventIdentity(
+  event: SessionEventEnvelope,
+  target: AgentRunStreamIdentityTarget,
+): SessionEventEnvelope {
+  const sessionId = agentRunSyntheticSessionId(target);
+  if (event.session_id === sessionId && event.notification.sessionId === sessionId) {
+    return event;
+  }
+  return {
+    ...event,
+    session_id: sessionId,
+    notification: {
+      ...event.notification,
+      sessionId,
+    },
+  };
+}
+
 function messageTimestamp(message: FeedMessage): number {
   return message.timestamp_ms == null ? Date.now() : Number(message.timestamp_ms);
 }
@@ -308,7 +342,7 @@ export function agentRunConversationFeedEvents(
   feed: AgentConversationFeedSnapshot | null,
 ): SessionEventEnvelope[] {
   if (!feed) return [];
-  const threadId = feed.runtime_session_ref?.runtime_session_id ?? "";
+  const threadId = agentRunThreadId(feed);
   const toolResults = toolResultByCallId(feed.messages);
   const representedToolCallIdsValue = representedToolCallIds(feed.messages);
   const pending: Array<{ message: FeedMessage; event: BackboneEvent }> = [];

@@ -510,8 +510,9 @@ export function AgentRunWorkspacePage({
   const hasDeliveryRuntime = deliveryRuntimeSessionId !== null;
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
-    sessionId: deliveryRuntimeSessionId,
-    runtimeSessionId: deliveryRuntimeSessionId,
+    sessionId: null,
+    runtimeSessionId: null,
+    traceSessionId: deliveryRuntimeSessionId,
     agentRunRuntimeTarget,
     sessionMeta: runtimeControl?.delivery_trace_meta
       ? {

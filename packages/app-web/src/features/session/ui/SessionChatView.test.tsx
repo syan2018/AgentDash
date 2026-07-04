@@ -6,6 +6,7 @@ import {
   computeProjectionRefreshKey,
   extractTurnLifecycleEventType,
   isAgentRunWorkspaceActionRunning,
+  rawEventsBelongToRuntimeStreamTarget,
 } from "./SessionChatViewModel";
 import {
   collectAllPlatformEvents,
@@ -28,16 +29,16 @@ const completedTurn: Turn = {
   durationMs: null,
 };
 
-function eventEnvelope(eventSeq: number, event: BackboneEvent): SessionEventEnvelope {
+function eventEnvelope(eventSeq: number, event: BackboneEvent, sessionId = "session-1"): SessionEventEnvelope {
   return {
-    session_id: "session-1",
+    session_id: sessionId,
     event_seq: eventSeq,
     occurred_at_ms: eventSeq,
     committed_at_ms: eventSeq,
     session_update_type: event.type,
     notification: {
       event,
-      sessionId: "session-1",
+      sessionId,
       source: {
         connectorId: "test",
         connectorType: "unit",
@@ -153,6 +154,55 @@ describe("computeProjectionRefreshKey", () => {
     ];
 
     expect(computeProjectionRefreshKey(events)).toBe(8);
+  });
+});
+
+describe("rawEventsBelongToRuntimeStreamTarget", () => {
+  it("matches raw session events by raw session id", () => {
+    const events = [eventEnvelope(1, agentDeltaEvent("assistant-1"), "session-1")];
+
+    expect(rawEventsBelongToRuntimeStreamTarget({
+      rawEvents: events,
+      sessionId: "session-1",
+      agentRunTarget: null,
+    })).toBe(true);
+    expect(rawEventsBelongToRuntimeStreamTarget({
+      rawEvents: events,
+      sessionId: "other-session",
+      agentRunTarget: null,
+    })).toBe(false);
+  });
+
+  it("matches AgentRun events by synthetic stream key when raw session id is absent", () => {
+    const syntheticSessionId = "agentrun:run-1:agent-1";
+    const events = [eventEnvelope(1, turnTerminalMetaEvent("turn_completed"), syntheticSessionId)];
+
+    expect(rawEventsBelongToRuntimeStreamTarget({
+      rawEvents: events,
+      sessionId: null,
+      agentRunTarget: { runId: "run-1", agentId: "agent-1" },
+    })).toBe(true);
+  });
+
+  it("prefers AgentRun synthetic stream key when diagnostic session id is present", () => {
+    const syntheticSessionId = "agentrun:run-1:agent-1";
+    const events = [eventEnvelope(1, turnTerminalMetaEvent("turn_completed"), syntheticSessionId)];
+
+    expect(rawEventsBelongToRuntimeStreamTarget({
+      rawEvents: events,
+      sessionId: "runtime-session-1",
+      agentRunTarget: { runId: "run-1", agentId: "agent-1" },
+    })).toBe(true);
+  });
+
+  it("rejects stale raw RuntimeSession events on AgentRun scoped chat", () => {
+    const events = [eventEnvelope(1, turnTerminalMetaEvent("turn_completed"), "runtime-session-1")];
+
+    expect(rawEventsBelongToRuntimeStreamTarget({
+      rawEvents: events,
+      sessionId: null,
+      agentRunTarget: { runId: "run-1", agentId: "agent-1" },
+    })).toBe(false);
   });
 });
 

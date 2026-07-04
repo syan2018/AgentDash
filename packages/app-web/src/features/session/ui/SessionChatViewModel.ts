@@ -4,6 +4,10 @@ import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
+import {
+  agentRunSyntheticSessionId,
+  type AgentRunStreamIdentityTarget,
+} from "../model/agentRunConversationFeed";
 import { extractPlatformEventType, isRecord } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 
@@ -21,6 +25,20 @@ export function isAgentRunWorkspaceActionRunning(input: {
     input.executionStatus === "starting_claimed" ||
     input.executionStatus === "running_active" ||
     input.executionStatus === "cancelling";
+}
+
+export function rawEventsBelongToRuntimeStreamTarget(input: {
+  rawEvents: SessionEventEnvelope[];
+  sessionId: string | null;
+  agentRunTarget?: AgentRunStreamIdentityTarget | null;
+}): boolean {
+  const expectedSessionId = input.agentRunTarget
+    ? agentRunSyntheticSessionId(input.agentRunTarget)
+    : input.sessionId?.trim() || null;
+  if (!expectedSessionId) {
+    return input.rawEvents.length === 0;
+  }
+  return input.rawEvents.every((event) => event.session_id === expectedSessionId);
 }
 
 export function toExecutorConfigSource(

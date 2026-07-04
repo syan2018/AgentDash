@@ -32,6 +32,7 @@ import {
   collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
   isAgentRunWorkspaceActionRunning,
+  rawEventsBelongToRuntimeStreamTarget,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
@@ -139,12 +140,16 @@ export function SessionChatView({
     }
   }, [injectedInputConsumed, injectedInputValue]);
 
-  // sessionId 变更时重置内部状态
+  const agentRunTargetKey = agentRunTarget
+    ? `${agentRunTarget.runId}:${agentRunTarget.agentId}`
+    : null;
+
+  // runtime stream target 变更时重置内部状态
   useEffect(() => {
     setSendError(null);
     setIsCancelling(false);
     cancelInFlightRef.current = false;
-  }, [sessionId]);
+  }, [agentRunTargetKey, sessionId]);
 
   // ─── 执行器配置 ──────────────────────────────────────
 
@@ -268,8 +273,7 @@ export function SessionChatView({
 
   // ─── 会话流 ──────────────────────────────────────────
 
-  const streamSessionId = sessionId ?? "__placeholder__";
-  const hasRuntimeTraceSession = sessionId !== null;
+  const hasRuntimeStreamTarget = agentRunTarget != null || sessionId !== null;
 
   const {
     displayItems,
@@ -285,9 +289,9 @@ export function SessionChatView({
     streamingEntryId,
     tokenUsage,
   } = useSessionFeed({
-    sessionId: streamSessionId,
+    sessionId,
     agentRunTarget,
-    enabled: hasRuntimeTraceSession,
+    enabled: hasRuntimeStreamTarget,
   });
 
   const projectionRefreshKey = useMemo(
@@ -295,11 +299,11 @@ export function SessionChatView({
     [rawEvents],
   );
   const rawEventsBelongToCurrentSession = useMemo(
-    () => !sessionId || rawEvents.every((event) => event.session_id === sessionId),
-    [rawEvents, sessionId],
+    () => rawEventsBelongToRuntimeStreamTarget({ rawEvents, sessionId, agentRunTarget }),
+    [agentRunTarget, rawEvents, sessionId],
   );
   const canApplyLiveEventSideEffects =
-    hasRuntimeTraceSession &&
+    hasRuntimeStreamTarget &&
     rawEventsBelongToCurrentSession &&
     rawEvents.length > 0 &&
     historyReplayBoundarySeq != null;
@@ -362,7 +366,7 @@ export function SessionChatView({
     lastSystemEventSeqRef.current = null;
     lastTaskToolEventSeqRef.current = null;
     lastTurnLifecycleEventSeqRef.current = null;
-  }, [sessionId]);
+  }, [agentRunTargetKey, sessionId]);
 
   useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
@@ -511,8 +515,9 @@ export function SessionChatView({
       if (cancelAction) {
         await cancelAction();
       } else {
-        if (!sessionId) return;
-        await sendCancel();
+        if (sessionId) {
+          await sendCancel();
+        }
       }
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "取消失败，请重试。");
@@ -615,14 +620,14 @@ export function SessionChatView({
 
   // ─── 派生状态 ────────────────────────────────────────
 
-  const connectionLabel = !hasRuntimeTraceSession
-    ? agentRunTarget ? "工作区待连接" : "待创建"
+  const connectionLabel = !hasRuntimeStreamTarget
+    ? "待创建"
     : isConnected ? "已连接" : isLoading ? "连接中…" : "未连接";
-  const connectionColor = !hasRuntimeTraceSession
-    ? agentRunTarget ? "bg-warning/70" : "bg-muted-foreground/40"
+  const connectionColor = !hasRuntimeStreamTarget
+    ? "bg-muted-foreground/40"
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
-  const displayError = sendError ?? (hasRuntimeTraceSession ? wsError?.message : null) ?? null;
+  const displayError = sendError ?? (hasRuntimeStreamTarget ? wsError?.message : null) ?? null;
   const mailboxMessages = mailbox.messages;
 
   // ─── 渲染 ────────────────────────────────────────────
@@ -653,7 +658,7 @@ export function SessionChatView({
                 {displayError}
               </div>
             </div>
-            {wsError && !isConnected && hasRuntimeTraceSession && (
+            {wsError && !isConnected && hasRuntimeStreamTarget && (
               <button type="button" onClick={reconnect} className="shrink-0 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
                 重新连接
               </button>
@@ -667,7 +672,7 @@ export function SessionChatView({
         displayItems={displayItems}
         turnSegments={turnSegments}
         agentRunTarget={agentRunTarget}
-        hasRuntimeTraceSession={hasRuntimeTraceSession}
+        hasRuntimeTraceSession={hasRuntimeStreamTarget}
         isLoading={isLoading}
         sessionId={sessionId}
         streamingEntryId={streamingEntryId}
@@ -696,7 +701,7 @@ export function SessionChatView({
           discovered={discovered}
           execConfig={execConfig}
           fileRef={fileRef}
-          hasRuntimeTraceSession={hasRuntimeTraceSession}
+          hasRuntimeTraceSession={hasRuntimeStreamTarget}
           inputPrefix={inputPrefix}
           toolbarSlot={inputToolbarSlot}
           inputValue={inputValue}

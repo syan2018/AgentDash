@@ -25,7 +25,7 @@ import type {
 } from "./types";
 
 export interface UseSessionFeedOptions {
-  sessionId: string;
+  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   endpoint?: string;
   enableAggregation?: boolean;

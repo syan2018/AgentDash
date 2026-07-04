@@ -29,6 +29,22 @@ export interface SessionProjectionViewPanelProps {
   embedded?: boolean;
 }
 
+async function fetchSessionProjectionForTarget({
+  sessionId,
+  agentRunTarget,
+}: {
+  sessionId: string | null;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
+}): Promise<SessionProjectionViewResponse | null> {
+  if (agentRunTarget) {
+    return fetchAgentRunRuntimeContextProjection(agentRunTarget);
+  }
+  if (sessionId) {
+    return fetchSessionContextProjection(sessionId);
+  }
+  return null;
+}
+
 interface ContextCategoryRow {
   id: string;
   label: string;
@@ -346,16 +362,14 @@ export function SessionProjectionView({
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!sessionId) {
+    if (!agentRunTarget && !sessionId) {
       setProjection(null);
       return;
     }
     setIsLoading(true);
     setError(null);
     try {
-      const next = agentRunTarget
-        ? await fetchAgentRunRuntimeContextProjection(agentRunTarget)
-        : await fetchSessionContextProjection(sessionId);
+      const next = await fetchSessionProjectionForTarget({ sessionId, agentRunTarget });
       setProjection(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载模型上下文失败");

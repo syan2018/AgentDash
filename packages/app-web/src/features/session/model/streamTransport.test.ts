@@ -1,9 +1,35 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BackboneEnvelope } from "../../../generated/backbone-protocol";
+import { createSessionStreamTransport } from "./streamTransport";
 import {
   parseSessionEventEnvelopePayload,
   parseSessionNdjsonEnvelope,
 } from "./sessionNdjsonEnvelopeValidator";
+
+const mocks = vi.hoisted(() => ({
+  authenticatedFetch: vi.fn(),
+  registerStreamConnection: vi.fn(() => vi.fn()),
+  resolveApiUrl: vi.fn((path: string) => `http://api.test${path}`),
+}));
+
+vi.mock("../../../api/client", () => ({
+  authenticatedFetch: mocks.authenticatedFetch,
+}));
+
+vi.mock("../../../api/origin", () => ({
+  resolveApiUrl: mocks.resolveApiUrl,
+}));
+
+vi.mock("../../../api/streamRegistry", () => ({
+  registerStreamConnection: mocks.registerStreamConnection,
+}));
+
+beforeEach(() => {
+  mocks.authenticatedFetch.mockReset();
+  mocks.registerStreamConnection.mockReset();
+  mocks.registerStreamConnection.mockReturnValue(vi.fn());
+  mocks.resolveApiUrl.mockClear();
+});
 
 function envelope(): BackboneEnvelope {
   return {
@@ -194,5 +220,52 @@ describe("parseSessionNdjsonEnvelope", () => {
     if (!result.ok) {
       expect(result.error.message).toContain("未知 Session NDJSON 类型");
     }
+  });
+});
+
+describe("createSessionStreamTransport", () => {
+  it("connects AgentRun scoped stream without a raw session id", () => {
+    mocks.authenticatedFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      body: null,
+    } as Response);
+    const transport = createSessionStreamTransport({
+      sessionId: null,
+      agentRunTarget: { runId: "run 1", agentId: "agent/1" },
+      onEvent: vi.fn(),
+      onLifecycleChange: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(mocks.resolveApiUrl).toHaveBeenCalledWith(
+      "/api/agent-runs/run%201/agents/agent%2F1/runtime/stream/ndjson",
+    );
+    expect(mocks.authenticatedFetch).toHaveBeenCalledWith(
+      "http://api.test/api/agent-runs/run%201/agents/agent%2F1/runtime/stream/ndjson",
+      expect.objectContaining({
+        method: "GET",
+        cache: "no-store",
+      }),
+    );
+
+    transport.close();
+  });
+
+  it("rejects raw session stream when session id is missing", () => {
+    const onError = vi.fn();
+    const transport = createSessionStreamTransport({
+      sessionId: null,
+      onEvent: vi.fn(),
+      onLifecycleChange: vi.fn(),
+      onError,
+    });
+
+    expect(mocks.authenticatedFetch).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Session stream requires sessionId unless agentRunTarget is provided.",
+    }));
+
+    transport.close();
   });
 });

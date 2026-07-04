@@ -14,7 +14,7 @@ const RETRY_MAX_MS = 8000;
 export type SessionStreamLifecycle = "connecting" | "connected" | "reconnecting" | "closed";
 
 export interface SessionStreamTransportOptions {
-  sessionId: string;
+  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   endpoint?: string;
   sinceId?: number;
@@ -30,7 +30,7 @@ export interface SessionStreamTransport {
 }
 
 function buildStreamEndpoint(
-  sessionId: string,
+  sessionId: string | null | undefined,
   endpoint?: string,
   agentRunTarget?: AgentRunRuntimeTarget | null,
 ): string {
@@ -40,11 +40,15 @@ function buildStreamEndpoint(
   if (agentRunTarget) {
     return `/api/agent-runs/${encodeURIComponent(agentRunTarget.runId)}/agents/${encodeURIComponent(agentRunTarget.agentId)}/runtime/stream/ndjson`;
   }
-  return `/api/sessions/${encodeURIComponent(sessionId)}/stream/ndjson`;
+  const rawSessionId = sessionId?.trim();
+  if (!rawSessionId) {
+    throw new Error("Session stream requires sessionId unless agentRunTarget is provided.");
+  }
+  return `/api/sessions/${encodeURIComponent(rawSessionId)}/stream/ndjson`;
 }
 
 function buildNdjsonEndpoint(
-  sessionId: string,
+  sessionId: string | null | undefined,
   endpoint?: string,
   agentRunTarget?: AgentRunRuntimeTarget | null,
 ): string {

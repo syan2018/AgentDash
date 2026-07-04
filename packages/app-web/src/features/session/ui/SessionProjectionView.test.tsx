@@ -1,7 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { SessionProjectionViewResponse } from "../../../generated/session-contracts";
 import { SessionProjectionViewPanel } from "./SessionProjectionView";
+
+const mocks = vi.hoisted(() => ({
+  fetchAgentRunRuntimeContextProjection: vi.fn(),
+  fetchSessionContextProjection: vi.fn(),
+}));
+
+vi.mock("../../../services/agentRunRuntime", () => ({
+  fetchAgentRunRuntimeContextProjection: mocks.fetchAgentRunRuntimeContextProjection,
+}));
+
+vi.mock("../../../services/session", () => ({
+  fetchSessionContextProjection: mocks.fetchSessionContextProjection,
+}));
+
+beforeEach(() => {
+  mocks.fetchAgentRunRuntimeContextProjection.mockReset();
+  mocks.fetchSessionContextProjection.mockReset();
+});
+
+afterEach(() => {
+  vi.doUnmock("react");
+});
 
 describe("SessionProjectionViewPanel", () => {
   it("渲染模型投影版本、压缩范围和 synthetic segment", () => {
@@ -58,6 +80,72 @@ describe("SessionProjectionViewPanel", () => {
     expect(markup).not.toContain("150.1K");
   });
 });
+
+describe("fetchSessionProjectionForTarget", () => {
+  it("AgentRun target 存在时不要求 raw session id", async () => {
+    const projection = sampleProjection();
+    mocks.fetchAgentRunRuntimeContextProjection.mockResolvedValue(projection);
+    const { SessionProjectionView } = await importProjectionViewWithImmediateEffects();
+
+    SessionProjectionView({
+      sessionId: null,
+      agentRunTarget: { runId: "run-1", agentId: "agent-1" },
+      refreshKey: 0,
+      tokenUsage: null,
+      embedded: false,
+    });
+    await flushPromises();
+
+    expect(mocks.fetchAgentRunRuntimeContextProjection).toHaveBeenCalledWith({
+      runId: "run-1",
+      agentId: "agent-1",
+    });
+    expect(mocks.fetchSessionContextProjection).not.toHaveBeenCalled();
+  });
+
+  it("raw session projection 仍要求 session id 作为 fallback target", async () => {
+    const projection = sampleProjection();
+    mocks.fetchSessionContextProjection.mockResolvedValue(projection);
+    const { SessionProjectionView } = await importProjectionViewWithImmediateEffects();
+
+    SessionProjectionView({
+      sessionId: "sess-1",
+      agentRunTarget: null,
+      refreshKey: 0,
+      tokenUsage: null,
+      embedded: false,
+    });
+    await flushPromises();
+
+    expect(mocks.fetchSessionContextProjection).toHaveBeenCalledWith("sess-1");
+    expect(mocks.fetchAgentRunRuntimeContextProjection).not.toHaveBeenCalled();
+  });
+});
+
+async function importProjectionViewWithImmediateEffects() {
+  vi.resetModules();
+  vi.doMock("react", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("react")>();
+    return {
+      ...actual,
+      useCallback: <T,>(callback: T, _deps?: readonly unknown[]) => callback,
+      useEffect: (effect: () => void | (() => void), _deps?: readonly unknown[]) => {
+        effect();
+      },
+      useState: <T,>(initial: T | (() => T)) => {
+        const value = typeof initial === "function" ? (initial as () => T)() : initial;
+        const setter = vi.fn();
+        return [value, setter as (value: T | ((prev: T) => T)) => void];
+      },
+    };
+  });
+  return import("./SessionProjectionView");
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 function sampleProjection(): SessionProjectionViewResponse {
   return {

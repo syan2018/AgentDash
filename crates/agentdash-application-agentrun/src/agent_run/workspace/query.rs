@@ -131,16 +131,11 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .lifecycle_run_view(run.id)
             .await
             .map_err(WorkflowApplicationError::from)?;
-        let mut agent_view = run_view
+        let agent_view = run_view
             .agents
             .iter()
             .find(|view| view.agent_ref.agent_id == agent.id.to_string())
             .cloned();
-        if let Some(agent_view) = agent_view.as_mut() {
-            agent_view.delivery_runtime_ref = delivery_runtime_session_id
-                .clone()
-                .map(|runtime_session_id| RuntimeSessionRefView { runtime_session_id });
-        }
         let subject_associations =
             filter_agent_subject_associations(run_view.subject_associations, agent.id);
         let execution_state = match delivery_runtime_session_id.as_deref() {

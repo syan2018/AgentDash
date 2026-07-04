@@ -395,9 +395,6 @@ pub fn lifecycle_agent_to_view(
         source: agent.source.as_str().to_string(),
         project_agent_id: agent.project_agent_id.map(|id| id.to_string()),
         status: agent.status.clone(),
-        delivery_runtime_ref: current_delivery.map(|binding| RuntimeSessionRefView {
-            runtime_session_id: binding.runtime_session_id.clone(),
-        }),
         last_delivery_status: current_delivery.map(|binding| binding.status.as_str().to_string()),
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
@@ -816,7 +813,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_agent_view_uses_current_delivery_not_raw_latest_anchor() {
+    fn lifecycle_agent_view_uses_current_delivery_status_not_raw_latest_anchor() {
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let launch_frame_id = Uuid::new_v4();
@@ -837,32 +834,32 @@ mod tests {
             DeliveryBindingStatus::Running,
             current_anchor.updated_at,
         );
+        let raw_latest_binding = AgentRunDeliveryBinding::from_anchor(
+            &raw_latest_anchor,
+            DeliveryBindingStatus::Lost,
+            raw_latest_anchor.updated_at,
+        );
 
         let view = lifecycle_agent_to_view(&agent, Some(&binding));
 
-        assert_eq!(
-            view.delivery_runtime_ref
-                .as_ref()
-                .map(|runtime_ref| runtime_ref.runtime_session_id.as_str()),
-            Some("runtime-current-delivery")
-        );
         assert_ne!(
-            view.delivery_runtime_ref
-                .as_ref()
-                .map(|runtime_ref| runtime_ref.runtime_session_id.as_str()),
-            Some(raw_latest_anchor.runtime_session_id.as_str())
+            binding.runtime_session_id.as_str(),
+            raw_latest_binding.runtime_session_id.as_str()
         );
         assert_eq!(view.last_delivery_status.as_deref(), Some("running"));
+        assert_ne!(
+            view.last_delivery_status.as_deref(),
+            Some(raw_latest_binding.status.as_str())
+        );
     }
 
     #[test]
-    fn lifecycle_agent_view_has_no_delivery_ref_without_current_delivery() {
+    fn lifecycle_agent_view_has_no_delivery_status_without_current_delivery() {
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
 
         let view = lifecycle_agent_to_view(&agent, None);
 
-        assert!(view.delivery_runtime_ref.is_none());
         assert!(view.last_delivery_status.is_none());
     }
 

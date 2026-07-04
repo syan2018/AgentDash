@@ -123,7 +123,6 @@ pub struct AgentRunView {
     pub source: String,
     pub project_agent_id: Option<String>,
     pub status: String,
-    pub delivery_runtime_ref: Option<RuntimeSessionRefView>,
     pub last_delivery_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,

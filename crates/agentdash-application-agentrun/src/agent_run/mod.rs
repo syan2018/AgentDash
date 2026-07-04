@@ -65,7 +65,8 @@ pub use effective_capability::{
     agent_run_effective_capability_port, runtime_session_effective_capability_port,
 };
 pub use fork::{
-    AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkService, AgentRunForkSubmitCommand,
+    AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkRepos, AgentRunForkService,
+    AgentRunForkSubmitCommand,
 };
 pub use frame::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,
@@ -118,7 +119,8 @@ pub use permission_runtime_surface_update::{
 pub use presentation_read_model::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
     AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
-    RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel, SessionRuntimeControlPlaneReadModel,
+    AgentRunPresentationReadModelQueryRepos, RuntimeSessionRefReadModel,
+    RuntimeSessionTraceReadModel, SessionRuntimeControlPlaneReadModel,
     SessionRuntimeControlPlaneStatusModel, SessionRuntimeControlReadModel,
 };
 pub use project_agent_context::{

@@ -137,10 +137,9 @@ pub async fn list_project_agents(
         .await
         .map_err(ApiError::from)?;
 
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
-        let bridge = build_project_agent_context(&agent_run_repos, agent)
+        let bridge = build_project_agent_context(agent)
             .await
             .map_err(ApiError::Internal)?;
         response.push(build_project_agent_summary(&project, &bridge));
@@ -232,7 +231,7 @@ pub async fn create_project_agent_run(
         "ProjectAgent run admission returned"
     );
 
-    let agent_context = build_project_agent_context(&agent_run_repos, &dispatch.project_agent)
+    let agent_context = build_project_agent_context(&dispatch.project_agent)
         .await
         .map_err(ApiError::Internal)?;
     let summary = build_project_agent_summary(&project, &agent_context);

@@ -1,12 +1,16 @@
 use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
-use agentdash_domain::agent::ProjectAgent;
-use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
+use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
+use agentdash_domain::agent_run_mailbox::{AgentRunMailboxRepository, AgentRunMailboxState};
 use agentdash_domain::common::error::DomainError;
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::settings::{
     AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY, SettingScope, SettingsRepository,
 };
-use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
+use agentdash_domain::workflow::{
+    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleGateRepository, LifecycleRun,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+};
 use agentdash_spi::Vfs;
 use uuid::Uuid;
 
@@ -18,7 +22,8 @@ use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
     AgentRunOwnershipModel, ConversationModelConfigInput, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, ConversationWaitingItemModel, DeliveryRuntimeSelection,
-    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, ValidationSeverityModel,
+    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
+    DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
 use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
@@ -36,8 +41,39 @@ use super::types::{
     AgentRunWorkspaceTraceMetaModel, SubjectRefModel,
 };
 
+#[derive(Clone, Copy)]
+pub struct AgentRunWorkspaceQueryDeps<'a> {
+    pub delivery_selection_repos: DeliveryRuntimeSelectionRepositories<'a>,
+    pub agent_frame_repo: &'a dyn AgentFrameRepository,
+    pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    pub project_agent_repo: &'a dyn ProjectAgentRepository,
+    pub agent_run_mailbox_repo: &'a dyn AgentRunMailboxRepository,
+    pub lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
+    pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
+    pub settings_repo: &'a dyn SettingsRepository,
+    pub inline_file_repo: &'a dyn InlineFileRepository,
+}
+
+impl<'a> AgentRunWorkspaceQueryDeps<'a> {
+    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
+        Self {
+            delivery_selection_repos: DeliveryRuntimeSelectionRepositories::from_repository_set(
+                repos,
+            ),
+            agent_frame_repo: repos.agent_frame_repo.as_ref(),
+            execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
+            project_agent_repo: repos.project_agent_repo.as_ref(),
+            agent_run_mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
+            lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo.as_ref(),
+            lifecycle_gate_repo: repos.lifecycle_gate_repo.as_ref(),
+            settings_repo: repos.settings_repo.as_ref(),
+            inline_file_repo: repos.inline_file_repo.as_ref(),
+        }
+    }
+}
+
 pub struct AgentRunWorkspaceQueryService<'a> {
-    repos: &'a RepositorySet,
+    repos: AgentRunWorkspaceQueryDeps<'a>,
     session_core: SessionCoreService,
     session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
     vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
@@ -47,7 +83,7 @@ pub struct AgentRunWorkspaceQueryService<'a> {
 
 impl<'a> AgentRunWorkspaceQueryService<'a> {
     pub fn new(
-        repos: &'a RepositorySet,
+        repos: AgentRunWorkspaceQueryDeps<'a>,
         session_core: SessionCoreService,
         session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
         vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
@@ -102,7 +138,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 };
                 Some(
                     build_surface_summary(
-                        self.repos.inline_file_repo.as_ref(),
+                        self.repos.inline_file_repo,
                         self.vfs_runtime,
                         &source,
                         &resolution.vfs,
@@ -190,14 +226,14 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .map(|gate| ConversationWaitingItemModel::from_lifecycle_gate(&gate))
             .collect::<Vec<_>>();
         let hide_system_steer_messages = load_hide_system_steer_messages_setting(
-            self.repos.settings_repo.as_ref(),
+            self.repos.settings_repo,
             viewer_user_id.as_deref(),
         )
         .await
         .map_err(WorkflowApplicationError::from)?;
         let mailbox = mailbox_state_model(
             mailbox_state.as_ref(),
-            delivery_runtime_session_id.is_some() && !terminal_agent,
+            frame_ref.is_some() && !terminal_agent,
             mailbox_visible_message_count,
             hide_system_steer_messages,
         );
@@ -347,7 +383,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         run: &LifecycleRun,
         agent: &LifecycleAgent,
     ) -> Result<Option<DeliveryRuntimeSelection>, WorkflowApplicationError> {
-        match DeliveryRuntimeSelectionService::from_repository_set(self.repos)
+        match DeliveryRuntimeSelectionService::new(self.repos.delivery_selection_repos)
             .select_current_delivery(run.id, agent.id)
             .await
         {

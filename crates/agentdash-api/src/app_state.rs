@@ -24,7 +24,8 @@ use agentdash_application_agentrun::agent_run::runtime_surface::{
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
-    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
+    AgentRunPresentationReadModelQueryRepos, AgentRunRuntimeSurfaceQuery,
+    AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateService,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
@@ -308,7 +309,12 @@ impl AppState {
         });
         let presentation_read_model_query =
             AgentRunPresentationReadModelQuery::new(AgentRunPresentationReadModelQueryDeps {
-                repos: repos.to_agent_run_repository_set(),
+                repos: AgentRunPresentationReadModelQueryRepos {
+                    agent_frame_repo: repos.agent_frame_repo.clone(),
+                    lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+                    lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+                    execution_anchor_repo: repos.execution_anchor_repo.clone(),
+                },
                 session_core: agent_run_session_core(session_core.clone()),
                 session_eventing: agent_run_session_eventing(session_eventing.clone()),
                 surface_query: runtime_surface_query_port.clone(),

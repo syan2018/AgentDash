@@ -300,8 +300,7 @@ impl<'a> FrameRequestAssembler<'a> {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("selected companion ProjectAgent {project_agent_id} 不存在"))?;
-        let agent_run_repos = self.repos.to_agent_run_repository_set();
-        let context = build_project_agent_context(&agent_run_repos, &agent).await?;
+        let context = build_project_agent_context(&agent).await?;
         validate_selected_agent_key_snapshot(&context, selected_agent_key_snapshot)?;
         Ok(Some(context))
     }

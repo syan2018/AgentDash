@@ -408,7 +408,7 @@ describe("AgentRun workspace conversation command authority", () => {
     workspace.conversation = undefined;
     const state = commandState("ready", workspace);
 
-    expect(state.executionStatus).toBe("delivery_missing");
+    expect(state.executionStatus).toBe("ready");
     expect(state.commands.commands).toHaveLength(0);
   });
 });

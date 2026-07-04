@@ -10,8 +10,8 @@ import type { TabTypeDescriptor } from "../tab-type-registry";
 import { InspectorIcon } from "./icons";
 
 function InspectorTabContent() {
-  const { sessionId, agentRunRuntimeTarget, hookRuntime } = useWorkspaceData();
-  if (!agentRunRuntimeTarget && !sessionId) {
+  const { traceSessionId, agentRunRuntimeTarget, hookRuntime } = useWorkspaceData();
+  if (!agentRunRuntimeTarget && !traceSessionId) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center px-6">
         <p className="text-center text-sm text-muted-foreground">
@@ -31,7 +31,7 @@ function InspectorTabContent() {
       )}
       <div className="min-h-0 flex-1 overflow-hidden">
         <ContextInspectorPanel
-          sessionId={sessionId}
+          sessionId={traceSessionId}
           agentRunTarget={agentRunRuntimeTarget}
         />
       </div>

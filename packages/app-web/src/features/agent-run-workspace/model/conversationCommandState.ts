@@ -226,7 +226,7 @@ export function buildRuntimeSessionCommandState(input: {
       : "当前 AgentRun 尚未返回 conversation snapshot。";
     return {
       mode: "runtime",
-      executionStatus: input.projectionStatus !== "ready" ? input.projectionStatus : "delivery_missing",
+      executionStatus: input.projectionStatus !== "ready" ? input.projectionStatus : "ready",
       commands: emptyCommandSet(),
       modelConfig: {
         status: "model_required",

@@ -50,7 +50,6 @@ const XTERM_THEME = {
 
 interface TerminalViewProps {
   terminalId: string;
-  sessionId?: string;
   tabId?: string;
 }
 
@@ -395,7 +394,6 @@ export const terminalTabType: TabTypeDescriptor = {
       <TerminalView
         key={props.tabId}
         terminalId={terminalId}
-        sessionId={props.sessionId ?? undefined}
         tabId={props.tabId}
       />
     );

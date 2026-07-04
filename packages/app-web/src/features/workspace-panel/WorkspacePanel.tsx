@@ -39,7 +39,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     const { runtimeData, onWorkspaceModuleOpened } = props;
     const { projectId, extensionRuntime } = runtimeData;
     const agentRunRuntimeTarget = runtimeData.agentRunRuntimeTarget ?? null;
-    const traceSessionId = runtimeData.traceSessionId ?? runtimeData.runtimeSessionId ?? runtimeData.sessionId;
     const workspaceKey = agentRunRuntimeTarget
       ? `agentrun:${agentRunRuntimeTarget.runId}:${agentRunRuntimeTarget.agentId}`
       : null;
@@ -233,11 +232,10 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       return type.renderContent({
         uri: activeTab.uri,
         tabId: activeTab.id,
-        sessionId: traceSessionId,
         isActive: true,
         refreshRevision: activeTab.refreshRevision,
       });
-    }, [activeTab, registrySnapshot, traceSessionId]);
+    }, [activeTab, registrySnapshot]);
 
     return (
       <WorkspaceDataProvider value={workspaceData}>

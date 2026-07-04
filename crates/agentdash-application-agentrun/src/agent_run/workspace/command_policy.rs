@@ -1,4 +1,7 @@
 use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_domain::agent::ProjectAgentRepository;
+use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
+use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
@@ -10,7 +13,8 @@ use crate::agent_run::{
     ConversationCommandKindModel, ConversationCommandModel, ConversationExecutionStatusModel,
     ConversationModelConfigInput, ConversationModelConfigResolver,
     ConversationModelConfigStatusModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
-    DeliveryRuntimeSelectionService, conversation_command_id_for,
+    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
+    conversation_command_id_for,
 };
 use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
@@ -18,15 +22,36 @@ use crate::error::WorkflowApplicationError;
 use super::projection::is_terminal_agent_status;
 use super::query::mailbox_message_visible;
 
+#[derive(Clone, Copy)]
+pub struct AgentRunWorkspaceCommandPolicyDeps<'a> {
+    pub delivery_selection_repos: DeliveryRuntimeSelectionRepositories<'a>,
+    pub agent_frame_repo: &'a dyn AgentFrameRepository,
+    pub project_agent_repo: &'a dyn ProjectAgentRepository,
+    pub agent_run_mailbox_repo: &'a dyn AgentRunMailboxRepository,
+}
+
+impl<'a> AgentRunWorkspaceCommandPolicyDeps<'a> {
+    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
+        Self {
+            delivery_selection_repos: DeliveryRuntimeSelectionRepositories::from_repository_set(
+                repos,
+            ),
+            agent_frame_repo: repos.agent_frame_repo.as_ref(),
+            project_agent_repo: repos.project_agent_repo.as_ref(),
+            agent_run_mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
+        }
+    }
+}
+
 pub struct AgentRunWorkspaceCommandPolicyService<'a> {
-    repos: &'a RepositorySet,
+    repos: AgentRunWorkspaceCommandPolicyDeps<'a>,
     session_core: SessionCoreService,
     session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
 }
 
 impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
     pub fn new(
-        repos: &'a RepositorySet,
+        repos: AgentRunWorkspaceCommandPolicyDeps<'a>,
         session_core: SessionCoreService,
         session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
     ) -> Self {
@@ -43,15 +68,17 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         command: AgentRunWorkspaceCommandPrecondition,
     ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
         let current_delivery = self.resolve_current_delivery(context).await?;
-        ensure_context_targets_current_delivery(context, current_delivery.as_ref())?;
-        let runtime_session_id = current_delivery
+        let delivery_trace_session_id = current_delivery
             .as_ref()
-            .map(|selection| selection.runtime_session_id.as_str())
-            .unwrap_or(context.runtime_session_id);
-        let execution_state = self
-            .session_core
-            .inspect_session_execution_state(runtime_session_id)
-            .await?;
+            .map(|selection| selection.runtime_session_id.as_str());
+        let execution_state = match delivery_trace_session_id {
+            Some(session_id) => {
+                self.session_core
+                    .inspect_session_execution_state(session_id)
+                    .await?
+            }
+            None => SessionExecutionState::Idle,
+        };
         let frame = self
             .resolve_current_frame(context.agent, current_delivery.as_ref())
             .await?;
@@ -62,6 +89,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 context,
                 frame.as_ref(),
                 frame_ref,
+                delivery_trace_session_id,
                 execution_state.clone(),
                 terminal_agent,
             )
@@ -70,7 +98,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             serde_json::json!({
                 "run_id": context.run.id.to_string(),
                 "agent_id": context.agent.id.to_string(),
-                "runtime_session_id": runtime_session_id,
+                "delivery_trace_session_id": delivery_trace_session_id,
                 "state": availability.execution_status,
                 "active_turn_id": &availability.active_turn_id,
             })
@@ -103,24 +131,25 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
 
             run_id = %context.run.id,
             agent_id = %context.agent.id,
-            runtime_session_id = %context.runtime_session_id,
             "AgentRun composer policy inspect state"
         );
         let current_delivery = self.resolve_current_delivery(context).await?;
-        ensure_context_targets_current_delivery(context, current_delivery.as_ref())?;
-        let runtime_session_id = current_delivery
+        let delivery_trace_session_id = current_delivery
             .as_ref()
-            .map(|selection| selection.runtime_session_id.as_str())
-            .unwrap_or(context.runtime_session_id);
-        let execution_state = self
-            .session_core
-            .inspect_session_execution_state(runtime_session_id)
-            .await?;
+            .map(|selection| selection.runtime_session_id.as_str());
+        let execution_state = match delivery_trace_session_id {
+            Some(session_id) => {
+                self.session_core
+                    .inspect_session_execution_state(session_id)
+                    .await?
+            }
+            None => SessionExecutionState::Idle,
+        };
         diag!(Debug, Subsystem::AgentRun,
 
             run_id = %context.run.id,
             agent_id = %context.agent.id,
-            runtime_session_id = %runtime_session_id,
+            delivery_trace_session_id = ?delivery_trace_session_id,
             execution_state = ?execution_state,
             "AgentRun composer policy state resolved"
         );
@@ -134,6 +163,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 context,
                 frame.as_ref(),
                 frame_ref,
+                delivery_trace_session_id,
                 execution_state,
                 terminal_agent,
             )
@@ -147,7 +177,6 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
 
             run_id = %context.run.id,
             agent_id = %context.agent.id,
-            runtime_session_id = %context.runtime_session_id,
             accepted = result.is_ok(),
             "AgentRun composer policy precondition checked"
         );
@@ -159,13 +188,14 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
         frame: Option<&AgentFrame>,
         frame_ref: Option<(Uuid, i32)>,
+        delivery_trace_session_id: Option<&str>,
         execution_state: SessionExecutionState,
         terminal_agent: bool,
     ) -> Result<ConversationCommandAvailability, AgentRunWorkspaceCommandPolicyError> {
-        let supports_steering = match &execution_state {
-            SessionExecutionState::Running { turn_id: Some(_) } => {
+        let supports_steering = match (&execution_state, delivery_trace_session_id) {
+            (SessionExecutionState::Running { turn_id: Some(_) }, Some(session_id)) => {
                 self.session_control
-                    .supports_session_steering(context.runtime_session_id)
+                    .supports_session_steering(session_id)
                     .await
             }
             _ => false,
@@ -195,7 +225,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 run_id: context.run.id,
                 agent_id: context.agent.id,
                 frame_ref,
-                delivery_runtime_session_id: Some(context.runtime_session_id.to_string()),
+                delivery_runtime_session_id: delivery_trace_session_id.map(str::to_string),
                 execution_state,
                 terminal_agent,
                 supports_steering,
@@ -215,7 +245,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         &self,
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
     ) -> Result<Option<DeliveryRuntimeSelection>, AgentRunWorkspaceCommandPolicyError> {
-        match DeliveryRuntimeSelectionService::from_repository_set(self.repos)
+        match DeliveryRuntimeSelectionService::new(self.repos.delivery_selection_repos)
             .select_current_delivery(context.run.id, context.agent.id)
             .await
         {
@@ -291,7 +321,6 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
 pub struct AgentRunWorkspaceCommandPolicyContext<'a> {
     pub run: &'a LifecycleRun,
     pub agent: &'a LifecycleAgent,
-    pub runtime_session_id: &'a str,
 }
 
 #[derive(Debug, Clone)]
@@ -443,30 +472,6 @@ fn ensure_command_submission_matches_availability(
     Ok(())
 }
 
-fn ensure_context_targets_current_delivery(
-    context: AgentRunWorkspaceCommandPolicyContext<'_>,
-    current_delivery: Option<&DeliveryRuntimeSelection>,
-) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
-    let Some(selection) = current_delivery else {
-        return Ok(());
-    };
-    if selection.runtime_session_id == context.runtime_session_id {
-        return Ok(());
-    }
-    Err(stale_command_conflict(
-        &SessionExecutionState::Idle,
-        false,
-        serde_json::json!({
-            "reason": "delivery_runtime_binding_mismatch",
-            "run_id": context.run.id.to_string(),
-            "agent_id": context.agent.id.to_string(),
-            "expected_runtime_session_id": selection.runtime_session_id,
-            "submitted_runtime_session_id": context.runtime_session_id,
-            "snapshot_refresh_required": true,
-        }),
-    ))
-}
-
 fn workflow_error_from_selection_error(
     error: DeliveryRuntimeSelectionError,
 ) -> WorkflowApplicationError {
@@ -492,7 +497,7 @@ fn ensure_composer_command_precondition_matches_availability(
         serde_json::json!({
             "run_id": context.run.id.to_string(),
             "agent_id": context.agent.id.to_string(),
-            "runtime_session_id": context.runtime_session_id,
+            "delivery_trace_session_id": availability.runtime_session_id.as_deref(),
             "state": availability.execution_status,
             "submitted_command_kind": command.command_kind,
             "submitted_command_id": command.command_id,
@@ -640,11 +645,7 @@ mod tests {
         run: &'a LifecycleRun,
         agent: &'a LifecycleAgent,
     ) -> AgentRunWorkspaceCommandPolicyContext<'a> {
-        AgentRunWorkspaceCommandPolicyContext {
-            run,
-            agent,
-            runtime_session_id: "session-1",
-        }
+        AgentRunWorkspaceCommandPolicyContext { run, agent }
     }
 
     fn availability(
@@ -663,7 +664,7 @@ mod tests {
             run_id: context.run.id,
             agent_id: context.agent.id,
             frame_ref: Some((Uuid::new_v4(), 1)),
-            delivery_runtime_session_id: Some(context.runtime_session_id.to_string()),
+            delivery_runtime_session_id: Some("trace-session-1".to_string()),
             execution_state,
             terminal_agent,
             supports_steering: true,

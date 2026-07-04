@@ -56,7 +56,6 @@ pub enum ConversationExecutionStatusModel {
     Cancelling,
     Terminal,
     FrameMissing,
-    DeliveryMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -629,9 +628,6 @@ fn conversation_execution_view(
 ) -> ConversationExecutionModel {
     let reason = match status {
         ConversationExecutionStatusModel::Terminal => Some("当前 AgentRun 已结束。".to_string()),
-        ConversationExecutionStatusModel::DeliveryMissing => {
-            Some("当前 AgentRun 缺少可投递的 runtime 通道。".to_string())
-        }
         ConversationExecutionStatusModel::FrameMissing => {
             Some("当前 AgentRun 没有可投递的 runtime frame。".to_string())
         }
@@ -660,8 +656,6 @@ fn conversation_execution_status(
 ) -> ConversationExecutionStatusModel {
     if input.terminal_agent {
         ConversationExecutionStatusModel::Terminal
-    } else if input.delivery_runtime_session_id.is_none() {
-        ConversationExecutionStatusModel::DeliveryMissing
     } else if input.frame_ref.is_none() {
         ConversationExecutionStatusModel::FrameMissing
     } else if input.model_config_status == ConversationModelConfigStatusModel::ModelRequired {
@@ -694,7 +688,6 @@ fn conversation_commands(
         ConversationExecutionStatusModel::Draft
             | ConversationExecutionStatusModel::Terminal
             | ConversationExecutionStatusModel::FrameMissing
-            | ConversationExecutionStatusModel::DeliveryMissing
             | ConversationExecutionStatusModel::ModelRequired
     ) && model_ready;
     let running_active =
@@ -706,7 +699,7 @@ fn conversation_commands(
             | ConversationExecutionStatusModel::Cancelling
     );
     let mailbox_can_resume = !input.terminal_agent
-        && input.delivery_runtime_session_id.is_some()
+        && input.frame_ref.is_some()
         && input.mailbox_paused
         && input.mailbox_visible_message_count > 0;
 
@@ -907,7 +900,6 @@ fn disabled_code_for_status(status: ConversationExecutionStatusModel) -> &'stati
         ConversationExecutionStatusModel::Cancelling => "cancelling",
         ConversationExecutionStatusModel::Terminal => "terminal",
         ConversationExecutionStatusModel::FrameMissing => "missing_frame",
-        ConversationExecutionStatusModel::DeliveryMissing => "missing_delivery_runtime",
     }
 }
 
@@ -931,9 +923,6 @@ fn unavailable_reason_for_submit(
         ConversationExecutionStatusModel::Terminal => "当前 AgentRun 已结束，不能继续发送消息。",
         ConversationExecutionStatusModel::FrameMissing => {
             "当前 AgentRun 没有可投递的 runtime frame。"
-        }
-        ConversationExecutionStatusModel::DeliveryMissing => {
-            "当前 AgentRun 缺少可投递的 runtime 通道。"
         }
         ConversationExecutionStatusModel::ModelRequired => "当前 AgentRun 缺少模型选择。",
         ConversationExecutionStatusModel::Draft | ConversationExecutionStatusModel::Ready => {

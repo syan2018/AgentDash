@@ -2,10 +2,8 @@ use agentdash_domain::{
     agent::ProjectAgent,
     common::{AgentConfig, AgentPresetConfig},
     project::Project,
-    workspace::Workspace,
+    workspace::{Workspace, WorkspaceRepository},
 };
-
-use crate::agent_run_repository_set::RepositorySet;
 
 pub const PROJECT_AGENT_BINDING_LABEL_PREFIX: &str = "project_agent:";
 
@@ -22,12 +20,11 @@ pub struct ResolvedProjectAgentContext {
 }
 
 pub async fn resolve_project_workspace(
-    repos: &RepositorySet,
+    workspace_repo: &dyn WorkspaceRepository,
     project: &Project,
 ) -> Result<Option<Workspace>, String> {
     if let Some(workspace_id) = project.config.default_workspace_id {
-        return repos
-            .workspace_repo
+        return workspace_repo
             .get_by_id(workspace_id)
             .await
             .map_err(|error| error.to_string());
@@ -36,7 +33,6 @@ pub async fn resolve_project_workspace(
 }
 
 pub async fn build_project_agent_context(
-    _repos: &RepositorySet,
     agent: &ProjectAgent,
 ) -> Result<ResolvedProjectAgentContext, String> {
     let preset = agent.preset_config().map_err(|error| error.to_string())?;

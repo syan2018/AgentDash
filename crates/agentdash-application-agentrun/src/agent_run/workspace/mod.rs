@@ -5,12 +5,13 @@ pub mod types;
 
 pub use command_policy::{
     AgentRunWorkspaceCommandConflict, AgentRunWorkspaceCommandPolicyContext,
-    AgentRunWorkspaceCommandPolicyError, AgentRunWorkspaceCommandPolicyService,
-    AgentRunWorkspaceCommandPrecondition,
+    AgentRunWorkspaceCommandPolicyDeps, AgentRunWorkspaceCommandPolicyError,
+    AgentRunWorkspaceCommandPolicyService, AgentRunWorkspaceCommandPrecondition,
 };
 pub use projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
 pub use query::{
-    AgentRunWorkspaceQueryService, load_hide_system_steer_messages_setting, mailbox_message_visible,
+    AgentRunWorkspaceQueryDeps, AgentRunWorkspaceQueryService,
+    load_hide_system_steer_messages_setting, mailbox_message_visible,
 };
 pub use types::{
     AgentRunListProjection, AgentRunResourceSurfaceCoordinateModel,

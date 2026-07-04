@@ -44,9 +44,7 @@ export interface AgentRunCanvasBridgeIdentity extends AgentRunCanvasBridgeBase {
 
 export interface WorkspaceRuntimeData {
   projectId: string | null;
-  sessionId: string | null;
-  runtimeSessionId: string | null;
-  traceSessionId?: string | null;
+  traceSessionId: string | null;
   agentRunRuntimeTarget?: AgentRunRuntimeTarget | null;
   agentRunCanvasBridgeBase?: AgentRunCanvasBridgeBase | null;
   refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;

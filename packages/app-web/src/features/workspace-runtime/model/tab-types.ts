@@ -5,7 +5,6 @@ export type TabURI = string;
 export interface TabContentRenderProps {
   uri: string;
   tabId: string;
-  sessionId: string | null;
   isActive: boolean;
   refreshRevision: number;
 }

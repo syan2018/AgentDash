@@ -38,6 +38,16 @@ D-001, D-014, D-015
 - stale guard 应优先使用 snapshot / run / frame / active turn / workspace revision，而不是 runtime session id。
 - diagnostic trace panel 可以保留 runtime trace meta，但不能影响 product command availability。
 
+## Projection / Read Model Rebuildability
+
+| Surface | Rebuild input | Decision role | Recovery |
+| --- | --- | --- | --- |
+| AgentRun workspace snapshot | `LifecycleRun`、`LifecycleAgent`、current frame/delivery binding、mailbox state/messages、lifecycle gates、runtime event meta | 驱动 workspace status、conversation commands、mailbox UI | 重新读取 AgentRun/Lifecycle canonical state 和当前 trace meta 即可重建 |
+| AgentRun workspace list projection | root run tree、agent source/status、subject association、project-agent display label、trace title meta | 驱动导航列表展示和跳转目标 | 重新扫描 Lifecycle/AgentRun 关系与 trace meta 即可重建 |
+| Agent conversation command snapshot | run/agent/frame、execution state、mailbox state、model config、ownership | command availability 与 stale guard 的产品事实来源 | snapshot id 由 AgentRun/frame/turn/status 派生，刷新 workspace snapshot 即可恢复 |
+| Runtime trace/context diagnostic | AgentRun current delivery binding 派生出的 runtime trace/event stream | 仅用于审计、context projection、runtime terminal/stream 诊断 | 通过 AgentRun route 重新解析 current delivery，再从 runtime event store/cache 重放 |
+| Resource surface coordinate | AgentRun frame runtime 与 current delivery anchor | 用于定位资源 surface 的来源，不作为产品 identity | frame runtime 和 delivery anchor 可从 AgentRun/Lifecycle state 重新解析 |
+
 ## Acceptance
 
 - 前端产品路径不需要 raw `sessionId` 才能 start、submit、cancel、fork、tool interaction。

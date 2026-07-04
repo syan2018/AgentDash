@@ -5,7 +5,10 @@ use uuid::Uuid;
 
 use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_domain::DomainError;
-use agentdash_domain::workflow::{AgentFrame, RuntimeSessionExecutionAnchor};
+use agentdash_domain::workflow::{
+    AgentFrame, AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+};
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::lifecycle_read_model_facade::{
@@ -20,12 +23,11 @@ use crate::agent_run::{
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, RuntimeSurfaceQueryPurpose,
 };
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 
 #[derive(Clone)]
 pub struct AgentRunPresentationReadModelQuery {
-    repos: RepositorySet,
+    repos: AgentRunPresentationReadModelQueryRepos,
     session_core: SessionCoreService,
     session_eventing: SessionEventingService,
     surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
@@ -33,8 +35,16 @@ pub struct AgentRunPresentationReadModelQuery {
 }
 
 #[derive(Clone)]
+pub struct AgentRunPresentationReadModelQueryRepos {
+    pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+}
+
+#[derive(Clone)]
 pub struct AgentRunPresentationReadModelQueryDeps {
-    pub repos: RepositorySet,
+    pub repos: AgentRunPresentationReadModelQueryRepos,
     pub session_core: SessionCoreService,
     pub session_eventing: SessionEventingService,
     pub surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,

@@ -220,8 +220,7 @@ async fn resolve_task_workspace(
     if let Some(workspace_id) = story.and_then(|story| story.default_workspace_id) {
         return repos.workspace_repo.get_by_id(workspace_id).await.ok();
     }
-    let agent_run_repos = repos.to_agent_run_repository_set();
-    crate::agent_run::resolve_project_workspace(&agent_run_repos, project)
+    crate::agent_run::resolve_project_workspace(repos.workspace_repo.as_ref(), project)
         .await
         .ok()
 }

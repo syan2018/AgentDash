@@ -104,6 +104,7 @@ impl From<DeliveryRuntimeSelectionError> for ApplicationError {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct DeliveryRuntimeSelectionRepositories<'a> {
     pub lifecycle_runs: &'a dyn LifecycleRunRepository,
     pub lifecycle_agents: &'a dyn LifecycleAgentRepository,

@@ -47,14 +47,11 @@ pub(super) async fn compose(
         .ok_or_else(|| {
             ConnectorError::InvalidConfig(format!("ProjectAgent {} 不存在", project_agent_id))
         })?;
-    let agent_run_repos = svc.repos.to_agent_run_repository_set();
-    let agent_context = build_project_agent_context(&agent_run_repos, &project_agent)
+    let agent_context = build_project_agent_context(&project_agent)
         .await
         .map_err(connector_internal)?;
     let backend_requirement = agent_context.preset_config.backend_requirement_or_default();
-    let workspace =
-        resolve_project_agent_workspace(svc, &agent_run_repos, &project, backend_requirement)
-            .await?;
+    let workspace = resolve_project_agent_workspace(svc, &project, backend_requirement).await?;
     let mut subject_assignment =
         resolve_project_agent_subject_assignment(svc, run.id, agent.id, run.project_id).await?;
     let subject_owner_ctx = subject_assignment
@@ -150,11 +147,10 @@ pub(super) async fn compose(
 
 async fn resolve_project_agent_workspace(
     svc: &FrameConstructionService,
-    agent_run_repos: &agentdash_application_agentrun::agent_run_repository_set::RepositorySet,
     project: &agentdash_domain::project::Project,
     backend_requirement: AgentBackendRequirement,
 ) -> Result<Option<Workspace>, ConnectorError> {
-    let Some(workspace) = resolve_project_workspace(agent_run_repos, project)
+    let Some(workspace) = resolve_project_workspace(svc.repos.workspace_repo.as_ref(), project)
         .await
         .map_err(connector_internal)?
     else {

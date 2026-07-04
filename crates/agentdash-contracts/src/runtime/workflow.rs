@@ -929,7 +929,6 @@ pub enum AgentRunWorkspaceControlPlaneStatus {
     Cancelling,
     Terminal,
     FrameMissing,
-    DeliveryMissing,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -988,7 +987,6 @@ pub enum ConversationExecutionStatus {
     Cancelling,
     Terminal,
     FrameMissing,
-    DeliveryMissing,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

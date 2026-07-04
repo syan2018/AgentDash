@@ -55,3 +55,11 @@ D-016, D-018
 - `rg "RepositorySet|AgentRunRepositorySet|LifecycleRepositorySet"` 确认业务层残留。
 - Rust 编译和 application service tests。
 - 依赖图人工 review：每个 use case 的 deps 不跨越无关领域。
+
+## 2026-07-05 Worker E2 Progress
+
+- AgentRun fork service constructor now accepts `AgentRunForkRepos`; API route helpers unwrap `AgentRunRepositorySet` at the composition boundary.
+- AgentRun workspace query and command policy now expose use-case deps structs; `AgentRunRepositorySet` remains only in their `from_repository_set` wiring helpers.
+- AgentRun presentation read model now stores explicit frame/run/agent/anchor repository ports instead of cloning `AgentRunRepositorySet`.
+- Project agent context construction no longer requires a repository set; workspace lookup takes the workspace repository port directly.
+- Remaining AgentRun `from_repository_set` helpers are accepted composition/fixture adapters. Workspace query still depends on several repositories because it composes the workspace shell, mailbox state, frame runtime, resource surface, and list projection; further splitting is a possible follow-up if these views diverge.

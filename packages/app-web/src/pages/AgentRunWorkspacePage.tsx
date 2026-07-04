@@ -503,8 +503,6 @@ export function AgentRunWorkspacePage({
       : "返回 Story";
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
-    sessionId: null,
-    runtimeSessionId: null,
     traceSessionId: deliveryTraceSessionId,
     agentRunRuntimeTarget,
     sessionMeta: runtimeControl?.delivery_trace_meta

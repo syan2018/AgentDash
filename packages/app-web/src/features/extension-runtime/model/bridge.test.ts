@@ -472,7 +472,7 @@ function runtimeTrace() {
 function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): WorkspaceData {
   return {
     projectId: "project-1",
-    sessionId: "session-1",
+    traceSessionId: "session-1",
     agentRunRuntimeTarget: {
       runId: "run-1",
       agentId: "agent-1",
@@ -530,7 +530,6 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
     contextSnapshot: null,
     ownerStory: null,
     ownerProjectName: "Project",
-    runtimeSessionId: "session-1",
     sessionMeta: null,
     controlAnchor: null,
     lifecycleRun: null,

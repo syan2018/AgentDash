@@ -106,17 +106,12 @@ pub struct AgentRunForkService<'a> {
 
 impl<'a> AgentRunForkService<'a> {
     pub fn new(
-        repos: &'a RepositorySet,
+        repos: AgentRunForkRepos<'a>,
         session_branching: SessionBranchingService,
         session_core: SessionCoreService,
         mailbox: AgentRunMailboxService<'a>,
     ) -> Self {
-        Self::from_repos(
-            AgentRunForkRepos::from_repository_set(repos),
-            session_branching,
-            session_core,
-            mailbox,
-        )
+        Self::from_repos(repos, session_branching, session_core, mailbox)
     }
 
     pub fn from_repos(

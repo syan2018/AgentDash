@@ -113,10 +113,6 @@ export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string,
  */
 source: string, project_agent_id?: string, status: string,
 /**
- * 投递用的 runtime session（由 execution anchor 提供）。
- */
-delivery_runtime_ref?: RuntimeSessionRefDto,
-/**
  * agent 最新 execution status（如 running / completed / idle）。
  */
 last_delivery_status?: string, created_at: string, updated_at: string, };

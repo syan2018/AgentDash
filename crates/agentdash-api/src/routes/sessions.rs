@@ -319,9 +319,6 @@ fn presentation_agent_run_to_contract(
         source: agent.source,
         project_agent_id: agent.project_agent_id,
         status: agent.status,
-        delivery_runtime_ref: agent
-            .delivery_runtime_ref
-            .map(presentation_runtime_ref_to_contract),
         last_delivery_status: agent.last_delivery_status,
         created_at: agent.created_at,
         updated_at: agent.updated_at,

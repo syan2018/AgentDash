@@ -1815,11 +1815,6 @@ fn agent_run_workspace_view(
             source: agent.source,
             project_agent_id: agent.project_agent_id,
             status: agent.status,
-            delivery_runtime_ref: agent.delivery_runtime_ref.map(|runtime_ref| {
-                RuntimeSessionRefDto {
-                    runtime_session_id: runtime_ref.runtime_session_id,
-                }
-            }),
             last_delivery_status: agent.last_delivery_status,
             created_at: agent.created_at,
             updated_at: agent.updated_at,

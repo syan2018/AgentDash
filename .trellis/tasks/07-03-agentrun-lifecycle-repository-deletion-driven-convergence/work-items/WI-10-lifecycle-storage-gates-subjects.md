@@ -51,3 +51,42 @@ D-002, D-014, D-016, D-017
 - `rg "LifecycleContext|permission_scope|budget|LifecycleGate|SubjectAssociation|AgentLineage"` 使用点清点。
 - lifecycle repository roundtrip 测试覆盖删除/保留字段。
 - migration 验证 JSONB/child table/table 删除或约束调整。
+
+## Implementation Record 2026-07-04 / Worker A2
+
+### Storage Decisions
+
+| Item | Result | D-016 / D-017 / D-019 reason |
+| --- | --- | --- |
+| `LifecycleContext` / `lifecycle_runs.context` | Deleted from domain/repository schema mapping; covered by migration `0041_drop_lifecycle_run_context_view_projection.sql` | It was not an independent fact source and had no scan, lock, paging, recovery, or reverse-query need. AgentRun/frame refs are owned by `lifecycle_agents`, `agent_frames`, anchors, subject associations, and read models. `permission_scope` / lifecycle-level `budget` have no production consumer in this storage surface, so any future governance state should be introduced as explicit control-plane state. |
+| `LifecycleRun.view_projection` / `lifecycle_runs.view_projection` | Deleted from domain/repository schema mapping; covered by migration `0041_drop_lifecycle_run_context_view_projection.sql` | It is a rebuildable read projection, not aggregate state. Current read models are rebuilt from `LifecycleRun.orchestrations`, agents, subject associations, runtime trace refs, and execution log. It has no independent query/update behavior or non-rebuildable decision role. |
+| `LifecycleRun.orchestrations` | Retained as embedded control-plane state | It is parent-owned `LifecycleRun` state. Current reducer and ready-node paths load the run, mutate the matching orchestration, and write the aggregate back; no independent DB claim/scan/pagination API exists in this scope. |
+| `LifecycleRun.tasks` | Retained as embedded run-scoped task plan facts | It is parent-owned `LifecycleRun` state. Task commands mutate the loaded run aggregate; subject associations provide reverse lookup when needed. No queue-like lock/claim behavior exists for this storage. |
+| `LifecycleRun.execution_log` | Retained as embedded append-ish control-plane ledger | It is parent-owned run ledger data. Current writers group entries by run and update the aggregate, while views read the full run log. Independent append table qualification would require pagination, immutable audit identity, or append conflict handling beyond this WI. |
+| `LifecycleGate` / `lifecycle_gates` | Retained as Lifecycle-owned child table | It has positive child-table qualification: open-by-agent lookup, status updates, correlation-based resume/polling, workflow human gate, companion gate, wait activity, and workspace waiting projection all need indexed rows and local updates. It is not a top-level business aggregate. |
+| `LifecycleSubjectAssociation` / `lifecycle_subject_associations` | Retained as indexed relationship table | It has positive relationship-table qualification: subject -> run/agent reverse lookup and anchor -> subject context are production query paths for permission/context, subject execution, task/routine reuse, read model construction, and runtime-trace-to-subject resolution. |
+| `AgentLineage` / `agent_lineages` | Retained as same-run control-tree child table | It has positive child-table qualification: parent lookup, children lookup, run-level forest construction, descendant counting, run view filtering, and companion parent routing all need indexed edges. It remains distinct from product fork lineage. |
+| `AgentRunLineage` / `agent_run_lineages` | Unchanged in WI-10 except fork materialization no longer depends on deleted LifecycleRun fields | Product fork canonicalization belongs to WI-08. WI-10 only verified it is separate from same-run `AgentLineage` and that Lifecycle context/projection deletion does not require copying those fields into child runs. |
+
+### Usage Inventory Result
+
+Command used for the required usage sweep:
+
+```powershell
+rg "LifecycleContext|permission_scope|budget|LifecycleGate|SubjectAssociation|AgentLineage"
+```
+
+Code-scope findings:
+
+- `LifecycleContext`: no remaining exact domain `LifecycleContext` type or `lifecycle_runs.context` repository mapping usage. The remaining substring hits are `AgentConversationLifecycleContextModel`, which is an AgentRun conversation read model over frame/subject context rather than the deleted `LifecycleRun.context` storage surface.
+- `permission_scope`: no remaining Rust production or repository mapping usage.
+- `budget`: remaining Rust hits are orchestration/script/session concepts (`OrchestrationLimits`, `PlanActivation`, session compaction), not `LifecycleContext`.
+- `LifecycleGate`: production use remains in gate resolver, workflow human gate launcher, companion gate flow, wait activity, AgentRun workspace waiting projection, domain repository trait, Postgres adapter, and tests. These uses justify `lifecycle_gates` as a Lifecycle-owned child table.
+- `SubjectAssociation`: production use remains in lifecycle read models, runtime-session-to-subject context resolver, subject execution control, task/routine context lookup, permission/capability context, contracts, domain repository trait, Postgres adapter, and tests. These uses justify the indexed relationship table.
+- `AgentLineage`: production use remains in lifecycle relation writer, AgentRun list/detail control tree construction, run view filtering, companion parent lookup, contracts, domain repository trait, Postgres adapter, and tests. These uses justify the same-run control-tree child table.
+
+### Verification Notes
+
+- Lifecycle repository mapping now roundtrips only `orchestrations`, `tasks`, `status`, `execution_log`, timestamps, topology, project, and owner fields for `LifecycleRun`.
+- Migration `0041_drop_lifecycle_run_context_view_projection.sql` is the schema change for the deleted columns.
+- Gates, subjects, and same-run lineage were retained because their qualification comes from indexed scan/reverse lookup/state-machine needs rather than the old repository shape.

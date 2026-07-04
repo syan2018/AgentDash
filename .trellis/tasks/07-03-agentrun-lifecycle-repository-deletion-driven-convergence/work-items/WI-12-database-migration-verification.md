@@ -58,3 +58,26 @@ D-003, D-005, D-010, D-011, D-013, D-016, D-017, D-019
 - FK/cascade 查询审计。
 - Postgres repository roundtrip tests。
 - AgentRun start、submit、accepted turn、fork、delete 的数据库级集成验证。
+
+## WI-10 Ledger Entry 2026-07-04 / Worker A2
+
+### Schema Changes
+
+| Migration | Change | Decision mapping |
+| --- | --- | --- |
+| `crates/agentdash-infrastructure/migrations/0041_drop_lifecycle_run_context_view_projection.sql` | Drops `lifecycle_runs.context` and `lifecycle_runs.view_projection` | D-016: neither column is an independent fact source or qualified child table. D-017: neither column has lock, scan, claim, pagination, recovery, or reverse-query requirements. D-019: both are redundant embedded storage surfaces replaced by canonical lifecycle/agent/frame/subject/read-model facts. |
+
+### Redundant Table / Field Ledger
+
+| Candidate | Conclusion | Canonical replacement or qualification |
+| --- | --- | --- |
+| `lifecycle_runs.context` | Deleted | AgentRun and frame refs come from `lifecycle_agents`, `agent_frames`, `runtime_session_execution_anchors`, `agent_lineages`, `agent_run_lineages`, and read models. Subject context comes from `lifecycle_subject_associations`. |
+| `lifecycle_runs.view_projection` | Deleted | Lifecycle views are rebuilt from `LifecycleRun` aggregate state, agents, subject associations, runtime trace refs, and execution log through application read-model builders. |
+| `lifecycle_gates` | Retained as Lifecycle-owned child table | Open gate scanning, status transition, correlation resume, workflow human gate, companion gate, wait activity, and workspace waiting projection need indexed rows and local updates. |
+| `lifecycle_subject_associations` | Retained as indexed relationship table | Subject reverse lookup and anchor-to-subject context lookup are production query paths. |
+| `agent_lineages` | Retained as same-run control-tree child table | Parent/children/run queries support API tree projection, run view filtering, descendant counts, and companion parent routing. |
+| `agent_run_lineages` | Deferred to WI-08 | Product fork canonical record work remains outside WI-10; this ledger only records that Lifecycle context/projection deletion no longer requires fork materialization to clone those columns. |
+
+### Migration Risk For Merge
+
+`0041_drop_lifecycle_run_context_view_projection.sql` is already present and no additional WI-10 migration file was added in this worker. Main-session merge should still keep migration ordering stable with other Batch A workers and run `pnpm run migration:guard` after all migration-touching diffs are combined.

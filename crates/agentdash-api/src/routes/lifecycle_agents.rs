@@ -49,7 +49,7 @@ use agentdash_contracts::workflow::{
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
     ConversationModelConfigView, ConversationWaitingItemView, DeleteAgentRunResponse,
     LifecycleRunRefDto, LifecycleSubjectAssociationDto, RuntimeSessionRefDto,
-    RuntimeSessionTraceMeta, SubjectRefDto, ValidationSeverity,
+    RuntimeSessionTraceMeta, SessionRuntimeControlView, SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::workflow::{AgentLineage, LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -1157,15 +1157,29 @@ async fn get_agent_run_runtime_control(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
-    let runtime_session_id =
-        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    sessions::get_session_runtime_control(
-        State(state),
-        CurrentUser(current_user),
-        Path(runtime_session_id),
+) -> Result<Json<SessionRuntimeControlView>, ApiError> {
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
     )
-    .await
+    .await?;
+    let runtime_session_id = context
+        .delivery_runtime_session_id
+        .as_deref()
+        .ok_or_else(|| {
+            ApiError::NotFound("AgentRun 当前没有可读取的 delivery RuntimeSession".to_string())
+        })?;
+    Ok(Json(
+        sessions::load_session_runtime_control_view(
+            state.as_ref(),
+            &current_user,
+            runtime_session_id,
+        )
+        .await?,
+    ))
 }
 
 async fn list_agent_run_runtime_events(

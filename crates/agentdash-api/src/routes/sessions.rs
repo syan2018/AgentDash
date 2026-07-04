@@ -147,22 +147,28 @@ pub async fn get_session_runtime_control(
         ProjectPermission::Use,
     )
     .await?;
+    Ok(Json(
+        load_session_runtime_control_view(state.as_ref(), &current_user, &runtime_session_id)
+            .await?,
+    ))
+}
+
+pub(crate) async fn load_session_runtime_control_view(
+    state: &AppState,
+    current_user: &agentdash_integration_api::AuthIdentity,
+    runtime_session_id: &str,
+) -> Result<SessionRuntimeControlView, ApiError> {
     let view = state
         .services
         .presentation_read_model_query
-        .session_runtime_control(&runtime_session_id)
+        .session_runtime_control(runtime_session_id)
         .await
         .map_err(presentation_read_model_error_to_api)?;
     if let Some(project_id) = view.project_id {
-        load_project_with_permission(
-            state.as_ref(),
-            &current_user,
-            project_id,
-            ProjectPermission::Use,
-        )
-        .await?;
+        load_project_with_permission(state, current_user, project_id, ProjectPermission::Use)
+            .await?;
     }
-    Ok(Json(SessionRuntimeControlView {
+    Ok(SessionRuntimeControlView {
         runtime_session_ref: RuntimeSessionRefDto {
             runtime_session_id: view.runtime_session_id,
         },
@@ -180,7 +186,7 @@ pub async fn get_session_runtime_control(
             .into_iter()
             .map(presentation_subject_association_to_contract)
             .collect(),
-    }))
+    })
 }
 
 fn presentation_lifecycle_run_to_contract(

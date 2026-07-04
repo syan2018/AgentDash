@@ -423,7 +423,7 @@ struct NoopExecutionAnchorRepo;
 
 #[async_trait]
 impl RuntimeSessionExecutionAnchorRepository for NoopExecutionAnchorRepo {
-    async fn upsert(
+    async fn create_once(
         &self,
         _anchor: &agentdash_domain::workflow::RuntimeSessionExecutionAnchor,
     ) -> Result<(), DomainError> {
@@ -461,14 +461,6 @@ impl RuntimeSessionExecutionAnchorRepository for NoopExecutionAnchorRepo {
         _runtime_session_ids: &[String],
     ) -> Result<Vec<agentdash_domain::workflow::RuntimeSessionExecutionAnchor>, DomainError> {
         Ok(Vec::new())
-    }
-
-    async fn latest_updated_anchor_for_agent(
-        &self,
-        _agent_id: Uuid,
-    ) -> Result<Option<agentdash_domain::workflow::RuntimeSessionExecutionAnchor>, DomainError>
-    {
-        Ok(None)
     }
 }
 

@@ -1575,20 +1575,6 @@ mod tests {
                 .filter_map(|id| anchors.get(id).cloned())
                 .collect())
         }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
-                .cloned())
-        }
     }
 
     #[derive(Default)]

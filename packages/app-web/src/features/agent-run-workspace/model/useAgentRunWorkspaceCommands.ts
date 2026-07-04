@@ -36,8 +36,8 @@ import {
   type InFlightAgentRunCommand,
 } from "./workspaceCommandState";
 import type {
-  AgentRunSessionCommand,
-  AgentRunSessionCommandState,
+  AgentRunConversationCommand,
+  AgentRunConversationCommandState,
 } from "./conversationCommandState";
 import {
   conversationCommandByKind,
@@ -46,7 +46,7 @@ import {
 } from "./conversationCommandState";
 
 interface ResolveExecutorConfigInput {
-  command: AgentRunSessionCommand;
+  command: AgentRunConversationCommand;
   modelConfig: ConversationModelConfigView;
   explicitExecutorConfigOverride?: ExecutorConfig;
 }
@@ -62,7 +62,7 @@ type CreateProjectAgentRun = (
 export interface UseAgentRunWorkspaceCommandsOptions {
   currentRunId: string | null;
   currentAgentId: string | null;
-  chatCommandState: AgentRunSessionCommandState;
+  chatCommandState: AgentRunConversationCommandState;
   conversationMailbox: ConversationMailboxSnapshotView | undefined;
   draftProjectId: string | null;
   draftProjectAgentKey: string | null;
@@ -79,7 +79,7 @@ export interface UseAgentRunWorkspaceCommandsOptions {
 
 export interface UseAgentRunWorkspaceCommandsResult {
   handleAgentRunCommand: (
-    command: AgentRunSessionCommand,
+    command: AgentRunConversationCommand,
     prompt: string,
     executorConfig?: ExecutorConfig,
     backendSelection?: BackendSelectionRequestDto,
@@ -230,7 +230,7 @@ export function useAgentRunWorkspaceCommands(
   }, [refreshWorkspaceProjection]);
 
   const handleAgentRunCommand = useCallback(async (
-    command: AgentRunSessionCommand,
+    command: AgentRunConversationCommand,
     prompt: string,
     executorConfig?: ExecutorConfig,
     backendSelection?: BackendSelectionRequestDto,

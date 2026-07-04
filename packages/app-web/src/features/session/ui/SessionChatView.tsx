@@ -672,7 +672,7 @@ export function SessionChatView({
         displayItems={displayItems}
         turnSegments={turnSegments}
         agentRunTarget={agentRunTarget}
-        hasRuntimeTraceSession={hasRuntimeStreamTarget}
+        hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
         sessionId={sessionId}
         streamingEntryId={streamingEntryId}
@@ -701,7 +701,7 @@ export function SessionChatView({
           discovered={discovered}
           execConfig={execConfig}
           fileRef={fileRef}
-          hasRuntimeTraceSession={hasRuntimeStreamTarget}
+          hasRuntimeStreamTarget={hasRuntimeStreamTarget}
           inputPrefix={inputPrefix}
           toolbarSlot={inputToolbarSlot}
           inputValue={inputValue}

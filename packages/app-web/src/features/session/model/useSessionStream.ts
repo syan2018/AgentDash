@@ -24,7 +24,7 @@ import type {
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
 import {
   agentRunConversationFeedEntries,
-  normalizeAgentRunSessionEventIdentity,
+  normalizeAgentRunStreamEventIdentity,
 } from "./agentRunConversationFeed";
 import {
   createInitialStreamState,
@@ -227,7 +227,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
       let afterSeq = shouldResetState ? 0 : baseState.lastAppliedSeq;
       const normalizeEvents = (events: SessionEventEnvelope[]): SessionEventEnvelope[] => {
         if (!agentRunTarget) return events;
-        return events.map((event) => normalizeAgentRunSessionEventIdentity(event, agentRunTarget));
+        return events.map((event) => normalizeAgentRunStreamEventIdentity(event, agentRunTarget));
       };
 
       try {
@@ -277,7 +277,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
           onEvent: (event) => {
             if (!mountedRef.current) return;
             const normalizedEvent = agentRunTarget
-              ? normalizeAgentRunSessionEventIdentity(event, agentRunTarget)
+              ? normalizeAgentRunStreamEventIdentity(event, agentRunTarget)
               : event;
             enqueueEventRef.current(normalizedEvent);
           },

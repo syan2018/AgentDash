@@ -154,20 +154,20 @@ export function AgentRunWorkspacePage({
     sourceKey: agentRunSourceKey,
   });
 
-  const runtimeControl: AgentRunWorkspaceView | null = agentRunWorkspaceState.workspace;
-  const deliveryTraceSessionId = agentRunWorkspaceState.trace_session_id;
+  const workspaceControl: AgentRunWorkspaceView | null = agentRunWorkspaceState.workspace;
+  const deliveryTraceSessionId = agentRunWorkspaceState.delivery_trace_session_id;
   const draftWorkspaceTitle =
     draftProjectAgent?.display_name
     ?? traceAgentContext?.display_name
     ?? "新 AgentRun";
   const workspaceTitle = isProjectAgentDraft
     ? draftWorkspaceTitle
-    : runtimeControl?.shell.display_title ?? "";
+    : workspaceControl?.shell.display_title ?? "";
 
   // ─── 身份 / 从属信息（identity bar）─────────────────────
-  const identityAgentSource = agentSourceLabel(runtimeControl?.agent?.source);
+  const identityAgentSource = agentSourceLabel(workspaceControl?.agent?.source);
   const identitySubject = useMemo(() => {
-    const assoc = runtimeControl?.subject_associations?.[0];
+    const assoc = workspaceControl?.subject_associations?.[0];
     if (!assoc) return null;
     let label = assoc.subject_ref.kind;
     const meta = assoc.metadata;
@@ -181,9 +181,9 @@ export function AgentRunWorkspacePage({
       }
     }
     return { kind: assoc.subject_ref.kind, id: assoc.subject_ref.id, label };
-  }, [runtimeControl?.subject_associations]);
-  const lineageParent = runtimeControl?.parent ?? null;
-  const subagentChildCount = runtimeControl?.children?.length ?? 0;
+  }, [workspaceControl?.subject_associations]);
+  const lineageParent = workspaceControl?.parent ?? null;
+  const subagentChildCount = workspaceControl?.children?.length ?? 0;
   const hasIdentityBar =
     !isProjectAgentDraft
     && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
@@ -196,9 +196,9 @@ export function AgentRunWorkspacePage({
   const taskExecutorSummary = null;
 
   const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
-  const agentRunDetailRunId = runtimeControl?.run_ref.run_id ?? currentRunId;
-  const agentRunDetailAgentId = runtimeControl?.agent_ref.agent_id ?? currentAgentId;
-  const agentRunDetailFrameId = runtimeControl?.frame_runtime?.frame_ref.frame_id ?? null;
+  const agentRunDetailRunId = workspaceControl?.run_ref.run_id ?? currentRunId;
+  const agentRunDetailAgentId = workspaceControl?.agent_ref.agent_id ?? currentAgentId;
+  const agentRunDetailFrameId = workspaceControl?.frame_runtime?.frame_ref.frame_id ?? null;
   const agentRunDetailTarget = useMemo(() => {
     if (!agentRunDetailRunId || !agentRunDetailAgentId) return null;
     return {
@@ -244,7 +244,7 @@ export function AgentRunWorkspacePage({
     }
     return null;
   }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
-  const ownerProjectId = runtimeControl?.project_id
+  const ownerProjectId = workspaceControl?.project_id
     ?? runContext?.project_id
     ?? ownerStory?.project_id
     ?? draftProjectIdValue
@@ -505,22 +505,22 @@ export function AgentRunWorkspacePage({
     projectId: ownerProjectId,
     traceSessionId: deliveryTraceSessionId,
     agentRunRuntimeTarget,
-    sessionMeta: runtimeControl?.delivery_trace_meta
+    sessionMeta: workspaceControl?.delivery_trace_meta
       ? {
-          id: runtimeControl.delivery_trace_meta.runtime_session_ref.runtime_session_id,
-          title: runtimeControl.delivery_trace_meta.trace_title,
-          title_source: runtimeControl.delivery_trace_meta.trace_title_source,
-          created_at: runtimeControl.delivery_trace_meta.updated_at,
-          updated_at: runtimeControl.delivery_trace_meta.updated_at,
-          last_event_seq: runtimeControl.delivery_trace_meta.last_event_seq,
-          last_delivery_status: runtimeControl.delivery_trace_meta.delivery_status,
+          id: workspaceControl.delivery_trace_meta.runtime_session_ref.runtime_session_id,
+          title: workspaceControl.delivery_trace_meta.trace_title,
+          title_source: workspaceControl.delivery_trace_meta.trace_title_source,
+          created_at: workspaceControl.delivery_trace_meta.updated_at,
+          updated_at: workspaceControl.delivery_trace_meta.updated_at,
+          last_event_seq: workspaceControl.delivery_trace_meta.last_event_seq,
+          last_delivery_status: workspaceControl.delivery_trace_meta.delivery_status,
         }
       : null,
     controlAnchor: null,
     lifecycleRun: null,
-    lifecycleAgent: runtimeControl?.agent ?? null,
-    frameRuntime: runtimeControl?.frame_runtime ?? null,
-    subjectAssociations: runtimeControl?.subject_associations ?? [],
+    lifecycleAgent: workspaceControl?.agent ?? null,
+    frameRuntime: workspaceControl?.frame_runtime ?? null,
+    subjectAssociations: workspaceControl?.subject_associations ?? [],
     runtimeStatus: agentRunWorkspaceState.status,
     runtimeError: agentRunWorkspaceState.error ?? agentRunWorkspaceState.runtime_surface_error,
     extensionRuntime,
@@ -536,7 +536,7 @@ export function AgentRunWorkspacePage({
     ownerProjectId,
     deliveryTraceSessionId,
     agentRunRuntimeTarget,
-    runtimeControl,
+    workspaceControl,
     agentRunWorkspaceState.status,
     agentRunWorkspaceState.error,
     agentRunWorkspaceState.runtime_surface_error,

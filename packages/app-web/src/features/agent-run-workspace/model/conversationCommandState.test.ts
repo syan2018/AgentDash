@@ -14,10 +14,10 @@ import type {
 } from "../../../generated/agent-run-mailbox-contracts";
 import type { ProjectAgentSummary } from "../../../types";
 import {
-  buildDraftSessionCommandState,
-  buildRuntimeSessionCommandState,
-  projectSessionChatCommandState,
-  projectSessionChatMailboxModel,
+  buildAgentRunConversationCommandState,
+  buildDraftConversationCommandState,
+  projectAgentRunChatCommandState,
+  projectAgentRunChatMailboxModel,
 } from "./conversationCommandState";
 
 const ownership: AgentRunOwnershipView = {
@@ -117,7 +117,7 @@ describe("AgentRun conversation command state", () => {
       executor_config_policy: "forbidden",
       placement: ["header"],
     });
-    const commandState = buildRuntimeSessionCommandState({
+    const commandState = buildAgentRunConversationCommandState({
       conversation: {
         execution: {
           status: "running_active",
@@ -137,7 +137,7 @@ describe("AgentRun conversation command state", () => {
       projectionError: null,
     });
 
-    const model = projectSessionChatCommandState(commandState);
+    const model = projectAgentRunChatCommandState(commandState);
 
     expect(model.mode).toBe("runtime");
     expect(model.executionStatus).toBe("running_active");
@@ -161,13 +161,13 @@ describe("AgentRun conversation command state", () => {
   });
 
   it("keeps projection loading and error states visible when conversation snapshot is missing", () => {
-    const commandState = buildRuntimeSessionCommandState({
+    const commandState = buildAgentRunConversationCommandState({
       conversation: null,
       projectionStatus: "error",
       projectionError: "工作台投影加载失败",
     });
 
-    const model = projectSessionChatCommandState(commandState);
+    const model = projectAgentRunChatCommandState(commandState);
 
     expect(model.executionStatus).toBe("error");
     expect(model.commands).toEqual([]);
@@ -192,7 +192,7 @@ describe("AgentRun conversation command state", () => {
       },
     };
 
-    const missingModel = buildDraftSessionCommandState({
+    const missingModel = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-key",
       agent,
@@ -202,7 +202,7 @@ describe("AgentRun conversation command state", () => {
     expect(missingModel.localDraftAction?.enabled).toBe(false);
     expect(missingModel.localDraftAction?.disabled_code).toBe("model_required");
 
-    const ready = buildDraftSessionCommandState({
+    const ready = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-key",
       agent,
@@ -213,7 +213,7 @@ describe("AgentRun conversation command state", () => {
         model_id: "gpt-test",
       },
     });
-    const model = projectSessionChatCommandState(ready);
+    const model = projectAgentRunChatCommandState(ready);
 
     expect(ready.executionStatus).toBe("draft");
     expect(ready.localDraftAction?.enabled).toBe(true);
@@ -250,7 +250,7 @@ describe("AgentRun conversation command state", () => {
       requires_input: false,
       placement: ["mailbox_row"],
     });
-    const commandState = buildRuntimeSessionCommandState({
+    const commandState = buildAgentRunConversationCommandState({
       conversation: {
         execution: { status: "ready" },
         commands: {
@@ -287,7 +287,7 @@ describe("AgentRun conversation command state", () => {
       ],
     };
 
-    const model = projectSessionChatMailboxModel(commandState, mailbox);
+    const model = projectAgentRunChatMailboxModel(commandState, mailbox);
 
     expect(model.messages).toEqual([mailboxMessage()]);
     expect(model.waiting_items).toEqual(mailbox.waiting_items);

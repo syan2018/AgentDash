@@ -60,3 +60,11 @@ D-001, D-014, D-015
 - contracts regenerate / frontend typecheck。
 - AgentRun workspace 基本流程浏览器验证。
 - `rg "runtime_session_id|sessionId|delivery_runtime_ref|source_runtime_session_id"` 清点产品路径残留。
+
+## Implementation Record
+
+- Batch R2a 前端产品边界已将 AgentRun workspace command helper 从 RuntimeSession/SessionCommand 命名收敛为 AgentRun conversation/AgentRun chat adapter 命名。
+- AgentRun workspace projection state 使用 `delivery_trace_session_id` 表示 delivery trace 边界引用；raw `runtime_session_id` 仅从 `delivery_trace_meta` 派生给 workspace runtime/diagnostic 边界。
+- `planAgentRunMessageSent` 不再按 trace session id 是否存在分叉；message sent 后的 workspace/list/hook runtime refresh 由 AgentRun control plane 调度，具体 hook refresh 仍由 run/agent target 存在性兜住。
+- 保留的 `SessionChatView`、`sessionId: null`、terminal/context inspector runtime id 引用属于通用 chat shell、diagnostic trace 或 terminal connector 边界。
+- 验证：`pnpm --filter app-web test -- conversationCommandState controlPlaneModel useAgentRunWorkspaceState MailboxMessageRow AgentRunWorkspacePage.workspace-module`、`pnpm --filter app-web run lint`、`pnpm run frontend:check`、`git diff --check` 均通过。

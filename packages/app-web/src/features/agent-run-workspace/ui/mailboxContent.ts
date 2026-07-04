@@ -1,10 +1,10 @@
 import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
-import type { SessionChatMailboxModel } from "../../session/ui/SessionChatViewTypes";
+import type { AgentRunChatMailboxModel } from "../model/conversationCommandState";
 
 /** mailbox 是否有可展示内容（消息 / 关注 / 暂停）。供综合状态栏判断是否渲染。 */
 export function mailboxHasContent(
   messages: MailboxMessageView[],
-  mailbox?: SessionChatMailboxModel,
+  mailbox?: AgentRunChatMailboxModel,
 ): boolean {
   const steer = messages.filter(
     (m) => m.delivery.kind === "steer_active_turn" &&

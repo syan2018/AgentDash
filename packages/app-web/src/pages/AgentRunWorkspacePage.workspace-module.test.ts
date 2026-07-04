@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
 import {
-  buildDraftSessionCommandState,
-  buildRuntimeSessionCommandState,
+  buildAgentRunConversationCommandState,
+  buildDraftConversationCommandState,
   resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type {
@@ -101,7 +101,7 @@ function commandState(
   projectionStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
   workspace: AgentRunWorkspaceView | null,
 ) {
-  return buildRuntimeSessionCommandState({
+  return buildAgentRunConversationCommandState({
     projectionStatus,
     projectionError: projectionStatus === "error" ? "refresh failed" : null,
     conversation: workspace?.conversation,
@@ -226,7 +226,7 @@ describe("AgentRun workspace conversation command authority", () => {
       },
       source: "project_agent",
     };
-    const state = buildDraftSessionCommandState({
+    const state = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-1",
       agent,
@@ -253,7 +253,7 @@ describe("AgentRun workspace conversation command authority", () => {
       },
       source: "project_agent",
     };
-    const state = buildDraftSessionCommandState({
+    const state = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-1",
       agent,
@@ -280,7 +280,7 @@ describe("AgentRun workspace conversation command authority", () => {
   });
 
   it("keeps reasoning-capable model selection valid even without thinking level", () => {
-    expect(buildDraftSessionCommandState({
+    expect(buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-1",
       agent: {
@@ -315,7 +315,7 @@ describe("AgentRun workspace conversation command authority", () => {
       },
       source: "project_agent",
     };
-    const state = buildDraftSessionCommandState({
+    const state = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-1",
       agent,

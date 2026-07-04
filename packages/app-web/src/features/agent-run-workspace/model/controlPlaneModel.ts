@@ -1,13 +1,13 @@
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import type { SessionChatSubmitIntent } from "../../session";
 import { extractPlatformEventData } from "../../session/model/platformEvent";
 import {
   workspaceModulePresentationFromPlatformEventData,
   workspaceModulePresentedTabTarget,
 } from "../../workspace-module/model/presentation";
 import type {
-  AgentRunSessionCommand,
-  AgentRunSessionCommandState,
+  AgentRunConversationCommand,
+  AgentRunConversationCommandState,
+  AgentRunChatSubmitIntent,
 } from "./conversationCommandState";
 
 export interface AgentRunWorkspacePanelTarget {
@@ -33,17 +33,17 @@ export interface AgentRunControlPlaneEffectPlan {
 }
 
 export type AgentRunSubmitCommandResolution =
-  | { ok: true; command: AgentRunSessionCommand }
+  | { ok: true; command: AgentRunConversationCommand }
   | { ok: false; message: string };
 
-function commandLookupKey(command: AgentRunSessionCommand): string {
+function commandLookupKey(command: AgentRunConversationCommand): string {
   return command.command_id;
 }
 
 export function buildAgentRunCommandLookup(
-  commandState: AgentRunSessionCommandState,
-): Map<string, AgentRunSessionCommand> {
-  const lookup = new Map<string, AgentRunSessionCommand>();
+  commandState: AgentRunConversationCommandState,
+): Map<string, AgentRunConversationCommand> {
+  const lookup = new Map<string, AgentRunConversationCommand>();
   for (const command of commandState.commands.commands) {
     lookup.set(commandLookupKey(command), command);
   }
@@ -54,8 +54,8 @@ export function buildAgentRunCommandLookup(
 }
 
 export function resolveAgentRunSubmitCommand(
-  commandState: AgentRunSessionCommandState,
-  intent: SessionChatSubmitIntent,
+  commandState: AgentRunConversationCommandState,
+  intent: AgentRunChatSubmitIntent,
 ): AgentRunSubmitCommandResolution {
   const command = buildAgentRunCommandLookup(commandState).get(intent.command_id);
   if (!command) {
@@ -67,15 +67,11 @@ export function resolveAgentRunSubmitCommand(
   return { ok: true, command };
 }
 
-export function planAgentRunMessageSent(
-  traceSessionId: string | null,
-): AgentRunControlPlaneEffectPlan {
+export function planAgentRunMessageSent(): AgentRunControlPlaneEffectPlan {
   return {
     refreshWorkspaceState: true,
     refreshAgentRunListReason: "message_sent",
-    ...(traceSessionId
-      ? { hookRuntimeRefresh: { reason: "message_sent", immediate: true } }
-      : {}),
+    hookRuntimeRefresh: { reason: "message_sent", immediate: true },
   };
 }
 

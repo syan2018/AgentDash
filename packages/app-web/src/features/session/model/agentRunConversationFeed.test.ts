@@ -4,7 +4,7 @@ import type { SessionEventEnvelope } from "./types";
 import {
   agentRunConversationFeedEntries,
   agentRunConversationFeedEvents,
-  normalizeAgentRunSessionEventIdentity,
+  normalizeAgentRunStreamEventIdentity,
 } from "./agentRunConversationFeed";
 
 function feed(messages: AgentConversationFeedSnapshot["messages"]): AgentConversationFeedSnapshot {
@@ -156,7 +156,7 @@ describe("agentRunConversationFeedEntries", () => {
 
   it("normalizes AgentRun scoped runtime events to the synthetic stream identity", () => {
     const event = runtimeEvent("runtime-session-1");
-    const normalized = normalizeAgentRunSessionEventIdentity(event, {
+    const normalized = normalizeAgentRunStreamEventIdentity(event, {
       runId: "run-1",
       agentId: "agent-1",
     });
@@ -168,7 +168,7 @@ describe("agentRunConversationFeedEntries", () => {
 
   it("keeps already normalized AgentRun runtime events by reference", () => {
     const event = runtimeEvent("agentrun:run-1:agent-1");
-    const normalized = normalizeAgentRunSessionEventIdentity(event, {
+    const normalized = normalizeAgentRunStreamEventIdentity(event, {
       runId: "run-1",
       agentId: "agent-1",
     });

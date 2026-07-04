@@ -13,10 +13,10 @@ import type {
   ConversationCommandStaleGuardView,
 } from "../../../generated/agent-run-mailbox-contracts";
 import type { ProjectAgentSummary } from "../../../types";
-import type { SessionChatSubmitIntent } from "../../session";
 import {
-  buildDraftSessionCommandState,
-  buildRuntimeSessionCommandState,
+  type AgentRunChatSubmitIntent,
+  buildAgentRunConversationCommandState,
+  buildDraftConversationCommandState,
 } from "./conversationCommandState";
 import {
   planAgentRunMessageSent,
@@ -65,7 +65,7 @@ function resolvedModelConfig(): ConversationModelConfigView {
   };
 }
 
-function submitIntent(commandId: string): SessionChatSubmitIntent {
+function submitIntent(commandId: string): AgentRunChatSubmitIntent {
   return {
     command_id: commandId,
     prompt: "继续",
@@ -94,7 +94,7 @@ describe("AgentRun control-plane model", () => {
       kind: "submit_message",
       command_id: "cmd-submit",
     });
-    const commandState = buildRuntimeSessionCommandState({
+    const commandState = buildAgentRunConversationCommandState({
       conversation: {
         execution: { status: "ready" },
         commands: {
@@ -126,7 +126,7 @@ describe("AgentRun control-plane model", () => {
         model_id: "gpt-test",
       },
     };
-    const commandState = buildDraftSessionCommandState({
+    const commandState = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-key",
       agent,
@@ -145,7 +145,7 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("rejects submit intent when command id came from a stale snapshot", () => {
-    const commandState = buildRuntimeSessionCommandState({
+    const commandState = buildAgentRunConversationCommandState({
       conversation: {
         execution: { status: "ready" },
         commands: {
@@ -169,11 +169,7 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("plans message, turn-end, and manual workspace-module refresh effects", () => {
-    expect(planAgentRunMessageSent(null)).toEqual({
-      refreshWorkspaceState: true,
-      refreshAgentRunListReason: "message_sent",
-    });
-    expect(planAgentRunMessageSent("session-1")).toEqual({
+    expect(planAgentRunMessageSent()).toEqual({
       refreshWorkspaceState: true,
       hookRuntimeRefresh: { reason: "message_sent", immediate: true },
       refreshAgentRunListReason: "message_sent",

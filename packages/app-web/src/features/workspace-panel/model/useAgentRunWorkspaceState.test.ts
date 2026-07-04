@@ -93,7 +93,7 @@ function loadedState(): AgentRunWorkspaceProjectionState {
     source_key: "agentrun:run-1:agent-1",
     status: "ready",
     workspace,
-    trace_session_id: "session-1",
+    delivery_trace_session_id: "session-1",
     runtime_surface: runtimeSurface,
     frame: frameRuntime,
   };
@@ -160,7 +160,7 @@ describe("AgentRun workspace refresh state", () => {
     );
 
     expect(refreshing.status).toBe("refreshing");
-    expect(refreshing.trace_session_id).toBe("session-1");
+    expect(refreshing.delivery_trace_session_id).toBe("session-1");
     expect(refreshing.workspace).toBe(workspace);
     expect(refreshing.runtime_surface).toBe(runtimeSurface);
     expect(refreshing.frame).toBe(frameRuntime);
@@ -186,7 +186,7 @@ describe("AgentRun workspace refresh state", () => {
 
     expect(failed.status).toBe("error");
     expect(failed.error).toBe("refresh failed");
-    expect(failed.trace_session_id).toBe("session-1");
+    expect(failed.delivery_trace_session_id).toBe("session-1");
     expect(failed.workspace).toBe(workspace);
     expect(failed.runtime_surface).toBe(runtimeSurface);
     expect(failed.frame).toBe(frameRuntime);

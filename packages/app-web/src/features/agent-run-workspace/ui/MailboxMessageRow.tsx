@@ -5,16 +5,16 @@ import type {
 } from "../../../generated/agent-run-mailbox-contracts";
 import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type {
-  SessionChatCommandModel,
-  SessionChatMailboxModel,
-} from "../../session/ui/SessionChatViewTypes";
+  AgentRunChatCommandModel,
+  AgentRunChatMailboxModel,
+} from "../model/conversationCommandState";
 import { useSessionWorkspacePanelAction } from "../../session/ui/SessionWorkspacePanelActionContext";
 import { terminalUriForWaitingItem } from "../model/waitingTerminal";
 import { mailboxHasContent } from "./mailboxContent";
 
 interface MailboxMessageListProps {
   messages: MailboxMessageView[];
-  mailbox?: SessionChatMailboxModel;
+  mailbox?: AgentRunChatMailboxModel;
   onPromote: (messageId: string) => void;
   onDelete: (messageId: string) => void;
   onResume?: () => void;
@@ -374,8 +374,8 @@ function MessageRow({
   index: number;
   totalInSection: number;
   pendingMessages: MailboxMessageView[];
-  promoteCommand?: SessionChatCommandModel;
-  deleteCommand?: SessionChatCommandModel;
+  promoteCommand?: AgentRunChatCommandModel;
+  deleteCommand?: AgentRunChatCommandModel;
   onPromote: (id: string) => void;
   onDelete: (id: string) => void;
   onRecall?: (id: string) => void;

@@ -27,7 +27,7 @@ function agentRunThreadId(feed: AgentConversationFeedSnapshot): string {
   });
 }
 
-export function normalizeAgentRunSessionEventIdentity(
+export function normalizeAgentRunStreamEventIdentity(
   event: SessionEventEnvelope,
   target: AgentRunStreamIdentityTarget,
 ): SessionEventEnvelope {

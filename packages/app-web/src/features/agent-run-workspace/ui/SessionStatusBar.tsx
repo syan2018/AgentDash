@@ -16,7 +16,7 @@ import type { Task, TaskPlanStatus } from "../../../types";
 import { TaskStatusToken } from "../../../components/ui/status-badge";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import { TaskDrawer } from "../../task/task-drawer";
-import type { SessionChatMailboxModel } from "../../session/ui/SessionChatViewTypes";
+import type { AgentRunChatMailboxModel } from "../model/conversationCommandState";
 import { MailboxSections } from "./MailboxMessageRow";
 import { mailboxHasContent } from "./mailboxContent";
 
@@ -27,7 +27,7 @@ interface SessionStatusBarProps {
 
   // mailbox passthrough
   messages: MailboxMessageView[];
-  mailbox?: SessionChatMailboxModel;
+  mailbox?: AgentRunChatMailboxModel;
   onPromote: (messageId: string) => void;
   onDelete: (messageId: string) => void;
   onResume?: () => void;

@@ -326,7 +326,7 @@ mod tests {
     use tokio::sync::{Mutex, RwLock, mpsc};
     use uuid::Uuid;
 
-    use super::super::MemorySessionPersistence;
+    use super::super::MemoryRuntimeTraceStore;
     use super::super::effects_service::SessionEffectsService;
     use super::super::eventing::SessionEventingService;
     use super::super::hub_support::{SessionProfile, TurnExecution, TurnTerminalKind};
@@ -382,8 +382,8 @@ mod tests {
             .await;
         assert!(registry.has_active_turn(session_id).await);
 
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let base_stores = SessionStoreSet::from_shared_store(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let base_stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         let stores = SessionStoreSet {
             events: Arc::new(FailingEventStore),
             ..base_stores
@@ -466,8 +466,8 @@ mod tests {
             .await;
         assert!(registry.has_active_turn(session_id).await);
 
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_shared_store(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&SessionMeta {

@@ -581,7 +581,15 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool).await?;
         let session_repo = Arc::new(PostgresSessionRepository::new(db_runtime.pool.clone()));
         session_repo.initialize().await?;
-        let session_stores = SessionStoreSet::from_shared_store(session_repo);
+        let session_stores = SessionStoreSet::new(
+            session_repo.clone(),
+            session_repo.clone(),
+            session_repo.clone(),
+            session_repo.clone(),
+            session_repo.clone(),
+            session_repo.clone(),
+            session_repo,
+        );
         let session_runtime = SessionRuntimeServices::new_with_hooks_and_stores(
             connector.clone(),
             None,

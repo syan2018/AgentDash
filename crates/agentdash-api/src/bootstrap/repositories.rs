@@ -65,7 +65,15 @@ pub(crate) async fn build_repositories(
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
 
     let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
-    let session_stores = SessionStoreSet::from_shared_store(session_repo.clone());
+    let session_stores = SessionStoreSet::new(
+        session_repo.clone(),
+        session_repo.clone(),
+        session_repo.clone(),
+        session_repo.clone(),
+        session_repo.clone(),
+        session_repo.clone(),
+        session_repo.clone(),
+    );
     let runtime_session_creator = Arc::new(SessionMetaStoreRuntimeSessionCreator::new(
         session_stores.meta.clone(),
     ));

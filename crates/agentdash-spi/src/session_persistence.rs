@@ -945,29 +945,3 @@ pub trait SessionLineageStore: Send + Sync {
         updated_at_ms: i64,
     ) -> SessionStoreResult<()>;
 }
-
-/// Session 持久化全量端口——聚合 7 个领域子 store，方法签名全部由子 trait 继承。
-///
-/// 任意同时实现全部子 trait 的类型自动实现本 trait（见下方 blanket impl），
-/// 消费方依赖 `dyn SessionPersistence` 即可访问全部子 store 方法。
-pub trait SessionPersistence:
-    SessionMetaStore
-    + SessionEventStore
-    + SessionTerminalEffectStore
-    + SessionRuntimeCommandStore
-    + SessionCompactionStore
-    + SessionProjectionStore
-    + SessionLineageStore
-{
-}
-
-impl<T> SessionPersistence for T where
-    T: SessionMetaStore
-        + SessionEventStore
-        + SessionTerminalEffectStore
-        + SessionRuntimeCommandStore
-        + SessionCompactionStore
-        + SessionProjectionStore
-        + SessionLineageStore
-{
-}

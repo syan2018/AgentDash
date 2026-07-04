@@ -84,7 +84,7 @@ pub use hooks_service::SessionHookService;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommandOutcome, SessionLaunchService};
 #[cfg(test)]
-pub use memory_persistence::MemorySessionPersistence;
+pub use memory_persistence::MemoryRuntimeTraceStore;
 pub use persistence::{
     PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
     SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,

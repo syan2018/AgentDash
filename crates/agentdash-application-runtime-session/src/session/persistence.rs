@@ -23,7 +23,28 @@ pub struct SessionStoreSet {
 }
 
 impl SessionStoreSet {
-    pub fn from_shared_store<T>(store: Arc<T>) -> Self
+    pub fn new(
+        meta: Arc<dyn SessionMetaStore>,
+        events: Arc<dyn SessionEventStore>,
+        terminal_effects: Arc<dyn SessionTerminalEffectStore>,
+        runtime_commands: Arc<dyn SessionRuntimeCommandStore>,
+        compactions: Arc<dyn SessionCompactionStore>,
+        projections: Arc<dyn SessionProjectionStore>,
+        lineage: Arc<dyn SessionLineageStore>,
+    ) -> Self {
+        Self {
+            meta,
+            events,
+            terminal_effects,
+            runtime_commands,
+            compactions,
+            projections,
+            lineage,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_runtime_trace_test_store<T>(store: Arc<T>) -> Self
     where
         T: SessionMetaStore
             + SessionEventStore
@@ -34,14 +55,14 @@ impl SessionStoreSet {
             + SessionLineageStore
             + 'static,
     {
-        Self {
-            meta: store.clone(),
-            events: store.clone(),
-            terminal_effects: store.clone(),
-            runtime_commands: store.clone(),
-            compactions: store.clone(),
-            projections: store.clone(),
-            lineage: store,
-        }
+        Self::new(
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store.clone(),
+            store,
+        )
     }
 }

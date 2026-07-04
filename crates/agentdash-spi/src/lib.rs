@@ -162,7 +162,7 @@ pub use session_persistence::{
     SESSION_PROJECTION_KIND_AUDIT, SESSION_PROJECTION_KIND_HANDOFF,
     SESSION_PROJECTION_KIND_MODEL_CONTEXT, SESSION_PROJECTION_KIND_TIMELINE,
     SessionCompactionRecord, SessionCompactionStatus, SessionCompactionStore, SessionEventBacklog,
-    SessionEventPage, SessionEventStore, SessionMeta, SessionMetaStore, SessionPersistence,
+    SessionEventPage, SessionEventStore, SessionMeta, SessionMetaStore,
     SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
     SessionRuntimeCommandStore, SessionTerminalEffectStore, SetCompanionAgentRosterEffect,
     SetMcpServerSetEffect, SetToolAccessEffect, TerminalEffectRecord, TerminalEffectStatus,

@@ -511,7 +511,7 @@ mod tests {
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
     use crate::session::types::{ExecutionStatus, SessionMeta, TitleSource};
-    use crate::session::{MemorySessionPersistence, SessionMetaStore, SessionStoreSet};
+    use crate::session::{MemoryRuntimeTraceStore, SessionMetaStore, SessionStoreSet};
 
     #[test]
     fn terminal_effect_status_round_trips_wire_values() {
@@ -539,7 +539,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_hook_effects_uses_durable_handler_registry() {
-        let persistence = Arc::new(MemorySessionPersistence::default());
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
         persistence
             .create_session(&SessionMeta {
                 id: "sess-hook-replay".to_string(),
@@ -559,7 +559,7 @@ mod tests {
         let hub = SessionRuntimeInner::new_with_hooks_and_stores(
             Arc::new(NoopConnector),
             None,
-            SessionStoreSet::from_shared_store(persistence.clone()),
+            SessionStoreSet::from_runtime_trace_test_store(persistence.clone()),
         );
         let executed = Arc::new(Mutex::new(Vec::<String>::new()));
         hub.set_hook_effect_handler_registry(Arc::new(RecordingHookEffectRegistry {
@@ -606,7 +606,7 @@ mod tests {
 
     #[tokio::test]
     async fn hook_auto_resume_failure_keeps_terminal_effect_replayable() {
-        let persistence = Arc::new(MemorySessionPersistence::default());
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
         persistence
             .create_session(&SessionMeta {
                 id: "sess-auto-resume-failure".to_string(),

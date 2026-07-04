@@ -362,7 +362,7 @@ mod tests {
     };
     use async_trait::async_trait;
 
-    use super::super::memory_persistence::MemorySessionPersistence;
+    use super::super::memory_persistence::MemoryRuntimeTraceStore;
     use super::super::persistence::{
         NewCompactionProjectionCommit, SessionCompactionRecord, SessionCompactionStore,
         SessionMetaStore, SessionProjectionSegmentRecord, SessionProjectionStore,
@@ -580,7 +580,7 @@ mod tests {
     }
 
     async fn seed_session_with_compaction(
-        persistence: &Arc<MemorySessionPersistence>,
+        persistence: &Arc<MemoryRuntimeTraceStore>,
     ) -> (SessionStoreSet, Arc<ReadSpyEventStore>) {
         let session_id = "sess-ctx";
         persistence
@@ -669,7 +669,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_model_context_reads_only_suffix_with_active_compaction() {
-        let persistence = Arc::new(MemorySessionPersistence::default());
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
         let (stores, spy) = seed_session_with_compaction(&persistence).await;
         let projector = ContextProjector::new(stores);
 
@@ -716,7 +716,7 @@ mod tests {
     #[tokio::test]
     async fn build_model_context_equivalent_to_full_read_reference() {
         // 改造后产物必须与"全量读取后过滤"的参考实现等价。
-        let persistence = Arc::new(MemorySessionPersistence::default());
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
         let (stores, _spy) = seed_session_with_compaction(&persistence).await;
         let projector = ContextProjector::new(stores);
         let actual = projector

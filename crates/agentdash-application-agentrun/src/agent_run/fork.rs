@@ -30,7 +30,6 @@ use crate::agent_run::{
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
     DeliveryRuntimeSelectionService,
 };
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 
 pub struct AgentRunForkRepos<'a> {
@@ -43,22 +42,6 @@ pub struct AgentRunForkRepos<'a> {
     pub agent_run_mailbox_repo: &'a dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository,
     pub agent_run_lineage_repo: &'a dyn AgentRunLineageRepository,
     pub agent_run_fork_materialization: &'a dyn agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort,
-}
-
-impl<'a> AgentRunForkRepos<'a> {
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self {
-            lifecycle_run_repo: repos.lifecycle_run_repo.as_ref(),
-            lifecycle_agent_repo: repos.lifecycle_agent_repo.as_ref(),
-            agent_frame_repo: repos.agent_frame_repo.as_ref(),
-            execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
-            delivery_binding_repo: repos.agent_run_delivery_binding_repo.as_ref(),
-            agent_run_command_receipt_repo: repos.agent_run_command_receipt_repo.as_ref(),
-            agent_run_mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
-            agent_run_lineage_repo: repos.agent_run_lineage_repo.as_ref(),
-            agent_run_fork_materialization: repos.agent_run_fork_materialization.as_ref(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

@@ -16,7 +16,6 @@ use crate::agent_run::{
     DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
     conversation_command_id_for,
 };
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 
 use super::projection::is_terminal_agent_status;
@@ -28,19 +27,6 @@ pub struct AgentRunWorkspaceCommandPolicyDeps<'a> {
     pub agent_frame_repo: &'a dyn AgentFrameRepository,
     pub project_agent_repo: &'a dyn ProjectAgentRepository,
     pub agent_run_mailbox_repo: &'a dyn AgentRunMailboxRepository,
-}
-
-impl<'a> AgentRunWorkspaceCommandPolicyDeps<'a> {
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self {
-            delivery_selection_repos: DeliveryRuntimeSelectionRepositories::from_repository_set(
-                repos,
-            ),
-            agent_frame_repo: repos.agent_frame_repo.as_ref(),
-            project_agent_repo: repos.project_agent_repo.as_ref(),
-            agent_run_mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
-        }
-    }
 }
 
 pub struct AgentRunWorkspaceCommandPolicyService<'a> {

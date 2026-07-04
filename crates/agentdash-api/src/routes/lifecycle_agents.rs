@@ -7,7 +7,6 @@ use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_cancel_runtime, agent_run_session_control, agent_run_session_core,
     agent_run_session_eventing, agent_run_session_launch,
 };
-use agentdash_application_agentrun::AgentRunRepositorySet;
 use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, workspace as app_workspace,
 };
@@ -22,7 +21,8 @@ use agentdash_application_agentrun::agent_run::{
     AgentRunDeleteRepos, AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkRepos,
     AgentRunForkService, AgentRunForkSubmitCommand, AgentRunMailboxControlCommand,
     AgentRunMailboxService, AgentRunMailboxUserMessageCommand, AgentRunTerminalLaunchTarget,
-    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, ProjectAgentRunStartRepos,
+    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
+    DeliveryRuntimeSelectionService,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
@@ -304,9 +304,8 @@ pub async fn delete_project_agent_run(
     )
     .await?;
 
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
     let service = AgentRunDeleteCommandService::new(
-        AgentRunDeleteRepos::from_repository_set(&agent_run_repos),
+        agent_run_delete_repos(state.as_ref()),
         agent_run_session_core(state.services.session_core.clone()),
     );
     let outcome = service
@@ -699,8 +698,7 @@ pub async fn submit_agent_run_composer_input(
         delivery_trace_session_id = ?delivery_trace_session_id,
         "AgentRun composer submit context resolved"
     );
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
+    agent_run_workspace_command_policy(state.as_ref())
         .ensure_composer_submit_allowed(
             command_policy_context(&context),
             &command_precondition_to_application(req.command),
@@ -720,7 +718,7 @@ pub async fn submit_agent_run_composer_input(
         .transpose()
         .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
     if context.run.created_by_user_id != current_user.user_id {
-        let admission = agent_run_fork_admission_service(state.as_ref(), &agent_run_repos);
+        let admission = agent_run_fork_admission_service(state.as_ref());
         let current_user_id = current_user.user_id.clone();
         let client_command_id = req.client_command_id.clone();
         let response = admission
@@ -752,7 +750,7 @@ pub async fn submit_agent_run_composer_input(
             })?;
         return Ok(Json(agent_run_fork_submit_message_response(response)));
     }
-    let service = agent_run_mailbox_service(state.as_ref(), &agent_run_repos);
+    let service = agent_run_mailbox_service(state.as_ref());
     let response = service
         .accept_user_message(AgentRunMailboxUserMessageCommand {
             run_id: context.run.id,
@@ -799,8 +797,7 @@ async fn fork_agent_run(
         ProjectPermission::Use,
     )
     .await?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let admission = agent_run_fork_admission_service(state.as_ref(), &agent_run_repos);
+    let admission = agent_run_fork_admission_service(state.as_ref());
     let current_user_id = current_user.user_id.clone();
     let client_command_id = req.client_command_id.clone();
     let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
@@ -857,8 +854,7 @@ async fn fork_submit_agent_run(
         .map(serde_json::from_value::<AgentConfig>)
         .transpose()
         .map_err(|e| ApiError::BadRequest(format!("executor_config 格式错误: {e}")))?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let admission = agent_run_fork_admission_service(state.as_ref(), &agent_run_repos);
+    let admission = agent_run_fork_admission_service(state.as_ref());
     let current_user_id = current_user.user_id.clone();
     let client_command_id = req.client_command_id.clone();
     let fork_point_ref = req.fork_point_ref.map(message_ref_from_contract);
@@ -925,8 +921,7 @@ async fn delete_agent_run_mailbox_message(
     )
     .await?;
     let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
+    agent_run_workspace_command_policy(state.as_ref())
         .ensure_command_allowed(
             command_policy_context(&context),
             app_workspace::AgentRunWorkspaceCommandPrecondition::DeleteMailboxMessage {
@@ -936,7 +931,7 @@ async fn delete_agent_run_mailbox_message(
         .await
         .map_err(command_policy_error)?;
     let message_id = parse_uuid(&message_id, "message_id")?;
-    let response = agent_run_mailbox_service(state.as_ref(), &agent_run_repos)
+    let response = agent_run_mailbox_service(state.as_ref())
         .delete_message(AgentRunMailboxControlCommand {
             run_id: context.run.id,
             agent_id: context.agent.id,
@@ -965,8 +960,7 @@ async fn resume_agent_run_mailbox(
     )
     .await?;
     let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
+    agent_run_workspace_command_policy(state.as_ref())
         .ensure_command_allowed(
             command_policy_context(&context),
             app_workspace::AgentRunWorkspaceCommandPrecondition::ResumeMailbox {
@@ -975,7 +969,7 @@ async fn resume_agent_run_mailbox(
         )
         .await
         .map_err(command_policy_error)?;
-    let response = agent_run_mailbox_service(state.as_ref(), &agent_run_repos)
+    let response = agent_run_mailbox_service(state.as_ref())
         .resume_mailbox(
             AgentRunMailboxControlCommand {
                 run_id: context.run.id,
@@ -1007,8 +1001,7 @@ async fn promote_agent_run_mailbox_message(
     )
     .await?;
     let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
+    agent_run_workspace_command_policy(state.as_ref())
         .ensure_command_allowed(
             command_policy_context(&context),
             app_workspace::AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage {
@@ -1018,7 +1011,7 @@ async fn promote_agent_run_mailbox_message(
         .await
         .map_err(command_policy_error)?;
     let message_id = parse_uuid(&message_id, "message_id")?;
-    let response = agent_run_mailbox_service(state.as_ref(), &agent_run_repos)
+    let response = agent_run_mailbox_service(state.as_ref())
         .promote_message(
             AgentRunMailboxControlCommand {
                 run_id: context.run.id,
@@ -1050,8 +1043,7 @@ async fn move_agent_run_mailbox_message(
     )
     .await?;
     let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
+    agent_run_workspace_command_policy(state.as_ref())
         .ensure_command_allowed(
             command_policy_context(&context),
             app_workspace::AgentRunWorkspaceCommandPrecondition::MoveMailboxMessage {
@@ -1066,7 +1058,7 @@ async fn move_agent_run_mailbox_message(
         .as_deref()
         .map(|id| parse_uuid(id, "after_message_id"))
         .transpose()?;
-    let result = agent_run_mailbox_service(state.as_ref(), &agent_run_repos)
+    let result = agent_run_mailbox_service(state.as_ref())
         .move_message(AgentRunMailboxControlCommand {
             run_id: context.run.id,
             agent_id: context.agent.id,
@@ -1097,8 +1089,7 @@ async fn get_agent_run_mailbox_message_content(
     )
     .await?;
     let message_id = parse_uuid(&message_id, "message_id")?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let input = agent_run_mailbox_service(state.as_ref(), &agent_run_repos)
+    let input = agent_run_mailbox_service(state.as_ref())
         .get_message_content(context.run.id, context.agent.id, message_id)
         .await
         .map_err(ApiError::from)?;
@@ -1127,8 +1118,7 @@ async fn cancel_agent_run(
         ProjectPermission::Use,
     )
     .await?;
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    agent_run_workspace_command_policy(state.as_ref(), &agent_run_repos)
+    agent_run_workspace_command_policy(state.as_ref())
         .ensure_command_allowed(
             command_policy_context(&context),
             app_workspace::AgentRunWorkspaceCommandPrecondition::Cancel {
@@ -1137,7 +1127,7 @@ async fn cancel_agent_run(
         )
         .await
         .map_err(command_policy_error)?;
-    let delivery_selection = DeliveryRuntimeSelectionService::from_repository_set(&agent_run_repos)
+    let delivery_selection = delivery_runtime_selection_service(state.as_ref())
         .select_current_delivery(context.run.id, context.agent.id)
         .await
         .map_err(delivery_runtime_selection_error)?;
@@ -1464,17 +1454,8 @@ async fn delivery_runtime_session_for_agent_run(
     run_id: Uuid,
     agent_id: Uuid,
 ) -> Result<Option<AgentRunDeliveryRuntimeContext>, ApiError> {
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    delivery_runtime_session_for_agent_run_from_repos(&agent_run_repos, run_id, agent_id).await
-}
-
-async fn delivery_runtime_session_for_agent_run_from_repos(
-    repos: &AgentRunRepositorySet,
-    run_id: Uuid,
-    agent_id: Uuid,
-) -> Result<Option<AgentRunDeliveryRuntimeContext>, ApiError> {
     delivery_runtime_session_for_agent_run_from_selection(
-        DeliveryRuntimeSelectionService::from_repository_set(repos),
+        delivery_runtime_selection_service(state),
         run_id,
         agent_id,
     )
@@ -1522,11 +1503,10 @@ async fn load_agent_run_workspace_snapshot(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
     let lifecycle_repos = state.repos.to_lifecycle_repository_set();
     let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::new(&lifecycle_repos);
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
-        app_workspace::AgentRunWorkspaceQueryDeps::from_repository_set(&agent_run_repos),
+        agent_run_workspace_query_deps(state),
         agent_run_session_core(state.services.session_core.clone()),
         agent_run_session_control(state.services.session_control.clone()),
         &vfs_runtime,
@@ -1617,11 +1597,10 @@ async fn load_agent_run_list_projection(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
     );
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
     let lifecycle_repos = state.repos.to_lifecycle_repository_set();
     let lifecycle_surface_projection = AgentRunLifecycleSurfaceProjector::new(&lifecycle_repos);
     let service = app_workspace::AgentRunWorkspaceQueryService::new(
-        app_workspace::AgentRunWorkspaceQueryDeps::from_repository_set(&agent_run_repos),
+        agent_run_workspace_query_deps(state),
         agent_run_session_core(state.services.session_core.clone()),
         agent_run_session_control(state.services.session_control.clone()),
         &vfs_runtime,
@@ -2344,11 +2323,71 @@ async fn build_agent_run_mailbox_view(
     })
 }
 
-fn agent_run_mailbox_service<'a>(
+fn delivery_runtime_selection_repositories(
     state: &AppState,
-    agent_run_repos: &'a AgentRunRepositorySet,
-) -> AgentRunMailboxService<'a> {
-    ProjectAgentRunStartRepos::from_repository_set(agent_run_repos).mailbox_service(
+) -> DeliveryRuntimeSelectionRepositories<'_> {
+    DeliveryRuntimeSelectionRepositories {
+        lifecycle_runs: state.repos.lifecycle_run_repo.as_ref(),
+        lifecycle_agents: state.repos.lifecycle_agent_repo.as_ref(),
+        agent_frames: state.repos.agent_frame_repo.as_ref(),
+        execution_anchors: state.repos.execution_anchor_repo.as_ref(),
+        delivery_bindings: state.repos.agent_run_delivery_binding_repo.as_ref(),
+    }
+}
+
+fn delivery_runtime_selection_service(state: &AppState) -> DeliveryRuntimeSelectionService<'_> {
+    DeliveryRuntimeSelectionService::new(delivery_runtime_selection_repositories(state))
+}
+
+fn agent_run_delete_repos(state: &AppState) -> AgentRunDeleteRepos<'_> {
+    AgentRunDeleteRepos {
+        lifecycle_runs: state.repos.lifecycle_run_repo.as_ref(),
+        execution_anchors: state.repos.execution_anchor_repo.as_ref(),
+        delivery_bindings: state.repos.agent_run_delivery_binding_repo.as_ref(),
+    }
+}
+
+fn agent_run_workspace_query_deps(
+    state: &AppState,
+) -> app_workspace::AgentRunWorkspaceQueryDeps<'_> {
+    app_workspace::AgentRunWorkspaceQueryDeps {
+        delivery_selection_repos: delivery_runtime_selection_repositories(state),
+        agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
+        execution_anchor_repo: state.repos.execution_anchor_repo.as_ref(),
+        project_agent_repo: state.repos.project_agent_repo.as_ref(),
+        agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
+        lifecycle_subject_association_repo: state.repos.lifecycle_subject_association_repo.as_ref(),
+        lifecycle_gate_repo: state.repos.lifecycle_gate_repo.as_ref(),
+        settings_repo: state.repos.settings_repo.as_ref(),
+        inline_file_repo: state.repos.inline_file_repo.as_ref(),
+    }
+}
+
+fn agent_run_fork_repos(state: &AppState) -> AgentRunForkRepos<'_> {
+    AgentRunForkRepos {
+        lifecycle_run_repo: state.repos.lifecycle_run_repo.as_ref(),
+        lifecycle_agent_repo: state.repos.lifecycle_agent_repo.as_ref(),
+        agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
+        execution_anchor_repo: state.repos.execution_anchor_repo.as_ref(),
+        delivery_binding_repo: state.repos.agent_run_delivery_binding_repo.as_ref(),
+        agent_run_command_receipt_repo: state.repos.agent_run_command_receipt_repo.as_ref(),
+        agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
+        agent_run_lineage_repo: state.repos.agent_run_lineage_repo.as_ref(),
+        agent_run_fork_materialization: state.repos.agent_run_fork_materialization.as_ref(),
+    }
+}
+
+fn agent_run_mailbox_service(state: &AppState) -> AgentRunMailboxService<'_> {
+    AgentRunMailboxService::new(
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.project_agent_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+        state.repos.execution_anchor_repo.as_ref(),
+        state.repos.agent_run_delivery_binding_repo.as_ref(),
+        state.repos.project_backend_access_repo.as_ref(),
+        state.repos.agent_run_command_receipt_repo.as_ref(),
+        state.repos.agent_run_mailbox_repo.as_ref(),
         agent_run_session_core(state.services.session_core.clone()),
         agent_run_session_control(state.services.session_control.clone()),
         agent_run_session_eventing(state.services.session_eventing.clone()),
@@ -2356,23 +2395,17 @@ fn agent_run_mailbox_service<'a>(
     )
 }
 
-fn agent_run_fork_service<'a>(
-    state: &AppState,
-    agent_run_repos: &'a AgentRunRepositorySet,
-) -> AgentRunForkService<'a> {
+fn agent_run_fork_service(state: &AppState) -> AgentRunForkService<'_> {
     AgentRunForkService::new(
-        AgentRunForkRepos::from_repository_set(agent_run_repos),
+        agent_run_fork_repos(state),
         state.services.session_branching.clone(),
         agent_run_session_core(state.services.session_core.clone()),
-        agent_run_mailbox_service(state, agent_run_repos),
+        agent_run_mailbox_service(state),
     )
 }
 
-fn agent_run_fork_admission_service<'a>(
-    state: &AppState,
-    agent_run_repos: &'a AgentRunRepositorySet,
-) -> AgentRunAdmissionService<'a> {
-    AgentRunAdmissionService::for_fork(agent_run_fork_service(state, agent_run_repos))
+fn agent_run_fork_admission_service(state: &AppState) -> AgentRunAdmissionService<'_> {
+    AgentRunAdmissionService::for_fork(agent_run_fork_service(state))
 }
 
 fn agent_run_fork_submit_message_response(
@@ -2466,12 +2499,16 @@ fn message_ref_log_label(value: Option<&MessageRef>) -> String {
         .unwrap_or_else(|| "head".to_string())
 }
 
-fn agent_run_workspace_command_policy<'a>(
+fn agent_run_workspace_command_policy(
     state: &AppState,
-    agent_run_repos: &'a AgentRunRepositorySet,
-) -> app_workspace::AgentRunWorkspaceCommandPolicyService<'a> {
+) -> app_workspace::AgentRunWorkspaceCommandPolicyService<'_> {
     app_workspace::AgentRunWorkspaceCommandPolicyService::new(
-        app_workspace::AgentRunWorkspaceCommandPolicyDeps::from_repository_set(agent_run_repos),
+        app_workspace::AgentRunWorkspaceCommandPolicyDeps {
+            delivery_selection_repos: delivery_runtime_selection_repositories(state),
+            agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
+            project_agent_repo: state.repos.project_agent_repo.as_ref(),
+            agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
+        },
         agent_run_session_core(state.services.session_core.clone()),
         agent_run_session_control(state.services.session_control.clone()),
     )
@@ -3267,7 +3304,7 @@ mod tests {
         let state = agentdash_domain::agent_run_mailbox::AgentRunMailboxState {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
-            runtime_session_id: Some("runtime-1".to_string()),
+            delivery_runtime_session_id: Some("runtime-1".to_string()),
             paused: true,
             pause_reason: Some("turn_interrupted".to_string()),
             pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),
@@ -3290,7 +3327,7 @@ mod tests {
         let state = agentdash_domain::agent_run_mailbox::AgentRunMailboxState {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
-            runtime_session_id: Some("runtime-1".to_string()),
+            delivery_runtime_session_id: Some("runtime-1".to_string()),
             paused: true,
             pause_reason: Some("turn_interrupted".to_string()),
             pause_message: Some("上一轮已中断，mailbox 已暂停。".to_string()),

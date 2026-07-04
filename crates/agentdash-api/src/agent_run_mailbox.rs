@@ -1,16 +1,36 @@
 use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
+use std::sync::Arc;
 
-use agentdash_application::repository_set::RepositorySet;
 use agentdash_application_agentrun::agent_run::{
     AgentRunMailboxScheduleTrigger, AgentRunMailboxService, SessionControlService,
     SessionCoreService, SessionEventingService, SessionLaunchService,
 };
 use agentdash_application_runtime_session::session::SessionTerminalCallback;
+use agentdash_domain::agent::ProjectAgentRepository;
+use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
+use agentdash_domain::backend::ProjectBackendAccessRepository;
+use agentdash_domain::workflow::{
+    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+};
+
+#[derive(Clone)]
+pub(crate) struct AgentRunMailboxTerminalCallbackDeps {
+    pub(crate) lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub(crate) lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub(crate) project_agent_repo: Arc<dyn ProjectAgentRepository>,
+    pub(crate) agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    pub(crate) execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub(crate) delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    pub(crate) project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
+    pub(crate) command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
+    pub(crate) mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
+}
 
 #[derive(Clone)]
 pub(crate) struct AgentRunMailboxTerminalCallback {
-    repos: RepositorySet,
+    deps: AgentRunMailboxTerminalCallbackDeps,
     session_core: SessionCoreService,
     session_control: SessionControlService,
     session_eventing: SessionEventingService,
@@ -19,14 +39,14 @@ pub(crate) struct AgentRunMailboxTerminalCallback {
 
 impl AgentRunMailboxTerminalCallback {
     pub(crate) fn new(
-        repos: RepositorySet,
+        deps: AgentRunMailboxTerminalCallbackDeps,
         session_core: SessionCoreService,
         session_control: SessionControlService,
         session_eventing: SessionEventingService,
         session_launch: SessionLaunchService,
     ) -> Self {
         Self {
-            repos,
+            deps,
             session_core,
             session_control,
             session_eventing,
@@ -36,15 +56,15 @@ impl AgentRunMailboxTerminalCallback {
 
     fn service(&self) -> AgentRunMailboxService<'_> {
         AgentRunMailboxService::new(
-            self.repos.lifecycle_run_repo.as_ref(),
-            self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.project_agent_repo.as_ref(),
-            self.repos.agent_frame_repo.as_ref(),
-            self.repos.execution_anchor_repo.as_ref(),
-            self.repos.agent_run_delivery_binding_repo.as_ref(),
-            self.repos.project_backend_access_repo.as_ref(),
-            self.repos.agent_run_command_receipt_repo.as_ref(),
-            self.repos.agent_run_mailbox_repo.as_ref(),
+            self.deps.lifecycle_run_repo.as_ref(),
+            self.deps.lifecycle_agent_repo.as_ref(),
+            self.deps.project_agent_repo.as_ref(),
+            self.deps.agent_frame_repo.as_ref(),
+            self.deps.execution_anchor_repo.as_ref(),
+            self.deps.delivery_binding_repo.as_ref(),
+            self.deps.project_backend_access_repo.as_ref(),
+            self.deps.command_receipt_repo.as_ref(),
+            self.deps.mailbox_repo.as_ref(),
             self.session_core.clone(),
             self.session_control.clone(),
             self.session_eventing.clone(),
@@ -57,7 +77,7 @@ impl AgentRunMailboxTerminalCallback {
         session_id: &str,
     ) -> Result<(), agentdash_application_agentrun::WorkflowApplicationError> {
         let Some(anchor) = self
-            .repos
+            .deps
             .execution_anchor_repo
             .find_by_session(session_id)
             .await?

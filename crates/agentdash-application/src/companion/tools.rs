@@ -39,8 +39,8 @@ use super::{
 };
 use crate::agent_run::{
     AgentFrameRuntimeTarget, AgentRunMailboxCommandOutcome, AgentRunMailboxIntakeCommand,
-    AgentRunMailboxService, DeliveryRuntimeSelectionService, SessionControlService,
-    SessionCoreService, SessionEventingService, SessionLaunchService,
+    AgentRunMailboxService, DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
+    SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
     mailbox_source_identity_dedup_key,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
@@ -493,11 +493,16 @@ async fn deliver_companion_mailbox_message(
     session_launch: SessionLaunchService,
     input: CompanionMailboxDeliveryInput,
 ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
-    let agent_run_repos = repos.to_agent_run_repository_set();
-    let delivery = DeliveryRuntimeSelectionService::from_repository_set(&agent_run_repos)
-        .select_current_delivery(input.run_id, input.agent_id)
-        .await
-        .map_err(|error| crate::ApplicationError::Conflict(error.to_string()))?;
+    let delivery = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+        lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
+        lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
+        agent_frames: repos.agent_frame_repo.as_ref(),
+        execution_anchors: repos.execution_anchor_repo.as_ref(),
+        delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
+    })
+    .select_current_delivery(input.run_id, input.agent_id)
+    .await
+    .map_err(|error| crate::ApplicationError::Conflict(error.to_string()))?;
     if delivery.runtime_session_id != input.runtime_session_id {
         return Err(crate::ApplicationError::Conflict(format!(
             "companion mailbox delivery runtime mismatch: run_id={}, agent_id={}, expected_runtime_session_id={}, current_runtime_session_id={}",

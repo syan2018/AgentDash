@@ -25,7 +25,6 @@ use crate::agent_run::{
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
     DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 use agentdash_application_vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,
@@ -52,24 +51,6 @@ pub struct AgentRunWorkspaceQueryDeps<'a> {
     pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
     pub settings_repo: &'a dyn SettingsRepository,
     pub inline_file_repo: &'a dyn InlineFileRepository,
-}
-
-impl<'a> AgentRunWorkspaceQueryDeps<'a> {
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self {
-            delivery_selection_repos: DeliveryRuntimeSelectionRepositories::from_repository_set(
-                repos,
-            ),
-            agent_frame_repo: repos.agent_frame_repo.as_ref(),
-            execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
-            project_agent_repo: repos.project_agent_repo.as_ref(),
-            agent_run_mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
-            lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo.as_ref(),
-            lifecycle_gate_repo: repos.lifecycle_gate_repo.as_ref(),
-            settings_repo: repos.settings_repo.as_ref(),
-            inline_file_repo: repos.inline_file_repo.as_ref(),
-        }
-    }
 }
 
 pub struct AgentRunWorkspaceQueryService<'a> {

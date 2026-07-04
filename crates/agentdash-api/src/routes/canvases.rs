@@ -27,10 +27,8 @@ use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
     agent_run_session_launch,
 };
-use agentdash_application_agentrun::AgentRunRepositorySet;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunMailboxService, AgentRunMailboxUserMessageCommand, ProjectAgentRunStartRepos,
-    RuntimeSurfaceQueryPurpose,
+    AgentRunMailboxService, AgentRunMailboxUserMessageCommand, RuntimeSurfaceQueryPurpose,
 };
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
 use agentdash_application_runtime_gateway::{
@@ -848,8 +846,7 @@ pub async fn submit_agent_run_canvas_agent_input(
     if req.input.is_empty() {
         return Err(ApiError::BadRequest("input 不能为空".to_string()));
     }
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let service = agent_run_mailbox_service(state.as_ref(), &agent_run_repos);
+    let service = agent_run_mailbox_service(state.as_ref());
     let response = service
         .accept_user_message(AgentRunMailboxUserMessageCommand {
             run_id: context.run.id,
@@ -896,11 +893,17 @@ fn agent_run_canvas_resource_surface_ref_for_session(runtime_session_id: &str) -
     .surface_ref()
 }
 
-fn agent_run_mailbox_service<'a>(
-    state: &AppState,
-    agent_run_repos: &'a AgentRunRepositorySet,
-) -> AgentRunMailboxService<'a> {
-    ProjectAgentRunStartRepos::from_repository_set(agent_run_repos).mailbox_service(
+fn agent_run_mailbox_service(state: &AppState) -> AgentRunMailboxService<'_> {
+    AgentRunMailboxService::new(
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.project_agent_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+        state.repos.execution_anchor_repo.as_ref(),
+        state.repos.agent_run_delivery_binding_repo.as_ref(),
+        state.repos.project_backend_access_repo.as_ref(),
+        state.repos.agent_run_command_receipt_repo.as_ref(),
+        state.repos.agent_run_mailbox_repo.as_ref(),
         agent_run_session_core(state.services.session_core.clone()),
         agent_run_session_control(state.services.session_control.clone()),
         agent_run_session_eventing(state.services.session_eventing.clone()),

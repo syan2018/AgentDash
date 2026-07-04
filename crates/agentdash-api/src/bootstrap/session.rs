@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
+use crate::agent_run_mailbox::{
+    AgentRunMailboxTerminalCallback, AgentRunMailboxTerminalCallbackDeps,
+};
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::runtime_session_agent_run_bridge::{
@@ -413,7 +415,17 @@ pub(crate) async fn build_session_runtime(
         .with_function_runner(function_runner),
     );
     let mailbox_terminal_callback = Arc::new(AgentRunMailboxTerminalCallback::new(
-        repos.clone(),
+        AgentRunMailboxTerminalCallbackDeps {
+            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+            project_agent_repo: repos.project_agent_repo.clone(),
+            agent_frame_repo: repos.agent_frame_repo.clone(),
+            execution_anchor_repo: repos.execution_anchor_repo.clone(),
+            delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
+            project_backend_access_repo: repos.project_backend_access_repo.clone(),
+            command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
+            mailbox_repo: repos.agent_run_mailbox_repo.clone(),
+        },
         agent_run_session_core(session_core.clone()),
         agent_run_session_control(session_control.clone()),
         agent_run_session_eventing(session_eventing.clone()),

@@ -7,7 +7,6 @@ use agentdash_domain::workflow::{
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::ApplicationError;
 use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection::{
@@ -113,18 +112,6 @@ pub struct DeliveryRuntimeSelectionRepositories<'a> {
     pub delivery_bindings: &'a dyn AgentRunDeliveryBindingRepository,
 }
 
-impl<'a> DeliveryRuntimeSelectionRepositories<'a> {
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self {
-            lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
-            lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
-            agent_frames: repos.agent_frame_repo.as_ref(),
-            execution_anchors: repos.execution_anchor_repo.as_ref(),
-            delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
-        }
-    }
-}
-
 pub struct DeliveryRuntimeSelectionService<'a> {
     repos: DeliveryRuntimeSelectionRepositories<'a>,
 }
@@ -132,12 +119,6 @@ pub struct DeliveryRuntimeSelectionService<'a> {
 impl<'a> DeliveryRuntimeSelectionService<'a> {
     pub fn new(repos: DeliveryRuntimeSelectionRepositories<'a>) -> Self {
         Self { repos }
-    }
-
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self::new(DeliveryRuntimeSelectionRepositories::from_repository_set(
-            repos,
-        ))
     }
 
     pub async fn select(

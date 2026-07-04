@@ -63,3 +63,10 @@ D-016, D-018
 - AgentRun presentation read model now stores explicit frame/run/agent/anchor repository ports instead of cloning `AgentRunRepositorySet`.
 - Project agent context construction no longer requires a repository set; workspace lookup takes the workspace repository port directly.
 - Remaining AgentRun `from_repository_set` helpers are accepted composition/fixture adapters. Workspace query still depends on several repositories because it composes the workspace shell, mailbox state, frame runtime, resource surface, and list projection; further splitting is a possible follow-up if these views diverge.
+
+## 2026-07-05 Worker R1a Implementation Record
+
+- API AgentRun routes now assemble named use-case dependency structs directly from `AppState.repos`; route helpers no longer create or pass `AgentRunRepositorySet`.
+- `AgentRunMailboxTerminalCallback` now receives `AgentRunMailboxTerminalCallbackDeps`, keeping session bootstrap as the composition root while the callback service path sees named ports.
+- `AgentRunRepositorySet` and its main `RepositorySet::to_agent_run_repository_set` projection were removed because AgentRun use cases now declare their dependencies through purpose-named deps structs.
+- Delivery runtime selection callers in canvas diagnostics and companion mailbox delivery now list the five required repositories explicitly, so runtime delivery lookup no longer depends on an AgentRun-wide aggregate set.

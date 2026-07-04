@@ -6,7 +6,7 @@ use agentdash_domain::workflow::{
 };
 use uuid::Uuid;
 
-use crate::{AgentRunRepositorySet, WorkflowApplicationError};
+use crate::WorkflowApplicationError;
 
 use super::{SessionCoreService, SessionExecutionState};
 
@@ -28,16 +28,6 @@ pub struct AgentRunDeleteRepos<'a> {
     pub lifecycle_runs: &'a dyn LifecycleRunRepository,
     pub execution_anchors: &'a dyn RuntimeSessionExecutionAnchorRepository,
     pub delivery_bindings: &'a dyn AgentRunDeliveryBindingRepository,
-}
-
-impl<'a> AgentRunDeleteRepos<'a> {
-    pub fn from_repository_set(repos: &'a AgentRunRepositorySet) -> Self {
-        Self {
-            lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
-            execution_anchors: repos.execution_anchor_repo.as_ref(),
-            delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
-        }
-    }
 }
 
 pub struct AgentRunDeleteCommandService<'a> {

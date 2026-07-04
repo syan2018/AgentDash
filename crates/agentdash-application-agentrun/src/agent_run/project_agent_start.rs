@@ -42,7 +42,6 @@ use crate::agent_run::{
     mailbox::{outcome_from_message, outcome_from_result_json},
 };
 use crate::agent_run::{SessionControlService, SessionEventingService, SessionLaunchService};
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 
 pub struct ProjectAgentRunStartCommand {
@@ -123,27 +122,6 @@ pub struct ProjectAgentRunStartRepos<'a> {
 }
 
 impl<'a> ProjectAgentRunStartRepos<'a> {
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self {
-            project_agent_repo: repos.project_agent_repo.as_ref(),
-            lifecycle_run_repo: repos.lifecycle_run_repo.as_ref(),
-            workflow_graph_repo: repos.workflow_graph_repo.as_ref(),
-            lifecycle_agent_repo: repos.lifecycle_agent_repo.as_ref(),
-            agent_frame_repo: repos.agent_frame_repo.as_ref(),
-            lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo.as_ref(),
-            lifecycle_gate_repo: repos.lifecycle_gate_repo.as_ref(),
-            agent_lineage_repo: repos.agent_lineage_repo.as_ref(),
-            execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
-            delivery_binding_repo: repos.agent_run_delivery_binding_repo.as_ref(),
-            project_backend_access_repo: repos.project_backend_access_repo.as_ref(),
-            command_receipt_repo: repos.agent_run_command_receipt_repo.as_ref(),
-            mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
-            runtime_session_creator: repos.runtime_session_creator.as_ref(),
-            agent_frame_construction: repos.agent_frame_construction.as_ref(),
-            project_agent_lifecycle_launch: repos.project_agent_lifecycle_launch.as_ref(),
-        }
-    }
-
     pub fn mailbox_service(
         &self,
         session_core: crate::agent_run::runtime_session_boundary::SessionCoreService,

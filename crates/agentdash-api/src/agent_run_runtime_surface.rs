@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agentdash_application_agentrun::agent_run::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceWithBackend,
     AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError, DeliveryRuntimeSelectionError,
-    DeliveryRuntimeSelectionService, RuntimeSurfaceQueryPurpose,
-    terminal_launch_target_from_current_surface,
+    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
+    RuntimeSurfaceQueryPurpose, terminal_launch_target_from_current_surface,
 };
 use agentdash_integration_api::AuthIdentity;
 use agentdash_spi::{RuntimeBackendAnchor, Vfs};
@@ -113,11 +113,16 @@ pub(crate) async fn resolve_current_runtime_surface_with_backend_for_agent_run_f
         )));
     }
 
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let selection = DeliveryRuntimeSelectionService::from_repository_set(&agent_run_repos)
-        .select_current_delivery(run.id, agent.id)
-        .await
-        .map_err(delivery_runtime_selection_error_to_api)?;
+    let selection = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+        lifecycle_runs: state.repos.lifecycle_run_repo.as_ref(),
+        lifecycle_agents: state.repos.lifecycle_agent_repo.as_ref(),
+        agent_frames: state.repos.agent_frame_repo.as_ref(),
+        execution_anchors: state.repos.execution_anchor_repo.as_ref(),
+        delivery_bindings: state.repos.agent_run_delivery_binding_repo.as_ref(),
+    })
+    .select_current_delivery(run.id, agent.id)
+    .await
+    .map_err(delivery_runtime_selection_error_to_api)?;
     ensure_runtime_session_exists(state, &selection.runtime_session_id).await?;
     let runtime_surface = state
         .services

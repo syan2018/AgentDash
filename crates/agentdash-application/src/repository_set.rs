@@ -104,58 +104,6 @@ pub struct RepositorySet {
 }
 
 impl RepositorySet {
-    pub fn to_agent_run_repository_set(
-        &self,
-    ) -> agentdash_application_agentrun::AgentRunRepositorySet {
-        agentdash_application_agentrun::AgentRunRepositorySet {
-            project_repo: self.project_repo.clone(),
-            canvas_repo: self.canvas_repo.clone(),
-            canvas_runtime_state_repo: self.canvas_runtime_state_repo.clone(),
-            workspace_repo: self.workspace_repo.clone(),
-            story_repo: self.story_repo.clone(),
-            state_change_repo: self.state_change_repo.clone(),
-            backend_repo: self.backend_repo.clone(),
-            runtime_health_repo: self.runtime_health_repo.clone(),
-            backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
-            project_backend_access_repo: self.project_backend_access_repo.clone(),
-            backend_workspace_inventory_repo: self.backend_workspace_inventory_repo.clone(),
-            auth_session_repo: self.auth_session_repo.clone(),
-            user_directory_repo: self.user_directory_repo.clone(),
-            settings_repo: self.settings_repo.clone(),
-            shared_library_repo: self.shared_library_repo.clone(),
-            extension_package_artifact_repo: self.extension_package_artifact_repo.clone(),
-            project_extension_installation_repo: self.project_extension_installation_repo.clone(),
-            llm_provider_repo: self.llm_provider_repo.clone(),
-            llm_provider_credential_repo: self.llm_provider_credential_repo.clone(),
-            mcp_preset_repo: self.mcp_preset_repo.clone(),
-            skill_asset_repo: self.skill_asset_repo.clone(),
-            project_agent_repo: self.project_agent_repo.clone(),
-            project_vfs_mount_repo: self.project_vfs_mount_repo.clone(),
-            agent_procedure_repo: self.agent_procedure_repo.clone(),
-            workflow_template_install_repo: self.workflow_template_install_repo.clone(),
-            workflow_graph_repo: self.workflow_graph_repo.clone(),
-            lifecycle_run_repo: self.lifecycle_run_repo.clone(),
-            lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
-            agent_frame_repo: self.agent_frame_repo.clone(),
-            lifecycle_subject_association_repo: self.lifecycle_subject_association_repo.clone(),
-            lifecycle_gate_repo: self.lifecycle_gate_repo.clone(),
-            agent_lineage_repo: self.agent_lineage_repo.clone(),
-            agent_run_lineage_repo: self.agent_run_lineage_repo.clone(),
-            execution_anchor_repo: self.execution_anchor_repo.clone(),
-            agent_run_delivery_binding_repo: self.agent_run_delivery_binding_repo.clone(),
-            agent_run_command_receipt_repo: self.agent_run_command_receipt_repo.clone(),
-            agent_run_mailbox_repo: self.agent_run_mailbox_repo.clone(),
-            runtime_session_creator: self.runtime_session_creator.clone(),
-            agent_frame_construction: self.agent_frame_construction.clone(),
-            agent_run_fork_materialization: self.agent_run_fork_materialization.clone(),
-            project_agent_lifecycle_launch: self.project_agent_lifecycle_launch.clone(),
-            routine_repo: self.routine_repo.clone(),
-            routine_execution_repo: self.routine_execution_repo.clone(),
-            inline_file_repo: self.inline_file_repo.clone(),
-            permission_grant_repo: self.permission_grant_repo.clone(),
-        }
-    }
-
     pub fn to_lifecycle_repository_set(&self) -> agentdash_application_lifecycle::RepositorySet {
         agentdash_application_lifecycle::RepositorySet {
             project_repo: self.project_repo.clone(),

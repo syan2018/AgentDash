@@ -189,8 +189,7 @@ pub async fn create_project_agent_run(
         "ProjectAgent run start request parsed"
     );
 
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let repos = ProjectAgentRunStartRepos::from_repository_set(&agent_run_repos);
+    let repos = project_agent_run_start_repos(state.as_ref());
     let session_core = agent_run_session_core(state.services.session_core.clone());
     let service = ProjectAgentRunStartService::new(
         repos,
@@ -285,6 +284,27 @@ pub async fn create_project_agent_run(
             id: subject.id.to_string(),
         }),
     }))
+}
+
+fn project_agent_run_start_repos(state: &AppState) -> ProjectAgentRunStartRepos<'_> {
+    ProjectAgentRunStartRepos {
+        project_agent_repo: state.repos.project_agent_repo.as_ref(),
+        lifecycle_run_repo: state.repos.lifecycle_run_repo.as_ref(),
+        workflow_graph_repo: state.repos.workflow_graph_repo.as_ref(),
+        lifecycle_agent_repo: state.repos.lifecycle_agent_repo.as_ref(),
+        agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
+        lifecycle_subject_association_repo: state.repos.lifecycle_subject_association_repo.as_ref(),
+        lifecycle_gate_repo: state.repos.lifecycle_gate_repo.as_ref(),
+        agent_lineage_repo: state.repos.agent_lineage_repo.as_ref(),
+        execution_anchor_repo: state.repos.execution_anchor_repo.as_ref(),
+        delivery_binding_repo: state.repos.agent_run_delivery_binding_repo.as_ref(),
+        project_backend_access_repo: state.repos.project_backend_access_repo.as_ref(),
+        command_receipt_repo: state.repos.agent_run_command_receipt_repo.as_ref(),
+        mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
+        runtime_session_creator: state.repos.runtime_session_creator.as_ref(),
+        agent_frame_construction: state.repos.agent_frame_construction.as_ref(),
+        project_agent_lifecycle_launch: state.repos.project_agent_lifecycle_launch.as_ref(),
+    }
 }
 
 fn build_project_agent_summary(

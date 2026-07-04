@@ -34,7 +34,7 @@ LaunchCommand
 - runtime map、active turn、connector live session 是三个不同问题，不能用一个状态互相推断。
 - terminal fact 先持久化为事件，业务副作用进入 durable outbox；副作用失败不回滚 terminal event。
 - pending runtime delivery command 只保存投递指令；`AgentFrameTransitionRecord` 保存可 replay 的 frame surface transition records，不保存完整 `CapabilityState` projection。
-- `AgentFrame.surface` 是 frame revision 的 canonical typed surface document；split JSON columns 只作为 repository projection / migration fallback。
+- `AgentFrame.surface` 是 frame revision 的 canonical typed surface document；split JSON columns 只作为 repository projection / migration materialization path。
 
 ## Current Baseline
 

@@ -195,7 +195,7 @@ ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}
 - `workspaceTabStore.workspaceKey` 表达当前 AgentRun workspace layout identity。
 - WorkspacePanel 从 `WorkspaceRuntimeData.agentRunRuntimeTarget` 构造 `agentrun:{runId}:{agentId}`。
 - `WorkspaceTabLayout` 只保存 tab type、URI、title、pinned 和 active URI；它不保存 runtime trace state。
-- RuntimeSession id 仍可作为 tab content 的 trace/diagnostic prop，例如 terminal event projection、context audit fallback 或 raw session detail。
+- RuntimeSession id 仍可作为 tab content 的 trace/diagnostic prop，例如 terminal event projection、context audit diagnostic path 或 raw session detail。
 - Canvas tab opening uses concrete `presentation_uri` and active resource surface; persisted layout key stays AgentRun scoped.
 
 ### 4. Validation & Error Matrix
@@ -207,7 +207,7 @@ ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}
 | No AgentRun target is available | WorkspacePanel initializes with no persisted layout key and can render pinned/default local state |
 | Saved tab URI no longer exists in current runtime surface | `pruneInvalidTabs` removes dynamic tabs that cannot be opened in the current surface |
 | Context inspector has AgentRun target | Inspector uses AgentRun scoped audit path even if raw session id is absent |
-| Context inspector only has raw session id | Inspector can still render the diagnostic fallback path |
+| Context inspector only has raw session id | Inspector can still render the diagnostic trace path |
 
 ### 5. Reference Cases
 

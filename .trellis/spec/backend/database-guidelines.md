@@ -301,7 +301,7 @@ impl AgentFrame {
 ### 3. Contracts
 
 - `agent_frames.surface` 是 frame revision surface 的 canonical document。
-- split columns 是 repository projection columns；写入时从 `surface_document()` 派生，读取时只在 `surface` 缺失时作为 migration fallback。
+- split columns 是 repository projection columns；写入时从 `surface_document()` 派生，读取时只用于迁移物化和 projection 校验。
 - 新 AgentFrame 写入先填充 `surface`，再调用 projection 逻辑后 insert。
 - backfill migration 从既有 split columns 派生 `surface`，让历史 rows 仍可读取。
 - 没有 live repository query 的索引通过新 migration 删除；保留物理表需要有独立查询、独立更新或重建成本理由。
@@ -311,7 +311,7 @@ impl AgentFrame {
 | Condition | Required behavior |
 | --- | --- |
 | row has `surface` and stale split columns | mapper 返回 `surface` document，并用它重新投影 split fields |
-| row has no `surface` but has split columns | mapper 从 split columns 物化 `surface` |
+| row has no `surface` but has split columns | mapper 从 split columns 物化 `surface`，用于验证迁移 backfill 覆盖 |
 | `surface` JSON is invalid | repository 返回带 `agent_frames.surface` context 的 mapped `DomainError` |
 | split projection serialization fails | repository 在 insert 前返回 mapped `DomainError` |
 | index has no live query path | 通过新 migration 删除，并在工作项 ledger 记录理由 |
@@ -319,13 +319,13 @@ impl AgentFrame {
 ### 5. Good/Base/Boundary Cases
 
 - Good: frame construction builds `FrameSurfaceDraft`, writes `AgentFrame.surface`, and repository projects split columns for existing read helpers.
-- Base: old row without `surface` loads through split-column fallback and becomes a complete `AgentFrameSurfaceDocument`.
+- Base: migration backfill row materializes a complete `AgentFrameSurfaceDocument` from split columns.
 - Boundary mismatch: code writes only `vfs_surface_json` and leaves `surface` absent, causing launch/query/context delivery to read different surface facts.
 
 ### 6. Tests Required
 
-- Domain tests cover `surface_document()` fallback and `apply_surface_projection()`.
-- PostgreSQL mapper tests cover surface-overrides-split and split-to-surface fallback.
+- Domain tests cover `surface_document()` split-column materialization and `apply_surface_projection()`.
+- PostgreSQL mapper tests cover surface-overrides-split and split-to-surface materialization.
 - Migration guard runs for any `agent_frames` schema change.
 - Repository roundtrip tests assert insert/select preserves canonical surface and projected fields.
 

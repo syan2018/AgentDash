@@ -214,7 +214,16 @@ impl RepositorySet {
     }
 
     pub fn hook_workflow_projection_port(&self) -> Arc<dyn HookWorkflowProjectionPort> {
-        Arc::new(ApplicationHookWorkflowProjectionAdapter::new(self.clone()))
+        Arc::new(ApplicationHookWorkflowProjectionAdapter {
+            agent_procedure_repo: self.agent_procedure_repo.clone(),
+            agent_frame_repo: self.agent_frame_repo.clone(),
+            lifecycle_run_repo: self.lifecycle_run_repo.clone(),
+            lifecycle_subject_association_repo: self.lifecycle_subject_association_repo.clone(),
+            execution_anchor_repo: self.execution_anchor_repo.clone(),
+            lifecycle_agent_repo: self.lifecycle_agent_repo.clone(),
+            story_repo: self.story_repo.clone(),
+            inline_file_repo: self.inline_file_repo.clone(),
+        })
     }
 }
 
@@ -242,33 +251,34 @@ pub struct LifecycleProjectAgentLaunchAdapter {
     frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
 }
 
+pub struct LifecycleProjectAgentLaunchDeps {
+    pub run_repo: Arc<dyn LifecycleRunRepository>,
+    pub workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+    pub agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub frame_repo: Arc<dyn AgentFrameRepository>,
+    pub association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+    pub gate_repo: Arc<dyn LifecycleGateRepository>,
+    pub lineage_repo: Arc<dyn AgentLineageRepository>,
+    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
+    pub frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
+}
+
 impl LifecycleProjectAgentLaunchAdapter {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        run_repo: Arc<dyn LifecycleRunRepository>,
-        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
-        agent_repo: Arc<dyn LifecycleAgentRepository>,
-        frame_repo: Arc<dyn AgentFrameRepository>,
-        association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
-        gate_repo: Arc<dyn LifecycleGateRepository>,
-        lineage_repo: Arc<dyn AgentLineageRepository>,
-        anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-        runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
-        frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
-    ) -> Self {
+    pub fn new(deps: LifecycleProjectAgentLaunchDeps) -> Self {
         Self {
-            run_repo,
-            workflow_graph_repo,
-            agent_repo,
-            frame_repo,
-            association_repo,
-            gate_repo,
-            lineage_repo,
-            anchor_repo,
-            delivery_binding_repo,
-            runtime_session_creator,
-            frame_construction,
+            run_repo: deps.run_repo,
+            workflow_graph_repo: deps.workflow_graph_repo,
+            agent_repo: deps.agent_repo,
+            frame_repo: deps.frame_repo,
+            association_repo: deps.association_repo,
+            gate_repo: deps.gate_repo,
+            lineage_repo: deps.lineage_repo,
+            anchor_repo: deps.anchor_repo,
+            delivery_binding_repo: deps.delivery_binding_repo,
+            runtime_session_creator: deps.runtime_session_creator,
+            frame_construction: deps.frame_construction,
         }
     }
 }
@@ -325,14 +335,15 @@ fn workflow_error_from_lifecycle(
 }
 
 #[derive(Clone)]
-pub struct ApplicationHookWorkflowProjectionAdapter {
-    repos: RepositorySet,
-}
-
-impl ApplicationHookWorkflowProjectionAdapter {
-    pub fn new(repos: RepositorySet) -> Self {
-        Self { repos }
-    }
+struct ApplicationHookWorkflowProjectionAdapter {
+    agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+    agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    story_repo: Arc<dyn StoryRepository>,
+    inline_file_repo: Arc<dyn InlineFileRepository>,
 }
 
 #[async_trait]
@@ -344,9 +355,9 @@ impl HookWorkflowProjectionPort for ApplicationHookWorkflowProjectionAdapter {
         let workflow =
             agentdash_application_lifecycle::resolve_active_workflow_projection_for_target(
                 &query.target,
-                self.repos.agent_procedure_repo.as_ref(),
-                self.repos.agent_frame_repo.as_ref(),
-                self.repos.lifecycle_run_repo.as_ref(),
+                self.agent_procedure_repo.as_ref(),
+                self.agent_frame_repo.as_ref(),
+                self.lifecycle_run_repo.as_ref(),
             )
             .await
             .map_err(|message| HookWorkflowProjectionError::Projection { message })?;
@@ -359,11 +370,11 @@ impl HookWorkflowProjectionPort for ApplicationHookWorkflowProjectionAdapter {
         };
 
         let run_context = agentdash_application_lifecycle::SubjectRunContextResolver::new(
-            self.repos.lifecycle_run_repo.as_ref(),
-            self.repos.lifecycle_subject_association_repo.as_ref(),
-            self.repos.execution_anchor_repo.as_ref(),
-            self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.story_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
+            self.lifecycle_subject_association_repo.as_ref(),
+            self.execution_anchor_repo.as_ref(),
+            self.lifecycle_agent_repo.as_ref(),
+            self.story_repo.as_ref(),
         )
         .resolve_for_run(&workflow.run)
         .await
@@ -377,7 +388,7 @@ impl HookWorkflowProjectionPort for ApplicationHookWorkflowProjectionAdapter {
             attempt: workflow.active_attempt.attempt,
         };
         let fulfilled_output_ports = agentdash_application_lifecycle::load_scoped_port_output_map(
-            self.repos.inline_file_repo.as_ref(),
+            self.inline_file_repo.as_ref(),
             &artifact_scope,
         )
         .await;
@@ -396,7 +407,7 @@ impl HookWorkflowProjectionPort for ApplicationHookWorkflowProjectionAdapter {
         command: HookExecutionLogAppendCommand,
     ) -> Result<(), HookWorkflowProjectionError> {
         agentdash_application_lifecycle::lifecycle::execution_log::flush_execution_log_entries(
-            self.repos.lifecycle_run_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
             command.entries,
         )
         .await

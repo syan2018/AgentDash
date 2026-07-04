@@ -5,7 +5,9 @@ use anyhow::Result;
 use sqlx::PgPool;
 
 use agentdash_application::auth::session_service::AuthSessionService;
-use agentdash_application::repository_set::{LifecycleProjectAgentLaunchAdapter, RepositorySet};
+use agentdash_application::repository_set::{
+    LifecycleProjectAgentLaunchAdapter, LifecycleProjectAgentLaunchDeps, RepositorySet,
+};
 use agentdash_application_agentrun::agent_run::frame::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
@@ -170,17 +172,19 @@ pub(crate) async fn build_repositories(
             lifecycle_surface_projection,
         ));
     let project_agent_lifecycle_launch = Arc::new(LifecycleProjectAgentLaunchAdapter::new(
-        workflow_repo.clone(),
-        workflow_repo.clone(),
-        lifecycle_agent_repo.clone(),
-        agent_frame_repo.clone(),
-        lifecycle_subject_association_repo.clone(),
-        lifecycle_gate_repo.clone(),
-        agent_lineage_repo.clone(),
-        execution_anchor_repo.clone(),
-        agent_run_delivery_binding_repo.clone(),
-        runtime_session_creator.clone(),
-        agent_frame_construction.clone(),
+        LifecycleProjectAgentLaunchDeps {
+            run_repo: workflow_repo.clone(),
+            workflow_graph_repo: workflow_repo.clone(),
+            agent_repo: lifecycle_agent_repo.clone(),
+            frame_repo: agent_frame_repo.clone(),
+            association_repo: lifecycle_subject_association_repo.clone(),
+            gate_repo: lifecycle_gate_repo.clone(),
+            lineage_repo: agent_lineage_repo.clone(),
+            anchor_repo: execution_anchor_repo.clone(),
+            delivery_binding_repo: agent_run_delivery_binding_repo.clone(),
+            runtime_session_creator: runtime_session_creator.clone(),
+            frame_construction: agent_frame_construction.clone(),
+        },
     ));
 
     let permission_grant_repo =

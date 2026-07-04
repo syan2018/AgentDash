@@ -55,7 +55,7 @@ D-008, D-009, D-011, D-012
 
 ## Implementation Record
 
-- 2026-07-05：删除 RuntimeSession launch 的 noop accepted commit fallback；缺少 `AcceptedLaunchCommitPort` 时 launch 直接失败。
+- 2026-07-05：删除 RuntimeSession launch 的 noop accepted commit 替代路径；缺少 `AcceptedLaunchCommitPort` 时 launch 直接失败。
 - 2026-07-05：`AcceptedLaunchCommitPort::commit_accepted_launch` 改为返回 `Result`，AgentRun frame revision、current delivery binding、Lifecycle accepted-start 任一失败都会让 RuntimeSession launch 返回失败。
 - 2026-07-05：RuntimeSession commit 阶段严格提交 user input / turn started / `ContextDeliveryRecord` / `context_frame` / session meta / runtime command applied；失败会清理 turn/hook 并写入 failed terminal。
 - 2026-07-05：新增 `AcceptedTurnLifecycleAdvancePort`，Lifecycle 根据 RuntimeSession anchor 在 accepted commit 中提交 `NodeStarted`；graph dispatch 和 workflow agent-node allocation 改为 `NodeClaimed`，仅移出 ready queue，不写 started trace。

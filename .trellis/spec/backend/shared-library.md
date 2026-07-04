@@ -126,8 +126,14 @@ POST /api/projects/{project_id}/skill-assets/import
 Application 入口：
 
 ```rust
+pub struct ImportRemoteSkillUrlDeps<'a> {
+    pub skill_asset_repo: &'a dyn SkillAssetRepository,
+    pub shared_library_repo: &'a dyn LibraryAssetRepository,
+    pub shared_library_repos: &'a SharedLibraryRepositorySet,
+}
+
 pub async fn import_remote_skill_url_to_project(
-    repos: &RepositorySet,
+    deps: ImportRemoteSkillUrlDeps<'_>,
     input: ImportRemoteSkillAssetInput,
     source: &dyn RemoteSkillSource,
 ) -> Result<SkillAsset, SkillAssetApplicationError>;
@@ -144,6 +150,7 @@ pub fn materialize_remote_skill_template(
 ### 3. Contracts
 
 - `RemoteSkillSource::fetch(url)` 负责 GitHub / ClawHub / skills.sh 解析、文件数量限制、单文件限制和总大小限制。
+- Application 入口接收 `ImportRemoteSkillUrlDeps`，由 composition root 注入 skill/library port 与现有 SharedLibrary install repos；签名直接表达远端 materialize 与 Project install transaction 的真实依赖。
 - materializer 负责 content typing、根目录 `SKILL.md` metadata 解析、`validate_skill_files` 和 `SkillTemplatePayload` 生成。
 - URL import 的 `source_ref` 使用 `market:skill-url:{source_kind}:{sha256(normalized_url)}`。
 - `LibraryAsset` 写入 `asset_type=skill_template`、`scope=user`、`source=remote_imported`、`owner_id=current_user`。

@@ -410,7 +410,7 @@ function SubjectGroupHeader({
         {group.label}
       </span>
       <span className="shrink-0 text-[10px] text-muted-foreground/60">
-        {group.entries.length} 个会话
+        {group.entries.length} 个 AgentRun
       </span>
     </button>
   );

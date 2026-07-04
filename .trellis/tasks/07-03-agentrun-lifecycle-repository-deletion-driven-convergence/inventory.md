@@ -90,7 +90,7 @@
 | ProjectAgent start contract | `ProjectAgentRunStartResult` 顶层 `runtime_session_id`、`turn_id` | 移入 diagnostic trace meta 或删除；产品导航只用 `run_ref/agent_ref` |
 | AgentRun workspace DTO | `delivery_runtime_ref`、`delivery_trace_meta`、stale guard runtime id | runtime ref 只作 diagnostic；stale guard 改 snapshot/run/frame/turn/workspace revision |
 | Frontend workspace | `agentRunWorkspaceState.runtime_session_id` 进入 `WorkspaceRuntimeData.sessionId/runtimeSessionId` | 改为 AgentRun target + optional trace meta |
-| Tool approval UI | `ToolCallCardShell` 在无 AgentRun target 时 fallback raw session approval | 产品路径删除 fallback；diagnostic view 可显式使用 raw trace approval 或只读 |
+| Tool approval UI | `ToolCallCardShell` 当前只在存在 AgentRun target 时允许 approve/reject；raw session surface 保留为诊断 trace 入口 | 产品路径保持 AgentRun-scoped tool approval；diagnostic trace 不参与 workspace 控制 |
 | Permission grants | DTO/API 仍展示 `source_runtime_session_id` | 产品 UI 不以 runtime session 为权限事实源，source runtime 只作 audit |
 
 ## Execution Readiness

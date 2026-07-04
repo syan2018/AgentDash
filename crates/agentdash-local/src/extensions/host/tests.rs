@@ -296,7 +296,7 @@ async fn runtime_invoke_requires_cross_extension_permission() {
 }
 
 #[tokio::test]
-async fn runtime_invoke_reports_unloaded_action_without_host_api_fallback() {
+async fn runtime_invoke_reports_unloaded_action_without_host_api_substitution() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package_with_permissions(
         temp.path(),
@@ -349,7 +349,7 @@ async fn runtime_invoke_limits_recursive_calls() {
 }
 
 #[tokio::test]
-async fn protocol_channel_invoke_reports_unloaded_method_without_host_api_fallback() {
+async fn protocol_channel_invoke_reports_unloaded_method_without_host_api_substitution() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), unloaded_channel_invoke_bundle(), false, false)
         .await

@@ -59,7 +59,7 @@ pub async fn ensure_session_permission(
         .session_core
         .get_session_meta(session_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {session_id} 不存在")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("RuntimeSession trace {session_id} 不存在")))?;
     let anchor = match state
         .repos
         .execution_anchor_repo
@@ -69,7 +69,7 @@ pub async fn ensure_session_permission(
         Some(anchor) => anchor,
         None => {
             return Err(ApiError::BadRequest(format!(
-                "runtime session 缺少 RuntimeSessionExecutionAnchor: {session_id}"
+                "RuntimeSession trace 缺少 RuntimeSessionExecutionAnchor: {session_id}"
             )));
         }
     };
@@ -131,7 +131,7 @@ pub async fn get_session(
         .session_core
         .get_session_meta(&session_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
+        .ok_or_else(|| ApiError::NotFound(format!("RuntimeSession trace {session_id} 不存在")))?;
     Ok(Json(meta))
 }
 
@@ -582,7 +582,7 @@ async fn ensure_runtime_session_trace_exists(
         .session_core
         .get_session_meta(session_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {session_id} 不存在")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("RuntimeSession trace {session_id} 不存在")))?;
     Ok(())
 }
 

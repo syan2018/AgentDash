@@ -311,7 +311,7 @@ async fn companion_result_intake_dedups_duplicate_gate_result_envelopes() {
             schedule_on_submit: false,
             input: text_user_input_blocks("result available"),
             client_command_id: format!("companion-result:{gate_id}:attempt-1"),
-            source_dedup_key: Some("legacy-explicit-dedup".to_string()),
+            source_dedup_key: Some("caller-explicit-dedup".to_string()),
             executor_config: None,
             backend_selection: None,
             identity: None,
@@ -331,7 +331,7 @@ async fn companion_result_intake_dedups_duplicate_gate_result_envelopes() {
             schedule_on_submit: false,
             input: text_user_input_blocks("result available retry"),
             client_command_id: format!("companion-result:{gate_id}:attempt-2"),
-            source_dedup_key: Some("legacy-explicit-dedup-changed".to_string()),
+            source_dedup_key: Some("caller-explicit-dedup-changed".to_string()),
             executor_config: None,
             backend_selection: None,
             identity: None,
@@ -364,7 +364,7 @@ async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() 
     fixture
         .service()
         .accept_hook_auto_resume_effect(
-            &fixture.runtime_session_id,
+            &fixture.delivery_runtime_session_id,
             effect_id,
             source_turn_id.clone(),
             42,
@@ -375,7 +375,7 @@ async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() 
     fixture
         .service()
         .accept_hook_auto_resume_effect(
-            &fixture.runtime_session_id,
+            &fixture.delivery_runtime_session_id,
             effect_id,
             source_turn_id.clone(),
             42,
@@ -402,14 +402,20 @@ async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() 
     );
     assert_eq!(
         message.source.correlation_ref.as_deref(),
-        Some(format!("{}:{source_turn_id}:42", fixture.runtime_session_id).as_str())
+        Some(
+            format!(
+                "{}:{source_turn_id}:42",
+                fixture.delivery_runtime_session_id
+            )
+            .as_str()
+        )
     );
     assert_eq!(
         message.source_dedup_key.as_deref(),
         Some(
             format!(
                 "source:core:hook_auto_resume:ref:{effect_id}:correlation:{}:{source_turn_id}:42",
-                fixture.runtime_session_id
+                fixture.delivery_runtime_session_id
             )
             .as_str()
         )
@@ -451,7 +457,7 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
 
     let delegate_messages = delegate
         .service()
-        .drain_agent_run_turn_boundary_for_delegate(&delegate.runtime_session_id)
+        .drain_agent_run_turn_boundary_for_delegate(&delegate.delivery_runtime_session_id)
         .await
         .expect("delegate drain");
 
@@ -480,7 +486,7 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
         scheduler.run.id,
         scheduler.agent.id,
         scheduler.current_frame.id,
-        scheduler.runtime_session_id.clone(),
+        scheduler.delivery_runtime_session_id.clone(),
     );
 
     let outcomes = scheduler
@@ -524,7 +530,7 @@ async fn mailbox_launch_failure_marks_message_and_receipt_failed_without_accepte
         fixture.run.id,
         fixture.agent.id,
         fixture.current_frame.id,
-        fixture.runtime_session_id.clone(),
+        fixture.delivery_runtime_session_id.clone(),
     );
 
     let outcomes = fixture
@@ -567,7 +573,7 @@ async fn mailbox_steering_expected_turn_guard_is_consistent() {
 
     let delegate_messages = delegate
         .service()
-        .drain_agent_run_turn_boundary_for_delegate(&delegate.runtime_session_id)
+        .drain_agent_run_turn_boundary_for_delegate(&delegate.delivery_runtime_session_id)
         .await
         .expect("delegate drain");
 
@@ -597,7 +603,7 @@ async fn mailbox_steering_expected_turn_guard_is_consistent() {
         scheduler.run.id,
         scheduler.agent.id,
         scheduler.current_frame.id,
-        scheduler.runtime_session_id.clone(),
+        scheduler.delivery_runtime_session_id.clone(),
     );
 
     let outcomes = scheduler
@@ -644,7 +650,7 @@ struct MailboxSteeringFixture {
     run: LifecycleRun,
     agent: LifecycleAgent,
     current_frame: AgentFrame,
-    runtime_session_id: String,
+    delivery_runtime_session_id: String,
     active_turn_id: String,
 }
 
@@ -659,7 +665,7 @@ impl MailboxSteeringFixture {
         let backend_access = Arc::new(MemoryProjectBackendAccessRepository::default());
         let receipts = Arc::new(MemoryAgentRunCommandReceiptRepository::default());
         let mailbox = Arc::new(MemoryMailboxRepository::default());
-        let runtime_session_id = "runtime-steering".to_string();
+        let delivery_runtime_session_id = "runtime-steering".to_string();
         let active_turn_id = "active-turn".to_string();
 
         let run = LifecycleRun::new_plain(Uuid::new_v4());
@@ -668,7 +674,7 @@ impl MailboxSteeringFixture {
         let launch_frame = AgentFrame::new_initial(agent.id);
         let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
         let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            runtime_session_id.clone(),
+            delivery_runtime_session_id.clone(),
             run.id,
             launch_frame.id,
             agent.id,
@@ -708,7 +714,7 @@ impl MailboxSteeringFixture {
             run,
             agent,
             current_frame,
-            runtime_session_id,
+            delivery_runtime_session_id,
             active_turn_id,
         }
     }
@@ -758,7 +764,7 @@ impl MailboxSteeringFixture {
         let message = mailbox_message(
             self.run.id,
             self.agent.id,
-            &self.runtime_session_id,
+            &self.delivery_runtime_session_id,
             delivery,
             expected_active_turn.map(str::to_string),
             Some(receipt.receipt().id),
@@ -1107,8 +1113,8 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
             {
                 continue;
             }
-            if let Some(runtime_session_id) = request.delivery_runtime_session_id.clone() {
-                message.delivery_runtime_session_id = Some(runtime_session_id);
+            if let Some(delivery_runtime_session_id) = request.delivery_runtime_session_id.clone() {
+                message.delivery_runtime_session_id = Some(delivery_runtime_session_id);
             }
             message.status = MailboxMessageStatus::Consuming;
             message.claim_token = Some(request.claim_token);
@@ -1214,14 +1220,14 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
+        delivery_runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            delivery_runtime_session_id: runtime_session_id,
+            delivery_runtime_session_id,
             paused: true,
             pause_reason: Some(reason),
             pause_message: message,
@@ -1239,12 +1245,12 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
+        delivery_runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            delivery_runtime_session_id: runtime_session_id,
+            delivery_runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
@@ -1276,13 +1282,13 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: Option<String>,
+        delivery_runtime_session_id: Option<String>,
         preference: serde_json::Value,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            delivery_runtime_session_id: runtime_session_id,
+            delivery_runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
@@ -1432,7 +1438,7 @@ impl RuntimeSessionLaunchPort for FailingLaunchPort {
 fn mailbox_message(
     run_id: Uuid,
     agent_id: Uuid,
-    runtime_session_id: &str,
+    delivery_runtime_session_id: &str,
     delivery: MailboxDelivery,
     expected_active_agent_run_turn_id: Option<String>,
     command_receipt_id: Option<Uuid>,
@@ -1442,7 +1448,7 @@ fn mailbox_message(
         id: Uuid::new_v4(),
         run_id,
         agent_id,
-        delivery_runtime_session_id: Some(runtime_session_id.to_string()),
+        delivery_runtime_session_id: Some(delivery_runtime_session_id.to_string()),
         origin: MailboxMessageOrigin::User,
         source: MailboxSourceIdentity::composer(),
         delivery,

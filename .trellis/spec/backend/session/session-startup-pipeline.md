@@ -196,7 +196,7 @@ Contract:
 - Skill baseline 与 guidelines 从 effective VFS 派生。
 - `CapabilityState.vfs.active` 必须等于 `FrameLaunchEnvelope.launch_surface.vfs`。
 - `CapabilityState.tool.mcp_servers` 必须等于 `FrameLaunchEnvelope.launch_surface.mcp_servers`。
-- `runtime_surface` 是 query DTO，只从 `FrameLaunchEnvelope.launch_surface.vfs` / `AgentFrame.surface.vfs_surface` 生成；split `agent_frames.*_json` columns 只作为 read projection / migration fallback。
+- `runtime_surface` 是 query DTO，只从 `FrameLaunchEnvelope.launch_surface.vfs` / `AgentFrame.surface.vfs_surface` 生成；split `agent_frames.*_json` columns 只作为 read projection / migration materialization path。
 - `AgentFrame` 的 VFS / MCP / capability surface 通过 `AgentFrameBuilder::with_surface_draft` 集中写入，原因是 launch 装配面、query DTO 面和 capability replay 必须跟随 effective capability VFS 保持一致。
 - `FrameSurfaceDraft` 是 construction 到 `AgentFrameBuilder` / `FrameLaunchEnvelope` 的显式交接结构。`FrameLaunchSurface` 是从该 draft 校验得到的 launch-ready typed surface，原因是 construction validation、launch planning、connector projection 和 query surface 必须观察同一份 typed handoff，且 planner 不应读取 optional draft 字段。
 

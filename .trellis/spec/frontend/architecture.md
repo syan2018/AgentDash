@@ -80,7 +80,7 @@ export function selectVfsBackendTarget<T extends VfsMountBackendPolicy>(
 ### 3. Contracts
 
 - default mount 从 `runtimeSurface.vfs.mounts` 选择 requested mount，缺省使用 runtime surface default mount。
-- backend target 只从可浏览且携带 `backend_id` 的 mount 中选择；Project workspace binding fallback 在调用方转换成 mount policy 输入前完成。
+- backend target 只从可浏览且携带 `backend_id` 的 mount 中选择；Project workspace binding 作为第二输入源时，先由调用方转换成 mount policy 输入。
 - Extension webview bridge 的 `vfs.read` / `vfs.write` 使用同一 selector 生成请求上下文。
 
 ### 4. Validation & Error Matrix
@@ -95,13 +95,13 @@ export function selectVfsBackendTarget<T extends VfsMountBackendPolicy>(
 ### 5. Good/Base/Bad Cases
 
 - Good: VFS tab 和 extension iframe 指向同一个 session default mount 时得到同一个 backend id。
-- Base: Project workspace binding 只作为 extension tab 缺少 session backend 时的 fallback。
+- Base: Project workspace binding 只作为 extension tab 缺少 session backend 时的第二输入源。
 - Boundary mismatch: VFS tab 和 webview bridge 各自实现 mount/backend 选择会让同一 runtime surface 产生两个 UI 行为。
 - Canonical flow: 两个入口都调用 `selectDefaultVfsMount()` / `selectVfsBackendTarget()`，再按 selector 结果发起 API/bridge request。
 
 ### 6. Tests Required
 
-- `vfs-browser-panel.test.ts` 覆盖 default mount、requested mount、readonly 与 backend fallback。
+- `vfs-browser-panel.test.ts` 覆盖 default mount、requested mount、readonly 与 backend secondary-source selection。
 - `extension-runtime/model/bridge.test.ts` 覆盖 webview bridge 复用 policy 后的 VFS read/write request context。
 
 ### 7. Boundary Mismatch / Canonical

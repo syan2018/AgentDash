@@ -162,6 +162,12 @@ async fn materialize_forked_agent_run_tx(
         input.fork_point_ref_json,
         input.forked_by_user_id,
         input.metadata_json,
+    )
+    .with_frame_baseline(
+        input.parent_frame.id,
+        input.parent_frame.revision,
+        child_frame.id,
+        child_frame.revision,
     );
 
     let context = AgentRunForkMaterializationLogContext {
@@ -282,6 +288,10 @@ async fn insert_agent_run_lineage(
         .bind(lineage.child_run_id.to_string())
         .bind(lineage.child_agent_id.to_string())
         .bind(&lineage.relation_kind)
+        .bind(lineage.parent_frame_id.map(|id| id.to_string()))
+        .bind(lineage.parent_frame_revision)
+        .bind(lineage.child_frame_id.map(|id| id.to_string()))
+        .bind(lineage.child_frame_revision)
         .bind(option_u64_to_i64(lineage.fork_point_event_seq)?)
         .bind(opt_json_str(&lineage.fork_point_ref_json)?)
         .bind(&lineage.forked_by_user_id)
@@ -304,6 +314,10 @@ async fn insert_agent_run_lineage_tx(
         .bind(lineage.child_run_id.to_string())
         .bind(lineage.child_agent_id.to_string())
         .bind(&lineage.relation_kind)
+        .bind(lineage.parent_frame_id.map(|id| id.to_string()))
+        .bind(lineage.parent_frame_revision)
+        .bind(lineage.child_frame_id.map(|id| id.to_string()))
+        .bind(lineage.child_frame_revision)
         .bind(option_u64_to_i64(lineage.fork_point_event_seq)?)
         .bind(opt_json_str(&lineage.fork_point_ref_json)?)
         .bind(&lineage.forked_by_user_id)
@@ -318,8 +332,9 @@ async fn insert_agent_run_lineage_tx(
 fn agent_run_lineage_insert_sql() -> &'static str {
     r#"INSERT INTO agent_run_lineages
         (id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,
+         parent_frame_id,parent_frame_revision,child_frame_id,child_frame_revision,
          fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#
 }
 
 async fn insert_lifecycle_run_tx(
@@ -504,7 +519,7 @@ async fn select_anchor_by_session_tx(
     .transpose()
 }
 
-const AGENT_RUN_LINEAGE_COLS: &str = "id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at";
+const AGENT_RUN_LINEAGE_COLS: &str = "id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,parent_frame_id,parent_frame_revision,child_frame_id,child_frame_revision,fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at";
 
 #[derive(sqlx::FromRow)]
 struct ExecutionAnchorRow {
@@ -553,6 +568,10 @@ struct AgentRunLineageRow {
     child_run_id: String,
     child_agent_id: String,
     relation_kind: String,
+    parent_frame_id: Option<String>,
+    parent_frame_revision: Option<i32>,
+    child_frame_id: Option<String>,
+    child_frame_revision: Option<i32>,
     fork_point_event_seq: Option<i64>,
     fork_point_ref: Option<String>,
     forked_by_user_id: String,
@@ -574,6 +593,16 @@ impl TryFrom<AgentRunLineageRow> for AgentRunLineage {
             child_run_id: parse_uuid(&row.child_run_id, "agent_run_lineages.child_run_id")?,
             child_agent_id: parse_uuid(&row.child_agent_id, "agent_run_lineages.child_agent_id")?,
             relation_kind: row.relation_kind,
+            parent_frame_id: opt_uuid(
+                row.parent_frame_id.as_ref(),
+                "agent_run_lineages.parent_frame_id",
+            )?,
+            parent_frame_revision: row.parent_frame_revision,
+            child_frame_id: opt_uuid(
+                row.child_frame_id.as_ref(),
+                "agent_run_lineages.child_frame_id",
+            )?,
+            child_frame_revision: row.child_frame_revision,
             fork_point_event_seq: option_i64_to_u64(row.fork_point_event_seq)?,
             fork_point_ref_json: parse_optional_json(row.fork_point_ref, "fork_point_ref")?,
             forked_by_user_id: row.forked_by_user_id,
@@ -642,8 +671,10 @@ mod tests {
     fn agent_run_lineage_row_maps_json_and_refs() {
         let parent_run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
+        let parent_frame_id = Uuid::new_v4();
         let child_run_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
         let created_at = Utc::now();
 
         let lineage = AgentRunLineage::try_from(AgentRunLineageRow {
@@ -653,6 +684,10 @@ mod tests {
             child_run_id: child_run_id.to_string(),
             child_agent_id: child_agent_id.to_string(),
             relation_kind: "fork".to_string(),
+            parent_frame_id: Some(parent_frame_id.to_string()),
+            parent_frame_revision: Some(7),
+            child_frame_id: Some(child_frame_id.to_string()),
+            child_frame_revision: Some(1),
             fork_point_event_seq: Some(42),
             fork_point_ref: Some(json!({ "turn_id": "turn-1", "entry_index": 3 }).to_string()),
             forked_by_user_id: "user-child".to_string(),
@@ -666,6 +701,10 @@ mod tests {
         assert_eq!(lineage.child_run_id, child_run_id);
         assert_eq!(lineage.child_agent_id, child_agent_id);
         assert_eq!(lineage.relation_kind, "fork");
+        assert_eq!(lineage.parent_frame_id, Some(parent_frame_id));
+        assert_eq!(lineage.parent_frame_revision, Some(7));
+        assert_eq!(lineage.child_frame_id, Some(child_frame_id));
+        assert_eq!(lineage.child_frame_revision, Some(1));
         assert_eq!(lineage.fork_point_event_seq, Some(42));
         assert_eq!(
             lineage.fork_point_ref_json,
@@ -685,6 +724,10 @@ mod tests {
             child_run_id: Uuid::new_v4().to_string(),
             child_agent_id: Uuid::new_v4().to_string(),
             relation_kind: "fork".to_string(),
+            parent_frame_id: None,
+            parent_frame_revision: None,
+            child_frame_id: None,
+            child_frame_revision: None,
             fork_point_event_seq: Some(-1),
             fork_point_ref: None,
             forked_by_user_id: "user-child".to_string(),

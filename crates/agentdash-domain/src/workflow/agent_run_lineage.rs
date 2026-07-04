@@ -17,6 +17,14 @@ pub struct AgentRunLineage {
     pub child_agent_id: Uuid,
     pub relation_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_frame_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_frame_revision: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_frame_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_frame_revision: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_point_event_seq: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_point_ref_json: Option<Value>,
@@ -45,12 +53,30 @@ impl AgentRunLineage {
             child_run_id,
             child_agent_id,
             relation_kind: "fork".to_string(),
+            parent_frame_id: None,
+            parent_frame_revision: None,
+            child_frame_id: None,
+            child_frame_revision: None,
             fork_point_event_seq,
             fork_point_ref_json,
             forked_by_user_id: normalize_user_id(forked_by_user_id),
             metadata_json,
             created_at: Utc::now(),
         }
+    }
+
+    pub fn with_frame_baseline(
+        mut self,
+        parent_frame_id: Uuid,
+        parent_frame_revision: i32,
+        child_frame_id: Uuid,
+        child_frame_revision: i32,
+    ) -> Self {
+        self.parent_frame_id = Some(parent_frame_id);
+        self.parent_frame_revision = Some(parent_frame_revision);
+        self.child_frame_id = Some(child_frame_id);
+        self.child_frame_revision = Some(child_frame_revision);
+        self
     }
 }
 

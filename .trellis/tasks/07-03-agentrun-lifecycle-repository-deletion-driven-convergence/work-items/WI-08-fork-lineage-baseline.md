@@ -51,3 +51,16 @@ D-001, D-013, D-015, D-017
 - fork from fixed turn 的事务测试。
 - duplicate fork command replay 测试。
 - lineage query 测试覆盖 product lineage 与 runtime trace provenance 的分离。
+
+## Acceptance Record 2026-07-05 / Worker D2
+
+### Implemented
+
+- Duplicate fork replay now resolves the canonical product fork record through `AgentRunLineageRepository::find_parent(child_run_id, child_agent_id)`, using receipt `accepted_refs` only as the idempotent child outcome pointer.
+- Fork receipt `result_json` now stores the idempotent outcome shape plus `fork_record_id` and mailbox outcome ref. Parent refs, child refs, redirect refs, and lineage payload are sourced from `agent_run_lineages`.
+- `AgentRunLineage` now carries parent frame baseline and child frame baseline fields. Fork materialization writes these fields from the parent frame input and created child frame so product fork audit can explain parent AgentRun, fixed fork point, child AgentRun, child baseline, and fork owner from one canonical record.
+- `agent_run_lineages` remains the AgentRun child lineage table because duplicate replay, child lookup, parent audit, and fork provenance need a durable indexed product fact independent of RuntimeSession trace storage.
+
+### RuntimeSession Trace Provenance
+
+RuntimeSession fork creation still supplies internal trace provenance during materialization. Product replay no longer reads RuntimeSession lineage or receipt cached product refs; the remaining convergence risk is the existing runtime-session fork creation order and compensation path, which should be reviewed when the product-first fork transaction is tightened.

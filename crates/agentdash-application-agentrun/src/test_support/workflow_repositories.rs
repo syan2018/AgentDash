@@ -257,6 +257,12 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             input.fork_point_ref_json,
             input.forked_by_user_id,
             input.metadata_json,
+        )
+        .with_frame_baseline(
+            input.parent_frame.id,
+            input.parent_frame.revision,
+            child_frame.id,
+            child_frame.revision,
         );
 
         self.runs

@@ -420,8 +420,7 @@ impl<'a> AgentRunForkService<'a> {
                 );
             })?;
         let result_json = fork_result_json(
-            &parent_refs,
-            &child_refs,
+            &materialized.lineage,
             mailbox_outcome,
             mailbox_message.as_ref().map(|message| message.id),
         );
@@ -476,14 +475,7 @@ impl<'a> AgentRunForkService<'a> {
             AgentRunCommandStatus::Accepted => {}
         }
 
-        let result = record.result_json.as_ref().ok_or_else(|| {
-            WorkflowApplicationError::Internal(format!(
-                "AgentRun fork receipt {} 缺少 result_json",
-                record.id
-            ))
-        })?;
-        let parent_refs = accepted_refs_from_result_json(result, "parent")?;
-        let child_refs = record.accepted_refs.clone().ok_or_else(|| {
+        let accepted_refs = record.accepted_refs.clone().ok_or_else(|| {
             WorkflowApplicationError::Internal(format!(
                 "AgentRun fork receipt {} 缺少 accepted refs",
                 record.id
@@ -492,14 +484,16 @@ impl<'a> AgentRunForkService<'a> {
         let lineage = self
             .repos
             .agent_run_lineage_repo
-            .find_parent(child_refs.run_id, child_refs.agent_id)
+            .find_parent(accepted_refs.run_id, accepted_refs.agent_id)
             .await?
             .ok_or_else(|| {
                 WorkflowApplicationError::Internal(format!(
                     "AgentRun fork canonical lineage missing for child {}:{}",
-                    child_refs.run_id, child_refs.agent_id
+                    accepted_refs.run_id, accepted_refs.agent_id
                 ))
             })?;
+        let parent_refs = parent_refs_from_lineage(&lineage);
+        let child_refs = child_refs_from_lineage(&lineage, &accepted_refs);
         let mailbox_message = match record.mailbox_message_id {
             Some(id) => self.repos.agent_run_mailbox_repo.get_message(id).await?,
             None => None,
@@ -507,7 +501,13 @@ impl<'a> AgentRunForkService<'a> {
         let mailbox_outcome = mailbox_message
             .as_ref()
             .map(outcome_from_message)
-            .or_else(|| result.get("mailbox").and_then(outcome_from_result_json));
+            .or_else(|| {
+                record
+                    .result_json
+                    .as_ref()
+                    .and_then(|result| result.get("mailbox"))
+                    .and_then(outcome_from_result_json)
+            });
 
         Ok(AgentRunForkCommandResult {
             command_receipt: AgentRunCommandReceiptView::from_record(&record, true),
@@ -724,94 +724,47 @@ fn base_refs(
 }
 
 fn fork_result_json(
-    parent_refs: &AgentRunAcceptedRefs,
-    child_refs: &AgentRunAcceptedRefs,
+    lineage: &AgentRunLineage,
     mailbox_outcome: Option<AgentRunMailboxCommandOutcome>,
     mailbox_message_id: Option<Uuid>,
 ) -> Value {
     serde_json::json!({
         "outcome": "forked",
-        "parent": refs_json(parent_refs),
-        "child": refs_json(child_refs),
+        "fork_record_id": lineage.id,
         "mailbox": {
             "outcome": mailbox_outcome.map(|outcome| outcome.as_str()),
             "mailbox_message_id": mailbox_message_id,
         },
-        "redirect": {
-            "run_id": child_refs.run_id,
-            "agent_id": child_refs.agent_id,
-        },
     })
 }
 
-fn refs_json(refs: &AgentRunAcceptedRefs) -> Value {
-    serde_json::json!({
-        "run_id": refs.run_id,
-        "agent_id": refs.agent_id,
-        "frame_id": refs.frame_id,
-        "frame_revision": refs.frame_revision,
-        "runtime_session_id": refs.runtime_session_id,
-        "agent_run_turn_id": refs.agent_run_turn_id,
-        "protocol_turn_id": refs.protocol_turn_id,
-    })
+fn parent_refs_from_lineage(lineage: &AgentRunLineage) -> AgentRunAcceptedRefs {
+    AgentRunAcceptedRefs {
+        run_id: lineage.parent_run_id,
+        agent_id: lineage.parent_agent_id,
+        frame_id: lineage.parent_frame_id,
+        frame_revision: lineage.parent_frame_revision,
+        runtime_session_id: None,
+        agent_run_turn_id: None,
+        protocol_turn_id: None,
+    }
 }
 
-fn accepted_refs_from_result_json(
-    result: &Value,
-    key: &str,
-) -> Result<AgentRunAcceptedRefs, WorkflowApplicationError> {
-    let value = result.get(key).ok_or_else(|| {
-        WorkflowApplicationError::Internal(format!("AgentRun fork result_json 缺少 {key} refs"))
-    })?;
-    let run_id = uuid_from_json(value, "run_id")?;
-    let agent_id = uuid_from_json(value, "agent_id")?;
-    Ok(AgentRunAcceptedRefs {
-        run_id,
-        agent_id,
-        frame_id: optional_uuid_from_json(value, "frame_id")?,
-        frame_revision: value
-            .get("frame_revision")
-            .and_then(Value::as_i64)
-            .map(|value| value as i32),
-        runtime_session_id: value
-            .get("runtime_session_id")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        agent_run_turn_id: value
-            .get("agent_run_turn_id")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        protocol_turn_id: value
-            .get("protocol_turn_id")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    })
-}
-
-fn uuid_from_json(value: &Value, key: &str) -> Result<Uuid, WorkflowApplicationError> {
-    let raw = value.get(key).and_then(Value::as_str).ok_or_else(|| {
-        WorkflowApplicationError::Internal(format!("AgentRun fork result_json 缺少 {key}"))
-    })?;
-    Uuid::parse_str(raw).map_err(|error| {
-        WorkflowApplicationError::Internal(format!("AgentRun fork result_json {key} 无效: {error}"))
-    })
-}
-
-fn optional_uuid_from_json(
-    value: &Value,
-    key: &str,
-) -> Result<Option<Uuid>, WorkflowApplicationError> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(|raw| {
-            Uuid::parse_str(raw).map_err(|error| {
-                WorkflowApplicationError::Internal(format!(
-                    "AgentRun fork result_json {key} 无效: {error}"
-                ))
-            })
-        })
-        .transpose()
+fn child_refs_from_lineage(
+    lineage: &AgentRunLineage,
+    accepted_refs: &AgentRunAcceptedRefs,
+) -> AgentRunAcceptedRefs {
+    AgentRunAcceptedRefs {
+        run_id: lineage.child_run_id,
+        agent_id: lineage.child_agent_id,
+        frame_id: lineage.child_frame_id.or(accepted_refs.frame_id),
+        frame_revision: lineage
+            .child_frame_revision
+            .or(accepted_refs.frame_revision),
+        runtime_session_id: accepted_refs.runtime_session_id.clone(),
+        agent_run_turn_id: accepted_refs.agent_run_turn_id.clone(),
+        protocol_turn_id: accepted_refs.protocol_turn_id.clone(),
+    }
 }
 
 fn workflow_error_from_session_fork(error: std::io::Error) -> WorkflowApplicationError {
@@ -931,6 +884,19 @@ mod tests {
         assert_ne!(result.child_refs.run_id, fixture.parent_run.id);
         assert_eq!(result.lineage.parent_run_id, fixture.parent_run.id);
         assert_eq!(result.lineage.parent_agent_id, fixture.parent_agent.id);
+        assert_eq!(
+            result.lineage.parent_frame_id,
+            Some(fixture.parent_frame.id)
+        );
+        assert_eq!(
+            result.lineage.parent_frame_revision,
+            Some(fixture.parent_frame.revision)
+        );
+        assert_eq!(result.lineage.child_frame_id, result.child_refs.frame_id);
+        assert_eq!(
+            result.lineage.child_frame_revision,
+            result.child_refs.frame_revision
+        );
         assert_eq!(result.lineage.forked_by_user_id, "user-child");
 
         let child_run = fixture
@@ -972,18 +938,18 @@ mod tests {
             .runtime_session_id
             .as_deref()
             .expect("child accepted refs should include runtime trace");
-        let runtime_lineage = fixture
+        let runtime_trace_lineage = fixture
             .session_store
             .get_session_lineage(child_runtime_session_id)
             .await
-            .expect("runtime lineage")
-            .expect("runtime lineage");
+            .expect("runtime trace lineage")
+            .expect("runtime trace lineage");
         assert_eq!(
-            runtime_lineage.parent_session_id,
+            runtime_trace_lineage.parent_session_id,
             fixture.parent_runtime_session_id
         );
         assert_eq!(
-            runtime_lineage.relation_kind,
+            runtime_trace_lineage.relation_kind,
             SessionLineageRelationKind::Fork
         );
         assert_eq!(result.command_receipt.status, "accepted");
@@ -1074,6 +1040,16 @@ mod tests {
             .as_ref()
             .expect("stored fork result");
         assert!(result_json.get("lineage").is_none());
+        assert!(result_json.get("parent").is_none());
+        assert!(result_json.get("child").is_none());
+        assert!(result_json.get("redirect").is_none());
+        assert_eq!(
+            result_json
+                .get("fork_record_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            Some(first.lineage.id.to_string())
+        );
 
         let replay = fixture
             .admission()
@@ -1084,7 +1060,85 @@ mod tests {
         assert!(replay.command_receipt.duplicate);
         assert_eq!(replay.child_refs.run_id, first.child_refs.run_id);
         assert_eq!(replay.child_refs.agent_id, first.child_refs.agent_id);
+        assert_eq!(replay.parent_refs.frame_id, first.parent_refs.frame_id);
+        assert_eq!(replay.child_refs.frame_id, first.child_refs.frame_id);
         assert_eq!(replay.lineage.id, first.lineage.id);
+    }
+
+    #[tokio::test]
+    async fn accepted_duplicate_fork_replays_from_canonical_lineage_without_result_json() {
+        let fixture = ForkFixture::new().await;
+        let command = AgentRunForkCommand {
+            parent_run_id: fixture.parent_run.id,
+            parent_agent_id: fixture.parent_agent.id,
+            current_user_id: "user-child".to_string(),
+            title: None,
+            fork_point_ref: None,
+            metadata_json: None,
+            client_command_id: "fork-replay-no-json".to_string(),
+        };
+        let receipt = fixture
+            .seed_pending_fork_receipt(
+                &command.current_user_id,
+                &command.client_command_id,
+                AgentRunCommandKind::AgentRunFork,
+                None,
+                None,
+            )
+            .await;
+        let child_run_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
+        let child_refs = AgentRunAcceptedRefs {
+            run_id: child_run_id,
+            agent_id: child_agent_id,
+            frame_id: Some(child_frame_id),
+            frame_revision: Some(1),
+            runtime_session_id: Some("runtime-child-no-json".to_string()),
+            agent_run_turn_id: Some("agent-run-turn-1".to_string()),
+            protocol_turn_id: Some("protocol-turn-1".to_string()),
+        };
+        fixture
+            .receipts
+            .mark_accepted(receipt.id, child_refs)
+            .await
+            .expect("mark accepted");
+        let lineage = AgentRunLineage::new_fork(
+            fixture.parent_run.id,
+            fixture.parent_agent.id,
+            child_run_id,
+            child_agent_id,
+            Some(22),
+            None,
+            "user-child",
+            None,
+        )
+        .with_frame_baseline(
+            fixture.parent_frame.id,
+            fixture.parent_frame.revision,
+            child_frame_id,
+            1,
+        );
+        fixture
+            .lineages
+            .create(&lineage)
+            .await
+            .expect("canonical lineage");
+
+        let replay = fixture
+            .admission()
+            .admit_explicit_fork(command)
+            .await
+            .expect("replay fork");
+
+        assert!(replay.command_receipt.duplicate);
+        assert_eq!(replay.lineage.id, lineage.id);
+        assert_eq!(replay.parent_refs.frame_id, Some(fixture.parent_frame.id));
+        assert_eq!(replay.child_refs.frame_id, Some(child_frame_id));
+        assert_eq!(
+            replay.child_refs.runtime_session_id.as_deref(),
+            Some("runtime-child-no-json")
+        );
     }
 
     #[tokio::test]
@@ -1108,12 +1162,6 @@ mod tests {
                 None,
             )
             .await;
-        let parent_refs = base_refs(
-            &fixture.parent_run,
-            &fixture.parent_agent,
-            Some(&fixture.parent_frame),
-            &fixture.parent_runtime_session_id,
-        );
         let child_refs = AgentRunAcceptedRefs {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
@@ -1132,7 +1180,10 @@ mod tests {
             .receipts
             .store_result_json(
                 receipt.id,
-                fork_result_json(&parent_refs, &child_refs, None, None),
+                serde_json::json!({
+                    "outcome": "forked",
+                    "fork_record_id": Uuid::new_v4(),
+                }),
             )
             .await
             .expect("store result");
@@ -1632,7 +1683,7 @@ mod tests {
         compactions: Mutex<HashMap<(String, String), SessionCompactionRecord>>,
         segments: Mutex<Vec<SessionProjectionSegmentRecord>>,
         heads: Mutex<HashMap<(String, String), SessionProjectionHeadRecord>>,
-        lineages: Mutex<HashMap<String, SessionLineageRecord>>,
+        trace_lineages: Mutex<HashMap<String, SessionLineageRecord>>,
     }
 
     impl TestSessionStore {
@@ -1983,7 +2034,7 @@ mod tests {
             &self,
             record: SessionLineageRecord,
         ) -> SessionStoreResult<()> {
-            self.lineages
+            self.trace_lineages
                 .lock()
                 .await
                 .insert(record.child_session_id.clone(), record);
@@ -1994,7 +2045,12 @@ mod tests {
             &self,
             child_session_id: &str,
         ) -> SessionStoreResult<Option<SessionLineageRecord>> {
-            Ok(self.lineages.lock().await.get(child_session_id).cloned())
+            Ok(self
+                .trace_lineages
+                .lock()
+                .await
+                .get(child_session_id)
+                .cloned())
         }
 
         async fn list_session_children(
@@ -2004,7 +2060,7 @@ mod tests {
             status: Option<SessionLineageStatus>,
         ) -> SessionStoreResult<Vec<SessionLineageRecord>> {
             Ok(self
-                .lineages
+                .trace_lineages
                 .lock()
                 .await
                 .values()
@@ -2046,7 +2102,7 @@ mod tests {
             status: SessionLineageStatus,
             updated_at_ms: i64,
         ) -> SessionStoreResult<()> {
-            if let Some(lineage) = self.lineages.lock().await.get_mut(child_session_id) {
+            if let Some(lineage) = self.trace_lineages.lock().await.get_mut(child_session_id) {
                 lineage.status = status;
                 lineage.updated_at_ms = updated_at_ms;
             }

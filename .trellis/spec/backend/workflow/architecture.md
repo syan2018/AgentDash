@@ -336,15 +336,14 @@ LifecycleDispatchService::materialize_workflow_agent_node(
 
 ### 3. Contracts
 
-- Graph-backed dispatch 创建 runtime session 后，entry runtime node 必须通过 reducer 从 `Ready` 转为 `Running`。
-- Reducer 写入 `executor_run_ref` 和 `RuntimeTraceRef::RuntimeSession`，并移除 ready queue 中的 entry node。
+- Graph-backed dispatch 创建 runtime session 后，entry runtime node 必须通过 reducer 从 `Ready` 转为 `Claiming`。
+- Reducer 移除 ready queue 中的 entry node，但不写入 `executor_run_ref`、`RuntimeTraceRef::RuntimeSession` 或 `started_at`；这些执行事实由 accepted turn boundary 提交。
 - 更新后的 `LifecycleRun` 必须回写 repository，且 dispatch result 的 `runtime_refs` 仍使用同一个 `orchestration_id + node_path + attempt`。
 - `start_lifecycle_run` 只初始化 orchestration，不创建 runtime session，因此 entry node 仍为 `Ready`。
 - 如果 graph-backed dispatch 无法取得 runtime session id，不能伪造 `NodeStarted`；应返回内部错误并保持事实一致。
 - Scheduler ready `AgentCall` node materialization 必须通过 `LifecycleDispatchService` 创建 `LifecycleAgent`、
   `AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`，并返回同一组 `AgentRuntimeRefs`。
-  `AgentNodeLauncher` 在收到 materialization result 后提交 `NodeStarted`，原因是 node state transition
-  属于 orchestration reducer，而 runtime identity materialization 属于 lifecycle dispatch use case。
+  `AgentNodeLauncher` 在收到 materialization result 后提交 `NodeClaimed`，原因是 materialization 只声明节点已被 delivery 占用；`NodeStarted` 属于 RuntimeSession accepted turn 之后的 lifecycle advance boundary。
 - `WorkflowAgentNodeMaterializationResult.runtime_refs` 必须携带 `orchestration_id + node_path + attempt`，
   并与 anchor 的 orchestration binding 一致。
 
@@ -352,22 +351,22 @@ LifecycleDispatchService::materialize_workflow_agent_node(
 
 | 条件 | 结果 |
 | --- | --- |
-| graph-backed dispatch 成功创建 runtime session | entry node `Running`，ready queues 为空 |
+| graph-backed dispatch 成功创建 runtime session | entry node `Claiming`，ready queues 为空 |
 | `RuntimePolicy` 未提供 session id | 返回 internal error，不写 fake executor ref |
 | `start_lifecycle_run` | entry node `Ready`，无 executor ref |
-| scheduler ready `AgentCall` materialization 成功 | node `Running`，executor ref 指向创建的 runtime session，anchor refs 与 node coordinate 一致 |
+| scheduler ready `AgentCall` materialization 成功 | node `Claiming`，ready queue 移除；anchor refs 与 node coordinate 一致，executor ref 在 accepted turn 后写入 |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: subject execution with workflow graph creates one runtime session anchor and the root node has matching `ExecutorRunRef::RuntimeSession` plus trace ref.
-- Good: scheduler consumes a ready `AgentCall`, dispatch service creates the agent/frame/session/anchor evidence, then reducer records `NodeStarted` with the same runtime session ref.
+- Good: subject execution with workflow graph creates one runtime session anchor and the root node is claimed until the accepted turn writes matching `ExecutorRunRef::RuntimeSession` plus trace ref.
+- Good: scheduler consumes a ready `AgentCall`, dispatch service creates the agent/frame/session/anchor evidence, then reducer records `NodeClaimed`; accepted turn lifecycle advance records `NodeStarted` with the same runtime session ref.
 - Base: lifecycle start API creates orchestration only; no agent/frame/session side effect.
-- Bad: dispatch returns a delivery runtime session while `RuntimeNodeState` stays `Ready` with no executor ref.
+- Bad: dispatch returns a delivery runtime session while `RuntimeNodeState` stays `Ready` and remains eligible for a second claim.
 
 ### 6. Tests Required
 
 - Dispatch service graph-backed subject execution asserts node `Running`、empty ready queues、executor ref、trace ref、anchor refs。
-- Agent node launcher test asserts ready `AgentCall` materialization delegates identity/session/anchor creation to dispatch service and only applies `NodeStarted` after materialization result is available。
+- Agent node launcher test asserts ready `AgentCall` materialization delegates identity/session/anchor creation to dispatch service and applies only `NodeClaimed` after materialization result is available。
 - Project agent graph dispatch by key asserts the same started materialization。
 - Lifecycle run start test asserts entry remains `Ready`。
 
@@ -382,7 +381,7 @@ dispatch_common creates RuntimeSessionExecutionAnchor, but leaves node Ready
 #### Correct
 
 ```text
-dispatch_common creates anchor -> submits NodeStarted -> persists LifecycleRun with node Running
+dispatch_common creates anchor -> submits NodeClaimed -> persists LifecycleRun with node Claiming; accepted turn lifecycle advance submits NodeStarted
 ```
 
 ## Scenario: Workflow Script Builder Frontend

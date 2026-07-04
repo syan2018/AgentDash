@@ -971,7 +971,7 @@ pub struct AgentRunDeleteCommand {
 
 - Delete intent is Project-scoped because AgentRun list projection is Project-scoped and deletion must validate both Project edit permission and run ownership.
 - The product command target is the whole AgentRun / `LifecycleRun`; child Agent rows are not independent delete targets in this contract.
-- RuntimeSession ids are collected from `RuntimeSessionExecutionAnchor` and `LifecycleAgent.current_delivery` after the run ownership check. RuntimeSession cleanup serves the AgentRun delete command and is not the browser-facing product action.
+- RuntimeSession ids are collected from `RuntimeSessionExecutionAnchor` rows and active `AgentRunDeliveryBinding` rows after the run ownership check. `AgentRunDeliveryBinding` supplies current delivery state; `LifecycleAgent` stores identity only. RuntimeSession cleanup serves the AgentRun delete command and is not the browser-facing product action.
 - The command rejects active work before any delete side effect. `LifecycleRunStatus::Running`, `SessionExecutionState::Running`, and `SessionExecutionState::Cancelling` all block deletion.
 - Successful deletion removes RuntimeSession trace facts first, then deletes the `LifecycleRun`; run-owned lifecycle rows, anchors, mailbox rows, and frame relations rely on existing database cascades.
 - Frontend success handling refreshes the AgentRun list projection from the server. If the current route points at the deleted `run_id`, the browser navigates back to the Agent page.

@@ -22,7 +22,7 @@ WI-00 的执行前事实清点见 `inventory.md`。仓储、表、route、DTO、
 
 - `RuntimeSession` 是 runtime trace substrate，不是产品交互目标。
 - `BackboneEnvelope` 是 runtime event fact，`session_events` 是 durable ordering/event log。
-- `sessions.last_*`、`lifecycle_agents.current_delivery_*` 是 shell/read model 或 current pointer，不能反向成为 terminal truth。
+- `sessions.last_*` 是 runtime shell/read model；current delivery 必须是 AgentRun-owned binding/state，不能由 `lifecycle_agents.current_delivery_*` 身份字段反向成为业务事实。
 - `RuntimeSessionExecutionAnchor` 是 runtime trace 到控制面的 durable evidence 索引。
 - raw `/sessions/*` API 应定位为 trace/diagnostic，产品交互走 AgentRun scoped API。
 
@@ -202,7 +202,7 @@ Fork 是产品操作，应优先由 AgentRun 统一入口处理。Fork baseline 
 | 业务服务依赖全量 `RepositorySet` | 隐藏 use case 真实依赖，扩大每次改动的理解面 | 小型 deps struct，例如 `ProjectAgentRunStartDeps`、`AgentRunMailboxSchedulerDeps` |
 | AgentRun/Lifecycle crate 各自复制全量仓储集合 | 让组合根泄漏到业务层，并形成多套准 service locator | 单一 composition root，业务层只接收能力级 deps |
 | AgentRun start 直接持有 lifecycle/frame/anchor/runtime creator 底层仓储 | start 用例越过 launch port 自行拼装控制面事实 | `ProjectAgentLifecycleLaunchPort` + receipt + command queue |
-| 多处手写 anchor/current_delivery 同步 | `RuntimeSessionExecutionAnchor` 与 `LifecycleAgent.current_delivery` 写入规则分散 | `AgentRunDeliveryBindingPort` |
+| 多处手写 anchor/current_delivery 同步 | `RuntimeSessionExecutionAnchor` 与旧 lifecycle agent current delivery 字段写入规则分散 | `AgentRunDeliveryBindingPort` |
 | RuntimeSession builder 直接注入控制面仓储 | delivery substrate 反向依赖产品控制面事实存储 | 中性 runtime/application ports |
 | AgentRun runtime route 转调 Session route handler | AgentRun public identity 正确，但内部复用让 Session 语义回流 | 共享 application runtime service，Session route 降级为 trace/diagnostic |
 | raw Session 作为产品对象外露 | RuntimeSession 只能是 AgentRun 内部 stream state | 删除 raw Session 产品 route/service，只保留内部 trace/ref |
@@ -277,7 +277,7 @@ Fork 是产品操作，应优先由 AgentRun 统一入口处理。Fork baseline 
 | Projection / state | 初始判断 | 需要验证 |
 | --- | --- | --- |
 | `sessions.last_*` | RuntimeSession trace shell，可重建 | 是否仍被业务 terminal 判断使用 |
-| `lifecycle_agents.current_delivery_*` | current binding/state，不应只视为 projection | 单一写入边界、reconcile 规则 |
+| `agent_run_delivery_bindings` | current binding/state，不应只视为 projection | 单一写入边界、reconcile 规则 |
 | AgentRun workspace projection | 产品 read model，理论可重建 | 是否存在不可重建 UI-only state 混入 |
 | context projection/head/segments | RuntimeSession 内部上下文投影，按 event/compaction 重建 | rebuild 输入和 fork 初始上下文语义 |
 | Lifecycle view projection | 控制面 read model，是否可重建待评估 | 是否被业务逻辑直接依赖 |

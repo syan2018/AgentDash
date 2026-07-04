@@ -75,8 +75,10 @@ agent_run_lineages.parent_agent_id
 agent_run_lineages.child_run_id
 agent_run_lineages.child_agent_id
 agent_run_lineages.relation_kind = 'fork'
-agent_run_lineages.parent_runtime_session_id
-agent_run_lineages.child_runtime_session_id
+agent_run_lineages.parent_frame_id
+agent_run_lineages.parent_frame_revision
+agent_run_lineages.child_frame_id
+agent_run_lineages.child_frame_revision
 agent_run_lineages.fork_point_event_seq
 agent_run_lineages.fork_point_ref_json
 agent_run_lineages.forked_by_user_id

@@ -163,10 +163,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 anchor.agent_id, pending_frame.agent_id
             )));
         }
-        let surfaces = capability_state_to_frame_surfaces(accepted_capability_state);
-        pending_frame.effective_capability_json = surfaces.effective_capability_json;
-        pending_frame.vfs_surface_json = surfaces.vfs_surface_json;
-        pending_frame.mcp_surface_json = surfaces.mcp_surface_json;
+        apply_accepted_capability_surface(&mut pending_frame, accepted_capability_state);
         if let Err(error) = frame_repo.create(&pending_frame).await {
             let diagnostic_context =
                 DiagnosticErrorContext::new("agent_run.launch_commit", "pending_frame_create");
@@ -505,6 +502,19 @@ fn connector_error(message: impl Into<String>) -> ConnectorError {
     ConnectorError::Runtime(message.into())
 }
 
+fn apply_accepted_capability_surface(
+    frame: &mut AgentFrame,
+    accepted_capability_state: &CapabilityState,
+) {
+    let surfaces = capability_state_to_frame_surfaces(accepted_capability_state);
+    let mut surface = frame.surface_document();
+    surface.capability_state = surfaces.effective_capability_json;
+    surface.vfs_surface = surfaces.vfs_surface_json;
+    surface.mcp_surface = surfaces.mcp_surface_json;
+    frame.surface = Some(surface);
+    frame.apply_surface_projection();
+}
+
 async fn resolve_current_agent_frame_for_runtime_session(
     runtime_session_id: &str,
     anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
@@ -528,7 +538,8 @@ mod tests {
     use super::*;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentSource, LifecycleAgent, RuntimeSessionExecutionAnchor,
+        AgentFrame, AgentFrameSurfaceDocument, AgentSource, LifecycleAgent,
+        RuntimeSessionExecutionAnchor,
     };
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -741,6 +752,36 @@ mod tests {
                 .cloned()
                 .collect())
         }
+    }
+
+    #[test]
+    fn accepted_capability_surface_updates_canonical_document_before_projection() {
+        let mut frame = AgentFrame::new_revision(Uuid::new_v4(), 2, "test");
+        frame.surface = Some(AgentFrameSurfaceDocument {
+            capability_state: Some(serde_json::json!({"stale": true})),
+            context_slice: Some(serde_json::json!({"keep": "context"})),
+            vfs_surface: Some(serde_json::json!({"stale": "vfs"})),
+            mcp_surface: Some(serde_json::json!([{"stale": "mcp"}])),
+            ..Default::default()
+        });
+        frame.effective_capability_json = Some(serde_json::json!({"split": "stale"}));
+
+        let accepted_state = CapabilityState::default();
+        let expected = capability_state_to_frame_surfaces(&accepted_state);
+
+        apply_accepted_capability_surface(&mut frame, &accepted_state);
+
+        let surface = frame.surface.as_ref().expect("canonical surface");
+        assert_eq!(surface.capability_state, expected.effective_capability_json);
+        assert_eq!(surface.vfs_surface, expected.vfs_surface_json);
+        assert_eq!(surface.mcp_surface, expected.mcp_surface_json);
+        assert_eq!(
+            surface.context_slice,
+            Some(serde_json::json!({"keep": "context"}))
+        );
+        assert_eq!(frame.effective_capability_json, surface.capability_state);
+        assert_eq!(frame.vfs_surface_json, surface.vfs_surface);
+        assert_eq!(frame.mcp_surface_json, surface.mcp_surface);
     }
 
     #[tokio::test]

@@ -239,10 +239,10 @@ describe("createSessionStreamTransport", () => {
     });
 
     expect(mocks.resolveApiUrl).toHaveBeenCalledWith(
-      "/api/agent-runs/run%201/agents/agent%2F1/runtime/stream/ndjson",
+      "/api/agent-runs/run%201/agents/agent%2F1/journal/stream/ndjson",
     );
     expect(mocks.authenticatedFetch).toHaveBeenCalledWith(
-      "http://api.test/api/agent-runs/run%201/agents/agent%2F1/runtime/stream/ndjson",
+      "http://api.test/api/agent-runs/run%201/agents/agent%2F1/journal/stream/ndjson",
       expect.objectContaining({
         method: "GET",
         cache: "no-store",

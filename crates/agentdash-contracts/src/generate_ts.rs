@@ -187,9 +187,8 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition,
-    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
-    AgentFrameRefDto,
+    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
+    AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
     AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunRefDto,
     AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,

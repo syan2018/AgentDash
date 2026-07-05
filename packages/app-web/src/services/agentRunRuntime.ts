@@ -17,7 +17,7 @@ export function agentRunScopedPath(target: AgentRunRuntimeTarget, route: string)
   return `/agent-runs/${encodeURIComponent(target.runId)}/agents/${encodeURIComponent(target.agentId)}${route}`;
 }
 
-export async function fetchAgentRunRuntimeEvents(
+export async function fetchAgentRunJournalEvents(
   target: AgentRunRuntimeTarget,
   afterSeq = 0,
   limit = 500,
@@ -26,7 +26,7 @@ export async function fetchAgentRunRuntimeEvents(
   params.set("after_seq", String(afterSeq));
   params.set("limit", String(limit));
   return api.get<SessionEventsPageResponse>(
-    agentRunScopedPath(target, `/runtime/events?${params.toString()}`),
+    agentRunScopedPath(target, `/journal/events?${params.toString()}`),
   );
 }
 
@@ -36,19 +36,6 @@ export async function fetchAgentRunRuntimeContextProjection(
   try {
     return await api.get<SessionProjectionViewResponse>(
       agentRunScopedPath(target, "/runtime/context/projection"),
-    );
-  } catch (err) {
-    if ((err as ApiHttpError).status === 404) return null;
-    throw err;
-  }
-}
-
-export async function fetchAgentRunConversationSeedEvents(
-  target: AgentRunRuntimeTarget,
-): Promise<SessionEventsPageResponse | null> {
-  try {
-    return await api.get<SessionEventsPageResponse>(
-      agentRunScopedPath(target, "/conversation/seed-events"),
     );
   } catch (err) {
     if ((err as ApiHttpError).status === 404) return null;

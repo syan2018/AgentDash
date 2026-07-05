@@ -1,6 +1,8 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use agentdash_agent::MessageRef;
 use agentdash_application::runtime_session_agent_run_bridge::{
@@ -20,9 +22,7 @@ use agentdash_application_agentrun::agent_run::{
     DeliveryRuntimeSelectionService,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
-use agentdash_application_runtime_session::session::{
-    SessionLineageRelationKind, terminal_cache::TerminalState,
-};
+use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
     AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
@@ -30,14 +30,15 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
     AgentRunToolCallRejectionResponse, MailboxMessageView, MailboxStateView,
 };
-use agentdash_contracts::session::{SessionEventsPageResponse, SessionMessageRefDto};
+use agentdash_contracts::session::{
+    SessionEventResponse, SessionEventsPageResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
+};
 use agentdash_contracts::workflow::{
     AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
-    AgentFrameRefDto,
-    AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView,
-    AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView, AgentRunRefDto,
-    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
+    AgentFrameRefDto, AgentFrameRuntimeView, AgentRunCommandOnlyRequest,
+    AgentRunCommandPreconditionView, AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView,
+    AgentRunRefDto, AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
+    AgentRunView, AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
     AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
     AgentRunWorkspaceView, ConversationCommandKind, ConversationCommandPlacement,
     ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
@@ -52,12 +53,15 @@ use agentdash_domain::workflow::{AgentLineage, LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
 use axum::{
     Json,
+    body::Body,
+    body::Bytes,
     extract::{Path, Query, State},
     http::HeaderMap,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
+use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 use crate::dto::{
@@ -108,10 +112,6 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_workspace),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/conversation/seed-events",
-            axum::routing::get(get_agent_run_conversation_seed_events),
-        )
-        .route(
             "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
             axum::routing::post(submit_agent_run_composer_input),
         )
@@ -156,8 +156,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_runtime_control),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/events",
-            axum::routing::get(list_agent_run_runtime_events),
+            "/agent-runs/{run_id}/agents/{agent_id}/journal/events",
+            axum::routing::get(list_agent_run_journal_events),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/terminals",
@@ -173,8 +173,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_runtime_context_audit),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/stream/ndjson",
-            axum::routing::get(agent_run_runtime_stream_ndjson),
+            "/agent-runs/{run_id}/agents/{agent_id}/journal/stream/ndjson",
+            axum::routing::get(agent_run_journal_stream_route),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/approve",
@@ -324,6 +324,7 @@ pub struct AgentRunListQuery {
 
 const DEFAULT_PAGE_LIMIT: usize = 30;
 const MAX_PAGE_LIMIT: usize = 100;
+const AGENT_RUN_JOURNAL_STREAM_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
 /// keyset 游标：编码页尾 run 的 (last_activity_at_millis, run_id)，base64 不透明串。
 fn encode_cursor(last_activity_at: DateTime<Utc>, run_id: Uuid) -> String {
@@ -403,85 +404,6 @@ pub async fn get_agent_run_workspace(
     view.parent = parent;
     view.children = children;
     Ok(Json(view))
-}
-
-pub async fn get_agent_run_conversation_seed_events(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<SessionEventsPageResponse>, ApiError> {
-    let context = resolve_agent_run_context(
-        &state,
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let runtime_session_id = context
-        .delivery_runtime_session_id
-        .as_deref()
-        .ok_or_else(|| {
-            ApiError::NotFound("AgentRun 当前没有可读取的 delivery RuntimeSession".to_string())
-        })?;
-    let Some(lineage) = state
-        .services
-        .session_branching
-        .lineage_parent(runtime_session_id)
-        .await
-        .map_err(ApiError::from)?
-        .filter(|lineage| lineage.relation_kind == SessionLineageRelationKind::Fork)
-    else {
-        return Err(ApiError::NotFound(
-            "AgentRun 当前 delivery RuntimeSession 没有 fork seed events".to_string(),
-        ));
-    };
-
-    let head_event_seq = lineage.fork_point_event_seq.unwrap_or_default();
-    let events = load_runtime_session_events_until(
-        state.as_ref(),
-        &lineage.parent_session_id,
-        head_event_seq,
-    )
-    .await?;
-
-    Ok(Json(SessionEventsPageResponse {
-        snapshot_seq: head_event_seq,
-        events,
-        has_more: false,
-        next_after_seq: head_event_seq,
-    }))
-}
-
-async fn load_runtime_session_events_until(
-    state: &AppState,
-    session_id: &str,
-    head_event_seq: u64,
-) -> Result<Vec<agentdash_contracts::session::SessionEventResponse>, ApiError> {
-    if head_event_seq == 0 {
-        return Ok(Vec::new());
-    }
-
-    let mut after_seq = 0;
-    let mut events = Vec::new();
-    loop {
-        let page = state
-            .services
-            .session_eventing
-            .list_event_page(session_id, after_seq, 2_000)
-            .await
-            .map_err(ApiError::from)?;
-        for event in page.events {
-            if event.event_seq <= head_event_seq {
-                events.push(event.into());
-            }
-        }
-        if !page.has_more || page.next_after_seq >= head_event_seq {
-            break;
-        }
-        after_seq = page.next_after_seq;
-    }
-    Ok(events)
 }
 
 /// 解析当前 AgentRun 的 lineage 一跳父子，供右侧会话栏展示从属关系与跳转。
@@ -1098,18 +1020,76 @@ async fn get_agent_run_runtime_control(
     Ok(Json(view))
 }
 
-async fn list_agent_run_runtime_events(
+async fn list_agent_run_journal_events(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     Query(query): Query<SessionEventsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let runtime_session_id =
-        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    Ok(Json(
-        sessions::load_runtime_session_events_page(state.as_ref(), &runtime_session_id, query)
-            .await?,
-    ))
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let after_seq = query.after_seq.unwrap_or_default();
+    let limit = query.limit.unwrap_or(500).clamp(1, 2_000);
+    let page = agent_run_journal_service(state.as_ref())
+        .load_visible_journal_page(
+            app_agent_run::AgentRunJournalQuery {
+                run_id: context.run.id,
+                agent_id: context.agent.id,
+                delivery_runtime_session_id: context.delivery_runtime_session_id,
+            },
+            after_seq,
+            limit,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(agent_run_journal_page_to_contract(
+        context.run.id,
+        context.agent.id,
+        page,
+    )))
+}
+
+fn agent_run_journal_service(state: &AppState) -> app_agent_run::AgentRunJournalService {
+    app_agent_run::AgentRunJournalService::new(
+        state.services.session_branching.clone(),
+        agent_run_session_eventing(state.services.session_eventing.clone()),
+    )
+}
+
+fn agent_run_journal_page_to_contract(
+    run_id: Uuid,
+    agent_id: Uuid,
+    page: app_agent_run::AgentRunJournalPage,
+) -> SessionEventsPageResponse {
+    let journal_session_id = app_agent_run::agent_run_journal_session_id(run_id, agent_id);
+    SessionEventsPageResponse {
+        snapshot_seq: page.snapshot_seq,
+        events: page
+            .events
+            .into_iter()
+            .map(|event| agent_run_journal_event_to_contract(event, &journal_session_id))
+            .collect(),
+        has_more: page.has_more,
+        next_after_seq: page.next_after_seq,
+    }
+}
+
+fn agent_run_journal_event_to_contract(
+    event: app_agent_run::AgentRunJournalEvent,
+    journal_session_id: &str,
+) -> SessionEventResponse {
+    app_agent_run::project_event_to_agent_run_journal(
+        event.event,
+        event.journal_seq,
+        journal_session_id,
+    )
+    .into()
 }
 
 async fn list_agent_run_runtime_terminals(
@@ -1192,17 +1172,225 @@ async fn get_agent_run_runtime_context_audit(
     ))
 }
 
-async fn agent_run_runtime_stream_ndjson(
+async fn agent_run_journal_stream_route(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     headers: HeaderMap,
     Query(query): Query<NdjsonStreamQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let runtime_session_id =
-        resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
-    sessions::runtime_session_stream_ndjson(state.as_ref(), runtime_session_id, headers, query)
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    agent_run_journal_stream_ndjson(state.as_ref(), context, headers, query).await
+}
+
+async fn agent_run_journal_stream_ndjson(
+    state: &AppState,
+    context: AgentRunContext,
+    headers: HeaderMap,
+    query: NdjsonStreamQuery,
+) -> Result<Response, ApiError> {
+    let runtime_session_id = delivery_runtime_session_from_agent_run_context(&context)?;
+    sessions::ensure_runtime_session_trace_exists(state, &runtime_session_id).await?;
+    let service = agent_run_journal_service(state);
+    let prefix = service
+        .load_inherited_prefix(app_agent_run::AgentRunJournalQuery {
+            run_id: context.run.id,
+            agent_id: context.agent.id,
+            delivery_runtime_session_id: Some(runtime_session_id.clone()),
+        })
         .await
+        .map_err(ApiError::from)?;
+    let prefix_len = prefix
+        .events
+        .last()
+        .map(|event| event.journal_seq)
+        .unwrap_or_default();
+    let journal_session_id =
+        app_agent_run::agent_run_journal_session_id(context.run.id, context.agent.id);
+    let resume_from = parse_agent_run_journal_resume_from_header(&headers)?
+        .or(query.since_id)
+        .unwrap_or(0);
+    let runtime_resume_from = resume_from.saturating_sub(prefix_len);
+
+    let subscription = state
+        .services
+        .session_eventing
+        .subscribe_after(&runtime_session_id, runtime_resume_from)
+        .await
+        .map_err(ApiError::from)?;
+    let ephemeral_epoch = state.services.session_eventing.ephemeral_epoch();
+
+    let stream = async_stream::stream! {
+        let mut seq = resume_from;
+        for event in prefix.events {
+            if event.journal_seq <= resume_from {
+                continue;
+            }
+            seq = event.journal_seq;
+            let projected = app_agent_run::project_event_to_agent_run_journal(
+                event.event,
+                event.journal_seq,
+                &journal_session_id,
+            );
+            if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::event(projected)) {
+                yield Ok::<Bytes, Infallible>(line);
+            }
+        }
+
+        for event in subscription.backlog {
+            let journal_seq = prefix_len + event.event_seq;
+            seq = journal_seq;
+            let projected = app_agent_run::project_event_to_agent_run_journal(
+                event,
+                journal_seq,
+                &journal_session_id,
+            );
+            if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::event(projected)) {
+                yield Ok::<Bytes, Infallible>(line);
+            }
+        }
+
+        let connected_seq = std::cmp::max(seq, prefix_len + subscription.snapshot_seq);
+        if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::connected(
+            connected_seq,
+            ephemeral_epoch,
+        )) {
+            yield Ok::<Bytes, Infallible>(line);
+        }
+
+        for event in subscription.ephemeral_backlog {
+            let journal_seq = prefix_len + event.event_seq;
+            let projected = app_agent_run::project_event_to_agent_run_journal(
+                event,
+                journal_seq,
+                &journal_session_id,
+            );
+            if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::ephemeral_event(projected)) {
+                yield Ok::<Bytes, Infallible>(line);
+            }
+        }
+
+        let mut heartbeat_tick = tokio::time::interval(AGENT_RUN_JOURNAL_STREAM_HEARTBEAT_INTERVAL);
+        heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut rx = subscription.rx;
+
+        loop {
+            tokio::select! {
+                next = rx.recv() => {
+                    match next {
+                        Ok(event) => {
+                            let journal_seq = prefix_len + event.event_seq;
+                            let projected = app_agent_run::project_event_to_agent_run_journal(
+                                event,
+                                journal_seq,
+                                &journal_session_id,
+                            );
+                            let envelope = if projected.ephemeral {
+                                SessionNdjsonEnvelope::ephemeral_event(projected)
+                            } else {
+                                if journal_seq <= prefix_len + subscription.snapshot_seq {
+                                    continue;
+                                }
+                                seq = journal_seq;
+                                SessionNdjsonEnvelope::event(projected)
+                            };
+                            if let Some(line) = agent_run_journal_ndjson_line(&envelope) {
+                                yield Ok::<Bytes, Infallible>(line);
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            diag!(Warn, Subsystem::Api,
+                                run_id = %context.run.id,
+                                agent_id = %context.agent.id,
+                                runtime_session_id = %runtime_session_id,
+                                lagged = n,
+                                "AgentRun journal stream 订阅落后，部分消息被跳过（NDJSON）"
+                            );
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            diag!(Info, Subsystem::Api,
+                                run_id = %context.run.id,
+                                agent_id = %context.agent.id,
+                                runtime_session_id = %runtime_session_id,
+                                last_seq = seq,
+                                "AgentRun journal stream 连接关闭：广播通道关闭（NDJSON）"
+                            );
+                            break;
+                        }
+                    }
+                }
+                _ = heartbeat_tick.tick() => {
+                    if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::heartbeat_now()) {
+                        yield Ok::<Bytes, Infallible>(line);
+                    }
+                }
+            }
+        }
+    };
+
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/x-ndjson; charset=utf-8",
+            ),
+            (axum::http::header::CACHE_CONTROL, "no-cache, no-transform"),
+            (axum::http::header::CONNECTION, "keep-alive"),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        Body::from_stream(stream),
+    )
+        .into_response())
+}
+
+fn parse_agent_run_journal_resume_from_header(
+    headers: &HeaderMap,
+) -> Result<Option<u64>, ApiError> {
+    let Some(value) = headers.get("x-stream-since-id") else {
+        return Ok(None);
+    };
+    let raw = value
+        .to_str()
+        .map_err(|_| ApiError::BadRequest("x-stream-since-id 不是有效 UTF-8".to_string()))?;
+    let parsed = raw
+        .parse::<i64>()
+        .map_err(|_| ApiError::BadRequest("x-stream-since-id 不是有效整数".to_string()))?;
+    if parsed < 0 {
+        return Err(ApiError::BadRequest(
+            "x-stream-since-id 不能为负数".to_string(),
+        ));
+    }
+    Ok(Some(parsed as u64))
+}
+
+fn agent_run_journal_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
+    match serde_json::to_vec(value) {
+        Ok(mut bytes) => {
+            bytes.push(b'\n');
+            Some(Bytes::from(bytes))
+        }
+        Err(err) => {
+            let context =
+                DiagnosticErrorContext::new("agent_run_journal.ndjson", "serialize_event");
+            diag_error!(
+                Error,
+                Subsystem::Api,
+                context = &context,
+                error = &err,
+                route = "/api/agent-runs/{run_id}/agents/{agent_id}/journal/stream/ndjson",
+                "序列化 AgentRun journal NDJSON 消息失败"
+            );
+            None
+        }
+    }
 }
 
 async fn approve_agent_run_tool_call(

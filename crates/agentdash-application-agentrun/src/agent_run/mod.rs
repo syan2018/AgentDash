@@ -7,6 +7,7 @@ mod delivery_runtime_selection;
 mod effective_capability;
 mod fork;
 pub mod frame;
+mod journal;
 pub(crate) mod lifecycle_read_model_facade;
 pub mod mailbox;
 mod mailbox_runtime_adapter;
@@ -73,6 +74,11 @@ pub use frame::{
     FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
     RuntimeSurfaceUpdateRequest, TerminalHookEffectBinding, accepted_launch_commit_port,
     agent_frame_write_boundaries, hook_target_runtime_port,
+};
+pub use journal::{
+    AgentRunJournalEvent, AgentRunJournalPage, AgentRunJournalQuery, AgentRunJournalSegment,
+    AgentRunJournalSegmentRole, AgentRunJournalService, AgentRunJournalView,
+    agent_run_journal_session_id, project_event_to_agent_run_journal,
 };
 pub use lifecycle_read_model_facade::{
     ActiveRuntimeNodeRefView as PresentationActiveRuntimeNodeRefView,

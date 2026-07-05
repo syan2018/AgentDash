@@ -253,7 +253,7 @@ pub(crate) async fn load_runtime_session_events_page(
     })
 }
 
-async fn ensure_runtime_session_trace_exists(
+pub(crate) async fn ensure_runtime_session_trace_exists(
     state: &AppState,
     session_id: &str,
 ) -> Result<(), ApiError> {

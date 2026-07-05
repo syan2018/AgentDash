@@ -162,10 +162,3 @@ pub struct AgentRunWorkspaceProjectionModel {
     pub last_turn_id: Option<String>,
     pub delivery_status: String,
 }
-
-fn serialized_string<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_string())
-}

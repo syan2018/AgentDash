@@ -12,8 +12,7 @@ import {
   fetchSessionEvents,
 } from "../../../services/session";
 import {
-  fetchAgentRunConversationSeedEvents,
-  fetchAgentRunRuntimeEvents,
+  fetchAgentRunJournalEvents,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
 import type {
@@ -22,10 +21,6 @@ import type {
   TokenUsageInfo,
 } from "./types";
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
-import {
-  agentRunSeedEntries,
-  normalizeAgentRunStreamEventIdentity,
-} from "./agentRunStreamIdentity";
 import {
   createInitialStreamState,
   reduceStreamState,
@@ -225,33 +220,15 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     const start = async () => {
       let nextState = baseState;
       let afterSeq = shouldResetState ? 0 : baseState.lastAppliedSeq;
-      const normalizeEvents = (events: SessionEventEnvelope[]): SessionEventEnvelope[] => {
-        if (!agentRunTarget) return events;
-        return events.map((event) => normalizeAgentRunStreamEventIdentity(event, agentRunTarget));
-      };
 
       try {
-        if (agentRunTarget && shouldResetState) {
-          const seed = await fetchAgentRunConversationSeedEvents(agentRunTarget);
-          const feedEntries = agentRunSeedEntries(seed?.events ?? [], agentRunTarget);
-          nextState = createInitialStreamState([
-            ...initialEntriesRef.current,
-            ...feedEntries,
-          ]);
-          nextState = { ...nextState, lastAppliedSeq: 0, rawEvents: [] };
-          afterSeq = 0;
-          if (!mountedRef.current || cancelled) return;
-          setStreamState(nextState);
-          stateRef.current = nextState;
-        }
-
         while (!cancelled) {
           const page = agentRunTarget
-            ? await fetchAgentRunRuntimeEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE)
+            ? await fetchAgentRunJournalEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE)
             : rawSessionId
               ? await fetchSessionEvents(rawSessionId, afterSeq, HISTORY_PAGE_SIZE)
               : { events: [], next_after_seq: afterSeq, has_more: false };
-          const pageEvents = normalizeEvents(page.events);
+          const pageEvents = page.events;
           projectSessionTerminalPlatformEvents(pageEvents, callbackRefs.current.onError);
           nextState = reduceStreamState(nextState, pageEvents);
           afterSeq = page.next_after_seq;
@@ -275,10 +252,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
           sinceId: nextState.lastAppliedSeq,
           onEvent: (event) => {
             if (!mountedRef.current) return;
-            const normalizedEvent = agentRunTarget
-              ? normalizeAgentRunStreamEventIdentity(event, agentRunTarget)
-              : event;
-            enqueueEventRef.current(normalizedEvent);
+            enqueueEventRef.current(event);
           },
           onEphemeralEpoch: (epoch) => {
             if (!mountedRef.current) return;

@@ -38,7 +38,7 @@ function buildStreamEndpoint(
     return endpoint;
   }
   if (agentRunTarget) {
-    return `/api/agent-runs/${encodeURIComponent(agentRunTarget.runId)}/agents/${encodeURIComponent(agentRunTarget.agentId)}/runtime/stream/ndjson`;
+    return `/api/agent-runs/${encodeURIComponent(agentRunTarget.runId)}/agents/${encodeURIComponent(agentRunTarget.agentId)}/journal/stream/ndjson`;
   }
   const rawSessionId = sessionId?.trim();
   if (!rawSessionId) {

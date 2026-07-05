@@ -10,9 +10,7 @@ use agentdash_domain::workflow::{
 };
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::agent_run::runtime_session_boundary::{
-    SessionEventingService, SessionStoreError,
-};
+use crate::agent_run::runtime_session_boundary::{SessionEventingService, SessionStoreError};
 use crate::agent_run::{
     AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceQueryPort,
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,

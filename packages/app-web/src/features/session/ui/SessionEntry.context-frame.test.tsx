@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { AggregatedContextFrameGroup } from "../model/types";
+import type { AggregatedContextFrameGroup, SessionDisplayEntry } from "../model/types";
 import type { ContextFrame } from "../model/contextFrame";
 import { SessionEntry } from "./SessionEntry";
 
@@ -24,6 +24,40 @@ describe("SessionEntry ContextFrame 聚合", () => {
     expect(html).toContain("2x");
     expect(html).toContain("apply");
     expect(html).not.toContain("已注入动态上下文");
+  });
+});
+
+describe("SessionEntry 错误事件", () => {
+  it("把 PiAgent fatal error 渲染为独立错误块", () => {
+    const entry: SessionDisplayEntry = {
+      id: "error-1",
+      sessionId: "session-1",
+      timestamp: 1,
+      eventSeq: 1,
+      turnId: "turn-1",
+      event: {
+        type: "error",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          willRetry: false,
+          error: {
+            message: "刷新 Codex token 返回 401 Unauthorized",
+            codexErrorInfo: "unauthorized",
+            additionalDetails: "code=refresh_token_reused",
+          },
+        },
+      },
+    };
+
+    const html = renderToStaticMarkup(<SessionEntry item={entry} />);
+
+    expect(html).toContain("ERROR");
+    expect(html).toContain("执行失败");
+    expect(html).toContain("unauthorized");
+    expect(html).toContain("刷新 Codex token 返回 401 Unauthorized");
+    expect(html).toContain("code=refresh_token_reused");
+    expect(html).toContain("turn turn-1");
   });
 });
 

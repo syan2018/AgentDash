@@ -1,8 +1,8 @@
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunDeliveryBindingRepository, DeliveryBindingStatus, LifecycleAgent,
-    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
+    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -197,18 +197,8 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             });
         }
 
-        self.selection_from_anchor(
-            agent,
-            current_frame.id,
-            anchor,
-            binding.status,
-            binding.active_turn_id,
-            binding.last_turn_id,
-            binding.terminal_state,
-            binding.terminal_message,
-            binding.observed_at,
-        )
-        .await
+        self.selection_from_anchor(agent, current_frame.id, anchor, binding)
+            .await
     }
 
     async fn ensure_run(&self, run_id: Uuid) -> Result<(), DeliveryRuntimeSelectionError> {
@@ -246,12 +236,7 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
         agent: LifecycleAgent,
         current_frame_id: Uuid,
         anchor: RuntimeSessionExecutionAnchor,
-        status: DeliveryBindingStatus,
-        active_turn_id: Option<String>,
-        last_turn_id: Option<String>,
-        terminal_state: Option<String>,
-        terminal_message: Option<String>,
-        observed_at: DateTime<Utc>,
+        binding: AgentRunDeliveryBinding,
     ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
         self.repos.agent_frames.get(current_frame_id).await?.ok_or(
             DeliveryRuntimeSelectionError::CurrentFrameNotFound {
@@ -275,12 +260,12 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             orchestration_id: anchor.orchestration_id,
             node_path: anchor.node_path.clone(),
             node_attempt: anchor.node_attempt,
-            status,
-            active_turn_id,
-            last_turn_id,
-            terminal_state,
-            terminal_message,
-            observed_at,
+            status: binding.status,
+            active_turn_id: binding.active_turn_id,
+            last_turn_id: binding.last_turn_id,
+            terminal_state: binding.terminal_state,
+            terminal_message: binding.terminal_message,
+            observed_at: binding.observed_at,
             address: AgentRunRuntimeAddress {
                 run_id: anchor.run_id,
                 agent_id: agent.id,

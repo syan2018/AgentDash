@@ -747,6 +747,90 @@ fn provider_attempt_status_maps_to_platform_event() {
 }
 
 #[test]
+fn provider_run_error_maps_to_error_event() {
+    let event = AgentEvent::RunError {
+        error: agentdash_agent::AgentRunError::new(
+            agentdash_agent::AgentRunErrorKind::Provider,
+            "刷新 Codex token 返回 401 Unauthorized",
+        )
+        .with_code(Some("auth_error".to_string()))
+        .with_http_status(Some(401)),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::Error(error) => {
+            assert_eq!(error.thread_id, "session-1");
+            assert_eq!(error.turn_id, "turn-1");
+            assert_eq!(
+                error.error.message,
+                "刷新 Codex token 返回 401 Unauthorized"
+            );
+            assert_eq!(
+                error.error.codex_error_info,
+                Some(codex::CodexErrorInfo::Unauthorized)
+            );
+            assert!(!error.will_retry);
+            assert_eq!(
+                error.error.additional_details.as_deref(),
+                Some("kind=Provider\ncode=auth_error\nhttp_status=401")
+            );
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn assistant_error_message_end_maps_to_error_event_only() {
+    let event = AgentEvent::MessageEnd {
+        message: agentdash_agent::AgentMessage::Assistant {
+            content: vec![ContentPart::text("刷新 Codex token 返回 401 Unauthorized")],
+            tool_calls: vec![],
+            stop_reason: Some(StopReason::Error),
+            error_message: Some("刷新 Codex token 返回 401 Unauthorized".to_string()),
+            usage: None,
+            timestamp: Some(agentdash_agent::types::now_millis()),
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    assert_eq!(entry_index, 0);
+    assert!(matches!(envelopes[0].event, BackboneEvent::Error(_)));
+    assert!(!envelopes.iter().any(|envelope| {
+        matches!(
+            envelope.event,
+            BackboneEvent::AgentMessageDelta(_) | BackboneEvent::ItemCompleted(_)
+        )
+    }));
+}
+
+#[test]
 fn tool_call_stream_events_map_to_pending_start_and_updates() {
     let start_event = AgentEvent::MessageUpdate {
         message: AgentMessage::Assistant {

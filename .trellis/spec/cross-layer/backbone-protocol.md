@@ -114,6 +114,16 @@ PlatformEvent::ProviderAttemptStatus(ProviderAttemptStatus)
 PlatformEvent::SessionRewound(SessionRewound)
 ```
 
+Agent run 运行失败使用结构化 `AgentEvent::RunError` 进入 Backbone：
+
+```rust
+BackboneEvent::Error(codex::ErrorNotification)
+```
+
+`RunError` 的稳定 catch 字段是 `kind`、`code`、`http_status`、`retryable` 与 `aborted`。
+Provider 失败只是 `kind=provider` 的 run error；Hook 阻止、runtime delegate 失败、工具运行
+失败也应收束到同一错误事实模型，再由 session/前端消费统一的 `ErrorNotification`。
+
 `ProviderAttemptStatus` 字段：
 
 - `turn_id: String`
@@ -141,6 +151,8 @@ PlatformEvent::SessionRewound(SessionRewound)
 
 - `ProviderAttemptStatus` 是运行状态，不是 assistant message。前端可以渲染 Thinking /
   Reconnecting / retry exhausted，但不能把该文案写入模型上下文。
+- `ErrorNotification` 是错误事实展示事件，不是 assistant message。前端按 `TurnError` 渲染
+  错误块；运行终态由 AgentRun/RuntimeSession terminal 决定，不从 assistant transcript 推断。
 - `ErrorNotification { will_retry: true }` 是 Codex-style intermediate state；它不是 terminal
   failed，也不更新 turn summary。attempt/max/delay/provider 等细节来自
   `ProviderAttemptStatus`。

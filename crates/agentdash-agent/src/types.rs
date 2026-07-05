@@ -75,6 +75,9 @@ pub enum AgentEvent {
     ProviderAttemptStatus {
         status: ProviderAttemptStatus,
     },
+    RunError {
+        error: AgentRunError,
+    },
     ToolExecutionStart {
         tool_call_id: String,
         tool_name: String,
@@ -128,6 +131,67 @@ pub struct ProviderAttemptStatus {
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunErrorKind {
+    Provider,
+    HookBlocked,
+    Runtime,
+    Tool,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Error)]
+#[error("{message}")]
+pub struct AgentRunError {
+    pub kind: AgentRunErrorKind,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default)]
+    pub aborted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+
+impl AgentRunError {
+    pub fn new(kind: AgentRunErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            code: None,
+            retryable: false,
+            aborted: false,
+            http_status: None,
+            details: None,
+        }
+    }
+
+    pub fn with_code(mut self, code: Option<String>) -> Self {
+        self.code = code;
+        self
+    }
+
+    pub fn with_retryable(mut self, retryable: bool) -> Self {
+        self.retryable = retryable;
+        self
+    }
+
+    pub fn with_aborted(mut self, aborted: bool) -> Self {
+        self.aborted = aborted;
+        self
+    }
+
+    pub fn with_http_status(mut self, http_status: Option<u16>) -> Self {
+        self.http_status = http_status;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,6 +311,8 @@ pub enum AssistantStreamEvent {
 
 #[derive(Debug, Error)]
 pub enum AgentError {
+    #[error("{0}")]
+    Run(Box<AgentRunError>),
     #[error("LLM 桥接层错误: {0}")]
     Bridge(#[from] crate::bridge::BridgeError),
     #[error("工具执行错误: {tool_name}: {source}")]
@@ -262,4 +328,10 @@ pub enum AgentError {
     InvalidState(String),
     #[error("运行时委托错误: {0}")]
     RuntimeDelegate(String),
+}
+
+impl From<AgentRunError> for AgentError {
+    fn from(error: AgentRunError) -> Self {
+        Self::Run(Box::new(error))
+    }
 }

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::{iter::Peekable, str::Chars, sync::Arc};
 
 use agentdash_agent::{
-    AgentEvent, AgentMessage, AgentToolResult, ContentPart, TokenUsage, ToolResultAddressProvider,
-    stable_tool_result_item_id,
+    AgentEvent, AgentMessage, AgentRunError, AgentRunErrorKind, AgentToolResult, ContentPart,
+    TokenUsage, ToolResultAddressProvider, stable_tool_result_item_id,
 };
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
@@ -219,6 +219,82 @@ fn provider_attempt_status_to_protocol(
         provider: status.provider.clone(),
         model: status.model.clone(),
     }
+}
+
+fn run_error_notification(
+    session_id: &str,
+    turn_id: &str,
+    error: &AgentRunError,
+) -> codex::ErrorNotification {
+    error_notification(
+        session_id,
+        turn_id,
+        &error.message,
+        Some(run_error_codex_error_info(error)),
+        run_error_details(error),
+    )
+}
+
+fn error_notification(
+    session_id: &str,
+    turn_id: &str,
+    message: &str,
+    codex_error_info: Option<codex::CodexErrorInfo>,
+    additional_details: Option<String>,
+) -> codex::ErrorNotification {
+    codex::ErrorNotification {
+        error: codex::TurnError {
+            message: message.to_string(),
+            codex_error_info,
+            additional_details,
+        },
+        will_retry: false,
+        thread_id: session_id.to_string(),
+        turn_id: turn_id.to_string(),
+    }
+}
+
+fn run_error_codex_error_info(error: &AgentRunError) -> codex::CodexErrorInfo {
+    if error.aborted {
+        return codex::CodexErrorInfo::Other;
+    }
+    match error.http_status {
+        Some(401 | 403) => codex::CodexErrorInfo::Unauthorized,
+        Some(400 | 422) => codex::CodexErrorInfo::BadRequest,
+        Some(500..=599) => codex::CodexErrorInfo::InternalServerError,
+        _ => match (error.kind, error.code.as_deref()) {
+            (AgentRunErrorKind::HookBlocked, _) => codex::CodexErrorInfo::BadRequest,
+            (
+                _,
+                Some("auth_error" | "unauthorized" | "invalid_api_key" | "invalid_credentials"),
+            ) => codex::CodexErrorInfo::Unauthorized,
+            (_, Some("invalid_request" | "invalid_request_error")) => {
+                codex::CodexErrorInfo::BadRequest
+            }
+            (_, Some("provider_5xx")) => codex::CodexErrorInfo::InternalServerError,
+            (_, Some("timeout" | "rate_limited" | "transient_provider_error")) => {
+                codex::CodexErrorInfo::ResponseStreamConnectionFailed {
+                    http_status_code: error.http_status,
+                }
+            }
+            _ => codex::CodexErrorInfo::Other,
+        },
+    }
+}
+
+fn run_error_details(error: &AgentRunError) -> Option<String> {
+    let mut parts = Vec::new();
+    parts.push(format!("kind={:?}", error.kind));
+    if let Some(code) = error.code.as_deref() {
+        parts.push(format!("code={code}"));
+    }
+    if let Some(http_status) = error.http_status {
+        parts.push(format!("http_status={http_status}"));
+    }
+    if error.retryable {
+        parts.push("retryable=true".to_string());
+    }
+    (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
 /// 从 shell_exec 的 args JSON 中提取 command / cwd。
@@ -804,6 +880,11 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
             )]
         }
 
+        AgentEvent::RunError { error } => vec![wrap(
+            BackboneEvent::Error(run_error_notification(session_id, turn_id, error)),
+            *entry_index,
+        )],
+
         AgentEvent::MessageUpdate {
             message,
             event: stream_event,
@@ -983,19 +1064,26 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                 if matches!(stop_reason, Some(agentdash_agent::StopReason::Aborted)) {
                     return Vec::new();
                 }
+                if let Some(error_message) = error_message {
+                    let error =
+                        AgentRunError::new(AgentRunErrorKind::Unknown, error_message.clone())
+                            .with_code(Some("assistant_error_message".to_string()));
+                    return vec![wrap(
+                        BackboneEvent::Error(run_error_notification(session_id, turn_id, &error)),
+                        *entry_index,
+                    )];
+                }
 
                 let reasoning_text = content
                     .iter()
                     .filter_map(ContentPart::extract_reasoning)
                     .collect::<Vec<_>>()
                     .join("");
-                let text = error_message.clone().unwrap_or_else(|| {
-                    content
-                        .iter()
-                        .filter_map(ContentPart::extract_text)
-                        .collect::<Vec<_>>()
-                        .join("")
-                });
+                let text = content
+                    .iter()
+                    .filter_map(ContentPart::extract_text)
+                    .collect::<Vec<_>>()
+                    .join("");
 
                 let mut envelopes = Vec::new();
 
@@ -1138,7 +1226,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                     ));
                 }
 
-                if has_streamable_content || error_message.is_some() || !tool_calls.is_empty() {
+                if has_streamable_content || !tool_calls.is_empty() {
                     *entry_index += 1;
                 }
                 if !matches!(
@@ -1186,18 +1274,13 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                     *entry_index,
                 ),
                 wrap(
-                    BackboneEvent::Error(codex::ErrorNotification {
-                        error: codex::TurnError {
-                            message: error.clone(),
-                            codex_error_info: None,
-                            additional_details: Some(format!(
-                                "context_compaction_item_id={item_id}"
-                            )),
-                        },
-                        will_retry: false,
-                        thread_id: session_id.to_string(),
-                        turn_id: turn_id.to_string(),
-                    }),
+                    BackboneEvent::Error(error_notification(
+                        session_id,
+                        turn_id,
+                        error,
+                        None,
+                        Some(format!("context_compaction_item_id={item_id}")),
+                    )),
                     *entry_index,
                 ),
             ]

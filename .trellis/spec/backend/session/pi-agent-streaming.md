@@ -192,7 +192,10 @@ provider_fatal_error(message, code)
 - Bridge tests assert HTTP `429`/`408`/`5xx`, fatal body codes, Codex usage/rate-limit fatal behavior,
   and rate-limit headers populate `ProviderErrorClassification`.
 - Executor tests assert `AgentEvent::ProviderAttemptStatus` maps to
-  `PlatformEvent::ProviderAttemptStatus`.
+  `PlatformEvent::ProviderAttemptStatus`, and `AgentEvent::RunError` maps to the unified
+  `BackboneEvent::Error`.
+- Agent tests assert provider stream failure emits `AgentEvent::RunError(kind=provider)` and fails
+  the run instead of appending assistant transcript content.
 - Session/application tests assert failed turns append `SessionRewound` with the failed
   `entry_index`, and next projected transcript excludes only that AgentLoop child round's
   assistant/tool output while preserving user input and earlier successful child rounds in the same

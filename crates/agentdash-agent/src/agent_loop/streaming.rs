@@ -9,9 +9,9 @@ use crate::bridge::{
     StreamChunk, ToolCallDeltaContent, sleep_for_retry,
 };
 use crate::types::{
-    AgentContext, AgentError, AgentEvent, AgentMessage, AssistantStreamEvent,
-    BeforeProviderRequestInput, CompactionFailureInput, ContentPart, DynAgentTool,
-    EvaluateCompactionInput, ProviderAttemptPhase, ProviderAttemptStatus,
+    AgentContext, AgentError, AgentEvent, AgentMessage, AgentRunError, AgentRunErrorKind,
+    AssistantStreamEvent, BeforeProviderRequestInput, CompactionFailureInput, ContentPart,
+    DynAgentTool, EvaluateCompactionInput, ProviderAttemptPhase, ProviderAttemptStatus,
     ProviderVisibleContextStats, ToolCallInfo, TransformContextInput, estimate_request_tokens,
     now_millis,
 };
@@ -131,10 +131,19 @@ pub(super) async fn stream_assistant_response(
             .await
             .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
         if let Some(reason) = output.blocked {
-            return Ok(AgentMessage::error_assistant(
+            let error = AgentRunError::new(
+                AgentRunErrorKind::HookBlocked,
                 format!("输入被 Hook 规则阻止: {reason}"),
-                false,
-            ));
+            )
+            .with_code(Some("hook_blocked".to_string()));
+            emit_event(
+                emit,
+                AgentEvent::RunError {
+                    error: error.clone(),
+                },
+            )
+            .await;
+            return Err(error.into());
         }
         output.steering_messages
     } else if let Some(ref transform) = config.transform_context {
@@ -325,7 +334,10 @@ pub(super) async fn stream_assistant_response(
             let chunk = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => {
-                    stream_failure = Some(AgentMessage::error_assistant("Agent run aborted", true));
+                    stream_failure = Some(BridgeError::provider(
+                        "Agent run aborted",
+                        ProviderErrorClassification::aborted(),
+                    ));
                     break;
                 }
                 chunk = stream.next() => chunk,
@@ -334,7 +346,10 @@ pub(super) async fn stream_assistant_response(
                 break;
             };
             if cancel.is_cancelled() {
-                stream_failure = Some(AgentMessage::error_assistant("Agent run aborted", true));
+                stream_failure = Some(BridgeError::provider(
+                    "Agent run aborted",
+                    ProviderErrorClassification::aborted(),
+                ));
                 break;
             }
             match chunk {
@@ -634,9 +649,7 @@ pub(super) async fn stream_assistant_response(
                     if is_retryable_pre_delta(&error, has_visible_delta) {
                         retry_error = Some(error);
                     } else {
-                        let aborted = error.is_aborted();
-                        stream_failure =
-                            Some(AgentMessage::error_assistant(error.to_string(), aborted));
+                        stream_failure = Some(error);
                     }
                     break;
                 }
@@ -688,16 +701,13 @@ pub(super) async fn stream_assistant_response(
             }
 
             emit_retry_exhausted(emit, attempt, retry_policy, &error, &classification).await;
-            stream_failure = Some(AgentMessage::error_assistant(error.to_string(), false));
+            stream_failure = Some(error);
             break;
         }
 
         let empty_error = BridgeError::EmptyResponse;
         if has_visible_delta {
-            stream_failure = Some(AgentMessage::error_assistant(
-                empty_error.to_string(),
-                false,
-            ));
+            stream_failure = Some(empty_error);
             break;
         }
         let classification = empty_error.classification();
@@ -726,41 +736,42 @@ pub(super) async fn stream_assistant_response(
         && response.is_none()
         && let Some(error) = last_pre_delta_error
     {
-        stream_failure = Some(AgentMessage::error_assistant(error.to_string(), false));
+        stream_failure = Some(error);
     }
 
     end_active_text(context, emit, &mut partial).await;
     end_active_reasoning(context, emit, &mut partial).await;
 
-    let assistant_message = if let Some(message) = stream_failure {
-        message
-    } else {
-        let response = response.ok_or(crate::bridge::BridgeError::EmptyResponse)?;
-        match response.message {
-            AgentMessage::Assistant {
-                content,
-                tool_calls,
-                stop_reason,
-                error_message,
-                ..
-            } => AgentMessage::Assistant {
-                content,
-                tool_calls: tool_calls.clone(),
-                stop_reason: stop_reason.or_else(|| {
-                    Some(if error_message.is_some() {
-                        crate::types::StopReason::Error
-                    } else if tool_calls.is_empty() {
-                        crate::types::StopReason::Stop
-                    } else {
-                        crate::types::StopReason::ToolUse
-                    })
-                }),
-                error_message,
-                usage: Some(response.usage.clone()),
-                timestamp: Some(crate::types::now_millis()),
-            },
-            other => other,
-        }
+    if let Some(error) = stream_failure {
+        emit_provider_failure(emit, &error).await;
+        return Err(error.into());
+    }
+
+    let response = response.ok_or(crate::bridge::BridgeError::EmptyResponse)?;
+    let assistant_message = match response.message {
+        AgentMessage::Assistant {
+            content,
+            tool_calls,
+            stop_reason,
+            error_message,
+            ..
+        } => AgentMessage::Assistant {
+            content,
+            tool_calls: tool_calls.clone(),
+            stop_reason: stop_reason.or_else(|| {
+                Some(if error_message.is_some() {
+                    crate::types::StopReason::Error
+                } else if tool_calls.is_empty() {
+                    crate::types::StopReason::Stop
+                } else {
+                    crate::types::StopReason::ToolUse
+                })
+            }),
+            error_message,
+            usage: Some(response.usage.clone()),
+            timestamp: Some(crate::types::now_millis()),
+        },
+        other => other,
     };
 
     if assistant_message.is_aborted() {
@@ -900,6 +911,21 @@ async fn mark_visible_delta(
 
 async fn emit_provider_status(emit: &AgentEventSink, status: ProviderAttemptStatus) {
     emit_event(emit, AgentEvent::ProviderAttemptStatus { status }).await;
+}
+
+async fn emit_provider_failure(emit: &AgentEventSink, error: &BridgeError) {
+    let classification = error.classification();
+    emit_event(
+        emit,
+        AgentEvent::RunError {
+            error: AgentRunError::new(AgentRunErrorKind::Provider, error.to_string())
+                .with_code(provider_reason_code(&classification))
+                .with_retryable(classification.is_retryable_before_visible_delta())
+                .with_aborted(error.is_aborted())
+                .with_http_status(classification.http_status),
+        },
+    )
+    .await;
 }
 
 async fn emit_retry_scheduled(

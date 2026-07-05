@@ -149,22 +149,6 @@ impl AgentMessage {
         }
     }
 
-    pub fn error_assistant(error_message: impl Into<String>, aborted: bool) -> Self {
-        let msg = error_message.into();
-        Self::Assistant {
-            content: vec![ContentPart::text(&msg)],
-            tool_calls: vec![],
-            stop_reason: Some(if aborted {
-                StopReason::Aborted
-            } else {
-                StopReason::Error
-            }),
-            error_message: Some(msg),
-            usage: Some(TokenUsage::default()),
-            timestamp: Some(now_millis()),
-        }
-    }
-
     pub fn is_error_or_aborted(&self) -> bool {
         matches!(
             self,

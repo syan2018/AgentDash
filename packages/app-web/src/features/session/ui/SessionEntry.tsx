@@ -42,12 +42,12 @@ import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { CodexErrorInfo, ErrorNotification } from "../../../generated/backbone-protocol";
 
 export interface SessionEntryProps {
   item: SessionDisplayItem;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   isStreaming?: boolean;
-  sessionId?: string | null;
   /** 该条目后面是否紧跟 agent message（用于 tool group 自动折叠） */
   followedByMessage?: boolean;
 }
@@ -56,7 +56,6 @@ export const SessionEntry = memo(function SessionEntry({
   item,
   agentRunTarget,
   isStreaming,
-  sessionId,
   followedByMessage,
 }: SessionEntryProps) {
   if (isAggregatedGroup(item)) {
@@ -64,7 +63,6 @@ export const SessionEntry = memo(function SessionEntry({
       <AggregatedToolGroupEntry
         group={item}
         agentRunTarget={agentRunTarget}
-        sessionId={sessionId}
         followedByMessage={followedByMessage}
       />
     );
@@ -84,7 +82,6 @@ export const SessionEntry = memo(function SessionEntry({
         entry={item}
         agentRunTarget={agentRunTarget}
         isStreaming={!!isStreaming}
-        sessionId={sessionId}
       />
     );
   }
@@ -96,12 +93,10 @@ export function SingleEntry({
   entry,
   agentRunTarget,
   isStreaming = false,
-  sessionId,
 }: {
   entry: SessionDisplayEntry;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   isStreaming?: boolean;
-  sessionId?: string | null;
 }) {
   const { event, isPendingApproval, accumulatedText } = entry;
   const { prefs } = useDebugPrefs();
@@ -132,7 +127,7 @@ export function SingleEntry({
     case "item_completed": {
       const threadItem = event.payload.item;
       const card = renderToolCallCard(threadItem, {
-        sessionId: sessionId ?? undefined,
+        sessionId: entry.sessionId,
         outputText: accumulatedText,
       });
       return (
@@ -142,7 +137,6 @@ export function SingleEntry({
           status={card.status}
           isPendingApproval={isPendingApproval}
           agentRunTarget={agentRunTarget}
-          sessionId={sessionId ?? undefined}
           itemId={threadItem.id}
           durationMs={card.durationMs}
         >
@@ -167,14 +161,7 @@ export function SingleEntry({
     }
 
     case "error": {
-      return (
-        <div className="flex items-center gap-2 px-2 py-1 text-xs">
-          <span className="inline-flex rounded-[4px] border border-destructive/25 bg-destructive/10 px-1 py-px text-[9px] font-semibold tracking-[0.08em] text-destructive">
-            错误
-          </span>
-          <span className="text-destructive">{event.payload.error.message}</span>
-        </div>
-      );
+      return <SessionErrorCard notification={event.payload} />;
     }
 
     case "user_input_submitted": {
@@ -191,7 +178,7 @@ export function SingleEntry({
         return (
           <SessionSystemEventCard
             event={event}
-            sessionId={sessionId ?? undefined}
+            sessionId={entry.sessionId}
             contextFrame={entry.contextFrame}
           />
         );
@@ -203,6 +190,80 @@ export function SingleEntry({
     default:
       return null;
   }
+}
+
+function SessionErrorCard({ notification }: { notification: ErrorNotification }) {
+  const { error } = notification;
+  const errorInfo = formatCodexErrorInfo(error.codexErrorInfo);
+  const details = error.additionalDetails?.trim();
+
+  return (
+    <div className="rounded-[8px] border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex rounded-[4px] border border-destructive/25 bg-background/60 px-1.5 py-px text-[10px] font-semibold">
+          ERROR
+        </span>
+        <span className="font-medium">
+          {notification.willRetry ? "执行错误，等待重试" : "执行失败"}
+        </span>
+        {errorInfo && (
+          <span className="font-mono text-[11px] text-destructive/80">{errorInfo}</span>
+        )}
+      </div>
+
+      <pre className="mt-2 whitespace-pre-wrap wrap-anywhere font-sans text-sm leading-6 text-foreground">
+        {error.message}
+      </pre>
+
+      {details && (
+        <details className="mt-2 text-xs text-destructive/80" open>
+          <summary className="cursor-pointer select-none">错误详情</summary>
+          <pre className="mt-1 whitespace-pre-wrap wrap-anywhere rounded-[6px] bg-background/60 px-2 py-1.5 font-mono text-[11px] leading-5 text-foreground/80">
+            {details}
+          </pre>
+        </details>
+      )}
+
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-destructive/70">
+        <span>turn {notification.turnId}</span>
+        <span>thread {notification.threadId}</span>
+      </div>
+    </div>
+  );
+}
+
+function formatCodexErrorInfo(info: CodexErrorInfo | null): string | null {
+  if (info == null) return null;
+  if (typeof info === "string") return info;
+  if ("httpConnectionFailed" in info) {
+    return formatHttpErrorInfo("http_connection_failed", info.httpConnectionFailed.httpStatusCode);
+  }
+  if ("responseStreamConnectionFailed" in info) {
+    return formatHttpErrorInfo(
+      "response_stream_connection_failed",
+      info.responseStreamConnectionFailed.httpStatusCode,
+    );
+  }
+  if ("responseStreamDisconnected" in info) {
+    return formatHttpErrorInfo(
+      "response_stream_disconnected",
+      info.responseStreamDisconnected.httpStatusCode,
+    );
+  }
+  if ("responseTooManyFailedAttempts" in info) {
+    return formatHttpErrorInfo(
+      "response_too_many_failed_attempts",
+      info.responseTooManyFailedAttempts.httpStatusCode,
+    );
+  }
+  if ("activeTurnNotSteerable" in info) {
+    return `active_turn_not_steerable:${info.activeTurnNotSteerable.turnKind}`;
+  }
+  return null;
+}
+
+function formatHttpErrorInfo(kind: string, httpStatusCode: number | null): string {
+  return httpStatusCode == null ? kind : `${kind}:HTTP ${httpStatusCode}`;
 }
 
 function AggregatedContextFrameGroupEntry({
@@ -224,12 +285,10 @@ function AggregatedContextFrameGroupEntry({
 function AggregatedToolGroupEntry({
   group,
   agentRunTarget,
-  sessionId,
   followedByMessage = false,
 }: {
   group: AggregatedEntryGroup;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  sessionId?: string | null;
   /** 后续有 agent message 时自动折叠 */
   followedByMessage?: boolean;
 }) {
@@ -277,7 +336,6 @@ function AggregatedToolGroupEntry({
               key={entry.id}
               entry={entry}
               agentRunTarget={agentRunTarget}
-              sessionId={sessionId}
             />
           ))}
         </div>

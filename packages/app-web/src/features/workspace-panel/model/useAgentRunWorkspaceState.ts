@@ -1,19 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { AgentFrameRuntimeView, AgentRunWorkspaceView } from "../../../types";
 import type { AgentFrameHookRuntimeInfo } from "../../../types";
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchAgentRunWorkspace } from "../../../services/lifecycle";
-import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
+import type { WorkspaceRuntimeStateStatus } from "../../workspace-runtime";
 
-export interface AgentRunWorkspaceProjectionState {
+export interface AgentRunWorkspaceState {
   run_id: string | null;
   agent_id: string | null;
   source_key: string | null;
-  status: SessionRuntimeStateStatus;
+  status: WorkspaceRuntimeStateStatus;
   workspace: AgentRunWorkspaceView | null;
-  runtime_session_id: string | null;
   runtime_surface: ResolvedVfsSurface | null;
   hook_runtime: AgentFrameHookRuntimeInfo | null;
   frame: AgentFrameRuntimeView | null;
@@ -29,14 +28,13 @@ interface UseAgentRunWorkspaceStateInput {
 
 type AgentRunWorkspaceLoadMode = "replace" | "refresh";
 
-export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceProjectionState {
+export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceState {
   return {
     run_id: null,
     agent_id: null,
     source_key: null,
     status: "idle",
     workspace: null,
-    runtime_session_id: null,
     runtime_surface: null,
     hook_runtime: null,
     frame: null,
@@ -46,7 +44,7 @@ export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceProjectionState 
 }
 
 function stateMatches(
-  state: AgentRunWorkspaceProjectionState,
+  state: AgentRunWorkspaceState,
   runId: string,
   agentId: string,
   sourceKey: string,
@@ -65,12 +63,12 @@ export function agentRunWorkspaceResourceSurface(
 }
 
 export function beginAgentRunWorkspaceStateLoad(
-  current: AgentRunWorkspaceProjectionState,
+  current: AgentRunWorkspaceState,
   runId: string,
   agentId: string,
   sourceKey: string,
   mode: AgentRunWorkspaceLoadMode,
-): AgentRunWorkspaceProjectionState {
+): AgentRunWorkspaceState {
   if (mode === "refresh" && stateMatches(current, runId, agentId, sourceKey)) {
     return {
       ...current,
@@ -90,13 +88,13 @@ export function beginAgentRunWorkspaceStateLoad(
 }
 
 export function failAgentRunWorkspaceStateLoad(
-  current: AgentRunWorkspaceProjectionState,
+  current: AgentRunWorkspaceState,
   runId: string,
   agentId: string,
   sourceKey: string,
   mode: AgentRunWorkspaceLoadMode,
   message: string,
-): AgentRunWorkspaceProjectionState {
+): AgentRunWorkspaceState {
   if (mode === "refresh" && stateMatches(current, runId, agentId, sourceKey)) {
     return {
       ...current,
@@ -120,7 +118,7 @@ export function useAgentRunWorkspaceState({
   agentId,
   sourceKey,
 }: UseAgentRunWorkspaceStateInput) {
-  const [state, setState] = useState<AgentRunWorkspaceProjectionState>(() => emptyAgentRunWorkspaceState());
+  const [state, setState] = useState<AgentRunWorkspaceState>(() => emptyAgentRunWorkspaceState());
   const setAgent = useLifecycleStore((s) => s.setAgent);
   const setFrame = useLifecycleStore((s) => s.setFrame);
 
@@ -137,7 +135,6 @@ export function useAgentRunWorkspaceState({
 
     try {
       const workspace = await fetchAgentRunWorkspace(rid, aid);
-      const runtimeSessionId = workspace.delivery_runtime_ref?.runtime_session_id ?? null;
       const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
 
       if (!canCommit()) return workspace;
@@ -153,7 +150,6 @@ export function useAgentRunWorkspaceState({
         source_key: skey,
         status: "ready",
         workspace,
-        runtime_session_id: runtimeSessionId,
         runtime_surface: runtimeSurface,
         hook_runtime: null,
         frame: workspace.frame_runtime ?? null,

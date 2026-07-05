@@ -7,7 +7,8 @@ use agentdash_application_ports::lifecycle_materialization::{
 use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
 use agentdash_domain::workflow::{
-    AgentPolicy, AgentProcedureContract, AgentRuntimeRefs, AgentSource, DeliveryBindingStatus,
+    AgentPolicy, AgentProcedureContract, AgentRunDeliveryBinding,
+    AgentRunDeliveryBindingRepository, AgentRuntimeRefs, AgentSource, DeliveryBindingStatus,
     ExecutionSource, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
     OrchestrationBindingRefs, RuntimePolicy, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository,
@@ -24,6 +25,7 @@ use super::plan::{
 pub(crate) struct AgentRuntimeMaterializer<'a> {
     agent_repo: &'a dyn LifecycleAgentRepository,
     anchor_repo: Option<&'a dyn RuntimeSessionExecutionAnchorRepository>,
+    delivery_binding_repo: Option<&'a dyn AgentRunDeliveryBindingRepository>,
     runtime_session_creator:
         Option<&'a dyn runtime_session_delivery_port::RuntimeSessionCreationPort>,
     frame_construction:
@@ -36,6 +38,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
     pub(crate) fn new(
         agent_repo: &'a dyn LifecycleAgentRepository,
         anchor_repo: Option<&'a dyn RuntimeSessionExecutionAnchorRepository>,
+        delivery_binding_repo: Option<&'a dyn AgentRunDeliveryBindingRepository>,
         runtime_session_creator: Option<
             &'a dyn runtime_session_delivery_port::RuntimeSessionCreationPort,
         >,
@@ -49,6 +52,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         Self {
             agent_repo,
             anchor_repo,
+            delivery_binding_repo,
             runtime_session_creator,
             frame_construction,
             workflow_agent_frame_materialization,
@@ -68,7 +72,6 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         let frame_id = self
             .construct_launch_anchor_frame(&agent, runtime_session_ref)
             .await?;
-        let mut agent = agent;
 
         if let (Some(anchor_repo), Some(session_id)) = (self.anchor_repo, runtime_session_ref) {
             let anchor = match &orchestration_binding {
@@ -88,13 +91,20 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                     agent.id,
                 ),
             };
-            anchor_repo.upsert(&anchor).await?;
-            agent.bind_current_delivery_from_anchor(
-                &anchor,
-                DeliveryBindingStatus::Ready,
-                chrono::Utc::now(),
-            );
-            self.agent_repo.update(&agent).await?;
+            anchor_repo.create_once(&anchor).await?;
+            let binding_repo = self.delivery_binding_repo.ok_or_else(|| {
+                WorkflowApplicationError::Internal(
+                    "RuntimeSession current delivery binding 缺少 AgentRunDeliveryBindingRepository"
+                        .to_string(),
+                )
+            })?;
+            binding_repo
+                .upsert(&AgentRunDeliveryBinding::from_anchor(
+                    &anchor,
+                    DeliveryBindingStatus::Ready,
+                    chrono::Utc::now(),
+                ))
+                .await?;
         }
 
         let runtime_refs = AgentRuntimeRefs::new(run.id, agent.id, frame_id, orchestration_binding);
@@ -137,7 +147,6 @@ impl<'a> AgentRuntimeMaterializer<'a> {
             )
             .await?;
 
-        let mut agent = agent;
         let anchor_repo = self.anchor_repo.ok_or_else(|| {
             WorkflowApplicationError::Internal(
                 "Workflow AgentCall materialization 缺少 RuntimeSessionExecutionAnchorRepository"
@@ -153,13 +162,20 @@ impl<'a> AgentRuntimeMaterializer<'a> {
             request.orchestration_binding.node_path.clone(),
             request.orchestration_binding.attempt,
         );
-        anchor_repo.upsert(&anchor).await?;
-        agent.bind_current_delivery_from_anchor(
-            &anchor,
-            DeliveryBindingStatus::Ready,
-            chrono::Utc::now(),
-        );
-        self.agent_repo.update(&agent).await?;
+        anchor_repo.create_once(&anchor).await?;
+        let binding_repo = self.delivery_binding_repo.ok_or_else(|| {
+            WorkflowApplicationError::Internal(
+                "Workflow AgentCall materialization 缺少 AgentRunDeliveryBindingRepository"
+                    .to_string(),
+            )
+        })?;
+        binding_repo
+            .upsert(&AgentRunDeliveryBinding::from_anchor(
+                &anchor,
+                DeliveryBindingStatus::Ready,
+                chrono::Utc::now(),
+            ))
+            .await?;
 
         Ok(WorkflowAgentNodeMaterializationResult {
             runtime_refs: AgentRuntimeRefs::new(

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import type { AgentRunOwnershipView } from "../../../generated/workflow-contracts";
@@ -11,7 +11,7 @@ import {
   beginAgentRunWorkspaceStateLoad,
   emptyAgentRunWorkspaceState,
   failAgentRunWorkspaceStateLoad,
-  type AgentRunWorkspaceProjectionState,
+  type AgentRunWorkspaceState,
 } from "./useAgentRunWorkspaceState";
 
 const frameRuntime: AgentFrameRuntimeView = {
@@ -39,11 +39,9 @@ const workspace: AgentRunWorkspaceView = {
   shell: {
     display_title: "Workspace title",
     title_source: "session_meta",
-    workspace_status: "running",
     delivery_status: "running",
     last_activity_at: "2026-06-12T00:00:00.000Z",
   },
-  delivery_runtime_ref: { runtime_session_id: "session-1" },
   control_plane: {
     status: "running",
     ownership,
@@ -76,7 +74,7 @@ const runtimeSurface: ResolvedVfsSurface = {
   default_mount_id: "main",
 };
 
-function loadedState(): AgentRunWorkspaceProjectionState {
+function loadedState(): AgentRunWorkspaceState {
   return {
     ...emptyAgentRunWorkspaceState(),
     run_id: "run-1",
@@ -84,7 +82,6 @@ function loadedState(): AgentRunWorkspaceProjectionState {
     source_key: "agentrun:run-1:agent-1",
     status: "ready",
     workspace,
-    runtime_session_id: "session-1",
     runtime_surface: runtimeSurface,
     frame: frameRuntime,
   };
@@ -107,7 +104,6 @@ describe("AgentRun workspace refresh state", () => {
             agent_id: "agent-1",
             frame_id: "frame-1",
           },
-          delivery_runtime_ref: { runtime_session_id: "session-1" },
           subject_associations: [],
         },
         execution: {
@@ -142,7 +138,7 @@ describe("AgentRun workspace refresh state", () => {
     expect(agentRunWorkspaceResourceSurface(snapshotWorkspace)).toBe(runtimeSurface);
   });
 
-  it("初始加载成功后触发 refresh 时 pending 期间保留 runtime identity 与 workspace", () => {
+  it("初始加载成功后触发 refresh 时 pending 期间保留 workspace", () => {
     const refreshing = beginAgentRunWorkspaceStateLoad(
       loadedState(),
       "run-1",
@@ -152,14 +148,13 @@ describe("AgentRun workspace refresh state", () => {
     );
 
     expect(refreshing.status).toBe("refreshing");
-    expect(refreshing.runtime_session_id).toBe("session-1");
     expect(refreshing.workspace).toBe(workspace);
     expect(refreshing.runtime_surface).toBe(runtimeSurface);
     expect(refreshing.frame).toBe(frameRuntime);
     expect(refreshing.error).toBeNull();
   });
 
-  it("refresh 失败时不清空上一帧 runtime identity", () => {
+  it("refresh 失败时不清空上一帧 workspace", () => {
     const refreshing = beginAgentRunWorkspaceStateLoad(
       loadedState(),
       "run-1",
@@ -178,7 +173,6 @@ describe("AgentRun workspace refresh state", () => {
 
     expect(failed.status).toBe("error");
     expect(failed.error).toBe("refresh failed");
-    expect(failed.runtime_session_id).toBe("session-1");
     expect(failed.workspace).toBe(workspace);
     expect(failed.runtime_surface).toBe(runtimeSurface);
     expect(failed.frame).toBe(frameRuntime);

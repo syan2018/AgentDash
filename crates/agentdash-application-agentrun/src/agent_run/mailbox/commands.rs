@@ -6,6 +6,7 @@ pub enum AgentRunMailboxCommandOutcome {
     Queued,
     Steered,
     Deleted,
+    Moved,
     Resumed,
     Blocked,
     Failed,
@@ -18,6 +19,7 @@ impl AgentRunMailboxCommandOutcome {
             Self::Queued => "queued",
             Self::Steered => "steered",
             Self::Deleted => "deleted",
+            Self::Moved => "moved",
             Self::Resumed => "resumed",
             Self::Blocked => "blocked",
             Self::Failed => "failed",
@@ -74,7 +76,7 @@ impl AgentRunMailboxCommandTarget {
 pub struct AgentRunMailboxUserMessageCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub frame_id: Uuid,
     pub source: MailboxSourceIdentity,
     pub schedule_on_submit: bool,
     pub input: Vec<UserInputBlock>,
@@ -90,7 +92,7 @@ pub struct AgentRunMailboxUserMessageCommand {
 pub struct AgentRunMailboxIntakeCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub frame_id: Uuid,
     pub origin: MailboxMessageOrigin,
     pub source: MailboxSourceIdentity,
     pub retain_payload: bool,
@@ -164,8 +166,9 @@ pub fn mailbox_source_identity_dedup_key(source: &MailboxSourceIdentity) -> Opti
 pub struct AgentRunMailboxControlCommand {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub frame_id: Uuid,
     pub message_id: Option<Uuid>,
+    pub after_message_id: Option<Uuid>,
     pub client_command_id: String,
 }
 
@@ -173,6 +176,7 @@ pub struct AgentRunMailboxControlCommand {
 pub struct AgentRunMailboxControlTargetCommand {
     pub target: AgentRunMailboxCommandTarget,
     pub message_id: Option<Uuid>,
+    pub after_message_id: Option<Uuid>,
     pub client_command_id: String,
 }
 
@@ -183,6 +187,16 @@ pub struct AgentRunMailboxCommandResult {
     pub mailbox_message: Option<AgentRunMailboxMessage>,
     pub accepted_refs: Option<AgentRunAcceptedRefs>,
     pub runtime_state: Option<SessionExecutionState>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentRunMailboxMoveCommandResult {
+    pub command_receipt: AgentRunCommandReceiptView,
+    pub outcome: AgentRunMailboxCommandOutcome,
+    pub mailbox_message: Option<AgentRunMailboxMessage>,
+    pub accepted_refs: Option<AgentRunAcceptedRefs>,
+    pub runtime_state: Option<SessionExecutionState>,
+    pub order_key: i64,
 }
 
 #[derive(Debug, Clone)]

@@ -201,7 +201,7 @@ function extractProviderAttemptStatus(event: SessionEventEnvelope): { turnId?: s
   };
 }
 
-function extractTerminalTurnId(event: SessionEventEnvelope): string | null {
+export function extractTerminalTurnId(event: SessionEventEnvelope): string | null {
   const bbEvent = event.notification.event;
   if (bbEvent.type === "turn_completed") {
     return bbEvent.payload.turn.id;

@@ -52,40 +52,6 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
             .cloned()
             .collect())
     }
-
-    async fn append_visible_canvas_mount(
-        &self,
-        frame_id: Uuid,
-        mount_id: &str,
-    ) -> Result<(), DomainError> {
-        let mut frames = self.frames.lock().await;
-        let frame = frames
-            .iter_mut()
-            .find(|frame| frame.id == frame_id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_canvas_mount(mount_id);
-        Ok(())
-    }
-
-    async fn append_visible_workspace_module_ref(
-        &self,
-        frame_id: Uuid,
-        module_ref: &str,
-    ) -> Result<(), DomainError> {
-        let mut frames = self.frames.lock().await;
-        let frame = frames
-            .iter_mut()
-            .find(|frame| frame.id == frame_id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_workspace_module_ref(module_ref);
-        Ok(())
-    }
 }
 
 #[derive(Default)]
@@ -95,16 +61,21 @@ pub(crate) struct MemoryRuntimeSessionExecutionAnchorRepository {
 
 #[async_trait::async_trait]
 impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAnchorRepository {
-    async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+    async fn create_once(
+        &self,
+        anchor: &RuntimeSessionExecutionAnchor,
+    ) -> Result<(), DomainError> {
         let mut anchors = self.anchors.lock().await;
         if let Some(existing) = anchors
-            .iter_mut()
+            .iter()
             .find(|item| item.runtime_session_id == anchor.runtime_session_id)
         {
-            *existing = anchor.clone();
-        } else {
-            anchors.push(anchor.clone());
+            if existing.has_same_launch_coordinates_as(anchor) {
+                return Ok(());
+            }
+            return Err(existing.immutable_conflict(anchor));
         }
+        anchors.push(anchor.clone());
         Ok(())
     }
 
@@ -171,19 +142,6 @@ impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAn
             .collect())
     }
 
-    async fn latest_updated_anchor_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-        Ok(self
-            .anchors
-            .lock()
-            .await
-            .iter()
-            .filter(|anchor| anchor.agent_id == agent_id)
-            .max_by_key(|anchor| anchor.updated_at)
-            .cloned())
-    }
 }
 
 #[derive(Default)]

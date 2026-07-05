@@ -1,12 +1,12 @@
-import { renderToStaticMarkup } from "react-dom/server";
+﻿import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
 import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type {
-  SessionChatCommandModel,
-  SessionChatMailboxModel,
-} from "../../session/ui/SessionChatViewTypes";
+  AgentRunChatCommandModel,
+  AgentRunChatMailboxModel,
+} from "../model/conversationCommandState";
 import { SessionWorkspacePanelActionProvider } from "../../session/ui/SessionWorkspacePanelActionProvider";
 import { terminalUriForWaitingItem } from "../model/waitingTerminal";
 import { MailboxMessageList } from "./MailboxMessageRow";
@@ -61,14 +61,14 @@ const execWaitingItem: ConversationWaitingItemView = {
 
 function renderMailboxList(options: {
   messages?: MailboxMessageView[];
-  mailbox?: Partial<SessionChatMailboxModel>;
-  promoteCommand?: SessionChatCommandModel;
-  deleteCommand?: SessionChatCommandModel;
+  mailbox?: Partial<AgentRunChatMailboxModel>;
+  promoteCommand?: AgentRunChatCommandModel;
+  deleteCommand?: AgentRunChatCommandModel;
   onRecall?: (messageId: string) => void;
   openWorkspacePanel?: () => void;
 }) {
   const messages = options.messages ?? [mailboxMessage];
-  const mailbox: SessionChatMailboxModel = {
+  const mailbox: AgentRunChatMailboxModel = {
     messages,
     waiting_items: options.mailbox?.waiting_items ?? [],
     paused: false,
@@ -99,7 +99,7 @@ function renderMailboxList(options: {
   );
 }
 
-const deleteCommand: SessionChatCommandModel = {
+const deleteCommand: AgentRunChatCommandModel = {
   kind: "delete_mailbox_message",
   command_id: "cmd-delete",
   enabled: true,
@@ -107,7 +107,7 @@ const deleteCommand: SessionChatCommandModel = {
   executor_config_policy: "forbidden",
 };
 
-const promoteCommand: SessionChatCommandModel = {
+const promoteCommand: AgentRunChatCommandModel = {
   kind: "promote_mailbox_message",
   command_id: "cmd-promote",
   enabled: true,
@@ -330,7 +330,7 @@ describe("MailboxMessageList", () => {
     expect(markup).toContain("[图]");
   });
 
-  it("renders waiting items from the workspace conversation mailbox projection", () => {
+  it("renders waiting items from the workspace conversation mailbox snapshot", () => {
     const markup = renderMailboxList({
       messages: [],
       mailbox: {

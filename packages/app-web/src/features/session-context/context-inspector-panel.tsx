@@ -5,14 +5,13 @@
  * 每个 fragment 一行。首版支持 scope / slot / source_prefix 过滤，只读，不提供编辑/
  * 禁用按钮（PRD D5 决策）。
  *
- * Context audit panel. AgentRun workspace uses AgentRun scoped context audit; trace detail can fall back to runtime trace diagnostics.
+ * Context audit panel. AgentRun workspace uses AgentRun scoped context audit.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FRAGMENT_SCOPE_TAGS,
   fetchAgentRunContextAudit,
-  fetchContextAudit,
   type ContextAuditEvent,
   type FragmentScopeTag,
 } from "../../services/contextAudit";
@@ -68,7 +67,6 @@ function describeTrigger(trigger: string): string {
 }
 
 interface ContextInspectorPanelProps {
-  sessionId: string;
   agentRunTarget?: AgentRunRuntimeTarget | null;
 }
 
@@ -78,7 +76,6 @@ interface ContextInspectorPanelProps {
  * 调用方（AgentRun workspace / Context Panel 等）负责决定何时挂载；挂载后自动开始轮询。
  */
 export function ContextInspectorPanel({
-  sessionId,
   agentRunTarget = null,
 }: ContextInspectorPanelProps) {
   const [events, setEvents] = useState<ContextAuditEvent[]>([]);
@@ -89,21 +86,24 @@ export function ContextInspectorPanel({
   const [expandedEventIds, setExpandedEventIds] = useState<Set<string>>(new Set());
 
   const loadEvents = useCallback(async () => {
+    if (!agentRunTarget) {
+      setEvents([]);
+      setError(null);
+      return;
+    }
     try {
       const queryParams = {
         scope: scopeFilter || undefined,
         slot: slotFilter.trim() || undefined,
         source_prefix: sourcePrefix.trim() || undefined,
       };
-      const list = agentRunTarget
-        ? await fetchAgentRunContextAudit(agentRunTarget, queryParams)
-        : await fetchContextAudit(sessionId, queryParams);
+      const list = await fetchAgentRunContextAudit(agentRunTarget, queryParams);
       setEvents(list);
       setError(null);
     } catch (err) {
       setError((err as Error).message || "加载失败");
     }
-  }, [agentRunTarget, sessionId, scopeFilter, slotFilter, sourcePrefix]);
+  }, [agentRunTarget, scopeFilter, slotFilter, sourcePrefix]);
 
   useEffect(() => {
     let cancelled = false;

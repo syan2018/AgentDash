@@ -704,14 +704,6 @@ mod launcher_drain_tests {
                 .cloned()
                 .collect())
         }
-
-        async fn append_visible_canvas_mount(
-            &self,
-            _frame_id: Uuid,
-            _mount_id: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -796,9 +788,9 @@ mod launcher_drain_tests {
                 input.orchestration_binding.node_path.clone(),
                 input.orchestration_binding.attempt,
             );
-            self.anchor_repo.upsert(&anchor).await.map_err(|error| {
+            self.anchor_repo.create_once(&anchor).await.map_err(|error| {
                 agentdash_application_ports::lifecycle_materialization::LifecycleMaterializationError::Repository {
-                    operation: "upsert_runtime_session_execution_anchor",
+                    operation: "create_runtime_session_execution_anchor",
                     message: error.to_string(),
                 }
             })?;
@@ -880,16 +872,21 @@ mod launcher_drain_tests {
 
     #[async_trait]
     impl RuntimeSessionExecutionAnchorRepository for InMemoryAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items
-                .iter_mut()
+                .iter()
                 .find(|existing| existing.runtime_session_id == anchor.runtime_session_id)
             {
-                *existing = anchor.clone();
-            } else {
-                items.push(anchor.clone());
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
             }
+            items.push(anchor.clone());
             Ok(())
         }
 
@@ -957,20 +954,6 @@ mod launcher_drain_tests {
                         .cloned()
                 })
                 .collect())
-        }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
-                .cloned())
         }
     }
 
@@ -1345,20 +1328,10 @@ mod launcher_drain_tests {
         assert_eq!(result.launched_agent_nodes[0].node_path, "agent");
         let latest = latest_run(&run_repo, run_id);
         let node = runtime_node(&latest, "agent");
-        assert_eq!(node.status, RuntimeNodeStatus::Running);
-        assert!(node.started_at.is_some());
-        assert_eq!(
-            node.executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: result.launched_agent_nodes[0].runtime_session_id.clone(),
-            })
-        );
-        assert_eq!(
-            node.trace_refs,
-            vec![RuntimeTraceRef::RuntimeSession {
-                session_id: result.launched_agent_nodes[0].runtime_session_id.clone(),
-            }]
-        );
+        assert_eq!(node.status, RuntimeNodeStatus::Claiming);
+        assert!(node.started_at.is_none());
+        assert_eq!(node.executor_run_ref, None);
+        assert!(node.trace_refs.is_empty());
         assert!(latest.orchestrations[0].dispatch.ready_node_ids.is_empty());
 
         let frame = frame_repo.latest();
@@ -1386,7 +1359,7 @@ mod launcher_drain_tests {
     }
 
     #[tokio::test]
-    async fn launcher_materializes_agent_call_contract_through_frame_materializer_and_node_started()
+    async fn launcher_materializes_agent_call_contract_through_frame_materializer_and_node_claimed()
     {
         let procedure_key = "agent.contract.review";
         let node = plan_node(
@@ -1447,19 +1420,9 @@ mod launcher_drain_tests {
 
         let latest = latest_run(&run_repo, run_id);
         let node = runtime_node(&latest, "agent");
-        assert_eq!(node.status, RuntimeNodeStatus::Running);
-        assert_eq!(
-            node.executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: launched.runtime_session_id.clone(),
-            })
-        );
-        assert_eq!(
-            node.trace_refs,
-            vec![RuntimeTraceRef::RuntimeSession {
-                session_id: launched.runtime_session_id.clone(),
-            }]
-        );
+        assert_eq!(node.status, RuntimeNodeStatus::Claiming);
+        assert_eq!(node.executor_run_ref, None);
+        assert!(node.trace_refs.is_empty());
 
         let frame = frame_repo.latest();
         let anchor = anchor_repo.find(&launched.runtime_session_id);
@@ -1498,11 +1461,8 @@ mod launcher_drain_tests {
         assert_eq!(result.launched_agent_nodes.len(), 1);
         let latest = latest_run(&run_repo, run_id);
         let node = runtime_node(&latest, "agent");
-        assert_eq!(node.status, RuntimeNodeStatus::Running);
-        assert!(matches!(
-            node.executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession { .. })
-        ));
+        assert_eq!(node.status, RuntimeNodeStatus::Claiming);
+        assert_eq!(node.executor_run_ref, None);
     }
 
     #[tokio::test]

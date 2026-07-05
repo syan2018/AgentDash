@@ -24,7 +24,7 @@ use super::eventing::SessionEventingService;
 use super::hooks_service::SessionHookService;
 use super::hub::SessionRuntimeInner;
 use super::launch::SessionLaunchService;
-use super::persistence::SessionPersistence;
+use super::persistence::SessionStoreSet;
 use super::runtime_control::SessionRuntimeService;
 use super::runtime_transition_service::SessionRuntimeTransitionService;
 use super::title_service::SessionTitleService;
@@ -35,17 +35,13 @@ pub struct SessionRuntimeBuilder {
 }
 
 impl SessionRuntimeBuilder {
-    pub fn new_with_hooks_and_persistence(
+    pub fn new_with_hooks_and_stores(
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
-        persistence: Arc<dyn SessionPersistence>,
+        stores: SessionStoreSet,
     ) -> Self {
         Self {
-            inner: SessionRuntimeInner::new_with_hooks_and_persistence(
-                connector,
-                hook_provider,
-                persistence,
-            ),
+            inner: SessionRuntimeInner::new_with_hooks_and_stores(connector, hook_provider, stores),
         }
     }
 

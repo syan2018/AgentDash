@@ -17,7 +17,7 @@ describe("workspaceTabStore extension tab layout", () => {
   it("恢复 plugin tab 的 type_id 与 uri", () => {
     useWorkspaceTabStore.getState().reset();
 
-    useWorkspaceTabStore.getState().initialize("session-1", {
+    useWorkspaceTabStore.getState().initialize("agentrun:run-1:agent-1", {
       tabs: [{
         type_id: "local-hello.panel",
         uri: "local-hello://profile",
@@ -28,6 +28,7 @@ describe("workspaceTabStore extension tab layout", () => {
     }, layoutOptions);
 
     const layout = useWorkspaceTabStore.getState().exportLayout();
+    expect(useWorkspaceTabStore.getState().workspaceKey).toBe("agentrun:run-1:agent-1");
     expect(layout.tabs[0]).toMatchObject({
       type_id: "local-hello.panel",
       uri: "local-hello://profile",
@@ -77,7 +78,7 @@ describe("workspaceTabStore extension tab layout", () => {
       resolveTitle: (_typeId, uri) => uri,
     };
 
-    useWorkspaceTabStore.getState().initialize("session-1", {
+    useWorkspaceTabStore.getState().initialize("agentrun:run-1:agent-1", {
       tabs: [
         {
           type_id: "canvas",

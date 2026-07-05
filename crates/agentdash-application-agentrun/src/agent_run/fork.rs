@@ -2,7 +2,6 @@ use agentdash_agent_protocol::UserInputBlock;
 use agentdash_agent_types::MessageRef;
 use agentdash_application_ports::agent_run_fork_materialization::{
     AgentRunForkMaterializationError, AgentRunForkMaterializationInput,
-    AgentRunForkMaterializationResult,
 };
 use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_application_runtime_session::session::{SessionBranchingService, SessionForkRequest};
@@ -11,8 +10,9 @@ use agentdash_domain::agent_run_mailbox::{AgentRunMailboxMessage, MailboxSourceI
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
     AgentRunCommandReceipt, AgentRunCommandReceiptRepository, AgentRunCommandStatus,
-    AgentRunLineage, AgentRunLineageRepository, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentRunDeliveryBindingRepository, AgentRunLineage, AgentRunLineageRepository, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::AgentConfig;
 use agentdash_spi::platform::auth::AuthIdentity;
@@ -30,7 +30,6 @@ use crate::agent_run::{
     DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
     DeliveryRuntimeSelectionService,
 };
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 
 pub struct AgentRunForkRepos<'a> {
@@ -38,25 +37,11 @@ pub struct AgentRunForkRepos<'a> {
     pub lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     pub agent_frame_repo: &'a dyn AgentFrameRepository,
     pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    pub delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
     pub agent_run_command_receipt_repo: &'a dyn AgentRunCommandReceiptRepository,
     pub agent_run_mailbox_repo: &'a dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository,
     pub agent_run_lineage_repo: &'a dyn AgentRunLineageRepository,
     pub agent_run_fork_materialization: &'a dyn agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort,
-}
-
-impl<'a> AgentRunForkRepos<'a> {
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self {
-            lifecycle_run_repo: repos.lifecycle_run_repo.as_ref(),
-            lifecycle_agent_repo: repos.lifecycle_agent_repo.as_ref(),
-            agent_frame_repo: repos.agent_frame_repo.as_ref(),
-            execution_anchor_repo: repos.execution_anchor_repo.as_ref(),
-            agent_run_command_receipt_repo: repos.agent_run_command_receipt_repo.as_ref(),
-            agent_run_mailbox_repo: repos.agent_run_mailbox_repo.as_ref(),
-            agent_run_lineage_repo: repos.agent_run_lineage_repo.as_ref(),
-            agent_run_fork_materialization: repos.agent_run_fork_materialization.as_ref(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -104,17 +89,12 @@ pub struct AgentRunForkService<'a> {
 
 impl<'a> AgentRunForkService<'a> {
     pub fn new(
-        repos: &'a RepositorySet,
+        repos: AgentRunForkRepos<'a>,
         session_branching: SessionBranchingService,
         session_core: SessionCoreService,
         mailbox: AgentRunMailboxService<'a>,
     ) -> Self {
-        Self::from_repos(
-            AgentRunForkRepos::from_repository_set(repos),
-            session_branching,
-            session_core,
-            mailbox,
-        )
+        Self::from_repos(repos, session_branching, session_core, mailbox)
     }
 
     pub fn from_repos(
@@ -131,14 +111,14 @@ impl<'a> AgentRunForkService<'a> {
         }
     }
 
-    pub async fn explicit_fork(
+    pub(crate) async fn explicit_fork(
         &self,
         command: AgentRunForkCommand,
     ) -> Result<AgentRunForkCommandResult, WorkflowApplicationError> {
         self.execute(command.into_execution(None)).await
     }
 
-    pub async fn fork_submit(
+    pub(crate) async fn fork_submit(
         &self,
         command: AgentRunForkSubmitCommand,
     ) -> Result<AgentRunForkCommandResult, WorkflowApplicationError> {
@@ -348,7 +328,7 @@ impl<'a> AgentRunForkService<'a> {
                         materialized.child_run.id,
                         materialized.child_agent.id,
                         materialized.child_frame.id,
-                        materialized.lineage.child_runtime_session_id.clone(),
+                        materialized.child_runtime_session_id.clone(),
                     ),
                     source: MailboxSourceIdentity::composer(),
                     schedule_on_submit: true,
@@ -367,7 +347,7 @@ impl<'a> AgentRunForkService<'a> {
                         "child_mailbox_submit",
                         &log_context,
                         Some(&parent),
-                        Some(&materialized.lineage.child_runtime_session_id),
+                        Some(&materialized.child_runtime_session_id),
                         &error,
                     );
                     mark_command_terminal_failed(
@@ -398,7 +378,7 @@ impl<'a> AgentRunForkService<'a> {
                         "receipt_attach_mailbox_message",
                         &log_context,
                         Some(&parent),
-                        Some(&materialized.lineage.child_runtime_session_id),
+                        Some(&materialized.child_runtime_session_id),
                         error,
                     );
                 })?;
@@ -413,14 +393,12 @@ impl<'a> AgentRunForkService<'a> {
                     "receipt_mark_accepted",
                     &log_context,
                     Some(&parent),
-                    Some(&materialized.lineage.child_runtime_session_id),
+                    Some(&materialized.child_runtime_session_id),
                     error,
                 );
             })?;
         let result_json = fork_result_json(
-            &parent_refs,
-            &child_refs,
-            &materialized,
+            &materialized.lineage,
             mailbox_outcome,
             mailbox_message.as_ref().map(|message| message.id),
         );
@@ -434,7 +412,7 @@ impl<'a> AgentRunForkService<'a> {
                     "receipt_store_result",
                     &log_context,
                     Some(&parent),
-                    Some(&materialized.lineage.child_runtime_session_id),
+                    Some(&materialized.child_runtime_session_id),
                     error,
                 );
             })?;
@@ -475,20 +453,25 @@ impl<'a> AgentRunForkService<'a> {
             AgentRunCommandStatus::Accepted => {}
         }
 
-        let result = record.result_json.as_ref().ok_or_else(|| {
-            WorkflowApplicationError::Internal(format!(
-                "AgentRun fork receipt {} 缺少 result_json",
-                record.id
-            ))
-        })?;
-        let parent_refs = accepted_refs_from_result_json(result, "parent")?;
-        let child_refs = record.accepted_refs.clone().ok_or_else(|| {
+        let accepted_refs = record.accepted_refs.clone().ok_or_else(|| {
             WorkflowApplicationError::Internal(format!(
                 "AgentRun fork receipt {} 缺少 accepted refs",
                 record.id
             ))
         })?;
-        let lineage = lineage_from_result_json(result)?;
+        let lineage = self
+            .repos
+            .agent_run_lineage_repo
+            .find_parent(accepted_refs.run_id, accepted_refs.agent_id)
+            .await?
+            .ok_or_else(|| {
+                WorkflowApplicationError::Internal(format!(
+                    "AgentRun fork canonical lineage missing for child {}:{}",
+                    accepted_refs.run_id, accepted_refs.agent_id
+                ))
+            })?;
+        let parent_refs = parent_refs_from_lineage(&lineage);
+        let child_refs = child_refs_from_lineage(&lineage, &accepted_refs);
         let mailbox_message = match record.mailbox_message_id {
             Some(id) => self.repos.agent_run_mailbox_repo.get_message(id).await?,
             None => None,
@@ -496,7 +479,13 @@ impl<'a> AgentRunForkService<'a> {
         let mailbox_outcome = mailbox_message
             .as_ref()
             .map(outcome_from_message)
-            .or_else(|| result.get("mailbox").and_then(outcome_from_result_json));
+            .or_else(|| {
+                record
+                    .result_json
+                    .as_ref()
+                    .and_then(|result| result.get("mailbox"))
+                    .and_then(outcome_from_result_json)
+            });
 
         Ok(AgentRunForkCommandResult {
             command_receipt: AgentRunCommandReceiptView::from_record(&record, true),
@@ -541,6 +530,7 @@ impl<'a> AgentRunForkService<'a> {
                 lifecycle_agents: self.repos.lifecycle_agent_repo,
                 agent_frames: self.repos.agent_frame_repo,
                 execution_anchors: self.repos.execution_anchor_repo,
+                delivery_bindings: self.repos.delivery_binding_repo,
             })
             .select_current_delivery(run.id, agent.id)
             .await
@@ -712,152 +702,47 @@ fn base_refs(
 }
 
 fn fork_result_json(
-    parent_refs: &AgentRunAcceptedRefs,
-    child_refs: &AgentRunAcceptedRefs,
-    materialized: &AgentRunForkMaterializationResult,
+    lineage: &AgentRunLineage,
     mailbox_outcome: Option<AgentRunMailboxCommandOutcome>,
     mailbox_message_id: Option<Uuid>,
 ) -> Value {
     serde_json::json!({
         "outcome": "forked",
-        "parent": refs_json(parent_refs),
-        "child": refs_json(child_refs),
-        "lineage": {
-            "id": materialized.lineage.id,
-            "parent_run_id": materialized.lineage.parent_run_id,
-            "parent_agent_id": materialized.lineage.parent_agent_id,
-            "child_run_id": materialized.lineage.child_run_id,
-            "child_agent_id": materialized.lineage.child_agent_id,
-            "relation_kind": materialized.lineage.relation_kind,
-            "fork_point_event_seq": materialized.lineage.fork_point_event_seq,
-            "fork_point_ref": materialized.lineage.fork_point_ref_json,
-            "parent_runtime_session_id": materialized.lineage.parent_runtime_session_id,
-            "child_runtime_session_id": materialized.lineage.child_runtime_session_id,
-            "forked_by_user_id": materialized.lineage.forked_by_user_id,
-            "metadata": materialized.lineage.metadata_json,
-            "created_at": materialized.lineage.created_at.to_rfc3339(),
-        },
+        "fork_record_id": lineage.id,
         "mailbox": {
             "outcome": mailbox_outcome.map(|outcome| outcome.as_str()),
             "mailbox_message_id": mailbox_message_id,
         },
-        "redirect": {
-            "run_id": child_refs.run_id,
-            "agent_id": child_refs.agent_id,
-        },
     })
 }
 
-fn refs_json(refs: &AgentRunAcceptedRefs) -> Value {
-    serde_json::json!({
-        "run_id": refs.run_id,
-        "agent_id": refs.agent_id,
-        "frame_id": refs.frame_id,
-        "frame_revision": refs.frame_revision,
-        "runtime_session_id": refs.runtime_session_id,
-        "agent_run_turn_id": refs.agent_run_turn_id,
-        "protocol_turn_id": refs.protocol_turn_id,
-    })
+fn parent_refs_from_lineage(lineage: &AgentRunLineage) -> AgentRunAcceptedRefs {
+    AgentRunAcceptedRefs {
+        run_id: lineage.parent_run_id,
+        agent_id: lineage.parent_agent_id,
+        frame_id: lineage.parent_frame_id,
+        frame_revision: lineage.parent_frame_revision,
+        runtime_session_id: None,
+        agent_run_turn_id: None,
+        protocol_turn_id: None,
+    }
 }
 
-fn accepted_refs_from_result_json(
-    result: &Value,
-    key: &str,
-) -> Result<AgentRunAcceptedRefs, WorkflowApplicationError> {
-    let value = result.get(key).ok_or_else(|| {
-        WorkflowApplicationError::Internal(format!("AgentRun fork result_json 缺少 {key} refs"))
-    })?;
-    let run_id = uuid_from_json(value, "run_id")?;
-    let agent_id = uuid_from_json(value, "agent_id")?;
-    Ok(AgentRunAcceptedRefs {
-        run_id,
-        agent_id,
-        frame_id: optional_uuid_from_json(value, "frame_id")?,
-        frame_revision: value
-            .get("frame_revision")
-            .and_then(Value::as_i64)
-            .map(|value| value as i32),
-        runtime_session_id: value
-            .get("runtime_session_id")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        agent_run_turn_id: value
-            .get("agent_run_turn_id")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        protocol_turn_id: value
-            .get("protocol_turn_id")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    })
-}
-
-fn lineage_from_result_json(result: &Value) -> Result<AgentRunLineage, WorkflowApplicationError> {
-    let value = result.get("lineage").ok_or_else(|| {
-        WorkflowApplicationError::Internal("AgentRun fork result_json 缺少 lineage".to_string())
-    })?;
-    Ok(AgentRunLineage {
-        id: uuid_from_json(value, "id")?,
-        parent_run_id: uuid_from_json(value, "parent_run_id")?,
-        parent_agent_id: uuid_from_json(value, "parent_agent_id")?,
-        child_run_id: uuid_from_json(value, "child_run_id")?,
-        child_agent_id: uuid_from_json(value, "child_agent_id")?,
-        relation_kind: value
-            .get("relation_kind")
-            .and_then(Value::as_str)
-            .unwrap_or("fork")
-            .to_string(),
-        fork_point_event_seq: value.get("fork_point_event_seq").and_then(Value::as_u64),
-        fork_point_ref_json: value.get("fork_point_ref").cloned(),
-        parent_runtime_session_id: value
-            .get("parent_runtime_session_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        child_runtime_session_id: value
-            .get("child_runtime_session_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        forked_by_user_id: value
-            .get("forked_by_user_id")
-            .and_then(Value::as_str)
-            .unwrap_or("system")
-            .to_string(),
-        metadata_json: value.get("metadata").cloned(),
-        created_at: value
-            .get("created_at")
-            .and_then(Value::as_str)
-            .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
-            .map(|value| value.with_timezone(&chrono::Utc))
-            .unwrap_or_else(chrono::Utc::now),
-    })
-}
-
-fn uuid_from_json(value: &Value, key: &str) -> Result<Uuid, WorkflowApplicationError> {
-    let raw = value.get(key).and_then(Value::as_str).ok_or_else(|| {
-        WorkflowApplicationError::Internal(format!("AgentRun fork result_json 缺少 {key}"))
-    })?;
-    Uuid::parse_str(raw).map_err(|error| {
-        WorkflowApplicationError::Internal(format!("AgentRun fork result_json {key} 无效: {error}"))
-    })
-}
-
-fn optional_uuid_from_json(
-    value: &Value,
-    key: &str,
-) -> Result<Option<Uuid>, WorkflowApplicationError> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(|raw| {
-            Uuid::parse_str(raw).map_err(|error| {
-                WorkflowApplicationError::Internal(format!(
-                    "AgentRun fork result_json {key} 无效: {error}"
-                ))
-            })
-        })
-        .transpose()
+fn child_refs_from_lineage(
+    lineage: &AgentRunLineage,
+    accepted_refs: &AgentRunAcceptedRefs,
+) -> AgentRunAcceptedRefs {
+    AgentRunAcceptedRefs {
+        run_id: lineage.child_run_id,
+        agent_id: lineage.child_agent_id,
+        frame_id: lineage.child_frame_id.or(accepted_refs.frame_id),
+        frame_revision: lineage
+            .child_frame_revision
+            .or(accepted_refs.frame_revision),
+        runtime_session_id: accepted_refs.runtime_session_id.clone(),
+        agent_run_turn_id: accepted_refs.agent_run_turn_id.clone(),
+        protocol_turn_id: accepted_refs.protocol_turn_id.clone(),
+    }
 }
 
 fn workflow_error_from_session_fork(error: std::io::Error) -> WorkflowApplicationError {
@@ -901,7 +786,7 @@ fn workflow_error_from_selection_error(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
     use agentdash_agent_protocol::{
         BackboneEnvelope, SourceInfo, UserInputBlock, UserInputSubmissionKind,
@@ -909,7 +794,7 @@ mod tests {
     };
     use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
     use agentdash_application_runtime_session::session::{
-        SessionBranchingService, TitleSource,
+        SessionRuntimeBuilder, TitleSource,
         persistence::{
             AgentFrameTransitionRecord, CompactionProjectionCommitResult,
             NewCompactionProjectionCommit, NewTerminalEffectRecord, PersistedSessionEvent,
@@ -925,14 +810,19 @@ mod tests {
     use agentdash_domain::agent_run_mailbox::MailboxMessageStatus;
     use agentdash_domain::workflow::{
         AgentFrame, AgentFrameRepository, AgentRunCommandKind, AgentRunCommandReceipt,
-        AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunLineageRepository,
-        AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+        AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunDeliveryBinding,
+        AgentRunDeliveryBindingRepository, AgentRunLineageRepository, AgentSource,
+        DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
         LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
         RuntimeSessionExecutionAnchorRepository,
     };
-    use agentdash_spi::ConnectorError;
     use agentdash_spi::session_persistence::ExecutionStatus;
+    use agentdash_spi::{
+        AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+        ExecutionContext, ExecutionStream, PromptPayload,
+    };
     use tokio::sync::Mutex;
+    use tokio_stream::wrappers::ReceiverStream;
 
     use super::*;
     use crate::agent_run::command_receipt::digest_command_request;
@@ -944,9 +834,9 @@ mod tests {
     };
     use crate::test_support::{
         MemoryAgentFrameRepository, MemoryAgentRunCommandReceiptRepository,
-        MemoryAgentRunForkMaterialization, MemoryAgentRunLineageRepository,
-        MemoryAgentRunMailboxRepository, MemoryLifecycleAgentRepository,
-        MemoryLifecycleRunRepository, MemoryProjectAgentRepository,
+        MemoryAgentRunDeliveryBindingRepository, MemoryAgentRunForkMaterialization,
+        MemoryAgentRunLineageRepository, MemoryAgentRunMailboxRepository,
+        MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository, MemoryProjectAgentRepository,
         MemoryProjectBackendAccessRepository, MemoryRuntimeSessionExecutionAnchorRepository,
     };
 
@@ -955,8 +845,8 @@ mod tests {
         let fixture = ForkFixture::new().await;
 
         let result = fixture
-            .service()
-            .explicit_fork(AgentRunForkCommand {
+            .admission()
+            .admit_explicit_fork(AgentRunForkCommand {
                 parent_run_id: fixture.parent_run.id,
                 parent_agent_id: fixture.parent_agent.id,
                 current_user_id: "user-child".to_string(),
@@ -972,6 +862,19 @@ mod tests {
         assert_ne!(result.child_refs.run_id, fixture.parent_run.id);
         assert_eq!(result.lineage.parent_run_id, fixture.parent_run.id);
         assert_eq!(result.lineage.parent_agent_id, fixture.parent_agent.id);
+        assert_eq!(
+            result.lineage.parent_frame_id,
+            Some(fixture.parent_frame.id)
+        );
+        assert_eq!(
+            result.lineage.parent_frame_revision,
+            Some(fixture.parent_frame.revision)
+        );
+        assert_eq!(result.lineage.child_frame_id, result.child_refs.frame_id);
+        assert_eq!(
+            result.lineage.child_frame_revision,
+            result.child_refs.frame_revision
+        );
         assert_eq!(result.lineage.forked_by_user_id, "user-child");
 
         let child_run = fixture
@@ -989,11 +892,14 @@ mod tests {
             .expect("read child agent")
             .expect("child agent");
         assert_eq!(child_agent.created_by_user_id, "user-child");
+        let child_binding = fixture
+            .delivery_bindings
+            .get_current(result.child_refs.run_id, result.child_refs.agent_id)
+            .await
+            .expect("read child binding")
+            .expect("child binding");
         assert_eq!(
-            child_agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.runtime_session_id.as_str()),
+            Some(child_binding.runtime_session_id.as_str()),
             result.child_refs.runtime_session_id.as_deref()
         );
 
@@ -1003,23 +909,25 @@ mod tests {
             .await
             .expect("read lineage")
             .expect("lineage");
-        assert_eq!(
-            lineage.child_runtime_session_id,
-            result.lineage.child_runtime_session_id
-        );
+        assert_eq!(lineage.id, result.lineage.id);
 
-        let runtime_lineage = fixture
+        let child_runtime_session_id = result
+            .child_refs
+            .runtime_session_id
+            .as_deref()
+            .expect("child accepted refs should include runtime trace");
+        let runtime_trace_lineage = fixture
             .session_store
-            .get_session_lineage(&result.lineage.child_runtime_session_id)
+            .get_session_lineage(child_runtime_session_id)
             .await
-            .expect("runtime lineage")
-            .expect("runtime lineage");
+            .expect("runtime trace lineage")
+            .expect("runtime trace lineage");
         assert_eq!(
-            runtime_lineage.parent_session_id,
+            runtime_trace_lineage.parent_session_id,
             fixture.parent_runtime_session_id
         );
         assert_eq!(
-            runtime_lineage.relation_kind,
+            runtime_trace_lineage.relation_kind,
             SessionLineageRelationKind::Fork
         );
         assert_eq!(result.command_receipt.status, "accepted");
@@ -1031,8 +939,8 @@ mod tests {
         let fixture = ForkFixture::new().await;
 
         let result = fixture
-            .service()
-            .fork_submit(AgentRunForkSubmitCommand {
+            .admission()
+            .admit_fork_submit(AgentRunForkSubmitCommand {
                 parent_run_id: fixture.parent_run.id,
                 parent_agent_id: fixture.parent_agent.id,
                 current_user_id: "fork-user".to_string(),
@@ -1054,8 +962,8 @@ mod tests {
             .await;
         assert_eq!(child_messages.len(), 1);
         assert_eq!(
-            child_messages[0].runtime_session_id,
-            result.lineage.child_runtime_session_id
+            child_messages[0].delivery_runtime_session_id.as_deref(),
+            result.child_refs.runtime_session_id.as_deref()
         );
         assert_eq!(child_messages[0].status, MailboxMessageStatus::Dispatched);
         assert_eq!(
@@ -1070,17 +978,14 @@ mod tests {
                 .await
                 .is_empty()
         );
-        let parent_after = fixture
-            .agents
-            .get(fixture.parent_agent.id)
+        let parent_binding = fixture
+            .delivery_bindings
+            .get_current(fixture.parent_run.id, fixture.parent_agent.id)
             .await
-            .expect("read parent")
-            .expect("parent");
+            .expect("read parent binding")
+            .expect("parent binding");
         assert_eq!(
-            parent_after
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.runtime_session_id.as_str()),
+            Some(parent_binding.runtime_session_id.as_str()),
             Some(fixture.parent_runtime_session_id.as_str())
         );
         assert!(matches!(
@@ -1103,20 +1008,174 @@ mod tests {
             client_command_id: "fork-replay".to_string(),
         };
         let first = fixture
-            .service()
-            .explicit_fork(command.clone())
+            .admission()
+            .admit_explicit_fork(command.clone())
             .await
             .expect("first fork");
+        let receipts = fixture.receipts_for_client("fork-replay").await;
+        let result_json = receipts[0]
+            .result_json
+            .as_ref()
+            .expect("stored fork result");
+        assert!(result_json.get("lineage").is_none());
+        assert!(result_json.get("parent").is_none());
+        assert!(result_json.get("child").is_none());
+        assert!(result_json.get("redirect").is_none());
+        assert_eq!(
+            result_json
+                .get("fork_record_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            Some(first.lineage.id.to_string())
+        );
+
         let replay = fixture
-            .service()
-            .explicit_fork(command)
+            .admission()
+            .admit_explicit_fork(command)
             .await
             .expect("replay fork");
 
         assert!(replay.command_receipt.duplicate);
         assert_eq!(replay.child_refs.run_id, first.child_refs.run_id);
         assert_eq!(replay.child_refs.agent_id, first.child_refs.agent_id);
+        assert_eq!(replay.parent_refs.frame_id, first.parent_refs.frame_id);
+        assert_eq!(replay.child_refs.frame_id, first.child_refs.frame_id);
         assert_eq!(replay.lineage.id, first.lineage.id);
+    }
+
+    #[tokio::test]
+    async fn accepted_duplicate_fork_replays_from_canonical_lineage_without_result_json() {
+        let fixture = ForkFixture::new().await;
+        let command = AgentRunForkCommand {
+            parent_run_id: fixture.parent_run.id,
+            parent_agent_id: fixture.parent_agent.id,
+            current_user_id: "user-child".to_string(),
+            title: None,
+            fork_point_ref: None,
+            metadata_json: None,
+            client_command_id: "fork-replay-no-json".to_string(),
+        };
+        let receipt = fixture
+            .seed_pending_fork_receipt(
+                &command.current_user_id,
+                &command.client_command_id,
+                AgentRunCommandKind::AgentRunFork,
+                None,
+                None,
+            )
+            .await;
+        let child_run_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
+        let child_refs = AgentRunAcceptedRefs {
+            run_id: child_run_id,
+            agent_id: child_agent_id,
+            frame_id: Some(child_frame_id),
+            frame_revision: Some(1),
+            runtime_session_id: Some("runtime-child-no-json".to_string()),
+            agent_run_turn_id: Some("agent-run-turn-1".to_string()),
+            protocol_turn_id: Some("protocol-turn-1".to_string()),
+        };
+        fixture
+            .receipts
+            .mark_accepted(receipt.id, child_refs)
+            .await
+            .expect("mark accepted");
+        let lineage = AgentRunLineage::new_fork(
+            fixture.parent_run.id,
+            fixture.parent_agent.id,
+            child_run_id,
+            child_agent_id,
+            Some(22),
+            None,
+            "user-child",
+            None,
+        )
+        .with_frame_baseline(
+            fixture.parent_frame.id,
+            fixture.parent_frame.revision,
+            child_frame_id,
+            1,
+        );
+        fixture
+            .lineages
+            .create(&lineage)
+            .await
+            .expect("canonical lineage");
+
+        let replay = fixture
+            .admission()
+            .admit_explicit_fork(command)
+            .await
+            .expect("replay fork");
+
+        assert!(replay.command_receipt.duplicate);
+        assert_eq!(replay.lineage.id, lineage.id);
+        assert_eq!(replay.parent_refs.frame_id, Some(fixture.parent_frame.id));
+        assert_eq!(replay.child_refs.frame_id, Some(child_frame_id));
+        assert_eq!(
+            replay.child_refs.runtime_session_id.as_deref(),
+            Some("runtime-child-no-json")
+        );
+    }
+
+    #[tokio::test]
+    async fn accepted_duplicate_fork_errors_when_canonical_lineage_is_missing() {
+        let fixture = ForkFixture::new().await;
+        let command = AgentRunForkCommand {
+            parent_run_id: fixture.parent_run.id,
+            parent_agent_id: fixture.parent_agent.id,
+            current_user_id: "user-child".to_string(),
+            title: None,
+            fork_point_ref: None,
+            metadata_json: None,
+            client_command_id: "fork-missing-lineage".to_string(),
+        };
+        let receipt = fixture
+            .seed_pending_fork_receipt(
+                &command.current_user_id,
+                &command.client_command_id,
+                AgentRunCommandKind::AgentRunFork,
+                None,
+                None,
+            )
+            .await;
+        let child_refs = AgentRunAcceptedRefs {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            frame_id: None,
+            frame_revision: None,
+            runtime_session_id: Some("runtime-child-missing-lineage".to_string()),
+            agent_run_turn_id: None,
+            protocol_turn_id: None,
+        };
+        fixture
+            .receipts
+            .mark_accepted(receipt.id, child_refs.clone())
+            .await
+            .expect("mark accepted");
+        fixture
+            .receipts
+            .store_result_json(
+                receipt.id,
+                serde_json::json!({
+                    "outcome": "forked",
+                    "fork_record_id": Uuid::new_v4(),
+                }),
+            )
+            .await
+            .expect("store result");
+
+        let error = fixture
+            .admission()
+            .admit_explicit_fork(command)
+            .await
+            .expect_err("canonical lineage is required for replay");
+
+        assert!(
+            matches!(error, WorkflowApplicationError::Internal(message) if message.contains("canonical lineage missing"))
+        );
+        assert_eq!(fixture.session_store.created_child_count().await, 0);
     }
 
     #[tokio::test]
@@ -1142,8 +1201,8 @@ mod tests {
             .await;
 
         let error = fixture
-            .service()
-            .explicit_fork(command)
+            .admission()
+            .admit_explicit_fork(command)
             .await
             .expect_err("pending duplicate conflicts");
 
@@ -1179,8 +1238,8 @@ mod tests {
             .expect("mark failed");
 
         let error = fixture
-            .service()
-            .explicit_fork(command)
+            .admission()
+            .admit_explicit_fork(command)
             .await
             .expect_err("terminal failure replays");
 
@@ -1199,8 +1258,8 @@ mod tests {
             .await;
 
         let error = fixture
-            .service()
-            .explicit_fork(AgentRunForkCommand {
+            .admission()
+            .admit_explicit_fork(AgentRunForkCommand {
                 parent_run_id: fixture.parent_run.id,
                 parent_agent_id: fixture.parent_agent.id,
                 current_user_id: "user-child".to_string(),
@@ -1225,6 +1284,7 @@ mod tests {
         project_agents: Arc<MemoryProjectAgentRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
         anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
         backend_access: Arc<MemoryProjectBackendAccessRepository>,
         receipts: Arc<MemoryAgentRunCommandReceiptRepository>,
         mailbox: Arc<MemoryAgentRunMailboxRepository>,
@@ -1248,6 +1308,7 @@ mod tests {
             let project_agents = Arc::new(MemoryProjectAgentRepository::default());
             let frames = Arc::new(MemoryAgentFrameRepository::default());
             let anchors = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+            let delivery_bindings = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
             let backend_access = Arc::new(MemoryProjectBackendAccessRepository::default());
             let receipts = Arc::new(MemoryAgentRunCommandReceiptRepository::default());
             let mailbox = Arc::new(MemoryAgentRunMailboxRepository::default());
@@ -1257,6 +1318,7 @@ mod tests {
                 agents.clone(),
                 frames.clone(),
                 anchors.clone(),
+                delivery_bindings.clone(),
                 lineages.clone(),
             ));
             let session_store = Arc::new(TestSessionStore::default());
@@ -1273,7 +1335,7 @@ mod tests {
 
             let parent_run = LifecycleRun::new_plain_for_user(Uuid::new_v4(), "parent-owner");
             runs.create(&parent_run).await.expect("parent run");
-            let mut parent_agent = LifecycleAgent::new_root_for_user(
+            let parent_agent = LifecycleAgent::new_root_for_user(
                 parent_run.id,
                 parent_run.project_id,
                 AgentSource::ProjectAgent,
@@ -1287,14 +1349,18 @@ mod tests {
                 launch_frame.id,
                 parent_agent.id,
             );
-            parent_agent.bind_current_delivery_from_anchor(
+            let parent_binding = AgentRunDeliveryBinding::from_anchor(
                 &anchor,
                 DeliveryBindingStatus::Ready,
                 anchor.updated_at,
             );
             frames.create(&launch_frame).await.expect("launch frame");
             frames.create(&parent_frame).await.expect("parent frame");
-            anchors.upsert(&anchor).await.expect("anchor");
+            anchors.create_once(&anchor).await.expect("anchor");
+            delivery_bindings
+                .upsert(&parent_binding)
+                .await
+                .expect("parent binding");
             agents.create(&parent_agent).await.expect("parent agent");
 
             Self {
@@ -1303,6 +1369,7 @@ mod tests {
                 project_agents,
                 frames,
                 anchors,
+                delivery_bindings,
                 backend_access,
                 receipts,
                 mailbox,
@@ -1326,6 +1393,7 @@ mod tests {
                 lifecycle_agent_repo: self.agents.as_ref(),
                 agent_frame_repo: self.frames.as_ref(),
                 execution_anchor_repo: self.anchors.as_ref(),
+                delivery_binding_repo: self.delivery_bindings.as_ref(),
                 agent_run_command_receipt_repo: self.receipts.as_ref(),
                 agent_run_mailbox_repo: self.mailbox.as_ref(),
                 agent_run_lineage_repo: self.lineages.as_ref(),
@@ -1337,6 +1405,7 @@ mod tests {
                 self.project_agents.as_ref(),
                 self.frames.as_ref(),
                 self.anchors.as_ref(),
+                self.delivery_bindings.as_ref(),
                 self.backend_access.as_ref(),
                 self.receipts.as_ref(),
                 self.mailbox.as_ref(),
@@ -1345,12 +1414,22 @@ mod tests {
                 SessionEventingService::new(self.eventing.clone()),
                 SessionLaunchService::new(self.launch.clone()),
             );
+            let branching = SessionRuntimeBuilder::new_with_hooks_and_stores(
+                Arc::new(NoopConnector),
+                None,
+                self.session_store.store_set(),
+            )
+            .branching_service();
             AgentRunForkService::from_repos(
                 repos,
-                SessionBranchingService::new(self.session_store.store_set()),
+                branching,
                 SessionCoreService::new(self.core.clone()),
                 mailbox,
             )
+        }
+
+        fn admission(&self) -> crate::agent_run::AgentRunAdmissionService<'_> {
+            crate::agent_run::AgentRunAdmissionService::for_fork(self.service())
         }
 
         async fn seed_pending_fork_receipt(
@@ -1404,6 +1483,68 @@ mod tests {
                 .into_iter()
                 .filter(|receipt| receipt.client_command_id == client_command_id)
                 .collect()
+        }
+    }
+
+    struct NoopConnector;
+
+    #[async_trait::async_trait]
+    impl AgentConnector for NoopConnector {
+        fn connector_id(&self) -> &'static str {
+            "noop"
+        }
+
+        fn connector_type(&self) -> ConnectorType {
+            ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> ConnectorCapabilities {
+            ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: ExecutionContext,
+        ) -> Result<ExecutionStream, ConnectorError> {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(Box::pin(ReceiverStream::new(rx)))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
         }
     }
 
@@ -1520,7 +1661,7 @@ mod tests {
         compactions: Mutex<HashMap<(String, String), SessionCompactionRecord>>,
         segments: Mutex<Vec<SessionProjectionSegmentRecord>>,
         heads: Mutex<HashMap<(String, String), SessionProjectionHeadRecord>>,
-        lineages: Mutex<HashMap<String, SessionLineageRecord>>,
+        trace_lineages: Mutex<HashMap<String, SessionLineageRecord>>,
     }
 
     impl TestSessionStore {
@@ -1871,7 +2012,7 @@ mod tests {
             &self,
             record: SessionLineageRecord,
         ) -> SessionStoreResult<()> {
-            self.lineages
+            self.trace_lineages
                 .lock()
                 .await
                 .insert(record.child_session_id.clone(), record);
@@ -1882,7 +2023,12 @@ mod tests {
             &self,
             child_session_id: &str,
         ) -> SessionStoreResult<Option<SessionLineageRecord>> {
-            Ok(self.lineages.lock().await.get(child_session_id).cloned())
+            Ok(self
+                .trace_lineages
+                .lock()
+                .await
+                .get(child_session_id)
+                .cloned())
         }
 
         async fn list_session_children(
@@ -1892,7 +2038,7 @@ mod tests {
             status: Option<SessionLineageStatus>,
         ) -> SessionStoreResult<Vec<SessionLineageRecord>> {
             Ok(self
-                .lineages
+                .trace_lineages
                 .lock()
                 .await
                 .values()
@@ -1934,7 +2080,7 @@ mod tests {
             status: SessionLineageStatus,
             updated_at_ms: i64,
         ) -> SessionStoreResult<()> {
-            if let Some(lineage) = self.lineages.lock().await.get_mut(child_session_id) {
+            if let Some(lineage) = self.trace_lineages.lock().await.get_mut(child_session_id) {
                 lineage.status = status;
                 lineage.updated_at_ms = updated_at_ms;
             }

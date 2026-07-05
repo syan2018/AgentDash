@@ -4,8 +4,8 @@ use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::workflow::LifecycleGate;
 use agentdash_spi::{AgentConfig, ThinkingLevel};
 
+use crate::agent_run::AgentRunExecutionState;
 use crate::agent_run::lifecycle_read_model_facade::LifecycleSubjectAssociationView;
-use crate::agent_run::runtime_session_boundary::SessionExecutionState;
 use crate::agent_run::workspace::types::AgentRunResourceSurfaceCoordinateModel;
 use crate::error::WorkflowApplicationError;
 use agentdash_application_vfs::ResolvedVfsSurface;
@@ -56,7 +56,6 @@ pub enum ConversationExecutionStatusModel {
     Cancelling,
     Terminal,
     FrameMissing,
-    DeliveryMissing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +123,7 @@ pub enum ConversationCommandKindModel {
     SubmitMessage,
     PromoteMailboxMessage,
     DeleteMailboxMessage,
+    MoveMailboxMessage,
     ResumeMailbox,
     Cancel,
 }
@@ -143,7 +143,6 @@ pub struct ConversationCommandStaleGuardModel {
     pub run_id: String,
     pub agent_id: String,
     pub frame_id: Option<String>,
-    pub runtime_session_id: Option<String>,
     pub active_turn_id: Option<String>,
 }
 
@@ -476,7 +475,7 @@ pub struct ConversationCommandAvailabilityInput {
     pub agent_id: Uuid,
     pub frame_ref: Option<(Uuid, i32)>,
     pub delivery_runtime_session_id: Option<String>,
-    pub execution_state: SessionExecutionState,
+    pub execution_state: AgentRunExecutionState,
     pub terminal_agent: bool,
     pub supports_steering: bool,
     pub mailbox_paused: bool,
@@ -524,7 +523,6 @@ impl ConversationCommandAvailabilityResolver {
             input.run_id,
             input.agent_id,
             input.frame_ref,
-            input.delivery_runtime_session_id.as_deref(),
             &input.execution_state,
             input.terminal_agent,
         );
@@ -554,7 +552,7 @@ pub struct AgentConversationSnapshotInput {
     pub frame_ref: Option<(Uuid, i32)>,
     pub delivery_runtime_session_id: Option<String>,
     pub subject_associations: Vec<LifecycleSubjectAssociationView>,
-    pub execution_state: SessionExecutionState,
+    pub execution_state: AgentRunExecutionState,
     pub terminal_agent: bool,
     pub supports_steering: bool,
     pub mailbox_paused: bool,
@@ -630,9 +628,6 @@ fn conversation_execution_view(
 ) -> ConversationExecutionModel {
     let reason = match status {
         ConversationExecutionStatusModel::Terminal => Some("当前 AgentRun 已结束。".to_string()),
-        ConversationExecutionStatusModel::DeliveryMissing => {
-            Some("当前 AgentRun 缺少可投递的 runtime 通道。".to_string())
-        }
         ConversationExecutionStatusModel::FrameMissing => {
             Some("当前 AgentRun 没有可投递的 runtime frame。".to_string())
         }
@@ -661,21 +656,19 @@ fn conversation_execution_status(
 ) -> ConversationExecutionStatusModel {
     if input.terminal_agent {
         ConversationExecutionStatusModel::Terminal
-    } else if input.delivery_runtime_session_id.is_none() {
-        ConversationExecutionStatusModel::DeliveryMissing
     } else if input.frame_ref.is_none() {
         ConversationExecutionStatusModel::FrameMissing
     } else if input.model_config_status == ConversationModelConfigStatusModel::ModelRequired {
         ConversationExecutionStatusModel::ModelRequired
     } else {
         match input.execution_state {
-            SessionExecutionState::Running { turn_id: None } => {
+            AgentRunExecutionState::Running { turn_id: None } => {
                 ConversationExecutionStatusModel::StartingClaimed
             }
-            SessionExecutionState::Running { turn_id: Some(_) } => {
+            AgentRunExecutionState::Running { turn_id: Some(_) } => {
                 ConversationExecutionStatusModel::RunningActive
             }
-            SessionExecutionState::Cancelling { .. } => {
+            AgentRunExecutionState::Cancelling { .. } => {
                 ConversationExecutionStatusModel::Cancelling
             }
             _ => ConversationExecutionStatusModel::Ready,
@@ -695,7 +688,6 @@ fn conversation_commands(
         ConversationExecutionStatusModel::Draft
             | ConversationExecutionStatusModel::Terminal
             | ConversationExecutionStatusModel::FrameMissing
-            | ConversationExecutionStatusModel::DeliveryMissing
             | ConversationExecutionStatusModel::ModelRequired
     ) && model_ready;
     let running_active =
@@ -707,7 +699,7 @@ fn conversation_commands(
             | ConversationExecutionStatusModel::Cancelling
     );
     let mailbox_can_resume = !input.terminal_agent
-        && input.delivery_runtime_session_id.is_some()
+        && input.frame_ref.is_some()
         && input.mailbox_paused
         && input.mailbox_visible_message_count > 0;
 
@@ -750,6 +742,18 @@ fn conversation_commands(
             snapshot_id,
             input.mailbox_visible_message_count > 0,
             "当前没有可删除的 mailbox message。",
+            Some("command_unavailable"),
+            None,
+            false,
+            "ignored",
+            vec![ConversationCommandPlacementModel::MailboxRow],
+        ),
+        command_view(
+            input,
+            ConversationCommandKindModel::MoveMailboxMessage,
+            snapshot_id,
+            input.mailbox_visible_message_count > 0,
+            "当前没有可移动的 mailbox message。",
             Some("command_unavailable"),
             None,
             false,
@@ -836,7 +840,6 @@ fn command_view(
             run_id: input.run_id.to_string(),
             agent_id: input.agent_id.to_string(),
             frame_id: input.frame_ref.map(|(frame_id, _)| frame_id.to_string()),
-            runtime_session_id: input.delivery_runtime_session_id.clone(),
             active_turn_id: active_turn_id(&input.execution_state),
         },
     }
@@ -846,31 +849,29 @@ pub fn conversation_snapshot_id(
     run_id: Uuid,
     agent_id: Uuid,
     frame_ref: Option<(Uuid, i32)>,
-    delivery_runtime_session_id: Option<&str>,
-    execution_state: &SessionExecutionState,
+    execution_state: &AgentRunExecutionState,
     terminal_agent: bool,
 ) -> String {
     let frame = frame_ref
         .map(|(frame_id, revision)| format!("{frame_id}:{revision}"))
         .unwrap_or_else(|| "none".to_string());
-    let runtime = delivery_runtime_session_id.unwrap_or("none");
     let turn = active_turn_id(execution_state).unwrap_or_else(|| "none".to_string());
     format!(
-        "agentrun:{run_id}:{agent_id}:frame:{frame}:runtime:{runtime}:state:{}:turn:{turn}:terminal:{terminal_agent}",
+        "agentrun:{run_id}:{agent_id}:frame:{frame}:state:{}:turn:{turn}:terminal:{terminal_agent}",
         conversation_execution_state_code(execution_state)
     )
 }
 
-pub fn conversation_execution_state_code(execution_state: &SessionExecutionState) -> &'static str {
+pub fn conversation_execution_state_code(execution_state: &AgentRunExecutionState) -> &'static str {
     match execution_state {
-        SessionExecutionState::Idle => "idle",
-        SessionExecutionState::Running { turn_id: None } => "starting_claimed",
-        SessionExecutionState::Running { turn_id: Some(_) } => "running_active",
-        SessionExecutionState::Cancelling { .. } => "cancelling",
-        SessionExecutionState::Completed { .. } => "completed",
-        SessionExecutionState::Failed { .. } => "failed",
-        SessionExecutionState::Interrupted { .. } => "interrupted",
-        SessionExecutionState::Lost { .. } => "lost",
+        AgentRunExecutionState::Idle => "idle",
+        AgentRunExecutionState::Running { turn_id: None } => "starting_claimed",
+        AgentRunExecutionState::Running { turn_id: Some(_) } => "running_active",
+        AgentRunExecutionState::Cancelling { .. } => "cancelling",
+        AgentRunExecutionState::Completed { .. } => "completed",
+        AgentRunExecutionState::Failed { .. } => "failed",
+        AgentRunExecutionState::Interrupted { .. } => "interrupted",
+        AgentRunExecutionState::Lost { .. } => "lost",
     }
 }
 
@@ -879,6 +880,7 @@ pub fn conversation_command_id_for(kind: ConversationCommandKindModel) -> &'stat
         ConversationCommandKindModel::SubmitMessage => "submit_message",
         ConversationCommandKindModel::PromoteMailboxMessage => "promote_mailbox_message",
         ConversationCommandKindModel::DeleteMailboxMessage => "delete_mailbox_message",
+        ConversationCommandKindModel::MoveMailboxMessage => "move_mailbox_message",
         ConversationCommandKindModel::ResumeMailbox => "resume_mailbox",
         ConversationCommandKindModel::Cancel => "cancel",
     }
@@ -898,7 +900,6 @@ fn disabled_code_for_status(status: ConversationExecutionStatusModel) -> &'stati
         ConversationExecutionStatusModel::Cancelling => "cancelling",
         ConversationExecutionStatusModel::Terminal => "terminal",
         ConversationExecutionStatusModel::FrameMissing => "missing_frame",
-        ConversationExecutionStatusModel::DeliveryMissing => "missing_delivery_runtime",
     }
 }
 
@@ -923,9 +924,6 @@ fn unavailable_reason_for_submit(
         ConversationExecutionStatusModel::FrameMissing => {
             "当前 AgentRun 没有可投递的 runtime frame。"
         }
-        ConversationExecutionStatusModel::DeliveryMissing => {
-            "当前 AgentRun 缺少可投递的 runtime 通道。"
-        }
         ConversationExecutionStatusModel::ModelRequired => "当前 AgentRun 缺少模型选择。",
         ConversationExecutionStatusModel::Draft | ConversationExecutionStatusModel::Ready => {
             "当前 AgentRun 暂不可提交消息。"
@@ -933,15 +931,15 @@ fn unavailable_reason_for_submit(
     }
 }
 
-fn active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
+fn active_turn_id(execution_state: &AgentRunExecutionState) -> Option<String> {
     match execution_state {
-        SessionExecutionState::Running { turn_id }
-        | SessionExecutionState::Cancelling { turn_id }
-        | SessionExecutionState::Interrupted { turn_id, .. }
-        | SessionExecutionState::Lost { turn_id, .. } => turn_id.clone(),
-        SessionExecutionState::Completed { turn_id }
-        | SessionExecutionState::Failed { turn_id, .. } => Some(turn_id.clone()),
-        SessionExecutionState::Idle => None,
+        AgentRunExecutionState::Running { turn_id }
+        | AgentRunExecutionState::Cancelling { turn_id } => turn_id.clone(),
+        AgentRunExecutionState::Idle
+        | AgentRunExecutionState::Completed { .. }
+        | AgentRunExecutionState::Failed { .. }
+        | AgentRunExecutionState::Interrupted { .. }
+        | AgentRunExecutionState::Lost { .. } => None,
     }
 }
 
@@ -1051,7 +1049,7 @@ mod tests {
         }
     }
 
-    fn snapshot_input(execution_state: SessionExecutionState) -> AgentConversationSnapshotInput {
+    fn snapshot_input(execution_state: AgentRunExecutionState) -> AgentConversationSnapshotInput {
         AgentConversationSnapshotInput {
             project_id: Uuid::new_v4(),
             run_id: Uuid::new_v4(),
@@ -1206,7 +1204,7 @@ mod tests {
     #[test]
     fn starting_claimed_exposes_no_active_turn_commands() {
         let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            SessionExecutionState::Running { turn_id: None },
+            AgentRunExecutionState::Running { turn_id: None },
         ));
 
         assert_eq!(
@@ -1230,7 +1228,7 @@ mod tests {
     #[test]
     fn running_active_exposes_submit_and_supported_promote() {
         let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            SessionExecutionState::Running {
+            AgentRunExecutionState::Running {
                 turn_id: Some("turn-1".to_string()),
             },
         ));
@@ -1254,7 +1252,7 @@ mod tests {
 
     #[test]
     fn running_active_without_steer_support_keeps_submit_and_disables_promote() {
-        let mut input = snapshot_input(SessionExecutionState::Running {
+        let mut input = snapshot_input(AgentRunExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         });
         input.supports_steering = false;
@@ -1280,8 +1278,9 @@ mod tests {
 
     #[test]
     fn ready_keyboard_maps_enter_and_ctrl_enter_to_submit_message() {
-        let snapshot =
-            AgentConversationSnapshotResolver::resolve(snapshot_input(SessionExecutionState::Idle));
+        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            AgentRunExecutionState::Idle,
+        ));
 
         assert_eq!(
             snapshot.execution.status,
@@ -1299,8 +1298,9 @@ mod tests {
 
     #[test]
     fn runtime_snapshot_does_not_emit_draft_start_command() {
-        let snapshot =
-            AgentConversationSnapshotResolver::resolve(snapshot_input(SessionExecutionState::Idle));
+        let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            AgentRunExecutionState::Idle,
+        ));
 
         assert!(
             snapshot
@@ -1314,7 +1314,7 @@ mod tests {
     #[test]
     fn command_guards_share_snapshot_id() {
         let snapshot = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            SessionExecutionState::Running {
+            AgentRunExecutionState::Running {
                 turn_id: Some("turn-1".to_string()),
             },
         ));
@@ -1330,14 +1330,31 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_id_ignores_delivery_runtime_session() {
+        let input = ConversationCommandAvailabilityInput::from_snapshot_input(&snapshot_input(
+            AgentRunExecutionState::Running {
+                turn_id: Some("turn-1".to_string()),
+            },
+        ));
+        let mut rotated_runtime = input.clone();
+        rotated_runtime.delivery_runtime_session_id = Some("runtime-2".to_string());
+
+        let first = ConversationCommandAvailabilityResolver::resolve(input);
+        let second = ConversationCommandAvailabilityResolver::resolve(rotated_runtime);
+
+        assert_eq!(first.snapshot_id, second.snapshot_id);
+        assert!(!first.snapshot_id.contains(":runtime:"));
+    }
+
+    #[test]
     fn completed_turn_changes_snapshot_and_keyboard_stays_submit_message() {
         let running = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            SessionExecutionState::Running {
+            AgentRunExecutionState::Running {
                 turn_id: Some("turn-1".to_string()),
             },
         ));
         let completed = AgentConversationSnapshotResolver::resolve(snapshot_input(
-            SessionExecutionState::Completed {
+            AgentRunExecutionState::Completed {
                 turn_id: "turn-1".to_string(),
             },
         ));
@@ -1355,11 +1372,19 @@ mod tests {
             completed.commands.keyboard.ctrl_enter.as_deref(),
             Some("submit_message")
         );
+        assert_eq!(completed.execution.active_turn_id, None);
+        assert!(
+            completed
+                .commands
+                .commands
+                .iter()
+                .all(|command| command.stale_guard.active_turn_id.is_none())
+        );
     }
 
     #[test]
     fn paused_empty_mailbox_does_not_need_user_attention() {
-        let mut input = snapshot_input(SessionExecutionState::Idle);
+        let mut input = snapshot_input(AgentRunExecutionState::Idle);
         input.mailbox_paused = true;
         input.mailbox_visible_message_count = 0;
 
@@ -1372,7 +1397,7 @@ mod tests {
 
     #[test]
     fn snapshot_preserves_typed_resource_surface() {
-        let mut input = snapshot_input(SessionExecutionState::Idle);
+        let mut input = snapshot_input(AgentRunExecutionState::Idle);
         input.resource_surface = Some(lifecycle_surface());
 
         let snapshot = AgentConversationSnapshotResolver::resolve(input);
@@ -1392,7 +1417,7 @@ mod tests {
 
     #[test]
     fn snapshot_preserves_resource_surface_coordinate() {
-        let mut input = snapshot_input(SessionExecutionState::Idle);
+        let mut input = snapshot_input(AgentRunExecutionState::Idle);
         let frame_id = input.frame_ref.expect("frame ref").0;
         input.resource_surface = Some(lifecycle_surface());
         input.resource_surface_coordinate = Some(AgentRunResourceSurfaceCoordinateModel {
@@ -1426,7 +1451,7 @@ mod tests {
 
     #[test]
     fn snapshot_includes_resource_diagnostics() {
-        let mut input = snapshot_input(SessionExecutionState::Idle);
+        let mut input = snapshot_input(AgentRunExecutionState::Idle);
         input.resource_diagnostics = vec![ConversationDiagnosticModel {
             code: "resource_surface_lifecycle_mount_missing".to_string(),
             severity: ValidationSeverityModel::Error,
@@ -1483,7 +1508,7 @@ mod tests {
             })),
         );
 
-        let mut input = snapshot_input(SessionExecutionState::Running {
+        let mut input = snapshot_input(AgentRunExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         });
         input.open_wait_items = vec![

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 52
-- **Last Active**: 2026-07-03
+- **Total Sessions**: 54
+- **Last Active**: 2026-07-05
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1885 | Active |
+| `journal-1.md` | ~1971 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 54 | 2026-07-05 | AgentRun执行事实源收束 | `fe685508`, `9901613a` | `codex/agentrun-lifecycle-repository-convergence` |
+| 53 | 2026-07-05 | AgentRun Lifecycle 仓储收束最终收口 | `00468388`, `ee54afc7`, `6b193ff3`, `0576389a`, `f1ef3112`, `3d3af3d7`, `bd1f2d02`, `298fa204`, `2cf181f2`, `7eb91878`, `657ea90d`, `c67f55ef`, `8bdf31f3`, `1433cff8`, `b7cdb4e6`, `fbb94c78`, `3b114836`, `37de72d9`, `c8c08a3b`, `50515eca` | `codex/agentrun-lifecycle-repository-convergence` |
 | 52 | 2026-07-03 | 实现 Agent 并行等待与 mailbox 回传 | `8d75d7504`, `cd6240e86`, `2483c9e50` | `codex/terminal-subagents-wait-integration` |
 | 51 | 2026-07-03 | 修复终端输出与跳转链路 | `9812555ec`, `ae4875702`, `7b149724a` | `codex/terminal-subagents-wait-integration` |
 | 50 | 2026-07-03 | AgentRun fork 与 Session API 收口 | `b130d0d45`, `00dd09253`, `31f095e4f`, `a4d2ed536`, `f0012025c`, `5ca329b76`, `111a2d0f7`, `d302ef467` | `main` |

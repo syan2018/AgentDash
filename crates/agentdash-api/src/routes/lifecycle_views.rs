@@ -10,7 +10,6 @@ use agentdash_application_agentrun::agent_run::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
     AgentRunRuntimeSurfaceQueryError, ConversationEffectiveExecutorConfigModel,
     ConversationModelConfigSourceModel, RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel,
-    SessionRuntimeControlPlaneStatusModel,
 };
 use agentdash_application_lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
@@ -18,7 +17,7 @@ use agentdash_application_lifecycle::run_view_builder::{
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, ConversationEffectiveExecutorConfigView,
     ConversationModelConfigSource, LifecycleRunView, ProjectActiveAgentsView, RuntimeSessionRefDto,
-    RuntimeSessionTraceView, SessionRuntimeControlPlaneStatus, SubjectExecutionView,
+    RuntimeSessionTraceView, SubjectExecutionView,
 };
 use agentdash_domain::workflow::{LifecycleRun, SubjectRef};
 
@@ -51,8 +50,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_frame_runtime),
         )
         .route(
-            "/sessions/{id}/trace",
-            axum::routing::get(get_session_trace),
+            "/runtime-traces/{id}",
+            axum::routing::get(get_runtime_trace),
         )
         .route(
             "/projects/{id}/active-agents",
@@ -75,7 +74,7 @@ pub async fn get_lifecycle_run_view(
     )
     .await?;
 
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let view = run_view_builder::build_lifecycle_run_view(&lifecycle_repos, &run).await?;
     Ok(Json(lifecycle_run_view_to_contract(view)))
 }
@@ -86,7 +85,7 @@ pub async fn get_subject_execution(
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<SubjectExecutionView>, ApiError> {
     let subject = SubjectRef::new(kind, parse_uuid(&id, "subject_id")?);
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let view =
         run_view_builder::build_subject_execution_view(&lifecycle_repos, subject.clone()).await?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
@@ -116,12 +115,12 @@ pub async fn get_agent_frame_runtime(
     Ok(Json(agent_frame_runtime_to_view(view)))
 }
 
-pub async fn get_session_trace(
+pub async fn get_runtime_trace(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,
 ) -> Result<Json<RuntimeSessionTraceView>, ApiError> {
-    authorize_runtime_session_shell(state.as_ref(), &current_user, &runtime_session_id).await?;
+    authorize_runtime_trace(state.as_ref(), &current_user, &runtime_session_id).await?;
     let view = state
         .services
         .presentation_read_model_query
@@ -146,7 +145,7 @@ pub async fn get_project_active_agents(
     )
     .await?;
 
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let view =
         run_view_builder::build_project_active_agents_view(&lifecycle_repos, project_id).await?;
     Ok(Json(project_active_agents_view_to_contract(view)))
@@ -211,7 +210,7 @@ async fn load_lifecycle_run(state: &AppState, run_id: Uuid) -> Result<LifecycleR
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
 }
 
-async fn authorize_runtime_session_shell(
+async fn authorize_runtime_trace(
     state: &AppState,
     current_user: &agentdash_integration_api::AuthIdentity,
     runtime_session_id: &str,
@@ -221,7 +220,7 @@ async fn authorize_runtime_session_shell(
         .session_core
         .get_session_meta(runtime_session_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("会话 {runtime_session_id} 不存在")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("runtime trace {runtime_session_id} 不存在")))?;
     let anchor = state
         .repos
         .execution_anchor_repo
@@ -229,7 +228,7 @@ async fn authorize_runtime_session_shell(
         .await?
         .ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "runtime session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+                "runtime trace 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
             ))
         })?;
     let run = load_lifecycle_run(state, anchor.run_id).await?;
@@ -322,37 +321,12 @@ fn runtime_session_trace_to_contract(
     }
 }
 
-pub(crate) fn session_runtime_control_status_to_contract(
-    status: SessionRuntimeControlPlaneStatusModel,
-) -> SessionRuntimeControlPlaneStatus {
-    match status {
-        SessionRuntimeControlPlaneStatusModel::UnboundTrace => {
-            SessionRuntimeControlPlaneStatus::UnboundTrace
-        }
-        SessionRuntimeControlPlaneStatusModel::AnchoredIdle => {
-            SessionRuntimeControlPlaneStatus::AnchoredIdle
-        }
-        SessionRuntimeControlPlaneStatusModel::AnchoredRunning => {
-            SessionRuntimeControlPlaneStatus::AnchoredRunning
-        }
-        SessionRuntimeControlPlaneStatusModel::AnchoredCancelling => {
-            SessionRuntimeControlPlaneStatus::AnchoredCancelling
-        }
-        SessionRuntimeControlPlaneStatusModel::Terminal => {
-            SessionRuntimeControlPlaneStatus::Terminal
-        }
-        SessionRuntimeControlPlaneStatusModel::FrameMissing => {
-            SessionRuntimeControlPlaneStatus::FrameMissing
-        }
-    }
-}
-
 pub(crate) fn presentation_read_model_error_to_api(
     error: AgentRunPresentationReadModelError,
 ) -> ApiError {
     match error {
         AgentRunPresentationReadModelError::MissingSession { runtime_session_id } => {
-            ApiError::NotFound(format!("会话 {runtime_session_id} 不存在"))
+            ApiError::NotFound(format!("runtime trace {runtime_session_id} 不存在"))
         }
         AgentRunPresentationReadModelError::MissingLifecycleRun { run_id } => {
             ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}"))
@@ -370,7 +344,7 @@ pub(crate) fn presentation_read_model_error_to_api(
             AgentRunRuntimeSurfaceQueryError::MissingAnchor {
                 runtime_session_id, ..
             } => ApiError::NotFound(format!(
-                "runtime_session 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+                "runtime trace 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
             )),
             AgentRunRuntimeSurfaceQueryError::MissingLifecycleRun { run_id, .. } => {
                 ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}"))

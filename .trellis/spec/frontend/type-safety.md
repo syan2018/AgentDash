@@ -61,7 +61,7 @@ Validation:
 
 Project extension runtime surface 消费 `generated/extension-runtime-contracts.ts`，`services/extensionRuntime.ts` 只保留 endpoint 调用与 webview asset URL 拼装。`features/extension-runtime` 以 Project ID 为 key 缓存 runtime projection，并向 WorkspacePanel 输出 tab descriptor 与 webview bridge；installation 的 `installed_source` 与 `package_artifact` 是显式可空字段，用来区分 Shared Library 安装来源与 packaged artifact 安装来源；前端不从 Shared Library payload 或 Session Context 推断 extension runtime 声明。
 
-Extension webview bridge 的 `runtime.invoke_action` 只校验 Project、Session、backend 与 action key 这些宿主上下文，并把 `action_key + input` 交给后端 RuntimeGateway，原因是具体 action 是否在当前 actor/context 下可执行由 Gateway catalog / invoke 同源裁决。Project extension runtime projection 的 `runtime_actions` 服务资产展示，不作为前端执行可用性 gate。
+Extension webview bridge 的 `runtime.invoke_action` 与 `extension.invoke_channel` 校验 Project、AgentRun target、backend 与 action/channel key，并把 generated request DTO 交给 AgentRun scoped extension runtime service。后端从 AgentRun current delivery 推导内部 runtime context，原因是具体 action/channel 是否在当前 actor/context 下可执行由 Gateway catalog / invoke 同源裁决，而产品执行身份属于 AgentRun workspace。Project extension runtime projection 的 `runtime_actions` 服务资产展示，不作为前端执行可用性 gate。
 
 新增或修改跨层 DTO 时同步运行：
 
@@ -177,7 +177,7 @@ AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 s
 AgentRun workspace 消费 `AgentConversationSnapshot` / `AgentRunWorkspaceView.conversation` 的 generated DTO。输入区、pending row、model selector 与 keyboard submit 使用 `ConversationCommandSetView.commands`、
 `ConversationKeyboardMapView`、`ConversationModelConfigView` 和 `ConversationPendingSnapshotView`，原因是这些字段携带后端同一轮 snapshot 的 command id、stale guard、模型解析和用户注意力语义。
 
-AgentRun command handlers 以 `ConversationCommandView.enabled`、`unavailable_reason` 和 `commandPrecondition(command)` 作为 mutating command 的语义准入来源；`workspace_status`、`delivery_status` 与 workspace projection loading state 只服务展示和刷新 UX。这样做的原因是后端 command resolver 与 command policy 共享 stale guard，前端如果再用 workspace status 派生 allow/deny 会绕开同源 command contract。
+AgentRun command handlers 以 `ConversationCommandView.enabled`、`unavailable_reason` 和 `commandPrecondition(command)` 作为 mutating command 的语义准入来源；`delivery_status` 与 workspace projection loading state 只服务展示和刷新 UX。这样做的原因是后端 command resolver 与 command policy 共享 stale guard，前端如果再用展示状态派生 allow/deny 会绕开同源 command contract。
 
 ProjectAgent draft start 使用 generated `CreateProjectAgentRunRequest` / `ProjectAgentRunStartResult`。启动成功后前端只用 `run_ref` / `agent_ref` 导航并刷新 AgentRun workspace；首轮输入是否 queued/launched/failed 由 `initial_message: AgentRunMessageCommandResponse` 和后续 workspace/mailbox projection 表达。前端不从 `runtime_session_id`、可选 `turn_id` 或 HTTP success 派生聊天投递状态，原因是 draft workspace materialization 与 connector accepted 是不同边界。
 

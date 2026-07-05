@@ -4,6 +4,10 @@ import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { SessionEventEnvelope } from "../model/types";
+import {
+  agentRunJournalSessionId,
+  type AgentRunJournalIdentityTarget,
+} from "../model/agentRunJournalIdentity";
 import { extractPlatformEventType, isRecord } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 
@@ -12,6 +16,27 @@ export type SessionTurnLifecycleEventType =
   | "turn_completed"
   | "turn_failed"
   | "turn_interrupted";
+
+export function isAgentRunWorkspaceActionRunning(input: {
+  executionStatus: string;
+}): boolean {
+  return input.executionStatus === "starting_claimed" ||
+    input.executionStatus === "running_active" ||
+    input.executionStatus === "cancelling";
+}
+
+export function rawEventsBelongToRuntimeStreamTarget(input: {
+  rawEvents: SessionEventEnvelope[];
+  agentRunTarget?: AgentRunJournalIdentityTarget | null;
+}): boolean {
+  const expectedSessionId = input.agentRunTarget
+    ? agentRunJournalSessionId(input.agentRunTarget)
+    : null;
+  if (!expectedSessionId) {
+    return input.rawEvents.length === 0;
+  }
+  return input.rawEvents.every((event) => event.session_id === expectedSessionId);
+}
 
 export function toExecutorConfigSource(
   defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | ConversationEffectiveExecutorConfigView | null | undefined,

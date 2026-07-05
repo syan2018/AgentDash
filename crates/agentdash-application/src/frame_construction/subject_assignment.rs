@@ -70,8 +70,8 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("Project {project_id} 不存在"))?;
-        let agent_run_repos = self.repos.to_agent_run_repository_set();
-        let workspace = resolve_project_workspace(&agent_run_repos, &project).await?;
+        let workspace =
+            resolve_project_workspace(self.repos.workspace_repo.as_ref(), &project).await?;
 
         Ok(SubjectContextAssignment {
             workspace,
@@ -115,8 +115,7 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
                     .ok_or_else(|| format!("Story 默认 Workspace {workspace_id} 不存在"))?,
             )
         } else {
-            let agent_run_repos = self.repos.to_agent_run_repository_set();
-            resolve_project_workspace(&agent_run_repos, &project).await?
+            resolve_project_workspace(self.repos.workspace_repo.as_ref(), &project).await?
         };
         let resolved_sources = resolve_workspace_declared_sources(
             self.availability,
@@ -187,12 +186,10 @@ impl<'a> SubjectContextAssignmentResolver<'a> {
                         .ok_or_else(|| format!("Story 默认 Workspace {workspace_id} 不存在"))?,
                 )
             } else {
-                let agent_run_repos = self.repos.to_agent_run_repository_set();
-                resolve_project_workspace(&agent_run_repos, &project).await?
+                resolve_project_workspace(self.repos.workspace_repo.as_ref(), &project).await?
             }
         } else {
-            let agent_run_repos = self.repos.to_agent_run_repository_set();
-            resolve_project_workspace(&agent_run_repos, &project).await?
+            resolve_project_workspace(self.repos.workspace_repo.as_ref(), &project).await?
         };
         let mut declared_sources = story
             .as_ref()

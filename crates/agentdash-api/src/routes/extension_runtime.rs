@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_project_for_api;
+use crate::agent_run_runtime_surface::resolve_current_runtime_surface_with_backend_for_agent_run_for_api;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
@@ -53,12 +53,12 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_project_extension_runtime),
         )
         .route(
-            "/projects/{project_id}/extension-runtime/invoke-action",
-            axum::routing::post(invoke_project_extension_runtime_action),
+            "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-action",
+            axum::routing::post(invoke_agent_run_extension_runtime_action),
         )
         .route(
-            "/projects/{project_id}/extension-runtime/invoke-channel",
-            axum::routing::post(invoke_project_extension_runtime_channel),
+            "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-channel",
+            axum::routing::post(invoke_agent_run_extension_runtime_channel),
         )
         .route(
             "/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}",
@@ -75,6 +75,12 @@ pub struct ProjectExtensionRuntimeWebviewPath {
     pub project_id: String,
     pub extension_key: String,
     pub asset_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentRunExtensionRuntimePath {
+    pub run_id: String,
+    pub agent_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,37 +113,25 @@ pub async fn get_project_extension_runtime(
     Ok(Json(extension_runtime_projection_response(projection)))
 }
 
-/// POST `/api/projects/:project_id/extension-runtime/invoke-action`
-pub async fn invoke_project_extension_runtime_action(
+/// POST `/api/agent-runs/:run_id/agents/:agent_id/extension-runtime/invoke-action`
+pub async fn invoke_agent_run_extension_runtime_action(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path(path): Path<ProjectExtensionRuntimePath>,
+    Path(path): Path<AgentRunExtensionRuntimePath>,
     Json(req): Json<ExtensionRuntimeInvokeActionRequest>,
 ) -> Result<Json<ExtensionRuntimeInvokeActionResponse>, ApiError> {
-    let project_id = parse_project_id(&path.project_id)?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-
-    let session_id = req.session_id.trim();
-    if session_id.is_empty() {
-        return Err(ApiError::BadRequest(
-            "extension runtime invoke 缺少 session_id".into(),
-        ));
-    }
-    let runtime_surface = resolve_current_runtime_surface_with_backend_for_project_for_api(
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_agent_run_for_api(
         &state,
         &current_user,
-        session_id,
-        project_id,
+        &path.run_id,
+        &path.agent_id,
+        ProjectPermission::Use,
         RuntimeSurfaceQueryPurpose::new("extension_runtime"),
         "Extension runtime action",
     )
     .await?;
+    let project_id = runtime_surface.project_id;
+    let session_id = runtime_surface.runtime_session_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
@@ -150,11 +144,11 @@ pub async fn invoke_project_extension_runtime_action(
     let mut request = RuntimeInvocationRequest::new(
         action_key,
         RuntimeActor::SessionUser {
-            session_id: session_id.to_string(),
+            session_id: session_id.clone(),
             user_id: Some(current_user.user_id.clone()),
         },
         RuntimeContext::Session {
-            session_id: session_id.to_string(),
+            session_id,
             project_id: Some(project_id),
             workspace_id: None,
         },
@@ -169,37 +163,25 @@ pub async fn invoke_project_extension_runtime_action(
     Ok(Json(extension_runtime_invoke_response(result)))
 }
 
-/// POST `/api/projects/:project_id/extension-runtime/invoke-channel`
-pub async fn invoke_project_extension_runtime_channel(
+/// POST `/api/agent-runs/:run_id/agents/:agent_id/extension-runtime/invoke-channel`
+pub async fn invoke_agent_run_extension_runtime_channel(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path(path): Path<ProjectExtensionRuntimePath>,
+    Path(path): Path<AgentRunExtensionRuntimePath>,
     Json(req): Json<ExtensionRuntimeInvokeChannelRequestDto>,
 ) -> Result<Json<ExtensionRuntimeInvokeChannelResponse>, ApiError> {
-    let project_id = parse_project_id(&path.project_id)?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-
-    let session_id = req.session_id.trim();
-    if session_id.is_empty() {
-        return Err(ApiError::BadRequest(
-            "extension channel invoke 缺少 session_id".into(),
-        ));
-    }
-    let runtime_surface = resolve_current_runtime_surface_with_backend_for_project_for_api(
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_agent_run_for_api(
         &state,
         &current_user,
-        session_id,
-        project_id,
+        &path.run_id,
+        &path.agent_id,
+        ProjectPermission::Use,
         RuntimeSurfaceQueryPurpose::new("extension_runtime"),
         "Extension runtime channel",
     )
     .await?;
+    let project_id = runtime_surface.project_id;
+    let session_id = runtime_surface.runtime_session_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
     if req.channel_key.trim().is_empty() {
@@ -231,7 +213,7 @@ pub async fn invoke_project_extension_runtime_channel(
         .extension_runtime_channel_invoker
         .invoke(ExtensionRuntimeChannelInvokeRequest {
             project_id,
-            session_id: session_id.to_string(),
+            session_id,
             backend_id,
             workspace,
             consumer,

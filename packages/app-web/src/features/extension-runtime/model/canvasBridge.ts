@@ -4,6 +4,7 @@ import type {
   ExtensionRuntimeInvokeChannelResponse,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../generated/extension-runtime-contracts";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
 import type { CanvasExtensionChannelRequest } from "../../canvas-panel/CanvasRuntimePreview";
 import type { WorkspaceData } from "../../workspace-runtime";
@@ -26,19 +27,19 @@ export async function invokeExtensionChannelFromCanvas({
   tab: ExtensionWorkspaceTabProjectionResponse;
   request: CanvasExtensionChannelRequest;
   invokeChannel(
-    projectId: string,
+    target: AgentRunRuntimeTarget,
     request: ExtensionRuntimeInvokeChannelRequest,
   ): Promise<ExtensionRuntimeInvokeChannelResponse>;
 }): Promise<unknown> {
-  if (!workspaceData.projectId || !workspaceData.sessionId) {
-    throw new Error("Canvas extension channel 缺少 Project 或 Session context");
+  const agentRunTarget = workspaceData.agentRunRuntimeTarget ?? null;
+  if (!workspaceData.projectId || !agentRunTarget) {
+    throw new Error("Canvas extension channel 缺少 Project 或 AgentRun context");
   }
   const backend = selectExtensionBackendTarget(workspaceData);
   if (!backend || !backend.online) {
     throw new Error("Canvas extension channel 缺少可用 backend");
   }
-  const result = await invokeChannel(workspaceData.projectId, {
-    session_id: workspaceData.sessionId,
+  const result = await invokeChannel(agentRunTarget, {
     channel_key: request.channel_key,
     method: request.method,
     input: toJsonValue(request.input),

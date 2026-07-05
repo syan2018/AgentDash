@@ -1,6 +1,6 @@
 use agentdash_application_agentrun::agent_run::{
     AgentRunCommandReceiptView, AgentRunMailboxCommandOutcome as AppMailboxCommandOutcome,
-    AgentRunMailboxCommandResult, SessionExecutionState,
+    AgentRunMailboxCommandResult,
 };
 use agentdash_application_ports::launch::{BackendSelectionInput, BackendSelectionInputMode};
 use agentdash_contracts::agent_run_mailbox::{
@@ -8,9 +8,9 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunMessageCommandResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
     ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
     MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
-    RuntimeSessionCommandStateDto, SteeringStopEffect,
+    SteeringStopEffect,
 };
-use agentdash_contracts::workflow::{AgentRunRefDto, LifecycleRunRefDto, RuntimeSessionRefDto};
+use agentdash_contracts::workflow::{AgentRunRefDto, LifecycleRunRefDto};
 
 pub(crate) fn agent_run_message_command_response(
     result: AgentRunMailboxCommandResult,
@@ -20,7 +20,6 @@ pub(crate) fn agent_run_message_command_response(
         outcome: mailbox_command_outcome_view(result.outcome),
         mailbox_message: result.mailbox_message.map(mailbox_message_view),
         accepted_refs: result.accepted_refs.map(agent_run_message_accepted_refs),
-        runtime_state: result.runtime_state.map(runtime_session_state_dto),
         fork: None,
     }
 }
@@ -67,9 +66,6 @@ pub(crate) fn agent_run_message_accepted_refs(
                 frame_id: frame_id.to_string(),
                 revision: refs.frame_revision,
             }),
-        runtime_session_ref: refs
-            .runtime_session_id
-            .map(|runtime_session_id| RuntimeSessionRefDto { runtime_session_id }),
         agent_run_turn_id: refs.agent_run_turn_id,
         protocol_turn_id: refs.protocol_turn_id,
     }
@@ -83,51 +79,10 @@ pub(crate) fn mailbox_command_outcome_view(
         AppMailboxCommandOutcome::Queued => AgentRunMessageCommandOutcome::Queued,
         AppMailboxCommandOutcome::Steered => AgentRunMessageCommandOutcome::Steered,
         AppMailboxCommandOutcome::Deleted => AgentRunMessageCommandOutcome::Deleted,
+        AppMailboxCommandOutcome::Moved => AgentRunMessageCommandOutcome::Moved,
         AppMailboxCommandOutcome::Resumed => AgentRunMessageCommandOutcome::Resumed,
         AppMailboxCommandOutcome::Blocked => AgentRunMessageCommandOutcome::Blocked,
         AppMailboxCommandOutcome::Failed => AgentRunMessageCommandOutcome::Failed,
-    }
-}
-
-pub(crate) fn runtime_session_state_dto(
-    state: SessionExecutionState,
-) -> RuntimeSessionCommandStateDto {
-    match state {
-        SessionExecutionState::Idle => RuntimeSessionCommandStateDto {
-            status: "idle".to_string(),
-            turn_id: None,
-            message: None,
-        },
-        SessionExecutionState::Running { turn_id } => RuntimeSessionCommandStateDto {
-            status: "running".to_string(),
-            turn_id,
-            message: None,
-        },
-        SessionExecutionState::Cancelling { turn_id } => RuntimeSessionCommandStateDto {
-            status: "cancelling".to_string(),
-            turn_id,
-            message: Some("当前执行正在取消中。".to_string()),
-        },
-        SessionExecutionState::Completed { turn_id } => RuntimeSessionCommandStateDto {
-            status: "completed".to_string(),
-            turn_id: Some(turn_id),
-            message: None,
-        },
-        SessionExecutionState::Failed { turn_id, message } => RuntimeSessionCommandStateDto {
-            status: "failed".to_string(),
-            turn_id: Some(turn_id),
-            message,
-        },
-        SessionExecutionState::Interrupted { turn_id, message } => RuntimeSessionCommandStateDto {
-            status: "interrupted".to_string(),
-            turn_id,
-            message,
-        },
-        SessionExecutionState::Lost { turn_id, message } => RuntimeSessionCommandStateDto {
-            status: "lost".to_string(),
-            turn_id,
-            message,
-        },
     }
 }
 
@@ -345,9 +300,6 @@ fn mailbox_message_accepted_refs(
             agent_id: message.agent_id.to_string(),
         },
         frame_ref: None,
-        runtime_session_ref: Some(RuntimeSessionRefDto {
-            runtime_session_id: message.runtime_session_id.clone(),
-        }),
         agent_run_turn_id: message.accepted_agent_run_turn_id.clone(),
         protocol_turn_id: message.accepted_protocol_turn_id.clone(),
     })

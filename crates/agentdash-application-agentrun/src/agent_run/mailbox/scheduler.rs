@@ -15,6 +15,24 @@ struct SteeringDeliveryResult {
     agent_message: Option<AgentMessage>,
 }
 
+fn required_message_delivery_runtime_session_id(
+    message: &AgentRunMailboxMessage,
+) -> Result<String, WorkflowApplicationError> {
+    message.delivery_runtime_session_id.clone().ok_or_else(|| {
+        WorkflowApplicationError::Conflict(format!(
+            "mailbox message {} 尚未绑定 delivery runtime ref",
+            message.id
+        ))
+    })
+}
+
+fn message_delivery_runtime_session_label(message: &AgentRunMailboxMessage) -> &str {
+    message
+        .delivery_runtime_session_id
+        .as_deref()
+        .unwrap_or("<unassigned>")
+}
+
 impl<'a> AgentRunMailboxService<'a> {
     pub async fn schedule(
         &self,
@@ -236,7 +254,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(runtime_session_id.to_string()),
+                delivery_runtime_session_id: Some(runtime_session_id.to_string()),
                 barriers,
                 drain_mode,
                 limit,
@@ -289,7 +307,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .claim_next(AgentRunMailboxClaimRequest {
                 run_id,
                 agent_id,
-                runtime_session_id: Some(runtime_session_id.to_string()),
+                delivery_runtime_session_id: Some(runtime_session_id.to_string()),
                 barriers: vec![ConsumptionBarrier::AgentRunTurnBoundary],
                 drain_mode,
                 limit,
@@ -323,7 +341,7 @@ impl<'a> AgentRunMailboxService<'a> {
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
         diag!(Debug, Subsystem::AgentRun,
 
-            runtime_session_id = %message.runtime_session_id,
+            runtime_session_id = %message_delivery_runtime_session_label(&message),
             mailbox_message_id = %message.id,
             delivery = ?message.delivery,
             barrier = ?message.barrier,
@@ -332,14 +350,15 @@ impl<'a> AgentRunMailboxService<'a> {
         );
         match &message.delivery {
             MailboxDelivery::LaunchOrContinueTurn => {
+                let runtime_session_id = required_message_delivery_runtime_session_id(&message)?;
                 let execution_state = self
                     .session_core
-                    .inspect_session_execution_state(&message.runtime_session_id)
+                    .inspect_session_execution_state(&runtime_session_id)
                     .await
                     .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?;
                 diag!(Debug, Subsystem::AgentRun,
 
-                    runtime_session_id = %message.runtime_session_id,
+                    runtime_session_id = %runtime_session_id,
                     mailbox_message_id = %message.id,
                     execution_state = ?execution_state,
                     trigger = ?trigger,
@@ -374,9 +393,10 @@ impl<'a> AgentRunMailboxService<'a> {
         message: AgentRunMailboxMessage,
         identity: Option<AuthIdentity>,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
+        let runtime_session_id = required_message_delivery_runtime_session_id(&message)?;
         diag!(Debug, Subsystem::AgentRun,
 
-            runtime_session_id = %message.runtime_session_id,
+            runtime_session_id = %runtime_session_id,
             mailbox_message_id = %message.id,
             "AgentRun mailbox launch consumption entered"
         );
@@ -386,7 +406,7 @@ impl<'a> AgentRunMailboxService<'a> {
         let delivery = SessionTurnMessageDeliveryPort::new(self.session_launch.clone());
         diag!(Debug, Subsystem::AgentRun,
 
-            runtime_session_id = %message.runtime_session_id,
+            runtime_session_id = %runtime_session_id,
             mailbox_message_id = %message.id,
             input_blocks = input.len(),
             has_executor_config = executor_config.is_some(),
@@ -394,7 +414,7 @@ impl<'a> AgentRunMailboxService<'a> {
         );
         let turn_id = match delivery
             .deliver_user_message(AgentRunMessageDelivery {
-                delivery_runtime_session_id: message.runtime_session_id.clone(),
+                delivery_runtime_session_id: runtime_session_id.clone(),
                 input,
                 executor_config,
                 planning_input,
@@ -406,7 +426,7 @@ impl<'a> AgentRunMailboxService<'a> {
             Err(error) => {
                 diag!(Debug, Subsystem::AgentRun,
 
-                    runtime_session_id = %message.runtime_session_id,
+                    runtime_session_id = %runtime_session_id,
                     mailbox_message_id = %message.id,
                     error = %error,
                     "AgentRun mailbox launch delivery failed"
@@ -433,20 +453,20 @@ impl<'a> AgentRunMailboxService<'a> {
         };
         diag!(Debug, Subsystem::AgentRun,
 
-            runtime_session_id = %message.runtime_session_id,
+            runtime_session_id = %runtime_session_id,
             mailbox_message_id = %message.id,
             turn_id = %turn_id,
             "AgentRun mailbox launch delivery accepted"
         );
         let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&message.runtime_session_id)
+            .resolve_control_plane_for_delivery(&runtime_session_id)
             .await?;
         let refs = AgentRunAcceptedRefs {
             run_id: run.id,
             agent_id: agent.id,
             frame_id: Some(frame.id),
             frame_revision: Some(frame.revision),
-            runtime_session_id: Some(message.runtime_session_id.clone()),
+            runtime_session_id: Some(runtime_session_id.clone()),
             agent_run_turn_id: Some(turn_id.clone()),
             protocol_turn_id: None,
         };
@@ -489,13 +509,14 @@ impl<'a> AgentRunMailboxService<'a> {
         message: AgentRunMailboxMessage,
         mode: SteeringDeliveryMode,
     ) -> Result<SteeringDeliveryResult, WorkflowApplicationError> {
+        let runtime_session_id = required_message_delivery_runtime_session_id(&message)?;
         let input = message_input(&message)?;
         let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&message.runtime_session_id)
+            .resolve_control_plane_for_delivery(&runtime_session_id)
             .await?;
         let active_turn_id = match self
             .session_core
-            .inspect_session_execution_state(&message.runtime_session_id)
+            .inspect_session_execution_state(&runtime_session_id)
             .await
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))?
         {
@@ -540,7 +561,7 @@ impl<'a> AgentRunMailboxService<'a> {
             SteeringDeliveryMode::LiveSteer => {
                 if !self
                     .session_control
-                    .supports_session_steering(&message.runtime_session_id)
+                    .supports_session_steering(&runtime_session_id)
                     .await
                 {
                     let outcome = self
@@ -555,7 +576,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 if let Err(error) = self
                     .session_control
                     .steer_session(SessionTurnSteerCommand {
-                        session_id: message.runtime_session_id.clone(),
+                        session_id: runtime_session_id.clone(),
                         expected_turn_id: active_turn_id.clone(),
                         input: input.clone(),
                     })
@@ -583,7 +604,7 @@ impl<'a> AgentRunMailboxService<'a> {
         let event_error = match self
             .session_eventing
             .emit_user_input_submitted(
-                &message.runtime_session_id,
+                &runtime_session_id,
                 &active_turn_id,
                 &format!(
                     "{}:mailbox_steering:{}:{}:{}",
@@ -605,7 +626,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 diag_error!(Warn, Subsystem::AgentRun,
                     context = &diagnostic_context,
                     error = &error,
-                    runtime_session_id = %message.runtime_session_id,
+                    runtime_session_id = %runtime_session_id,
                     run_id = %run.id,
                     agent_id = %agent.id,
                     frame_id = %frame.id,
@@ -633,7 +654,7 @@ impl<'a> AgentRunMailboxService<'a> {
             agent_id: agent.id,
             frame_id: Some(frame.id),
             frame_revision: Some(frame.revision),
-            runtime_session_id: Some(message.runtime_session_id.clone()),
+            runtime_session_id: Some(runtime_session_id.clone()),
             agent_run_turn_id: Some(active_turn_id),
             protocol_turn_id: None,
         };
@@ -660,6 +681,7 @@ impl<'a> AgentRunMailboxService<'a> {
         message: AgentRunMailboxMessage,
         launch_source: String,
     ) -> Result<AgentRunMailboxScheduleOutcome, WorkflowApplicationError> {
+        let runtime_session_id = required_message_delivery_runtime_session_id(&message)?;
         let input = message_input(&message)?;
         let command = match launch_source.as_str() {
             "hook_auto_resume" => LaunchCommand::hook_auto_resume_input(LaunchPromptInput {
@@ -696,7 +718,7 @@ impl<'a> AgentRunMailboxService<'a> {
         let turn_id = match self
             .session_launch
             .launch_command_in_task(
-                message.runtime_session_id.clone(),
+                runtime_session_id.clone(),
                 command,
                 message_launch_planning_input(&message)?,
             )
@@ -725,14 +747,14 @@ impl<'a> AgentRunMailboxService<'a> {
             }
         };
         let (run, agent, frame) = self
-            .resolve_control_plane_for_delivery(&message.runtime_session_id)
+            .resolve_control_plane_for_delivery(&runtime_session_id)
             .await?;
         let refs = AgentRunAcceptedRefs {
             run_id: run.id,
             agent_id: agent.id,
             frame_id: Some(frame.id),
             frame_revision: Some(frame.revision),
-            runtime_session_id: Some(message.runtime_session_id.clone()),
+            runtime_session_id: Some(runtime_session_id.clone()),
             agent_run_turn_id: Some(turn_id.clone()),
             protocol_turn_id: None,
         };

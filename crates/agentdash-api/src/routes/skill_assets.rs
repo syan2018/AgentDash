@@ -12,9 +12,9 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::skill_asset::{
-    CreateSkillAssetInput, ImportRemoteSkillAssetInput, SkillAssetApplicationError,
-    SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput, content_from_bytes,
-    import_remote_skill_url_to_project,
+    CreateSkillAssetInput, ImportRemoteSkillAssetInput, ImportRemoteSkillUrlDeps,
+    SkillAssetApplicationError, SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput,
+    content_from_bytes, import_remote_skill_url_to_project,
 };
 use agentdash_contracts::common_response::DeletedIdResponse;
 use agentdash_contracts::skill_asset::{
@@ -234,8 +234,13 @@ pub async fn import_remote_skill_asset(
     .await?;
 
     let remote_source = agentdash_infrastructure::HttpRemoteSkillSource::new();
+    let shared_library_repos = state.repos.to_shared_library_repository_set();
     let asset = import_remote_skill_url_to_project(
-        &state.repos,
+        ImportRemoteSkillUrlDeps {
+            skill_asset_repo: state.repos.skill_asset_repo.as_ref(),
+            shared_library_repo: state.repos.shared_library_repo.as_ref(),
+            shared_library_repos: &shared_library_repos,
+        },
         ImportRemoteSkillAssetInput {
             project_id,
             owner_id: current_user.user_id.clone(),

@@ -8,14 +8,16 @@
 
 - **领域层**定义单一聚合 Repository Port（如 `StoryRepository`、`WorkspaceRepository`）
 - **基础设施层**提供 `Postgres*Repository` 实现
-- **应用层**通过 `RepositorySet` 编排多个 Port
+- **应用层**通过具名 use-case deps struct 编排多个 Port
 - Repository 接口语义直接对应聚合边界，不混入跨聚合事务
 
 ---
 
-## RepositorySet
+## Composition Root And Use-Case Dependencies
 
-`RepositorySet` 定义在 `agentdash-application`，持有所有 Repository trait 对象。API 层通过 `AppState` 持有 `RepositorySet`，应用层优先接收 `&RepositorySet` 或具体 trait。
+`RepositorySet` 定义在 `agentdash-application`，只作为 API composition root / bootstrap 的 repository 装配结果。`AppState` 可以持有 `RepositorySet` 以统一启动期 wiring，但业务 route helper、application service constructor 和 use case 不直接接收或转发全量 set。
+
+跨 repository 用例使用具名 deps struct，例如 `AgentRunForkRepos`、`ProjectAgentRunStartRepos`、`DeliveryRuntimeSelectionRepositories` 或 workspace query deps。这样 constructor 签名表达真实依赖集合，测试 fixture 也必须显式构造该用例需要的 port。原因是全量 repository set 会把 service locator 伪装成业务依赖，难以判断某个用例是否跨越了不该跨的 aggregate。
 
 Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersistence`、session event record、terminal effect outbox record 与 runtime command record 定义在 `agentdash-spi::session_persistence`，由 application 组合成 runtime stores，由 infrastructure 提供 PostgreSQL / SQLite adapter。这样 session runtime 的持久化事实可以跨 cloud/local adapter 复用，而基础设施层不需要依赖 application 编排 crate。
 
@@ -29,7 +31,7 @@ Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersisten
 
 ### 2. 聚合整体持久化必须原子
 
-例如 `WorkspaceRepository` 在同一事务内写 `workspaces` 与 `workspace_bindings`。`LifecycleRunRepository` 在同一聚合边界内写 lifecycle context、orchestrations、tasks 与 view projection；`StoryRepository` 只写 Story 自身字段与上下文。
+例如 `WorkspaceRepository` 在同一事务内写 `workspaces` 与 `workspace_bindings`。`LifecycleRunRepository` 在同一聚合边界内写 orchestrations、tasks 与 execution log；`StoryRepository` 只写 Story 自身字段与上下文。
 
 ### 3. 跨聚合一致性使用显式 Command Port
 
@@ -37,7 +39,11 @@ Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersisten
 
 Story 页面展示 Task 时读取 Story projection；Task durable facts 的写命令落在 LifecycleRun aggregate mutation 或 Lifecycle application command 上。这样 Story context、Task plan facts 与 runtime execution projection 的事实源保持可解释。
 
-### 4. 命名约定
+### 4. Use-case deps 不从 RepositorySet 派生
+
+业务模块不提供 `from_repository_set` adapter。composition root 负责把全量 repository set 拆成具名 deps struct，再传给 route helper 或 service constructor。允许的 residual 是 bootstrap/AppState wiring；一旦进入业务函数，参数名必须说明该用例需要什么能力。
+
+### 5. 命名约定
 
 - 结构体命名 `<技术><实体>Repository`（如 `PostgresStoryRepository`）
 - 不在 `postgres/` 目录保留 `Sqlite*` 命名

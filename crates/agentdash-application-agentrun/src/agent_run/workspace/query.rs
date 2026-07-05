@@ -1,43 +1,59 @@
 use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
-use agentdash_domain::agent::ProjectAgent;
-use agentdash_domain::agent_run_mailbox::AgentRunMailboxState;
+use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
+use agentdash_domain::agent_run_mailbox::{AgentRunMailboxRepository, AgentRunMailboxState};
 use agentdash_domain::common::error::DomainError;
+use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::settings::{
     AGENT_MAILBOX_HIDE_SYSTEM_STEER_MESSAGES_KEY, SettingScope, SettingsRepository,
 };
-use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
+use agentdash_domain::workflow::{
+    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleGateRepository, LifecycleRun,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+};
 use agentdash_spi::Vfs;
 use uuid::Uuid;
 
 use crate::agent_run::lifecycle_read_model_facade::{
     LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
-use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionExecutionState};
+use crate::agent_run::runtime_session_boundary::SessionCoreService;
 use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
-    AgentRunOwnershipModel, ConversationModelConfigInput, ConversationModelConfigResolver,
-    ConversationModelConfigSourceModel, ConversationWaitingItemModel, DeliveryRuntimeSelection,
-    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionService, ValidationSeverityModel,
+    AgentRunExecutionState, AgentRunOwnershipModel, ConversationModelConfigInput,
+    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
+    ConversationWaitingItemModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
+    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 use agentdash_application_vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, VfsSurfaceRuntimeProjection,
     build_surface_summary,
 };
 
-use super::projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
+use super::state::{derive_workspace_state, is_terminal_agent_status};
 use super::types::{
     AgentRunResourceSurfaceCoordinateModel, AgentRunResourceSurfaceSourceAnchorModel,
     AgentRunWorkspaceFrameRefModel, AgentRunWorkspaceFrameRuntimeModel,
-    AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceProjectionInput,
-    AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
-    AgentRunWorkspaceTraceMetaModel, SubjectRefModel,
+    AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel,
+    AgentRunWorkspaceSnapshot, SubjectRefModel,
 };
 
+#[derive(Clone, Copy)]
+pub struct AgentRunWorkspaceQueryDeps<'a> {
+    pub delivery_selection_repos: DeliveryRuntimeSelectionRepositories<'a>,
+    pub agent_frame_repo: &'a dyn AgentFrameRepository,
+    pub execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    pub project_agent_repo: &'a dyn ProjectAgentRepository,
+    pub agent_run_mailbox_repo: &'a dyn AgentRunMailboxRepository,
+    pub lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
+    pub lifecycle_gate_repo: &'a dyn LifecycleGateRepository,
+    pub settings_repo: &'a dyn SettingsRepository,
+    pub inline_file_repo: &'a dyn InlineFileRepository,
+}
+
 pub struct AgentRunWorkspaceQueryService<'a> {
-    repos: &'a RepositorySet,
+    repos: AgentRunWorkspaceQueryDeps<'a>,
     session_core: SessionCoreService,
     session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
     vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
@@ -47,7 +63,7 @@ pub struct AgentRunWorkspaceQueryService<'a> {
 
 impl<'a> AgentRunWorkspaceQueryService<'a> {
     pub fn new(
-        repos: &'a RepositorySet,
+        repos: AgentRunWorkspaceQueryDeps<'a>,
         session_core: SessionCoreService,
         session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
         vfs_runtime: &'a dyn VfsSurfaceRuntimeProjection,
@@ -102,7 +118,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
                 };
                 Some(
                     build_surface_summary(
-                        self.repos.inline_file_repo.as_ref(),
+                        self.repos.inline_file_repo,
                         self.vfs_runtime,
                         &source,
                         &resolution.vfs,
@@ -131,32 +147,23 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .lifecycle_run_view(run.id)
             .await
             .map_err(WorkflowApplicationError::from)?;
-        let mut agent_view = run_view
+        let agent_view = run_view
             .agents
             .iter()
             .find(|view| view.agent_ref.agent_id == agent.id.to_string())
             .cloned();
-        if let Some(agent_view) = agent_view.as_mut() {
-            agent_view.delivery_runtime_ref = delivery_runtime_session_id
-                .clone()
-                .map(|runtime_session_id| RuntimeSessionRefView { runtime_session_id });
-        }
         let subject_associations =
             filter_agent_subject_associations(run_view.subject_associations, agent.id);
-        let execution_state = match delivery_runtime_session_id.as_deref() {
-            Some(session_id) => {
-                self.session_core
-                    .inspect_session_execution_state(session_id)
-                    .await?
-            }
-            None => SessionExecutionState::Idle,
-        };
+        let execution_state = current_delivery
+            .as_ref()
+            .map(DeliveryRuntimeSelection::execution_state)
+            .unwrap_or(AgentRunExecutionState::Idle);
         let terminal_agent = is_terminal_agent_status(&agent.status);
         let supports_steering = match delivery_runtime_session_id.as_deref() {
             Some(session_id)
                 if matches!(
                     execution_state,
-                    SessionExecutionState::Running { turn_id: Some(_) }
+                    AgentRunExecutionState::Running { turn_id: Some(_) }
                 ) =>
             {
                 self.session_control
@@ -165,9 +172,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             }
             _ => false,
         };
-        let projection = AgentRunWorkspaceProjection::derive(
-            AgentRunWorkspaceProjectionInput::new(&execution_state, &agent.status),
-        );
+        let workspace_state = derive_workspace_state(&execution_state);
 
         let mailbox_messages = self
             .repos
@@ -195,14 +200,14 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .map(|gate| ConversationWaitingItemModel::from_lifecycle_gate(&gate))
             .collect::<Vec<_>>();
         let hide_system_steer_messages = load_hide_system_steer_messages_setting(
-            self.repos.settings_repo.as_ref(),
+            self.repos.settings_repo,
             viewer_user_id.as_deref(),
         )
         .await
         .map_err(WorkflowApplicationError::from)?;
         let mailbox = mailbox_state_model(
             mailbox_state.as_ref(),
-            delivery_runtime_session_id.is_some() && !terminal_agent,
+            frame_ref.is_some() && !terminal_agent,
             mailbox_visible_message_count,
             hide_system_steer_messages,
         );
@@ -253,21 +258,16 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             meta.as_ref(),
             project_agent.as_ref(),
             &agent,
-            &projection.delivery_status,
-            projection.last_turn_id.clone(),
+            &workspace_state,
+            workspace_state.last_turn_id.clone(),
         );
-        let delivery_trace_meta = meta
-            .as_ref()
-            .map(AgentRunWorkspaceTraceMetaModel::from_session_meta);
-
         Ok(AgentRunWorkspaceSnapshot {
             run,
             agent,
             ownership,
             shell,
             delivery_runtime_session_id,
-            delivery_trace_meta,
-            projection,
+            state: workspace_state,
             agent_view,
             frame_runtime,
             subject_associations,
@@ -281,10 +281,10 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
 
     /// 列表视图的轻量解析：只取标题 / 投递状态 / subject 归属，
     /// 跳过 vfs surface、run view、mailbox、conversation 等重量级解析。
-    pub async fn resolve_list_projection(
+    pub async fn resolve_list_item(
         &self,
         input: AgentRunWorkspaceQueryInput,
-    ) -> Result<super::types::AgentRunListProjection, WorkflowApplicationError> {
+    ) -> Result<super::types::AgentRunListItem, WorkflowApplicationError> {
         let _viewer_user_id = input.viewer_user_id;
         let run = input.run;
         let agent = input.agent;
@@ -296,29 +296,19 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             Some(session_id) => self.session_core.get_session_meta(session_id).await?,
             None => None,
         };
-        let execution_state = match delivery_runtime_session_id.as_deref() {
-            Some(session_id) => {
-                self.session_core
-                    .inspect_session_execution_state(session_id)
-                    .await?
-            }
-            None => SessionExecutionState::Idle,
-        };
-        let projection = AgentRunWorkspaceProjection::derive(
-            AgentRunWorkspaceProjectionInput::new(&execution_state, &agent.status),
-        );
+        let execution_state = current_delivery
+            .as_ref()
+            .map(DeliveryRuntimeSelection::execution_state)
+            .unwrap_or(AgentRunExecutionState::Idle);
+        let workspace_state = derive_workspace_state(&execution_state);
         let project_agent = self.load_project_agent(&run, &agent).await?;
         let shell = shell_model(
             meta.as_ref(),
             project_agent.as_ref(),
             &agent,
-            &projection.delivery_status,
-            projection.last_turn_id.clone(),
+            &workspace_state,
+            workspace_state.last_turn_id.clone(),
         );
-        let delivery_trace_meta = meta
-            .as_ref()
-            .map(AgentRunWorkspaceTraceMetaModel::from_session_meta);
-
         let association = self
             .repos
             .lifecycle_subject_association_repo
@@ -335,13 +325,12 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .as_ref()
             .and_then(|assoc| subject_label_from_metadata(assoc.metadata_json.as_ref()));
 
-        Ok(super::types::AgentRunListProjection {
+        Ok(super::types::AgentRunListItem {
             run,
             agent: agent.clone(),
             shell,
             project_agent_label: project_agent.as_ref().map(project_agent_display_label),
             delivery_runtime_session_id,
-            delivery_trace_meta,
             subject_ref,
             subject_label,
         })
@@ -352,14 +341,14 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
         run: &LifecycleRun,
         agent: &LifecycleAgent,
     ) -> Result<Option<DeliveryRuntimeSelection>, WorkflowApplicationError> {
-        if agent.current_delivery.is_none() {
-            return Ok(None);
-        }
-        DeliveryRuntimeSelectionService::from_repository_set(self.repos)
+        match DeliveryRuntimeSelectionService::new(self.repos.delivery_selection_repos)
             .select_current_delivery(run.id, agent.id)
             .await
-            .map(Some)
-            .map_err(workflow_error_from_selection_error)
+        {
+            Ok(selection) => Ok(Some(selection)),
+            Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
+            Err(error) => Err(workflow_error_from_selection_error(error)),
+        }
     }
 
     async fn resolve_agent_run_frame_vfs(
@@ -532,7 +521,7 @@ fn shell_model(
     meta: Option<&crate::agent_run::runtime_session_boundary::SessionMeta>,
     project_agent: Option<&ProjectAgent>,
     agent: &LifecycleAgent,
-    delivery_status: &str,
+    workspace_state: &super::types::AgentRunWorkspaceStateModel,
     last_turn_id: Option<String>,
 ) -> AgentRunWorkspaceShellModel {
     let (display_title, title_source) = match meta {
@@ -548,8 +537,7 @@ fn shell_model(
     AgentRunWorkspaceShellModel {
         display_title,
         title_source,
-        workspace_status: agent.status.clone(),
-        delivery_status: delivery_status.to_string(),
+        delivery_status: workspace_state.delivery_status.clone(),
         last_turn_id,
         last_activity_at: agent.updated_at.to_rfc3339(),
     }

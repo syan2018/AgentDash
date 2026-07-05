@@ -84,17 +84,15 @@ function getItemKey(item: SessionDisplayItem): string {
  * - hover 出轻量摘要（百分比 / 当前·上限 / 最近输入输出 / 估算）
  * - 点击向上展开锚定圆环的浮层，渲染完整明细（构成 / 消息明细 / Top Tools / segments）
  *
- * 只要存在会话就渲染（即便用量数据尚未到达，也能点开看投影明细），
+ * 只要存在 AgentRun target 或 raw session trace 就渲染（即便用量数据尚未到达，也能点开看投影明细），
  * 因此入口在 GUI 上始终可见、可发现。
  */
 function ContextUsageRing({
   usage,
-  sessionId,
   agentRunTarget,
   refreshKey,
 }: {
   usage: TokenUsageInfo | null;
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey: number;
 }) {
@@ -121,8 +119,7 @@ function ContextUsageRing({
     };
   }, [open]);
 
-  // 没有会话可查时不渲染入口
-  if (!sessionId) return null;
+  if (!agentRunTarget) return null;
 
   const maxTokens = usage ? usage.effectiveContextWindow ?? usage.modelContextWindow : undefined;
   const currentContextTokens = usage?.currentContextTokens ?? 0;
@@ -201,7 +198,6 @@ function ContextUsageRing({
       {open && (
         <div className="absolute bottom-full right-0 z-50 mb-1.5 w-[min(680px,calc(100vw-2rem))]">
           <SessionProjectionView
-            sessionId={sessionId}
             agentRunTarget={agentRunTarget}
             refreshKey={refreshKey}
             tokenUsage={usage}
@@ -216,13 +212,9 @@ function ContextUsageRing({
 export function SessionChatStatusBar({
   connectionColor,
   connectionLabel,
-  isActionRunning,
-  isConnected,
 }: {
   connectionColor: string;
   connectionLabel: string;
-  isActionRunning: boolean;
-  isConnected: boolean;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
@@ -230,12 +222,6 @@ export function SessionChatStatusBar({
         <span className={`inline-block h-1.5 w-1.5 rounded-[8px] ${connectionColor}`} />
         {connectionLabel}
       </span>
-      {isActionRunning && (
-        <span className="flex items-center gap-1 rounded-[8px] border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
-          <span className="inline-block h-1.5 w-1.5 rounded-[8px] bg-primary" />
-          {isConnected ? "接收中" : "执行中"}
-        </span>
-      )}
     </div>
   );
 }
@@ -245,9 +231,8 @@ export function SessionChatStream({
   displayItems,
   turnSegments,
   agentRunTarget,
-  hasSession,
+  hasRuntimeStreamTarget,
   isLoading,
-  sessionId,
   streamingEntryId,
   streamPrefixContent,
   onForkFromMessageRef,
@@ -257,9 +242,8 @@ export function SessionChatStream({
   displayItems: SessionDisplayItem[];
   turnSegments?: TurnSegment[];
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  hasSession: boolean;
+  hasRuntimeStreamTarget: boolean;
   isLoading: boolean;
-  sessionId: string | null;
   streamingEntryId: string | null;
   streamPrefixContent?: ReactNode;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
@@ -267,14 +251,14 @@ export function SessionChatStream({
 }) {
   return (
     <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
-      {hasSession && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
+      {hasRuntimeStreamTarget && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
         <div className="flex h-full items-center justify-center">
           <div className="text-center">
             <div className="mx-auto h-8 w-8 animate-spin rounded-[12px] border-2 border-primary border-t-transparent" />
             <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
           </div>
         </div>
-      ) : (hasSession && displayItems.length > 0) || streamPrefixContent ? (
+      ) : (hasRuntimeStreamTarget && displayItems.length > 0) || streamPrefixContent ? (
         <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
           {streamPrefixContent}
           {turnSegments && turnSegments.length > 0 ? (
@@ -283,7 +267,6 @@ export function SessionChatStream({
                 key={segment.turnId ?? `gap-${idx}`}
                 segment={segment}
                 agentRunTarget={agentRunTarget}
-                sessionId={sessionId}
                 streamingEntryId={streamingEntryId}
                 onForkFromMessageRef={onForkFromMessageRef}
               />
@@ -298,7 +281,6 @@ export function SessionChatStream({
                     item={item}
                     agentRunTarget={agentRunTarget}
                     isStreaming={key === streamingEntryId}
-                    sessionId={sessionId}
                     followedByMessage={followed}
                   />
                 </div>
@@ -310,10 +292,10 @@ export function SessionChatStream({
         <div className="flex h-full items-center justify-center">
           <div className="text-center">
             <div className="mx-auto mb-4 w-fit rounded-[8px] border border-dashed border-border bg-secondary px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Session
+              {agentRunTarget ? "Workspace" : "Session"}
             </div>
             <p className="text-sm text-muted-foreground">
-              {hasSession ? "会话已就绪，继续发送消息" : "输入 prompt 并发送开始会话"}
+              {hasRuntimeStreamTarget ? "会话已就绪，继续发送消息" : "对话尚未开始，仍可发送可用命令"}
             </p>
           </div>
         </div>
@@ -408,13 +390,11 @@ function useActiveTurnElapsedMs(startedAtMs: number | undefined, active: boolean
 function TurnSection({
   segment,
   agentRunTarget,
-  sessionId,
   streamingEntryId,
   onForkFromMessageRef,
 }: {
   segment: TurnSegment;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  sessionId: string | null;
   streamingEntryId: string | null;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
@@ -459,7 +439,6 @@ function TurnSection({
                 item={item}
                 agentRunTarget={agentRunTarget}
                 isStreaming={key === streamingEntryId}
-                sessionId={sessionId}
                 followedByMessage={followed}
               />
             </div>
@@ -490,7 +469,6 @@ function TurnSection({
           item={segment.finalOutput}
           agentRunTarget={agentRunTarget}
           isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
-          sessionId={sessionId}
         />
       )}
       <RoundActionToolbar
@@ -593,7 +571,7 @@ export function SessionChatComposer({
   discovered,
   execConfig,
   fileRef,
-  hasSession,
+  hasRuntimeStreamTarget,
   inputPrefix,
   toolbarSlot,
   inputValue,
@@ -607,7 +585,6 @@ export function SessionChatComposer({
   showExecutorSelector,
   workspaceId,
   tokenUsage,
-  sessionId,
   agentRunTarget,
   projectionRefreshKey,
   onAtTrigger,
@@ -625,7 +602,7 @@ export function SessionChatComposer({
   discovered: ExecutorDiscoveredState;
   execConfig: ExecutorConfigState;
   fileRef: FileReferenceState;
-  hasSession: boolean;
+  hasRuntimeStreamTarget: boolean;
   inputPrefix?: ReactNode;
   toolbarSlot?: ReactNode;
   inputValue: string;
@@ -639,7 +616,6 @@ export function SessionChatComposer({
   showExecutorSelector: boolean;
   workspaceId?: string | null;
   tokenUsage: TokenUsageInfo | null;
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   projectionRefreshKey: number;
   onAtTrigger: (query: string) => void;
@@ -702,7 +678,7 @@ export function SessionChatComposer({
     <div className="shrink-0 pb-4 pt-2">
       <div className="mx-auto w-full max-w-4xl px-5">
         {/* Prompt 模板（无 session + draft 模式） */}
-        {!hasSession && !submitCommand?.enabled && promptTemplates && promptTemplates.length > 0 && (
+        {!hasRuntimeStreamTarget && !submitCommand?.enabled && promptTemplates && promptTemplates.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {promptTemplates.map((tpl) => (
               <button
@@ -806,7 +782,6 @@ export function SessionChatComposer({
           <div className={isExpanded ? "order-4 flex items-center gap-0.5" : "order-3 flex items-center gap-0.5"}>
             <ContextUsageRing
               usage={tokenUsage}
-              sessionId={sessionId}
               agentRunTarget={agentRunTarget}
               refreshKey={projectionRefreshKey}
             />

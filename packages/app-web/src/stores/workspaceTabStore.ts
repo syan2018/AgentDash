@@ -2,12 +2,15 @@
  * 工作空间 Tab 状态管理
  *
  * 管理 AgentRun workspace 右栏动态 Tab 实例的生命周期：
- * 增/删/激活/排序/URI 更新，以及从后端 session meta 恢复/持久化。
+ * 增/删/激活/排序/URI 更新，以及按 AgentRun workspace key 恢复/持久化。
  */
 
 import { create } from "zustand";
-import type { TabInstance, SessionTabLayout } from "../features/workspace-runtime";
-import { saveSessionTabLayout, loadSessionTabLayout } from "../services/session";
+import type { TabInstance, WorkspaceTabLayout } from "../features/workspace-runtime";
+import {
+  loadWorkspaceTabLayout,
+  saveWorkspaceTabLayout,
+} from "../services/agentRunWorkspaceLayout";
 
 let nextTabSeq = 1;
 function generateTabId(): string {
@@ -76,12 +79,12 @@ function createDefaultPinnedTabs(options?: WorkspaceTabLayoutOptions): TabInstan
 interface WorkspaceTabState {
   tabs: TabInstance[];
   activeTabId: string | null;
-  sessionId: string | null;
+  workspaceKey: string | null;
 
-  /** 初始化：从后端恢复或生成默认状态 */
+  /** 初始化：从用户设置恢复或生成默认状态 */
   initialize: (
-    sessionId: string | null,
-    saved?: SessionTabLayout | null,
+    workspaceKey: string | null,
+    saved?: WorkspaceTabLayout | null,
     options?: WorkspaceTabLayoutOptions,
   ) => void;
   /** 添加新 Tab 实例，返回实例 ID */
@@ -106,7 +109,7 @@ interface WorkspaceTabState {
   /** 清理当前 runtime 下不可再打开的动态 Tab */
   pruneInvalidTabs: (options: WorkspaceTabLayoutOptions) => void;
   /** 导出当前布局用于持久化 */
-  exportLayout: () => SessionTabLayout;
+  exportLayout: () => WorkspaceTabLayout;
   /** 防抖持久化到后端 */
   schedulePersist: () => void;
   /** 重置状态 */
@@ -119,19 +122,23 @@ const PERSIST_DEBOUNCE_MS = 1500;
 export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   tabs: [],
   activeTabId: null,
-  sessionId: null,
+  workspaceKey: null,
 
-  initialize: (sessionId, saved, options) => {
-    // 尝试从后端加载已保存的布局（异步，不阻塞初始化）
-    if (!saved && sessionId) {
-      void loadSessionTabLayout(sessionId)
+  initialize: (workspaceKey, saved, options) => {
+    // 尝试加载已保存的布局（异步，不阻塞初始化）
+    if (!saved && workspaceKey) {
+      void loadWorkspaceTabLayout(workspaceKey)
         .then((loaded) => {
-          if (loaded && get().sessionId === sessionId && get().tabs.every((t) => t.pinned)) {
-            get().initialize(sessionId, loaded, options);
+          if (
+            loaded
+            && get().workspaceKey === workspaceKey
+            && get().tabs.every((t) => t.pinned)
+          ) {
+            get().initialize(workspaceKey, loaded, options);
           }
         })
         .catch((error: unknown) => {
-          console.error("加载 session tab layout 失败", error);
+          console.error("加载 workspace tab layout 失败", error);
         });
     }
 
@@ -168,14 +175,14 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
       set({
         tabs,
         activeTabId: activeTab?.id ?? tabs[0]?.id ?? null,
-        sessionId,
+        workspaceKey,
       });
     } else {
       const tabs = createDefaultPinnedTabs(options);
       set({
         tabs,
         activeTabId: tabs[0]?.id ?? null,
-        sessionId,
+        workspaceKey,
       });
     }
   },
@@ -315,7 +322,7 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
     get().schedulePersist();
   },
 
-  exportLayout: (): SessionTabLayout => {
+  exportLayout: (): WorkspaceTabLayout => {
     const state = get();
     const activeTab = state.tabs.find((t) => t.id === state.activeTabId);
     return {
@@ -330,14 +337,15 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
   },
 
   schedulePersist: () => {
-    const sid = get().sessionId;
-    if (!sid) return;
+    const workspaceKey = get().workspaceKey;
+    if (!workspaceKey) return;
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
+      if (get().workspaceKey !== workspaceKey) return;
       const layout = get().exportLayout();
-      void saveSessionTabLayout(sid, layout).catch((error: unknown) => {
-        console.error("保存 session tab layout 失败", error);
+      void saveWorkspaceTabLayout(workspaceKey, layout).catch((error: unknown) => {
+        console.error("保存 workspace tab layout 失败", error);
       });
     }, PERSIST_DEBOUNCE_MS);
   },
@@ -347,6 +355,6 @@ export const useWorkspaceTabStore = create<WorkspaceTabState>()((set, get) => ({
       clearTimeout(persistTimer);
       persistTimer = null;
     }
-    set({ tabs: [], activeTabId: null, sessionId: null });
+    set({ tabs: [], activeTabId: null, workspaceKey: null });
   },
 }));

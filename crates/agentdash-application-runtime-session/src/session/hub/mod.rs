@@ -2,7 +2,7 @@
 //!
 //! 按能力服务拆分后的剩余范围：
 //! - [`facade`]：测试入口与少量 session 内部 helper。
-//! - [`factory`]：构造与注入（`new_with_hooks_and_persistence` + `with_*` / `set_*`）。
+//! - [`factory`]：构造与注入（`new_with_hooks_and_stores` + `with_*` / `set_*`）。
 //! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + 已持久化 AgentFrame adoption。
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_runtime` /
 //!   `collect_runtime_context_update_injections` / `schedule_unanchored_hook_auto_resume`。
@@ -13,7 +13,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use super::persistence::{SessionPersistence, SessionStoreSet};
+use super::persistence::SessionStoreSet;
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
@@ -52,7 +52,6 @@ pub struct SessionRuntimeInner {
     pub(super) runtime_registry: SessionRuntimeRegistry,
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) stores: SessionStoreSet,
-    pub(super) persistence: Arc<dyn SessionPersistence>,
     pub(crate) vfs_service: Option<Arc<dyn Send + Sync>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub(super) skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,

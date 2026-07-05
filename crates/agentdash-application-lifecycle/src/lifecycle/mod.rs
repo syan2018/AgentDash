@@ -1,3 +1,4 @@
+mod accepted_turn_lifecycle;
 pub(crate) mod activity_activation;
 mod completion;
 mod dispatch;
@@ -19,18 +20,21 @@ pub(crate) mod vfs_catalog;
 pub(crate) mod vfs_mount;
 pub mod vfs_provider;
 
+pub use accepted_turn_lifecycle::{
+    AcceptedTurnLifecycleAdvanceService, accepted_turn_lifecycle_advance_port,
+};
 pub(crate) use activity_activation::ActivityActivation;
 pub use agentdash_application_workflow::WorkflowApplicationError;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use dispatch_facade::LifecycleDispatchFacade;
-pub use dispatch_service::{LifecycleDispatchService, SessionPersistenceRuntimeSessionCreator};
+pub use dispatch_service::{LifecycleDispatchService, SessionMetaStoreRuntimeSessionCreator};
 pub use execution_log::{
     RuntimeNodeArtifactScope, RuntimeNodePortArtifactRef, load_scoped_port_output_map,
     materialize_activity_summary,
 };
 pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
-    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
+    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
 };
 pub use projection::{
     ActiveWorkflowProjection, resolve_active_workflow_projection_for_target,
@@ -38,7 +42,8 @@ pub use projection::{
 };
 pub use run::select_active_run;
 pub use run_command_service::{
-    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandService,
+    ContinueLifecycleRunResult, CreateLifecycleRunCommand, LifecycleRunCommandDeps,
+    LifecycleRunCommandService,
 };
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,

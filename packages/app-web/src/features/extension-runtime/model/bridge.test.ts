@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseExtensionBridgeMessage, toJsonValue } from "./bridge";
 import type { JsonValue } from "../../../generated/common-contracts";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type {
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,
@@ -62,11 +63,11 @@ describe("extension bridge message validation", () => {
 
   it("为 webview runtime action、channel 和 VFS 请求组装宿主上下文", async () => {
     const actionCalls: Array<{
-      projectId: string;
+      target: AgentRunRuntimeTarget;
       request: ExtensionRuntimeInvokeActionRequest;
     }> = [];
     const channelCalls: Array<{
-      projectId: string;
+      target: AgentRunRuntimeTarget;
       request: ExtensionRuntimeInvokeChannelRequest;
     }> = [];
     const openTabCalls: Array<{ typeId: string; uri: string }> = [];
@@ -81,12 +82,12 @@ describe("extension bridge message validation", () => {
       openTab(typeId, uri) {
         openTabCalls.push({ typeId, uri });
       },
-      async invokeAction(projectId, request) {
-        actionCalls.push({ projectId, request });
+      async invokeAction(target, request) {
+        actionCalls.push({ target, request });
         return actionResponse(request.action_key, { ok: true });
       },
-      async invokeChannel(projectId, request) {
-        channelCalls.push({ projectId, request });
+      async invokeChannel(target, request) {
+        channelCalls.push({ target, request });
         return channelResponse(request.channel_key, request.method, { channel: true });
       },
       async readFile(request) {
@@ -113,9 +114,8 @@ describe("extension bridge message validation", () => {
       services,
     })).resolves.toEqual({ ok: true });
     expect(actionCalls).toEqual([{
-      projectId: "project-1",
+      target: { runId: "run-1", agentId: "agent-1" },
       request: {
-        session_id: "session-1",
         action_key: "protocol-demo.greet",
         input: { value: null },
       },
@@ -135,9 +135,8 @@ describe("extension bridge message validation", () => {
       services,
     })).resolves.toEqual({ channel: true });
     expect(channelCalls).toEqual([{
-      projectId: "project-1",
+      target: { runId: "run-1", agentId: "agent-1" },
       request: {
-        session_id: "session-1",
         channel_key: "api",
         method: "greet",
         input: { source: "panel" },
@@ -244,13 +243,13 @@ describe("extension bridge message validation", () => {
 
   it("为未知 method 和 backend admission error 保留可诊断错误", async () => {
     const actionCalls: Array<{
-      projectId: string;
+      target: AgentRunRuntimeTarget;
       request: ExtensionRuntimeInvokeActionRequest;
     }> = [];
     const services: ExtensionWebviewBridgeServices = {
       ...noopServices(),
-      async invokeAction(projectId, request) {
-        actionCalls.push({ projectId, request });
+      async invokeAction(target, request) {
+        actionCalls.push({ target, request });
         throw new Error("ProviderUnavailable: action is not in RuntimeGateway catalog");
       },
     };
@@ -287,9 +286,8 @@ describe("extension bridge message validation", () => {
       services,
     })).rejects.toThrow("ProviderUnavailable: action is not in RuntimeGateway catalog");
     expect(actionCalls).toEqual([{
-      projectId: "project-1",
+      target: { runId: "run-1", agentId: "agent-1" },
       request: {
-        session_id: "session-1",
         action_key: "other-extension.action",
         input: { source: "panel" },
       },
@@ -353,7 +351,7 @@ describe("extension bridge message validation", () => {
 
   it("为 Canvas-like consumer 组装 extension channel request", async () => {
     const calls: Array<{
-      projectId: string;
+      target: AgentRunRuntimeTarget;
       request: ExtensionRuntimeInvokeChannelRequest;
     }> = [];
     const result = await invokeExtensionChannelFromCanvas({
@@ -365,17 +363,16 @@ describe("extension bridge message validation", () => {
         input: { value: Number.NaN },
         dependency_alias: "demo",
       },
-      async invokeChannel(projectId, request) {
-        calls.push({ projectId, request });
+      async invokeChannel(target, request) {
+        calls.push({ target, request });
         return channelResponse(request.channel_key, request.method, { ok: true });
       },
     });
 
     expect(result).toEqual({ ok: true });
     expect(calls).toEqual([{
-      projectId: "project-1",
+      target: { runId: "run-1", agentId: "agent-1" },
       request: {
-        session_id: "session-1",
         channel_key: "api",
         method: "greet",
         input: { value: null },
@@ -420,10 +417,10 @@ function bridgeRequest(
 function noopServices(): ExtensionWebviewBridgeServices {
   return {
     openTab() {},
-    async invokeAction(_projectId, request) {
+    async invokeAction(_target, request) {
       return actionResponse(request.action_key, null);
     },
-    async invokeChannel(_projectId, request) {
+    async invokeChannel(_target, request) {
       return channelResponse(request.channel_key, request.method, null);
     },
     async readFile() {
@@ -475,7 +472,10 @@ function runtimeTrace() {
 function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): WorkspaceData {
   return {
     projectId: "project-1",
-    sessionId: "session-1",
+    agentRunRuntimeTarget: {
+      runId: "run-1",
+      agentId: "agent-1",
+    },
     agentRunCanvasBridgeBase: {
       run_id: "run-1",
       agent_id: "agent-1",
@@ -529,9 +529,6 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
     contextSnapshot: null,
     ownerStory: null,
     ownerProjectName: "Project",
-    runtimeSessionId: "session-1",
-    sessionMeta: null,
-    controlAnchor: null,
     lifecycleRun: null,
     lifecycleAgent: null,
     frameRuntime: null,

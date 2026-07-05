@@ -5,7 +5,7 @@
  * 执行器选择、上下文用量指示、发送/取消。
  *
  * AgentRun workspace 等 runtime trace 场景复用此组件，
- * 由父组件管理 sessionId 生命周期和外层导航。
+ * 由父组件提供 AgentRun journal target 与外层导航。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -31,6 +31,8 @@ import {
   collectAllPlatformEvents,
   collectTurnLifecycleEvents,
   computeProjectionRefreshKey,
+  isAgentRunWorkspaceActionRunning,
+  rawEventsBelongToRuntimeStreamTarget,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
@@ -43,8 +45,6 @@ import { SessionWorkspacePanelActionProvider } from "./SessionWorkspacePanelActi
 // ─── 工具函数 ──────────────────────────────────────────
 
 // ─── 主组件 ────────────────────────────────────────────
-
-const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
 
 function isSilentCommandRefreshError(error: unknown): boolean {
   return Boolean(
@@ -71,7 +71,6 @@ export function SessionChatView({
   openWorkspacePanel,
 }: SessionChatViewProps) {
   const {
-    sessionId,
     agentRunTarget,
     workspaceId,
     executorHint,
@@ -98,14 +97,10 @@ export function SessionChatView({
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
-  const [optimisticRunning, setOptimisticRunning] = useState(false);
-  const [stableActionRunning, setStableActionRunning] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
   const appliedHintRef = useRef<string | null>(null);
-  const optimisticRunningUntilRef = useRef(0);
-  const actionRunningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
   const initialValueAppliedRef = useRef(false);
@@ -138,12 +133,16 @@ export function SessionChatView({
     }
   }, [injectedInputConsumed, injectedInputValue]);
 
-  // sessionId 变更时重置内部状态
+  const agentRunTargetKey = agentRunTarget
+    ? `${agentRunTarget.runId}:${agentRunTarget.agentId}`
+    : null;
+
+  // runtime stream target 变更时重置内部状态
   useEffect(() => {
     setSendError(null);
     setIsCancelling(false);
     cancelInFlightRef.current = false;
-  }, [sessionId]);
+  }, [agentRunTargetKey]);
 
   // ─── 执行器配置 ──────────────────────────────────────
 
@@ -171,7 +170,6 @@ export function SessionChatView({
   );
   const executorHydrationKey = useMemo(() => {
     if (executorStateKey) return executorStateKey;
-    if (sessionId) return sessionId;
     const source = toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults);
     if (source) {
       return [
@@ -184,7 +182,7 @@ export function SessionChatView({
       ].join(":");
     }
     return resolvedHint ? `draft:${resolvedHint}` : null;
-  }, [agentDefaults, executorStateKey, resolvedHint, sessionId, snapshotExecutorDefaults]);
+  }, [agentDefaults, executorStateKey, resolvedHint, snapshotExecutorDefaults]);
 
   // 每个 session 仅 hydrate 一次（用户手改后切走再切回不会被再次覆盖）。
   // 首帧 agentDefaults 可能还没到，effect 会等 agentDefaults 就绪后再命中条件。
@@ -267,8 +265,7 @@ export function SessionChatView({
 
   // ─── 会话流 ──────────────────────────────────────────
 
-  const streamSessionId = sessionId ?? "__placeholder__";
-  const hasSession = sessionId !== null;
+  const hasRuntimeStreamTarget = agentRunTarget != null;
 
   const {
     displayItems,
@@ -280,13 +277,12 @@ export function SessionChatView({
     isLoading,
     error: wsError,
     reconnect,
-    sendCancel,
     streamingEntryId,
     tokenUsage,
   } = useSessionFeed({
-    sessionId: streamSessionId,
     agentRunTarget,
-    enabled: hasSession,
+    activeTurnId: commandState.activeTurnId ?? null,
+    enabled: hasRuntimeStreamTarget,
   });
 
   const projectionRefreshKey = useMemo(
@@ -294,64 +290,20 @@ export function SessionChatView({
     [rawEvents],
   );
   const rawEventsBelongToCurrentSession = useMemo(
-    () => !sessionId || rawEvents.every((event) => event.session_id === sessionId),
-    [rawEvents, sessionId],
+    () => rawEventsBelongToRuntimeStreamTarget({ rawEvents, agentRunTarget }),
+    [agentRunTarget, rawEvents],
   );
   const canApplyLiveEventSideEffects =
-    hasSession &&
+    hasRuntimeStreamTarget &&
     rawEventsBelongToCurrentSession &&
     rawEvents.length > 0 &&
     historyReplayBoundarySeq != null;
 
   // ─── Action running 检测 ──────────────────────────────
 
-  const snapshotExecutionActive = commandState.executionStatus === "starting_claimed" ||
-    commandState.executionStatus === "running_active" ||
-    commandState.executionStatus === "cancelling";
-
-  const targetActionRunning = hasSession && (snapshotExecutionActive || optimisticRunning);
-
-  useEffect(() => {
-    if (targetActionRunning) {
-      if (actionRunningReleaseTimerRef.current) {
-        clearTimeout(actionRunningReleaseTimerRef.current);
-        actionRunningReleaseTimerRef.current = null;
-      }
-      setStableActionRunning(true);
-      return;
-    }
-    if (actionRunningReleaseTimerRef.current) clearTimeout(actionRunningReleaseTimerRef.current);
-    actionRunningReleaseTimerRef.current = setTimeout(() => {
-      actionRunningReleaseTimerRef.current = null;
-      setStableActionRunning(false);
-    }, ACTION_RUNNING_RELEASE_DELAY_MS);
-  }, [targetActionRunning]);
-
-  useEffect(() => () => {
-    if (actionRunningReleaseTimerRef.current) clearTimeout(actionRunningReleaseTimerRef.current);
-  }, []);
-
-  const isActionRunning = hasSession && stableActionRunning;
-
-  useEffect(() => {
-    if (!hasSession) {
-      setOptimisticRunning(false);
-      optimisticRunningUntilRef.current = 0;
-    }
-  }, [hasSession]);
-
-  useEffect(() => {
-    if (!optimisticRunning) return;
-    const remainMs = Math.max(optimisticRunningUntilRef.current - Date.now(), 0);
-    const timer = window.setTimeout(() => setOptimisticRunning(false), remainMs);
-    return () => window.clearTimeout(timer);
-  }, [optimisticRunning]);
-
-  useEffect(() => {
-    if (snapshotExecutionActive) return;
-    optimisticRunningUntilRef.current = 0;
-    setOptimisticRunning(false);
-  }, [snapshotExecutionActive]);
+  const isActionRunning = isAgentRunWorkspaceActionRunning({
+    executionStatus: commandState.executionStatus,
+  });
 
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
@@ -366,24 +318,32 @@ export function SessionChatView({
     lastSystemEventSeqRef.current = null;
     lastTaskToolEventSeqRef.current = null;
     lastTurnLifecycleEventSeqRef.current = null;
-  }, [sessionId]);
+  }, [agentRunTargetKey]);
 
   useEffect(() => {
-    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? historyReplayBoundarySeq;
+    if (!hasRuntimeStreamTarget || !rawEventsBelongToCurrentSession || rawEvents.length === 0) return;
+    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? 0;
     lastTurnLifecycleEventSeqRef.current = afterSeq;
     const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
     lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
+    let terminalSeen = false;
     for (const item of result.items) {
       if (item.eventType === "turn_started") {
-        setOptimisticRunning(false);
+        continue;
       } else {
-        optimisticRunningUntilRef.current = 0;
-        setOptimisticRunning(false);
-        onTurnEndRef.current?.();
+        terminalSeen = true;
       }
     }
-  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
+    if (terminalSeen) {
+      onTurnEndRef.current?.();
+    }
+  }, [
+    agentRunTarget,
+    hasRuntimeStreamTarget,
+    historyReplayBoundarySeq,
+    rawEvents,
+    rawEventsBelongToCurrentSession,
+  ]);
 
   useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
@@ -461,14 +421,11 @@ export function SessionChatView({
     }
 
     setSendError(null);
-    setOptimisticRunning(true);
-    optimisticRunningUntilRef.current = Date.now() + 2500;
     setIsSending(true);
 
     try {
       await commandActionRef.current({
         command_id: command.command_id,
-        sessionId,
         prompt: trimmed,
         executorConfig,
         imageAttachments: images.length > 0 ? images : undefined,
@@ -479,8 +436,6 @@ export function SessionChatView({
       clearInput();
       onMessageSent?.();
     } catch (e) {
-      optimisticRunningUntilRef.current = 0;
-      setOptimisticRunning(false);
       if (isSilentCommandRefreshError(e)) {
         setSendError(null);
         return;
@@ -498,7 +453,6 @@ export function SessionChatView({
     imageAttach.attachments,
     isSending,
     onMessageSent,
-    sessionId,
   ]);
 
   const commandById = useCallback((commandId: string | undefined): SessionChatCommandModel | undefined => {
@@ -509,7 +463,6 @@ export function SessionChatView({
   const handleCancel = useCallback(async () => {
     const cancelCommand = commandState.cancelCommand;
     if (!cancelCommand?.enabled) return;
-    if (!hasSession || !sessionId) return;
     if (cancelInFlightRef.current) return;
     cancelInFlightRef.current = true;
     setSendError(null);
@@ -517,8 +470,6 @@ export function SessionChatView({
     try {
       if (cancelAction) {
         await cancelAction();
-      } else {
-        await sendCancel();
       }
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "取消失败，请重试。");
@@ -526,7 +477,7 @@ export function SessionChatView({
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [cancelAction, commandState.cancelCommand, hasSession, sendCancel, sessionId]);
+  }, [cancelAction, commandState.cancelCommand]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -621,14 +572,14 @@ export function SessionChatView({
 
   // ─── 派生状态 ────────────────────────────────────────
 
-  const connectionLabel = !hasSession
+  const connectionLabel = !hasRuntimeStreamTarget
     ? "待创建"
     : isConnected ? "已连接" : isLoading ? "连接中…" : "未连接";
-  const connectionColor = !hasSession
+  const connectionColor = !hasRuntimeStreamTarget
     ? "bg-muted-foreground/40"
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
-  const displayError = sendError ?? (hasSession ? wsError?.message : null) ?? null;
+  const displayError = sendError ?? (hasRuntimeStreamTarget ? wsError?.message : null) ?? null;
   const mailboxMessages = mailbox.messages;
 
   // ─── 渲染 ────────────────────────────────────────────
@@ -641,8 +592,6 @@ export function SessionChatView({
         <SessionChatStatusBar
           connectionColor={connectionColor}
           connectionLabel={connectionLabel}
-          isActionRunning={isActionRunning}
-          isConnected={isConnected}
         />
       )}
 
@@ -659,7 +608,7 @@ export function SessionChatView({
                 {displayError}
               </div>
             </div>
-            {wsError && !isConnected && hasSession && (
+            {wsError && !isConnected && hasRuntimeStreamTarget && (
               <button type="button" onClick={reconnect} className="shrink-0 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
                 重新连接
               </button>
@@ -673,9 +622,8 @@ export function SessionChatView({
         displayItems={displayItems}
         turnSegments={turnSegments}
         agentRunTarget={agentRunTarget}
-        hasSession={hasSession}
+        hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
-        sessionId={sessionId}
         streamingEntryId={streamingEntryId}
         streamPrefixContent={streamPrefixContent}
         onForkFromMessageRef={intents.forkFromMessageRef}
@@ -702,7 +650,7 @@ export function SessionChatView({
           discovered={discovered}
           execConfig={execConfig}
           fileRef={fileRef}
-          hasSession={hasSession}
+          hasRuntimeStreamTarget={hasRuntimeStreamTarget}
           inputPrefix={inputPrefix}
           toolbarSlot={inputToolbarSlot}
           inputValue={inputValue}
@@ -716,7 +664,6 @@ export function SessionChatView({
           showExecutorSelector={showExecutorSelector}
           workspaceId={workspaceId}
           tokenUsage={tokenUsage}
-          sessionId={sessionId}
           agentRunTarget={agentRunTarget}
           projectionRefreshKey={projectionRefreshKey}
           onAtTrigger={handleAtTrigger}

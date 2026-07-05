@@ -3,52 +3,49 @@ use std::{io, sync::Arc};
 use serde_json::Value;
 use uuid::Uuid;
 
-use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_domain::DomainError;
-use agentdash_domain::workflow::{AgentFrame, RuntimeSessionExecutionAnchor};
+use agentdash_domain::workflow::{
+    AgentFrame, AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchorRepository,
+};
 
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
-use crate::agent_run::lifecycle_read_model_facade::{
-    AgentRunView, LifecycleRunView, LifecycleSubjectAssociationView,
-};
-use crate::agent_run::runtime_session_boundary::{
-    ExecutionStatus, SessionCoreService, SessionEventingService, SessionExecutionState,
-    SessionMeta, SessionStoreError,
-};
+use crate::agent_run::runtime_session_boundary::{SessionEventingService, SessionStoreError};
 use crate::agent_run::{
     AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceQueryPort,
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, RuntimeSurfaceQueryPurpose,
 };
-use crate::agent_run_repository_set::RepositorySet;
 use crate::error::WorkflowApplicationError;
 
 #[derive(Clone)]
 pub struct AgentRunPresentationReadModelQuery {
-    repos: RepositorySet,
-    session_core: SessionCoreService,
+    repos: AgentRunPresentationReadModelQueryRepos,
     session_eventing: SessionEventingService,
     surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
-    lifecycle_read_model: Arc<dyn LifecycleReadModelQueryPort>,
+}
+
+#[derive(Clone)]
+pub struct AgentRunPresentationReadModelQueryRepos {
+    pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
 }
 
 #[derive(Clone)]
 pub struct AgentRunPresentationReadModelQueryDeps {
-    pub repos: RepositorySet,
-    pub session_core: SessionCoreService,
+    pub repos: AgentRunPresentationReadModelQueryRepos,
     pub session_eventing: SessionEventingService,
     pub surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
-    pub lifecycle_read_model: Arc<dyn LifecycleReadModelQueryPort>,
 }
 
 impl AgentRunPresentationReadModelQuery {
     pub fn new(deps: AgentRunPresentationReadModelQueryDeps) -> Self {
         Self {
             repos: deps.repos,
-            session_core: deps.session_core,
             session_eventing: deps.session_eventing,
             surface_query: deps.surface_query,
-            lifecycle_read_model: deps.lifecycle_read_model,
         }
     }
 
@@ -118,145 +115,6 @@ impl AgentRunPresentationReadModelQuery {
             frame_ref,
             events,
             turns: Vec::new(),
-        })
-    }
-
-    pub async fn session_runtime_control(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<SessionRuntimeControlReadModel, AgentRunPresentationReadModelError> {
-        let session_meta = self
-            .session_core
-            .get_session_meta(runtime_session_id)
-            .await?
-            .ok_or_else(|| AgentRunPresentationReadModelError::MissingSession {
-                runtime_session_id: runtime_session_id.to_string(),
-            })?;
-        let Some(anchor) = self
-            .repos
-            .execution_anchor_repo
-            .find_by_session(runtime_session_id)
-            .await?
-        else {
-            return Ok(SessionRuntimeControlReadModel {
-                runtime_session_id: runtime_session_id.to_string(),
-                session_meta,
-                control_plane: SessionRuntimeControlPlaneReadModel {
-                    status: SessionRuntimeControlPlaneStatusModel::UnboundTrace,
-                    reason: Some(
-                        "当前 Session 只有 runtime trace，没有绑定 Agent 控制面。".to_string(),
-                    ),
-                },
-                anchor: None,
-                run: None,
-                agent: None,
-                frame_runtime: None,
-                subject_associations: Vec::new(),
-                project_id: None,
-            });
-        };
-
-        let run = self
-            .repos
-            .lifecycle_run_repo
-            .get_by_id(anchor.run_id)
-            .await?
-            .ok_or(AgentRunPresentationReadModelError::MissingLifecycleRun {
-                run_id: anchor.run_id,
-            })?;
-        let agent = self
-            .repos
-            .lifecycle_agent_repo
-            .get(anchor.agent_id)
-            .await?
-            .ok_or(AgentRunPresentationReadModelError::MissingLifecycleAgent {
-                agent_id: anchor.agent_id,
-            })?;
-        if agent.run_id != run.id || agent.project_id != run.project_id {
-            return Err(AgentRunPresentationReadModelError::ControlPlaneMismatch {
-                message: format!(
-                    "runtime session anchor agent 与 run 不一致: {runtime_session_id}"
-                ),
-            });
-        }
-
-        let frame_runtime = match self
-            .current_runtime_frame(runtime_session_id, "session_runtime_control")
-            .await
-        {
-            Ok(Some(frame)) => Some(
-                self.agent_frame_runtime_from_frame(frame, Some(run.project_id))
-                    .await?,
-            ),
-            Ok(None) => None,
-            Err(AgentRunPresentationReadModelError::RuntimeSurface(
-                AgentRunRuntimeSurfaceQueryError::MissingCurrentFrame { .. },
-            )) => None,
-            Err(error) => return Err(error),
-        };
-        let run_view = self.lifecycle_read_model.lifecycle_run_view(run.id).await?;
-        let agent_view = run_view
-            .agents
-            .iter()
-            .find(|view| view.agent_ref.agent_id == agent.id.to_string())
-            .cloned();
-        let agent_id_string = agent.id.to_string();
-        let subject_associations = run_view
-            .subject_associations
-            .iter()
-            .filter(|assoc| {
-                assoc.anchor_agent_id.as_deref() == Some(agent_id_string.as_str())
-                    || assoc.anchor_agent_id.is_none()
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let execution_state = self
-            .session_core
-            .inspect_session_execution_state(runtime_session_id)
-            .await?;
-        let delivery_running = session_meta.last_delivery_status == ExecutionStatus::Running
-            || matches!(execution_state, SessionExecutionState::Running { .. });
-        let delivery_cancelling =
-            matches!(execution_state, SessionExecutionState::Cancelling { .. });
-        let terminal_agent = is_terminal_agent_status(&agent.status);
-        let has_frame = frame_runtime.is_some();
-        let control_plane = if terminal_agent {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::Terminal,
-                reason: Some("当前 Agent 已结束。".to_string()),
-            }
-        } else if !has_frame {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::FrameMissing,
-                reason: Some("当前 Agent 没有可投递的 runtime frame。".to_string()),
-            }
-        } else if delivery_cancelling {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::AnchoredCancelling,
-                reason: Some("当前 Session 正在取消中，等待执行器收口。".to_string()),
-            }
-        } else if delivery_running {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::AnchoredRunning,
-                reason: Some("当前 Session 正在执行中。".to_string()),
-            }
-        } else {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::AnchoredIdle,
-                reason: None,
-            }
-        };
-
-        Ok(SessionRuntimeControlReadModel {
-            runtime_session_id: runtime_session_id.to_string(),
-            session_meta,
-            control_plane,
-            anchor: Some(anchor),
-            run: Some(run_view),
-            agent: agent_view,
-            frame_runtime,
-            subject_associations,
-            project_id: Some(run.project_id),
         })
     }
 
@@ -374,35 +232,6 @@ pub struct RuntimeSessionTraceReadModel {
     pub turns: Vec<Value>,
 }
 
-#[derive(Debug, Clone)]
-pub struct SessionRuntimeControlReadModel {
-    pub runtime_session_id: String,
-    pub session_meta: SessionMeta,
-    pub control_plane: SessionRuntimeControlPlaneReadModel,
-    pub anchor: Option<RuntimeSessionExecutionAnchor>,
-    pub run: Option<LifecycleRunView>,
-    pub agent: Option<AgentRunView>,
-    pub frame_runtime: Option<AgentFrameRuntimeReadModel>,
-    pub subject_associations: Vec<LifecycleSubjectAssociationView>,
-    pub project_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionRuntimeControlPlaneReadModel {
-    pub status: SessionRuntimeControlPlaneStatusModel,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionRuntimeControlPlaneStatusModel {
-    UnboundTrace,
-    AnchoredIdle,
-    AnchoredRunning,
-    AnchoredCancelling,
-    Terminal,
-    FrameMissing,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum AgentRunPresentationReadModelError {
     #[error("session 不存在: {runtime_session_id}")]
@@ -433,8 +262,4 @@ fn agent_frame_ref_model(frame: &AgentFrame) -> AgentFrameRefReadModel {
         frame_id: frame.id.to_string(),
         revision: Some(frame.revision),
     }
-}
-
-fn is_terminal_agent_status(status: &str) -> bool {
-    matches!(status, "completed" | "failed" | "cancelled")
 }

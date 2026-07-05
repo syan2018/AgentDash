@@ -18,8 +18,8 @@ use agentdash_application_agentrun::agent_run::{
 };
 use agentdash_domain::story::{StoryRepository, StoryStatus};
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunCommandReceiptRepository, LifecycleAgentRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 
@@ -39,6 +39,7 @@ pub struct TerminalCancelCoordinator {
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
 }
 
 impl TerminalCancelCoordinator {
@@ -52,6 +53,7 @@ impl TerminalCancelCoordinator {
         agent_repo: Arc<dyn LifecycleAgentRepository>,
         frame_repo: Arc<dyn AgentFrameRepository>,
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     ) -> Self {
         Self {
             session_runtime,
@@ -61,6 +63,7 @@ impl TerminalCancelCoordinator {
             agent_repo,
             frame_repo,
             execution_anchor_repo,
+            delivery_binding_repo,
         }
     }
 
@@ -142,6 +145,7 @@ impl TerminalCancelCoordinator {
             self.agent_repo.as_ref(),
             self.frame_repo.as_ref(),
             self.execution_anchor_repo.as_ref(),
+            self.delivery_binding_repo.as_ref(),
         );
         match service
             .prepare_runtime_cancel_delivery(&subject, Some("terminal_status_cancel".to_string()))

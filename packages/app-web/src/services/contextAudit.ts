@@ -1,9 +1,8 @@
 /**
- * Session Context Audit 客户端
+ * AgentRun Context Audit 客户端。
  *
- * Runtime trace diagnostic fallback for Bundle / Fragment audit timeline.
- * 数据由 `InMemoryContextAuditBus` 按 session 环形缓冲提供，前端用于 Context Inspector
- * 面板渲染。
+ * 数据由 `InMemoryContextAuditBus` 按 AgentRun runtime target 查询，供 workspace
+ * Inspector 面板渲染 Bundle / Fragment 审计时间线。
  */
 
 import { api } from "../api/client";
@@ -27,7 +26,6 @@ export const FRAGMENT_SCOPE_TAGS: FragmentScopeTag[] = [
 export interface ContextAuditEvent {
   event_id: string;
   bundle_id: string;
-  /** Session 外部 ID（SessionHub 分配的 `sess-<ms>-<short>`）。 */
   session_id: string;
   /** Bundle 内部追踪 UUID（可能是占位值）。 */
   bundle_session_uuid: string;
@@ -49,21 +47,6 @@ export interface ContextAuditQueryParams {
   scope?: FragmentScopeTag;
   slot?: string;
   source_prefix?: string;
-}
-
-export async function fetchContextAudit(
-  sessionId: string,
-  params?: ContextAuditQueryParams,
-): Promise<ContextAuditEvent[]> {
-  const search = new URLSearchParams();
-  if (params?.since_ms != null) search.set("since_ms", String(params.since_ms));
-  if (params?.scope) search.set("scope", params.scope);
-  if (params?.slot) search.set("slot", params.slot);
-  if (params?.source_prefix) search.set("source_prefix", params.source_prefix);
-  const suffix = search.toString() ? `?${search.toString()}` : "";
-  return api.get<ContextAuditEvent[]>(
-    `/sessions/${encodeURIComponent(sessionId)}/context/audit${suffix}`,
-  );
 }
 
 export async function fetchAgentRunContextAudit(

@@ -8,8 +8,13 @@ import "@xterm/xterm/css/xterm.css";
 import { authenticatedFetch } from "../../../api/client";
 import { asRecord, requireStringField } from "../../../api/mappers";
 import { buildApiPath } from "../../../api/origin";
+import {
+  agentRunScopedPath,
+  type AgentRunRuntimeTarget,
+} from "../../../services/agentRunRuntime";
 import type { TerminalCapability, TerminalSpawnResult } from "../../../types/terminal";
 import type { TabTypeDescriptor } from "../tab-type-registry";
+import { useWorkspaceData } from "../workspace-data-context";
 import { TerminalIcon } from "./icons";
 import {
   buildInteractiveTerminalUri,
@@ -45,7 +50,6 @@ const XTERM_THEME = {
 
 interface TerminalViewProps {
   terminalId: string;
-  sessionId?: string;
   tabId?: string;
 }
 
@@ -65,7 +69,8 @@ function resolveTerminalTitle(uri: string): string {
  * 所有写入 xterm 的数据都通过 useEffect 增量追加（lastWrittenLen 对齐），
  * 不存在第二条写入路径，从而避免重复绘制。
  */
-function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: TerminalViewProps) {
+function TerminalView({ terminalId: initialTerminalId, tabId }: TerminalViewProps) {
+  const { agentRunRuntimeTarget } = useWorkspaceData();
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -124,8 +129,21 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
     });
     resizeObserver.observe(containerRef.current);
 
-    if (initialTerminalId === "new" && sessionId) {
-      void spawnTerminal(sessionId, term, fitAddon, setStatus, tabId, realIdRef, setActiveId);
+    if (initialTerminalId === "new") {
+      if (!agentRunRuntimeTarget) {
+        term.write("\r\n\x1b[31mAgentRun runtime target 不可用，无法创建终端。\x1b[0m\r\n");
+        setStatus("error");
+      } else {
+        void spawnTerminal(
+          agentRunRuntimeTarget,
+          term,
+          fitAddon,
+          setStatus,
+          tabId,
+          realIdRef,
+          setActiveId,
+        );
+      }
     } else if (initialTerminalId !== "new") {
       // 已有终端：回放通过 useEffect[output] 自动触发，此处只需设状态
       setStatus("running");
@@ -247,8 +265,12 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
   );
 }
 
+type AgentRunTerminalSpawnResult = TerminalSpawnResult & {
+  runtime_session_id: string;
+};
+
 async function spawnTerminal(
-  sessionId: string,
+  agentRunTarget: AgentRunRuntimeTarget,
   term: Terminal,
   fitAddon: FitAddon,
   setStatus: (s: "connecting" | "running" | "exited" | "error") => void,
@@ -258,14 +280,17 @@ async function spawnTerminal(
 ) {
   try {
     const dims = fitAddon.proposeDimensions();
-    const resp = await authenticatedFetch(buildApiPath(`/sessions/${encodeURIComponent(sessionId)}/terminals`), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cols: dims?.cols ?? 80,
-        rows: dims?.rows ?? 24,
-      }),
-    });
+    const resp = await authenticatedFetch(
+      buildApiPath(agentRunScopedPath(agentRunTarget, "/runtime/terminals")),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cols: dims?.cols ?? 80,
+          rows: dims?.rows ?? 24,
+        }),
+      },
+    );
     if (!resp.ok) {
       const message = await readErrorMessage(resp);
       term.write(`\r\n\x1b[31mFailed to spawn terminal: ${message}\x1b[0m\r\n`);
@@ -279,7 +304,7 @@ async function spawnTerminal(
 
     useTerminalStore.getState().registerTerminal({
       id: realId,
-      sessionId,
+      sessionId: data.runtime_session_id,
       capability: "interactive",
       cwd: ".",
       state: "running",
@@ -342,10 +367,11 @@ async function readErrorMessage(resp: Response): Promise<string> {
   return text.slice(0, 200);
 }
 
-function mapTerminalSpawnResult(raw: Record<string, unknown>): TerminalSpawnResult {
+function mapTerminalSpawnResult(raw: Record<string, unknown>): AgentRunTerminalSpawnResult {
   const processId = raw.process_id;
   return {
     terminal_id: requireStringField(raw, "terminal_id"),
+    runtime_session_id: requireStringField(raw, "runtime_session_id"),
     process_id: typeof processId === "number" && Number.isFinite(processId) ? processId : undefined,
   };
 }
@@ -368,7 +394,6 @@ export const terminalTabType: TabTypeDescriptor = {
       <TerminalView
         key={props.tabId}
         terminalId={terminalId}
-        sessionId={props.sessionId ?? undefined}
         tabId={props.tabId}
       />
     );

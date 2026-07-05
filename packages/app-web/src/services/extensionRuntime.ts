@@ -1,5 +1,9 @@
 import { buildApiPath } from "../api/origin";
 import { api } from "../api/client";
+import {
+  agentRunScopedPath,
+  type AgentRunRuntimeTarget,
+} from "./agentRunRuntime";
 import type {
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,
@@ -17,22 +21,22 @@ export async function fetchProjectExtensionRuntime(
   );
 }
 
-export async function invokeProjectExtensionRuntimeAction(
-  projectId: string,
+export async function invokeAgentRunExtensionRuntimeAction(
+  target: AgentRunRuntimeTarget,
   request: ExtensionRuntimeInvokeActionRequest,
 ): Promise<ExtensionRuntimeInvokeActionResponse> {
   return api.post<ExtensionRuntimeInvokeActionResponse>(
-    `/projects/${encodeURIComponent(projectId)}/extension-runtime/invoke-action`,
+    agentRunScopedPath(target, "/extension-runtime/invoke-action"),
     request,
   );
 }
 
-export async function invokeProjectExtensionRuntimeChannel(
-  projectId: string,
+export async function invokeAgentRunExtensionRuntimeChannel(
+  target: AgentRunRuntimeTarget,
   request: ExtensionRuntimeInvokeChannelRequest,
 ): Promise<ExtensionRuntimeInvokeChannelResponse> {
   return api.post<ExtensionRuntimeInvokeChannelResponse>(
-    `/projects/${encodeURIComponent(projectId)}/extension-runtime/invoke-channel`,
+    agentRunScopedPath(target, "/extension-runtime/invoke-channel"),
     request,
   );
 }

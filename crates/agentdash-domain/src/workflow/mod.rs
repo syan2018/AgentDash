@@ -1,5 +1,6 @@
 mod agent_frame;
 mod agent_lineage;
+mod agent_run_delivery_binding;
 mod agent_run_lineage;
 mod command_receipt;
 pub mod dispatch;
@@ -12,8 +13,9 @@ mod runtime_session_anchor;
 mod validation;
 mod value_objects;
 
-pub use agent_frame::AgentFrame;
+pub use agent_frame::{AgentFrame, AgentFrameSurfaceDocument};
 pub use agent_lineage::AgentLineage;
+pub use agent_run_delivery_binding::{AgentRunDeliveryBinding, DeliveryBindingStatus};
 pub use agent_run_lineage::AgentRunLineage;
 pub use command_receipt::{
     AgentRunAcceptedRefs, AgentRunCommandClaim, AgentRunCommandKind, AgentRunCommandReceipt,
@@ -31,31 +33,28 @@ pub use entity::{
     AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, WorkflowGraphDraft,
     build_effective_contract, build_effective_contract_from_contract,
 };
-pub use lifecycle_agent::{
-    AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentCurrentDeliveryBinding,
-    bootstrap_status,
-};
+pub use lifecycle_agent::{AgentSource, LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunLineageRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    AgentRunDeliveryBindingRepository, AgentRunLineageRepository, LifecycleAgentRepository,
+    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
     WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
-pub use runtime_session_anchor::{RuntimeDeliverySelectionPolicy, RuntimeSessionExecutionAnchor};
+pub use runtime_session_anchor::RuntimeSessionExecutionAnchor;
 pub use validation::{validate_agent_procedure, validate_workflow_graph};
 pub use value_objects::{
     ActivationRule, ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
     ActivityIterationPolicy, ActivityJoinPolicy, ActivityTransition, ActivityTransitionKind,
-    AgentActivityExecutorSpec, AgentFrameRef, AgentProcedureContract, AgentProcedureExecutionSpec,
-    AgentReusePolicy, AgentRunRef, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
+    AgentActivityExecutorSpec, AgentProcedureContract, AgentProcedureExecutionSpec,
+    AgentReusePolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
     BashExecExecutorSpec, CapabilityConfig, ContextStrategy, DefinitionSource,
     DispatchLeaseSnapshot, DispatchOutboxItem, DispatchState, EffectiveSessionContract,
     ExecutorRunRef, ExecutorSpec, FunctionActivityExecutorSpec, GateStrategy,
-    HumanActivityExecutorSpec, HumanApprovalExecutorSpec, InputPortDefinition, LifecycleContext,
+    HumanActivityExecutorSpec, HumanApprovalExecutorSpec, InputPortDefinition,
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
     LifecycleTaskPlanItem, LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch, MountDirective,
     NodeCacheRef, NodeCacheState, NodePortValue, OrchestrationInstance, OrchestrationJournalFact,

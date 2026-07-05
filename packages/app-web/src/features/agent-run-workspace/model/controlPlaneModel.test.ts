@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { JsonValue } from "../../../generated/common-contracts";
@@ -13,10 +13,10 @@ import type {
   ConversationCommandStaleGuardView,
 } from "../../../generated/agent-run-mailbox-contracts";
 import type { ProjectAgentSummary } from "../../../types";
-import type { SessionChatSubmitIntent } from "../../session";
 import {
-  buildDraftSessionCommandState,
-  buildRuntimeSessionCommandState,
+  type AgentRunChatSubmitIntent,
+  buildAgentRunConversationCommandState,
+  buildDraftConversationCommandState,
 } from "./conversationCommandState";
 import {
   planAgentRunMessageSent,
@@ -31,7 +31,6 @@ function staleGuard(commandId: string): ConversationCommandStaleGuardView {
     snapshot_id: "snapshot-1",
     run_id: "run-1",
     agent_id: "agent-1",
-    runtime_session_id: "session-1",
     active_turn_id: commandId === "cancel" ? "turn-1" : undefined,
   };
 }
@@ -66,15 +65,14 @@ function resolvedModelConfig(): ConversationModelConfigView {
   };
 }
 
-function submitIntent(commandId: string): SessionChatSubmitIntent {
+function submitIntent(commandId: string): AgentRunChatSubmitIntent {
   return {
     command_id: commandId,
-    sessionId: "session-1",
     prompt: "继续",
   };
 }
 
-function sessionMetaEvent(key: string, value: JsonValue): BackboneEvent {
+function platformMetaUpdateEvent(key: string, value: JsonValue): BackboneEvent {
   return {
     type: "platform",
     payload: {
@@ -96,7 +94,7 @@ describe("AgentRun control-plane model", () => {
       kind: "submit_message",
       command_id: "cmd-submit",
     });
-    const commandState = buildRuntimeSessionCommandState({
+    const commandState = buildAgentRunConversationCommandState({
       conversation: {
         execution: { status: "ready" },
         commands: {
@@ -106,8 +104,8 @@ describe("AgentRun control-plane model", () => {
         },
         model_config: resolvedModelConfig(),
       },
-      projectionStatus: "ready",
-      projectionError: null,
+      workspaceStateStatus: "ready",
+      workspaceStateError: null,
     });
 
     const result = resolveAgentRunSubmitCommand(commandState, submitIntent("cmd-submit"));
@@ -128,11 +126,11 @@ describe("AgentRun control-plane model", () => {
         model_id: "gpt-test",
       },
     };
-    const commandState = buildDraftSessionCommandState({
+    const commandState = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-key",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
     });
     const draftCommand = commandState.localDraftAction;
     if (!draftCommand) throw new Error("draft command missing");
@@ -147,7 +145,7 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("rejects submit intent when command id came from a stale snapshot", () => {
-    const commandState = buildRuntimeSessionCommandState({
+    const commandState = buildAgentRunConversationCommandState({
       conversation: {
         execution: { status: "ready" },
         commands: {
@@ -157,8 +155,8 @@ describe("AgentRun control-plane model", () => {
         },
         model_config: resolvedModelConfig(),
       },
-      projectionStatus: "ready",
-      projectionError: null,
+      workspaceStateStatus: "ready",
+      workspaceStateError: null,
     });
 
     expect(resolveAgentRunSubmitCommand(
@@ -171,8 +169,8 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("plans message, turn-end, and manual workspace-module refresh effects", () => {
-    expect(planAgentRunMessageSent(null)).toEqual({});
-    expect(planAgentRunMessageSent("session-1")).toEqual({
+    expect(planAgentRunMessageSent()).toEqual({
+      refreshWorkspaceState: true,
       hookRuntimeRefresh: { reason: "message_sent", immediate: true },
       refreshAgentRunListReason: "message_sent",
     });
@@ -209,7 +207,7 @@ describe("AgentRun control-plane model", () => {
   it("plans workspace refresh from companion wait-related events", () => {
     expect(planAgentRunSystemEvent(
       "companion_human_request",
-      sessionMetaEvent("companion_human_request", {
+      platformMetaUpdateEvent("companion_human_request", {
         gate_id: "gate-1",
         companion_label: "Research Agent",
       }),
@@ -220,7 +218,7 @@ describe("AgentRun control-plane model", () => {
 
     expect(planAgentRunSystemEvent(
       "companion_result_returned",
-      sessionMetaEvent("companion_result_returned", {
+      platformMetaUpdateEvent("companion_result_returned", {
         gate_id: "gate-1",
         mailbox_message_id: "mailbox-1",
       }),
@@ -233,7 +231,7 @@ describe("AgentRun control-plane model", () => {
   it("plans capability refresh from context frame events", () => {
     const plan = planAgentRunSystemEvent(
       "context_frame",
-      sessionMetaEvent("context_frame", {
+      platformMetaUpdateEvent("context_frame", {
         kind: "capability_state_delta",
       }),
     );
@@ -248,7 +246,7 @@ describe("AgentRun control-plane model", () => {
   it("opens Canvas presentation from presentation_uri after refreshing runtime surface", () => {
     const plan = planAgentRunSystemEvent(
       "workspace_module_presented",
-      sessionMetaEvent("workspace_module_presented", {
+      platformMetaUpdateEvent("workspace_module_presented", {
         module_id: "canvas:canvas-1",
         view_key: "preview",
         renderer_kind: "canvas",
@@ -274,7 +272,7 @@ describe("AgentRun control-plane model", () => {
   it("does not synthesize Canvas presentation URI from view_key", () => {
     const plan = planAgentRunSystemEvent(
       "workspace_module_presented",
-      sessionMetaEvent("workspace_module_presented", {
+      platformMetaUpdateEvent("workspace_module_presented", {
         module_id: "canvas:canvas-1",
         view_key: "canvas-1",
         renderer_kind: "canvas",

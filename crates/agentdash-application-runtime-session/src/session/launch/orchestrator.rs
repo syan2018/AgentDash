@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use agentdash_application_ports::frame_launch_envelope::{
-    FrameLaunchEnvelope, FrameLaunchEnvelopeRequest, RuntimeTraceLaunchStateRef,
+    AcceptedLaunchCommitPort, FrameLaunchEnvelope, FrameLaunchEnvelopeRequest,
+    RuntimeTraceLaunchStateRef,
 };
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
@@ -22,6 +25,7 @@ struct LaunchRuntimeFacts {
     session_meta: SessionMeta,
     requested_runtime_commands: Vec<RuntimeCommandRecord>,
     context_sources: Vec<String>,
+    accepted_launch_commit: Arc<dyn AcceptedLaunchCommitPort>,
 }
 
 impl SessionLaunchOrchestrator {
@@ -41,6 +45,7 @@ impl SessionLaunchOrchestrator {
                 "session_launch_envelope_provider 未注入，拒绝 session launch: {reason}"
             )));
         };
+        let accepted_launch_commit = self.deps.current_accepted_launch_commit_port().await?;
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
         let had_existing_runtime = self.deps.connector.has_live_session(session_id).await;
         let _cached_continuation = self.deps.turn_supervisor.claim_prompt(session_id).await?;
@@ -111,7 +116,6 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let accepted_launch_commit = self.deps.current_accepted_launch_commit_port().await;
         let agent_needs_bootstrap_early = accepted_launch_commit.agent_needs_bootstrap(&sid).await;
         let runtime_trace_state = RuntimeTraceLaunchState::from(&session_meta);
         let launch_envelope = match provider
@@ -170,6 +174,7 @@ impl SessionLaunchOrchestrator {
             session_meta,
             requested_runtime_commands,
             context_sources,
+            accepted_launch_commit,
         };
         let context_sources = facts.context_sources.clone();
         let turn_id = self
@@ -202,11 +207,11 @@ impl SessionLaunchOrchestrator {
             mut session_meta,
             requested_runtime_commands,
             context_sources: _context_sources,
+            accepted_launch_commit,
         } = facts;
         let deps = &self.deps;
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        let accepted_launch_commit = deps.current_accepted_launch_commit_port().await;
         let agent_needs_bootstrap = accepted_launch_commit
             .agent_needs_bootstrap(session_id)
             .await;

@@ -41,12 +41,8 @@ pub struct FrameCapabilitySurfaces {
 
 /// 从 `AgentFrame` revision 投影出只读 `CapabilityState`。
 ///
-/// 投影顺序：
-/// 1. `effective_capability_json` 反序列化为完整 `CapabilityState`
-/// 2. `vfs_surface_json` 如存在，覆盖 `state.vfs.active`
-/// 3. `mcp_surface_json` 如存在，覆盖 `state.tool.mcp_servers`
-///
-/// 第 2/3 步使用独立列覆盖，以支持 frame 级别对单一维度的精确更新。
+/// `effective_capability_json` 是 canonical surface；split VFS/MCP 列只在
+/// canonical 维度缺失时作为同一 revision 的投影补全，不能覆盖 canonical state。
 pub fn project_capability_state_from_frame(frame: &AgentFrame) -> CapabilityState {
     let mut state: CapabilityState = frame
         .effective_capability_json
@@ -54,18 +50,20 @@ pub fn project_capability_state_from_frame(frame: &AgentFrame) -> CapabilityStat
         .and_then(|json| serde_json::from_value(json.clone()).ok())
         .unwrap_or_default();
 
-    if let Some(vfs) = frame
-        .vfs_surface_json
-        .as_ref()
-        .and_then(|json| serde_json::from_value::<Vfs>(json.clone()).ok())
+    if state.vfs.active.is_none()
+        && let Some(vfs) = frame
+            .vfs_surface_json
+            .as_ref()
+            .and_then(|json| serde_json::from_value::<Vfs>(json.clone()).ok())
     {
         state.vfs.active = Some(vfs);
     }
 
-    if let Some(servers) = frame
-        .mcp_surface_json
-        .as_ref()
-        .and_then(|json| serde_json::from_value::<Vec<RuntimeMcpServer>>(json.clone()).ok())
+    if state.tool.mcp_servers.is_empty()
+        && let Some(servers) = frame
+            .mcp_surface_json
+            .as_ref()
+            .and_then(|json| serde_json::from_value::<Vec<RuntimeMcpServer>>(json.clone()).ok())
     {
         state.tool.mcp_servers = servers;
     }
@@ -867,7 +865,7 @@ fn link_key(link: &MountLink) -> String {
 mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_spi::{CapabilityDimensionKey, CapabilityState};
+    use agentdash_spi::{CapabilityDimensionKey, CapabilityState, McpTransportConfig};
 
     // ── AgentFrame 投影 round-trip 测试 ──────────────────────────────
 
@@ -919,13 +917,21 @@ mod tests {
     }
 
     #[test]
-    fn vfs_surface_json_overrides_embedded_vfs() {
-        let base = CapabilityState::default();
+    fn effective_capability_json_remains_canonical_when_split_vfs_differs() {
+        let canonical_vfs = Vfs {
+            mounts: vec![mount("canonical", "relay_fs")],
+            default_mount_id: Some("canonical".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mut base = CapabilityState::default();
+        base.vfs.active = Some(canonical_vfs);
         let surfaces = capability_state_to_frame_surfaces(&base);
 
-        let override_vfs = Vfs {
-            mounts: vec![mount("override", "inline_fs")],
-            default_mount_id: Some("override".to_string()),
+        let stale_split_vfs = Vfs {
+            mounts: vec![mount("stale-split", "inline_fs")],
+            default_mount_id: Some("stale-split".to_string()),
             source_project_id: None,
             source_story_id: None,
             links: Vec::new(),
@@ -933,7 +939,7 @@ mod tests {
 
         let mut frame = AgentFrame::new_initial(Uuid::new_v4());
         frame.effective_capability_json = surfaces.effective_capability_json;
-        frame.vfs_surface_json = serde_json::to_value(&override_vfs).ok();
+        frame.vfs_surface_json = serde_json::to_value(&stale_split_vfs).ok();
 
         let projected = project_capability_state_from_frame(&frame);
         assert_eq!(
@@ -942,8 +948,43 @@ mod tests {
                 .active
                 .as_ref()
                 .and_then(|v| v.default_mount_id.as_deref()),
-            Some("override"),
-            "vfs_surface_json 应覆盖 effective_capability_json 中嵌入的 VFS"
+            Some("canonical"),
+            "split VFS projection must not overwrite canonical capability state"
+        );
+    }
+
+    #[test]
+    fn effective_capability_json_remains_canonical_when_split_mcp_differs() {
+        let mut base = CapabilityState::default();
+        base.tool.mcp_servers = vec![RuntimeMcpServer {
+            name: "canonical-server".to_string(),
+            transport: McpTransportConfig::Http {
+                url: "http://localhost/canonical".to_string(),
+                headers: Vec::new(),
+            },
+            uses_relay: false,
+            readiness: Default::default(),
+        }];
+        let surfaces = capability_state_to_frame_surfaces(&base);
+        let stale_split_servers = vec![RuntimeMcpServer {
+            name: "stale-split-server".to_string(),
+            transport: McpTransportConfig::Http {
+                url: "http://localhost/stale".to_string(),
+                headers: Vec::new(),
+            },
+            uses_relay: false,
+            readiness: Default::default(),
+        }];
+
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4());
+        frame.effective_capability_json = surfaces.effective_capability_json;
+        frame.mcp_surface_json = serde_json::to_value(&stale_split_servers).ok();
+
+        let projected = project_capability_state_from_frame(&frame);
+        assert_eq!(projected.tool.mcp_servers.len(), 1);
+        assert_eq!(
+            projected.tool.mcp_servers[0].name, "canonical-server",
+            "split MCP projection must not overwrite canonical capability state"
         );
     }
 

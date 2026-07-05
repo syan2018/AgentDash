@@ -167,8 +167,8 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .build_uncommitted(self.frame_repo.as_ref())
             .await
             .map_err(|error| error.to_string())?;
-        next_frame.append_visible_canvas_mount(&canvas.mount_id);
-        next_frame.append_visible_workspace_module_ref(&workspace_module_ref);
+        materialize_visible_canvas_mount_projection(&mut next_frame, &canvas.mount_id);
+        materialize_visible_workspace_module_ref_projection(&mut next_frame, &workspace_module_ref);
 
         if agent_frame_runtime_surface_unchanged(&current_frame, &next_frame) {
             return Ok(RuntimeVfsState::new(active_vfs, active_policy));
@@ -383,6 +383,51 @@ fn append_canvas_mount(vfs: &mut Vfs, canvas: &Canvas, access: CanvasMountAccess
     }
 }
 
+fn materialize_visible_canvas_mount_projection(
+    frame: &mut agentdash_domain::workflow::AgentFrame,
+    mount_id: &str,
+) {
+    frame.visible_canvas_mount_ids_json =
+        merge_string_projection(frame.visible_canvas_mount_ids_json.as_ref(), mount_id);
+}
+
+fn materialize_visible_workspace_module_ref_projection(
+    frame: &mut agentdash_domain::workflow::AgentFrame,
+    module_ref: &str,
+) {
+    frame.visible_workspace_module_refs_json = merge_string_projection(
+        frame.visible_workspace_module_refs_json.as_ref(),
+        module_ref,
+    );
+}
+
+fn merge_string_projection(
+    current: Option<&serde_json::Value>,
+    next_value: &str,
+) -> Option<serde_json::Value> {
+    let mut values = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Some(serde_json::Value::Array(current)) = current {
+        for value in current.iter().filter_map(serde_json::Value::as_str) {
+            let value = value.trim();
+            if !value.is_empty() && seen.insert(value.to_string()) {
+                values.push(value.to_string());
+            }
+        }
+    }
+    let next_value = next_value.trim();
+    if !next_value.is_empty() && seen.insert(next_value.to_string()) {
+        values.push(next_value.to_string());
+    }
+    if values.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Array(
+            values.into_iter().map(serde_json::Value::String).collect(),
+        ))
+    }
+}
+
 fn runtime_vfs_access_policy_after_canvas_mount_update(
     current_policy: &RuntimeVfsAccessPolicy,
     active_vfs: &Vfs,
@@ -563,8 +608,11 @@ mod tests {
             Some(serde_json::to_value(Vec::<RuntimeMcpServer>::new()).unwrap());
         frame.execution_profile_json =
             Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
-        frame.append_visible_canvas_mount(&canvas.mount_id);
-        frame.append_visible_workspace_module_ref(&canvas_module_id(&canvas.mount_id));
+        materialize_visible_canvas_mount_projection(&mut frame, &canvas.mount_id);
+        materialize_visible_workspace_module_ref_projection(
+            &mut frame,
+            &canvas_module_id(&canvas.mount_id),
+        );
 
         let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
         frame_repo.create(&frame).await.expect("frame should save");
@@ -978,7 +1026,7 @@ mod tests {
             "revision id, revision number and created_by are not model-visible surface changes"
         );
 
-        candidate.append_visible_workspace_module_ref("canvas:cvs-other");
+        materialize_visible_workspace_module_ref_projection(&mut candidate, "canvas:cvs-other");
         assert!(!agent_frame_runtime_surface_unchanged(&current, &candidate));
     }
 

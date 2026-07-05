@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use crate::SharedPlatformConfig;
 use crate::lifecycle::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
-    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
+    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
 };
-use crate::{RepositorySet, SharedPlatformConfig};
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::FunctionRunner;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
@@ -29,7 +29,7 @@ impl SharedSessionToolServicesHandle {
 /// materialize 当前节点的 completed / failed outcome。
 #[derive(Clone)]
 pub struct CompleteLifecycleNodeTool {
-    repos: RepositorySet,
+    orchestrator_deps: LifecycleOrchestratorDeps,
     session_services_handle: SharedSessionToolServicesHandle,
     platform_config: SharedPlatformConfig,
     function_runner: Option<Arc<dyn FunctionRunner>>,
@@ -61,14 +61,14 @@ pub struct CompleteLifecycleNodeParams {
 
 impl CompleteLifecycleNodeTool {
     pub fn new(
-        repos: RepositorySet,
+        orchestrator_deps: LifecycleOrchestratorDeps,
         session_services_handle: SharedSessionToolServicesHandle,
         function_runner: Option<Arc<dyn FunctionRunner>>,
         platform_config: SharedPlatformConfig,
         context: &ExecutionContext,
     ) -> Self {
         Self {
-            repos,
+            orchestrator_deps,
             session_services_handle,
             platform_config,
             function_runner,
@@ -116,7 +116,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
             )
         })?;
         let mut orchestrator = LifecycleOrchestrator::new_with_platform_config(
-            self.repos.clone(),
+            self.orchestrator_deps.clone(),
             self.platform_config.clone(),
         );
         if let Some(function_runner) = &self.function_runner {

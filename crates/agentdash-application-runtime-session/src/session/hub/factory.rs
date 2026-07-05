@@ -1,6 +1,6 @@
 //! `SessionRuntimeInner` 构造与依赖注入。
 //!
-//! 集中 `new_with_hooks_and_persistence` + `with_*` builder 链 + `set_*`
+//! 集中 `new_with_hooks_and_stores` + `with_*` builder 链 + `set_*`
 //! 运行时注入方法。AppState / local main / companion tool 构造 hub 的
 //! 入口就在这里。
 
@@ -18,7 +18,7 @@ use agentdash_application_ports::runtime_session_live::{
 };
 use tokio::sync::Mutex;
 
-use super::super::persistence::{SessionPersistence, SessionStoreSet};
+use super::super::persistence::SessionStoreSet;
 use super::super::runtime_registry::SessionRuntimeRegistry;
 use super::super::turn_supervisor::TurnSupervisor;
 use super::SessionRuntimeInner;
@@ -29,19 +29,19 @@ use agentdash_spi::hooks::ExecutionHookProvider;
 impl SessionRuntimeInner {
     pub fn core_service(&self) -> super::super::core::SessionCoreService {
         super::super::core::SessionCoreService::new(
-            self.stores.clone(),
+            self.stores.core_stores(),
             self.runtime_registry.clone(),
             self.connector.clone(),
         )
     }
 
     pub fn branching_service(&self) -> super::super::branching::SessionBranchingService {
-        super::super::branching::SessionBranchingService::new(self.stores.clone())
+        super::super::branching::SessionBranchingService::new(self.stores.branching_stores())
     }
 
     pub fn eventing_service(&self) -> super::super::eventing::SessionEventingService {
         super::super::eventing::SessionEventingService::new(
-            self.stores.clone(),
+            self.stores.eventing_stores(),
             self.runtime_registry.clone(),
             self.connector.clone(),
         )
@@ -49,9 +49,10 @@ impl SessionRuntimeInner {
 
     pub fn runtime_service(&self) -> super::super::runtime_control::SessionRuntimeService {
         super::super::runtime_control::SessionRuntimeService::new(
-            self.stores.clone(),
+            self.stores.runtime_stores(),
             self.turn_supervisor.clone(),
             self.eventing_service(),
+            self.effects_service(),
             self.connector.clone(),
         )
     }
@@ -93,22 +94,20 @@ impl SessionRuntimeInner {
         super::super::runtime_transition_service::SessionRuntimeTransitionService::new(self.clone())
     }
 
-    pub fn new_with_hooks_and_persistence(
+    pub fn new_with_hooks_and_stores(
         connector: Arc<dyn AgentConnector>,
         hook_provider: Option<Arc<dyn ExecutionHookProvider>>,
-        persistence: Arc<dyn SessionPersistence>,
+        stores: SessionStoreSet,
     ) -> Self {
         let sessions = Arc::new(Mutex::new(HashMap::new()));
         let runtime_registry = SessionRuntimeRegistry::new(sessions.clone());
         let turn_supervisor = TurnSupervisor::new(runtime_registry.clone());
-        let stores = SessionStoreSet::from_persistence(persistence.clone());
         Self {
             connector,
             hook_provider,
             runtime_registry,
             turn_supervisor,
             stores,
-            persistence,
             vfs_service: None,
             extra_skill_dirs: Vec::new(),
             skill_discovery_providers: Vec::new(),

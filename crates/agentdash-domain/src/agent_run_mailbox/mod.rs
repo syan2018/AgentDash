@@ -354,7 +354,7 @@ pub struct AgentRunMailboxMessage {
     pub id: Uuid,
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub delivery_runtime_session_id: Option<String>,
     pub origin: MailboxMessageOrigin,
     pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
@@ -391,7 +391,7 @@ pub struct AgentRunMailboxMessage {
 pub struct NewAgentRunMailboxMessage {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub delivery_runtime_session_id: Option<String>,
     pub origin: MailboxMessageOrigin,
     pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
@@ -414,7 +414,7 @@ pub struct NewAgentRunMailboxMessage {
 pub struct AgentRunMailboxState {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: String,
+    pub delivery_runtime_session_id: Option<String>,
     pub paused: bool,
     pub pause_reason: Option<String>,
     pub pause_message: Option<String>,
@@ -426,7 +426,7 @@ pub struct AgentRunMailboxState {
 pub struct AgentRunMailboxClaimRequest {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub runtime_session_id: Option<String>,
+    pub delivery_runtime_session_id: Option<String>,
     pub barriers: Vec<ConsumptionBarrier>,
     pub drain_mode: Option<MailboxDrainMode>,
     pub limit: i64,
@@ -489,7 +489,7 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        delivery_runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError>;
@@ -498,7 +498,7 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        delivery_runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError>;
 
     async fn get_state(
@@ -511,7 +511,7 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        delivery_runtime_session_id: Option<String>,
         preference: Value,
     ) -> Result<AgentRunMailboxState, DomainError>;
 

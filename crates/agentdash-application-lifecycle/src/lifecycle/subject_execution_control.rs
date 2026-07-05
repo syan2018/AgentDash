@@ -4,10 +4,10 @@ use agentdash_application_workflow::orchestration::{
     OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
 };
 use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, OrchestrationBindingRefs,
-    RuntimeControlRefs, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-    SubjectRef,
+    AgentFrameRepository, AgentRunDeliveryBindingRepository, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociation,
+    LifecycleSubjectAssociationRepository, OrchestrationBindingRefs, RuntimeControlRefs,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
 
 use super::WorkflowApplicationError;
@@ -91,6 +91,7 @@ pub struct SubjectExecutionControlService<'a> {
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
     execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
 }
 
 impl<'a> SubjectExecutionControlService<'a> {
@@ -100,6 +101,7 @@ impl<'a> SubjectExecutionControlService<'a> {
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
         execution_anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+        delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
     ) -> Self {
         Self {
             lifecycle_run_repo,
@@ -107,6 +109,7 @@ impl<'a> SubjectExecutionControlService<'a> {
             lifecycle_agent_repo,
             agent_frame_repo,
             execution_anchor_repo,
+            delivery_binding_repo,
         }
     }
 
@@ -163,6 +166,7 @@ impl<'a> SubjectExecutionControlService<'a> {
             self.lifecycle_agent_repo,
             self.agent_frame_repo,
             self.execution_anchor_repo,
+            self.delivery_binding_repo,
             association.anchor_run_id,
             agent.id,
         )
@@ -292,6 +296,7 @@ async fn select_current_delivery(
     lifecycle_agent_repo: &dyn LifecycleAgentRepository,
     agent_frame_repo: &dyn AgentFrameRepository,
     execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+    delivery_binding_repo: &dyn AgentRunDeliveryBindingRepository,
     run_id: Uuid,
     agent_id: Uuid,
 ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
@@ -310,9 +315,9 @@ async fn select_current_delivery(
             actual_run_id: agent.run_id,
         });
     }
-    let binding = agent
-        .current_delivery
-        .clone()
+    let binding = delivery_binding_repo
+        .get_current(run_id, agent_id)
+        .await?
         .ok_or(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { run_id, agent_id })?;
     let anchor = execution_anchor_repo
         .find_by_session(&binding.runtime_session_id)
@@ -392,10 +397,10 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentSource, DeliveryBindingStatus, LifecycleRun, LifecycleRunStatus,
-        OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef,
-        OrchestrationStatus, PlanNodeKind, RuntimeNodeState, RuntimeNodeStatus,
-        RuntimeSessionExecutionAnchor,
+        AgentFrame, AgentRunDeliveryBinding, AgentSource, DeliveryBindingStatus, LifecycleRun,
+        LifecycleRunStatus, OrchestrationInstance, OrchestrationPlanSnapshot,
+        OrchestrationSourceRef, OrchestrationStatus, PlanNodeKind, RuntimeNodeState,
+        RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
     };
     use chrono::Utc;
 
@@ -598,14 +603,6 @@ mod tests {
                 .cloned()
                 .collect())
         }
-
-        async fn append_visible_canvas_mount(
-            &self,
-            _frame_id: Uuid,
-            _mount_id: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
     }
 
     #[derive(Default)]
@@ -621,16 +618,21 @@ mod tests {
 
     #[async_trait::async_trait]
     impl RuntimeSessionExecutionAnchorRepository for AnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
             let mut anchors = self.anchors.lock().unwrap();
             if let Some(existing) = anchors
-                .iter_mut()
+                .iter()
                 .find(|existing| existing.runtime_session_id == anchor.runtime_session_id)
             {
-                *existing = anchor.clone();
-            } else {
-                anchors.push(anchor.clone());
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
             }
+            anchors.push(anchor.clone());
             Ok(())
         }
 
@@ -696,19 +698,62 @@ mod tests {
                 .cloned()
                 .collect())
         }
+    }
 
-        async fn latest_updated_anchor_for_agent(
+    #[derive(Default)]
+    struct BindingRepo {
+        bindings: Mutex<Vec<AgentRunDeliveryBinding>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRunDeliveryBindingRepository for BindingRepo {
+        async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
+            let mut bindings = self.bindings.lock().unwrap();
+            if let Some(existing) = bindings
+                .iter_mut()
+                .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
+            {
+                *existing = binding.clone();
+            } else {
+                bindings.push(binding.clone());
+            }
+            Ok(())
+        }
+
+        async fn get_current(
             &self,
+            run_id: Uuid,
             agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
             Ok(self
-                .anchors
+                .bindings
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
+                .find(|item| item.run_id == run_id && item.agent_id == agent_id)
                 .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|item| item.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.bindings
+                .lock()
+                .unwrap()
+                .retain(|item| item.runtime_session_id != runtime_session_id);
+            Ok(())
         }
     }
 
@@ -764,11 +809,12 @@ mod tests {
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
         let anchor_repo = AnchorRepo::default();
+        let binding_repo = BindingRepo::default();
 
         let (run, orchestration_id) = run_with_running_node(project_id);
         run_repo.create(&run).await.expect("run");
 
-        let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
+        let agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
         let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             "runtime-2",
@@ -779,7 +825,7 @@ mod tests {
             "main",
             1,
         );
-        agent.bind_current_delivery_from_anchor(
+        let binding = AgentRunDeliveryBinding::from_anchor(
             &anchor,
             DeliveryBindingStatus::Running,
             anchor.updated_at,
@@ -787,6 +833,7 @@ mod tests {
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.create(&frame).await.expect("frame");
         anchor_repo.insert(anchor);
+        binding_repo.upsert(&binding).await.expect("binding");
         association_repo
             .create(&LifecycleSubjectAssociation::new_agent_scoped(
                 run.id,
@@ -804,6 +851,7 @@ mod tests {
             &agent_repo,
             &frame_repo,
             &anchor_repo,
+            &binding_repo,
         );
         let result = service
             .cancel_subject_execution(CancelSubjectExecutionCommand {
@@ -851,10 +899,11 @@ mod tests {
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
         let anchor_repo = AnchorRepo::default();
+        let binding_repo = BindingRepo::default();
 
         let run = LifecycleRun::new_plain(project_id);
         run_repo.create(&run).await.expect("run");
-        let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
+        let agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
         let frame = AgentFrame::new_revision(agent.id, 1, "test");
         let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "runtime-plain-1",
@@ -862,7 +911,7 @@ mod tests {
             frame.id,
             agent.id,
         );
-        agent.bind_current_delivery_from_anchor(
+        let binding = AgentRunDeliveryBinding::from_anchor(
             &anchor,
             DeliveryBindingStatus::Running,
             anchor.updated_at,
@@ -870,6 +919,7 @@ mod tests {
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.create(&frame).await.expect("frame");
         anchor_repo.insert(anchor);
+        binding_repo.upsert(&binding).await.expect("binding");
         association_repo
             .create(&LifecycleSubjectAssociation::new_agent_scoped(
                 run.id,
@@ -887,6 +937,7 @@ mod tests {
             &agent_repo,
             &frame_repo,
             &anchor_repo,
+            &binding_repo,
         );
         let result = service
             .cancel_subject_execution(CancelSubjectExecutionCommand {
@@ -917,6 +968,7 @@ mod tests {
         let agent_repo = AgentRepo::default();
         let frame_repo = FrameRepo::default();
         let anchor_repo = AnchorRepo::default();
+        let binding_repo = BindingRepo::default();
 
         let run = LifecycleRun::new_control(project_id);
         let mut agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Unknown);
@@ -936,6 +988,7 @@ mod tests {
             &agent_repo,
             &frame_repo,
             &anchor_repo,
+            &binding_repo,
         );
         let err = service
             .resolve_associated_agent(&association)

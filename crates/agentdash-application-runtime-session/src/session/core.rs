@@ -3,20 +3,20 @@ use std::{collections::HashMap, sync::Arc};
 use futures::future::join_all;
 
 use super::hub_support::meta_to_execution_state;
-use super::persistence::{SessionStoreError, SessionStoreResult, SessionStoreSet};
+use super::persistence::{SessionCoreStores, SessionStoreError, SessionStoreResult};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::types::{ExecutionStatus, SessionExecutionState, SessionMeta};
 
 #[derive(Clone)]
 pub struct SessionCoreService {
-    stores: SessionStoreSet,
+    stores: SessionCoreStores,
     runtime_registry: SessionRuntimeRegistry,
     connector: Arc<dyn agentdash_spi::AgentConnector>,
 }
 
 impl SessionCoreService {
     pub(super) fn new(
-        stores: SessionStoreSet,
+        stores: SessionCoreStores,
         runtime_registry: SessionRuntimeRegistry,
         connector: Arc<dyn agentdash_spi::AgentConnector>,
     ) -> Self {
@@ -102,7 +102,7 @@ impl SessionCoreService {
         Ok(map)
     }
 
-    pub async fn update_session_meta<F>(
+    pub(in crate::session) async fn update_session_meta<F>(
         &self,
         session_id: &str,
         updater: F,

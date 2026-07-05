@@ -19,7 +19,7 @@
 - PostgreSQL repository 统一通过 `persistence::postgres::db_err` / `sql_err_for` 映射 SQLx 错误，保留 NotFound、Conflict、Database 三类可映射语义
 - 数据库列名和 JSON 序列化统一 `snake_case`
 - 复杂值对象以 JSON 文本存入 `TEXT`
-- 新增目标模型列不因为 JSON 文本存储而追加 `_json` / `_jsonb` 后缀；列名优先表达业务语义，例如 `lifecycle_runs.context`、`lifecycle_runs.orchestrations`、`lifecycle_runs.view_projection`
+- 新增目标模型列不因为 JSON 文本存储而追加 `_json` / `_jsonb` 后缀；列名优先表达业务语义，例如 `lifecycle_runs.orchestrations`、`lifecycle_runs.tasks`、`lifecycle_runs.execution_log`
 - 时间字段使用 PostgreSQL 原生 timestamp 类型，repository 直接 bind/read `chrono::DateTime<Utc>`
 - Repository 实现模式详见 [repository-pattern.md](./repository-pattern.md)
 - 显式 `agentdash-server migrate` 入口负责运行 PostgreSQL migrations；API 长驻服务启动在 repository 装配前只执行 schema readiness 检查。这样发布流程可以把 schema 演进放进一次性部署步骤，并让长期服务只依赖运行期所需数据库权限。
@@ -28,7 +28,7 @@
 
 ## 事务规则
 
-- **单一聚合**：事务边界由对应 Repository 负责（如 `WorkspaceRepository` 内部同事务写 `workspaces` + `workspace_bindings`，`LifecycleRunRepository` 整体写回 lifecycle context / orchestrations / tasks / view projection）
+- **单一聚合**：事务边界由对应 Repository 负责（如 `WorkspaceRepository` 内部同事务写 `workspaces` + `workspace_bindings`，`LifecycleRunRepository` 整体写回 orchestrations / tasks / execution log）
 - **跨聚合**：使用显式 Command Port 或 Unit of Work，不要硬塞进单一 Repository trait
 - Story projection 与 LifecycleRun Task facts 同时变化时，使用应用层命令编排多个聚合；不要让 `StoryRepository` 承担 Task durable CRUD
 
@@ -213,16 +213,19 @@ database baseline squash task -> document approval -> edit 0001_init.sql -> rebu
 
 ```sql
 ALTER TABLE lifecycle_runs
-    ADD COLUMN IF NOT EXISTS context text DEFAULT '{}'::text NOT NULL,
     ADD COLUMN IF NOT EXISTS orchestrations text DEFAULT '[]'::text NOT NULL,
-    ADD COLUMN IF NOT EXISTS view_projection text;
+    ADD COLUMN IF NOT EXISTS tasks text DEFAULT '[]'::text NOT NULL,
+    ADD COLUMN IF NOT EXISTS execution_log text DEFAULT '[]'::text NOT NULL;
 ```
 
 Repository 仍用 JSON 序列化读写：
 
 ```rust
-serde_json::to_string(&run.context)?;
-parse_json_column::<LifecycleContext>(&row.context, "lifecycle_runs.context")?;
+serde_json::to_string(&run.orchestrations)?;
+parse_json_column::<Vec<OrchestrationInstance>>(
+    &row.orchestrations,
+    "lifecycle_runs.orchestrations",
+)?;
 ```
 
 ### 3. Contracts
@@ -263,6 +266,85 @@ ADD COLUMN orchestrations_json text DEFAULT '[]'::text NOT NULL;
 
 ```sql
 ADD COLUMN orchestrations text DEFAULT '[]'::text NOT NULL;
+```
+
+## Scenario: AgentFrame Surface Document And Projection Columns
+
+### 1. Scope / Trigger
+
+- Trigger: AgentFrame capability/context/VFS/MCP/execution/profile surface changes or schema changes around `agent_frames`.
+- Scope: `agent_frames.surface`, split projection columns, repository row mapping, migration backfill, AgentFrame repository tests.
+
+### 2. Signatures
+
+```sql
+ALTER TABLE agent_frames
+    ADD COLUMN IF NOT EXISTS surface text;
+```
+
+```rust
+pub struct AgentFrame {
+    pub surface: Option<AgentFrameSurfaceDocument>,
+    pub effective_capability_json: Option<Value>,
+    pub context_slice_json: Option<Value>,
+    pub vfs_surface_json: Option<Value>,
+    pub mcp_surface_json: Option<Value>,
+    pub execution_profile_json: Option<Value>,
+}
+
+impl AgentFrame {
+    pub fn surface_document(&self) -> AgentFrameSurfaceDocument;
+    pub fn apply_surface_projection(&mut self);
+}
+```
+
+### 3. Contracts
+
+- `agent_frames.surface` 是 frame revision surface 的 canonical document。
+- split columns 是 repository projection columns；写入时从 `surface_document()` 派生，读取时只用于迁移物化和 projection 校验。
+- 新 AgentFrame 写入先填充 `surface`，再调用 projection 逻辑后 insert。
+- backfill migration 从既有 split columns 派生 `surface`，让历史 rows 仍可读取。
+- 没有 live repository query 的索引通过新 migration 删除；保留物理表需要有独立查询、独立更新或重建成本理由。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| row has `surface` and stale split columns | mapper 返回 `surface` document，并用它重新投影 split fields |
+| row has no `surface` but has split columns | mapper 从 split columns 物化 `surface`，用于验证迁移 backfill 覆盖 |
+| `surface` JSON is invalid | repository 返回带 `agent_frames.surface` context 的 mapped `DomainError` |
+| split projection serialization fails | repository 在 insert 前返回 mapped `DomainError` |
+| index has no live query path | 通过新 migration 删除，并在工作项 ledger 记录理由 |
+
+### 5. Good/Base/Boundary Cases
+
+- Good: frame construction builds `FrameSurfaceDraft`, writes `AgentFrame.surface`, and repository projects split columns for existing read helpers.
+- Base: migration backfill row materializes a complete `AgentFrameSurfaceDocument` from split columns.
+- Boundary mismatch: code writes only `vfs_surface_json` and leaves `surface` absent, causing launch/query/context delivery to read different surface facts.
+
+### 6. Tests Required
+
+- Domain tests cover `surface_document()` split-column materialization and `apply_surface_projection()`.
+- PostgreSQL mapper tests cover surface-overrides-split and split-to-surface materialization.
+- Migration guard runs for any `agent_frames` schema change.
+- Repository roundtrip tests assert insert/select preserves canonical surface and projected fields.
+
+### 7. Boundary / Canonical
+
+#### Boundary
+
+```rust
+frame.vfs_surface_json = Some(vfs_json);
+frame.mcp_surface_json = Some(mcp_json);
+repo.insert_frame(&frame).await?;
+```
+
+#### Canonical
+
+```rust
+frame.surface = Some(surface_document);
+frame.apply_surface_projection();
+repo.insert_frame(&frame).await?;
 ```
 
 ---

@@ -3,7 +3,7 @@
 
 export type ListPermissionGrantsQuery = { effect_frame_id?: string, run_id?: string, status?: PermissionGrantStatusDto, status_group?: PermissionGrantStatusGroupDto, };
 
-export type PermissionGrantResponse = { id: string, run_id: string, effect_frame_id?: string, source_runtime_session_id: string, requested_paths: Array<string>, requested_vfs_access?: Array<PermissionGrantVfsAccessRuleDto>, reason: string, grant_scope: PermissionGrantScopeDto, expires_at?: string, scope_escalation_intent?: ScopeEscalationIntentDto, status: PermissionGrantStatusDto, policy_decision?: PolicyDecisionDto, approved_by?: string, created_at: string, updated_at: string, };
+export type PermissionGrantResponse = { id: string, run_id: string, effect_frame_id?: string, requested_paths: Array<string>, requested_vfs_access?: Array<PermissionGrantVfsAccessRuleDto>, reason: string, grant_scope: PermissionGrantScopeDto, expires_at?: string, scope_escalation_intent?: ScopeEscalationIntentDto, status: PermissionGrantStatusDto, policy_decision?: PolicyDecisionDto, approved_by?: string, created_at: string, updated_at: string, };
 
 export type PermissionGrantScopeDto = "turn" | "agent_frame" | "activity";
 

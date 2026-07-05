@@ -5,8 +5,8 @@ use agentdash_application_ports::agent_run_fork_materialization::{
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentRunLineage, AgentRunLineageRepository, DeliveryBindingStatus, LifecycleAgent,
-    LifecycleRun, RuntimeSessionExecutionAnchor,
+    AgentFrame, AgentRunDeliveryBinding, AgentRunLineage, AgentRunLineageRepository,
+    DeliveryBindingStatus, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -111,10 +111,10 @@ async fn materialize_forked_agent_run_tx(
     pool: &PgPool,
     input: AgentRunForkMaterializationInput,
 ) -> Result<AgentRunForkMaterializationResult, DomainError> {
-    let mut child_run =
+    let parent_runtime_session_id = input.parent_runtime_session_id.clone();
+    let child_runtime_session_id = input.child_runtime_session_id.clone();
+    let child_run =
         LifecycleRun::new_plain_for_user(input.parent_run.project_id, &input.forked_by_user_id);
-    child_run.context = input.parent_run.context.clone();
-    child_run.view_projection = input.parent_run.view_projection.clone();
 
     let mut child_agent = LifecycleAgent::new_root_for_user(
         child_run.id,
@@ -129,6 +129,7 @@ async fn materialize_forked_agent_run_tx(
 
     let mut child_frame =
         AgentFrame::new_revision(child_agent.id, 1, "agent_run_fork_materialization");
+    child_frame.surface = Some(input.parent_frame.surface_document());
     child_frame.effective_capability_json = input.parent_frame.effective_capability_json.clone();
     child_frame.context_slice_json = input.parent_frame.context_slice_json.clone();
     child_frame.vfs_surface_json = input.parent_frame.vfs_surface_json.clone();
@@ -143,18 +144,15 @@ async fn materialize_forked_agent_run_tx(
     child_frame.created_by_id = Some(input.forked_by_user_id.clone());
 
     let mut anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-        input.child_runtime_session_id.clone(),
+        child_runtime_session_id.clone(),
         child_run.id,
         child_frame.id,
         child_agent.id,
     );
     anchor.created_by_kind = "agent_run_fork".to_string();
 
-    child_agent.bind_current_delivery_from_anchor(
-        &anchor,
-        DeliveryBindingStatus::Ready,
-        chrono::Utc::now(),
-    );
+    let delivery_binding =
+        AgentRunDeliveryBinding::from_anchor(&anchor, DeliveryBindingStatus::Ready, Utc::now());
 
     let lineage = AgentRunLineage::new_fork(
         input.parent_run.id,
@@ -163,21 +161,25 @@ async fn materialize_forked_agent_run_tx(
         child_agent.id,
         input.fork_point_event_seq,
         input.fork_point_ref_json,
-        input.parent_runtime_session_id,
-        input.child_runtime_session_id,
         input.forked_by_user_id,
         input.metadata_json,
+    )
+    .with_frame_baseline(
+        input.parent_frame.id,
+        input.parent_frame.revision,
+        child_frame.id,
+        child_frame.revision,
     );
 
     let context = AgentRunForkMaterializationLogContext {
         parent_run_id: input.parent_run.id,
         parent_agent_id: input.parent_agent.id,
         parent_frame_id: input.parent_frame.id,
-        parent_runtime_session_id: lineage.parent_runtime_session_id.clone(),
+        parent_runtime_session_id,
         child_run_id: child_run.id,
         child_agent_id: child_agent.id,
         child_frame_id: child_frame.id,
-        child_runtime_session_id: lineage.child_runtime_session_id.clone(),
+        child_runtime_session_id: child_runtime_session_id.clone(),
         lineage_id: lineage.id,
         forked_by_user_id: lineage.forked_by_user_id.clone(),
     };
@@ -200,10 +202,19 @@ async fn materialize_forked_agent_run_tx(
         .inspect_err(|error| {
             log_agent_run_fork_materialization_error("insert_agent_frame", &context, error);
         })?;
-    upsert_anchor_tx(&mut tx, &anchor)
+    create_anchor_once_tx(&mut tx, &anchor)
         .await
         .inspect_err(|error| {
-            log_agent_run_fork_materialization_error("upsert_execution_anchor", &context, error);
+            log_agent_run_fork_materialization_error(
+                "create_execution_anchor_once",
+                &context,
+                error,
+            );
+        })?;
+    upsert_delivery_binding_tx(&mut tx, &delivery_binding)
+        .await
+        .inspect_err(|error| {
+            log_agent_run_fork_materialization_error("upsert_delivery_binding", &context, error);
         })?;
     insert_agent_run_lineage_tx(&mut tx, &lineage)
         .await
@@ -218,6 +229,7 @@ async fn materialize_forked_agent_run_tx(
         child_run,
         child_agent,
         child_frame,
+        child_runtime_session_id,
         lineage,
     })
 }
@@ -277,10 +289,12 @@ async fn insert_agent_run_lineage(
         .bind(lineage.child_run_id.to_string())
         .bind(lineage.child_agent_id.to_string())
         .bind(&lineage.relation_kind)
+        .bind(lineage.parent_frame_id.map(|id| id.to_string()))
+        .bind(lineage.parent_frame_revision)
+        .bind(lineage.child_frame_id.map(|id| id.to_string()))
+        .bind(lineage.child_frame_revision)
         .bind(option_u64_to_i64(lineage.fork_point_event_seq)?)
         .bind(opt_json_str(&lineage.fork_point_ref_json)?)
-        .bind(&lineage.parent_runtime_session_id)
-        .bind(&lineage.child_runtime_session_id)
         .bind(&lineage.forked_by_user_id)
         .bind(opt_json_str(&lineage.metadata_json)?)
         .bind(lineage.created_at)
@@ -301,10 +315,12 @@ async fn insert_agent_run_lineage_tx(
         .bind(lineage.child_run_id.to_string())
         .bind(lineage.child_agent_id.to_string())
         .bind(&lineage.relation_kind)
+        .bind(lineage.parent_frame_id.map(|id| id.to_string()))
+        .bind(lineage.parent_frame_revision)
+        .bind(lineage.child_frame_id.map(|id| id.to_string()))
+        .bind(lineage.child_frame_revision)
         .bind(option_u64_to_i64(lineage.fork_point_event_seq)?)
         .bind(opt_json_str(&lineage.fork_point_ref_json)?)
-        .bind(&lineage.parent_runtime_session_id)
-        .bind(&lineage.child_runtime_session_id)
         .bind(&lineage.forked_by_user_id)
         .bind(opt_json_str(&lineage.metadata_json)?)
         .bind(lineage.created_at)
@@ -317,9 +333,9 @@ async fn insert_agent_run_lineage_tx(
 fn agent_run_lineage_insert_sql() -> &'static str {
     r#"INSERT INTO agent_run_lineages
         (id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,
-         fork_point_event_seq,fork_point_ref,parent_runtime_session_id,child_runtime_session_id,
-         forked_by_user_id,metadata,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#
+         parent_frame_id,parent_frame_revision,child_frame_id,child_frame_revision,
+         fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#
 }
 
 async fn insert_lifecycle_run_tx(
@@ -328,9 +344,9 @@ async fn insert_lifecycle_run_tx(
 ) -> Result<(), DomainError> {
     sqlx::query(
         r#"INSERT INTO lifecycle_runs
-            (id,project_id,created_by_user_id,topology,context,orchestrations,tasks,
-             view_projection,status,execution_log,created_at,updated_at,last_activity_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+            (id,project_id,created_by_user_id,topology,orchestrations,tasks,
+             status,execution_log,created_at,updated_at,last_activity_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
     )
     .bind(run.id.to_string())
     .bind(run.project_id.to_string())
@@ -339,10 +355,8 @@ async fn insert_lifecycle_run_tx(
         agentdash_domain::workflow::LifecycleRunTopology::Plain => "plain",
         agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph => "workflow_graph",
     })
-    .bind(serde_json::to_string(&run.context)?)
     .bind(serde_json::to_string(&run.orchestrations)?)
     .bind(serde_json::to_string(&run.tasks)?)
-    .bind(opt_json_str(&run.view_projection)?)
     .bind(serde_json::to_string(&run.status)?)
     .bind(serde_json::to_string(&run.execution_log)?)
     .bind(run.created_at)
@@ -358,14 +372,11 @@ async fn insert_lifecycle_agent_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     agent: &LifecycleAgent,
 ) -> Result<(), DomainError> {
-    let delivery = agent.current_delivery.as_ref();
     sqlx::query(
         r#"INSERT INTO lifecycle_agents
-            (id,run_id,project_id,created_by_user_id,source,project_agent_id,status,bootstrap_status,
-             current_delivery_runtime_session_id,current_delivery_launch_frame_id,
-             current_delivery_orchestration_id,current_delivery_node_path,current_delivery_node_attempt,
-             current_delivery_status,current_delivery_observed_at,created_at,updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"#,
+            (id,run_id,project_id,created_by_user_id,source,project_agent_id,
+             status,bootstrap_status,created_at,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
     )
     .bind(agent.id.to_string())
     .bind(agent.run_id.to_string())
@@ -375,13 +386,6 @@ async fn insert_lifecycle_agent_tx(
     .bind(agent.project_agent_id.map(|id| id.to_string()))
     .bind(&agent.status)
     .bind(&agent.bootstrap_status)
-    .bind(delivery.map(|binding| binding.runtime_session_id.clone()))
-    .bind(delivery.map(|binding| binding.launch_frame_id.to_string()))
-    .bind(delivery.and_then(|binding| binding.orchestration_id.map(|id| id.to_string())))
-    .bind(delivery.and_then(|binding| binding.node_path.clone()))
-    .bind(delivery.and_then(|binding| binding.node_attempt.map(|value| value as i32)))
-    .bind(delivery.map(|binding| binding.status.as_str().to_string()))
-    .bind(delivery.map(|binding| binding.observed_at))
     .bind(agent.created_at)
     .bind(agent.updated_at)
     .execute(&mut **tx)
@@ -390,27 +394,73 @@ async fn insert_lifecycle_agent_tx(
     Ok(())
 }
 
+async fn upsert_delivery_binding_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    binding: &AgentRunDeliveryBinding,
+) -> Result<(), DomainError> {
+    sqlx::query(
+        r#"INSERT INTO agent_run_delivery_bindings
+            (run_id,agent_id,runtime_session_id,launch_frame_id,orchestration_id,
+             node_path,node_attempt,status,active_turn_id,last_turn_id,terminal_state,
+             terminal_message,observed_at,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           ON CONFLICT (run_id, agent_id) DO UPDATE SET
+               runtime_session_id = EXCLUDED.runtime_session_id,
+               launch_frame_id = EXCLUDED.launch_frame_id,
+               orchestration_id = EXCLUDED.orchestration_id,
+               node_path = EXCLUDED.node_path,
+               node_attempt = EXCLUDED.node_attempt,
+               status = EXCLUDED.status,
+               active_turn_id = EXCLUDED.active_turn_id,
+               last_turn_id = EXCLUDED.last_turn_id,
+               terminal_state = EXCLUDED.terminal_state,
+               terminal_message = EXCLUDED.terminal_message,
+               observed_at = EXCLUDED.observed_at,
+               updated_at = EXCLUDED.updated_at"#,
+    )
+    .bind(binding.run_id.to_string())
+    .bind(binding.agent_id.to_string())
+    .bind(&binding.runtime_session_id)
+    .bind(binding.launch_frame_id.to_string())
+    .bind(binding.orchestration_id.map(|id| id.to_string()))
+    .bind(&binding.node_path)
+    .bind(binding.node_attempt.map(|value| value as i32))
+    .bind(binding.status.as_str())
+    .bind(&binding.active_turn_id)
+    .bind(&binding.last_turn_id)
+    .bind(&binding.terminal_state)
+    .bind(&binding.terminal_message)
+    .bind(binding.observed_at)
+    .bind(binding.updated_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| sql_err_for("agent_run_delivery_bindings", error))?;
+    Ok(())
+}
+
 async fn insert_agent_frame_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     frame: &AgentFrame,
 ) -> Result<(), DomainError> {
+    let surface = frame.surface_document();
     sqlx::query(
         r#"INSERT INTO agent_frames
-            (id,agent_id,revision,effective_capability_json,context_slice_json,vfs_surface_json,
+            (id,agent_id,revision,surface,effective_capability_json,context_slice_json,vfs_surface_json,
              mcp_surface_json,visible_canvas_mount_ids_json,visible_workspace_module_refs_json,
              execution_profile_json,created_by_kind,created_by_id,created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
     )
     .bind(frame.id.to_string())
     .bind(frame.agent_id.to_string())
     .bind(frame.revision)
-    .bind(opt_json_str(&frame.effective_capability_json)?)
-    .bind(opt_json_str(&frame.context_slice_json)?)
-    .bind(opt_json_str(&frame.vfs_surface_json)?)
-    .bind(opt_json_str(&frame.mcp_surface_json)?)
-    .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
-    .bind(opt_json_str(&frame.visible_workspace_module_refs_json)?)
-    .bind(opt_json_str(&frame.execution_profile_json)?)
+    .bind(surface_json_str(frame)?)
+    .bind(opt_json_str(&surface.capability_state)?)
+    .bind(opt_json_str(&surface.context_slice)?)
+    .bind(opt_json_str(&surface.vfs_surface)?)
+    .bind(opt_json_str(&surface.mcp_surface)?)
+    .bind(opt_json_str(&surface.visible_canvas_mount_ids)?)
+    .bind(opt_json_str(&surface.visible_workspace_module_refs)?)
+    .bind(opt_json_str(&surface.execution_profile)?)
     .bind(&frame.created_by_kind)
     .bind(&frame.created_by_id)
     .bind(frame.created_at)
@@ -420,24 +470,16 @@ async fn insert_agent_frame_tx(
     Ok(())
 }
 
-async fn upsert_anchor_tx(
+async fn create_anchor_once_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     anchor: &RuntimeSessionExecutionAnchor,
 ) -> Result<(), DomainError> {
-    sqlx::query(
+    let result = sqlx::query(
         r#"INSERT INTO runtime_session_execution_anchors
             (runtime_session_id,run_id,launch_frame_id,agent_id,orchestration_id,node_path,
              node_attempt,created_by_kind,created_at,updated_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-           ON CONFLICT (runtime_session_id) DO UPDATE SET
-             run_id=EXCLUDED.run_id,
-             launch_frame_id=EXCLUDED.launch_frame_id,
-             agent_id=EXCLUDED.agent_id,
-             orchestration_id=EXCLUDED.orchestration_id,
-             node_path=EXCLUDED.node_path,
-             node_attempt=EXCLUDED.node_attempt,
-             created_by_kind=EXCLUDED.created_by_kind,
-             updated_at=EXCLUDED.updated_at"#,
+           ON CONFLICT (runtime_session_id) DO NOTHING"#,
     )
     .bind(&anchor.runtime_session_id)
     .bind(anchor.run_id.to_string())
@@ -452,10 +494,83 @@ async fn upsert_anchor_tx(
     .execute(&mut **tx)
     .await
     .map_err(|error| sql_err_for("runtime_session_execution_anchors", error))?;
-    Ok(())
+    if result.rows_affected() > 0 {
+        return Ok(());
+    }
+
+    let existing = select_anchor_by_session_tx(tx, &anchor.runtime_session_id)
+        .await?
+        .ok_or_else(|| DomainError::Database {
+            operation: "create_runtime_session_execution_anchor",
+            message: format!(
+                "runtime_session_id={} conflicted but existing anchor was not visible",
+                anchor.runtime_session_id
+            ),
+        })?;
+    if existing.has_same_launch_coordinates_as(anchor) {
+        return Ok(());
+    }
+    Err(existing.immutable_conflict(anchor))
 }
 
-const AGENT_RUN_LINEAGE_COLS: &str = "id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,fork_point_event_seq,fork_point_ref,parent_runtime_session_id,child_runtime_session_id,forked_by_user_id,metadata,created_at";
+async fn select_anchor_by_session_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    runtime_session_id: &str,
+) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+    sqlx::query_as::<_, ExecutionAnchorRow>(
+        r#"SELECT runtime_session_id,run_id,launch_frame_id,agent_id,orchestration_id,node_path,
+                  node_attempt,created_by_kind,created_at,updated_at
+           FROM runtime_session_execution_anchors
+           WHERE runtime_session_id = $1"#,
+    )
+    .bind(runtime_session_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|error| sql_err_for("runtime_session_execution_anchors", error))?
+    .map(TryInto::try_into)
+    .transpose()
+}
+
+const AGENT_RUN_LINEAGE_COLS: &str = "id,parent_run_id,parent_agent_id,child_run_id,child_agent_id,relation_kind,parent_frame_id,parent_frame_revision,child_frame_id,child_frame_revision,fork_point_event_seq,fork_point_ref,forked_by_user_id,metadata,created_at";
+
+#[derive(sqlx::FromRow)]
+struct ExecutionAnchorRow {
+    runtime_session_id: String,
+    run_id: String,
+    launch_frame_id: String,
+    agent_id: String,
+    orchestration_id: Option<String>,
+    node_path: Option<String>,
+    node_attempt: Option<i32>,
+    created_by_kind: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl TryFrom<ExecutionAnchorRow> for RuntimeSessionExecutionAnchor {
+    type Error = DomainError;
+
+    fn try_from(row: ExecutionAnchorRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            runtime_session_id: row.runtime_session_id,
+            run_id: parse_uuid(&row.run_id, "runtime_session_execution_anchors.run_id")?,
+            launch_frame_id: parse_uuid(
+                &row.launch_frame_id,
+                "runtime_session_execution_anchors.launch_frame_id",
+            )?,
+            agent_id: parse_uuid(&row.agent_id, "runtime_session_execution_anchors.agent_id")?,
+            orchestration_id: opt_uuid(
+                row.orchestration_id.as_ref(),
+                "runtime_session_execution_anchors.orchestration_id",
+            )?,
+            node_path: row.node_path,
+            node_attempt: row.node_attempt.map(|attempt| attempt as u32),
+            created_by_kind: row.created_by_kind,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
 
 #[derive(sqlx::FromRow)]
 struct AgentRunLineageRow {
@@ -465,10 +580,12 @@ struct AgentRunLineageRow {
     child_run_id: String,
     child_agent_id: String,
     relation_kind: String,
+    parent_frame_id: Option<String>,
+    parent_frame_revision: Option<i32>,
+    child_frame_id: Option<String>,
+    child_frame_revision: Option<i32>,
     fork_point_event_seq: Option<i64>,
     fork_point_ref: Option<String>,
-    parent_runtime_session_id: String,
-    child_runtime_session_id: String,
     forked_by_user_id: String,
     metadata: Option<String>,
     created_at: DateTime<Utc>,
@@ -488,10 +605,18 @@ impl TryFrom<AgentRunLineageRow> for AgentRunLineage {
             child_run_id: parse_uuid(&row.child_run_id, "agent_run_lineages.child_run_id")?,
             child_agent_id: parse_uuid(&row.child_agent_id, "agent_run_lineages.child_agent_id")?,
             relation_kind: row.relation_kind,
+            parent_frame_id: opt_uuid(
+                row.parent_frame_id.as_ref(),
+                "agent_run_lineages.parent_frame_id",
+            )?,
+            parent_frame_revision: row.parent_frame_revision,
+            child_frame_id: opt_uuid(
+                row.child_frame_id.as_ref(),
+                "agent_run_lineages.child_frame_id",
+            )?,
+            child_frame_revision: row.child_frame_revision,
             fork_point_event_seq: option_i64_to_u64(row.fork_point_event_seq)?,
             fork_point_ref_json: parse_optional_json(row.fork_point_ref, "fork_point_ref")?,
-            parent_runtime_session_id: row.parent_runtime_session_id,
-            child_runtime_session_id: row.child_runtime_session_id,
             forked_by_user_id: row.forked_by_user_id,
             metadata_json: parse_optional_json(row.metadata, "metadata")?,
             created_at: row.created_at,
@@ -504,12 +629,22 @@ fn parse_uuid(raw: &str, ctx: &str) -> Result<Uuid, DomainError> {
         .map_err(|error| DomainError::InvalidConfig(format!("{ctx} invalid uuid `{raw}`: {error}")))
 }
 
+fn opt_uuid(raw: Option<&String>, ctx: &str) -> Result<Option<Uuid>, DomainError> {
+    raw.map(|value| parse_uuid(value, ctx)).transpose()
+}
+
 fn opt_json_str(value: &Option<Value>) -> Result<Option<String>, DomainError> {
     value
         .as_ref()
         .map(serde_json::to_string)
         .transpose()
         .map_err(Into::into)
+}
+
+fn surface_json_str(frame: &AgentFrame) -> Result<String, DomainError> {
+    serde_json::to_string(&frame.surface_document()).map_err(|error| {
+        DomainError::InvalidConfig(format!("agent_frames.surface JSON 无效: {error}"))
+    })
 }
 
 fn parse_optional_json(raw: Option<String>, column: &str) -> Result<Option<Value>, DomainError> {
@@ -554,8 +689,10 @@ mod tests {
     fn agent_run_lineage_row_maps_json_and_refs() {
         let parent_run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
+        let parent_frame_id = Uuid::new_v4();
         let child_run_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
         let created_at = Utc::now();
 
         let lineage = AgentRunLineage::try_from(AgentRunLineageRow {
@@ -565,10 +702,12 @@ mod tests {
             child_run_id: child_run_id.to_string(),
             child_agent_id: child_agent_id.to_string(),
             relation_kind: "fork".to_string(),
+            parent_frame_id: Some(parent_frame_id.to_string()),
+            parent_frame_revision: Some(7),
+            child_frame_id: Some(child_frame_id.to_string()),
+            child_frame_revision: Some(1),
             fork_point_event_seq: Some(42),
             fork_point_ref: Some(json!({ "turn_id": "turn-1", "entry_index": 3 }).to_string()),
-            parent_runtime_session_id: "runtime-parent".to_string(),
-            child_runtime_session_id: "runtime-child".to_string(),
             forked_by_user_id: "user-child".to_string(),
             metadata: Some(json!({ "reason": "explore" }).to_string()),
             created_at,
@@ -580,13 +719,15 @@ mod tests {
         assert_eq!(lineage.child_run_id, child_run_id);
         assert_eq!(lineage.child_agent_id, child_agent_id);
         assert_eq!(lineage.relation_kind, "fork");
+        assert_eq!(lineage.parent_frame_id, Some(parent_frame_id));
+        assert_eq!(lineage.parent_frame_revision, Some(7));
+        assert_eq!(lineage.child_frame_id, Some(child_frame_id));
+        assert_eq!(lineage.child_frame_revision, Some(1));
         assert_eq!(lineage.fork_point_event_seq, Some(42));
         assert_eq!(
             lineage.fork_point_ref_json,
             Some(json!({ "turn_id": "turn-1", "entry_index": 3 }))
         );
-        assert_eq!(lineage.parent_runtime_session_id, "runtime-parent");
-        assert_eq!(lineage.child_runtime_session_id, "runtime-child");
         assert_eq!(lineage.forked_by_user_id, "user-child");
         assert_eq!(lineage.metadata_json, Some(json!({ "reason": "explore" })));
         assert_eq!(lineage.created_at, created_at);
@@ -601,10 +742,12 @@ mod tests {
             child_run_id: Uuid::new_v4().to_string(),
             child_agent_id: Uuid::new_v4().to_string(),
             relation_kind: "fork".to_string(),
+            parent_frame_id: None,
+            parent_frame_revision: None,
+            child_frame_id: None,
+            child_frame_revision: None,
             fork_point_event_seq: Some(-1),
             fork_point_ref: None,
-            parent_runtime_session_id: "runtime-parent".to_string(),
-            child_runtime_session_id: "runtime-child".to_string(),
             forked_by_user_id: "user-child".to_string(),
             metadata: None,
             created_at: Utc::now(),

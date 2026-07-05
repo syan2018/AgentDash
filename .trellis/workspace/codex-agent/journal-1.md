@@ -1883,3 +1883,89 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 53: AgentRun Lifecycle 仓储收束最终收口
+
+**Date**: 2026-07-05
+**Task**: AgentRun Lifecycle 仓储收束最终收口
+**Branch**: `codex/agentrun-lifecycle-repository-convergence`
+
+### Summary
+
+完成 AgentRun/Lifecycle/RuntimeSession 仓储与事实边界重构收束，删除 AgentRun/Lifecycle repository set 路径，收窄 remaining composition deps，并通过 migration、contracts、frontend、fmt、clippy 与后端全仓测试。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `00468388` | (see git log) |
+| `ee54afc7` | (see git log) |
+| `6b193ff3` | (see git log) |
+| `0576389a` | (see git log) |
+| `f1ef3112` | (see git log) |
+| `3d3af3d7` | (see git log) |
+| `bd1f2d02` | (see git log) |
+| `298fa204` | (see git log) |
+| `2cf181f2` | (see git log) |
+| `7eb91878` | (see git log) |
+| `657ea90d` | (see git log) |
+| `c67f55ef` | (see git log) |
+| `8bdf31f3` | (see git log) |
+| `1433cff8` | (see git log) |
+| `b7cdb4e6` | (see git log) |
+| `fbb94c78` | (see git log) |
+| `3b114836` | (see git log) |
+| `37de72d9` | (see git log) |
+| `c8c08a3b` | (see git log) |
+| `50515eca` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 54: AgentRun执行事实源收束
+
+**Date**: 2026-07-05
+**Task**: AgentRun执行事实源收束
+**Branch**: `codex/agentrun-lifecycle-repository-convergence`
+
+### Summary
+
+完成AgentRun/RuntimeSession执行事实源收束：AgentRun scoped runtime-control改为workspace projection，fork display seed改用父级可见transcript切片，前端移除AgentRun侧SessionRuntimeControlView消费，并补充长期spec与验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fe685508` | (see git log) |
+| `9901613a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

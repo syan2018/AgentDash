@@ -167,7 +167,7 @@
 | `abort()` | ✅ | |
 | `waitForIdle()` | ✅ | |
 | `reset()` | ✅ | 清空 AgentState 全部字段 |
-| 错误封装为 AssistantMessage | ✅ | `error_assistant()` |
+| 运行失败事件 | ✅ | `AgentEvent::RunError` |
 
 ---
 
@@ -201,7 +201,7 @@
 | 10 | `agent.rs`: `AgentConfig` 扩展 + `QueueMode` + 出队 | P0 |
 | 11 | `bridge.rs`: `BridgeRequest.llm_messages` | P0 |
 | 12 | `types.rs`: `StopReason`、`TokenUsage`、assistant 新字段 | P1 |
-| 13 | `types.rs`: `error_assistant()` + `is_error_or_aborted()` | P1 |
+| 13 | `types.rs`: `AgentRunError` + `is_error_or_aborted()` | P1 |
 | 14 | `agent.rs`: `is_running` + `idle_notify` + `wait_for_idle()` + `reset()` | P1 |
 | 15 | `agent_loop.rs`: usage/stop_reason 传播 + stopReason 退出 | P1 |
 | 16 | `types.rs`: timestamp、tool_name、details 字段 | P2 |

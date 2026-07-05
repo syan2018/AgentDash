@@ -24,7 +24,7 @@ pub struct WorkflowGraph {
 - compiler 输出 `OrchestrationPlanSnapshot(plan_digest=...)`；blocking diagnostics 在创建 orchestration 前返回给调用方。
 - `LifecycleRun.add_orchestration` 直接保存 `OrchestrationInstance`，entry rules materialize 为 `RuntimeNodeState(status=Ready)` 与 ready queue。
 - node status、inputs、outputs、executor refs、trace refs、error、cache refs 和 state exchange 都由 common orchestration runtime reducer 写入。
-- Agent / Function / LocalEffect / HumanGate executor 统一提交 `NodeStarted` 与 terminal node event；同步完成的 executor 也要先记录 started，再记录 completed/failed。
+- Agent executor materialization 先提交 `NodeClaimed`，RuntimeSession accepted turn 后由 lifecycle advance 提交 `NodeStarted`。Function / LocalEffect / HumanGate executor 在真实执行开始时提交 `NodeStarted` 与 terminal node event；同步完成的 executor 也要先记录 started，再记录 completed/failed。
 - Runtime session 反查节点时走 `RuntimeSessionExecutionAnchor -> LifecycleRun -> OrchestrationInstance -> RuntimeNodeState`。
 - Active workflow projection 从 `LifecycleRun.orchestrations[]` 派生，供 API / frontend / VFS / hook 查询同一事实源。
 
@@ -119,7 +119,7 @@ SubmitOrchestrationHumanDecisionResponse {
 ### 3. Contracts
 
 - `drain_ready_nodes` 每次从 `LifecycleRunRepository` 重新加载 aggregate，处理一个 ready node 后写回，再进入下一轮；这样所有后继激活都来自 reducer materialization 后的最新 snapshot。
-- AgentCall 正式支持 `AgentReusePolicy::CreateActivityAgent + RuntimeSessionPolicy::CreateNew`，并创建 `LifecycleAgent`、`AgentFrame`、`RuntimeSessionExecutionAnchor` 后提交 `NodeStarted(ExecutorRunRef::RuntimeSession)`。
+- AgentCall 正式支持 `AgentReusePolicy::CreateActivityAgent + RuntimeSessionPolicy::CreateNew`，并创建 `LifecycleAgent`、`AgentFrame`、`RuntimeSessionExecutionAnchor` 后提交 `NodeClaimed`。RuntimeSession accepted turn 成功后，再由 lifecycle advance 提交 `NodeStarted(ExecutorRunRef::RuntimeSession)`。
 - Function API 与 BashExec 使用 `FunctionRunner` SPI。同步完成也必须先提交 `NodeStarted(ExecutorRunRef::FunctionRun)`，再提交 `NodeCompleted` 或 `NodeFailed`。
 - compiler 将 BashExec 映射为 `PlanNodeKind::LocalEffect + ExecutorSpec::Function(BashExec)`；执行器按 typed executor spec 调用 `run_bash`，因此 `PlanNodeKind` 表达流程语义，`ExecutorSpec` 表达副作用机制。
 - HumanGate 创建 `LifecycleGate(gate_kind=orchestration_human_gate)`，payload 必须包含 `run_id`、`orchestration_id`、`node_path`、`attempt`、`plan_node_id` 与 executor contract；runtime node 写 `ExecutorRunRef::HumanDecision`。

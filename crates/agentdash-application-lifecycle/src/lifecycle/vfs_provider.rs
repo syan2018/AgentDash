@@ -16,7 +16,8 @@ use uuid::Uuid;
 use crate::lifecycle::SessionToolResultCache;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, encode_node_path_segment};
 use crate::lifecycle::surface::journey::{
-    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, filter_session_items,
+    AgentRunJournalReader, AgentRunJournalRef, LifecycleJourneyError, LifecycleJourneyProjection,
+    SessionItemView, SessionToolResultCacheReader, filter_session_items,
     group_events_into_turn_summaries, item_file_name, session_summary_archives, to_json_pretty,
     tool_result_metadata_for_projection,
 };
@@ -33,8 +34,8 @@ use agentdash_application_vfs::provider::{
 };
 use agentdash_application_vfs::types::{ListOptions, ListResult, ReadResult};
 use agentdash_domain::common::Mount;
-use agentdash_spi::SessionPersistence;
 use agentdash_spi::platform::mount::RuntimeFileEntry;
+use agentdash_spi::{SessionCompactionStore, SessionMetaStore};
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -47,31 +48,40 @@ impl LifecycleMountProvider {
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
-        session_persistence: Arc<dyn SessionPersistence>,
+        session_meta_store: Arc<dyn SessionMetaStore>,
+        session_compaction_store: Arc<dyn SessionCompactionStore>,
+        agent_run_journal_reader: Arc<dyn AgentRunJournalReader>,
     ) -> Self {
         Self::new_with_tool_result_cache(
             lifecycle_run_repo,
             inline_file_repo,
             skill_asset_repo,
-            session_persistence,
+            session_meta_store,
+            session_compaction_store,
             SessionToolResultCache::new(),
+            agent_run_journal_reader,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_tool_result_cache(
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
-        session_persistence: Arc<dyn SessionPersistence>,
-        tool_result_cache: Arc<SessionToolResultCache>,
+        session_meta_store: Arc<dyn SessionMetaStore>,
+        session_compaction_store: Arc<dyn SessionCompactionStore>,
+        tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
+        agent_run_journal_reader: Arc<dyn AgentRunJournalReader>,
     ) -> Self {
         Self {
             lifecycle_run_repo,
             skill_asset_repo,
             journey: LifecycleJourneyProjection::new_with_tool_result_cache(
                 inline_file_repo,
-                session_persistence,
+                session_meta_store,
+                session_compaction_store,
                 tool_result_cache,
+                agent_run_journal_reader,
             ),
         }
     }
@@ -82,7 +92,7 @@ impl LifecycleMountProvider {
         segs: &[&str],
     ) -> Result<String, MountError> {
         let run_ctx = load_run_context(&self.lifecycle_run_repo, mount).await?;
-        let session_id = parse_runtime_session_id_from_metadata(mount)?;
+        let session_source = agent_run_session_event_source_from_mount(mount)?;
         let content = match segs {
             [] | ["state"] => to_json_pretty(&agent_run_session_overview(&run_ctx.run, mount)?)
                 .map_err(map_journey_err)?,
@@ -91,12 +101,12 @@ impl LifecycleMountProvider {
             }
             ["session"] => self
                 .journey
-                .read_session_projection(&session_id, &["meta"])
+                .read_session_projection(&session_source, &["meta"])
                 .await
                 .map_err(map_journey_err)?,
             ["session", rest @ ..] => self
                 .journey
-                .read_session_projection(&session_id, rest)
+                .read_session_projection(&session_source, rest)
                 .await
                 .map_err(map_journey_err)?,
             ["node"] | ["node", "state"] => {
@@ -154,7 +164,7 @@ impl LifecycleMountProvider {
         options: &ListOptions,
         segs: &[&str],
     ) -> Result<Vec<RuntimeFileEntry>, MountError> {
-        let session_id = parse_runtime_session_id_from_metadata(mount)?;
+        let session_source = agent_run_session_event_source_from_mount(mount)?;
         let entries = match segs {
             [] => agent_run_session_root_entries(
                 lifecycle_mount_has_skill_asset_projection(mount),
@@ -162,7 +172,8 @@ impl LifecycleMountProvider {
             ),
             ["session"] => {
                 if options.recursive {
-                    list_session_recursive_entries(&self.journey, &session_id, "session").await?
+                    list_session_recursive_entries(&self.journey, &session_source, "session")
+                        .await?
                 } else {
                     session_root_entries("session")
                 }
@@ -170,7 +181,7 @@ impl LifecycleMountProvider {
             ["session", "items"] => {
                 list_session_item_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/items",
                     SessionItemView::Items,
                 )
@@ -179,7 +190,7 @@ impl LifecycleMountProvider {
             ["session", "messages"] => {
                 list_session_item_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/messages",
                     SessionItemView::Messages,
                 )
@@ -188,7 +199,7 @@ impl LifecycleMountProvider {
             ["session", "tools"] => {
                 list_session_item_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/tools",
                     SessionItemView::Tools,
                 )
@@ -197,7 +208,7 @@ impl LifecycleMountProvider {
             ["session", "tool-results"] => {
                 list_session_tool_result_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/tool-results",
                     ToolResultListScope::Root,
                     options.recursive,
@@ -207,7 +218,7 @@ impl LifecycleMountProvider {
             ["session", "tool-results", turn_alias] => {
                 list_session_tool_result_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/tool-results",
                     ToolResultListScope::Turn { turn_alias },
                     options.recursive,
@@ -217,7 +228,7 @@ impl LifecycleMountProvider {
             ["session", "tool-results", turn_alias, body_alias] => {
                 list_session_tool_result_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/tool-results",
                     ToolResultListScope::Body {
                         turn_alias,
@@ -230,20 +241,20 @@ impl LifecycleMountProvider {
             ["session", "writes"] => {
                 list_session_item_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/writes",
                     SessionItemView::Writes,
                 )
                 .await?
             }
             ["session", "summaries"] => {
-                list_session_summary_entries(&self.journey, &session_id, "session/summaries")
+                list_session_summary_entries(&self.journey, &session_source, "session/summaries")
                     .await?
             }
             ["session", "terminal"] => {
                 list_session_terminal_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/terminal",
                     options.recursive,
                 )
@@ -252,7 +263,7 @@ impl LifecycleMountProvider {
             ["session", "turns"] => {
                 list_session_turn_entries(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/turns",
                     options.recursive,
                 )
@@ -261,7 +272,7 @@ impl LifecycleMountProvider {
             ["session", "turns", turn_id] => {
                 list_session_turn_entries_for_turn(
                     &self.journey,
-                    &session_id,
+                    &session_source,
                     "session/turns",
                     turn_id,
                 )
@@ -375,6 +386,19 @@ fn parse_agent_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
     parse_uuid_metadata(mount, "agent_id")
 }
 
+fn optional_agent_id_from_metadata(mount: &Mount) -> Result<Option<Uuid>, MountError> {
+    let Some(raw) = mount
+        .metadata
+        .get("agent_id")
+        .and_then(|value| value.as_str())
+    else {
+        return Ok(None);
+    };
+    Uuid::parse_str(raw).map(Some).map_err(|error| {
+        MountError::OperationFailed(format!("mount metadata agent_id 无效: {error}"))
+    })
+}
+
 fn parse_launch_frame_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
     parse_uuid_metadata(mount, "launch_frame_id")
 }
@@ -440,6 +464,38 @@ fn runtime_scope_from_mount(mount: &Mount) -> Result<RuntimeNodeArtifactScope, M
         node_path: parse_node_path_from_metadata(mount)?,
         attempt: parse_attempt_from_metadata(mount)?,
     })
+}
+
+fn agent_run_session_event_source_from_mount(
+    mount: &Mount,
+) -> Result<AgentRunJournalRef, MountError> {
+    Ok(AgentRunJournalRef::new(
+        parse_run_id_from_metadata(mount)?,
+        parse_agent_id_from_metadata(mount)?,
+    ))
+}
+
+fn node_runtime_session_event_source_from_mount(
+    mount: &Mount,
+) -> Result<AgentRunJournalRef, MountError> {
+    let agent_id = optional_agent_id_from_metadata(mount)?.ok_or_else(|| {
+        MountError::OperationFailed(
+            "node_runtime lifecycle_vfs mount 缺少 AgentRun agent_id，无法读取 AgentRun journal"
+                .to_string(),
+        )
+    })?;
+    Ok(AgentRunJournalRef::new(
+        parse_run_id_from_metadata(mount)?,
+        agent_id,
+    ))
+}
+
+fn current_node_session_event_source(
+    mount: &Mount,
+    ctx: &LifecycleMountContext,
+) -> Result<AgentRunJournalRef, MountError> {
+    session_id_for_node(current_node(ctx)?)?;
+    node_runtime_session_event_source_from_mount(mount)
 }
 
 async fn load_run_context(
@@ -654,17 +710,17 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
-                let session_id = session_id_for_node(current_node(&active)?)?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 self.journey
-                    .read_session_projection(&session_id, &["meta"])
+                    .read_session_projection(&session_source, &["meta"])
                     .await
                     .map_err(map_journey_err)?
             }
             ["session", rest @ ..] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
-                let session_id = session_id_for_node(current_node(&active)?)?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 self.journey
-                    .read_session_projection(&session_id, rest)
+                    .read_session_projection(&session_source, rest)
                     .await
                     .map_err(map_journey_err)?
             }
@@ -843,18 +899,20 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
-                let session_id = session_id_for_node(current_node(&active)?)?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 if options.recursive {
-                    list_session_recursive_entries(&self.journey, &session_id, "session").await?
+                    list_session_recursive_entries(&self.journey, &session_source, "session")
+                        .await?
                 } else {
                     session_root_entries("session")
                 }
             }
             ["session", "items"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_item_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/items",
                     SessionItemView::Items,
                 )
@@ -862,9 +920,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "messages"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_item_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/messages",
                     SessionItemView::Messages,
                 )
@@ -872,9 +931,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "tools"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_item_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/tools",
                     SessionItemView::Tools,
                 )
@@ -882,9 +942,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "tool-results"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_tool_result_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/tool-results",
                     ToolResultListScope::Root,
                     options.recursive,
@@ -893,9 +954,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "tool-results", turn_alias] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_tool_result_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/tool-results",
                     ToolResultListScope::Turn { turn_alias },
                     options.recursive,
@@ -904,9 +966,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "tool-results", turn_alias, body_alias] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_tool_result_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/tool-results",
                     ToolResultListScope::Body {
                         turn_alias,
@@ -918,9 +981,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "writes"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_item_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/writes",
                     SessionItemView::Writes,
                 )
@@ -928,18 +992,16 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "summaries"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
-                list_session_summary_entries(
-                    &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
-                    "session/summaries",
-                )
-                .await?
+                let session_source = current_node_session_event_source(mount, &active)?;
+                list_session_summary_entries(&self.journey, &session_source, "session/summaries")
+                    .await?
             }
             ["session", "terminal"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_terminal_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/terminal",
                     options.recursive,
                 )
@@ -947,9 +1009,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "turns"] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_turn_entries(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/turns",
                     options.recursive,
                 )
@@ -957,9 +1020,10 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "turns", turn_id] => {
                 let active = load_active_context(&self.lifecycle_run_repo, mount).await?;
+                let session_source = current_node_session_event_source(mount, &active)?;
                 list_session_turn_entries_for_turn(
                     &self.journey,
-                    &session_id_for_node(current_node(&active)?)?,
+                    &session_source,
                     "session/turns",
                     turn_id,
                 )
@@ -1073,14 +1137,14 @@ fn lifecycle_path_matches_pattern(path: &str, pattern: &str) -> bool {
 
 async fn list_session_recursive_entries(
     journey: &LifecycleJourneyProjection,
-    session_id: &str,
+    source: &AgentRunJournalRef,
     display_root: &str,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
     let mut entries = session_root_entries(display_root);
     entries.extend(
         list_session_item_entries(
             journey,
-            session_id,
+            source,
             &format!("{display_root}/items"),
             SessionItemView::Items,
         )
@@ -1089,7 +1153,7 @@ async fn list_session_recursive_entries(
     entries.extend(
         list_session_item_entries(
             journey,
-            session_id,
+            source,
             &format!("{display_root}/messages"),
             SessionItemView::Messages,
         )
@@ -1098,7 +1162,7 @@ async fn list_session_recursive_entries(
     entries.extend(
         list_session_item_entries(
             journey,
-            session_id,
+            source,
             &format!("{display_root}/tools"),
             SessionItemView::Tools,
         )
@@ -1107,7 +1171,7 @@ async fn list_session_recursive_entries(
     entries.extend(
         list_session_tool_result_entries(
             journey,
-            session_id,
+            source,
             &format!("{display_root}/tool-results"),
             ToolResultListScope::Root,
             true,
@@ -1117,40 +1181,33 @@ async fn list_session_recursive_entries(
     entries.extend(
         list_session_item_entries(
             journey,
-            session_id,
+            source,
             &format!("{display_root}/writes"),
             SessionItemView::Writes,
         )
         .await?,
     );
     entries.extend(
-        list_session_summary_entries(journey, session_id, &format!("{display_root}/summaries"))
+        list_session_summary_entries(journey, source, &format!("{display_root}/summaries")).await?,
+    );
+    entries.extend(
+        list_session_terminal_entries(journey, source, &format!("{display_root}/terminal"), true)
             .await?,
     );
     entries.extend(
-        list_session_terminal_entries(
-            journey,
-            session_id,
-            &format!("{display_root}/terminal"),
-            true,
-        )
-        .await?,
-    );
-    entries.extend(
-        list_session_turn_entries(journey, session_id, &format!("{display_root}/turns"), true)
-            .await?,
+        list_session_turn_entries(journey, source, &format!("{display_root}/turns"), true).await?,
     );
     Ok(entries)
 }
 
 async fn list_session_item_entries(
     journey: &LifecycleJourneyProjection,
-    session_id: &str,
+    source: &AgentRunJournalRef,
     display_root: &str,
     view: SessionItemView,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
     let projections = journey
-        .session_item_projections(session_id)
+        .session_item_projections(source)
         .await
         .map_err(map_journey_err)?;
     Ok(filter_session_items(&projections, view)
@@ -1179,18 +1236,21 @@ enum ToolResultListScope<'a> {
 
 async fn list_session_tool_result_entries(
     journey: &LifecycleJourneyProjection,
-    session_id: &str,
+    source: &AgentRunJournalRef,
     display_root: &str,
     scope: ToolResultListScope<'_>,
     recursive: bool,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
+    let projection_session_id = source.projection_session_id();
     let projections = journey
-        .session_item_projections(session_id)
+        .session_item_projections(source)
         .await
         .map_err(map_journey_err)?;
     let mut metadata = filter_session_items(&projections, SessionItemView::Tools)
         .iter()
-        .filter_map(|projection| tool_result_metadata_for_projection(session_id, projection))
+        .filter_map(|projection| {
+            tool_result_metadata_for_projection(&projection_session_id, projection)
+        })
         .collect::<Vec<_>>();
     metadata.sort_by(|left, right| left.item_id.cmp(&right.item_id));
 
@@ -1284,12 +1344,12 @@ fn tool_result_recursive_entries_for_refs(
 
 async fn list_session_terminal_entries(
     journey: &LifecycleJourneyProjection,
-    session_id: &str,
+    source: &AgentRunJournalRef,
     display_root: &str,
     _recursive: bool,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
     let mut metadata = journey
-        .terminal_metadata_entries(session_id)
+        .terminal_metadata_entries(source)
         .await
         .map_err(map_journey_err)?;
     metadata.sort_by(|left, right| left.terminal_id.cmp(&right.terminal_id));
@@ -1311,12 +1371,19 @@ async fn list_session_terminal_entries(
 
 async fn list_session_summary_entries(
     journey: &LifecycleJourneyProjection,
-    session_id: &str,
+    source: &AgentRunJournalRef,
     display_root: &str,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
-    let entries = session_summary_archives(journey.session_persistence(), session_id)
+    let journal = journey
+        .journal_projection(source)
         .await
         .map_err(map_journey_err)?;
+    let entries = session_summary_archives(
+        journey.session_compaction_store(),
+        &journal.delivery_runtime_session_id,
+    )
+    .await
+    .map_err(map_journey_err)?;
     Ok(entries
         .into_iter()
         .filter_map(|(entry, _)| {
@@ -1330,12 +1397,12 @@ async fn list_session_summary_entries(
 
 async fn list_session_turn_entries(
     journey: &LifecycleJourneyProjection,
-    session_id: &str,
+    source: &AgentRunJournalRef,
     display_root: &str,
     recursive: bool,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
     let events = journey
-        .session_events(session_id)
+        .journal_events(source)
         .await
         .map_err(map_journey_err)?;
     Ok(group_events_into_turn_summaries(&events)
@@ -1363,12 +1430,12 @@ async fn list_session_turn_entries(
 
 async fn list_session_turn_entries_for_turn(
     journey: &LifecycleJourneyProjection,
-    session_id: &str,
+    source: &AgentRunJournalRef,
     display_root: &str,
     turn_id: &str,
 ) -> Result<Vec<RuntimeFileEntry>, MountError> {
     let events = journey
-        .session_events(session_id)
+        .journal_events(source)
         .await
         .map_err(map_journey_err)?;
     if events

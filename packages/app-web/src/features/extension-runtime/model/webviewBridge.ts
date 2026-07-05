@@ -6,6 +6,7 @@ import type {
   ExtensionRuntimeInvokeChannelResponse,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../generated/extension-runtime-contracts";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
 import type { WorkspaceBackendTarget, WorkspaceData } from "../../workspace-runtime";
 import { selectDefaultVfsMount, selectVfsBackendTarget } from "../../vfs/vfs-browser-panel-policy";
@@ -28,11 +29,11 @@ export interface ExtensionWebviewAvailability {
 export interface ExtensionWebviewBridgeServices {
   openTab(typeId: string, uri: string): void;
   invokeAction(
-    projectId: string,
+    target: AgentRunRuntimeTarget,
     request: ExtensionRuntimeInvokeActionRequest,
   ): Promise<ExtensionRuntimeInvokeActionResponse>;
   invokeChannel(
-    projectId: string,
+    target: AgentRunRuntimeTarget,
     request: ExtensionRuntimeInvokeChannelRequest,
   ): Promise<ExtensionRuntimeInvokeChannelResponse>;
   readFile(request: { surfaceRef: string; mountId: string; path: string }): Promise<{ content: string }>;
@@ -57,9 +58,9 @@ export async function handleExtensionWebviewBridgeRequest({
   services: ExtensionWebviewBridgeServices;
 }): Promise<JsonValue> {
   const projectId = workspaceData.projectId;
-  const sessionId = workspaceData.sessionId;
-  if (!projectId || !sessionId) {
-    throw new Error("Extension panel 缺少 Project 或 Session context");
+  const agentRunTarget = workspaceData.agentRunRuntimeTarget ?? null;
+  if (!projectId || !agentRunTarget) {
+    throw new Error("Extension panel 缺少 Project 或 AgentRun context");
   }
   if (!backend) {
     throw new Error("Extension panel 缺少可用 backend");
@@ -88,8 +89,7 @@ export async function handleExtensionWebviewBridgeRequest({
       if (!actionKey) {
         throw new Error("runtime.invoke_action 缺少 action_key");
       }
-      const result = await services.invokeAction(projectId, {
-        session_id: sessionId,
+      const result = await services.invokeAction(agentRunTarget, {
         action_key: actionKey,
         input: toJsonValue(message.params.input),
       });
@@ -102,8 +102,7 @@ export async function handleExtensionWebviewBridgeRequest({
         throw new Error("extension.invoke_channel 参数非法");
       }
       const dependencyAlias = bridgeParamString(message.params, "dependency_alias");
-      const result = await services.invokeChannel(projectId, {
-        session_id: sessionId,
+      const result = await services.invokeChannel(agentRunTarget, {
         channel_key: channelKey,
         method,
         input: toJsonValue(message.params.input),
@@ -161,8 +160,8 @@ export function resolveExtensionWebviewAvailability(
       workspaceData.extensionRuntime.error ?? "Project extension runtime projection 不可用。",
     );
   }
-  if (!workspaceData.projectId || !workspaceData.sessionId) {
-    return unavailable("Extension panel 不可用", "当前页面缺少 Project 或 Session context。");
+  if (!workspaceData.projectId || !workspaceData.agentRunRuntimeTarget) {
+    return unavailable("Extension panel 不可用", "当前页面缺少 Project 或 AgentRun context。");
   }
   if (!tab.loadability.available) {
     return unavailable(

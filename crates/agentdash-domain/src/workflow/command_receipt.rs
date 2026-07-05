@@ -44,6 +44,7 @@ pub enum AgentRunCommandKind {
     AgentRunForkSubmit,
     MailboxPromote,
     MailboxDelete,
+    MailboxMove,
     MailboxResume,
     Cancel,
 }
@@ -57,6 +58,7 @@ impl AgentRunCommandKind {
             Self::AgentRunForkSubmit => "agent_run_fork_submit",
             Self::MailboxPromote => "mailbox_promote",
             Self::MailboxDelete => "mailbox_delete",
+            Self::MailboxMove => "mailbox_move",
             Self::MailboxResume => "mailbox_resume",
             Self::Cancel => "cancel",
         }
@@ -74,6 +76,7 @@ impl TryFrom<&str> for AgentRunCommandKind {
             "agent_run_fork_submit" => Ok(Self::AgentRunForkSubmit),
             "mailbox_promote" => Ok(Self::MailboxPromote),
             "mailbox_delete" => Ok(Self::MailboxDelete),
+            "mailbox_move" => Ok(Self::MailboxMove),
             "mailbox_resume" => Ok(Self::MailboxResume),
             "cancel" => Ok(Self::Cancel),
             other => Err(DomainError::InvalidConfig(format!(
@@ -172,4 +175,18 @@ pub trait AgentRunCommandReceiptRepository: Send + Sync {
     ) -> Result<AgentRunCommandReceipt, DomainError>;
 
     async fn get(&self, id: Uuid) -> Result<Option<AgentRunCommandReceipt>, DomainError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentRunCommandKind;
+
+    #[test]
+    fn mailbox_move_command_kind_round_trips() {
+        assert_eq!(AgentRunCommandKind::MailboxMove.as_str(), "mailbox_move");
+        assert_eq!(
+            AgentRunCommandKind::try_from("mailbox_move").expect("mailbox_move command kind"),
+            AgentRunCommandKind::MailboxMove
+        );
+    }
 }

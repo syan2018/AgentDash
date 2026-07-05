@@ -9,8 +9,8 @@ use std::time::Duration;
 use agentdash_agent::agent_loop::AgentLoopConfig;
 use agentdash_agent::types::TokenUsage;
 use agentdash_agent::{
-    Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentTool,
-    AgentToolError, AgentToolResult, AssistantStreamEvent, BeforeStopInput, BridgeError,
+    Agent, AgentConfig, AgentContext, AgentError, AgentEvent, AgentMessage, AgentRunErrorKind,
+    AgentTool, AgentToolError, AgentToolResult, AssistantStreamEvent, BeforeStopInput, BridgeError,
     BridgeRequest, BridgeResponse, ContentPart, DynAgentTool, LlmBridge, ReadableBodyKind,
     ReadableToolResultRef, StopDecision, StopReason, ToolApprovalOutcome, ToolCallInfo,
     ToolDefinition, ToolResultAddressProvider, ToolResultCacheWrite, ToolResultRefContext,
@@ -18,6 +18,7 @@ use agentdash_agent::{
 };
 use async_trait::async_trait;
 use futures::Stream;
+use futures::StreamExt;
 use tokio::sync::{Mutex, Notify, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -395,6 +396,7 @@ fn event_kind(event: &AgentEvent) -> &'static str {
         AgentEvent::ContextCompacted { .. } => "context_compacted",
         AgentEvent::ContextCompactionFailed { .. } => "context_compaction_failed",
         AgentEvent::ProviderAttemptStatus { .. } => "provider_attempt_status",
+        AgentEvent::RunError { .. } => "run_error",
         AgentEvent::ToolExecutionStart { .. } => "tool_execution_start",
         AgentEvent::ToolExecutionUpdate { .. } => "tool_execution_update",
         AgentEvent::ToolExecutionPendingApproval { .. } => "tool_execution_pending_approval",
@@ -1810,36 +1812,41 @@ async fn responses_tool_name_delta_emits_start_before_arguments_finish() {
 }
 
 #[tokio::test]
-async fn stream_errors_become_error_assistant_messages() {
+async fn stream_errors_become_provider_failures() {
     let bridge = ScriptedBridge::new(vec![vec![ScriptStep::chunk(
         agentdash_agent::StreamChunk::Error(BridgeError::CompletionFailed("boom".to_string())),
     )]]);
     let mut agent = Agent::new(Arc::new(bridge), AgentConfig::default());
 
-    let (_rx, handle) = agent
+    let (mut rx, handle) = agent
         .prompt(AgentMessage::user("hi"))
         .expect("prompt should start");
-    let new_messages = handle
+    let error = handle
         .await
         .expect("task should not panic")
-        .expect("run should succeed");
+        .expect_err("provider stream failure should fail the run");
+    assert!(error.to_string().contains("boom"));
 
-    assert_eq!(new_messages.len(), 2);
-    assert!(matches!(
-        new_messages.last(),
-        Some(AgentMessage::Assistant {
-            stop_reason: Some(StopReason::Error),
-            ..
-        })
-    ));
+    let mut collected = Vec::new();
+    while let Some(event) = rx.next().await {
+        collected.push(event);
+    }
+    assert!(collected.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::RunError { error }
+                if error.kind == AgentRunErrorKind::Provider && error.message.contains("boom")
+        )
+    }));
 
     let state = agent.state().await;
-    assert!(matches!(
+    assert!(!matches!(
         state.messages.last(),
-        Some(AgentMessage::Assistant {
-            stop_reason: Some(StopReason::Error),
-            ..
-        })
+        Some(AgentMessage::Assistant { .. })
+    ));
+    assert!(matches!(
+        state.error.as_deref(),
+        Some(message) if message.contains("boom")
     ));
 }
 

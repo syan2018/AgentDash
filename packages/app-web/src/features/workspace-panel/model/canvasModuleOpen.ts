@@ -15,7 +15,6 @@ export interface CanvasModuleOpenOption {
 }
 
 export interface OpenUserCanvasModuleParams {
-  runtimeSessionId: string | null;
   option: CanvasModuleOpenOption;
   openOrActivate: (typeId: string, uri: string, refreshContent?: boolean) => void;
 }
@@ -77,14 +76,9 @@ export function selectCanvasModuleOpenOptions(
 }
 
 export async function openUserCanvasModule({
-  runtimeSessionId,
   option,
   openOrActivate,
 }: OpenUserCanvasModuleParams): Promise<void> {
-  if (!runtimeSessionId) {
-    throw new Error("当前 AgentRun 尚未就绪，无法打开 Canvas。");
-  }
-
   const target = workspaceModulePresentationTabTarget({
     module_id: option.module_id,
     view_key: option.view_key,

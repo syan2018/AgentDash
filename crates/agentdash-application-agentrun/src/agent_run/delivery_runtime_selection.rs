@@ -1,12 +1,13 @@
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
+    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::agent_run_repository_set::RepositorySet;
+use crate::agent_run::AgentRunExecutionState;
 use crate::error::ApplicationError;
 use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection::{
@@ -29,10 +30,26 @@ pub struct DeliveryRuntimeSelection {
     pub node_path: Option<String>,
     pub node_attempt: Option<u32>,
     pub status: DeliveryBindingStatus,
+    pub active_turn_id: Option<String>,
+    pub last_turn_id: Option<String>,
+    pub terminal_state: Option<String>,
+    pub terminal_message: Option<String>,
     pub observed_at: DateTime<Utc>,
     pub address: AgentRunRuntimeAddress,
     pub message_stream: MessageStreamProjectionRef,
     pub anchor: RuntimeSessionExecutionAnchor,
+}
+
+impl DeliveryRuntimeSelection {
+    pub fn execution_state(&self) -> AgentRunExecutionState {
+        AgentRunExecutionState::from_delivery_parts(
+            self.status,
+            self.active_turn_id.clone(),
+            self.last_turn_id.clone(),
+            self.terminal_state.clone(),
+            self.terminal_message.clone(),
+        )
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -47,14 +64,8 @@ pub enum DeliveryRuntimeSelectionError {
         agent_id: Uuid,
         actual_run_id: Uuid,
     },
-    #[error("LifecycleAgent {agent_id} 缺少 current delivery binding")]
+    #[error("AgentRun {run_id}/LifecycleAgent {agent_id} 缺少 current delivery binding")]
     CurrentDeliveryMissing { run_id: Uuid, agent_id: Uuid },
-    #[error("LifecycleAgent {agent_id} 的 current delivery binding 缺少字段 {field}")]
-    BindingIncomplete {
-        run_id: Uuid,
-        agent_id: Uuid,
-        field: &'static str,
-    },
     #[error("RuntimeSessionExecutionAnchor {runtime_session_id} 不存在")]
     AnchorMissing { runtime_session_id: String },
     #[error(
@@ -68,6 +79,18 @@ pub enum DeliveryRuntimeSelectionError {
         actual_run_id: Uuid,
         actual_agent_id: Uuid,
         actual_launch_frame_id: Uuid,
+    },
+    #[error(
+        "RuntimeSessionExecutionAnchor {runtime_session_id} 的 orchestration/node 坐标不匹配 current delivery binding"
+    )]
+    AnchorNodeMismatch {
+        runtime_session_id: String,
+        expected_orchestration_id: Option<Uuid>,
+        expected_node_path: Option<String>,
+        expected_node_attempt: Option<u32>,
+        actual_orchestration_id: Option<Uuid>,
+        actual_node_path: Option<String>,
+        actual_node_attempt: Option<u32>,
     },
     #[error("LifecycleAgent {agent_id} 缺少当前 AgentFrame revision")]
     CurrentFrameMissing { agent_id: Uuid },
@@ -97,22 +120,13 @@ impl From<DeliveryRuntimeSelectionError> for ApplicationError {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct DeliveryRuntimeSelectionRepositories<'a> {
     pub lifecycle_runs: &'a dyn LifecycleRunRepository,
     pub lifecycle_agents: &'a dyn LifecycleAgentRepository,
     pub agent_frames: &'a dyn AgentFrameRepository,
     pub execution_anchors: &'a dyn RuntimeSessionExecutionAnchorRepository,
-}
-
-impl<'a> DeliveryRuntimeSelectionRepositories<'a> {
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self {
-            lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
-            lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
-            agent_frames: repos.agent_frame_repo.as_ref(),
-            execution_anchors: repos.execution_anchor_repo.as_ref(),
-        }
-    }
+    pub delivery_bindings: &'a dyn AgentRunDeliveryBindingRepository,
 }
 
 pub struct DeliveryRuntimeSelectionService<'a> {
@@ -122,12 +136,6 @@ pub struct DeliveryRuntimeSelectionService<'a> {
 impl<'a> DeliveryRuntimeSelectionService<'a> {
     pub fn new(repos: DeliveryRuntimeSelectionRepositories<'a>) -> Self {
         Self { repos }
-    }
-
-    pub fn from_repository_set(repos: &'a RepositorySet) -> Self {
-        Self::new(DeliveryRuntimeSelectionRepositories::from_repository_set(
-            repos,
-        ))
     }
 
     pub async fn select(
@@ -148,9 +156,11 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
     ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
         self.ensure_run(run_id).await?;
         let agent = self.load_agent_for_run(run_id, agent_id).await?;
-        let binding = agent
-            .current_delivery
-            .clone()
+        let binding = self
+            .repos
+            .delivery_bindings
+            .get_current(run_id, agent_id)
+            .await?
             .ok_or(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { run_id, agent_id })?;
         let expected_anchor = self
             .repos
@@ -160,7 +170,15 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             .ok_or_else(|| DeliveryRuntimeSelectionError::AnchorMissing {
                 runtime_session_id: binding.runtime_session_id.clone(),
             })?;
-        validate_anchor_matches(&expected_anchor, run_id, agent_id, binding.launch_frame_id)?;
+        validate_anchor_matches(
+            &expected_anchor,
+            run_id,
+            agent_id,
+            binding.launch_frame_id,
+            binding.orchestration_id,
+            binding.node_path.as_deref(),
+            binding.node_attempt,
+        )?;
         let current_frame = self
             .repos
             .agent_frames
@@ -179,14 +197,8 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             });
         }
 
-        self.selection_from_anchor(
-            agent,
-            current_frame.id,
-            anchor,
-            binding.status,
-            binding.observed_at,
-        )
-        .await
+        self.selection_from_anchor(agent, current_frame.id, anchor, binding)
+            .await
     }
 
     async fn ensure_run(&self, run_id: Uuid) -> Result<(), DeliveryRuntimeSelectionError> {
@@ -224,8 +236,7 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
         agent: LifecycleAgent,
         current_frame_id: Uuid,
         anchor: RuntimeSessionExecutionAnchor,
-        status: DeliveryBindingStatus,
-        observed_at: DateTime<Utc>,
+        binding: AgentRunDeliveryBinding,
     ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
         self.repos.agent_frames.get(current_frame_id).await?.ok_or(
             DeliveryRuntimeSelectionError::CurrentFrameNotFound {
@@ -249,8 +260,12 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             orchestration_id: anchor.orchestration_id,
             node_path: anchor.node_path.clone(),
             node_attempt: anchor.node_attempt,
-            status,
-            observed_at,
+            status: binding.status,
+            active_turn_id: binding.active_turn_id,
+            last_turn_id: binding.last_turn_id,
+            terminal_state: binding.terminal_state,
+            terminal_message: binding.terminal_message,
+            observed_at: binding.observed_at,
             address: AgentRunRuntimeAddress {
                 run_id: anchor.run_id,
                 agent_id: agent.id,
@@ -270,21 +285,40 @@ fn validate_anchor_matches(
     expected_run_id: Uuid,
     expected_agent_id: Uuid,
     expected_launch_frame_id: Uuid,
+    expected_orchestration_id: Option<Uuid>,
+    expected_node_path: Option<&str>,
+    expected_node_attempt: Option<u32>,
 ) -> Result<(), DeliveryRuntimeSelectionError> {
-    if anchor.run_id == expected_run_id
-        && anchor.agent_id == expected_agent_id
-        && anchor.launch_frame_id == expected_launch_frame_id
+    if anchor.run_id != expected_run_id
+        || anchor.agent_id != expected_agent_id
+        || anchor.launch_frame_id != expected_launch_frame_id
+    {
+        return Err(DeliveryRuntimeSelectionError::AnchorMismatch {
+            runtime_session_id: anchor.runtime_session_id.clone(),
+            expected_run_id,
+            expected_agent_id,
+            expected_launch_frame_id,
+            actual_run_id: anchor.run_id,
+            actual_agent_id: anchor.agent_id,
+            actual_launch_frame_id: anchor.launch_frame_id,
+        });
+    }
+
+    if anchor.orchestration_id == expected_orchestration_id
+        && anchor.node_path.as_deref() == expected_node_path
+        && anchor.node_attempt == expected_node_attempt
     {
         return Ok(());
     }
-    Err(DeliveryRuntimeSelectionError::AnchorMismatch {
+
+    Err(DeliveryRuntimeSelectionError::AnchorNodeMismatch {
         runtime_session_id: anchor.runtime_session_id.clone(),
-        expected_run_id,
-        expected_agent_id,
-        expected_launch_frame_id,
-        actual_run_id: anchor.run_id,
-        actual_agent_id: anchor.agent_id,
-        actual_launch_frame_id: anchor.launch_frame_id,
+        expected_orchestration_id,
+        expected_node_path: expected_node_path.map(ToOwned::to_owned),
+        expected_node_attempt,
+        actual_orchestration_id: anchor.orchestration_id,
+        actual_node_path: anchor.node_path.clone(),
+        actual_node_attempt: anchor.node_attempt,
     })
 }
 
@@ -292,17 +326,18 @@ fn validate_anchor_matches(
 mod tests {
     use std::sync::Arc;
 
+    use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,
-        LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
-        RuntimeSessionExecutionAnchorRepository,
+        AgentFrame, AgentFrameRepository, AgentRunDeliveryBinding, AgentSource, LifecycleAgent,
+        LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+        RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
     };
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::test_support::{
-        MemoryAgentFrameRepository, MemoryLifecycleAgentRepository,
-        MemoryRuntimeSessionExecutionAnchorRepository,
+        MemoryAgentFrameRepository, MemoryAgentRunDeliveryBindingRepository,
+        MemoryLifecycleAgentRepository, MemoryRuntimeSessionExecutionAnchorRepository,
     };
 
     #[derive(Default)]
@@ -371,6 +406,7 @@ mod tests {
         agents: Arc<MemoryLifecycleAgentRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
         anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
     }
 
     impl SelectionFixture {
@@ -380,6 +416,7 @@ mod tests {
                 agents: Arc::new(MemoryLifecycleAgentRepository::default()),
                 frames: Arc::new(MemoryAgentFrameRepository::default()),
                 anchors: Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default()),
+                delivery_bindings: Arc::new(MemoryAgentRunDeliveryBindingRepository::default()),
             }
         }
 
@@ -389,6 +426,7 @@ mod tests {
                 lifecycle_agents: self.agents.as_ref(),
                 agent_frames: self.frames.as_ref(),
                 execution_anchors: self.anchors.as_ref(),
+                delivery_bindings: self.delivery_bindings.as_ref(),
             })
         }
 
@@ -404,8 +442,7 @@ mod tests {
             let run = LifecycleRun::new_plain(Uuid::new_v4());
             self.runs.create(&run).await.expect("create run");
 
-            let mut agent =
-                LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+            let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
             let launch_frame = AgentFrame::new_initial(agent.id);
             let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
             let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
@@ -414,7 +451,7 @@ mod tests {
                 launch_frame.id,
                 agent.id,
             );
-            agent.bind_current_delivery_from_anchor(
+            let binding = AgentRunDeliveryBinding::from_anchor(
                 &anchor,
                 DeliveryBindingStatus::Running,
                 anchor.updated_at,
@@ -428,7 +465,11 @@ mod tests {
                 .create(&current_frame)
                 .await
                 .expect("current frame");
-            self.anchors.upsert(&anchor).await.expect("anchor");
+            self.anchors.create_once(&anchor).await.expect("anchor");
+            self.delivery_bindings
+                .upsert(&binding)
+                .await
+                .expect("binding");
             self.agents.create(&agent).await.expect("agent");
 
             (run, agent, launch_frame, current_frame, anchor)
@@ -502,9 +543,14 @@ mod tests {
         );
         fixture
             .anchors
-            .upsert(&mismatched_anchor)
+            .delete_by_session(&anchor.runtime_session_id)
             .await
-            .expect("replace anchor");
+            .expect("delete anchor");
+        fixture
+            .anchors
+            .create_once(&mismatched_anchor)
+            .await
+            .expect("create mismatched anchor");
 
         let error = fixture
             .service()
@@ -519,5 +565,89 @@ mod tests {
             error,
             DeliveryRuntimeSelectionError::AnchorMismatch { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn delivery_runtime_selection_current_delivery_rejects_node_coordinate_mismatch() {
+        let fixture = SelectionFixture::new();
+        let (run, agent, launch_frame, _current_frame, anchor) =
+            fixture.seed_current_delivery().await;
+        let orchestration_id = Uuid::new_v4();
+        let mismatched_anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            anchor.runtime_session_id.clone(),
+            run.id,
+            launch_frame.id,
+            agent.id,
+            orchestration_id,
+            "implement",
+            1,
+        );
+        fixture
+            .anchors
+            .delete_by_session(&anchor.runtime_session_id)
+            .await
+            .expect("delete anchor");
+        fixture
+            .anchors
+            .create_once(&mismatched_anchor)
+            .await
+            .expect("create mismatched anchor");
+
+        let error = fixture
+            .service()
+            .select_current_delivery(run.id, agent.id)
+            .await
+            .expect_err("node coordinate mismatch");
+
+        assert!(matches!(
+            error,
+            DeliveryRuntimeSelectionError::AnchorNodeMismatch { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn execution_anchor_create_once_is_idempotent_for_same_coordinates() {
+        let repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-current",
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+
+        repo.create_once(&anchor).await.expect("first create");
+        repo.create_once(&anchor).await.expect("idempotent create");
+
+        let anchors = repo
+            .list_by_agent(anchor.agent_id)
+            .await
+            .expect("list anchors");
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].runtime_session_id, anchor.runtime_session_id);
+    }
+
+    #[tokio::test]
+    async fn execution_anchor_create_once_conflicts_for_coordinate_change() {
+        let repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-current",
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let conflicting = RuntimeSessionExecutionAnchor::new_dispatch(
+            anchor.runtime_session_id.clone(),
+            Uuid::new_v4(),
+            anchor.launch_frame_id,
+            anchor.agent_id,
+        );
+
+        repo.create_once(&anchor).await.expect("first create");
+        let error = repo
+            .create_once(&conflicting)
+            .await
+            .expect_err("coordinate change conflicts");
+
+        assert!(matches!(error, DomainError::Conflict { .. }));
     }
 }

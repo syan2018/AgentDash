@@ -22,12 +22,12 @@ use super::terminal_effects::{
 use super::types::{ExecutionStatus, PendingCapabilityStateTransition, SessionMeta};
 
 #[derive(Clone, Default)]
-pub struct MemorySessionPersistence {
-    inner: Arc<Mutex<MemorySessionPersistenceState>>,
+pub struct MemoryRuntimeTraceStore {
+    inner: Arc<Mutex<MemoryRuntimeTraceStoreState>>,
 }
 
 #[derive(Default)]
-struct MemorySessionPersistenceState {
+struct MemoryRuntimeTraceStoreState {
     metas: HashMap<String, SessionMeta>,
     events: HashMap<String, Vec<PersistedSessionEvent>>,
     terminal_effects: Vec<TerminalEffectRecord>,
@@ -39,7 +39,7 @@ struct MemorySessionPersistenceState {
 }
 
 #[async_trait::async_trait]
-impl SessionMetaStore for MemorySessionPersistence {
+impl SessionMetaStore for MemoryRuntimeTraceStore {
     async fn create_session(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         guard.metas.insert(meta.id.clone(), meta.clone());
@@ -96,7 +96,7 @@ impl SessionMetaStore for MemorySessionPersistence {
 }
 
 #[async_trait::async_trait]
-impl SessionEventStore for MemorySessionPersistence {
+impl SessionEventStore for MemoryRuntimeTraceStore {
     async fn append_event(
         &self,
         session_id: &str,
@@ -225,7 +225,7 @@ impl SessionEventStore for MemorySessionPersistence {
 }
 
 #[async_trait::async_trait]
-impl SessionTerminalEffectStore for MemorySessionPersistence {
+impl SessionTerminalEffectStore for MemoryRuntimeTraceStore {
     async fn insert_terminal_effect(
         &self,
         effect: NewTerminalEffectRecord,
@@ -324,7 +324,7 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
 }
 
 #[async_trait::async_trait]
-impl SessionRuntimeCommandStore for MemorySessionPersistence {
+impl SessionRuntimeCommandStore for MemoryRuntimeTraceStore {
     async fn upsert_runtime_delivery_command(
         &self,
         delivery_runtime_session_id: &str,
@@ -442,7 +442,7 @@ fn validate_runtime_delivery_command(
 }
 
 #[async_trait::async_trait]
-impl SessionCompactionStore for MemorySessionPersistence {
+impl SessionCompactionStore for MemoryRuntimeTraceStore {
     async fn get_compaction(
         &self,
         session_id: &str,
@@ -476,7 +476,7 @@ impl SessionCompactionStore for MemorySessionPersistence {
 }
 
 #[async_trait::async_trait]
-impl SessionProjectionStore for MemorySessionPersistence {
+impl SessionProjectionStore for MemoryRuntimeTraceStore {
     async fn list_projection_segments(
         &self,
         session_id: &str,
@@ -616,7 +616,7 @@ impl SessionProjectionStore for MemorySessionPersistence {
 }
 
 #[async_trait::async_trait]
-impl SessionLineageStore for MemorySessionPersistence {
+impl SessionLineageStore for MemoryRuntimeTraceStore {
     async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         if record.child_session_id == record.parent_session_id {
@@ -765,7 +765,7 @@ impl SessionLineageStore for MemorySessionPersistence {
     }
 }
 
-impl MemorySessionPersistence {
+impl MemoryRuntimeTraceStore {
     async fn update_terminal_effect(
         &self,
         effect_id: uuid::Uuid,
@@ -1109,7 +1109,7 @@ mod tests {
 
     #[tokio::test]
     async fn save_session_meta_keeps_newer_event_projection() {
-        let persistence = MemorySessionPersistence::default();
+        let persistence = MemoryRuntimeTraceStore::default();
         let meta = SessionMeta {
             id: "sess-memory".to_string(),
             title: "测试".to_string(),
@@ -1160,7 +1160,7 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_effect_outbox_tracks_attempt_status_and_delete() {
-        let persistence = MemorySessionPersistence::default();
+        let persistence = MemoryRuntimeTraceStore::default();
         let meta = SessionMeta {
             id: "sess-effects".to_string(),
             title: "测试".to_string(),
@@ -1225,7 +1225,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_command_store_supersedes_and_marks_applied() {
-        let persistence = MemorySessionPersistence::default();
+        let persistence = MemoryRuntimeTraceStore::default();
         let meta = SessionMeta {
             id: "sess-runtime-command".to_string(),
             title: "测试".to_string(),
@@ -1321,7 +1321,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_lineage_queries_are_stable_and_filterable() {
-        let persistence = MemorySessionPersistence::default();
+        let persistence = MemoryRuntimeTraceStore::default();
         for id in ["root", "child-a", "child-b", "grand"] {
             persistence
                 .create_session(&memory_session_meta(id))

@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ConversationCommandSetView,
   ConversationCommandView,
   ConversationMailboxSnapshotView,
@@ -10,9 +10,21 @@ import type {
   SessionChatCommandModel,
   SessionChatCommandState,
   SessionChatMailboxModel,
+  SessionChatModel,
   SessionChatModelConfig,
+  SessionChatSubmitIntent,
+  SessionChatViewIntents,
 } from "../../session";
 import type { ExecutorConfig } from "../../../services/executor";
+
+// Adapter boundary to the reusable SessionChatView shell; AgentRun command authority stays in the conversation snapshot.
+export type AgentRunChatCommandModel = SessionChatCommandModel;
+export type AgentRunChatCommandState = SessionChatCommandState;
+export type AgentRunChatMailboxModel = SessionChatMailboxModel;
+export type AgentRunChatModel = SessionChatModel;
+export type AgentRunChatModelConfig = SessionChatModelConfig;
+export type AgentRunChatSubmitIntent = SessionChatSubmitIntent;
+export type AgentRunChatViewIntents = SessionChatViewIntents;
 
 export interface LocalDraftStartAction {
   source: "local_draft";
@@ -26,11 +38,12 @@ export interface LocalDraftStartAction {
   executor_config_policy: "required";
 }
 
-export type AgentRunSessionCommand = ConversationCommandView | LocalDraftStartAction;
+export type AgentRunConversationCommand = ConversationCommandView | LocalDraftStartAction;
 
-export interface AgentRunSessionCommandState {
+export interface AgentRunConversationCommandState {
   mode: "draft" | "runtime";
   executionStatus: string;
+  activeTurnId?: string | null;
   commands: ConversationCommandSetView;
   localDraftAction?: LocalDraftStartAction;
   modelConfig: ConversationModelConfigView;
@@ -114,12 +127,12 @@ export function executorConfigFromConversationModel(
   };
 }
 
-export function isLocalDraftStartAction(command: AgentRunSessionCommand): command is LocalDraftStartAction {
+export function isLocalDraftStartAction(command: AgentRunConversationCommand): command is LocalDraftStartAction {
   return command.kind === "draft_start_local";
 }
 
 export function resolveExecutorConfigForConversationCommand(input: {
-  command: AgentRunSessionCommand;
+  command: AgentRunConversationCommand;
   modelConfig: ConversationModelConfigView;
   explicitExecutorConfigOverride?: ExecutorConfig;
 }): ExecutorConfig | undefined {
@@ -164,7 +177,7 @@ function draftStartCommand(input: {
   projectId: string | null;
   agentKey: string | null;
   agent: ProjectAgentSummary | null;
-  projectionReady: boolean;
+  workspaceStateReady: boolean;
   modelConfig: ConversationModelConfigView;
 }): LocalDraftStartAction {
   const missingDraft = !input.projectId || !input.agentKey || !input.agent;
@@ -172,7 +185,7 @@ function draftStartCommand(input: {
     ? "当前 Draft 尚未就绪。"
     : input.modelConfig.status === "model_required"
       ? input.modelConfig.message ?? "请选择模型配置后再发送。"
-      : input.projectionReady
+      : input.workspaceStateReady
         ? undefined
         : "当前 Draft 正在加载。";
 
@@ -189,13 +202,13 @@ function draftStartCommand(input: {
   };
 }
 
-export function buildDraftSessionCommandState(input: {
+export function buildDraftConversationCommandState(input: {
   projectId: string | null;
   agentKey: string | null;
   agent: ProjectAgentSummary | null;
-  projectionReady: boolean;
+  workspaceStateReady: boolean;
   explicitExecutorConfigOverride?: ExecutorConfig | null;
-}): AgentRunSessionCommandState {
+}): AgentRunConversationCommandState {
   const modelConfig = modelConfigForDraft({
     agent: input.agent,
     explicitExecutorConfigOverride: input.explicitExecutorConfigOverride,
@@ -211,22 +224,35 @@ export function buildDraftSessionCommandState(input: {
   };
 }
 
-export function buildRuntimeSessionCommandState(input: {
+export function buildAgentRunConversationCommandState(input: {
   conversation: {
-    execution: { status: string; reason?: string };
+    execution: { status: string; active_turn_id?: string; reason?: string };
     commands: ConversationCommandSetView;
     model_config: ConversationModelConfigView;
   } | null | undefined;
-  projectionStatus: string;
-  projectionError: string | null;
-}): AgentRunSessionCommandState {
-  if (!input.conversation) {
-    const reason = input.projectionStatus !== "ready"
-      ? input.projectionError ?? "当前 AgentRun 工作台投影正在刷新。"
-      : "当前 AgentRun 尚未返回 conversation snapshot。";
+  workspaceStateStatus: string;
+  workspaceStateError: string | null;
+}): AgentRunConversationCommandState {
+  if (input.workspaceStateStatus !== "ready") {
+    const reason = input.workspaceStateError ?? "当前 AgentRun 工作台状态正在刷新。";
     return {
       mode: "runtime",
-      executionStatus: input.projectionStatus !== "ready" ? input.projectionStatus : "delivery_missing",
+      executionStatus: input.workspaceStateStatus,
+      commands: emptyCommandSet(),
+      modelConfig: {
+        status: "model_required",
+        missing_fields: [],
+        message: reason,
+      },
+      helperText: reason,
+    };
+  }
+
+  if (!input.conversation) {
+    const reason = "当前 AgentRun 尚未返回 conversation snapshot。";
+    return {
+      mode: "runtime",
+      executionStatus: "ready",
       commands: emptyCommandSet(),
       modelConfig: {
         status: "model_required",
@@ -240,23 +266,24 @@ export function buildRuntimeSessionCommandState(input: {
   return {
     mode: "runtime",
     executionStatus: input.conversation.execution.status,
+    activeTurnId: input.conversation.execution.active_turn_id,
     commands: input.conversation.commands,
     modelConfig: input.conversation.model_config,
     helperText: input.conversation.execution.reason,
   };
 }
 
-function normalizeExecutorConfigPolicy(value: string): SessionChatCommandModel["executor_config_policy"] {
+function normalizeExecutorConfigPolicy(value: string): AgentRunChatCommandModel["executor_config_policy"] {
   if (value === "required" || value === "forbidden") return value;
   return "optional";
 }
 
-function normalizeShortcut(value: string | undefined): SessionChatCommandModel["shortcut"] {
+function normalizeShortcut(value: string | undefined): AgentRunChatCommandModel["shortcut"] {
   if (value === "enter" || value === "ctrl_enter") return value;
   return undefined;
 }
 
-function projectCommand(command: AgentRunSessionCommand): SessionChatCommandModel {
+function projectCommand(command: AgentRunConversationCommand): AgentRunChatCommandModel {
   return {
     command_id: command.command_id,
     kind: command.kind,
@@ -269,7 +296,7 @@ function projectCommand(command: AgentRunSessionCommand): SessionChatCommandMode
   };
 }
 
-function projectModelConfig(modelConfig: ConversationModelConfigView): SessionChatModelConfig {
+function projectModelConfig(modelConfig: ConversationModelConfigView): AgentRunChatModelConfig {
   return {
     status: modelConfig.status,
     effective_executor_config: modelConfig.effective_executor_config,
@@ -292,9 +319,9 @@ export function mailboxRowCommand(
   return commands.find((command) => command.kind === kind && command.placement.includes("mailbox_row"));
 }
 
-export function projectSessionChatCommandState(
-  commandState: AgentRunSessionCommandState,
-): SessionChatCommandState {
+export function projectAgentRunChatCommandState(
+  commandState: AgentRunConversationCommandState,
+): AgentRunChatCommandState {
   const runtimeCommands = commandState.commands.commands.map(projectCommand);
   const commands = commandState.localDraftAction
     ? [projectCommand(commandState.localDraftAction), ...runtimeCommands]
@@ -321,10 +348,10 @@ export function projectSessionChatCommandState(
   };
 }
 
-export function projectSessionChatMailboxModel(
-  commandState: AgentRunSessionCommandState,
+export function projectAgentRunChatMailboxModel(
+  commandState: AgentRunConversationCommandState,
   mailbox: ConversationMailboxSnapshotView | null | undefined,
-): SessionChatMailboxModel {
+): AgentRunChatMailboxModel {
   const promoteCommand = mailboxRowCommand(commandState.commands.commands, "promote_mailbox_message");
   const deleteCommand = mailboxRowCommand(commandState.commands.commands, "delete_mailbox_message");
 

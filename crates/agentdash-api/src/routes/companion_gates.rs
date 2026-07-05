@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use agentdash_application::{
     companion::{
-        AgentRunCompanionMailboxDelivery, CompanionGateControlService, RespondCompanionGateCommand,
+        AgentRunCompanionMailboxDelivery, CompanionGateControlRepos, CompanionGateControlService,
+        RespondCompanionGateCommand,
     },
     runtime_session_agent_run_bridge::{
         agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
@@ -49,12 +50,15 @@ pub async fn respond_companion_gate(
     .await?;
 
     let service = CompanionGateControlService::with_session_eventing(
-        state.repos.lifecycle_gate_repo.clone(),
-        state.repos.lifecycle_run_repo.clone(),
-        state.repos.agent_frame_repo.clone(),
-        state.repos.lifecycle_agent_repo.clone(),
-        state.repos.execution_anchor_repo.clone(),
-        state.repos.agent_lineage_repo.clone(),
+        CompanionGateControlRepos {
+            gate_repo: state.repos.lifecycle_gate_repo.clone(),
+            run_repo: state.repos.lifecycle_run_repo.clone(),
+            frame_repo: state.repos.agent_frame_repo.clone(),
+            agent_repo: state.repos.lifecycle_agent_repo.clone(),
+            anchor_repo: state.repos.execution_anchor_repo.clone(),
+            delivery_binding_repo: state.repos.agent_run_delivery_binding_repo.clone(),
+            lineage_repo: state.repos.agent_lineage_repo.clone(),
+        },
         state.services.session_eventing.clone(),
     )
     .with_human_response_mailbox_delivery(Arc::new(

@@ -104,7 +104,6 @@ pub struct PermissionGrantResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub effect_frame_id: Option<String>,
-    pub source_runtime_session_id: String,
     pub requested_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requested_vfs_access: Vec<PermissionGrantVfsAccessRuleDto>,

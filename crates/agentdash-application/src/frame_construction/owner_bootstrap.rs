@@ -19,7 +19,7 @@ use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
-use crate::canvas::append_visible_canvas_mounts;
+use crate::canvas::project_visible_canvas_mounts;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
     ContextContributionSource, ContextContributions, McpCandidates, ToolContribution,
@@ -434,7 +434,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             ports_lifecycle_surface::project_active_workflow_lifecycle_vfs(vfs, active_workflow)
         };
         if let Some(space) = vfs.as_mut() {
-            append_visible_canvas_mounts(
+            project_visible_canvas_mounts(
                 self.canvas_repo,
                 project_id,
                 space,

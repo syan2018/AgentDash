@@ -1,5 +1,5 @@
 /**
- * 综合会话状态栏
+ * AgentRun 状态栏
  *
  * 合并「Task 进度」与「mailbox（pending/steering）」为输入栏上方的单一可折叠栏：
  * - 折叠态：当前待办项（active 优先）+ 整体进度 done/total，外加 pending/暂停徽标。
@@ -16,7 +16,7 @@ import type { Task, TaskPlanStatus } from "../../../types";
 import { TaskStatusToken } from "../../../components/ui/status-badge";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import { TaskDrawer } from "../../task/task-drawer";
-import type { SessionChatMailboxModel } from "../../session/ui/SessionChatViewTypes";
+import type { AgentRunChatMailboxModel } from "../model/conversationCommandState";
 import { MailboxSections } from "./MailboxMessageRow";
 import { mailboxHasContent } from "./mailboxContent";
 
@@ -27,7 +27,7 @@ interface SessionStatusBarProps {
 
   // mailbox passthrough
   messages: MailboxMessageView[];
-  mailbox?: SessionChatMailboxModel;
+  mailbox?: AgentRunChatMailboxModel;
   onPromote: (messageId: string) => void;
   onDelete: (messageId: string) => void;
   onResume?: () => void;
@@ -111,7 +111,7 @@ export function SessionStatusBar(props: SessionStatusBarProps) {
                 <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
                   {currentWait
                     ? `${currentWait.source_label ?? currentWait.kind}: ${currentWait.preview ?? "等待外部事件"}`
-                    : "会话消息"}
+                    : "AgentRun 消息"}
                 </span>
               </>
             )}

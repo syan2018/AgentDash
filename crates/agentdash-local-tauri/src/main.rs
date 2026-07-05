@@ -701,10 +701,8 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("启动 AgentDash 桌面端失败")
         .run(move |_app, event| match event {
-            RunEvent::ExitRequested { api, .. } => {
-                if !state_for_exit.is_explicit_quit_requested() {
-                    api.prevent_exit();
-                }
+            RunEvent::ExitRequested { api, .. } if !state_for_exit.is_explicit_quit_requested() => {
+                api.prevent_exit();
             }
             RunEvent::Exit => {
                 state_for_exit.api.stop_sidecar();

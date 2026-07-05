@@ -1,5 +1,6 @@
 use agentdash_application_agentrun::agent_run::{
-    AgentFrameSurfaceExt, DeliveryRuntimeSelectionPolicy, DeliveryRuntimeSelectionService,
+    AgentFrameSurfaceExt, DeliveryRuntimeSelectionPolicy, DeliveryRuntimeSelectionRepositories,
+    DeliveryRuntimeSelectionService,
 };
 use agentdash_application_vfs::PROVIDER_CANVAS_FS;
 use agentdash_domain::canvas::{
@@ -95,11 +96,16 @@ pub async fn resolve_agent_run_canvas_context(
         )));
     }
 
-    let agent_run_repos = repos.to_agent_run_repository_set();
-    let delivery = DeliveryRuntimeSelectionService::from_repository_set(&agent_run_repos)
-        .select(DeliveryRuntimeSelectionPolicy::CurrentDelivery { run_id, agent_id })
-        .await
-        .map_err(agent_run_selection_error)?;
+    let delivery = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+        lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
+        lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
+        agent_frames: repos.agent_frame_repo.as_ref(),
+        execution_anchors: repos.execution_anchor_repo.as_ref(),
+        delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
+    })
+    .select(DeliveryRuntimeSelectionPolicy::CurrentDelivery { run_id, agent_id })
+    .await
+    .map_err(agent_run_selection_error)?;
     let current_agent_frame = repos
         .agent_frame_repo
         .get(delivery.current_frame_id)

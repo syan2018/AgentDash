@@ -14,9 +14,7 @@ use agentdash_application::context::{
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_session_agent_run_bridge::{
-    agent_run_session_core, agent_run_session_eventing,
-};
+use agentdash_application::runtime_session_agent_run_bridge::agent_run_session_eventing;
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::runtime_surface::{
@@ -24,7 +22,8 @@ use agentdash_application_agentrun::agent_run::runtime_surface::{
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
-    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
+    AgentRunPresentationReadModelQueryRepos, AgentRunRuntimeSurfaceQuery,
+    AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateService,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
@@ -194,7 +193,7 @@ impl AppState {
         .await?;
         let repos = repository_bootstrap.repos;
         let auth_session_service = repository_bootstrap.auth_session_service;
-        let session_persistence = repository_bootstrap.session_persistence;
+        let session_stores = repository_bootstrap.session_stores;
         let tool_result_cache =
             agentdash_application_runtime_session::session::SessionToolResultCache::new();
         let extension_package_artifact_storage =
@@ -220,7 +219,7 @@ impl AppState {
 
         let vfs_bootstrap = crate::bootstrap::vfs::build_vfs_kernel(
             repos.clone(),
-            session_persistence.clone(),
+            session_stores.clone(),
             tool_result_cache.clone(),
             backend_registry.clone(),
             integration_registration.mount_providers,
@@ -238,7 +237,7 @@ impl AppState {
         let session_bootstrap = crate::bootstrap::session::build_session_runtime(
             crate::bootstrap::session::SessionBootstrapInput {
                 repos: repos.clone(),
-                session_persistence: session_persistence.clone(),
+                session_stores,
                 tool_result_cache: tool_result_cache.clone(),
                 backend_registry: backend_registry.clone(),
                 vfs_service: vfs_service.clone(),
@@ -282,21 +281,24 @@ impl AppState {
                 run_repo: repos.lifecycle_run_repo.clone(),
                 agent_repo: repos.lifecycle_agent_repo.clone(),
                 frame_repo: repos.agent_frame_repo.clone(),
+                delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
                 permission_grant_repo: repos.permission_grant_repo.clone(),
             },
         ));
         let runtime_surface_query_port: Arc<dyn AgentRunRuntimeSurfaceQueryPort> =
             runtime_surface_query.clone();
         let lifecycle_read_model_query: Arc<dyn LifecycleReadModelQueryPort> = Arc::new(
-            LifecycleReadModelQueryAdapter::new(repos.to_lifecycle_repository_set()),
+            LifecycleReadModelQueryAdapter::new(repos.lifecycle_read_model_repos()),
         );
         let resource_surface_query =
             AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
                 anchor_repo: repos.execution_anchor_repo.clone(),
                 surface_query: runtime_surface_query_port.clone(),
-                lifecycle_surface_projection: Arc::new(AgentRunLifecycleSurfaceProjector::new(
-                    &repos.to_lifecycle_repository_set(),
-                )),
+                lifecycle_surface_projection: Arc::new(
+                    AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(
+                        repos.skill_asset_repo.clone(),
+                    ),
+                ),
             });
         let resource_surface_query_port: Arc<dyn AgentRunResourceSurfaceQueryPort> =
             Arc::new(resource_surface_query.clone());
@@ -307,11 +309,14 @@ impl AppState {
         });
         let presentation_read_model_query =
             AgentRunPresentationReadModelQuery::new(AgentRunPresentationReadModelQueryDeps {
-                repos: repos.to_agent_run_repository_set(),
-                session_core: agent_run_session_core(session_core.clone()),
+                repos: AgentRunPresentationReadModelQueryRepos {
+                    agent_frame_repo: repos.agent_frame_repo.clone(),
+                    lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+                    lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+                    execution_anchor_repo: repos.execution_anchor_repo.clone(),
+                },
                 session_eventing: agent_run_session_eventing(session_eventing.clone()),
                 surface_query: runtime_surface_query_port.clone(),
-                lifecycle_read_model: lifecycle_read_model_query.clone(),
             });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
             runtime_surface_query.clone(),
@@ -395,6 +400,7 @@ impl AppState {
                 repos.lifecycle_agent_repo.clone(),
                 repos.agent_frame_repo.clone(),
                 repos.execution_anchor_repo.clone(),
+                repos.agent_run_delivery_binding_repo.clone(),
             ),
         );
 

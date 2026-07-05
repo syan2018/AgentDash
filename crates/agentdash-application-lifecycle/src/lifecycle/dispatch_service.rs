@@ -11,9 +11,10 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
+    AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryBindingRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphRepository,
 };
 use agentdash_domain::workflow::{
     AgentLaunchDispatchResult, AgentLaunchIntent, ExecutionDispatchResult, ExecutionIntent,
@@ -28,22 +29,22 @@ use super::dispatch::{
     OrchestrationReducerBridge, RunOrchestrationStarter, SubjectAssociationWriter,
 };
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
+use agentdash_spi::{ExecutionStatus, SessionMeta, SessionMetaStore, TitleSource};
 
 #[derive(Clone)]
-pub struct SessionPersistenceRuntimeSessionCreator {
-    persistence: Arc<dyn SessionPersistence>,
+pub struct SessionMetaStoreRuntimeSessionCreator {
+    session_meta_store: Arc<dyn SessionMetaStore>,
 }
 
-impl SessionPersistenceRuntimeSessionCreator {
-    pub fn new(persistence: Arc<dyn SessionPersistence>) -> Self {
-        Self { persistence }
+impl SessionMetaStoreRuntimeSessionCreator {
+    pub fn new(session_meta_store: Arc<dyn SessionMetaStore>) -> Self {
+        Self { session_meta_store }
     }
 }
 
 #[async_trait]
 impl runtime_session_delivery_port::RuntimeSessionCreationPort
-    for SessionPersistenceRuntimeSessionCreator
+    for SessionMetaStoreRuntimeSessionCreator
 {
     async fn create_runtime_session(
         &self,
@@ -66,7 +67,7 @@ impl runtime_session_delivery_port::RuntimeSessionCreationPort
             last_terminal_message: None,
             executor_session_id: None,
         };
-        self.persistence
+        self.session_meta_store
             .create_session(&meta)
             .await
             .map_err(|error| {
@@ -103,6 +104,7 @@ pub struct LifecycleDispatchService<'a> {
     gate_repo: &'a dyn LifecycleGateRepository,
     lineage_repo: &'a dyn AgentLineageRepository,
     anchor_repo: Option<&'a dyn RuntimeSessionExecutionAnchorRepository>,
+    delivery_binding_repo: Option<&'a dyn AgentRunDeliveryBindingRepository>,
     runtime_session_creator:
         Option<&'a dyn runtime_session_delivery_port::RuntimeSessionCreationPort>,
     frame_construction:
@@ -131,6 +133,7 @@ impl<'a> LifecycleDispatchService<'a> {
             gate_repo,
             lineage_repo,
             anchor_repo: None,
+            delivery_binding_repo: None,
             runtime_session_creator: None,
             frame_construction: None,
             workflow_agent_frame_materialization: None,
@@ -143,6 +146,14 @@ impl<'a> LifecycleDispatchService<'a> {
         repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
     ) -> Self {
         self.anchor_repo = Some(repo);
+        self
+    }
+
+    pub fn with_delivery_binding_repo(
+        mut self,
+        repo: &'a dyn AgentRunDeliveryBindingRepository,
+    ) -> Self {
+        self.delivery_binding_repo = Some(repo);
         self
     }
 
@@ -340,6 +351,7 @@ impl<'a> LifecycleDispatchService<'a> {
         AgentRuntimeMaterializer::new(
             self.agent_repo,
             self.anchor_repo,
+            self.delivery_binding_repo,
             self.runtime_session_creator,
             self.frame_construction,
             self.workflow_agent_frame_materialization,
@@ -396,7 +408,7 @@ impl<'a> LifecycleDispatchService<'a> {
             )
             .await?;
         self.orchestration_reducer_bridge()
-            .mark_node_started(prepared.run, &prepared.orchestration_binding, &materialized)
+            .mark_node_claimed(prepared.run, &prepared.orchestration_binding, &materialized)
             .await?;
 
         Ok(DispatchFacts {
@@ -643,13 +655,6 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn append_visible_canvas_mount(
-            &self,
-            _frame_id: Uuid,
-            _mount_id: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
     }
 
     #[async_trait::async_trait]
@@ -861,16 +866,21 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl RuntimeSessionExecutionAnchorRepository for InMemoryExecutionAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items
-                .iter_mut()
+                .iter()
                 .find(|item| item.runtime_session_id == anchor.runtime_session_id)
             {
-                *existing = anchor.clone();
-            } else {
-                items.push(anchor.clone());
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
             }
+            items.push(anchor.clone());
             Ok(())
         }
 
@@ -936,19 +946,62 @@ mod tests {
                 .cloned()
                 .collect())
         }
+    }
 
-        async fn latest_updated_anchor_for_agent(
+    #[derive(Default)]
+    struct InMemoryDeliveryBindingRepo {
+        items: Mutex<Vec<AgentRunDeliveryBinding>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRunDeliveryBindingRepository for InMemoryDeliveryBindingRepo {
+        async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
+            let mut items = self.items.lock().unwrap();
+            if let Some(existing) = items
+                .iter_mut()
+                .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
+            {
+                *existing = binding.clone();
+            } else {
+                items.push(binding.clone());
+            }
+            Ok(())
+        }
+
+        async fn get_current(
             &self,
+            run_id: Uuid,
             agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
             Ok(self
                 .items
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|item| item.agent_id == agent_id)
-                .max_by_key(|item| item.updated_at)
+                .find(|item| item.run_id == run_id && item.agent_id == agent_id)
                 .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|item| item.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.items
+                .lock()
+                .unwrap()
+                .retain(|item| item.runtime_session_id != runtime_session_id);
+            Ok(())
         }
     }
 
@@ -1085,6 +1138,7 @@ mod tests {
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let anchor_repo = InMemoryExecutionAnchorRepo::default();
+        let delivery_binding_repo = InMemoryDeliveryBindingRepo::default();
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1095,7 +1149,8 @@ mod tests {
             &lineage_repo,
             &runtime_session_creator,
         )
-        .with_anchor_repo(&anchor_repo);
+        .with_anchor_repo(&anchor_repo)
+        .with_delivery_binding_repo(&delivery_binding_repo);
 
         let result = service
             .launch_agent(&new_project_agent_intent(project_id))
@@ -1116,6 +1171,13 @@ mod tests {
         let anchors = anchor_repo.items.lock().unwrap().clone();
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[0].orchestration_id, None);
+        let bindings = delivery_binding_repo.items.lock().unwrap().clone();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(
+            bindings[0].runtime_session_id,
+            anchors[0].runtime_session_id
+        );
+        assert_eq!(bindings[0].status, DeliveryBindingStatus::Ready);
     }
 
     #[tokio::test]
@@ -1172,6 +1234,7 @@ mod tests {
         let lineage_repo = InMemoryLineageRepo::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let anchor_repo = InMemoryExecutionAnchorRepo::default();
+        let delivery_binding_repo = InMemoryDeliveryBindingRepo::default();
         seed_test_workflow_graph(&workflow_repo, project_id);
         let service = make_service(
             &run_repo,
@@ -1183,7 +1246,8 @@ mod tests {
             &lineage_repo,
             &runtime_session_creator,
         )
-        .with_anchor_repo(&anchor_repo);
+        .with_anchor_repo(&anchor_repo)
+        .with_delivery_binding_repo(&delivery_binding_repo);
 
         let mut intent = new_task_execution_intent(project_id, task_id);
         intent.workflow_graph_ref = Some(test_workflow_graph_ref(project_id));
@@ -1207,21 +1271,11 @@ mod tests {
         let session_id = result.delivery_runtime_ref.expect("runtime session");
         assert_eq!(
             orchestration.node_tree[0].status,
-            RuntimeNodeStatus::Running
+            RuntimeNodeStatus::Claiming
         );
-        assert_eq!(
-            orchestration.node_tree[0].executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: session_id.to_string()
-            })
-        );
-        assert_eq!(
-            orchestration.node_tree[0].trace_refs,
-            vec![RuntimeTraceRef::RuntimeSession {
-                session_id: session_id.to_string()
-            }]
-        );
-        assert!(orchestration.node_tree[0].started_at.is_some());
+        assert_eq!(orchestration.node_tree[0].executor_run_ref, None);
+        assert!(orchestration.node_tree[0].trace_refs.is_empty());
+        assert!(orchestration.node_tree[0].started_at.is_none());
 
         let frames = frame_repo.items.lock().unwrap().clone();
         assert_eq!(frames.len(), 1);
@@ -1234,6 +1288,11 @@ mod tests {
         );
         assert_eq!(anchors[0].node_path.as_deref(), Some(TEST_ACTIVITY_KEY));
         assert_eq!(anchors[0].node_attempt, Some(1));
+        let bindings = delivery_binding_repo.items.lock().unwrap().clone();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].runtime_session_id, session_id.to_string());
+        assert_eq!(bindings[0].node_path.as_deref(), Some(TEST_ACTIVITY_KEY));
+        assert_eq!(bindings[0].node_attempt, Some(1));
         assert_eq!(result.subject_execution_ref.subject_ref.kind, "task");
         assert_eq!(result.subject_execution_ref.subject_ref.id, task_id);
     }
@@ -1287,23 +1346,13 @@ mod tests {
         ));
         assert!(orchestration.activation.ready_node_ids.is_empty());
         assert!(orchestration.dispatch.ready_node_ids.is_empty());
-        let session_id = result.delivery_runtime_ref.expect("runtime session");
+        assert!(result.delivery_runtime_ref.is_some());
         assert_eq!(
             orchestration.node_tree[0].status,
-            RuntimeNodeStatus::Running
+            RuntimeNodeStatus::Claiming
         );
-        assert_eq!(
-            orchestration.node_tree[0].executor_run_ref,
-            Some(ExecutorRunRef::RuntimeSession {
-                session_id: session_id.to_string()
-            })
-        );
-        assert_eq!(
-            orchestration.node_tree[0].trace_refs,
-            vec![RuntimeTraceRef::RuntimeSession {
-                session_id: session_id.to_string()
-            }]
-        );
+        assert_eq!(orchestration.node_tree[0].executor_run_ref, None);
+        assert!(orchestration.node_tree[0].trace_refs.is_empty());
     }
 
     #[tokio::test]

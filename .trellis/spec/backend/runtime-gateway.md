@@ -66,7 +66,7 @@ runtime session 上；可执行 MCP server 的事实源回到 AgentRun current r
 Session live runtime cache。
 
 RuntimeGateway provider 边界保持 action input/output 与 actor/context admission：provider 不解析
-current `AgentFrame`，不读取 session hub idle fallback，也不自行拼 VFS/backend/MCP surface。active
+current `AgentFrame`，不读取 session hub idle state，也不自行拼 VFS/backend/MCP surface。active
 turn connector tool refresh 是 session live runtime coordination，继续消费已闭合的
 `ExecutionContext`；它不是 `mcp.list_tools` / `mcp.call_tool` 的 current surface query 路径。
 

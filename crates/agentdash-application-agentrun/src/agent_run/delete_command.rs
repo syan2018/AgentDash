@@ -1,12 +1,12 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::workflow::{
-    LifecycleAgentRepository, LifecycleRunRepository, LifecycleRunStatus,
+    AgentRunDeliveryBindingRepository, LifecycleRunRepository, LifecycleRunStatus,
     RuntimeSessionExecutionAnchorRepository,
 };
 use uuid::Uuid;
 
-use crate::{AgentRunRepositorySet, WorkflowApplicationError};
+use crate::WorkflowApplicationError;
 
 use super::{SessionCoreService, SessionExecutionState};
 
@@ -26,18 +26,8 @@ pub struct AgentRunDeleteOutcome {
 #[derive(Clone, Copy)]
 pub struct AgentRunDeleteRepos<'a> {
     pub lifecycle_runs: &'a dyn LifecycleRunRepository,
-    pub lifecycle_agents: &'a dyn LifecycleAgentRepository,
     pub execution_anchors: &'a dyn RuntimeSessionExecutionAnchorRepository,
-}
-
-impl<'a> AgentRunDeleteRepos<'a> {
-    pub fn from_repository_set(repos: &'a AgentRunRepositorySet) -> Self {
-        Self {
-            lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
-            lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
-            execution_anchors: repos.execution_anchor_repo.as_ref(),
-        }
-    }
+    pub delivery_bindings: &'a dyn AgentRunDeliveryBindingRepository,
 }
 
 pub struct AgentRunDeleteCommandService<'a> {
@@ -80,16 +70,14 @@ impl<'a> AgentRunDeleteCommandService<'a> {
             )));
         }
 
-        let agents = self.repos.lifecycle_agents.list_by_run(run.id).await?;
         let anchors = self.repos.execution_anchors.list_by_run(run.id).await?;
+        let delivery_bindings = self.repos.delivery_bindings.list_by_run(run.id).await?;
         let mut runtime_session_ids = BTreeSet::new();
         for anchor in anchors {
             runtime_session_ids.insert(anchor.runtime_session_id);
         }
-        for agent in agents {
-            if let Some(delivery) = agent.current_delivery {
-                runtime_session_ids.insert(delivery.runtime_session_id);
-            }
+        for binding in delivery_bindings {
+            runtime_session_ids.insert(binding.runtime_session_id);
         }
 
         let runtime_session_ids = runtime_session_ids.into_iter().collect::<Vec<_>>();
@@ -98,6 +86,14 @@ impl<'a> AgentRunDeleteCommandService<'a> {
 
         let mut deleted_runtime_session_ids = Vec::new();
         for session_id in &runtime_session_ids {
+            self.repos
+                .delivery_bindings
+                .delete_by_session(session_id)
+                .await?;
+            self.repos
+                .execution_anchors
+                .delete_by_session(session_id)
+                .await?;
             match self.session_core.delete_session(session_id).await {
                 Ok(()) => deleted_runtime_session_ids.push(session_id.clone()),
                 Err(error) if is_session_not_found(&error) => {}
@@ -155,13 +151,15 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentSource, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
+        AgentRunDeliveryBinding, AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleRun,
+        RuntimeSessionExecutionAnchor,
     };
     use async_trait::async_trait;
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::agent_run::{RuntimeSessionCorePort, SessionMeta};
+    use crate::test_support::MemoryAgentRunDeliveryBindingRepository;
 
     #[derive(Default)]
     struct MemoryRunRepo {
@@ -227,56 +225,27 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryAgentRepo {
-        agents: Mutex<Vec<LifecycleAgent>>,
-    }
-
-    #[async_trait]
-    impl LifecycleAgentRepository for MemoryAgentRepo {
-        async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
-            self.agents.lock().await.push(agent.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
-            Ok(self
-                .agents
-                .lock()
-                .await
-                .iter()
-                .find(|agent| agent.id == id)
-                .cloned())
-        }
-
-        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
-            Ok(self
-                .agents
-                .lock()
-                .await
-                .iter()
-                .filter(|agent| agent.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
-            let mut agents = self.agents.lock().await;
-            if let Some(existing) = agents.iter_mut().find(|item| item.id == agent.id) {
-                *existing = agent.clone();
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
     struct MemoryAnchorRepo {
         anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
     }
 
     #[async_trait]
     impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-            self.anchors.lock().await.push(anchor.clone());
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().await;
+            if let Some(existing) = anchors
+                .iter()
+                .find(|item| item.runtime_session_id == anchor.runtime_session_id)
+            {
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
+            }
+            anchors.push(anchor.clone());
             Ok(())
         }
 
@@ -342,20 +311,6 @@ mod tests {
                 .cloned()
                 .collect())
         }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .await
-                .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
-                .cloned())
-        }
     }
 
     #[derive(Default)]
@@ -401,8 +356,8 @@ mod tests {
 
     struct Fixture {
         runs: MemoryRunRepo,
-        agents: MemoryAgentRepo,
         anchors: MemoryAnchorRepo,
+        delivery_bindings: MemoryAgentRunDeliveryBindingRepository,
         core: Arc<TestCorePort>,
     }
 
@@ -410,8 +365,8 @@ mod tests {
         fn new() -> Self {
             Self {
                 runs: MemoryRunRepo::default(),
-                agents: MemoryAgentRepo::default(),
                 anchors: MemoryAnchorRepo::default(),
+                delivery_bindings: MemoryAgentRunDeliveryBindingRepository::default(),
                 core: Arc::new(TestCorePort::default()),
             }
         }
@@ -420,8 +375,8 @@ mod tests {
             AgentRunDeleteCommandService::new(
                 AgentRunDeleteRepos {
                     lifecycle_runs: &self.runs,
-                    lifecycle_agents: &self.agents,
                     execution_anchors: &self.anchors,
+                    delivery_bindings: &self.delivery_bindings,
                 },
                 SessionCoreService::new(self.core.clone()),
             )
@@ -432,7 +387,6 @@ mod tests {
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         fixture.runs.create(&run).await.expect("run");
-        fixture.agents.create(&agent).await.expect("agent");
         (run, agent)
     }
 
@@ -449,7 +403,38 @@ mod tests {
             Uuid::new_v4(),
             agent.id,
         );
-        fixture.anchors.upsert(&anchor).await.expect("anchor");
+        fixture.anchors.create_once(&anchor).await.expect("anchor");
+        fixture
+            .core
+            .states
+            .lock()
+            .await
+            .insert(session_id.to_string(), state);
+    }
+
+    async fn seed_delivery_binding(
+        fixture: &Fixture,
+        run: &LifecycleRun,
+        agent: &LifecycleAgent,
+        session_id: &str,
+        state: SessionExecutionState,
+    ) {
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            session_id,
+            run.id,
+            Uuid::new_v4(),
+            agent.id,
+        );
+        let binding = AgentRunDeliveryBinding::from_anchor(
+            &anchor,
+            DeliveryBindingStatus::Ready,
+            anchor.updated_at,
+        );
+        fixture
+            .delivery_bindings
+            .upsert(&binding)
+            .await
+            .expect("binding");
         fixture
             .core
             .states
@@ -480,6 +465,14 @@ mod tests {
             SessionExecutionState::Idle,
         )
         .await;
+        seed_delivery_binding(
+            &fixture,
+            &run,
+            &agent,
+            "sess-current",
+            SessionExecutionState::Idle,
+        )
+        .await;
 
         let outcome = fixture
             .service()
@@ -493,7 +486,7 @@ mod tests {
         assert!(outcome.deleted);
         assert_eq!(
             outcome.deleted_runtime_session_ids,
-            vec!["sess-a", "sess-b"]
+            vec!["sess-a", "sess-b", "sess-current"]
         );
         assert!(fixture.runs.get_by_id(run.id).await.expect("get").is_none());
     }

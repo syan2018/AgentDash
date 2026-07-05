@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::DomainError;
@@ -9,10 +8,9 @@ use crate::shared_library::InstalledAssetSource;
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
     ActivityDefinition, ActivityTransition, AgentProcedureContract, DefinitionSource,
-    EffectiveSessionContract, LifecycleContext, LifecycleExecutionEntry, LifecycleRunStatus,
-    LifecycleTaskPlanItem, LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch,
-    OrchestrationInstance, OrchestrationStatus, RuntimeNodeState, RuntimeNodeStatus,
-    TaskPlanStatus, ValidationIssue,
+    EffectiveSessionContract, LifecycleExecutionEntry, LifecycleRunStatus, LifecycleTaskPlanItem,
+    LifecycleTaskPlanItemDraft, LifecycleTaskPlanItemPatch, OrchestrationInstance,
+    OrchestrationStatus, RuntimeNodeState, RuntimeNodeStatus, TaskPlanStatus, ValidationIssue,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,14 +160,10 @@ pub struct LifecycleRun {
     #[serde(default = "default_created_by_user_id")]
     pub created_by_user_id: String,
     pub topology: LifecycleRunTopology,
-    #[serde(default)]
-    pub context: LifecycleContext,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub orchestrations: Vec<OrchestrationInstance>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tasks: Vec<LifecycleTaskPlanItem>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub view_projection: Option<Value>,
     pub status: LifecycleRunStatus,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
@@ -192,10 +186,8 @@ impl LifecycleRun {
             project_id,
             created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             topology: LifecycleRunTopology::WorkflowGraph,
-            context: LifecycleContext::default(),
             orchestrations: Vec::new(),
             tasks: Vec::new(),
-            view_projection: None,
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
             created_at: now,
@@ -215,21 +207,14 @@ impl LifecycleRun {
             project_id,
             created_by_user_id: normalize_created_by_user_id(created_by_user_id),
             topology: LifecycleRunTopology::Plain,
-            context: LifecycleContext::default(),
             orchestrations: Vec::new(),
             tasks: Vec::new(),
-            view_projection: None,
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
             created_at: now,
             updated_at: now,
             last_activity_at: now,
         }
-    }
-
-    pub fn set_lifecycle_context(&mut self, context: LifecycleContext) {
-        self.context = context;
-        self.touch_activity();
     }
 
     pub fn add_orchestration(&mut self, orchestration: OrchestrationInstance) -> bool {
@@ -690,16 +675,12 @@ mod tests {
     #[test]
     fn lifecycle_run_orchestration_contract_defaults_empty() {
         let control = LifecycleRun::new_control(Uuid::new_v4());
-        assert_eq!(control.context, LifecycleContext::default());
         assert!(control.orchestrations.is_empty());
         assert!(control.tasks.is_empty());
-        assert!(control.view_projection.is_none());
 
         let plain = LifecycleRun::new_plain(Uuid::new_v4());
-        assert_eq!(plain.context, LifecycleContext::default());
         assert!(plain.orchestrations.is_empty());
         assert!(plain.tasks.is_empty());
-        assert!(plain.view_projection.is_none());
     }
 
     #[test]
@@ -838,12 +819,6 @@ mod tests {
     #[test]
     fn lifecycle_run_orchestration_aggregate_adds_replaces_and_finds_one_instance() {
         let mut run = LifecycleRun::new_control(Uuid::new_v4());
-        let context = LifecycleContext {
-            main_agent_run_id: Some(Uuid::new_v4()),
-            ..LifecycleContext::default()
-        };
-        run.set_lifecycle_context(context.clone());
-        assert_eq!(run.context, context);
 
         let orchestration = orchestration_instance("root", agent_executor());
         let orchestration_id = orchestration.orchestration_id;

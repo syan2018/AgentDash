@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ExecutorConfig } from "../../../services/executor";
@@ -12,11 +12,8 @@ import type {
 } from "../../../types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type {
-  SessionChatModel,
-  SessionChatSubmitIntent,
-  SessionChatViewIntents,
-} from "../../session";
-import type { AgentRunWorkspaceProjectionState } from "../../workspace-panel/model/useAgentRunWorkspaceState";
+  AgentRunWorkspaceState,
+} from "../../workspace-panel/model/useAgentRunWorkspaceState";
 import {
   planAgentRunMessageSent,
   planAgentRunSystemEvent,
@@ -27,11 +24,14 @@ import {
   type AgentRunWorkspacePanelTarget,
 } from "./controlPlaneModel";
 import {
-  buildDraftSessionCommandState,
-  buildRuntimeSessionCommandState,
+  type AgentRunChatModel,
+  type AgentRunChatSubmitIntent,
+  type AgentRunChatViewIntents,
+  buildAgentRunConversationCommandState,
+  buildDraftConversationCommandState,
   isCompleteExecutorConfig,
-  projectSessionChatCommandState,
-  projectSessionChatMailboxModel,
+  projectAgentRunChatCommandState,
+  projectAgentRunChatMailboxModel,
   resolveExecutorConfigForConversationCommand,
 } from "./conversationCommandState";
 import { useAgentRunWorkspaceCommands } from "./useAgentRunWorkspaceCommands";
@@ -43,7 +43,7 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
   draftProjectAgentKey: string | null;
   draftProjectAgent: ProjectAgentSummary | null;
   isProjectAgentDraft: boolean;
-  agentRunWorkspaceState: AgentRunWorkspaceProjectionState;
+  agentRunWorkspaceState: AgentRunWorkspaceState;
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
   refreshAgentRunHookRuntime: () => Promise<unknown>;
   traceExecutorHint?: string | null;
@@ -61,10 +61,9 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
 }
 
 interface UseAgentRunWorkspaceControlPlaneResult {
-  runtimeControl: AgentRunWorkspaceView | null;
-  deliveryRuntimeSessionId: string | null;
-  chatModel: SessionChatModel;
-  chatIntents: SessionChatViewIntents;
+  workspaceControl: AgentRunWorkspaceView | null;
+  chatModel: AgentRunChatModel;
+  chatIntents: AgentRunChatViewIntents;
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
   refreshAgentRunHookRuntime: () => Promise<unknown>;
   handleMessageSent: () => void;
@@ -100,8 +99,7 @@ export function useAgentRunWorkspaceControlPlane({
     config: ExecutorConfig | null;
   }>({ scopeKey: null, config: null });
 
-  const runtimeControl = agentRunWorkspaceState.workspace;
-  const deliveryRuntimeSessionId = agentRunWorkspaceState.runtime_session_id;
+  const workspaceControl = agentRunWorkspaceState.workspace;
 
   const executorOverrideScopeKey = isProjectAgentDraft
     ? `draft:${draftProjectId ?? ""}:${draftProjectAgentKey ?? ""}`
@@ -152,7 +150,7 @@ export function useAgentRunWorkspaceControlPlane({
         : null;
     }
     if (!currentRunId || !currentAgentId) return null;
-    const frameId = runtimeControl?.frame_runtime?.frame_ref.frame_id ?? "pending";
+    const frameId = workspaceControl?.frame_runtime?.frame_ref.frame_id ?? "pending";
     return `agentrun:${currentRunId}:${currentAgentId}:${frameId}`;
   }, [
     currentAgentId,
@@ -160,7 +158,7 @@ export function useAgentRunWorkspaceControlPlane({
     draftProjectAgentKey,
     draftProjectId,
     isProjectAgentDraft,
-    runtimeControl?.frame_runtime?.frame_ref.frame_id,
+    workspaceControl?.frame_runtime?.frame_ref.frame_id,
   ]);
 
   const executorHint = draftProjectAgent?.executor.executor
@@ -169,17 +167,17 @@ export function useAgentRunWorkspaceControlPlane({
 
   const commandState = useMemo(
     () => isProjectAgentDraft
-      ? buildDraftSessionCommandState({
+      ? buildDraftConversationCommandState({
           projectId: draftProjectId,
           agentKey: draftProjectAgentKey,
           agent: draftProjectAgent,
-          projectionReady: Boolean(draftProjectId && draftProjectAgentKey && draftProjectAgent),
+          workspaceStateReady: Boolean(draftProjectId && draftProjectAgentKey && draftProjectAgent),
           explicitExecutorConfigOverride,
         })
-      : buildRuntimeSessionCommandState({
-          conversation: runtimeControl?.conversation,
-          projectionStatus: agentRunWorkspaceState.status,
-          projectionError: agentRunWorkspaceState.error,
+      : buildAgentRunConversationCommandState({
+          conversation: workspaceControl?.conversation,
+          workspaceStateStatus: agentRunWorkspaceState.status,
+          workspaceStateError: agentRunWorkspaceState.error,
         }),
     [
       agentRunWorkspaceState.error,
@@ -189,11 +187,11 @@ export function useAgentRunWorkspaceControlPlane({
       draftProjectId,
       explicitExecutorConfigOverride,
       isProjectAgentDraft,
-      runtimeControl?.conversation,
+      workspaceControl?.conversation,
     ],
   );
 
-  const conversationMailbox = runtimeControl?.conversation?.mailbox;
+  const conversationMailbox = workspaceControl?.conversation?.mailbox;
 
   const {
     handleAgentRunCommand,
@@ -224,14 +222,13 @@ export function useAgentRunWorkspaceControlPlane({
     onDraftStarted,
   });
 
-  const submitComposer = useCallback(async (intent: SessionChatSubmitIntent) => {
+  const submitComposer = useCallback(async (intent: AgentRunChatSubmitIntent) => {
     const resolution = resolveAgentRunSubmitCommand(commandState, intent);
     if (!resolution.ok) {
       throw new Error(resolution.message);
     }
     await handleAgentRunCommand(
       resolution.command,
-      intent.sessionId,
       intent.prompt,
       intent.executorConfig,
       intent.backendSelection,
@@ -281,15 +278,14 @@ export function useAgentRunWorkspaceControlPlane({
     })();
   }, [handleMoveMailboxMessage, refreshAgentRunList]);
 
-  const chatModel = useMemo<SessionChatModel>(() => ({
-    sessionId: deliveryRuntimeSessionId,
+  const chatModel = useMemo<AgentRunChatModel>(() => ({
     executorHint,
     agentDefaults: draftProjectAgent?.effective_executor_config
-      ?? runtimeControl?.conversation?.model_config.effective_executor_config
+      ?? workspaceControl?.conversation?.model_config.effective_executor_config
       ?? taskExecutorSummary,
     executorStateKey,
-    commandState: projectSessionChatCommandState(commandState),
-    mailbox: projectSessionChatMailboxModel(commandState, conversationMailbox),
+    commandState: projectAgentRunChatCommandState(commandState),
+    mailbox: projectAgentRunChatMailboxModel(commandState, conversationMailbox),
     statusBarRunId: currentRunId,
     statusBarAgentId: currentAgentId,
     injectedInputValue: recalledInput,
@@ -298,16 +294,15 @@ export function useAgentRunWorkspaceControlPlane({
     conversationMailbox,
     currentAgentId,
     currentRunId,
-    deliveryRuntimeSessionId,
     draftProjectAgent?.effective_executor_config,
     executorHint,
     executorStateKey,
     recalledInput,
-    runtimeControl?.conversation?.model_config.effective_executor_config,
+    workspaceControl?.conversation?.model_config.effective_executor_config,
     taskExecutorSummary,
   ]);
 
-  const chatIntents = useMemo<SessionChatViewIntents>(() => ({
+  const chatIntents = useMemo<AgentRunChatViewIntents>(() => ({
     submitComposer,
     cancelAction,
     setExecutorConfigOverride: setExplicitExecutorConfigOverride,
@@ -373,8 +368,8 @@ export function useAgentRunWorkspaceControlPlane({
   ]);
 
   const handleMessageSent = useCallback(() => {
-    applyControlPlaneEffectPlan(planAgentRunMessageSent(deliveryRuntimeSessionId));
-  }, [applyControlPlaneEffectPlan, deliveryRuntimeSessionId]);
+    applyControlPlaneEffectPlan(planAgentRunMessageSent());
+  }, [applyControlPlaneEffectPlan]);
 
   const refreshStatusBarTasks = useCallback(() => {
     if (currentRunId && currentAgentId) {
@@ -403,8 +398,7 @@ export function useAgentRunWorkspaceControlPlane({
   }, [applyControlPlaneEffectPlan]);
 
   return {
-    runtimeControl,
-    deliveryRuntimeSessionId,
+    workspaceControl,
     chatModel,
     chatIntents,
     refreshAgentRunWorkspaceState,

@@ -43,7 +43,6 @@ describe("workspace module service", () => {
     await presentWorkspaceModule("project/1", {
       module_id: "canvas:cvs-mount-a",
       view_key: "preview",
-      runtime_session_id: "session-1",
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
@@ -51,7 +50,6 @@ describe("workspace module service", () => {
       {
         module_id: "canvas:cvs-mount-a",
         view_key: "preview",
-        runtime_session_id: "session-1",
       },
     );
   });

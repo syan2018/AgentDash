@@ -1,10 +1,12 @@
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_application_ports::frame_launch_envelope::FrameRuntimeSurface;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_domain::settings::SettingScope;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::{
-    ContextAgentConsumptionMode, ContextConnectorProfile, ContextDeliveryEntry,
-    ContextDeliveryMetadata, ContextDeliveryPlan, ContextDeliveryTarget, ContextFrame,
+    ContextAgentConsumptionMode, ContextConnectorProfile, ContextDeliveryAppliedFrame,
+    ContextDeliveryConnectorInput, ContextDeliveryEntry, ContextDeliveryMetadata,
+    ContextDeliveryPlan, ContextDeliveryRecord, ContextDeliveryTarget, ContextFrame,
     ContextFrameSection, ContextModelChannel, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
 };
 use agentdash_spi::{
@@ -50,6 +52,7 @@ pub(in crate::session) struct PreparedTurn {
     pub title_hint: String,
     pub source: SourceInfo,
     pub connector_context: Option<ExecutionContext>,
+    pub context_delivery_record: Option<ContextDeliveryRecord>,
     pub accepted_context_frames_to_emit: Vec<ContextFrame>,
     pub pending_transition_application: PendingRuntimeContextApplication,
     pub pending_command_ids: Vec<uuid::Uuid>,
@@ -401,6 +404,20 @@ impl TurnPreparer {
             &context.turn.context_frames,
         );
 
+        let context_delivery_record = Some(build_context_delivery_record(
+            &session_id,
+            &turn_id,
+            &launch_plan.frame_surface,
+            launch_plan.pending_frame.as_ref(),
+            deps.connector.connector_id(),
+            &context.session.executor_config.executor,
+            &context.session.working_directory,
+            context.turn.context_delivery_plan.as_ref(),
+            &pending_transition_application.context_frames,
+            &accepted_context_frames_to_emit,
+            started_at_ms,
+        ));
+
         Ok(PreparedTurn {
             pending_frame: launch_plan.pending_frame,
             session_id,
@@ -411,6 +428,7 @@ impl TurnPreparer {
             title_hint,
             source,
             connector_context: Some(context),
+            context_delivery_record,
             accepted_context_frames_to_emit,
             pending_transition_application,
             pending_command_ids,
@@ -616,6 +634,64 @@ fn build_context_delivery_plan(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn build_context_delivery_record(
+    session_id: &str,
+    turn_id: &str,
+    frame_surface: &FrameRuntimeSurface,
+    pending_frame: Option<&AgentFrame>,
+    connector_id: &str,
+    executor_id: &str,
+    working_directory: &std::path::Path,
+    plan: Option<&ContextDeliveryPlan>,
+    transition_frames: &[ContextFrame],
+    emitted_frames: &[ContextFrame],
+    created_at_ms: i64,
+) -> ContextDeliveryRecord {
+    let context_frame_ids = plan
+        .map(|plan| {
+            plan.entries
+                .iter()
+                .map(|entry| entry.frame_id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let target_agent = plan
+        .map(|plan| plan.target_agent.clone())
+        .unwrap_or_default();
+    let delivery_plan_id = plan.map(|plan| plan.plan_id.clone());
+    let mut emitted_context_frame_ids = Vec::new();
+    let mut seen_emitted = std::collections::HashSet::new();
+    for frame in transition_frames.iter().chain(emitted_frames.iter()) {
+        if seen_emitted.insert(frame.id.clone()) {
+            emitted_context_frame_ids.push(frame.id.clone());
+        }
+    }
+
+    ContextDeliveryRecord {
+        record_id: format!("context-delivery-record-{session_id}-{turn_id}"),
+        runtime_session_id: session_id.to_string(),
+        turn_id: turn_id.to_string(),
+        applied_frame: ContextDeliveryAppliedFrame {
+            agent_id: frame_surface.agent_id,
+            frame_id: frame_surface.frame_id,
+            frame_revision: frame_surface.frame_revision,
+            pending_frame_id: pending_frame.map(|frame| frame.id),
+            pending_frame_revision: pending_frame.map(|frame| frame.revision),
+        },
+        connector_input: ContextDeliveryConnectorInput {
+            connector_id: connector_id.to_string(),
+            executor_id: executor_id.to_string(),
+            working_directory: working_directory.display().to_string(),
+            target_agent,
+        },
+        delivery_plan_id,
+        context_frame_ids,
+        emitted_context_frame_ids,
+        created_at_ms,
+    }
+}
+
 fn sync_emitted_frame_delivery_metadata(
     emitted_frames: &mut [ContextFrame],
     planned_frames: &[ContextFrame],
@@ -719,6 +795,7 @@ mod tests {
     use super::*;
     use crate::session::types::{PromptLaunchPath, SessionRepositoryRehydrateMode};
     use agentdash_domain::common::AgentConfig;
+    use uuid::Uuid;
 
     #[test]
     fn connector_startup_context_is_only_sent_when_connector_needs_initializing() {
@@ -836,6 +913,96 @@ mod tests {
         assert_eq!(
             frames[0].delivery_metadata.agent_consumption.mode,
             ContextAgentConsumptionMode::SystemAppend
+        );
+    }
+
+    #[test]
+    fn context_delivery_record_links_connector_turn_frame_and_emissions() {
+        let agent_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+        let frame_id = Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap();
+        let mut pending_frame = AgentFrame::new_revision(agent_id, 8, "accepted_launch");
+        pending_frame.id = Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap();
+        let frame_surface = FrameRuntimeSurface {
+            agent_id,
+            frame_id,
+            frame_revision: 7,
+            capability_surface: serde_json::Value::Null,
+            context_slice: serde_json::Value::Null,
+            vfs_surface: serde_json::Value::Null,
+            mcp_surface: serde_json::Value::Null,
+            runtime_session_id: Some("session-1".to_string()),
+        };
+        let config = AgentConfig::new("CLAUDE_CODE");
+        let profile = context_connector_profile("codex-bridge", &config);
+        let frames = apply_delivery_target_to_frames(
+            vec![
+                test_frame(
+                    "transition-1",
+                    "capability_transition",
+                    "turn_start",
+                    "user",
+                    1,
+                ),
+                test_frame("identity-1", "identity", "connector_context", "system", 2),
+            ],
+            &profile,
+            "codex-bridge",
+            "CLAUDE_CODE",
+        );
+        let plan = build_context_delivery_plan(
+            &frames,
+            "session-1",
+            "turn-1",
+            "codex-bridge",
+            "CLAUDE_CODE",
+            profile,
+        );
+
+        let record = build_context_delivery_record(
+            "session-1",
+            "turn-1",
+            &frame_surface,
+            Some(&pending_frame),
+            "codex-bridge",
+            "CLAUDE_CODE",
+            std::path::Path::new("F:/workspace"),
+            Some(&plan),
+            &frames[0..1],
+            &frames[1..],
+            1234,
+        );
+
+        assert_eq!(record.runtime_session_id, "session-1");
+        assert_eq!(record.turn_id, "turn-1");
+        assert_eq!(record.applied_frame.agent_id, agent_id);
+        assert_eq!(record.applied_frame.frame_id, frame_id);
+        assert_eq!(record.applied_frame.frame_revision, 7);
+        assert_eq!(
+            record.applied_frame.pending_frame_id,
+            Some(pending_frame.id)
+        );
+        assert_eq!(record.applied_frame.pending_frame_revision, Some(8));
+        assert_eq!(record.connector_input.connector_id, "codex-bridge");
+        assert_eq!(record.connector_input.executor_id, "CLAUDE_CODE");
+        assert_eq!(
+            record.delivery_plan_id.as_deref(),
+            Some(plan.plan_id.as_str())
+        );
+        assert_eq!(
+            record.emitted_context_frame_ids,
+            vec!["transition-1".to_string(), "identity-1".to_string()]
+        );
+        assert!(
+            record
+                .context_frame_ids
+                .iter()
+                .any(|frame_id| frame_id == "identity-1")
+        );
+        assert!(
+            record
+                .context_frame_ids
+                .iter()
+                .any(|frame_id| frame_id == "transition-1")
         );
     }
 

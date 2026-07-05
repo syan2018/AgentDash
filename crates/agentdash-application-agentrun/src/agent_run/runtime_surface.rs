@@ -13,8 +13,8 @@ use agentdash_domain::permission::{
     PermissionGrantVfsPathScope,
 };
 use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgentRepository, LifecycleRunRepository,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunDeliveryBindingRepository, LifecycleAgentRepository,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{
     AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
@@ -23,6 +23,9 @@ use agentdash_spi::{
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use super::delivery_runtime_selection::{
+    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
+};
 use crate::agent_run::frame::runtime_launch::runtime_backend_anchor_from_vfs;
 use crate::agent_run::frame::surface::AgentFrameSurfaceExt;
 use crate::agent_run::runtime_capability::project_capability_state_from_frame;
@@ -59,6 +62,7 @@ pub struct AgentRunRuntimeSurfaceQuery {
     run_repo: Arc<dyn LifecycleRunRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
+    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
@@ -68,6 +72,7 @@ pub struct AgentRunRuntimeSurfaceQueryDeps {
     pub run_repo: Arc<dyn LifecycleRunRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
+    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }
 
@@ -79,6 +84,21 @@ pub trait AgentRunRuntimeSurfaceQueryPort: Send + Sync {
         purpose: RuntimeSurfaceQueryPurpose,
     ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError>;
 
+    async fn current_runtime_surface_for_agent_run(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        purpose: RuntimeSurfaceQueryPurpose,
+    ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError> {
+        Err(AgentRunRuntimeSurfaceQueryError::Repository {
+            purpose,
+            operation: "current delivery selection",
+            message: format!(
+                "AgentRun scoped runtime surface selection is not implemented for run_id={run_id}, agent_id={agent_id}"
+            ),
+        })
+    }
+
     async fn current_runtime_surface_with_backend(
         &self,
         runtime_session_id: &str,
@@ -88,7 +108,7 @@ pub trait AgentRunRuntimeSurfaceQueryPort: Send + Sync {
 
 #[derive(Clone)]
 pub struct AgentRunResourceSurfaceQuery {
-    anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    _anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
     lifecycle_surface_projection: Arc<dyn ports_lifecycle_surface::LifecycleSurfaceProjectionPort>,
 }
@@ -104,7 +124,7 @@ pub struct AgentRunResourceSurfaceQueryDeps {
 impl AgentRunResourceSurfaceQuery {
     pub fn new(deps: AgentRunResourceSurfaceQueryDeps) -> Self {
         Self {
-            anchor_repo: deps.anchor_repo,
+            _anchor_repo: deps.anchor_repo,
             surface_query: deps.surface_query,
             lifecycle_surface_projection: deps.lifecycle_surface_projection,
         }
@@ -130,38 +150,23 @@ impl AgentRunResourceSurfaceQuery {
         run_id: Uuid,
         agent_id: Uuid,
     ) -> Result<AgentRunResourceSurface, AgentRunResourceSurfaceQueryError> {
-        let anchor = self
-            .anchor_repo
-            .latest_updated_anchor_for_agent(agent_id)
-            .await
-            .map_err(|error| AgentRunResourceSurfaceQueryError::Repository {
-                operation: "latest runtime session execution anchor",
-                message: error.to_string(),
-            })?
-            .ok_or(AgentRunResourceSurfaceQueryError::MissingDeliveryAnchor { run_id, agent_id })?;
-
-        if anchor.run_id != run_id || anchor.agent_id != agent_id {
-            return Err(AgentRunResourceSurfaceQueryError::ControlPlaneMismatch {
-                field: "runtime_session_execution_anchor",
-                expected: format!("run_id={run_id}, agent_id={agent_id}"),
-                actual: format!("run_id={}, agent_id={}", anchor.run_id, anchor.agent_id),
-            });
-        }
-
         let surface = self
-            .resource_surface_for_runtime_session(&anchor.runtime_session_id)
-            .await?;
-        if surface.runtime.run_id != run_id || surface.runtime.agent_id != agent_id {
+            .surface_query
+            .current_runtime_surface_for_agent_run(
+                run_id,
+                agent_id,
+                RuntimeSurfaceQueryPurpose::resource_surface(),
+            )
+            .await
+            .map_err(AgentRunResourceSurfaceQueryError::RuntimeSurface)?;
+        if surface.run_id != run_id || surface.agent_id != agent_id {
             return Err(AgentRunResourceSurfaceQueryError::ControlPlaneMismatch {
                 field: "current_runtime_surface",
                 expected: format!("run_id={run_id}, agent_id={agent_id}"),
-                actual: format!(
-                    "run_id={}, agent_id={}",
-                    surface.runtime.run_id, surface.runtime.agent_id
-                ),
+                actual: format!("run_id={}, agent_id={}", surface.run_id, surface.agent_id),
             });
         }
-        Ok(surface)
+        self.project_resource_surface(surface).await
     }
 
     async fn project_resource_surface(
@@ -220,6 +225,7 @@ impl AgentRunRuntimeSurfaceQuery {
             run_repo: deps.run_repo,
             agent_repo: deps.agent_repo,
             frame_repo: deps.frame_repo,
+            delivery_binding_repo: deps.delivery_binding_repo,
             permission_grant_repo: deps.permission_grant_repo,
         }
     }
@@ -478,6 +484,31 @@ impl AgentRunRuntimeSurfaceQueryPort for AgentRunRuntimeSurfaceQuery {
         purpose: RuntimeSurfaceQueryPurpose,
     ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError> {
         self.resolve_surface(runtime_session_id, purpose).await
+    }
+
+    async fn current_runtime_surface_for_agent_run(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        purpose: RuntimeSurfaceQueryPurpose,
+    ) -> Result<AgentRunRuntimeSurface, AgentRunRuntimeSurfaceQueryError> {
+        let selection =
+            DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+                lifecycle_runs: self.run_repo.as_ref(),
+                lifecycle_agents: self.agent_repo.as_ref(),
+                agent_frames: self.frame_repo.as_ref(),
+                execution_anchors: self.anchor_repo.as_ref(),
+                delivery_bindings: self.delivery_binding_repo.as_ref(),
+            })
+            .select_current_delivery(run_id, agent_id)
+            .await
+            .map_err(|error| AgentRunRuntimeSurfaceQueryError::Repository {
+                purpose: purpose.clone(),
+                operation: "current delivery selection",
+                message: error.to_string(),
+            })?;
+        self.resolve_surface(&selection.runtime_session_id, purpose)
+            .await
     }
 
     async fn current_runtime_surface_with_backend(
@@ -1110,13 +1141,15 @@ mod tests {
         PermissionGrantVfsPathScope, PolicyDecision, PolicyOutcome,
     };
     use agentdash_domain::workflow::{
-        AgentFrame, AgentSource, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
+        AgentFrame, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository, AgentSource,
+        DeliveryBindingStatus, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
     };
     use agentdash_spi::{AgentConfig, McpTransportConfig, ToolCluster};
     use chrono::{DateTime, Utc};
     use tokio::sync::Mutex;
 
     use super::*;
+    use crate::test_support::MemoryAgentRunDeliveryBindingRepository;
 
     #[derive(Default)]
     struct TestFrameRepo {
@@ -1160,14 +1193,6 @@ mod tests {
                 .filter(|frame| frame.agent_id == agent_id)
                 .cloned()
                 .collect())
-        }
-
-        async fn append_visible_canvas_mount(
-            &self,
-            _frame_id: Uuid,
-            _mount_id: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
         }
     }
 
@@ -1257,11 +1282,18 @@ mod tests {
 
     #[async_trait::async_trait]
     impl RuntimeSessionExecutionAnchorRepository for TestAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-            self.anchors
-                .lock()
-                .await
-                .insert(anchor.runtime_session_id.clone(), anchor.clone());
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().await;
+            if let Some(existing) = anchors.get(&anchor.runtime_session_id) {
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
+            }
+            anchors.insert(anchor.runtime_session_id.clone(), anchor.clone());
             Ok(())
         }
 
@@ -1314,20 +1346,6 @@ mod tests {
                 .iter()
                 .filter_map(|id| anchors.get(id).cloned())
                 .collect())
-        }
-
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .await
-                .values()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
-                .cloned())
         }
     }
 
@@ -1495,6 +1513,7 @@ mod tests {
         run_repo: Arc<TestRunRepo>,
         agent_repo: Arc<TestAgentRepo>,
         frame_repo: Arc<TestFrameRepo>,
+        delivery_binding_repo: Arc<MemoryAgentRunDeliveryBindingRepository>,
         permission_grant_repo: Arc<TestPermissionGrantRepo>,
         run_id: Uuid,
         project_id: Uuid,
@@ -1507,6 +1526,7 @@ mod tests {
         let run_repo = Arc::new(TestRunRepo::default());
         let agent_repo = Arc::new(TestAgentRepo::default());
         let frame_repo = Arc::new(TestFrameRepo::default());
+        let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
         let permission_grant_repo = Arc::new(TestPermissionGrantRepo::default());
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
@@ -1519,23 +1539,31 @@ mod tests {
             Some(vfs_with_default_backend("backend-launch")),
         );
         let launch_frame_id = launch_frame.id;
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "session-1",
+            run_id,
+            launch_frame_id,
+            agent_id,
+        );
+        let binding = AgentRunDeliveryBinding::from_anchor(
+            &anchor,
+            DeliveryBindingStatus::Running,
+            anchor.updated_at,
+        );
         run_repo.create(&run).await.expect("run");
         agent_repo.create(&agent).await.expect("agent");
         frame_repo.insert(launch_frame).await;
-        anchor_repo
-            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
-                "session-1",
-                run_id,
-                launch_frame_id,
-                agent_id,
-            ))
+        anchor_repo.create_once(&anchor).await.expect("anchor");
+        delivery_binding_repo
+            .upsert(&binding)
             .await
-            .expect("anchor");
+            .expect("binding");
         let query = AgentRunRuntimeSurfaceQuery::new(AgentRunRuntimeSurfaceQueryDeps {
             anchor_repo: anchor_repo.clone(),
             run_repo: run_repo.clone(),
             agent_repo: agent_repo.clone(),
             frame_repo: frame_repo.clone(),
+            delivery_binding_repo: delivery_binding_repo.clone(),
             permission_grant_repo: permission_grant_repo.clone(),
         });
         Fixture {
@@ -1544,6 +1572,7 @@ mod tests {
             run_repo,
             agent_repo,
             frame_repo,
+            delivery_binding_repo,
             permission_grant_repo,
             run_id,
             project_id,
@@ -1661,7 +1690,7 @@ mod tests {
             .expect("bad agent");
         fixture
             .anchor_repo
-            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+            .create_once(&RuntimeSessionExecutionAnchor::new_dispatch(
                 "mismatch-session",
                 fixture.run_id,
                 fixture.launch_frame_id,
@@ -1846,6 +1875,7 @@ mod tests {
                 run_repo: fixture.run_repo.clone(),
                 agent_repo: fixture.agent_repo.clone(),
                 frame_repo: fixture.frame_repo.clone(),
+                delivery_binding_repo: fixture.delivery_binding_repo.clone(),
                 permission_grant_repo: fixture.permission_grant_repo.clone(),
             },
         ));
@@ -1879,6 +1909,65 @@ mod tests {
                 .get("launch_frame_id")
                 .and_then(serde_json::Value::as_str),
             Some(current_frame_id.to_string().as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn resource_surface_for_agent_run_uses_current_delivery_binding() {
+        let fixture = fixture().await;
+        let current_frame = frame(
+            fixture.agent_id,
+            2,
+            Some(vfs_with_default_backend("backend-current")),
+        );
+        let current_frame_id = current_frame.id;
+        insert_current_frame(&fixture, current_frame).await;
+        let mut unbound_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "session-unbound-later",
+            fixture.run_id,
+            fixture.launch_frame_id,
+            fixture.agent_id,
+        );
+        unbound_anchor.updated_at = Utc::now() + chrono::Duration::seconds(60);
+        fixture
+            .anchor_repo
+            .create_once(&unbound_anchor)
+            .await
+            .expect("unbound anchor");
+        let surface_query = Arc::new(AgentRunRuntimeSurfaceQuery::new(
+            AgentRunRuntimeSurfaceQueryDeps {
+                anchor_repo: fixture.anchor_repo.clone(),
+                run_repo: fixture.run_repo.clone(),
+                agent_repo: fixture.agent_repo.clone(),
+                frame_repo: fixture.frame_repo.clone(),
+                delivery_binding_repo: fixture.delivery_binding_repo.clone(),
+                permission_grant_repo: fixture.permission_grant_repo.clone(),
+            },
+        ));
+        let resource_query = AgentRunResourceSurfaceQuery::new(AgentRunResourceSurfaceQueryDeps {
+            anchor_repo: fixture.anchor_repo.clone(),
+            surface_query,
+            lifecycle_surface_projection: Arc::new(TestLifecycleSurfaceProjection),
+        });
+
+        let resource_surface = resource_query
+            .resource_surface_for_agent_run(fixture.run_id, fixture.agent_id)
+            .await
+            .expect("resource surface");
+
+        assert_eq!(resource_surface.runtime.runtime_session_id, "session-1");
+        assert_eq!(
+            resource_surface.runtime.current_surface_frame_id,
+            current_frame_id
+        );
+        assert_eq!(
+            resource_surface
+                .lifecycle_surface
+                .projections
+                .message_stream
+                .as_ref()
+                .map(|stream| stream.runtime_session_id.as_str()),
+            Some("session-1")
         );
     }
 

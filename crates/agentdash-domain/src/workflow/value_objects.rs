@@ -33,12 +33,12 @@ pub use lifecycle_def::LifecycleNodeType;
 pub use metadata::{DefinitionSource, ValidationIssue, ValidationSeverity};
 pub use mount_directive::MountDirective;
 pub use orchestration::{
-    ActivationRule, AgentFrameRef, AgentProcedureExecutionSpec, AgentRunRef, DispatchLeaseSnapshot,
-    DispatchOutboxItem, DispatchState, ExecutorSpec, LifecycleContext, NodeCacheRef,
-    NodeCacheState, NodePortValue, OrchestrationInstance, OrchestrationJournalFact,
-    OrchestrationLimits, OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus,
-    PlanActivation, PlanNode, PlanNodeKind, RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus,
-    RuntimeTraceRef, StateArtifactRef, StateExchangeRule, StateExchangeSnapshot,
+    ActivationRule, AgentProcedureExecutionSpec, DispatchLeaseSnapshot, DispatchOutboxItem,
+    DispatchState, ExecutorSpec, NodeCacheRef, NodeCacheState, NodePortValue,
+    OrchestrationInstance, OrchestrationJournalFact, OrchestrationLimits,
+    OrchestrationPlanSnapshot, OrchestrationSourceRef, OrchestrationStatus, PlanActivation,
+    PlanNode, PlanNodeKind, RuntimeNodeError, RuntimeNodeState, RuntimeNodeStatus, RuntimeTraceRef,
+    StateArtifactRef, StateExchangeRule, StateExchangeSnapshot,
 };
 pub use ports::{
     ContextStrategy, GateStrategy, InputPortDefinition, OutputPortDefinition, StandaloneFulfillment,

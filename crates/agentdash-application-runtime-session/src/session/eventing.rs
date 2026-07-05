@@ -9,10 +9,10 @@ use agentdash_agent_types::{
     AgentContextEnvelope, AgentDashNativeThreadItem, AgentDashThreadItem, AgentMessage, MessageRef,
 };
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
-use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::trace::{
     HookTraceStorageDisposition, hook_trace_payload_storage_disposition,
 };
+use agentdash_spi::hooks::{ContextDeliveryRecord, ContextFrame};
 use tokio::sync::broadcast;
 
 use super::compaction_context_frame::build_compaction_context_frame;
@@ -26,8 +26,8 @@ use super::hub_support::{
 };
 use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
-    SessionCompactionRecord, SessionCompactionStatus, SessionEventPage,
-    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionStoreSet,
+    SessionCompactionRecord, SessionCompactionStatus, SessionEventPage, SessionEventingStores,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
 };
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::transcript_restore::build_raw_projected_transcript_from_events;
@@ -54,14 +54,14 @@ fn ephemeral_runtime_epoch() -> u64 {
 
 #[derive(Clone)]
 pub struct SessionEventingService {
-    stores: SessionStoreSet,
+    stores: SessionEventingStores,
     runtime_registry: SessionRuntimeRegistry,
     connector: Arc<dyn agentdash_spi::AgentConnector>,
 }
 
 impl SessionEventingService {
     pub(super) fn new(
-        stores: SessionStoreSet,
+        stores: SessionEventingStores,
         runtime_registry: SessionRuntimeRegistry,
         connector: Arc<dyn agentdash_spi::AgentConnector>,
     ) -> Self {
@@ -392,6 +392,21 @@ impl SessionEventingService {
         self.persist_notification(session_id, envelope).await
     }
 
+    pub(crate) async fn emit_context_delivery_record(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        record: &ContextDeliveryRecord,
+    ) -> io::Result<PersistedSessionEvent> {
+        let envelope = build_context_delivery_record_envelope(
+            session_id,
+            turn_id,
+            record,
+            self.connector_source(None),
+        )?;
+        self.persist_notification(session_id, envelope).await
+    }
+
     pub async fn emit_user_input_submitted(
         &self,
         session_id: &str,
@@ -425,7 +440,7 @@ impl SessionEventingService {
         &self,
         session_id: &str,
     ) -> io::Result<agentdash_agent_types::AgentContextEnvelope> {
-        let mut envelope = ContextProjector::new(self.stores.clone())
+        let mut envelope = ContextProjector::new(self.stores.projection_stores())
             .build_model_context(session_id)
             .await?;
         self.apply_session_rewind_boundary(session_id, &mut envelope)
@@ -888,6 +903,32 @@ impl SessionEventingService {
             executor_id,
         }
     }
+}
+
+fn build_context_delivery_record_envelope(
+    session_id: &str,
+    turn_id: Option<&str>,
+    record: &ContextDeliveryRecord,
+    source: SourceInfo,
+) -> io::Result<BackboneEnvelope> {
+    let value = serde_json::to_value(record).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("context delivery record 序列化失败: {error}"),
+        )
+    })?;
+    Ok(BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "context_delivery_record".to_string(),
+            value,
+        }),
+        session_id,
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: turn_id.map(ToString::to_string),
+        entry_index: None,
+    }))
 }
 
 fn context_compacted_value(envelope: &BackboneEnvelope) -> Option<&serde_json::Value> {
@@ -1676,14 +1717,14 @@ mod tests {
 
     use super::*;
     use crate::session::{
-        MemorySessionPersistence,
+        MemoryRuntimeTraceStore,
         persistence::SessionStoreSet,
         types::{ExecutionStatus, SessionMeta},
     };
 
     fn test_eventing_service(stores: SessionStoreSet) -> SessionEventingService {
         SessionEventingService::new(
-            stores,
+            stores.eventing_stores(),
             SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new()))),
             Arc::new(NoopConnector),
         )
@@ -1723,6 +1764,51 @@ mod tests {
             connector_type: "local_executor".to_string(),
             executor_id: Some("CODEX".to_string()),
         }
+    }
+
+    #[test]
+    fn context_delivery_record_envelope_uses_record_key_and_turn_trace() {
+        let record = agentdash_spi::hooks::ContextDeliveryRecord {
+            record_id: "context-delivery-record-session-1-turn-1".to_string(),
+            runtime_session_id: "session-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            applied_frame: agentdash_spi::hooks::ContextDeliveryAppliedFrame {
+                agent_id: uuid::Uuid::nil(),
+                frame_id: uuid::Uuid::nil(),
+                frame_revision: 1,
+                pending_frame_id: None,
+                pending_frame_revision: None,
+            },
+            connector_input: agentdash_spi::hooks::ContextDeliveryConnectorInput {
+                connector_id: "codex-bridge".to_string(),
+                executor_id: "CODEX".to_string(),
+                working_directory: "F:/workspace".to_string(),
+                target_agent: agentdash_spi::hooks::ContextDeliveryTarget::default(),
+            },
+            delivery_plan_id: Some("plan-1".to_string()),
+            context_frame_ids: vec!["identity-1".to_string()],
+            emitted_context_frame_ids: vec!["identity-1".to_string()],
+            created_at_ms: 1234,
+        };
+
+        let envelope = build_context_delivery_record_envelope(
+            "session-1",
+            Some("turn-1"),
+            &record,
+            test_source_info(),
+        )
+        .expect("record envelope");
+
+        assert_eq!(envelope.trace.turn_id.as_deref(), Some("turn-1"));
+        let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
+            &envelope.event
+        else {
+            panic!("expected session meta update");
+        };
+        assert_eq!(key, "context_delivery_record");
+        let roundtrip: agentdash_spi::hooks::ContextDeliveryRecord =
+            serde_json::from_value(value.clone()).expect("record payload");
+        assert_eq!(roundtrip, record);
     }
 
     fn assistant_delta_envelope(session_id: &str, turn_id: &str, text: &str) -> BackboneEnvelope {
@@ -1883,8 +1969,8 @@ mod tests {
     #[tokio::test]
     async fn source_session_title_projects_to_session_meta() {
         let session_id = "sess-source-title";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -1936,8 +2022,8 @@ mod tests {
     #[tokio::test]
     async fn source_session_title_does_not_overwrite_user_title() {
         let session_id = "sess-user-title";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         let mut meta = test_meta(session_id, TitleSource::User);
         meta.title = "Pinned title".to_string();
         stores
@@ -1965,8 +2051,8 @@ mod tests {
     #[tokio::test]
     async fn source_session_title_ignores_preview_title() {
         let session_id = "sess-preview-title";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -1995,8 +2081,8 @@ mod tests {
     #[tokio::test]
     async fn context_compacted_missing_summary_or_boundary_is_not_persisted() {
         let session_id = "sess-bad-context-compaction";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2057,8 +2143,8 @@ mod tests {
     #[tokio::test]
     async fn executor_context_compacted_is_telemetry_and_does_not_advance_projection_head() {
         let session_id = "sess-external-compact";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2098,8 +2184,8 @@ mod tests {
     #[tokio::test]
     async fn session_rewind_marker_excludes_failed_turn_from_model_context() {
         let session_id = "sess-rewind-projection";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2131,11 +2217,12 @@ mod tests {
         let stable_terminal = service
             .persist_notification(
                 session_id,
-                crate::session::hub_support::build_turn_terminal_envelope(
+                crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                     session_id,
                     &source,
                     "turn-stable",
                     TurnTerminalKind::Completed,
+                    None,
                     None,
                 ),
             )
@@ -2182,12 +2269,13 @@ mod tests {
         let failed_terminal = service
             .persist_notification(
                 session_id,
-                crate::session::hub_support::build_turn_terminal_envelope(
+                crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                     session_id,
                     &source,
                     "turn-failed",
                     TurnTerminalKind::Failed,
                     Some("provider disconnected".to_string()),
+                    None,
                 ),
             )
             .await
@@ -2239,8 +2327,8 @@ mod tests {
     #[tokio::test]
     async fn multiple_session_rewind_markers_exclude_all_failed_turns_from_model_context() {
         let session_id = "sess-multiple-rewind-projection";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2272,11 +2360,12 @@ mod tests {
         service
             .persist_notification(
                 session_id,
-                crate::session::hub_support::build_turn_terminal_envelope(
+                crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                     session_id,
                     &source,
                     "turn-stable",
                     TurnTerminalKind::Completed,
+                    None,
                     None,
                 ),
             )
@@ -2324,12 +2413,13 @@ mod tests {
             let failed_terminal = service
                 .persist_notification(
                     session_id,
-                    crate::session::hub_support::build_turn_terminal_envelope(
+                    crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                         session_id,
                         &source,
                         failed_turn,
                         TurnTerminalKind::Failed,
                         Some("provider disconnected".to_string()),
+                        None,
                     ),
                 )
                 .await
@@ -2373,8 +2463,8 @@ mod tests {
     async fn append_guard_bounds_oversized_tool_completed_event_before_store_and_broadcast() {
         let session_id = "sess-append-guard-tool";
         let sentinel = "SENTINEL_TOOL_OUTPUT_SHOULD_NOT_PERSIST";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2429,8 +2519,8 @@ mod tests {
     async fn append_guard_bounds_oversized_terminal_output_before_store_and_backlog() {
         let session_id = "sess-append-guard-terminal";
         let sentinel = "SENTINEL_TERMINAL_OUTPUT_SHOULD_NOT_PERSIST";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2473,8 +2563,8 @@ mod tests {
     #[tokio::test]
     async fn append_guard_leaves_small_events_unchanged() {
         let session_id = "sess-append-guard-small";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2509,8 +2599,8 @@ mod tests {
     #[tokio::test]
     async fn ephemeral_event_broadcasts_without_durable_append() {
         let session_id = "sess-ephemeral-delta";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2559,8 +2649,8 @@ mod tests {
     #[tokio::test]
     async fn provider_attempt_status_is_live_only() {
         let session_id = "sess-ephemeral-provider-status";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2623,8 +2713,8 @@ mod tests {
     #[tokio::test]
     async fn matched_silent_hook_trace_is_live_only() {
         let session_id = "sess-ephemeral-hook-trace";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2670,8 +2760,8 @@ mod tests {
     #[tokio::test]
     async fn actionful_hook_trace_is_durable() {
         let session_id = "sess-durable-hook-trace";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2703,8 +2793,8 @@ mod tests {
     #[tokio::test]
     async fn ephemeral_seq_is_monotonic_and_cleared_on_turn_terminal() {
         let session_id = "sess-ephemeral-clear";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))
@@ -2741,11 +2831,12 @@ mod tests {
         service
             .persist_notification(
                 session_id,
-                crate::session::hub_support::build_turn_terminal_envelope(
+                crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                     session_id,
                     &source,
                     "turn-eph",
                     TurnTerminalKind::Completed,
+                    None,
                     None,
                 ),
             )
@@ -2775,8 +2866,8 @@ mod tests {
     #[tokio::test]
     async fn durable_event_still_appends() {
         let session_id = "sess-durable-still-appends";
-        let persistence = Arc::new(MemorySessionPersistence::default());
-        let stores = SessionStoreSet::from_persistence(persistence);
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
             .create_session(&test_meta(session_id, TitleSource::Auto))

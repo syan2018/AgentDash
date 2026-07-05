@@ -4,7 +4,7 @@ use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
 use agentdash_spi::{
     PersistedSessionEvent, SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord,
-    SessionCompactionStatus, SessionPersistence,
+    SessionCompactionStatus, SessionCompactionStore,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -159,10 +159,10 @@ pub struct SessionSummaryArchiveEntry {
 }
 
 pub async fn session_summary_archives(
-    persistence: &dyn SessionPersistence,
+    compaction_store: &dyn SessionCompactionStore,
     session_id: &str,
 ) -> JourneyResult<Vec<(SessionSummaryArchiveEntry, SessionCompactionRecord)>> {
-    let mut compactions = persistence
+    let mut compactions = compaction_store
         .list_compactions(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
         .await
         .map_err(|error| {
@@ -253,23 +253,21 @@ pub fn session_item_projections(events: &[PersistedSessionEvent]) -> Vec<Session
             }
             BackboneEvent::Platform(
                 agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
-            ) => {
-                if key == "context_compacted" {
-                    let item_id = value
-                        .get("lifecycle_item_id")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| format!("compaction:event:{}", event.event_seq));
-                    let builder = builders
-                        .entry(item_id.clone())
-                        .or_insert_with(|| SessionItemBuilder::new(item_id, "context_compaction"));
-                    builder.apply_event(event);
-                    builder.raw_value = Some(value.clone());
-                    if let Some(summary) = value.get("summary").and_then(Value::as_str) {
-                        builder.text = summary.to_string();
-                    }
-                    builder.status = Some("projection_committed".to_string());
+            ) if key == "context_compacted" => {
+                let item_id = value
+                    .get("lifecycle_item_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| format!("compaction:event:{}", event.event_seq));
+                let builder = builders
+                    .entry(item_id.clone())
+                    .or_insert_with(|| SessionItemBuilder::new(item_id, "context_compaction"));
+                builder.apply_event(event);
+                builder.raw_value = Some(value.clone());
+                if let Some(summary) = value.get("summary").and_then(Value::as_str) {
+                    builder.text = summary.to_string();
                 }
+                builder.status = Some("projection_committed".to_string());
             }
             BackboneEvent::AgentMessageDelta(delta) => {
                 let builder = builders.entry(delta.item_id.clone()).or_insert_with(|| {

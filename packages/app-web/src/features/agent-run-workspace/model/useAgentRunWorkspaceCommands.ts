@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+﻿import { useCallback, useRef, useState } from "react";
 
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { UserInput } from "../../../generated/backbone-protocol";
@@ -36,8 +36,8 @@ import {
   type InFlightAgentRunCommand,
 } from "./workspaceCommandState";
 import type {
-  AgentRunSessionCommand,
-  AgentRunSessionCommandState,
+  AgentRunConversationCommand,
+  AgentRunConversationCommandState,
 } from "./conversationCommandState";
 import {
   conversationCommandByKind,
@@ -46,7 +46,7 @@ import {
 } from "./conversationCommandState";
 
 interface ResolveExecutorConfigInput {
-  command: AgentRunSessionCommand;
+  command: AgentRunConversationCommand;
   modelConfig: ConversationModelConfigView;
   explicitExecutorConfigOverride?: ExecutorConfig;
 }
@@ -62,7 +62,7 @@ type CreateProjectAgentRun = (
 export interface UseAgentRunWorkspaceCommandsOptions {
   currentRunId: string | null;
   currentAgentId: string | null;
-  chatCommandState: AgentRunSessionCommandState;
+  chatCommandState: AgentRunConversationCommandState;
   conversationMailbox: ConversationMailboxSnapshotView | undefined;
   draftProjectId: string | null;
   draftProjectAgentKey: string | null;
@@ -79,8 +79,7 @@ export interface UseAgentRunWorkspaceCommandsOptions {
 
 export interface UseAgentRunWorkspaceCommandsResult {
   handleAgentRunCommand: (
-    command: AgentRunSessionCommand,
-    sessionId: string | null,
+    command: AgentRunConversationCommand,
     prompt: string,
     executorConfig?: ExecutorConfig,
     backendSelection?: BackendSelectionRequestDto,
@@ -220,19 +219,18 @@ export function useAgentRunWorkspaceCommands(
   const inFlightCommandRef = useRef<InFlightAgentRunCommand | null>(null);
   const [recalledInput, setRecalledInput] = useState<string | null>(null);
 
-  const refreshWorkspaceProjection = useCallback(() => {
+  const refreshWorkspaceStateSilently = useCallback(() => {
     void refreshWorkspaceState().catch(() => {});
   }, [refreshWorkspaceState]);
 
   const refreshAfterStaleAgentRunCommandError = useCallback((error: unknown): boolean => {
     if (!isStaleAgentRunCommandError(error)) return false;
-    refreshWorkspaceProjection();
+    refreshWorkspaceStateSilently();
     return true;
-  }, [refreshWorkspaceProjection]);
+  }, [refreshWorkspaceStateSilently]);
 
   const handleAgentRunCommand = useCallback(async (
-    command: AgentRunSessionCommand,
-    _sessionId: string | null,
+    command: AgentRunConversationCommand,
     prompt: string,
     executorConfig?: ExecutorConfig,
     backendSelection?: BackendSelectionRequestDto,
@@ -325,7 +323,7 @@ export function useAgentRunWorkspaceCommands(
         onAgentRunRedirect(redirect);
         return;
       }
-      refreshWorkspaceProjection();
+      refreshWorkspaceStateSilently();
       scheduleHookRuntimeRefresh("agent_run_command_submitted", true);
     } catch (error) {
       if (refreshAfterStaleAgentRunCommandError(error)) {
@@ -348,7 +346,7 @@ export function useAgentRunWorkspaceCommands(
     onDraftStarted,
     onAgentRunRedirect,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceProjection,
+    refreshWorkspaceStateSilently,
     resolveExecutorConfig,
     scheduleHookRuntimeRefresh,
   ]);
@@ -367,14 +365,14 @@ export function useAgentRunWorkspaceCommands(
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;
     }
-    refreshWorkspaceProjection();
+    refreshWorkspaceStateSilently();
     scheduleHookRuntimeRefresh("agent_run_cancelled", true);
   }, [
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceProjection,
+    refreshWorkspaceStateSilently,
     scheduleHookRuntimeRefresh,
   ]);
 
@@ -393,14 +391,14 @@ export function useAgentRunWorkspaceCommands(
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;
     }
-    refreshWorkspaceProjection();
+    refreshWorkspaceStateSilently();
     scheduleHookRuntimeRefresh("mailbox_message_promoted", true);
   }, [
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceProjection,
+    refreshWorkspaceStateSilently,
     scheduleHookRuntimeRefresh,
   ]);
 
@@ -419,14 +417,14 @@ export function useAgentRunWorkspaceCommands(
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;
     }
-    refreshWorkspaceProjection();
+    refreshWorkspaceStateSilently();
     scheduleHookRuntimeRefresh("mailbox_message_deleted", true);
   }, [
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceProjection,
+    refreshWorkspaceStateSilently,
     scheduleHookRuntimeRefresh,
   ]);
 
@@ -449,7 +447,7 @@ export function useAgentRunWorkspaceCommands(
     if (acceptedRunId) {
       void fetchAndIngestLifecycleRun(acceptedRunId);
     }
-    refreshWorkspaceProjection();
+    refreshWorkspaceStateSilently();
     scheduleHookRuntimeRefresh("mailbox_resumed", true);
   }, [
     conversationMailbox?.resume_command,
@@ -457,7 +455,7 @@ export function useAgentRunWorkspaceCommands(
     currentRunId,
     fetchAndIngestLifecycleRun,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceProjection,
+    refreshWorkspaceStateSilently,
     scheduleHookRuntimeRefresh,
   ]);
 
@@ -466,7 +464,7 @@ export function useAgentRunWorkspaceCommands(
     try {
       const deleteCommand = mailboxRowCommand(chatCommandState.commands.commands, "delete_mailbox_message");
       if (!deleteCommand?.enabled) {
-        refreshWorkspaceProjection();
+        refreshWorkspaceStateSilently();
         return;
       }
       const content = await fetchAgentRunMailboxMessageContent(
@@ -480,7 +478,7 @@ export function useAgentRunWorkspaceCommands(
         messageId,
         commandRequest(deleteCommand),
       );
-      refreshWorkspaceProjection();
+      refreshWorkspaceStateSilently();
       const textParts = Array.isArray(content.input)
         ? content.input.map(textFromUserInputBlock).filter((text): text is string => text !== null)
         : [];
@@ -489,30 +487,45 @@ export function useAgentRunWorkspaceCommands(
       }
     } catch (error) {
       refreshAfterStaleAgentRunCommandError(error);
-      refreshWorkspaceProjection();
+      refreshWorkspaceStateSilently();
     }
   }, [
     chatCommandState.commands.commands,
     currentAgentId,
     currentRunId,
     refreshAfterStaleAgentRunCommandError,
-    refreshWorkspaceProjection,
+    refreshWorkspaceStateSilently,
   ]);
 
   const handleMoveMailboxMessage = useCallback(async (messageId: string, afterMessageId: string | null) => {
     if (!currentRunId || !currentAgentId) return;
     try {
+      const moveCommand = mailboxRowCommand(chatCommandState.commands.commands, "move_mailbox_message");
+      if (!moveCommand?.enabled) {
+        refreshWorkspaceStateSilently();
+        return;
+      }
       await moveAgentRunMailboxMessage(
         currentRunId,
         currentAgentId,
         messageId,
-        { after_message_id: afterMessageId ?? undefined },
+        {
+          ...commandRequest(moveCommand),
+          after_message_id: afterMessageId ?? undefined,
+        },
       );
-      refreshWorkspaceProjection();
-    } catch {
-      refreshWorkspaceProjection();
+      refreshWorkspaceStateSilently();
+    } catch (error) {
+      refreshAfterStaleAgentRunCommandError(error);
+      refreshWorkspaceStateSilently();
     }
-  }, [currentAgentId, currentRunId, refreshWorkspaceProjection]);
+  }, [
+    chatCommandState.commands.commands,
+    currentAgentId,
+    currentRunId,
+    refreshAfterStaleAgentRunCommandError,
+    refreshWorkspaceStateSilently,
+  ]);
 
   const handleForkFromMessageRef = useCallback(async (forkPointRef: SessionMessageRefDto) => {
     if (!currentRunId || !currentAgentId) {

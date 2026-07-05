@@ -1,23 +1,26 @@
 //! Accepted launch commit adapter for AgentRun/Lifecycle control-plane writes.
 //!
 //! RuntimeSession launch owns delivery events and stream attachment. This
-//! adapter owns accepted AgentFrame revision persistence, LifecycleAgent current
+//! adapter owns accepted AgentFrame revision persistence, AgentRun current
 //! delivery binding, and owner-bootstrap status transitions.
 
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
+use agentdash_application_ports::accepted_turn_lifecycle::{
+    AcceptedTurnLifecycleAdvanceInput, AcceptedTurnLifecycleAdvancePort,
+};
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitInput, AcceptedLaunchCommitOutcome, AcceptedLaunchCommitPort,
     AcceptedLaunchHookRuntimeSync,
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, DeliveryBindingStatus, LifecycleAgent,
-    LifecycleAgentRepository, RuntimeSessionExecutionAnchor,
+    AgentFrame, AgentFrameRepository, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
+    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository,
 };
-use agentdash_spi::CapabilityState;
+use agentdash_spi::{CapabilityState, ConnectorError};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -29,7 +32,9 @@ use crate::agent_run::runtime_capability::capability_state_to_frame_surfaces;
 pub struct AgentRunAcceptedLaunchCommitAdapter {
     frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
+    delivery_binding_repo: Option<Arc<dyn AgentRunDeliveryBindingRepository>>,
     agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
+    lifecycle_advance: Option<Arc<dyn AcceptedTurnLifecycleAdvancePort>>,
     hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
 }
 
@@ -37,8 +42,21 @@ pub struct AgentRunAcceptedLaunchCommitAdapter {
 pub struct AgentRunAcceptedLaunchCommitDeps {
     pub frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     pub anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
+    pub delivery_binding_repo: Option<Arc<dyn AgentRunDeliveryBindingRepository>>,
     pub agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
+    pub lifecycle_advance: Option<Arc<dyn AcceptedTurnLifecycleAdvancePort>>,
     pub hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
+}
+
+struct CurrentFrameLaunchCommitContext<'a> {
+    frame_repo: &'a dyn AgentFrameRepository,
+    anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    agent_repo: &'a dyn LifecycleAgentRepository,
+    delivery_binding_repo: &'a dyn AgentRunDeliveryBindingRepository,
+    lifecycle_advance: &'a dyn AcceptedTurnLifecycleAdvancePort,
+    runtime_session_id: &'a str,
+    turn_id: &'a str,
+    accepted_capability_state: &'a CapabilityState,
 }
 
 impl AgentRunAcceptedLaunchCommitAdapter {
@@ -46,7 +64,9 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         Self {
             frame_repo: deps.frame_repo,
             anchor_repo: deps.anchor_repo,
+            delivery_binding_repo: deps.delivery_binding_repo,
             agent_repo: deps.agent_repo,
+            lifecycle_advance: deps.lifecycle_advance,
             hook_runtime_sync: deps.hook_runtime_sync,
         }
     }
@@ -84,15 +104,24 @@ impl AgentRunAcceptedLaunchCommitAdapter {
     pub async fn commit_accepted_launch(
         &self,
         input: AcceptedLaunchCommitInput,
-    ) -> AcceptedLaunchCommitOutcome {
-        let (Some(frame_repo), Some(anchor_repo), Some(agent_repo)) = (
+    ) -> Result<AcceptedLaunchCommitOutcome, ConnectorError> {
+        let (
+            Some(frame_repo),
+            Some(anchor_repo),
+            Some(delivery_binding_repo),
+            Some(agent_repo),
+            Some(lifecycle_advance),
+        ) = (
             self.frame_repo.as_ref(),
             self.anchor_repo.as_ref(),
+            self.delivery_binding_repo.as_ref(),
             self.agent_repo.as_ref(),
-        ) else {
-            return AcceptedLaunchCommitOutcome::with_diagnostic(
-                "AgentRun accepted launch commit repositories 未完整注入",
-            );
+            self.lifecycle_advance.as_ref(),
+        )
+        else {
+            return Err(connector_error(
+                "AgentRun accepted launch commit 依赖未完整注入",
+            ));
         };
 
         if let Some(pending_frame) = input.pending_frame {
@@ -100,7 +129,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 .commit_pending_frame(
                     frame_repo.as_ref(),
                     anchor_repo.as_ref(),
-                    agent_repo.as_ref(),
+                    delivery_binding_repo.as_ref(),
+                    lifecycle_advance.as_ref(),
                     input.runtime_session_id.as_str(),
                     input.turn_id.as_str(),
                     pending_frame,
@@ -109,14 +139,16 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 .await;
         }
 
-        self.commit_revision_from_current_frame(
-            frame_repo.as_ref(),
-            anchor_repo.as_ref(),
-            agent_repo.as_ref(),
-            input.runtime_session_id.as_str(),
-            input.turn_id.as_str(),
-            &input.accepted_capability_state,
-        )
+        self.commit_revision_from_current_frame(CurrentFrameLaunchCommitContext {
+            frame_repo: frame_repo.as_ref(),
+            anchor_repo: anchor_repo.as_ref(),
+            agent_repo: agent_repo.as_ref(),
+            delivery_binding_repo: delivery_binding_repo.as_ref(),
+            lifecycle_advance: lifecycle_advance.as_ref(),
+            runtime_session_id: input.runtime_session_id.as_str(),
+            turn_id: input.turn_id.as_str(),
+            accepted_capability_state: &input.accepted_capability_state,
+        })
         .await
     }
 
@@ -125,79 +157,85 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         &self,
         frame_repo: &dyn AgentFrameRepository,
         anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
-        agent_repo: &dyn LifecycleAgentRepository,
+        delivery_binding_repo: &dyn AgentRunDeliveryBindingRepository,
+        lifecycle_advance: &dyn AcceptedTurnLifecycleAdvancePort,
         runtime_session_id: &str,
         turn_id: &str,
         mut pending_frame: AgentFrame,
         accepted_capability_state: &CapabilityState,
-    ) -> AcceptedLaunchCommitOutcome {
+    ) -> Result<AcceptedLaunchCommitOutcome, ConnectorError> {
         let mut outcome = AcceptedLaunchCommitOutcome::empty();
-        let surfaces = capability_state_to_frame_surfaces(accepted_capability_state);
-        pending_frame.effective_capability_json = surfaces.effective_capability_json;
-        pending_frame.vfs_surface_json = surfaces.vfs_surface_json;
-        pending_frame.mcp_surface_json = surfaces.mcp_surface_json;
-        match frame_repo.create(&pending_frame).await {
-            Ok(()) => {
-                diag!(Debug, Subsystem::AgentRun,
-
-                    session_id = %runtime_session_id,
-                    agent_id = %pending_frame.agent_id,
-                    revision = pending_frame.revision,
-                    "accepted pending AgentFrame revision 已写入"
-                );
-                outcome.frame_id = Some(pending_frame.id);
-                outcome.agent_id = Some(pending_frame.agent_id);
-                outcome.wrote_frame_revision = true;
-            }
-            Err(error) => {
-                let diagnostic = format!("accepted pending AgentFrame revision 写入失败: {error}");
-                let diagnostic_context =
-                    DiagnosticErrorContext::new("agent_run.launch_commit", "pending_frame_create");
-                diag_error!(Warn, Subsystem::AgentRun,
-                    context = &diagnostic_context,
-                    error = &error,
-                    session_id = %runtime_session_id,
-                    turn_id = %turn_id,
-                    agent_id = %pending_frame.agent_id,
-                    frame_id = %pending_frame.id,
-                    frame_revision = pending_frame.revision,
-                    "Failed to write accepted pending AgentFrame revision"
-                );
-                outcome.diagnostics.push(diagnostic);
-                return outcome;
-            }
+        let anchor = self
+            .load_anchor_for_session(anchor_repo, runtime_session_id, turn_id)
+            .await?;
+        if anchor.agent_id != pending_frame.agent_id {
+            return Err(connector_error(format!(
+                "accepted pending AgentFrame agent_id 与 RuntimeSession anchor 不一致: session_id={runtime_session_id}, turn_id={turn_id}, anchor_agent_id={}, pending_agent_id={}",
+                anchor.agent_id, pending_frame.agent_id
+            )));
         }
+        apply_accepted_capability_surface(&mut pending_frame, accepted_capability_state);
+        if let Err(error) = frame_repo.create(&pending_frame).await {
+            let diagnostic_context =
+                DiagnosticErrorContext::new("agent_run.launch_commit", "pending_frame_create");
+            diag_error!(Error, Subsystem::AgentRun,
+                context = &diagnostic_context,
+                error = &error,
+                session_id = %runtime_session_id,
+                turn_id = %turn_id,
+                agent_id = %pending_frame.agent_id,
+                frame_id = %pending_frame.id,
+                frame_revision = pending_frame.revision,
+                "Failed to write accepted pending AgentFrame revision"
+            );
+            return Err(connector_error(format!(
+                "accepted pending AgentFrame revision 写入失败: {error}"
+            )));
+        }
+        diag!(Debug, Subsystem::AgentRun,
 
-        match self
-            .bind_current_delivery(
-                agent_repo,
-                anchor_repo,
-                runtime_session_id,
+            session_id = %runtime_session_id,
+            agent_id = %pending_frame.agent_id,
+            revision = pending_frame.revision,
+            "accepted pending AgentFrame revision 已写入"
+        );
+        outcome.frame_id = Some(pending_frame.id);
+        outcome.agent_id = Some(pending_frame.agent_id);
+        outcome.wrote_frame_revision = true;
+
+        outcome.bound_current_delivery = self
+            .bind_current_delivery_with_anchor(
+                delivery_binding_repo,
+                &anchor,
                 pending_frame.agent_id,
+                turn_id,
             )
-            .await
-        {
-            Ok(bound) => outcome.bound_current_delivery = bound,
-            Err(error) => outcome.diagnostics.push(error),
-        }
+            .await?;
+        self.advance_lifecycle_started(lifecycle_advance, runtime_session_id, turn_id)
+            .await?;
         if self
             .sync_hook_runtime_target(runtime_session_id, turn_id, pending_frame.id)
             .await
         {
             outcome.synced_hook_runtime_target = true;
         }
-        outcome
+        Ok(outcome)
     }
 
     async fn commit_revision_from_current_frame(
         &self,
-        frame_repo: &dyn AgentFrameRepository,
-        anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
-        agent_repo: &dyn LifecycleAgentRepository,
-        runtime_session_id: &str,
-        turn_id: &str,
-        accepted_capability_state: &CapabilityState,
-    ) -> AcceptedLaunchCommitOutcome {
+        context: CurrentFrameLaunchCommitContext<'_>,
+    ) -> Result<AcceptedLaunchCommitOutcome, ConnectorError> {
+        let CurrentFrameLaunchCommitContext {
+            frame_repo,
+            anchor_repo,
+            agent_repo,
+            delivery_binding_repo,
+            lifecycle_advance,
+            runtime_session_id,
+            turn_id,
+            accepted_capability_state,
+        } = context;
         let (anchor, current_frame) = match resolve_current_agent_frame_for_runtime_session(
             runtime_session_id,
             anchor_repo,
@@ -207,19 +245,24 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         .await
         {
             Ok(Some((anchor, _agent, current_frame))) => (anchor, current_frame),
-            Ok(None) => return AcceptedLaunchCommitOutcome::empty(),
+            Ok(None) => {
+                return Err(connector_error(format!(
+                    "accepted launch commit 缺少 RuntimeSession anchor/current AgentFrame: session_id={runtime_session_id}, turn_id={turn_id}"
+                )));
+            }
             Err(error) => {
-                let diagnostic = format!("查找 session 关联的 AgentFrame 失败: {error}");
                 let diagnostic_context =
                     DiagnosticErrorContext::new("agent_run.launch_commit", "resolve_current_frame");
-                diag_error!(Warn, Subsystem::AgentRun,
+                diag_error!(Error, Subsystem::AgentRun,
                     context = &diagnostic_context,
                     error = &error,
                     session_id = %runtime_session_id,
                     turn_id = %turn_id,
                     "Failed to resolve AgentFrame for accepted launch commit"
                 );
-                return AcceptedLaunchCommitOutcome::with_diagnostic(diagnostic);
+                return Err(connector_error(format!(
+                    "查找 session 关联的 AgentFrame 失败: {error}"
+                )));
             }
         };
 
@@ -249,13 +292,16 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 outcome.frame_id = Some(frame.id);
                 outcome.agent_id = Some(frame.agent_id);
                 outcome.wrote_frame_revision = true;
-                match self
-                    .bind_current_delivery_with_anchor(agent_repo, &anchor, frame.agent_id)
-                    .await
-                {
-                    Ok(bound) => outcome.bound_current_delivery = bound,
-                    Err(error) => outcome.diagnostics.push(error),
-                }
+                outcome.bound_current_delivery = self
+                    .bind_current_delivery_with_anchor(
+                        delivery_binding_repo,
+                        &anchor,
+                        frame.agent_id,
+                        turn_id,
+                    )
+                    .await?;
+                self.advance_lifecycle_started(lifecycle_advance, runtime_session_id, turn_id)
+                    .await?;
                 if self
                     .sync_hook_runtime_target(runtime_session_id, turn_id, frame.id)
                     .await
@@ -264,12 +310,11 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 }
             }
             Err(error) => {
-                let diagnostic = format!("accepted AgentFrame revision 写入失败: {error}");
                 let diagnostic_context = DiagnosticErrorContext::new(
                     "agent_run.launch_commit",
                     "current_frame_revision",
                 );
-                diag_error!(Warn, Subsystem::AgentRun,
+                diag_error!(Error, Subsystem::AgentRun,
                     context = &diagnostic_context,
                     error = &error,
                     session_id = %runtime_session_id,
@@ -280,88 +325,94 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                     frame_revision = current_frame_revision,
                     "Failed to write accepted AgentFrame revision"
                 );
-                outcome.diagnostics.push(diagnostic);
+                return Err(connector_error(format!(
+                    "accepted AgentFrame revision 写入失败: {error}"
+                )));
             }
         }
-        outcome
-    }
-
-    async fn bind_current_delivery(
-        &self,
-        agent_repo: &dyn LifecycleAgentRepository,
-        anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
-        runtime_session_id: &str,
-        agent_id: Uuid,
-    ) -> Result<bool, String> {
-        match anchor_repo.find_by_session(runtime_session_id).await {
-            Ok(Some(anchor)) => {
-                self.bind_current_delivery_with_anchor(agent_repo, &anchor, agent_id)
-                    .await
-            }
-            Ok(None) => {
-                diag!(Warn, Subsystem::AgentRun,
-
-                    session_id = %runtime_session_id,
-                    "accepted pending AgentFrame 已写入但缺少 current delivery anchor"
-                );
-                Ok(false)
-            }
-            Err(error) => {
-                let diagnostic = format!(
-                    "accepted pending AgentFrame 查询 current delivery anchor 失败: {error}"
-                );
-                let diagnostic_context = DiagnosticErrorContext::new(
-                    "agent_run.launch_commit",
-                    "current_delivery_anchor",
-                );
-                diag_error!(Warn, Subsystem::AgentRun,
-                    context = &diagnostic_context,
-                    error = &error,
-                    session_id = %runtime_session_id,
-                    agent_id = %agent_id,
-                    "Failed to query current delivery anchor for accepted pending AgentFrame"
-                );
-                Err(diagnostic)
-            }
-        }
+        Ok(outcome)
     }
 
     async fn bind_current_delivery_with_anchor(
         &self,
-        agent_repo: &dyn LifecycleAgentRepository,
+        delivery_binding_repo: &dyn AgentRunDeliveryBindingRepository,
         anchor: &RuntimeSessionExecutionAnchor,
         agent_id: Uuid,
-    ) -> Result<bool, String> {
-        let mut agent = match agent_repo.get(agent_id).await {
-            Ok(Some(agent)) => agent,
-            Ok(None) => return Ok(false),
-            Err(error) => {
-                return Err(format!(
-                    "查询 LifecycleAgent current delivery 失败: {error}"
-                ));
-            }
-        };
-        agent.bind_current_delivery_from_anchor(
+        turn_id: &str,
+    ) -> Result<bool, ConnectorError> {
+        if anchor.agent_id != agent_id {
+            return Err(connector_error(format!(
+                "accepted current delivery agent_id 与 RuntimeSession anchor 不一致: session_id={}, anchor_agent_id={}, frame_agent_id={agent_id}",
+                anchor.runtime_session_id, anchor.agent_id
+            )));
+        }
+        let binding = AgentRunDeliveryBinding::from_anchor(
             anchor,
             DeliveryBindingStatus::Running,
             chrono::Utc::now(),
-        );
-        if let Err(error) = agent_repo.update(&agent).await {
-            let diagnostic = format!("同步 accepted current delivery 失败: {error}");
+        )
+        .mark_running(turn_id, chrono::Utc::now());
+        if let Err(error) = delivery_binding_repo.upsert(&binding).await {
             let diagnostic_context =
                 DiagnosticErrorContext::new("agent_run.launch_commit", "bind_current_delivery");
-            diag_error!(Warn, Subsystem::AgentRun,
+            diag_error!(Error, Subsystem::AgentRun,
                 context = &diagnostic_context,
                 error = &error,
                 session_id = %anchor.runtime_session_id,
                 run_id = %anchor.run_id,
-                agent_id = %agent.id,
+                agent_id = %agent_id,
                 launch_frame_id = %anchor.launch_frame_id,
                 "Failed to sync accepted current delivery"
             );
-            return Err(diagnostic);
+            return Err(connector_error(format!(
+                "同步 accepted current delivery 失败: {error}"
+            )));
         }
         Ok(true)
+    }
+
+    async fn load_anchor_for_session(
+        &self,
+        anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+        runtime_session_id: &str,
+        turn_id: &str,
+    ) -> Result<RuntimeSessionExecutionAnchor, ConnectorError> {
+        anchor_repo
+            .find_by_session(runtime_session_id)
+            .await
+            .map_err(|error| {
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("agent_run.launch_commit", "load_anchor");
+                diag_error!(Error, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
+                    session_id = %runtime_session_id,
+                    turn_id = %turn_id,
+                    "Failed to query RuntimeSession anchor for accepted launch commit"
+                );
+                connector_error(format!(
+                    "accepted launch commit 查询 RuntimeSession anchor 失败: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                connector_error(format!(
+                    "accepted launch commit 缺少 RuntimeSession anchor: session_id={runtime_session_id}, turn_id={turn_id}"
+                ))
+            })
+    }
+
+    async fn advance_lifecycle_started(
+        &self,
+        lifecycle_advance: &dyn AcceptedTurnLifecycleAdvancePort,
+        runtime_session_id: &str,
+        turn_id: &str,
+    ) -> Result<(), ConnectorError> {
+        lifecycle_advance
+            .advance_node_started_for_accepted_turn(AcceptedTurnLifecycleAdvanceInput {
+                runtime_session_id: runtime_session_id.to_string(),
+                turn_id: turn_id.to_string(),
+            })
+            .await
     }
 
     async fn sync_hook_runtime_target(
@@ -440,7 +491,7 @@ impl AcceptedLaunchCommitPort for AgentRunAcceptedLaunchCommitAdapter {
     async fn commit_accepted_launch(
         &self,
         input: AcceptedLaunchCommitInput,
-    ) -> AcceptedLaunchCommitOutcome {
+    ) -> Result<AcceptedLaunchCommitOutcome, ConnectorError> {
         AgentRunAcceptedLaunchCommitAdapter::commit_accepted_launch(self, input).await
     }
 }
@@ -448,17 +499,38 @@ impl AcceptedLaunchCommitPort for AgentRunAcceptedLaunchCommitAdapter {
 pub fn accepted_launch_commit_port(
     frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     anchor_repo: Option<Arc<dyn RuntimeSessionExecutionAnchorRepository>>,
+    delivery_binding_repo: Option<Arc<dyn AgentRunDeliveryBindingRepository>>,
     agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
+    lifecycle_advance: Option<Arc<dyn AcceptedTurnLifecycleAdvancePort>>,
     hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
 ) -> Arc<dyn AcceptedLaunchCommitPort> {
     Arc::new(AgentRunAcceptedLaunchCommitAdapter::new(
         AgentRunAcceptedLaunchCommitDeps {
             frame_repo,
             anchor_repo,
+            delivery_binding_repo,
             agent_repo,
+            lifecycle_advance,
             hook_runtime_sync,
         },
     ))
+}
+
+fn connector_error(message: impl Into<String>) -> ConnectorError {
+    ConnectorError::Runtime(message.into())
+}
+
+fn apply_accepted_capability_surface(
+    frame: &mut AgentFrame,
+    accepted_capability_state: &CapabilityState,
+) {
+    let surfaces = capability_state_to_frame_surfaces(accepted_capability_state);
+    let mut surface = frame.surface_document();
+    surface.capability_state = surfaces.effective_capability_json;
+    surface.vfs_surface = surfaces.vfs_surface_json;
+    surface.mcp_surface = surfaces.mcp_surface_json;
+    frame.surface = Some(surface);
+    frame.apply_surface_projection();
 }
 
 async fn resolve_current_agent_frame_for_runtime_session(
@@ -484,18 +556,28 @@ mod tests {
     use super::*;
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentSource, LifecycleAgent, RuntimeSessionExecutionAnchor,
+        AgentFrame, AgentFrameSurfaceDocument, AgentSource, LifecycleAgent,
+        RuntimeSessionExecutionAnchor,
     };
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use crate::test_support::MemoryAgentRunDeliveryBindingRepository;
 
     #[derive(Default)]
     struct MemoryFrameRepo {
         frames: Mutex<Vec<AgentFrame>>,
+        fail_create: AtomicBool,
     }
 
     #[async_trait]
     impl AgentFrameRepository for MemoryFrameRepo {
         async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+            if self.fail_create.load(Ordering::SeqCst) {
+                return Err(DomainError::InvalidConfig(
+                    "forced frame create failure".to_string(),
+                ));
+            }
             self.frames.lock().unwrap().push(frame.clone());
             Ok(())
         }
@@ -529,13 +611,31 @@ mod tests {
                 .cloned()
                 .collect())
         }
+    }
 
-        async fn append_visible_canvas_mount(
+    struct NoopLifecycleAdvance;
+
+    #[async_trait]
+    impl AcceptedTurnLifecycleAdvancePort for NoopLifecycleAdvance {
+        async fn advance_node_started_for_accepted_turn(
             &self,
-            _frame_id: Uuid,
-            _mount_id: &str,
-        ) -> Result<(), DomainError> {
+            _input: AcceptedTurnLifecycleAdvanceInput,
+        ) -> Result<(), ConnectorError> {
             Ok(())
+        }
+    }
+
+    struct FailingLifecycleAdvance;
+
+    #[async_trait]
+    impl AcceptedTurnLifecycleAdvancePort for FailingLifecycleAdvance {
+        async fn advance_node_started_for_accepted_turn(
+            &self,
+            _input: AcceptedTurnLifecycleAdvanceInput,
+        ) -> Result<(), ConnectorError> {
+            Err(ConnectorError::Runtime(
+                "forced lifecycle update failure".to_string(),
+            ))
         }
     }
 
@@ -590,8 +690,21 @@ mod tests {
 
     #[async_trait]
     impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-            self.anchors.lock().unwrap().push(anchor.clone());
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().unwrap();
+            if let Some(existing) = anchors
+                .iter()
+                .find(|item| item.runtime_session_id == anchor.runtime_session_id)
+            {
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
+            }
+            anchors.push(anchor.clone());
             Ok(())
         }
 
@@ -657,27 +770,43 @@ mod tests {
                 .cloned()
                 .collect())
         }
+    }
 
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
-                .cloned())
-        }
+    #[test]
+    fn accepted_capability_surface_updates_canonical_document_before_projection() {
+        let mut frame = AgentFrame::new_revision(Uuid::new_v4(), 2, "test");
+        frame.surface = Some(AgentFrameSurfaceDocument {
+            capability_state: Some(serde_json::json!({"stale": true})),
+            context_slice: Some(serde_json::json!({"keep": "context"})),
+            vfs_surface: Some(serde_json::json!({"stale": "vfs"})),
+            mcp_surface: Some(serde_json::json!([{"stale": "mcp"}])),
+            ..Default::default()
+        });
+        frame.effective_capability_json = Some(serde_json::json!({"split": "stale"}));
+
+        let accepted_state = CapabilityState::default();
+        let expected = capability_state_to_frame_surfaces(&accepted_state);
+
+        apply_accepted_capability_surface(&mut frame, &accepted_state);
+
+        let surface = frame.surface.as_ref().expect("canonical surface");
+        assert_eq!(surface.capability_state, expected.effective_capability_json);
+        assert_eq!(surface.vfs_surface, expected.vfs_surface_json);
+        assert_eq!(surface.mcp_surface, expected.mcp_surface_json);
+        assert_eq!(
+            surface.context_slice,
+            Some(serde_json::json!({"keep": "context"}))
+        );
+        assert_eq!(frame.effective_capability_json, surface.capability_state);
+        assert_eq!(frame.vfs_surface_json, surface.vfs_surface);
+        assert_eq!(frame.mcp_surface_json, surface.mcp_surface);
     }
 
     #[tokio::test]
     async fn accepted_launch_commit_writes_frame_and_binds_current_delivery() {
         let run_id = Uuid::new_v4();
         let project_id = Uuid::new_v4();
-        let mut agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
+        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
         let launch_frame = AgentFrame::new_initial(agent.id);
         let pending_frame = AgentFrame::new_revision(agent.id, 2, "test");
         let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
@@ -692,12 +821,15 @@ mod tests {
         let agent_repo = Arc::new(MemoryAgentRepo::default());
         agent_repo.create(&agent).await.unwrap();
         let anchor_repo = Arc::new(MemoryAnchorRepo::default());
-        anchor_repo.upsert(&anchor).await.unwrap();
+        anchor_repo.create_once(&anchor).await.unwrap();
+        let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
 
         let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
             frame_repo: Some(frame_repo.clone()),
             anchor_repo: Some(anchor_repo),
+            delivery_binding_repo: Some(delivery_binding_repo.clone()),
             agent_repo: Some(agent_repo.clone()),
+            lifecycle_advance: Some(Arc::new(NoopLifecycleAdvance)),
             hook_runtime_sync: None,
         });
 
@@ -708,15 +840,117 @@ mod tests {
                 pending_frame: Some(pending_frame.clone()),
                 accepted_capability_state: CapabilityState::default(),
             })
-            .await;
+            .await
+            .expect("accepted launch commit");
 
         assert!(outcome.wrote_frame_revision);
         assert!(outcome.bound_current_delivery);
         assert_eq!(outcome.frame_id, Some(pending_frame.id));
-        agent = agent_repo.get(agent.id).await.unwrap().unwrap();
-        let binding = agent.current_delivery.expect("current delivery");
+        let binding = delivery_binding_repo
+            .get_current(run_id, agent.id)
+            .await
+            .unwrap()
+            .expect("current delivery");
         assert_eq!(binding.runtime_session_id, "runtime-a");
         assert_eq!(binding.status, DeliveryBindingStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn accepted_launch_commit_frame_create_failure_returns_error() {
+        let run_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
+        let launch_frame = AgentFrame::new_initial(agent.id);
+        let pending_frame = AgentFrame::new_revision(agent.id, 2, "test");
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-frame-fails",
+            run_id,
+            launch_frame.id,
+            agent.id,
+        );
+
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo.create(&launch_frame).await.unwrap();
+        frame_repo.fail_create.store(true, Ordering::SeqCst);
+        let agent_repo = Arc::new(MemoryAgentRepo::default());
+        agent_repo.create(&agent).await.unwrap();
+        let anchor_repo = Arc::new(MemoryAnchorRepo::default());
+        anchor_repo.create_once(&anchor).await.unwrap();
+        let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
+        let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
+            frame_repo: Some(frame_repo),
+            anchor_repo: Some(anchor_repo),
+            delivery_binding_repo: Some(delivery_binding_repo.clone()),
+            agent_repo: Some(agent_repo),
+            lifecycle_advance: Some(Arc::new(NoopLifecycleAdvance)),
+            hook_runtime_sync: None,
+        });
+
+        let error = adapter
+            .commit_accepted_launch(AcceptedLaunchCommitInput {
+                runtime_session_id: "runtime-frame-fails".to_string(),
+                turn_id: "turn-frame-fails".to_string(),
+                pending_frame: Some(pending_frame),
+                accepted_capability_state: CapabilityState::default(),
+            })
+            .await
+            .expect_err("frame create failure must fail accepted commit");
+
+        assert!(error.to_string().contains("AgentFrame revision 写入失败"));
+        assert!(
+            delivery_binding_repo
+                .get_current(run_id, agent.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn accepted_launch_commit_lifecycle_failure_returns_error() {
+        let run_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
+        let launch_frame = AgentFrame::new_initial(agent.id);
+        let pending_frame = AgentFrame::new_revision(agent.id, 2, "test");
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-lifecycle-fails",
+            run_id,
+            launch_frame.id,
+            agent.id,
+        );
+
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo.create(&launch_frame).await.unwrap();
+        let agent_repo = Arc::new(MemoryAgentRepo::default());
+        agent_repo.create(&agent).await.unwrap();
+        let anchor_repo = Arc::new(MemoryAnchorRepo::default());
+        anchor_repo.create_once(&anchor).await.unwrap();
+        let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
+        let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
+            frame_repo: Some(frame_repo),
+            anchor_repo: Some(anchor_repo),
+            delivery_binding_repo: Some(delivery_binding_repo),
+            agent_repo: Some(agent_repo),
+            lifecycle_advance: Some(Arc::new(FailingLifecycleAdvance)),
+            hook_runtime_sync: None,
+        });
+
+        let error = adapter
+            .commit_accepted_launch(AcceptedLaunchCommitInput {
+                runtime_session_id: "runtime-lifecycle-fails".to_string(),
+                turn_id: "turn-lifecycle-fails".to_string(),
+                pending_frame: Some(pending_frame),
+                accepted_capability_state: CapabilityState::default(),
+            })
+            .await
+            .expect_err("lifecycle update failure must fail accepted commit");
+
+        assert!(
+            error
+                .to_string()
+                .contains("forced lifecycle update failure")
+        );
     }
 
     #[tokio::test]
@@ -737,11 +971,13 @@ mod tests {
         let agent_repo = Arc::new(MemoryAgentRepo::default());
         agent_repo.create(&agent).await.unwrap();
         let anchor_repo = Arc::new(MemoryAnchorRepo::default());
-        anchor_repo.upsert(&anchor).await.unwrap();
+        anchor_repo.create_once(&anchor).await.unwrap();
         let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
             frame_repo: Some(frame_repo),
             anchor_repo: Some(anchor_repo),
+            delivery_binding_repo: None,
             agent_repo: Some(agent_repo.clone()),
+            lifecycle_advance: None,
             hook_runtime_sync: None,
         });
 

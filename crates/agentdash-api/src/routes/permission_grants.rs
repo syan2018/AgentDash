@@ -139,7 +139,6 @@ fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantResponse {
         id: grant.id.to_string(),
         run_id: grant.run_id.to_string(),
         effect_frame_id: grant.effect_frame_id.map(|id| id.to_string()),
-        source_runtime_session_id: grant.source_runtime_session_id.clone(),
         requested_paths: grant
             .requested_paths
             .iter()

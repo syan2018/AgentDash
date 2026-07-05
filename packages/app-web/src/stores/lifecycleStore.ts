@@ -67,8 +67,6 @@ interface LifecycleState {
   lifecycleRunsBySubject: (subjectKind: string, subjectId: string) => LifecycleRunView[];
   /** 返回指定 LifecycleRun 下的所有 agent */
   agentsByLifecycleRun: (lifecycleRunId: string) => AgentRunView[];
-  /** 返回指定 LifecycleRun 当前 agent/frame delivery runtime session id */
-  deliveryRuntimeSessionIdForLifecycleRun: (lifecycleRunId: string) => string | null;
 }
 
 // ─── Store ───────────────────────────────────────────────
@@ -262,12 +260,4 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
     return result;
   },
 
-  deliveryRuntimeSessionIdForLifecycleRun: (lifecycleRunId) => {
-    for (const agent of get().agents.values()) {
-      if (agent.agent_ref.run_id === lifecycleRunId && agent.delivery_runtime_ref) {
-        return agent.delivery_runtime_ref.runtime_session_id;
-      }
-    }
-    return null;
-  },
 }));

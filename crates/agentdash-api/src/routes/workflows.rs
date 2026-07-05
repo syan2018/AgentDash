@@ -542,7 +542,7 @@ pub async fn submit_orchestration_human_decision(
     )
     .await?;
 
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let launcher = OrchestrationExecutorLauncher::new(state.repos.to_workflow_repository_set())
         .with_function_runner(state.services.function_runner.clone());
     let result = launcher
@@ -857,7 +857,7 @@ async fn lifecycle_run_to_contract_view(
     state: &Arc<AppState>,
     run: &LifecycleRun,
 ) -> Result<LifecycleRunView, ApiError> {
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     run_view_builder::build_lifecycle_run_view(&lifecycle_repos, run)
         .await
         .map(lifecycle_run_view_to_contract)
@@ -866,7 +866,7 @@ async fn lifecycle_run_to_contract_view(
 
 fn lifecycle_command_service(state: &Arc<AppState>) -> LifecycleRunCommandService {
     LifecycleRunCommandService::new(
-        state.repos.to_lifecycle_repository_set(),
+        state.repos.lifecycle_run_command_deps(),
         lifecycle_platform_config(state),
     )
     .with_function_runner(state.services.function_runner.clone())

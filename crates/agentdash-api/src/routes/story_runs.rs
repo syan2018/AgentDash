@@ -46,7 +46,7 @@ pub async fn list_story_runs(
     .await?;
 
     let subject = SubjectRef::new("story", story_uuid);
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let view = run_view_builder::build_subject_execution_view(&lifecycle_repos, subject).await?;
     Ok(Json(subject_execution_view_to_contract(view)))
 }
@@ -69,7 +69,7 @@ pub async fn get_active_story_run(
     .await?;
 
     let subject = SubjectRef::new("story", story_uuid);
-    let lifecycle_repos = state.repos.to_lifecycle_repository_set();
+    let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let view = run_view_builder::build_subject_execution_view(&lifecycle_repos, subject).await?;
     let has_active_run = view.runs.iter().any(|run| {
         matches!(

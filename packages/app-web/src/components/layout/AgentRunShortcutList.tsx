@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AgentRunShortcutList — 侧栏 AgentRun 快捷列表。
  *
  * 展示当前项目的活跃 AgentRun，以 workspace shell title 为主。
@@ -8,30 +8,26 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { StatusDot, type StatusDotTone } from "@agentdash/ui";
-import type { SessionExecutionStatusValue } from "../../services/session";
 import type { AgentRunWorkspaceListEntry } from "../../types";
-import { useAgentRunListProjection } from "../../features/agent/agent-run-list-projection-store";
+import { useAgentRunListState } from "../../features/agent/agent-run-list-state-store";
+import {
+  AGENT_RUN_DELIVERY_STATUS_LABEL,
+  normalizeAgentRunDeliveryStatus,
+  type AgentRunDeliveryStatus,
+} from "../../features/agent/agent-run-delivery-status";
 
 /** 基于 delivery 执行状态的视觉映射 */
-const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> = {
+const EXECUTION_STATUS_TONE: Record<AgentRunDeliveryStatus, StatusDotTone> = {
   idle: "muted",
   running: "success",
   cancelling: "warning",
   completed: "info",
   failed: "danger",
   interrupted: "warning",
+  lost: "danger",
 };
 
-const EXECUTION_STATUS_LABEL: Record<SessionExecutionStatusValue, string> = {
-  idle: "就绪",
-  running: "执行中",
-  cancelling: "取消中",
-  completed: "已完成",
-  failed: "失败",
-  interrupted: "已中断",
-};
-
-function executionStatusTone(status: SessionExecutionStatusValue): StatusDotTone {
+function executionStatusTone(status: AgentRunDeliveryStatus): StatusDotTone {
   return EXECUTION_STATUS_TONE[status] ?? "muted";
 }
 
@@ -50,7 +46,7 @@ interface AgentRunShortcutEntry {
   runId: string;
   agentId: string;
   workspaceTitle: string;
-  executionStatus: SessionExecutionStatusValue;
+  executionStatus: AgentRunDeliveryStatus;
   updatedAt: string | number;
   subagentCount: number;
 }
@@ -62,26 +58,12 @@ interface LifecycleShortcutListProps {
   projectId: string | null;
 }
 
-function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
-  if (
-    status === "idle"
-    || status === "running"
-    || status === "cancelling"
-    || status === "completed"
-    || status === "failed"
-    || status === "interrupted"
-  ) {
-    return status;
-  }
-  return "idle";
-}
-
 function shortcutEntryFromAgentRun(entry: AgentRunWorkspaceListEntry): AgentRunShortcutEntry {
   return {
     runId: entry.run_ref.run_id,
     agentId: entry.agent_ref.agent_id,
     workspaceTitle: entry.shell.display_title.trim() || "AgentRun 加载中...",
-    executionStatus: normalizeExecutionStatus(entry.shell.delivery_status),
+    executionStatus: normalizeAgentRunDeliveryStatus(entry.shell.delivery_status),
     updatedAt: entry.shell.last_activity_at,
     subagentCount: entry.subagent_count ?? 0,
   };
@@ -91,10 +73,10 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
   const navigate = useNavigate();
   const location = useLocation();
   const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
-  const projection = useAgentRunListProjection(projectId);
-  const entries = projection.entries;
-  const hasMoreOnServer = Boolean(projection.next_cursor);
-  const error = projection.error;
+  const listState = useAgentRunListState(projectId);
+  const entries = listState.entries;
+  const hasMoreOnServer = Boolean(listState.next_cursor);
+  const error = listState.error;
   const listRef = useRef<HTMLDivElement | null>(null);
   const [maxVisible, setMaxVisible] = useState(8);
 
@@ -174,7 +156,7 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
                     size="sm"
                     pulse={entry.executionStatus === "running"}
                     className="shrink-0"
-                    title={EXECUTION_STATUS_LABEL[entry.executionStatus] ?? entry.executionStatus}
+                    title={AGENT_RUN_DELIVERY_STATUS_LABEL[entry.executionStatus] ?? entry.executionStatus}
                   />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
                     {entry.workspaceTitle}

@@ -1,7 +1,7 @@
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository, DeliveryBindingStatus,
-    LifecycleAgent, LifecycleAgentCurrentDeliveryBinding, LifecycleAgentRepository, LifecycleGate,
+    AgentFrame, AgentFrameRepository, AgentFrameSurfaceDocument, AgentLineage,
+    AgentLineageRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
     LifecycleGateRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
 };
@@ -47,101 +47,13 @@ struct AgentRow {
     project_agent_id: Option<String>,
     status: String,
     bootstrap_status: String,
-    current_delivery_runtime_session_id: Option<String>,
-    current_delivery_launch_frame_id: Option<String>,
-    current_delivery_orchestration_id: Option<String>,
-    current_delivery_node_path: Option<String>,
-    current_delivery_node_attempt: Option<i32>,
-    current_delivery_status: Option<String>,
-    current_delivery_observed_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
-}
-
-fn current_delivery_from_row(
-    row: &AgentRow,
-) -> Result<Option<LifecycleAgentCurrentDeliveryBinding>, DomainError> {
-    let has_any = row.current_delivery_runtime_session_id.is_some()
-        || row.current_delivery_launch_frame_id.is_some()
-        || row.current_delivery_orchestration_id.is_some()
-        || row.current_delivery_node_path.is_some()
-        || row.current_delivery_node_attempt.is_some()
-        || row.current_delivery_status.is_some()
-        || row.current_delivery_observed_at.is_some();
-    if !has_any {
-        return Ok(None);
-    }
-
-    let runtime_session_id = row
-        .current_delivery_runtime_session_id
-        .clone()
-        .ok_or_else(|| incomplete_current_delivery("current_delivery_runtime_session_id"))?;
-    let launch_frame_id = row
-        .current_delivery_launch_frame_id
-        .as_ref()
-        .ok_or_else(|| incomplete_current_delivery("current_delivery_launch_frame_id"))
-        .and_then(|value| parse_uuid(value, "lifecycle_agents.current_delivery_launch_frame_id"))?;
-    let status = row
-        .current_delivery_status
-        .as_deref()
-        .ok_or_else(|| incomplete_current_delivery("current_delivery_status"))?
-        .parse::<DeliveryBindingStatus>()
-        .map_err(|_| {
-            DomainError::InvalidConfig(format!(
-                "lifecycle_agents.current_delivery_status invalid slug `{}`",
-                row.current_delivery_status.as_deref().unwrap_or_default()
-            ))
-        })?;
-    let observed_at = row
-        .current_delivery_observed_at
-        .ok_or_else(|| incomplete_current_delivery("current_delivery_observed_at"))?;
-
-    let orchestration_id = opt_uuid(
-        row.current_delivery_orchestration_id.as_ref(),
-        "lifecycle_agents.current_delivery_orchestration_id",
-    )?;
-    let has_orchestration_coordinate = orchestration_id.is_some()
-        || row.current_delivery_node_path.is_some()
-        || row.current_delivery_node_attempt.is_some();
-    if has_orchestration_coordinate
-        && (orchestration_id.is_none()
-            || row.current_delivery_node_path.is_none()
-            || row.current_delivery_node_attempt.is_none())
-    {
-        return Err(incomplete_current_delivery(
-            "current_delivery_orchestration_coordinate",
-        ));
-    }
-    let node_attempt = match row.current_delivery_node_attempt {
-        Some(value) => Some(u32::try_from(value).map_err(|_| {
-            DomainError::InvalidConfig(format!(
-                "lifecycle_agents.current_delivery_node_attempt invalid value `{value}`"
-            ))
-        })?),
-        None => None,
-    };
-
-    Ok(Some(LifecycleAgentCurrentDeliveryBinding {
-        runtime_session_id,
-        launch_frame_id,
-        orchestration_id,
-        node_path: row.current_delivery_node_path.clone(),
-        node_attempt,
-        status,
-        observed_at,
-    }))
-}
-
-fn incomplete_current_delivery(field: &'static str) -> DomainError {
-    DomainError::InvalidConfig(format!(
-        "lifecycle_agents current delivery binding is incomplete: {field}"
-    ))
 }
 
 impl TryFrom<AgentRow> for LifecycleAgent {
     type Error = DomainError;
     fn try_from(row: AgentRow) -> Result<Self, Self::Error> {
-        let current_delivery = current_delivery_from_row(&row)?;
         Ok(LifecycleAgent {
             id: parse_uuid(&row.id, "lifecycle_agents.id")?,
             run_id: parse_uuid(&row.run_id, "lifecycle_agents.run_id")?,
@@ -154,7 +66,6 @@ impl TryFrom<AgentRow> for LifecycleAgent {
             )?,
             status: row.status,
             bootstrap_status: row.bootstrap_status,
-            current_delivery,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -166,12 +77,9 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
     async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
         sqlx::query(
             r#"INSERT INTO lifecycle_agents
-                (id, run_id, project_id, created_by_user_id, source, project_agent_id, status, bootstrap_status,
-                 current_delivery_runtime_session_id,
-                 current_delivery_launch_frame_id, current_delivery_orchestration_id,
-                 current_delivery_node_path, current_delivery_node_attempt,
-                 current_delivery_status, current_delivery_observed_at, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"#,
+                (id, run_id, project_id, created_by_user_id, source, project_agent_id,
+                 status, bootstrap_status, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
         )
         .bind(agent.id.to_string())
         .bind(agent.run_id.to_string())
@@ -181,48 +89,6 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
         .bind(agent.project_agent_id.map(|id| id.to_string()))
         .bind(&agent.status)
         .bind(&agent.bootstrap_status)
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.runtime_session_id.clone()),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.launch_frame_id.to_string()),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .and_then(|binding| binding.orchestration_id.map(|id| id.to_string())),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .and_then(|binding| binding.node_path.clone()),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .and_then(|binding| binding.node_attempt.map(|attempt| attempt as i32)),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.status.as_str()),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.observed_at),
-        )
         .bind(agent.created_at)
         .bind(agent.updated_at)
         .execute(&self.pool)
@@ -235,10 +101,6 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
         sqlx::query_as::<_, AgentRow>(
             r#"SELECT id,run_id,project_id,source,project_agent_id,status,bootstrap_status,
                       created_by_user_id,
-                      current_delivery_runtime_session_id,
-                      current_delivery_launch_frame_id, current_delivery_orchestration_id,
-                      current_delivery_node_path, current_delivery_node_attempt,
-                      current_delivery_status, current_delivery_observed_at,
                       created_at,updated_at
                FROM lifecycle_agents WHERE id=$1"#,
         )
@@ -254,10 +116,6 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
         sqlx::query_as::<_, AgentRow>(
             r#"SELECT id,run_id,project_id,source,project_agent_id,status,bootstrap_status,
                       created_by_user_id,
-                      current_delivery_runtime_session_id,
-                      current_delivery_launch_frame_id, current_delivery_orchestration_id,
-                      current_delivery_node_path, current_delivery_node_attempt,
-                      current_delivery_status, current_delivery_observed_at,
                       created_at,updated_at
                FROM lifecycle_agents WHERE run_id=$1 ORDER BY created_at"#,
         )
@@ -275,62 +133,13 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
             r#"UPDATE lifecycle_agents
                SET status=$1, bootstrap_status=$2, project_agent_id=$3,
                    created_by_user_id=$4,
-                   current_delivery_runtime_session_id=$5,
-                   current_delivery_launch_frame_id=$6,
-                   current_delivery_orchestration_id=$7,
-                   current_delivery_node_path=$8,
-                   current_delivery_node_attempt=$9,
-                   current_delivery_status=$10,
-                   current_delivery_observed_at=$11,
-                   updated_at=$12
-               WHERE id=$13"#,
+                   updated_at=$5
+               WHERE id=$6"#,
         )
         .bind(&agent.status)
         .bind(&agent.bootstrap_status)
         .bind(agent.project_agent_id.map(|id| id.to_string()))
         .bind(&agent.created_by_user_id)
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.runtime_session_id.clone()),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.launch_frame_id.to_string()),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .and_then(|binding| binding.orchestration_id.map(|id| id.to_string())),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .and_then(|binding| binding.node_path.clone()),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .and_then(|binding| binding.node_attempt.map(|attempt| attempt as i32)),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.status.as_str()),
-        )
-        .bind(
-            agent
-                .current_delivery
-                .as_ref()
-                .map(|binding| binding.observed_at),
-        )
         .bind(agent.updated_at)
         .bind(agent.id.to_string())
         .execute(&self.pool)
@@ -359,6 +168,7 @@ struct FrameRow {
     id: String,
     agent_id: String,
     revision: i32,
+    surface: Option<String>,
     effective_capability_json: Option<String>,
     context_slice_json: Option<String>,
     vfs_surface_json: Option<String>,
@@ -380,13 +190,26 @@ fn parse_opt_json(s: Option<String>, ctx: &str) -> Result<Option<serde_json::Val
     }
 }
 
+fn parse_opt_surface(
+    s: Option<String>,
+    ctx: &str,
+) -> Result<Option<AgentFrameSurfaceDocument>, DomainError> {
+    match s {
+        Some(val) => serde_json::from_str(&val)
+            .map(Some)
+            .map_err(|e| DomainError::InvalidConfig(format!("{ctx}: {e}"))),
+        None => Ok(None),
+    }
+}
+
 impl TryFrom<FrameRow> for AgentFrame {
     type Error = DomainError;
     fn try_from(row: FrameRow) -> Result<Self, Self::Error> {
-        Ok(AgentFrame {
+        let mut frame = AgentFrame {
             id: parse_uuid(&row.id, "agent_frames.id")?,
             agent_id: parse_uuid(&row.agent_id, "agent_frames.agent_id")?,
             revision: row.revision,
+            surface: parse_opt_surface(row.surface, "agent_frames.surface")?,
             effective_capability_json: parse_opt_json(
                 row.effective_capability_json,
                 "effective_capability_json",
@@ -409,7 +232,9 @@ impl TryFrom<FrameRow> for AgentFrame {
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,
-        })
+        };
+        frame.apply_surface_projection();
+        Ok(frame)
     }
 }
 
@@ -422,29 +247,37 @@ fn opt_json_str(v: &Option<serde_json::Value>) -> Result<Option<String>, DomainE
     }
 }
 
+fn surface_json_str(frame: &AgentFrame) -> Result<String, DomainError> {
+    serde_json::to_string(&frame.surface_document())
+        .map_err(|e| DomainError::InvalidConfig(format!("agent_frames.surface serialize: {e}")))
+}
+
 #[async_trait::async_trait]
 impl AgentFrameRepository for PostgresAgentFrameRepository {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+        let surface = frame.surface_document();
         sqlx::query(
             r#"INSERT INTO agent_frames
                 (id, agent_id, revision,
+                 surface,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
                  visible_canvas_mount_ids_json,
                  visible_workspace_module_refs_json,
                  execution_profile_json,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
         .bind(frame.revision)
-        .bind(opt_json_str(&frame.effective_capability_json)?)
-        .bind(opt_json_str(&frame.context_slice_json)?)
-        .bind(opt_json_str(&frame.vfs_surface_json)?)
-        .bind(opt_json_str(&frame.mcp_surface_json)?)
-        .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
-        .bind(opt_json_str(&frame.visible_workspace_module_refs_json)?)
-        .bind(opt_json_str(&frame.execution_profile_json)?)
+        .bind(surface_json_str(frame)?)
+        .bind(opt_json_str(&surface.capability_state)?)
+        .bind(opt_json_str(&surface.context_slice)?)
+        .bind(opt_json_str(&surface.vfs_surface)?)
+        .bind(opt_json_str(&surface.mcp_surface)?)
+        .bind(opt_json_str(&surface.visible_canvas_mount_ids)?)
+        .bind(opt_json_str(&surface.visible_workspace_module_refs)?)
+        .bind(opt_json_str(&surface.execution_profile)?)
         .bind(&frame.created_by_kind)
         .bind(&frame.created_by_id)
         .bind(frame.created_at)
@@ -457,6 +290,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,
+                      surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       visible_workspace_module_refs_json,
@@ -475,6 +309,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,
+                      surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       visible_workspace_module_refs_json,
@@ -493,6 +328,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,
+                      surface,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       visible_canvas_mount_ids_json,
                       visible_workspace_module_refs_json,
@@ -507,50 +343,6 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .into_iter()
         .map(TryInto::try_into)
         .collect()
-    }
-
-    async fn append_visible_canvas_mount(
-        &self,
-        frame_id: Uuid,
-        mount_id: &str,
-    ) -> Result<(), DomainError> {
-        let mut frame = self
-            .get(frame_id)
-            .await?
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_canvas_mount(mount_id);
-        sqlx::query("UPDATE agent_frames SET visible_canvas_mount_ids_json=$1 WHERE id=$2")
-            .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
-            .bind(frame_id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
-        Ok(())
-    }
-
-    async fn append_visible_workspace_module_ref(
-        &self,
-        frame_id: Uuid,
-        module_ref: &str,
-    ) -> Result<(), DomainError> {
-        let mut frame = self
-            .get(frame_id)
-            .await?
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_workspace_module_ref(module_ref);
-        sqlx::query("UPDATE agent_frames SET visible_workspace_module_refs_json=$1 WHERE id=$2")
-            .bind(opt_json_str(&frame.visible_workspace_module_refs_json)?)
-            .bind(frame_id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
-        Ok(())
     }
 }
 
@@ -995,21 +787,14 @@ impl TryFrom<AnchorRow> for RuntimeSessionExecutionAnchor {
 
 #[async_trait::async_trait]
 impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecutionAnchorRepository {
-    async fn upsert(&self, a: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-        sqlx::query(
+    async fn create_once(&self, a: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+        let result = sqlx::query(
             r#"INSERT INTO runtime_session_execution_anchors
                 (runtime_session_id, run_id, launch_frame_id, agent_id,
                  orchestration_id, node_path, node_attempt,
                  created_by_kind, created_at, updated_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-               ON CONFLICT (runtime_session_id) DO UPDATE SET
-                 run_id = EXCLUDED.run_id,
-                 launch_frame_id = EXCLUDED.launch_frame_id,
-                 agent_id = EXCLUDED.agent_id,
-                 orchestration_id = EXCLUDED.orchestration_id,
-                 node_path = EXCLUDED.node_path,
-                 node_attempt = EXCLUDED.node_attempt,
-                 updated_at = EXCLUDED.updated_at"#,
+               ON CONFLICT (runtime_session_id) DO NOTHING"#,
         )
         .bind(&a.runtime_session_id)
         .bind(a.run_id.to_string())
@@ -1024,7 +809,24 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
-        Ok(())
+        if result.rows_affected() > 0 {
+            return Ok(());
+        }
+
+        let existing = self
+            .find_by_session(&a.runtime_session_id)
+            .await?
+            .ok_or_else(|| DomainError::Database {
+                operation: "create_runtime_session_execution_anchor",
+                message: format!(
+                    "runtime_session_id={} conflicted but existing anchor was not visible",
+                    a.runtime_session_id
+                ),
+            })?;
+        if existing.has_same_launch_coordinates_as(a) {
+            return Ok(());
+        }
+        Err(existing.immutable_conflict(a))
     }
 
     async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
@@ -1123,106 +925,71 @@ impl RuntimeSessionExecutionAnchorRepository for PostgresRuntimeSessionExecution
         .map(TryInto::try_into)
         .collect()
     }
-
-    async fn latest_updated_anchor_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-        sqlx::query_as::<_, AnchorRow>(
-            r#"SELECT runtime_session_id, run_id, launch_frame_id, agent_id,
-                      orchestration_id, node_path, node_attempt,
-                      created_by_kind, created_at, updated_at
-               FROM runtime_session_execution_anchors
-               WHERE agent_id = $1
-               ORDER BY updated_at DESC
-               LIMIT 1"#,
-        )
-        .bind(agent_id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
 }
 
 #[cfg(test)]
-mod lifecycle_agent_current_delivery_tests {
+mod tests {
     use super::*;
-    use agentdash_domain::workflow::AgentSource;
+    use serde_json::json;
 
-    fn agent_row() -> AgentRow {
-        let now = Utc::now();
-        AgentRow {
+    fn frame_row_with_surface(surface: Option<serde_json::Value>) -> FrameRow {
+        FrameRow {
             id: Uuid::new_v4().to_string(),
-            run_id: Uuid::new_v4().to_string(),
-            project_id: Uuid::new_v4().to_string(),
-            created_by_user_id: "fixture-user".to_string(),
-            source: AgentSource::ProjectAgent.as_str().to_string(),
-            project_agent_id: None,
-            status: "active".to_string(),
-            bootstrap_status: "pending".to_string(),
-            current_delivery_runtime_session_id: Some("runtime-a".to_string()),
-            current_delivery_launch_frame_id: Some(Uuid::new_v4().to_string()),
-            current_delivery_orchestration_id: Some(Uuid::new_v4().to_string()),
-            current_delivery_node_path: Some("root.plan".to_string()),
-            current_delivery_node_attempt: Some(3),
-            current_delivery_status: Some("running".to_string()),
-            current_delivery_observed_at: Some(now),
-            created_at: now,
-            updated_at: now,
+            agent_id: Uuid::new_v4().to_string(),
+            revision: 3,
+            surface: surface.map(|value| value.to_string()),
+            effective_capability_json: None,
+            context_slice_json: None,
+            vfs_surface_json: None,
+            mcp_surface_json: None,
+            execution_profile_json: None,
+            visible_canvas_mount_ids_json: None,
+            visible_workspace_module_refs_json: None,
+            created_by_kind: "test".to_string(),
+            created_by_id: Some("tester".to_string()),
+            created_at: Utc::now(),
         }
     }
 
     #[test]
-    fn lifecycle_agent_current_delivery_row_maps_complete_binding() {
-        let row = agent_row();
-        let observed_at = row.current_delivery_observed_at.expect("observed_at");
-        let launch_frame_id = Uuid::parse_str(
-            row.current_delivery_launch_frame_id
-                .as_deref()
-                .expect("launch frame"),
-        )
-        .expect("launch uuid");
+    fn frame_row_projects_surface_document_as_canonical_source() {
+        let mut row = frame_row_with_surface(Some(json!({
+            "capability_state": {"canonical": true},
+            "vfs_surface": {"mounts": ["canonical"]},
+            "visible_canvas_mount_ids": ["canvas:canonical"]
+        })));
+        row.effective_capability_json = Some(json!({"stale": true}).to_string());
+        row.vfs_surface_json = Some(json!({"mounts": ["stale"]}).to_string());
+        row.visible_canvas_mount_ids_json = Some(json!(["canvas:stale"]).to_string());
 
-        let agent = LifecycleAgent::try_from(row).expect("agent");
-        let binding = agent.current_delivery.expect("binding");
+        let frame = AgentFrame::try_from(row).expect("frame row should map");
 
-        assert_eq!(binding.runtime_session_id, "runtime-a");
-        assert_eq!(binding.launch_frame_id, launch_frame_id);
-        assert_eq!(binding.node_path.as_deref(), Some("root.plan"));
-        assert_eq!(binding.node_attempt, Some(3));
-        assert_eq!(binding.status, DeliveryBindingStatus::Running);
-        assert_eq!(binding.observed_at, observed_at);
-    }
-
-    #[test]
-    fn lifecycle_agent_current_delivery_row_rejects_partial_binding() {
-        let mut row = agent_row();
-        row.current_delivery_launch_frame_id = None;
-
-        let error = LifecycleAgent::try_from(row).expect_err("partial binding fails");
-
-        assert!(matches!(error, DomainError::InvalidConfig(_)));
-        assert!(
-            error
-                .to_string()
-                .contains("current_delivery_launch_frame_id")
+        assert_eq!(
+            frame.effective_capability_json,
+            Some(json!({"canonical": true}))
+        );
+        assert_eq!(
+            frame.vfs_surface_json,
+            Some(json!({"mounts": ["canonical"]}))
+        );
+        assert_eq!(
+            frame.visible_canvas_mount_ids_json,
+            Some(json!(["canvas:canonical"]))
         );
     }
 
     #[test]
-    fn lifecycle_agent_current_delivery_row_rejects_partial_node_coordinate() {
-        let mut row = agent_row();
-        row.current_delivery_node_attempt = None;
+    fn frame_row_without_surface_derives_document_from_split_projection() {
+        let mut row = frame_row_with_surface(None);
+        row.effective_capability_json = Some(json!({"from_split": true}).to_string());
+        row.context_slice_json = Some(json!({"slice": "launch"}).to_string());
 
-        let error = LifecycleAgent::try_from(row).expect_err("partial node coordinate fails");
+        let frame = AgentFrame::try_from(row).expect("frame row should map");
+        let surface = frame
+            .surface
+            .expect("surface projection should be materialized");
 
-        assert!(matches!(error, DomainError::InvalidConfig(_)));
-        assert!(
-            error
-                .to_string()
-                .contains("current_delivery_orchestration_coordinate")
-        );
+        assert_eq!(surface.capability_state, Some(json!({"from_split": true})));
+        assert_eq!(surface.context_slice, Some(json!({"slice": "launch"})));
     }
 }

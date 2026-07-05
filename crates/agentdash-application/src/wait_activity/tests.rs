@@ -334,7 +334,7 @@ fn test_service_with_gate_repo(
     terminal_cache: Arc<SessionTerminalCache>,
     gate_repo: Arc<dyn LifecycleGateRepository>,
 ) -> WaitActivityService {
-    WaitActivityService::new(
+    WaitActivityService::from_repositories(
         Arc::new(NoopLifecycleAgentRepo),
         Arc::new(NoopAgentFrameRepo),
         Arc::new(NoopExecutionAnchorRepo),
@@ -417,21 +417,13 @@ impl AgentFrameRepository for NoopAgentFrameRepo {
     async fn list_by_agent(&self, _agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
         Ok(Vec::new())
     }
-
-    async fn append_visible_canvas_mount(
-        &self,
-        _frame_id: Uuid,
-        _mount_id: &str,
-    ) -> Result<(), DomainError> {
-        Ok(())
-    }
 }
 
 struct NoopExecutionAnchorRepo;
 
 #[async_trait]
 impl RuntimeSessionExecutionAnchorRepository for NoopExecutionAnchorRepo {
-    async fn upsert(
+    async fn create_once(
         &self,
         _anchor: &agentdash_domain::workflow::RuntimeSessionExecutionAnchor,
     ) -> Result<(), DomainError> {
@@ -469,14 +461,6 @@ impl RuntimeSessionExecutionAnchorRepository for NoopExecutionAnchorRepo {
         _runtime_session_ids: &[String],
     ) -> Result<Vec<agentdash_domain::workflow::RuntimeSessionExecutionAnchor>, DomainError> {
         Ok(Vec::new())
-    }
-
-    async fn latest_updated_anchor_for_agent(
-        &self,
-        _agent_id: Uuid,
-    ) -> Result<Option<agentdash_domain::workflow::RuntimeSessionExecutionAnchor>, DomainError>
-    {
-        Ok(None)
     }
 }
 
@@ -562,7 +546,7 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         &self,
         _run_id: Uuid,
         _agent_id: Uuid,
-        _runtime_session_id: String,
+        _runtime_session_id: Option<String>,
         _reason: String,
         _message: Option<String>,
     ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
@@ -573,7 +557,7 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         &self,
         _run_id: Uuid,
         _agent_id: Uuid,
-        _runtime_session_id: String,
+        _runtime_session_id: Option<String>,
     ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))
     }
@@ -591,7 +575,7 @@ impl AgentRunMailboxRepository for NoopMailboxRepo {
         &self,
         _run_id: Uuid,
         _agent_id: Uuid,
-        _runtime_session_id: String,
+        _runtime_session_id: Option<String>,
         _preference: Value,
     ) -> Result<agentdash_domain::agent_run_mailbox::AgentRunMailboxState, DomainError> {
         Err(DomainError::InvalidConfig("noop".to_string()))

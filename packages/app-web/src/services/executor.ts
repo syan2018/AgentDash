@@ -2,10 +2,6 @@ import { api } from "../api/client";
 import type { ThinkingLevel } from "../types";
 import type { PermissionPolicy } from "../features/executor-selector/model/types";
 import type { CompanionGateRespondResponse } from "../generated/companion-contracts";
-import type {
-  ApproveToolCallResponse,
-  RejectToolCallResponse,
-} from "../generated/session-contracts";
 import {
   approveAgentRunToolCall,
   rejectAgentRunToolCall,
@@ -25,39 +21,18 @@ export interface ExecutorConfig {
   permission_policy?: PermissionPolicy;
 }
 
-export async function approveToolCall(
-  sessionId: string,
-  toolCallId: string,
-): Promise<ApproveToolCallResponse> {
-  return api.post<ApproveToolCallResponse>(
-    `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/approve`,
-    {},
-  );
-}
-
 export async function approveToolCallForAgentRun(
   target: AgentRunRuntimeTarget,
   toolCallId: string,
-): Promise<ApproveToolCallResponse> {
+) {
   return approveAgentRunToolCall(target, toolCallId);
-}
-
-export async function rejectToolCall(
-  sessionId: string,
-  toolCallId: string,
-  reason?: string,
-): Promise<RejectToolCallResponse> {
-  return api.post<RejectToolCallResponse>(
-    `/sessions/${encodeURIComponent(sessionId)}/tool-approvals/${encodeURIComponent(toolCallId)}/reject`,
-    { reason },
-  );
 }
 
 export async function rejectToolCallForAgentRun(
   target: AgentRunRuntimeTarget,
   toolCallId: string,
   reason?: string,
-): Promise<RejectToolCallResponse> {
+) {
   return rejectAgentRunToolCall(target, toolCallId, reason);
 }
 

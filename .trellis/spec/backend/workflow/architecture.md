@@ -11,7 +11,6 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 | `AgentProcedure` | 单个 Agent Activity 的 behavior / capability / context / hook / port 契约 |
 | `WorkflowGraph` | 可执行 Activity DAG definition |
 | `LifecycleRun` | tracked life process / control ledger |
-| `LifecycleContext` | `LifecycleRun` 内的上下文快照，保存主 AgentRun、AgentRun refs、AgentFrame refs、权限和预算摘要 |
 | `OrchestrationInstance` | `LifecycleRun` 内部 0..N 个编排状态容器，保存 plan snapshot、runtime node state、dispatch 摘要和 state exchange snapshot；`orchestration_id` 是运行实例身份 |
 | `OrchestrationPlanSnapshot` | 静态 graph、workflow script 或 run artifact 编译后的不可变 runtime plan |
 | `LifecycleRunTopology` | run 的控制面拓扑：`plain` 表示普通 Agent runtime，`workflow_graph` 表示显式 Activity graph runtime |
@@ -29,7 +28,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 
 - `WorkflowGraph` 是 workflow 运行、编辑和观察的主模型。
 - `LifecycleRun` 是 tracked life process / control ledger；同一 run 可以包含 0..N 个 `OrchestrationInstance`。
-- `LifecycleRun.context`、`LifecycleRun.orchestrations`、`LifecycleRun.view_projection` 是 orchestration contract 的 owning aggregate 字段；command/service 通过 aggregate 写入这些字段，repository 只做整体持久化。
+- `LifecycleRun.orchestrations`、`LifecycleRun.tasks`、`LifecycleRun.execution_log` 是 Lifecycle control ledger 的 owning aggregate 字段；command/service 通过 aggregate 写入这些字段，repository 只做整体持久化。
 - `OrchestrationInstance.orchestration_id` 是唯一运行实例身份；definition source / asset provenance 只能作为 plan metadata 或审计信息，不参与 scheduler、terminal callback、trace anchor 的节点坐标。
 - 静态 `WorkflowGraph`、workflow script 或 run artifact 进入 runtime 前先由 application 层 compiler 生成 `OrchestrationPlanSnapshot(plan_digest=sha256:...)`；compiler blocking diagnostics 发生在 run/orchestration 创建前。
 - Runtime node key 必须包含 `orchestration_id + node_path + attempt`，避免同一 Lifecycle 内多个 orchestration 的节点冲突。
@@ -91,7 +90,11 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 - 普通 Agent runtime 默认使用 plain 拓扑，原因是多数 Agent 会话只需要控制面、runtime trace 与 subject 归属；Activity graph 只在需要节点流转、attempt state、claim 和 assignment 的显式 workflow 中引入。
 - 业务 result 不平铺 run / graph / agent / frame / node refs，原因是 run / agent / frame 是通用控制面，而 orchestration/node refs 是显式 workflow binding；统一 envelope 可以让调用方先处理 Agent runtime，再按拓扑决定是否进入 workflow 节点细节。
 - artifact edge 自动提供 flow dependency，原因是数据依赖本身已经表达执行顺序，重复 flow edge 会制造两套 dependency 事实。
-- `RuntimeSessionExecutionAnchor` 是 runtime trace/delivery refs 的索引和 read model projection 来源，原因是运行时 trace 反查需要稳定索引，且不应随 frame revision surface 变化。
+- `RuntimeSessionExecutionAnchor` 是 runtime trace/delivery refs 的 create-once launch evidence 和 read
+  model projection 来源，原因是运行时 trace 反查需要稳定索引，且 frame revision surface 变化时 anchor
+  坐标仍保持稳定。AgentRun current delivery selection 从 AgentRun-owned delivery binding 出发，并用
+  anchor 校验 run / agent / launch frame / orchestration node 坐标，原因是 current delivery 是运行中的
+  AgentRun 状态绑定，anchor 表达 runtime trace 到控制面坐标的不可变证据。
 - AgentRun conversation snapshot 以 run / agent / current frame / delivery anchor / runtime execution state /
   mailbox projection / model config / resource surface 生成 command view，原因是用户工作台命令需要同时验证
   lifecycle 控制面、active AgentRunTurn、mailbox envelope、模型解析和 connector capability。`RuntimeSession` 继续作为 delivery /
@@ -108,9 +111,10 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
   coordinate，原因是 task view、terminal effect artifact/status 和 journey node lookup 都需要消费同一
   runtime node identity，同时保留 RuntimeSession trace 下钻能力。
 - Workflow AgentCall node materialization 归属 `LifecycleDispatchService::materialize_workflow_agent_node`。
-  node launcher 只解析 ready-node policy、调用 materialization use case、提交 `NodeStarted` reducer event
-  和返回 executor refs；原因是 LifecycleAgent、AgentFrame、RuntimeSession 和 anchor 的创建必须和
-  plain / ProjectAgent dispatch 共享同一套控制面事实闭包。
+  node launcher 只解析 ready-node policy、调用 materialization use case、提交 `NodeClaimed` reducer event
+  和返回 executor refs；RuntimeSession accepted turn 后再由 lifecycle advance 提交 `NodeStarted`。原因是
+  LifecycleAgent、AgentFrame、RuntimeSession 和 anchor 的创建必须和 plain / ProjectAgent dispatch
+  共享同一套控制面事实闭包，而 running 状态属于真实 accepted turn 边界。
 - `LifecycleGateResolver` 是 gate transition 的 application owner。resolver 只推进 gate durable fact，并返回 delivery / notification intent；Companion mailbox、session event、Workflow HumanGate response 等外部投递由 adapter 消费 intent，原因是 gate state、human decision fact 与通知投递需要保持同一状态语言但不共享同一个 transport。
 - `LifecycleDispatchService` 保持 public facade，内部通过 `lifecycle::dispatch` owner services 编排。`RunOrchestrationStarter` 拥有 graph planning 与 run/orchestration start，`AgentRuntimeMaterializer` 拥有 LifecycleAgent / RuntimeSession / AgentFrame / anchor materialization，`SubjectAssociationWriter` 拥有 subject refs，`LifecycleRelationWriter` 拥有 lineage 与 gate opening，`OrchestrationReducerBridge` 拥有 reducer event 持久化。这样 dispatch facade 可以保持业务入口稳定，同时让每类副作用只有一个内部 owner。
 
@@ -118,7 +122,7 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 
 ### 1. Scope / Trigger
 
-- Trigger: 为 `LifecycleRun` 增加或消费 `context`、`orchestrations`、`view_projection` 字段，或修改 `OrchestrationInstance` / `OrchestrationPlanSnapshot` / `RuntimeNodeState` 等合同。
+- Trigger: 为 `LifecycleRun` 增加或消费 `orchestrations`、`tasks`、`execution_log` 字段，或修改 `OrchestrationInstance` / `OrchestrationPlanSnapshot` / `RuntimeNodeState` 等合同。
 - Scope: domain value objects、`LifecycleRun` aggregate、`LifecycleRunRepository`、workflow runtime 事实源边界。
 
 ### 2. Signatures
@@ -127,16 +131,15 @@ Domain aggregate:
 
 ```rust
 pub struct LifecycleRun {
-    pub context: LifecycleContext,
     pub orchestrations: Vec<OrchestrationInstance>,
-    pub view_projection: Option<serde_json::Value>,
+    pub tasks: Vec<LifecycleTaskPlanItem>,
+    pub execution_log: Vec<LifecycleExecutionEntry>,
 }
 ```
 
 Aggregate methods:
 
 ```rust
-set_lifecycle_context(context: LifecycleContext)
 add_orchestration(orchestration: OrchestrationInstance) -> bool
 replace_orchestration(orchestration: OrchestrationInstance) -> Option<OrchestrationInstance>
 orchestration_by_id(orchestration_id: Uuid) -> Option<&OrchestrationInstance>
@@ -145,25 +148,25 @@ orchestration_by_id(orchestration_id: Uuid) -> Option<&OrchestrationInstance>
 PostgreSQL columns on `lifecycle_runs`:
 
 ```sql
-context text DEFAULT '{}'::text NOT NULL
 orchestrations text DEFAULT '[]'::text NOT NULL
-view_projection text
+tasks text DEFAULT '[]'::text NOT NULL
+execution_log text DEFAULT '[]'::text NOT NULL
 ```
 
 ### 3. Contracts
 
-- `context` 保存 Lifecycle 级上下文引用，不内嵌完整 AgentFrame surface。
 - `orchestrations` 保存同一 Lifecycle 内 0..N 个内部编排实例；`orchestration_id` 是运行实例身份。definition source、asset revision、script digest 等 provenance 可以保存在 plan metadata 或可选审计字段中，但不替代 `orchestration_id`。
+- `tasks` 保存 run-scoped durable task plan facts；它随 LifecycleRun aggregate 整体读写，subject reverse lookup 由 `LifecycleSubjectAssociation` 提供。
+- `execution_log` 保存 run-scoped control-plane execution ledger；需要 append conflict safety、分页或审计不可变 event identity 时再拆独立 event table。
 - `OrchestrationPlanSnapshot.plan_digest` 是 compiled plan 内容身份；runtime、journal 和 projection 按 digest 判断 plan 合同，不使用 graph instance UUID 作为 plan 身份。
 - graph-backed dispatch 创建 `OrchestrationInstance` 时，直接 materialize entry ready nodes、dispatch ready queue 和空 `StateExchangeSnapshot`。
-- `view_projection` 是 read projection 占位，command/service 不从该字段反向推导 runtime state。
 - Scheduler、terminal callback 与 projection 消费 orchestration runtime node state。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| `LifecycleRun` constructor 创建 plain / workflow_graph run | `context={}`、`orchestrations=[]`、`view_projection=None` |
+| `LifecycleRun` constructor 创建 plain / workflow_graph run | `orchestrations=[]`、`tasks=[]`、`execution_log=[]` |
 | `add_orchestration` 收到重复 `orchestration_id` | 返回 `false`，不修改 aggregate |
 | `replace_orchestration` 找不到 `orchestration_id` | 返回 `None` |
 | repository 读取无效 `orchestrations` JSON 文本 | 返回带 `lifecycle_runs.orchestrations` 上下文的 `DomainError` |
@@ -172,8 +175,8 @@ view_projection text
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `LifecycleRunRepository` create/update/select 对 `context`、`orchestrations`、`view_projection` 做整体 roundtrip。
-- Base: plain run 没有 orchestration instance，但仍能保存空 context 和空数组。
+- Good: `LifecycleRunRepository` create/update/select 对 `orchestrations`、`tasks`、`execution_log` 做整体 roundtrip。
+- Base: plain run 没有 orchestration instance，但仍能保存空数组。
 - Good: 同一 run 内 root workflow、append workflow、review flow 或 dynamic script 分别拥有独立 `orchestration_id`，从而共享 Lifecycle 容器但隔离 runtime node state。
 
 ### 6. Tests Required
@@ -334,15 +337,14 @@ LifecycleDispatchService::materialize_workflow_agent_node(
 
 ### 3. Contracts
 
-- Graph-backed dispatch 创建 runtime session 后，entry runtime node 必须通过 reducer 从 `Ready` 转为 `Running`。
-- Reducer 写入 `executor_run_ref` 和 `RuntimeTraceRef::RuntimeSession`，并移除 ready queue 中的 entry node。
+- Graph-backed dispatch 创建 runtime session 后，entry runtime node 必须通过 reducer 从 `Ready` 转为 `Claiming`。
+- Reducer 移除 ready queue 中的 entry node，但不写入 `executor_run_ref`、`RuntimeTraceRef::RuntimeSession` 或 `started_at`；这些执行事实由 accepted turn boundary 提交。
 - 更新后的 `LifecycleRun` 必须回写 repository，且 dispatch result 的 `runtime_refs` 仍使用同一个 `orchestration_id + node_path + attempt`。
 - `start_lifecycle_run` 只初始化 orchestration，不创建 runtime session，因此 entry node 仍为 `Ready`。
 - 如果 graph-backed dispatch 无法取得 runtime session id，不能伪造 `NodeStarted`；应返回内部错误并保持事实一致。
 - Scheduler ready `AgentCall` node materialization 必须通过 `LifecycleDispatchService` 创建 `LifecycleAgent`、
   `AgentFrame`、`RuntimeSession` 和 `RuntimeSessionExecutionAnchor`，并返回同一组 `AgentRuntimeRefs`。
-  `AgentNodeLauncher` 在收到 materialization result 后提交 `NodeStarted`，原因是 node state transition
-  属于 orchestration reducer，而 runtime identity materialization 属于 lifecycle dispatch use case。
+  `AgentNodeLauncher` 在收到 materialization result 后提交 `NodeClaimed`，原因是 materialization 只声明节点已被 delivery 占用；`NodeStarted` 属于 RuntimeSession accepted turn 之后的 lifecycle advance boundary。
 - `WorkflowAgentNodeMaterializationResult.runtime_refs` 必须携带 `orchestration_id + node_path + attempt`，
   并与 anchor 的 orchestration binding 一致。
 
@@ -350,22 +352,22 @@ LifecycleDispatchService::materialize_workflow_agent_node(
 
 | 条件 | 结果 |
 | --- | --- |
-| graph-backed dispatch 成功创建 runtime session | entry node `Running`，ready queues 为空 |
+| graph-backed dispatch 成功创建 runtime session | entry node `Claiming`，ready queues 为空 |
 | `RuntimePolicy` 未提供 session id | 返回 internal error，不写 fake executor ref |
 | `start_lifecycle_run` | entry node `Ready`，无 executor ref |
-| scheduler ready `AgentCall` materialization 成功 | node `Running`，executor ref 指向创建的 runtime session，anchor refs 与 node coordinate 一致 |
+| scheduler ready `AgentCall` materialization 成功 | node `Claiming`，ready queue 移除；anchor refs 与 node coordinate 一致，executor ref 在 accepted turn 后写入 |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: subject execution with workflow graph creates one runtime session anchor and the root node has matching `ExecutorRunRef::RuntimeSession` plus trace ref.
-- Good: scheduler consumes a ready `AgentCall`, dispatch service creates the agent/frame/session/anchor evidence, then reducer records `NodeStarted` with the same runtime session ref.
+- Good: subject execution with workflow graph creates one runtime session anchor and the root node is claimed until the accepted turn writes matching `ExecutorRunRef::RuntimeSession` plus trace ref.
+- Good: scheduler consumes a ready `AgentCall`, dispatch service creates the agent/frame/session/anchor evidence, then reducer records `NodeClaimed`; accepted turn lifecycle advance records `NodeStarted` with the same runtime session ref.
 - Base: lifecycle start API creates orchestration only; no agent/frame/session side effect.
-- Bad: dispatch returns a delivery runtime session while `RuntimeNodeState` stays `Ready` with no executor ref.
+- Bad: dispatch returns a delivery runtime session while `RuntimeNodeState` stays `Ready` and remains eligible for a second claim.
 
 ### 6. Tests Required
 
 - Dispatch service graph-backed subject execution asserts node `Running`、empty ready queues、executor ref、trace ref、anchor refs。
-- Agent node launcher test asserts ready `AgentCall` materialization delegates identity/session/anchor creation to dispatch service and only applies `NodeStarted` after materialization result is available。
+- Agent node launcher test asserts ready `AgentCall` materialization delegates identity/session/anchor creation to dispatch service and applies only `NodeClaimed` after materialization result is available。
 - Project agent graph dispatch by key asserts the same started materialization。
 - Lifecycle run start test asserts entry remains `Ready`。
 
@@ -380,7 +382,7 @@ dispatch_common creates RuntimeSessionExecutionAnchor, but leaves node Ready
 #### Correct
 
 ```text
-dispatch_common creates anchor -> submits NodeStarted -> persists LifecycleRun with node Running
+dispatch_common creates anchor -> submits NodeClaimed -> persists LifecycleRun with node Claiming; accepted turn lifecycle advance submits NodeStarted
 ```
 
 ## Scenario: Workflow Script Builder Frontend

@@ -43,6 +43,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 lifecycle_agents: self.lifecycle_agent_repo,
                 agent_frames: self.agent_frame_repo,
                 execution_anchors: self.execution_anchor_repo,
+                delivery_bindings: self.delivery_binding_repo,
             })
             .select_current_delivery(run_id, agent_id)
             .await
@@ -144,6 +145,17 @@ impl<'a> AgentRunMailboxService<'a> {
             Some(&target.frame),
             &target.message_stream.runtime_session_id,
         ))
+    }
+}
+
+impl ResolvedAgentRunMailboxCommandTarget {
+    pub(super) fn command_target(&self) -> AgentRunMailboxCommandTarget {
+        AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+            self.run.id,
+            self.agent.id,
+            self.frame.id,
+            self.message_stream.runtime_session_id.clone(),
+        )
     }
 }
 

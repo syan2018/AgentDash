@@ -7,8 +7,9 @@ use agentdash_application_workflow::gate::{
     RespondHumanGateCommand,
 };
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryBindingRepository,
+    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
+    RuntimeSessionExecutionAnchorRepository,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -355,30 +356,41 @@ pub struct CompanionGateControlService {
     frame_repo: Arc<dyn AgentFrameRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     lineage_repo: Arc<dyn AgentLineageRepository>,
     delivery: Arc<dyn CompanionGateNotificationDelivery>,
     parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
     human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
 }
 
+#[derive(Clone)]
+pub struct CompanionGateControlRepos {
+    pub gate_repo: Arc<dyn LifecycleGateRepository>,
+    pub run_repo: Arc<dyn LifecycleRunRepository>,
+    pub frame_repo: Arc<dyn AgentFrameRepository>,
+    pub agent_repo: Arc<dyn LifecycleAgentRepository>,
+    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    pub lineage_repo: Arc<dyn AgentLineageRepository>,
+}
+
+pub struct CompanionGateControlDeps {
+    pub repos: CompanionGateControlRepos,
+    pub delivery: Arc<dyn CompanionGateNotificationDelivery>,
+}
+
 impl CompanionGateControlService {
-    pub fn new(
-        gate_repo: Arc<dyn LifecycleGateRepository>,
-        run_repo: Arc<dyn LifecycleRunRepository>,
-        frame_repo: Arc<dyn AgentFrameRepository>,
-        agent_repo: Arc<dyn LifecycleAgentRepository>,
-        anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        lineage_repo: Arc<dyn AgentLineageRepository>,
-        delivery: Arc<dyn CompanionGateNotificationDelivery>,
-    ) -> Self {
+    pub fn new(deps: CompanionGateControlDeps) -> Self {
+        let CompanionGateControlDeps { repos, delivery } = deps;
         Self {
-            gate_resolver: LifecycleGateResolver::new(gate_repo.clone()),
-            gate_repo,
-            run_repo,
-            frame_repo,
-            agent_repo,
-            anchor_repo,
-            lineage_repo,
+            gate_resolver: LifecycleGateResolver::new(repos.gate_repo.clone()),
+            gate_repo: repos.gate_repo,
+            run_repo: repos.run_repo,
+            frame_repo: repos.frame_repo,
+            agent_repo: repos.agent_repo,
+            anchor_repo: repos.anchor_repo,
+            delivery_binding_repo: repos.delivery_binding_repo,
+            lineage_repo: repos.lineage_repo,
             delivery,
             parent_mailbox_delivery: Arc::new(NoopCompanionParentMailboxDelivery),
             human_response_mailbox_delivery: Arc::new(NoopCompanionHumanResponseMailboxDelivery),
@@ -402,23 +414,13 @@ impl CompanionGateControlService {
     }
 
     pub fn with_session_eventing(
-        gate_repo: Arc<dyn LifecycleGateRepository>,
-        run_repo: Arc<dyn LifecycleRunRepository>,
-        frame_repo: Arc<dyn AgentFrameRepository>,
-        agent_repo: Arc<dyn LifecycleAgentRepository>,
-        anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-        lineage_repo: Arc<dyn AgentLineageRepository>,
+        repos: CompanionGateControlRepos,
         eventing: SessionEventingService,
     ) -> Self {
-        Self::new(
-            gate_repo,
-            run_repo,
-            frame_repo,
-            agent_repo,
-            anchor_repo,
-            lineage_repo,
-            Arc::new(SessionEventingCompanionGateDelivery::new(eventing)),
-        )
+        Self::new(CompanionGateControlDeps {
+            repos,
+            delivery: Arc::new(SessionEventingCompanionGateDelivery::new(eventing)),
+        })
     }
 
     pub async fn respond(
@@ -565,10 +567,10 @@ impl CompanionGateControlService {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("companion");
         let parent_delivery_runtime_session_id = self
-            .select_current_delivery_runtime_session_id(lineage.run_id, parent_agent_id)
+            .select_bound_delivery_runtime_session_id(lineage.run_id, parent_agent_id)
             .await?;
         let child_delivery_runtime_session_id = self
-            .validate_current_delivery_runtime_session_id(
+            .validate_bound_delivery_runtime_session_id(
                 lineage.run_id,
                 child_frame.agent_id,
                 &child_runtime_session_id,
@@ -703,7 +705,7 @@ impl CompanionGateControlService {
             ApplicationError::Conflict("lineage 中 parent_agent_id 为空".to_string())
         })?;
         let child_delivery_runtime_session_id = self
-            .validate_current_delivery_runtime_session_id(
+            .validate_bound_delivery_runtime_session_id(
                 child_anchor.run_id,
                 child_frame.agent_id,
                 &command.child_runtime_session_id,
@@ -860,7 +862,7 @@ impl CompanionGateControlService {
             )));
         }
         let parent_delivery_runtime_session_id = self
-            .validate_current_delivery_runtime_session_id(
+            .validate_bound_delivery_runtime_session_id(
                 parent_anchor.run_id,
                 parent_frame.agent_id,
                 &command.parent_runtime_session_id,
@@ -889,7 +891,7 @@ impl CompanionGateControlService {
                 ))
             })?;
         let child_delivery_runtime_session_id = self
-            .validate_current_delivery_runtime_session_id(
+            .validate_bound_delivery_runtime_session_id(
                 parent_anchor.run_id,
                 child_agent_id,
                 &child_delivery_runtime_session_id,
@@ -1006,11 +1008,11 @@ impl CompanionGateControlService {
             )));
         }
 
-        self.select_current_delivery_runtime_session_id(gate.run_id, frame.agent_id)
+        self.select_bound_delivery_runtime_session_id(gate.run_id, frame.agent_id)
             .await
     }
 
-    async fn select_current_delivery_runtime_session_id(
+    async fn select_bound_delivery_runtime_session_id(
         &self,
         run_id: Uuid,
         agent_id: Uuid,
@@ -1021,7 +1023,7 @@ impl CompanionGateControlService {
             .map(|selection| selection.runtime_session_id))
     }
 
-    async fn validate_current_delivery_runtime_session_id(
+    async fn validate_bound_delivery_runtime_session_id(
         &self,
         run_id: Uuid,
         agent_id: Uuid,
@@ -1049,6 +1051,7 @@ impl CompanionGateControlService {
             lifecycle_agents: self.agent_repo.as_ref(),
             agent_frames: self.frame_repo.as_ref(),
             execution_anchors: self.anchor_repo.as_ref(),
+            delivery_bindings: self.delivery_binding_repo.as_ref(),
         })
         .select_current_delivery(run_id, agent_id)
         .await
@@ -1268,8 +1271,9 @@ mod tests {
     use agentdash_domain::{
         DomainError,
         workflow::{
-            AgentFrame, AgentLineage, AgentSource, DeliveryBindingStatus, LifecycleAgent,
-            LifecycleGate, LifecycleRun, LifecycleRunRepository, RuntimeSessionExecutionAnchor,
+            AgentFrame, AgentLineage, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
+            AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleGate, LifecycleRun,
+            LifecycleRunRepository, RuntimeSessionExecutionAnchor,
         },
     };
 
@@ -1362,17 +1366,6 @@ mod tests {
                 .cloned()
                 .collect())
         }
-
-        async fn append_visible_canvas_mount(
-            &self,
-            frame_id: Uuid,
-            mount_id: &str,
-        ) -> Result<(), DomainError> {
-            if let Some(frame) = self.frames.lock().unwrap().get_mut(&frame_id) {
-                frame.append_visible_canvas_mount(mount_id);
-            }
-            Ok(())
-        }
     }
 
     #[derive(Default)]
@@ -1431,7 +1424,6 @@ mod tests {
     impl MemoryAgentRepo {
         fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid, project_id: Uuid) -> Self {
             let mut agents = HashMap::new();
-            let mut current_frame_ids: HashMap<Uuid, Uuid> = HashMap::new();
             let frames: Vec<_> = frame_repo
                 .frames
                 .lock()
@@ -1444,39 +1436,6 @@ mod tests {
                 agent.id = frame.agent_id;
                 agent.status = "running".to_string();
                 agents.entry(agent.id).or_insert(agent);
-                let should_replace = current_frame_ids
-                    .get(&frame.agent_id)
-                    .and_then(|current_frame_id| {
-                        frames.iter().find(|item| item.id == *current_frame_id)
-                    })
-                    .is_none_or(|current_frame| frame.revision > current_frame.revision);
-                if should_replace {
-                    current_frame_ids.insert(frame.agent_id, frame.id);
-                }
-            }
-
-            let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
-            for agent in agents.values_mut() {
-                let Some(frame_id) = current_frame_ids.get(&agent.id).copied() else {
-                    continue;
-                };
-                let Some(runtime_session_id) = sessions_by_frame
-                    .get(&frame_id)
-                    .and_then(|session_ids| session_ids.last())
-                else {
-                    continue;
-                };
-                let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-                    runtime_session_id.clone(),
-                    run_id,
-                    frame_id,
-                    agent.id,
-                );
-                agent.bind_current_delivery_from_anchor(
-                    &anchor,
-                    DeliveryBindingStatus::Running,
-                    anchor.updated_at,
-                );
             }
             Self {
                 agents: Mutex::new(agents),
@@ -1542,11 +1501,18 @@ mod tests {
 
     #[async_trait]
     impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
-        async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
-            self.anchors
-                .lock()
-                .unwrap()
-                .insert(anchor.runtime_session_id.clone(), anchor.clone());
+        async fn create_once(
+            &self,
+            anchor: &RuntimeSessionExecutionAnchor,
+        ) -> Result<(), DomainError> {
+            let mut anchors = self.anchors.lock().unwrap();
+            if let Some(existing) = anchors.get(&anchor.runtime_session_id) {
+                if existing.has_same_launch_coordinates_as(anchor) {
+                    return Ok(());
+                }
+                return Err(existing.immutable_conflict(anchor));
+            }
+            anchors.insert(anchor.runtime_session_id.clone(), anchor.clone());
             Ok(())
         }
 
@@ -1605,19 +1571,102 @@ mod tests {
                 .filter_map(|id| anchors.get(id).cloned())
                 .collect())
         }
+    }
 
-        async fn latest_updated_anchor_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
+    #[derive(Default)]
+    struct MemoryDeliveryBindingRepo {
+        bindings: Mutex<HashMap<(Uuid, Uuid), AgentRunDeliveryBinding>>,
+    }
+
+    impl MemoryDeliveryBindingRepo {
+        fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid) -> Self {
+            let frames: Vec<_> = frame_repo
+                .frames
                 .lock()
                 .unwrap()
                 .values()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .max_by_key(|anchor| anchor.updated_at)
+                .cloned()
+                .collect();
+            let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
+            let mut latest_frames: HashMap<Uuid, AgentFrame> = HashMap::new();
+            for frame in frames {
+                let should_replace = latest_frames
+                    .get(&frame.agent_id)
+                    .is_none_or(|current| frame.revision > current.revision);
+                if should_replace {
+                    latest_frames.insert(frame.agent_id, frame);
+                }
+            }
+            let mut bindings = HashMap::new();
+            for frame in latest_frames.values() {
+                let Some(runtime_session_id) = sessions_by_frame
+                    .get(&frame.id)
+                    .and_then(|session_ids| session_ids.last())
+                else {
+                    continue;
+                };
+                let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+                    runtime_session_id.clone(),
+                    run_id,
+                    frame.id,
+                    frame.agent_id,
+                );
+                let binding = AgentRunDeliveryBinding::from_anchor(
+                    &anchor,
+                    DeliveryBindingStatus::Running,
+                    anchor.updated_at,
+                );
+                bindings.insert((binding.run_id, binding.agent_id), binding);
+            }
+            Self {
+                bindings: Mutex::new(bindings),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentRunDeliveryBindingRepository for MemoryDeliveryBindingRepo {
+        async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
+            self.bindings
+                .lock()
+                .unwrap()
+                .insert((binding.run_id, binding.agent_id), binding.clone());
+            Ok(())
+        }
+
+        async fn get_current(
+            &self,
+            run_id: Uuid,
+            agent_id: Uuid,
+        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .get(&(run_id, agent_id))
                 .cloned())
+        }
+
+        async fn list_by_run(
+            &self,
+            run_id: Uuid,
+        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|binding| binding.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+            self.bindings
+                .lock()
+                .unwrap()
+                .retain(|_, binding| binding.runtime_session_id != runtime_session_id);
+            Ok(())
         }
     }
 
@@ -1740,15 +1789,22 @@ mod tests {
             frame_repo.as_ref(),
             run_id,
         ));
-        CompanionGateControlService::new(
-            gate_repo,
-            Arc::new(MemoryRunRepo::with_run(run_id, project_id)),
-            frame_repo,
-            agent_repo,
-            anchor_repo,
-            lineage_repo,
+        let delivery_binding_repo = Arc::new(MemoryDeliveryBindingRepo::from_frame_repo(
+            frame_repo.as_ref(),
+            run_id,
+        ));
+        CompanionGateControlService::new(CompanionGateControlDeps {
+            repos: CompanionGateControlRepos {
+                gate_repo,
+                run_repo: Arc::new(MemoryRunRepo::with_run(run_id, project_id)),
+                frame_repo,
+                agent_repo,
+                anchor_repo,
+                delivery_binding_repo,
+                lineage_repo,
+            },
             delivery,
-        )
+        })
         .with_parent_mailbox_delivery(parent_mailbox_delivery)
         .with_human_response_mailbox_delivery(human_mailbox_delivery)
     }

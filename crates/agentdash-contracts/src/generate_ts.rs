@@ -10,10 +10,11 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse,
     AgentRunForkSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
     AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
-    AgentRunMessageCommandResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
+    AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
+    AgentRunToolCallRejectionResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
     ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
     MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
-    RuntimeSessionCommandStateDto, SteeringStopEffect,
+    SteeringStopEffect,
 };
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
@@ -142,14 +143,10 @@ use agentdash_contracts::routine::{
     RoutineTriggerConfigResponse, UpdateRoutineRequest,
 };
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CreateSessionForkRequest, DeleteSessionResponse,
-    RejectToolCallResponse, RollbackSessionProjectionRequest, SessionCommandStateResponse,
-    SessionEventResponse, SessionEventsPageResponse, SessionForkChildSessionResponse,
-    SessionForkResponse, SessionLineageRecordResponse, SessionLineageRelationKindDto,
-    SessionLineageStatusDto, SessionLineageViewResponse, SessionMessageRefDto,
-    SessionNdjsonEnvelope, SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
-    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
-    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
+    SessionEventResponse, SessionEventsPageResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
+    SessionProjectionMessageRefResponse, SessionProjectionSegmentProvenanceResponse,
+    SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
+    SessionProjectionViewResponse,
 };
 use agentdash_contracts::settings::{
     SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
@@ -188,11 +185,8 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition,
-    AgentConversationContentPartView, AgentConversationFeedMessage, AgentConversationFeedSnapshot,
-    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationMessageRefView,
-    AgentConversationMessageRole, AgentConversationSnapshot, AgentConversationSourceRangeView,
-    AgentConversationToolCallView, AgentConversationToolResultView, AgentFrameRefDto,
+    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
+    AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
     AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunRefDto,
     AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
@@ -211,10 +205,8 @@ use agentdash_contracts::workflow::{
     LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
     OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
-    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionExecutionAnchorDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceMeta, RuntimeSessionTraceView,
-    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto, SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
+    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionRefDto, RuntimeSessionTraceView,
+    SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
     WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
@@ -308,6 +300,8 @@ fn main() {
             export_all::<AgentRunCommandReceipt>(dir);
             export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<AgentRunMessageCommandResponse>(dir);
+            export_all::<AgentRunToolCallApprovalResponse>(dir);
+            export_all::<AgentRunToolCallRejectionResponse>(dir);
             export_all::<MailboxMessageStatus>(dir);
             export_all::<MailboxMessageOrigin>(dir);
             export_all::<MailboxSourceIdentity>(dir);
@@ -321,7 +315,6 @@ fn main() {
             export_all::<AgentRunMailboxMessageContentView>(dir);
             export_all::<MailboxStateView>(dir);
             export_all::<AgentRunMessageCommandOutcome>(dir);
-            export_all::<RuntimeSessionCommandStateDto>(dir);
             export_all::<AgentRunMailboxView>(dir);
         },
     );
@@ -578,25 +571,12 @@ fn main() {
             export_all::<SessionEventResponse>(dir);
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
-            export_all::<SessionCommandStateResponse>(dir);
-            export_all::<DeleteSessionResponse>(dir);
-            export_all::<ApproveToolCallResponse>(dir);
-            export_all::<RejectToolCallResponse>(dir);
             export_all::<SessionProjectionSourceRangeResponse>(dir);
             export_all::<SessionProjectionMessageRefResponse>(dir);
             export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
             export_all::<SessionProjectionSegmentViewResponse>(dir);
             export_all::<SessionProjectionViewResponse>(dir);
-            export_all::<SessionLineageRelationKindDto>(dir);
-            export_all::<SessionLineageStatusDto>(dir);
             export_all::<SessionMessageRefDto>(dir);
-            export_all::<CreateSessionForkRequest>(dir);
-            export_all::<RollbackSessionProjectionRequest>(dir);
-            export_all::<SessionLineageRecordResponse>(dir);
-            export_all::<SessionForkChildSessionResponse>(dir);
-            export_all::<SessionForkResponse>(dir);
-            export_all::<SessionLineageViewResponse>(dir);
-            export_all::<SessionProjectionRollbackResponse>(dir);
         },
     );
 
@@ -757,8 +737,6 @@ fn main() {
             export_all::<AgentRunRefDto>(dir);
             export_all::<AgentFrameRefDto>(dir);
             export_all::<RuntimeSessionRefDto>(dir);
-            export_all::<SessionShellDto>(dir);
-            export_all::<RuntimeSessionExecutionAnchorDto>(dir);
             export_all::<AgentRunCommandPreconditionView>(dir);
             export_all::<AgentRunCommandOnlyRequest>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
@@ -774,7 +752,6 @@ fn main() {
             export_all::<OpenedHumanGateDto>(dir);
             export_all::<AgentRunView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
-            export_all::<RuntimeSessionTraceMeta>(dir);
             export_all::<AgentRunWorkspaceShell>(dir);
             export_all::<AgentRunWorkspaceControlPlaneStatus>(dir);
             export_all::<AgentRunWorkspaceControlPlaneView>(dir);
@@ -798,22 +775,11 @@ fn main() {
             export_all::<AgentConversationIdentity>(dir);
             export_all::<AgentConversationLifecycleContext>(dir);
             export_all::<AgentConversationSnapshot>(dir);
-            export_all::<AgentConversationMessageRefView>(dir);
-            export_all::<AgentConversationSourceRangeView>(dir);
-            export_all::<AgentConversationMessageRole>(dir);
-            export_all::<AgentConversationContentPartView>(dir);
-            export_all::<AgentConversationToolCallView>(dir);
-            export_all::<AgentConversationToolResultView>(dir);
-            export_all::<AgentConversationFeedMessage>(dir);
-            export_all::<AgentConversationFeedSnapshot>(dir);
             export_all::<AgentRunWorkspaceView>(dir);
             export_all::<SubjectRuntimeAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
-            export_all::<SessionRuntimeControlPlaneStatus>(dir);
-            export_all::<SessionRuntimeControlPlaneView>(dir);
-            export_all::<SessionRuntimeControlView>(dir);
             export_all::<AgentRunWorkspaceListEntry>(dir);
             export_all::<AgentRunWorkspaceListView>(dir);
             export_all::<DefinitionSource>(dir);

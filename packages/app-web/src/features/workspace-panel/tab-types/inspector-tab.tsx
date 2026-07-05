@@ -10,12 +10,12 @@ import type { TabTypeDescriptor } from "../tab-type-registry";
 import { InspectorIcon } from "./icons";
 
 function InspectorTabContent() {
-  const { sessionId, agentRunRuntimeTarget, hookRuntime } = useWorkspaceData();
-  if (!sessionId) {
+  const { agentRunRuntimeTarget, hookRuntime } = useWorkspaceData();
+  if (!agentRunRuntimeTarget) {
     return (
       <div className="flex h-full min-h-[200px] items-center justify-center px-6">
         <p className="text-center text-sm text-muted-foreground">
-          需要先建立会话才能查看上下文审计。
+          需要先进入 AgentRun workspace 才能查看上下文审计。
         </p>
       </div>
     );
@@ -31,7 +31,6 @@ function InspectorTabContent() {
       )}
       <div className="min-h-0 flex-1 overflow-hidden">
         <ContextInspectorPanel
-          sessionId={sessionId}
           agentRunTarget={agentRunRuntimeTarget}
         />
       </div>

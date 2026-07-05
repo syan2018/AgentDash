@@ -4,8 +4,8 @@ use agentdash_application_ports::lifecycle_materialization::{
     WorkflowAgentNodeMaterializationPort, WorkflowAgentNodeMaterializationRequest,
 };
 use agentdash_domain::workflow::{
-    AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy, ExecutorRunRef,
-    ExecutorSpec, LifecycleRun, OrchestrationBindingRefs, RuntimePolicy, RuntimeSessionPolicy,
+    AgentProcedureExecutionSpec, AgentProcedureRepository, AgentReusePolicy, ExecutorSpec,
+    LifecycleRun, OrchestrationBindingRefs, RuntimePolicy, RuntimeSessionPolicy,
 };
 
 use crate::WorkflowApplicationError;
@@ -128,10 +128,9 @@ impl AgentNodeLauncher {
                 attempt: coordinate.attempt,
                 runtime_session_id: session_id.clone(),
             },
-            event: Box::new(OrchestrationRuntimeEvent::NodeStarted {
+            event: Box::new(OrchestrationRuntimeEvent::NodeClaimed {
                 node_path: coordinate.node_path.clone(),
                 attempt: coordinate.attempt,
-                executor_run_ref: Some(ExecutorRunRef::RuntimeSession { session_id }),
                 timestamp: chrono::Utc::now(),
             }),
         })

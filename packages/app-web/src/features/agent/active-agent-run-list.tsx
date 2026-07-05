@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ActiveAgentRunList — 以后端 AgentRunWorkspaceListView 展示项目 AgentRun。
  *
  * 主 Run 行内联其直接子 Agent（一跳，含真实 shell 状态），`+N` 药丸就地展开；
@@ -9,14 +9,18 @@ import { CardMenu, ConfirmDialog, type CardMenuItem } from "@agentdash/ui";
 import { useCallback, useMemo, useState } from "react";
 import { useMatch, useNavigate } from "react-router-dom";
 import type { AgentRunListChild, AgentRunWorkspaceListEntry } from "../../types";
-import type { SessionExecutionStatusValue } from "../../services/session";
 import { deleteAgentRun } from "../../services/agentRun";
 import { formatRelativeTime } from "../../lib/format";
 import { agentSourceLabel } from "../../lib/agent-source";
 import {
-  useAgentRunListProjection,
-  useAgentRunListProjectionStore,
-} from "./agent-run-list-projection-store";
+  AGENT_RUN_DELIVERY_STATUS_LABEL,
+  normalizeAgentRunDeliveryStatus,
+  type AgentRunDeliveryStatus,
+} from "./agent-run-delivery-status";
+import {
+  useAgentRunListState,
+  useAgentRunListStateStore,
+} from "./agent-run-list-state-store";
 import {
   groupAgentRunsBySubject,
   groupKindLabel,
@@ -27,22 +31,14 @@ import {
 /** 首屏 / 每批分页大小（与后端默认一致）。 */
 const PAGE_SIZE = 30;
 
-const executionStatusLabel: Record<SessionExecutionStatusValue, string> = {
-  idle: "就绪",
-  running: "执行中",
-  cancelling: "取消中",
-  completed: "已完成",
-  failed: "失败",
-  interrupted: "已中断",
-};
-
-const executionStatusDotColor: Record<SessionExecutionStatusValue, string> = {
+const executionStatusDotColor: Record<AgentRunDeliveryStatus, string> = {
   idle: "bg-gray-400",
   running: "bg-emerald-500 animate-pulse",
   cancelling: "bg-amber-500 animate-pulse",
   completed: "bg-blue-500",
   failed: "bg-red-500",
   interrupted: "bg-amber-500",
+  lost: "bg-red-500",
 };
 
 type StatusFilterGroup = "all" | "running" | "idle" | "ended";
@@ -54,21 +50,7 @@ const STATUS_TAB_OPTIONS: Array<{ value: StatusFilterGroup; label: string }> = [
   { value: "ended", label: "已结束" },
 ];
 
-function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
-  if (
-    status === "idle"
-    || status === "running"
-    || status === "cancelling"
-    || status === "completed"
-    || status === "failed"
-    || status === "interrupted"
-  ) {
-    return status;
-  }
-  return "idle";
-}
-
-function statusGroupOf(status: SessionExecutionStatusValue): Exclude<StatusFilterGroup, "all"> {
+function statusGroupOf(status: AgentRunDeliveryStatus): Exclude<StatusFilterGroup, "all"> {
   switch (status) {
     case "running": return "running";
     case "cancelling": return "running";
@@ -76,6 +58,7 @@ function statusGroupOf(status: SessionExecutionStatusValue): Exclude<StatusFilte
     case "completed":
     case "failed":
     case "interrupted":
+    case "lost":
     default: return "ended";
   }
 }
@@ -88,11 +71,11 @@ function updatedAtTimestamp(value: string | null | undefined): number | null {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
-function StatusDot({ status }: { status: SessionExecutionStatusValue }) {
+function StatusDot({ status }: { status: AgentRunDeliveryStatus }) {
   return (
     <span
       className={`inline-block h-2 w-2 shrink-0 rounded-full ${executionStatusDotColor[status] ?? "bg-gray-400"}`}
-      title={executionStatusLabel[status] ?? status}
+      title={AGENT_RUN_DELIVERY_STATUS_LABEL[status] ?? status}
     />
   );
 }
@@ -233,7 +216,7 @@ interface AgentRunChildRowProps {
 
 function AgentRunChildRow({ child, depth, selectedAgentId, onOpenAgentRun }: AgentRunChildRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const status = normalizeExecutionStatus(child.shell.delivery_status);
+  const status = normalizeAgentRunDeliveryStatus(child.shell.delivery_status);
   const updatedAt = updatedAtTimestamp(child.shell.last_activity_at);
   const title = child.shell.display_title.trim() || child.project_agent_label?.trim() || "Companion";
   const isSelected = selectedAgentId === child.agent_ref.agent_id;
@@ -275,7 +258,7 @@ function AgentRunChildRow({ child, depth, selectedAgentId, onOpenAgentRun }: Age
             />
           )}
           <span className="shrink-0 text-[10px] text-muted-foreground/60">
-            {executionStatusLabel[status] ?? status}
+            {AGENT_RUN_DELIVERY_STATUS_LABEL[status] ?? status}
           </span>
         </div>
       </button>
@@ -307,7 +290,7 @@ function AgentRunRow({
   onRequestDelete,
 }: AgentRunRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const status = normalizeExecutionStatus(entry.shell.delivery_status);
+  const status = normalizeAgentRunDeliveryStatus(entry.shell.delivery_status);
   const updatedAt = updatedAtTimestamp(entry.shell.last_activity_at);
   const title = entry.shell.display_title.trim() || "AgentRun 加载中...";
   const children = entry.children ?? [];
@@ -365,7 +348,7 @@ function AgentRunRow({
             />
           )}
           <span className="shrink-0 text-[10px] text-muted-foreground/60">
-            {executionStatusLabel[status] ?? status}
+            {AGENT_RUN_DELIVERY_STATUS_LABEL[status] ?? status}
           </span>
         </div>
       </div>
@@ -410,7 +393,7 @@ function SubjectGroupHeader({
         {group.label}
       </span>
       <span className="shrink-0 text-[10px] text-muted-foreground/60">
-        {group.entries.length} 个会话
+        {group.entries.length} 个 AgentRun
       </span>
     </button>
   );
@@ -429,16 +412,16 @@ export function ActiveAgentRunList({
   selectedAgentId,
   onOpenAgentRun,
 }: ActiveAgentRunListProps) {
-  const projection = useAgentRunListProjection(projectId, PAGE_SIZE);
-  const loadMoreProjectAgentRuns = useAgentRunListProjectionStore((state) => state.loadMore);
-  const refreshProjectAgentRuns = useAgentRunListProjectionStore((state) => state.refreshProject);
+  const listState = useAgentRunListState(projectId, PAGE_SIZE);
+  const loadMoreProjectAgentRuns = useAgentRunListStateStore((state) => state.loadMore);
+  const refreshProjectAgentRuns = useAgentRunListStateStore((state) => state.refreshProject);
   const navigate = useNavigate();
   const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
-  const agentRuns = projection.entries;
-  const nextCursor = projection.next_cursor;
-  const isFetching = projection.status === "loading";
-  const isLoadingMore = projection.is_loading_more;
-  const error = projection.error;
+  const agentRuns = listState.entries;
+  const nextCursor = listState.next_cursor;
+  const isFetching = listState.status === "loading";
+  const isLoadingMore = listState.is_loading_more;
+  const error = listState.error;
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilterGroup>("all");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -505,7 +488,7 @@ export function ActiveAgentRunList({
 
     if (statusFilter !== "all") {
       list = list.filter((entry) =>
-        statusGroupOf(normalizeExecutionStatus(entry.shell.delivery_status)) === statusFilter
+        statusGroupOf(normalizeAgentRunDeliveryStatus(entry.shell.delivery_status)) === statusFilter
       );
     }
 

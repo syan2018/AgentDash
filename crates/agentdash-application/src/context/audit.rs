@@ -2,7 +2,7 @@
 //!
 //! 审计总线是 PRD Step 10 的核心：任何 `ContextFragment` 进入 `SessionContextBundle`
 //! （由 compose_* 产出 / Hook 每轮合并 / Continuation 等）都会发一条 `ContextAuditEvent`，
-//! 前端 Context Inspector 通过轮询 `/sessions/{id}/context/audit` 回放完整时间线。
+//! 前端 Context Inspector 通过 AgentRun scoped context audit 入口回放当前 delivery 时间线。
 //!
 //! 首版采用进程内 `Arc<RwLock<HashMap<session_id, VecDeque<event>>>>` 环形缓冲，
 //! 每 session 最多保留 `capacity_per_session` 条（默认 2000）；session_events 持久化

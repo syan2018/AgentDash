@@ -5,17 +5,15 @@ import type {
   LifecycleRunView,
   AgentRunView,
   LifecycleSubjectAssociationDto,
-  RuntimeSessionExecutionAnchorDto,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionContextSnapshot,
-  SessionShellDto,
   Story,
   TaskSessionExecutorSummary,
 } from "../../../types";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 
-export type SessionRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
+export type WorkspaceRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
 
 export type ProjectExtensionRuntimeStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
 
@@ -44,18 +42,14 @@ export interface AgentRunCanvasBridgeIdentity extends AgentRunCanvasBridgeBase {
 
 export interface WorkspaceRuntimeData {
   projectId: string | null;
-  sessionId: string | null;
-  runtimeSessionId: string | null;
   agentRunRuntimeTarget?: AgentRunRuntimeTarget | null;
   agentRunCanvasBridgeBase?: AgentRunCanvasBridgeBase | null;
   refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;
-  sessionMeta: SessionShellDto | null;
-  controlAnchor: RuntimeSessionExecutionAnchorDto | null;
   lifecycleRun: LifecycleRunView | null;
   lifecycleAgent: AgentRunView | null;
   frameRuntime: AgentFrameRuntimeView | null;
   subjectAssociations: LifecycleSubjectAssociationDto[];
-  runtimeStatus: SessionRuntimeStateStatus;
+  runtimeStatus: WorkspaceRuntimeStateStatus;
   runtimeError: string | null;
   extensionRuntime: ProjectExtensionRuntimeState;
   contextSnapshot: SessionContextSnapshot | null;

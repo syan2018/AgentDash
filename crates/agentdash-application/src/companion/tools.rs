@@ -30,7 +30,7 @@ use super::tool_context::{
     CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
 };
 use super::{
-    CompanionGateControlService, CompanionHumanResponseMailboxDelivery,
+    CompanionGateControlRepos, CompanionGateControlService, CompanionHumanResponseMailboxDelivery,
     CompanionHumanResponseMailboxDeliveryCommand, CompanionParentMailboxDelivery,
     CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
     CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
@@ -39,8 +39,9 @@ use super::{
 };
 use crate::agent_run::{
     AgentFrameRuntimeTarget, AgentRunMailboxCommandOutcome, AgentRunMailboxIntakeCommand,
-    AgentRunMailboxService, SessionControlService, SessionCoreService, SessionEventingService,
-    SessionLaunchService, mailbox_source_identity_dedup_key,
+    AgentRunMailboxService, DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
+    SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
+    mailbox_source_identity_dedup_key,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_session_agent_run_bridge::{
@@ -129,6 +130,7 @@ fn companion_mailbox_service_from_runtime(
         repos.project_agent_repo.as_ref(),
         repos.agent_frame_repo.as_ref(),
         repos.execution_anchor_repo.as_ref(),
+        repos.agent_run_delivery_binding_repo.as_ref(),
         repos.project_backend_access_repo.as_ref(),
         repos.agent_run_command_receipt_repo.as_ref(),
         repos.agent_run_mailbox_repo.as_ref(),
@@ -153,12 +155,15 @@ impl<'a> CompanionGateControlFactory<'a> {
         session_services: &SessionToolServices,
     ) -> CompanionGateControlService {
         CompanionGateControlService::with_session_eventing(
-            self.repos.lifecycle_gate_repo.clone(),
-            self.repos.lifecycle_run_repo.clone(),
-            self.repos.agent_frame_repo.clone(),
-            self.repos.lifecycle_agent_repo.clone(),
-            self.repos.execution_anchor_repo.clone(),
-            self.repos.agent_lineage_repo.clone(),
+            CompanionGateControlRepos {
+                gate_repo: self.repos.lifecycle_gate_repo.clone(),
+                run_repo: self.repos.lifecycle_run_repo.clone(),
+                frame_repo: self.repos.agent_frame_repo.clone(),
+                agent_repo: self.repos.lifecycle_agent_repo.clone(),
+                anchor_repo: self.repos.execution_anchor_repo.clone(),
+                delivery_binding_repo: self.repos.agent_run_delivery_binding_repo.clone(),
+                lineage_repo: self.repos.agent_lineage_repo.clone(),
+            },
             session_services.eventing.clone(),
         )
         .with_parent_mailbox_delivery(Arc::new(AgentRunCompanionMailboxDelivery::new(
@@ -490,6 +495,22 @@ async fn deliver_companion_mailbox_message(
     session_launch: SessionLaunchService,
     input: CompanionMailboxDeliveryInput,
 ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+    let delivery = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+        lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
+        lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
+        agent_frames: repos.agent_frame_repo.as_ref(),
+        execution_anchors: repos.execution_anchor_repo.as_ref(),
+        delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
+    })
+    .select_current_delivery(input.run_id, input.agent_id)
+    .await
+    .map_err(|error| crate::ApplicationError::Conflict(error.to_string()))?;
+    if delivery.runtime_session_id != input.runtime_session_id {
+        return Err(crate::ApplicationError::Conflict(format!(
+            "companion mailbox delivery runtime mismatch: run_id={}, agent_id={}, expected_runtime_session_id={}, current_runtime_session_id={}",
+            input.run_id, input.agent_id, input.runtime_session_id, delivery.runtime_session_id
+        )));
+    }
     let mailbox_result = companion_mailbox_service_from_runtime(
         repos,
         session_core,
@@ -500,7 +521,7 @@ async fn deliver_companion_mailbox_message(
     .accept_intake_message(AgentRunMailboxIntakeCommand {
         run_id: input.run_id,
         agent_id: input.agent_id,
-        runtime_session_id: input.runtime_session_id,
+        frame_id: delivery.current_frame_id,
         origin: MailboxMessageOrigin::Companion,
         source: input.source,
         retain_payload: true,
@@ -991,7 +1012,7 @@ impl CompanionRequestTool {
             .accept_intake_message(AgentRunMailboxIntakeCommand {
                 run_id: dispatch_result.run_ref,
                 agent_id: dispatch_result.agent_ref,
-                runtime_session_id: dispatch_result.delivery_runtime_session_id.clone(),
+                frame_id: dispatch_result.frame_ref,
                 origin: MailboxMessageOrigin::Companion,
                 source,
                 retain_payload: true,

@@ -1,10 +1,10 @@
-/**
+﻿/**
  * AgentRunWorkspacePage — AgentRun 交互工作台。
  *
  * 用户认知中 "AgentRun = 一个可继续交互的工作台"。此页面是用户点击 AgentRun 后的主视图，
  * 提供 Chat + Workspace Panel 双面板布局、标题编辑、上下文导航等完整交互。
  *
- * 底层数据通过 AgentRun workspace 投影驱动（`useAgentRunWorkspaceState`），
+ * 底层数据通过 AgentRun workspace state 驱动（`useAgentRunWorkspaceState`），
  * 不直接暴露 lifecycle 技术概念给用户。
  */
 
@@ -17,7 +17,7 @@ import { InlineBackendSelector, type InlineBackendOption } from "../features/ses
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
-import { refreshAgentRunListProjection } from "../features/agent/agent-run-list-projection-store";
+import { refreshAgentRunListState } from "../features/agent/agent-run-list-state-store";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -154,20 +154,19 @@ export function AgentRunWorkspacePage({
     sourceKey: agentRunSourceKey,
   });
 
-  const runtimeControl: AgentRunWorkspaceView | null = agentRunWorkspaceState.workspace;
-  const deliveryRuntimeSessionId = agentRunWorkspaceState.runtime_session_id;
+  const workspaceControl: AgentRunWorkspaceView | null = agentRunWorkspaceState.workspace;
   const draftWorkspaceTitle =
     draftProjectAgent?.display_name
     ?? traceAgentContext?.display_name
     ?? "新 AgentRun";
   const workspaceTitle = isProjectAgentDraft
     ? draftWorkspaceTitle
-    : runtimeControl?.shell.display_title ?? "";
+    : workspaceControl?.shell.display_title ?? "";
 
   // ─── 身份 / 从属信息（identity bar）─────────────────────
-  const identityAgentSource = agentSourceLabel(runtimeControl?.agent?.source);
+  const identityAgentSource = agentSourceLabel(workspaceControl?.agent?.source);
   const identitySubject = useMemo(() => {
-    const assoc = runtimeControl?.subject_associations?.[0];
+    const assoc = workspaceControl?.subject_associations?.[0];
     if (!assoc) return null;
     let label = assoc.subject_ref.kind;
     const meta = assoc.metadata;
@@ -181,24 +180,22 @@ export function AgentRunWorkspacePage({
       }
     }
     return { kind: assoc.subject_ref.kind, id: assoc.subject_ref.id, label };
-  }, [runtimeControl?.subject_associations]);
-  const lineageParent = runtimeControl?.parent ?? null;
-  const subagentChildCount = runtimeControl?.children?.length ?? 0;
+  }, [workspaceControl?.subject_associations]);
+  const lineageParent = workspaceControl?.parent ?? null;
+  const subagentChildCount = workspaceControl?.children?.length ?? 0;
   const hasIdentityBar =
     !isProjectAgentDraft
     && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
-  const activeHookRuntime = agentRunWorkspaceState.hook_runtime?.runtime_adapter_session_id === deliveryRuntimeSessionId
-    ? agentRunWorkspaceState.hook_runtime
-    : null;
+  const activeHookRuntime = agentRunWorkspaceState.hook_runtime;
   const deliveryRuntimeSurface = agentRunWorkspaceState.runtime_surface;
   const sessionContextSnapshot = null;
   const sessionCapabilities = null;
   const taskExecutorSummary = null;
 
   const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
-  const agentRunDetailRunId = runtimeControl?.run_ref.run_id ?? currentRunId;
-  const agentRunDetailAgentId = runtimeControl?.agent_ref.agent_id ?? currentAgentId;
-  const agentRunDetailFrameId = runtimeControl?.frame_runtime?.frame_ref.frame_id ?? null;
+  const agentRunDetailRunId = workspaceControl?.run_ref.run_id ?? currentRunId;
+  const agentRunDetailAgentId = workspaceControl?.agent_ref.agent_id ?? currentAgentId;
+  const agentRunDetailFrameId = workspaceControl?.frame_runtime?.frame_ref.frame_id ?? null;
   const agentRunDetailTarget = useMemo(() => {
     if (!agentRunDetailRunId || !agentRunDetailAgentId) return null;
     return {
@@ -244,7 +241,7 @@ export function AgentRunWorkspacePage({
     }
     return null;
   }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
-  const ownerProjectId = runtimeControl?.project_id
+  const ownerProjectId = workspaceControl?.project_id
     ?? runContext?.project_id
     ?? ownerStory?.project_id
     ?? draftProjectIdValue
@@ -263,7 +260,7 @@ export function AgentRunWorkspacePage({
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
   const refreshAgentRunList = useCallback((reason: string) => {
-    refreshAgentRunListProjection(ownerProjectId ?? draftProjectIdValue, reason);
+    refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, reason);
   }, [draftProjectIdValue, ownerProjectId]);
 
   useEffect(() => {
@@ -395,7 +392,7 @@ export function AgentRunWorkspacePage({
   }, [backendLabelById, chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
   const handleDraftAgentRunStarted = useCallback((response: ProjectAgentRunStartResult) => {
-    refreshAgentRunListProjection(draftProjectIdValue, "draft_started");
+    refreshAgentRunListState(draftProjectIdValue, "draft_started");
     navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
       replace: true,
       state: {
@@ -408,7 +405,7 @@ export function AgentRunWorkspacePage({
   }, [draftProjectIdValue, navigate]);
 
   const handleAgentRunRedirect = useCallback((target: { runId: string; agentId: string }) => {
-    refreshAgentRunListProjection(ownerProjectId ?? draftProjectIdValue, "agent_run_redirect");
+    refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, "agent_run_redirect");
     navigate(`/agent-runs/${encodeURIComponent(target.runId)}/${encodeURIComponent(target.agentId)}`, {
       state: {
         trace_agent: {
@@ -486,49 +483,28 @@ export function AgentRunWorkspacePage({
     navigate(`/story/${effectiveReturnTarget.story_id}`);
   }, [effectiveReturnTarget, navigate, selectProject]);
 
-  const handleCopyRuntimeSessionId = useCallback(async () => {
-    if (!deliveryRuntimeSessionId) return;
-    try { await navigator.clipboard.writeText(deliveryRuntimeSessionId); } catch { /* noop */ }
-  }, [deliveryRuntimeSessionId]);
-
   const handleOpenRunDetail = useCallback(() => {
     if (!agentRunDetailTarget) return;
     navigate(`/run/${agentRunDetailTarget.runId}`, {
       state: {
         agent_id: agentRunDetailTarget.agentId,
         frame_id: agentRunDetailTarget.frameId,
-        runtime_session_id: deliveryRuntimeSessionId,
       },
     });
-  }, [agentRunDetailTarget, deliveryRuntimeSessionId, navigate]);
+  }, [agentRunDetailTarget, navigate]);
 
   const backButtonLabel = effectiveReturnTarget?.owner_type === "project"
     ? "返回项目"
     : effectiveReturnTarget?.owner_type === "task"
       ? "返回任务"
       : "返回 Story";
-  const hasDeliveryRuntime = deliveryRuntimeSessionId !== null;
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
-    sessionId: deliveryRuntimeSessionId,
-    runtimeSessionId: deliveryRuntimeSessionId,
     agentRunRuntimeTarget,
-    sessionMeta: runtimeControl?.delivery_trace_meta
-      ? {
-          id: runtimeControl.delivery_trace_meta.runtime_session_ref.runtime_session_id,
-          title: runtimeControl.delivery_trace_meta.trace_title,
-          title_source: runtimeControl.delivery_trace_meta.trace_title_source,
-          created_at: runtimeControl.delivery_trace_meta.updated_at,
-          updated_at: runtimeControl.delivery_trace_meta.updated_at,
-          last_event_seq: runtimeControl.delivery_trace_meta.last_event_seq,
-          last_delivery_status: runtimeControl.delivery_trace_meta.delivery_status,
-        }
-      : null,
-    controlAnchor: null,
     lifecycleRun: null,
-    lifecycleAgent: runtimeControl?.agent ?? null,
-    frameRuntime: runtimeControl?.frame_runtime ?? null,
-    subjectAssociations: runtimeControl?.subject_associations ?? [],
+    lifecycleAgent: workspaceControl?.agent ?? null,
+    frameRuntime: workspaceControl?.frame_runtime ?? null,
+    subjectAssociations: workspaceControl?.subject_associations ?? [],
     runtimeStatus: agentRunWorkspaceState.status,
     runtimeError: agentRunWorkspaceState.error ?? agentRunWorkspaceState.runtime_surface_error,
     extensionRuntime,
@@ -542,9 +518,8 @@ export function AgentRunWorkspacePage({
     sessionCapabilities,
   }), [
     ownerProjectId,
-    deliveryRuntimeSessionId,
     agentRunRuntimeTarget,
-    runtimeControl,
+    workspaceControl,
     agentRunWorkspaceState.status,
     agentRunWorkspaceState.error,
     agentRunWorkspaceState.runtime_surface_error,
@@ -645,16 +620,6 @@ export function AgentRunWorkspacePage({
             >
               运行详情
             </button>
-          )}
-          {hasDeliveryRuntime && (
-            <>
-              <span className="hidden rounded-[8px] border border-border bg-secondary px-2.5 py-1 text-xs font-mono text-muted-foreground lg:inline">
-                {deliveryRuntimeSessionId.slice(0, 12)}…
-              </span>
-              <button type="button" onClick={() => void handleCopyRuntimeSessionId()} className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="复制 RuntimeSession ID">
-                复制
-              </button>
-            </>
           )}
           <button
             type="button"

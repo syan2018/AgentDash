@@ -16,9 +16,10 @@ use agentdash_domain::backend::{
 };
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunCommandClaim, AgentRunCommandReceipt,
-    AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunLineage,
-    AgentRunLineageRepository, DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository,
-    LifecycleRun, LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
+    AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunDeliveryBinding,
+    AgentRunDeliveryBindingRepository, AgentRunLineage, AgentRunLineageRepository,
+    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
+    LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository,
 };
 use chrono::Utc;
@@ -161,6 +162,7 @@ pub(crate) struct MemoryAgentRunForkMaterialization {
     agents: Arc<MemoryLifecycleAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
     anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+    delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
     lineages: Arc<MemoryAgentRunLineageRepository>,
     fail_message: Mutex<Option<String>>,
 }
@@ -171,6 +173,7 @@ impl MemoryAgentRunForkMaterialization {
         agents: Arc<MemoryLifecycleAgentRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
         anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
         lineages: Arc<MemoryAgentRunLineageRepository>,
     ) -> Self {
         Self {
@@ -178,6 +181,7 @@ impl MemoryAgentRunForkMaterialization {
             agents,
             frames,
             anchors,
+            delivery_bindings,
             lineages,
             fail_message: Mutex::new(None),
         }
@@ -198,11 +202,10 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             return Err(AgentRunForkMaterializationError::Internal { message });
         }
 
+        let child_runtime_session_id = input.child_runtime_session_id.clone();
         let mut child_run =
             LifecycleRun::new_plain_for_user(input.parent_run.project_id, &input.forked_by_user_id);
         child_run.topology = input.parent_run.topology;
-        child_run.context = input.parent_run.context.clone();
-        child_run.view_projection = input.parent_run.view_projection.clone();
 
         let mut child_agent = LifecycleAgent::new_root_for_user(
             child_run.id,
@@ -233,13 +236,13 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
         child_frame.created_by_id = Some(input.forked_by_user_id.clone());
 
         let mut anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            input.child_runtime_session_id.clone(),
+            child_runtime_session_id.clone(),
             child_run.id,
             child_frame.id,
             child_agent.id,
         );
         anchor.created_by_kind = "agent_run_fork".to_string();
-        child_agent.bind_current_delivery_from_anchor(
+        let delivery_binding = AgentRunDeliveryBinding::from_anchor(
             &anchor,
             DeliveryBindingStatus::Ready,
             anchor.updated_at,
@@ -252,10 +255,14 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             child_agent.id,
             input.fork_point_event_seq,
             input.fork_point_ref_json,
-            input.parent_runtime_session_id,
-            input.child_runtime_session_id,
             input.forked_by_user_id,
             input.metadata_json,
+        )
+        .with_frame_baseline(
+            input.parent_frame.id,
+            input.parent_frame.revision,
+            child_frame.id,
+            child_frame.revision,
         );
 
         self.runs
@@ -271,7 +278,11 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             .await
             .map_err(materialization_error)?;
         self.anchors
-            .upsert(&anchor)
+            .create_once(&anchor)
+            .await
+            .map_err(materialization_error)?;
+        self.delivery_bindings
+            .upsert(&delivery_binding)
             .await
             .map_err(materialization_error)?;
         self.lineages
@@ -283,6 +294,7 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
             child_run,
             child_agent,
             child_frame,
+            child_runtime_session_id,
             lineage,
         })
     }
@@ -332,40 +344,6 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
             .cloned()
             .collect())
     }
-
-    async fn append_visible_canvas_mount(
-        &self,
-        frame_id: Uuid,
-        mount_id: &str,
-    ) -> Result<(), DomainError> {
-        let mut frames = self.frames.lock().await;
-        let frame = frames
-            .iter_mut()
-            .find(|frame| frame.id == frame_id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_canvas_mount(mount_id);
-        Ok(())
-    }
-
-    async fn append_visible_workspace_module_ref(
-        &self,
-        frame_id: Uuid,
-        module_ref: &str,
-    ) -> Result<(), DomainError> {
-        let mut frames = self.frames.lock().await;
-        let frame = frames
-            .iter_mut()
-            .find(|frame| frame.id == frame_id)
-            .ok_or_else(|| DomainError::NotFound {
-                entity: "agent_frame",
-                id: frame_id.to_string(),
-            })?;
-        frame.append_visible_workspace_module_ref(module_ref);
-        Ok(())
-    }
 }
 
 #[derive(Default)]
@@ -375,16 +353,18 @@ pub(crate) struct MemoryRuntimeSessionExecutionAnchorRepository {
 
 #[async_trait::async_trait]
 impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAnchorRepository {
-    async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
+    async fn create_once(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
         let mut anchors = self.anchors.lock().await;
         if let Some(existing) = anchors
-            .iter_mut()
+            .iter()
             .find(|item| item.runtime_session_id == anchor.runtime_session_id)
         {
-            *existing = anchor.clone();
-        } else {
-            anchors.push(anchor.clone());
+            if existing.has_same_launch_coordinates_as(anchor) {
+                return Ok(());
+            }
+            return Err(existing.immutable_conflict(anchor));
         }
+        anchors.push(anchor.clone());
         Ok(())
     }
 
@@ -450,19 +430,59 @@ impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAn
             .cloned()
             .collect())
     }
+}
 
-    async fn latest_updated_anchor_for_agent(
+#[derive(Default)]
+pub(crate) struct MemoryAgentRunDeliveryBindingRepository {
+    bindings: Mutex<Vec<AgentRunDeliveryBinding>>,
+}
+
+#[async_trait::async_trait]
+impl AgentRunDeliveryBindingRepository for MemoryAgentRunDeliveryBindingRepository {
+    async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
+        let mut bindings = self.bindings.lock().await;
+        if let Some(existing) = bindings
+            .iter_mut()
+            .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
+        {
+            *existing = binding.clone();
+        } else {
+            bindings.push(binding.clone());
+        }
+        Ok(())
+    }
+
+    async fn get_current(
         &self,
+        run_id: Uuid,
         agent_id: Uuid,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+    ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
         Ok(self
-            .anchors
+            .bindings
             .lock()
             .await
             .iter()
-            .filter(|anchor| anchor.agent_id == agent_id)
-            .max_by_key(|anchor| anchor.updated_at)
+            .find(|binding| binding.run_id == run_id && binding.agent_id == agent_id)
             .cloned())
+    }
+
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
+        Ok(self
+            .bindings
+            .lock()
+            .await
+            .iter()
+            .filter(|binding| binding.run_id == run_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
+        self.bindings
+            .lock()
+            .await
+            .retain(|binding| binding.runtime_session_id != runtime_session_id);
+        Ok(())
     }
 }
 
@@ -936,7 +956,6 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             }
             if message.run_id != request.run_id
                 || message.agent_id != request.agent_id
-                || request.runtime_session_id.as_deref() != Some(&message.runtime_session_id)
                 || !request.barriers.contains(&message.barrier)
                 || request
                     .drain_mode
@@ -947,6 +966,9 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
                 )
             {
                 continue;
+            }
+            if let Some(runtime_session_id) = request.delivery_runtime_session_id.clone() {
+                message.delivery_runtime_session_id = Some(runtime_session_id);
             }
             message.status = MailboxMessageStatus::Consuming;
             message.claim_token = Some(request.claim_token);
@@ -1054,14 +1076,14 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id,
+            delivery_runtime_session_id: runtime_session_id,
             paused: true,
             pause_reason: Some(reason),
             pause_message: message,
@@ -1076,12 +1098,12 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id,
+            delivery_runtime_session_id: runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
@@ -1110,7 +1132,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
         preference: serde_json::Value,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let mut state = self
@@ -1119,7 +1141,7 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             .unwrap_or(AgentRunMailboxState {
                 run_id,
                 agent_id,
-                runtime_session_id,
+                delivery_runtime_session_id: runtime_session_id,
                 paused: false,
                 pause_reason: None,
                 pause_message: None,
@@ -1168,7 +1190,7 @@ fn mailbox_message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailb
         id: Uuid::new_v4(),
         run_id: message.run_id,
         agent_id: message.agent_id,
-        runtime_session_id: message.runtime_session_id,
+        delivery_runtime_session_id: message.delivery_runtime_session_id,
         origin: message.origin,
         source: message.source,
         delivery: message.delivery,

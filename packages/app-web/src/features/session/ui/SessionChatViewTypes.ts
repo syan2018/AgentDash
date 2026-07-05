@@ -43,6 +43,7 @@ export interface SessionChatCommandModel {
 export interface SessionChatCommandState {
   mode: "draft" | "runtime";
   executionStatus: string;
+  activeTurnId?: string | null;
   commands: SessionChatCommandModel[];
   keyboard: {
     enter?: string;
@@ -68,7 +69,6 @@ export interface SessionChatMailboxModel {
 }
 
 export interface SessionChatModel {
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   workspaceId?: string | null;
   executorHint?: string | null;
@@ -84,7 +84,6 @@ export interface SessionChatModel {
 
 export interface SessionChatSubmitIntent {
   command_id: string;
-  sessionId: string | null;
   prompt: string;
   executorConfig?: ExecutorConfig;
   backendSelection?: BackendSelectionRequestDto;

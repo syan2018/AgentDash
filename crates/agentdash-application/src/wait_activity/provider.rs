@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
-use agentdash_application_runtime_session::session::terminal_cache::SessionTerminalCache;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext};
 use async_trait::async_trait;
 
-use super::service::WaitActivityService;
+use super::service::{WaitActivityDeps, WaitActivityService};
 use super::tool::WaitTool;
 use super::types::WaitToolContext;
-use crate::repository_set::RepositorySet;
 use crate::runtime_tools::provider::runtime_session_id_from_context;
 
 #[derive(Clone)]
@@ -17,9 +15,9 @@ pub struct WaitRuntimeToolProvider {
 }
 
 impl WaitRuntimeToolProvider {
-    pub fn new(repos: RepositorySet, terminal_cache: Arc<SessionTerminalCache>) -> Self {
+    pub fn new(deps: WaitActivityDeps) -> Self {
         Self {
-            service: WaitActivityService::from_repository_set(repos, terminal_cache),
+            service: WaitActivityService::new(deps),
         }
     }
 

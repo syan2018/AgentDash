@@ -2,20 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Anchor-first runtime delivery selection.
-///
-/// Selection is resolved from `RuntimeSessionExecutionAnchorRepository`, so
-/// delivery commands never consult AgentFrame persistence for runtime refs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RuntimeDeliverySelectionPolicy {
-    /// The runtime session currently handled by the runtime adapter.
-    Specific { runtime_session_id: String },
-    /// The earliest runtime session recorded for the agent.
-    LaunchPrimary,
-    /// The latest runtime session recorded for the agent.
-    LatestAttached,
-}
+use crate::common::error::DomainError;
 
 /// RuntimeSession -> 控制面实体的 launch evidence 锚点。
 ///
@@ -86,6 +73,39 @@ impl RuntimeSessionExecutionAnchor {
             created_by_kind: "dispatch".to_string(),
             created_at: now,
             updated_at: now,
+        }
+    }
+
+    pub fn has_same_launch_coordinates_as(&self, other: &Self) -> bool {
+        self.runtime_session_id == other.runtime_session_id
+            && self.run_id == other.run_id
+            && self.launch_frame_id == other.launch_frame_id
+            && self.agent_id == other.agent_id
+            && self.orchestration_id == other.orchestration_id
+            && self.node_path == other.node_path
+            && self.node_attempt == other.node_attempt
+    }
+
+    pub fn immutable_conflict(&self, requested: &Self) -> DomainError {
+        DomainError::Conflict {
+            entity: "runtime_session_execution_anchor",
+            constraint: "runtime_session_id_immutable",
+            message: format!(
+                "runtime_session_id={} 已锚定到 run_id={}, agent_id={}, launch_frame_id={}, orchestration_id={:?}, node_path={:?}, node_attempt={:?}; requested run_id={}, agent_id={}, launch_frame_id={}, orchestration_id={:?}, node_path={:?}, node_attempt={:?}",
+                self.runtime_session_id,
+                self.run_id,
+                self.agent_id,
+                self.launch_frame_id,
+                self.orchestration_id,
+                self.node_path,
+                self.node_attempt,
+                requested.run_id,
+                requested.agent_id,
+                requested.launch_frame_id,
+                requested.orchestration_id,
+                requested.node_path,
+                requested.node_attempt,
+            ),
         }
     }
 }

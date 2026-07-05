@@ -707,6 +707,9 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
             s.error = Some(error.clone());
         }
         AgentEvent::ProviderAttemptStatus { .. } => {}
+        AgentEvent::RunError { error } => {
+            s.error = Some(error.message.clone());
+        }
         AgentEvent::ToolExecutionStart { tool_call_id, .. } => {
             s.pending_tool_calls.insert(tool_call_id.clone());
         }

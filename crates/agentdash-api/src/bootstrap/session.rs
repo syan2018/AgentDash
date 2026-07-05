@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::agent_run_mailbox::AgentRunMailboxTerminalCallback;
+use crate::agent_run_terminal_control::{
+    AgentRunTerminalControlCallback, AgentRunTerminalControlCallbackDeps,
+};
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::runtime_session_agent_run_bridge::{
@@ -13,7 +15,9 @@ use agentdash_application::runtime_tools::{
     SharedSessionToolServicesHandle, TaskRuntimeToolProvider, VfsRuntimeToolProvider,
     WorkflowRuntimeToolProvider,
 };
-use agentdash_application::wait_activity::{WaitActivityService, WaitRuntimeToolProvider};
+use agentdash_application::wait_activity::{
+    WaitActivityDeps, WaitActivityService, WaitRuntimeToolProvider,
+};
 use agentdash_application_agentrun::agent_run::{
     AgentRunEffectiveCapabilityView as ApplicationAgentRunEffectiveCapabilityView,
     AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
@@ -33,9 +37,10 @@ use agentdash_application_runtime_session::session::terminal_cache::SessionTermi
 use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
     SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
-    SessionLaunchService, SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService,
-    SessionRuntimeTransitionService, SessionTerminalCallback, SessionTitleService,
-    SessionToolResultCache, SessionToolResultCachePut,
+    SessionLaunchService, SessionRuntimeBuilder, SessionRuntimeService,
+    SessionRuntimeTransitionService, SessionStoreSet, SessionTerminalCallback,
+    SessionTerminalNotification, SessionTitleService, SessionToolResultCache,
+    SessionToolResultCachePut,
 };
 use agentdash_application_vfs::tools::RuntimeVfsState;
 use agentdash_application_vfs::tools::{ShellTerminalRegistration, ShellTerminalRegistry};
@@ -179,7 +184,7 @@ fn convert_effective_capability_view(
 
 pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
-    pub session_persistence: Arc<dyn SessionPersistence>,
+    pub session_stores: SessionStoreSet,
     pub tool_result_cache: Arc<SessionToolResultCache>,
     pub backend_registry: Arc<BackendRegistry>,
     pub vfs_service: Arc<VfsService>,
@@ -222,7 +227,7 @@ pub(crate) async fn build_session_runtime(
 ) -> Result<SessionBootstrapOutput> {
     let SessionBootstrapInput {
         repos,
-        session_persistence,
+        session_stores,
         tool_result_cache,
         backend_registry,
         vfs_service,
@@ -306,6 +311,7 @@ pub(crate) async fn build_session_runtime(
             run_repo: repos.lifecycle_run_repo.clone(),
             agent_repo: repos.lifecycle_agent_repo.clone(),
             frame_repo: repos.agent_frame_repo.clone(),
+            delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
             permission_grant_repo: repos.permission_grant_repo.clone(),
         },
     ));
@@ -324,10 +330,10 @@ pub(crate) async fn build_session_runtime(
         repos.permission_grant_repo.clone(),
     );
 
-    let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
+    let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_stores(
         connector.clone(),
         Some(hook_provider.clone()),
-        session_persistence,
+        session_stores,
     )
     .with_vfs_service(vfs_service.clone())
     .with_extra_skill_dirs(extra_skill_dirs.clone())
@@ -363,7 +369,14 @@ pub(crate) async fn build_session_runtime(
         .set_accepted_launch_commit_port(accepted_launch_commit_port(
             Some(repos.agent_frame_repo.clone()),
             Some(repos.execution_anchor_repo.clone()),
+            Some(repos.agent_run_delivery_binding_repo.clone()),
             Some(repos.lifecycle_agent_repo.clone()),
+            Some(
+                agentdash_application_lifecycle::accepted_turn_lifecycle_advance_port(
+                    repos.execution_anchor_repo.clone(),
+                    repos.lifecycle_run_repo.clone(),
+                ),
+            ),
             Some(accepted_launch_hook_sync),
         ))
         .await;
@@ -373,6 +386,7 @@ pub(crate) async fn build_session_runtime(
         project_agent_repo: repos.project_agent_repo.clone(),
         agent_frame_repo: repos.agent_frame_repo.clone(),
         execution_anchor_repo: repos.execution_anchor_repo.clone(),
+        delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
         project_backend_access_repo: repos.project_backend_access_repo.clone(),
         command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
         mailbox_repo: repos.agent_run_mailbox_repo.clone(),
@@ -398,13 +412,23 @@ pub(crate) async fn build_session_runtime(
 
     let orchestrator = Arc::new(
         agentdash_application_lifecycle::LifecycleOrchestrator::new_with_platform_config(
-            repos.to_lifecycle_repository_set(),
+            repos.lifecycle_orchestrator_deps(),
             lifecycle_platform_config(&platform_config),
         )
         .with_function_runner(function_runner),
     );
-    let mailbox_terminal_callback = Arc::new(AgentRunMailboxTerminalCallback::new(
-        repos.clone(),
+    let agent_run_terminal_control_callback = Arc::new(AgentRunTerminalControlCallback::new(
+        AgentRunTerminalControlCallbackDeps {
+            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+            project_agent_repo: repos.project_agent_repo.clone(),
+            agent_frame_repo: repos.agent_frame_repo.clone(),
+            execution_anchor_repo: repos.execution_anchor_repo.clone(),
+            delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
+            project_backend_access_repo: repos.project_backend_access_repo.clone(),
+            command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
+            mailbox_repo: repos.agent_run_mailbox_repo.clone(),
+        },
         agent_run_session_core(session_core.clone()),
         agent_run_session_control(session_control.clone()),
         agent_run_session_eventing(session_eventing.clone()),
@@ -413,10 +437,10 @@ pub(crate) async fn build_session_runtime(
     session_runtime_builder
         .set_terminal_callback(Arc::new(CompositeSessionTerminalCallback {
             callbacks: vec![
+                agent_run_terminal_control_callback,
                 Arc::new(LifecycleTerminalCallbackAdapter {
                     inner: orchestrator,
                 }),
-                mailbox_terminal_callback,
             ],
         }))
         .await;
@@ -489,8 +513,10 @@ fn build_session_runtime_tool_composer(
     );
 
     let terminal_cache = deps.terminal_cache.clone();
-    let wait_service =
-        WaitActivityService::from_repository_set(deps.repos.clone(), terminal_cache.clone());
+    let wait_service = WaitActivityService::new(WaitActivityDeps {
+        repositories: deps.repos.wait_activity_repositories(),
+        terminal_cache: terminal_cache.clone(),
+    });
     let vfs_provider = VfsRuntimeToolProvider::new(deps.vfs_service, Some(inline_persister))
         .with_materialization_service(deps.vfs_materialization_service)
         .with_shell_output_registry(deps.shell_output_registry)
@@ -498,7 +524,7 @@ fn build_session_runtime_tool_composer(
             deps.terminal_cache,
         )));
     let workflow_provider = WorkflowRuntimeToolProvider::new(
-        deps.repos.to_lifecycle_repository_set(),
+        deps.repos.lifecycle_orchestrator_deps(),
         agentdash_application_lifecycle::lifecycle::tools::SharedSessionToolServicesHandle,
         lifecycle_platform_config(&deps.platform_config),
         deps.function_runner,
@@ -541,23 +567,35 @@ struct LifecycleTerminalCallbackAdapter {
 
 #[async_trait]
 impl SessionTerminalCallback for LifecycleTerminalCallbackAdapter {
-    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
+    async fn on_session_terminal(
+        &self,
+        notification: SessionTerminalNotification,
+    ) -> Result<(), String> {
         agentdash_application_lifecycle::lifecycle::orchestrator::SessionTerminalCallback::on_session_terminal(
             self.inner.as_ref(),
-            session_id,
-            terminal_state,
+            &notification.session_id,
+            &notification.terminal_state,
         )
-            .await;
+            .await
     }
 }
 
 #[async_trait]
 impl SessionTerminalCallback for CompositeSessionTerminalCallback {
-    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
+    async fn on_session_terminal(
+        &self,
+        notification: SessionTerminalNotification,
+    ) -> Result<(), String> {
+        let mut errors = Vec::new();
         for callback in &self.callbacks {
-            callback
-                .on_session_terminal(session_id, terminal_state)
-                .await;
+            if let Err(error) = callback.on_session_terminal(notification.clone()).await {
+                errors.push(error);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
         }
     }
 }

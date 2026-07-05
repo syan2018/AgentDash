@@ -95,20 +95,14 @@ pub struct StoryMcpServer {
 
 ---
 
-## Session 执行状态持久化
+## Runtime Trace 恢复状态持久化
 
 ### 原则
 
-Session 执行状态必须持久化在 `SessionMeta.last_delivery_status`，不允许靠扫 JSONL 历史或读内存 map 推断。
+`SessionMeta.last_delivery_status` 是 RuntimeSession trace-head 的恢复摘要，用于 repository rehydrate、connector continuation 与 trace 诊断。AgentRun 用户可见 running/terminal 状态由 `AgentRunDeliveryBinding` 持久化，并由 AgentRun workspace/conversation snapshot 投影。
 
 ```rust
-// ❌ 扫 JSONL 历史推断状态
-let history = store.read_all(session_id).await?;
-
-// ❌ 纯内存 map
-let running = sessions.lock().await.get(id).map(|r| r.running);
-
-// ✅ 每次 turn 开始/结束时写入 meta
+// RuntimeSession turn 边界更新 trace recovery metadata。
 session_meta.last_delivery_status = "running".to_string();
 store.write_meta(&session_meta).await?;
 ```
@@ -124,7 +118,7 @@ store.write_meta(&session_meta).await?;
 - 冷启动 continuation 以 `connector.has_live_session(session_id)` 判断是否需要恢复。
 - 仓储恢复：connector 支持原生恢复时用 `restored_session_state`，否则退化为 continuation `system_context`
 
-### 合法值
+### Runtime trace delivery summary 合法值
 
 `last_delivery_status` 只有五个合法值：`idle` / `running` / `completed` / `failed` / `interrupted`。
 

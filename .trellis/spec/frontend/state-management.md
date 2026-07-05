@@ -104,14 +104,19 @@ state。waiting item 使用 generated `ConversationWaitingItemView`，显示 `ki
 workspace snapshot refresh，从后端重新读取 waiting projection。
 
 `AgentRunWorkspaceControlPlaneView.status` 使用 AgentRun workspace 语义：
-`ready | running | terminal | frame_missing | delivery_missing`。RuntimeSession detail 使用
-`SessionRuntimeControlView`，原因是 runtime trace/detail 从 runtime session identity 出发，而
-AgentRun workspace 从 run / agent identity 出发。
+`ready | running | terminal | frame_missing | delivery_missing`。RuntimeSession detail 只使用
+trace meta、events、stream、context projection 与 audit 诊断面，原因是 runtime trace/detail 从
+runtime session identity 出发，而 AgentRun workspace 从 run / agent identity 出发。
 
 SessionChatView 的职责是执行传入 command/intent，不持有业务分派规则。Enter、Ctrl/Cmd+Enter、
 按钮点击、round action fork 与 copy 都由 AgentRun workspace composition root 组装成可测试的
 intent；cancel 作为独立命令展示。这样 running workspace 可以同时显示 mailbox message、运行中
 注入状态和取消，ready workspace 显示可提交消息，trace/detail 展示后端 reason。
+
+Session stream 的 `isReceiving` 是局部渲染信号，只用于流式气泡、滚动锚点和连接生命周期收敛。
+用户可见运行状态来自 AgentRun command/control-plane snapshot，连接健康来自 stream connection
+state。这样做的原因是“正在接收网络事件”和“AgentRun 正在执行”不是同一层事实；前者没有独立
+用户动作语义，暴露成状态 badge 会让失败终态、连接态和运行态出现多源竞争。
 
 AgentRun workspace control-plane 的可判定规则先进入纯 model/projection 函数：command lookup、
 ChatView command model、mailbox action projection、system event refresh plan 和 workspace module
@@ -124,6 +129,11 @@ RuntimeSession stream 中的 turn 终态以 `Platform(SessionMetaUpdate)` 的 `t
 `turn_interrupted`。AgentRun workspace 监听该终态事件后刷新 workspace snapshot，原因是终态落库、
 active turn cleanup 与 command projection 已在后端完成，前端应重新读取权威 snapshot，而不是继续
 使用上一帧 running command。
+
+AgentRun workspace refresh 期间，上一帧 conversation snapshot 只用于 feed/布局连续展示，不继续作为
+composer command authority。这样做的原因是刷新本身表示后端 read model 正在重新收敛；输入区命令、
+helper、停止按钮和 keyboard mapping 必须等待新的 `AgentConversationSnapshot.commands`，否则终态
+到达后旧的 running snapshot 会继续向用户暴露可执行控制面。
 
 `ConversationCommandView.stale_guard.snapshot_id` 是一次 workspace projection 的不透明前置条件。
 文本输入提交使用 AgentRun `composer-submit` command：前端把当时选中的 command id、kind 与 stale
@@ -166,6 +176,65 @@ shell 服务导航与展示，conversation snapshot 服务可执行控制面。
 生命周期绑定 runtime session identity，右侧 resource browser 也需要展示连续性。输入区 command
 authority 来自最新 `AgentConversationSnapshot.commands`；`loading` / `refreshing` / `error` /
 stale projection 状态下上一帧 snapshot 只能用于展示诊断。
+
+## AgentRun Workspace Tab Layout State
+
+### 1. Scope / Trigger
+
+AgentRun workspace 右侧 WorkspacePanel 的 tab layout 是用户工作台偏好状态。它随 `run_id + agent_id`
+稳定存在，而不是随 delivery RuntimeSession 轮换。
+
+### 2. Signatures
+
+```ts
+type WorkspaceKey = `agentrun:${string}:${string}`;
+
+useWorkspaceTabStore.getState().initialize(workspaceKey, savedLayout, options);
+saveWorkspaceTabLayout(workspaceKey, layout);
+loadWorkspaceTabLayout(workspaceKey);
+```
+
+User setting key:
+
+```text
+ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}
+```
+
+### 3. Contracts
+
+- `workspaceTabStore.workspaceKey` 表达当前 AgentRun workspace layout identity。
+- WorkspacePanel 从 `WorkspaceRuntimeData.agentRunRuntimeTarget` 构造 `agentrun:{runId}:{agentId}`。
+- `WorkspaceTabLayout` 只保存 tab type、URI、title、pinned 和 active URI；它不保存 runtime trace state。
+- RuntimeSession id 仍可作为 tab content 的 trace/diagnostic prop，例如 terminal event projection、context audit diagnostic path 或 raw session detail。
+- Canvas tab opening uses concrete `presentation_uri` and active resource surface; persisted layout key stays AgentRun scoped.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| AgentRun target changes | WorkspacePanel re-initializes tab layout with the new AgentRun workspace key |
+| Delivery RuntimeSession changes for the same AgentRun | WorkspacePanel keeps the same layout key and refreshes runtime-backed tab content |
+| No AgentRun target is available | WorkspacePanel initializes with no persisted layout key and can render pinned/default local state |
+| Saved tab URI no longer exists in current runtime surface | `pruneInvalidTabs` removes dynamic tabs that cannot be opened in the current surface |
+| Context inspector has AgentRun target | Inspector uses AgentRun scoped audit path even if raw session id is absent |
+| Context inspector only has raw session id | Inspector can still render the diagnostic trace path |
+
+### 5. Reference Cases
+
+- AgentRun workspace opens, initializes pinned tabs, then restores user dynamic tabs from `ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}`.
+- Same AgentRun receives a new current delivery RuntimeSession; terminal/context tab content refreshes from new runtime refs, while tab order and dynamic URIs remain user layout state.
+- Canvas module presentation opens from `canvas://{canvas_mount_id}`; the layout records that URI, and current resource surface determines whether it remains openable.
+
+### 6. Tests Required
+
+- Store test asserts `workspaceKey` is stored and exported layout remains type/URI based.
+- Session service test asserts `saveWorkspaceTabLayout` and `loadWorkspaceTabLayout` use the AgentRun workspace setting key.
+- Workspace module/panel test asserts Canvas open does not require a RuntimeSession id when a concrete presentation URI is available.
+- Frontend typecheck asserts `WorkspaceTabLayout` exports are consistent across `workspace-runtime`, `workspace-panel`, services and store.
+
+### 7. Canonical Boundary
+
+Workspace layout persistence belongs to the AgentRun workspace key because it represents user navigation preference for that AgentRun. RuntimeSession identity belongs to runtime trace data and is passed only to components that read diagnostic events, projections or terminal event streams.
 
 `session_meta_updated`、`Platform(SessionMetaUpdate)` 与 RuntimeSession event stream 仍是 feed
 和 debug 面板可渲染的事实。工作台标题编辑和状态刷新通过 AgentRun Workspace shell 刷新或后续

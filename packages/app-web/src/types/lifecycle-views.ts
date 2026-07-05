@@ -2,7 +2,6 @@ export type {
   AgentFrameRefDto,
   AgentRunRefDto,
   LifecycleRunRefDto,
-  RuntimeSessionRefDto,
 } from "../generated/agent-run-mailbox-contracts";
 export type {
   SubjectRefDto,
@@ -23,10 +22,8 @@ export type {
   OrchestrationInstanceView,
   ProjectActiveAgentsView,
   RuntimeNodeView,
-  RuntimeSessionExecutionAnchorDto,
+  RuntimeSessionRefDto,
   RuntimeSessionTraceView,
-  SessionRuntimeControlView,
-  SessionShellDto,
   SubjectExecutionView,
   SubjectRuntimeAttemptView,
 } from "../generated/workflow-contracts";

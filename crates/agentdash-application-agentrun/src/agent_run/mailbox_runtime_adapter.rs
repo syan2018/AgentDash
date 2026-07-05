@@ -15,8 +15,8 @@ use agentdash_domain::agent_run_mailbox::{
 };
 use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunCommandReceiptRepository, LifecycleAgentRepository,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{
     AfterTurnInput, AgentMessage, AgentRuntimeError, BeforeStopInput,
@@ -41,6 +41,7 @@ pub struct AgentRunMailboxRuntimeBoundaryDeps {
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
     pub command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
@@ -182,30 +183,16 @@ struct MailboxBoundaryStage<'a> {
     deps: &'a AgentRunMailboxRuntimeBoundaryDeps,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeSessionMailboxAdapterRef {
-    runtime_session_id: String,
-}
-
-fn runtime_session_mailbox_adapter_ref(
-    runtime_session_id: &str,
-) -> RuntimeSessionMailboxAdapterRef {
-    RuntimeSessionMailboxAdapterRef {
-        runtime_session_id: runtime_session_id.to_string(),
-    }
-}
-
 impl MailboxBoundaryStage<'_> {
     fn mailbox_service(&self) -> AgentRunMailboxService<'_> {
         mailbox_service_from_deps(self.deps)
     }
 
     async fn schedule_agent_loop_turn_boundary(&self) {
-        let adapter_ref = runtime_session_mailbox_adapter_ref(self.runtime_session_id);
         let result = self
             .mailbox_service()
             .schedule_for_runtime_session(
-                &adapter_ref.runtime_session_id,
+                self.runtime_session_id,
                 AgentRunMailboxScheduleTrigger::AgentLoopTurnBoundary,
             )
             .await;
@@ -213,20 +200,18 @@ impl MailboxBoundaryStage<'_> {
             Ok(outcomes) if !outcomes.is_empty() => {
                 self.emit_mailbox_state_changed("steer_consumed").await;
             }
-            Err(error) => {
-                if !matches!(error, WorkflowApplicationError::NotFound(_)) {
-                    let diagnostic_context = DiagnosticErrorContext::new(
-                        "agent_run.mailbox_runtime_adapter",
-                        "schedule_agent_loop_turn_boundary",
-                    );
-                    diag_error!(Warn, Subsystem::AgentRun,
-                        context = &diagnostic_context,
-                        error = &error,
-                        runtime_session_id = %self.runtime_session_id,
-                        trigger = "agent_loop_turn_boundary",
-                        "AgentRun mailbox AgentLoopTurnBoundary scheduling failed"
-                    );
-                }
+            Err(error) if !matches!(error, WorkflowApplicationError::NotFound(_)) => {
+                let diagnostic_context = DiagnosticErrorContext::new(
+                    "agent_run.mailbox_runtime_adapter",
+                    "schedule_agent_loop_turn_boundary",
+                );
+                diag_error!(Warn, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
+                    runtime_session_id = %self.runtime_session_id,
+                    trigger = "agent_loop_turn_boundary",
+                    "AgentRun mailbox AgentLoopTurnBoundary scheduling failed"
+                );
             }
             _ => {}
         }
@@ -252,10 +237,9 @@ impl MailboxBoundaryStage<'_> {
     }
 
     async fn drain_agent_run_turn_boundary(&self) -> Result<Vec<AgentMessage>, AgentRuntimeError> {
-        let adapter_ref = runtime_session_mailbox_adapter_ref(self.runtime_session_id);
         match self
             .mailbox_service()
-            .drain_agent_run_turn_boundary_for_delegate(&adapter_ref.runtime_session_id)
+            .drain_agent_run_turn_boundary_for_delegate(self.runtime_session_id)
             .await
         {
             Ok(messages) => Ok(messages),
@@ -327,6 +311,7 @@ fn mailbox_service_from_deps(
         deps.project_agent_repo.as_ref(),
         deps.agent_frame_repo.as_ref(),
         deps.execution_anchor_repo.as_ref(),
+        deps.delivery_binding_repo.as_ref(),
         deps.project_backend_access_repo.as_ref(),
         deps.command_receipt_repo.as_ref(),
         deps.mailbox_repo.as_ref(),
@@ -528,18 +513,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn turn_boundary_delegate_keeps_session_id_as_adapter_ref() {
-        let adapter_ref = runtime_session_mailbox_adapter_ref("runtime-session-1");
-
-        assert_eq!(
-            adapter_ref,
-            RuntimeSessionMailboxAdapterRef {
-                runtime_session_id: "runtime-session-1".to_string(),
-            }
-        );
-    }
-
     #[tokio::test]
     async fn hook_not_found_on_unbound_trace_keeps_direct_messages() {
         let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
@@ -562,7 +535,7 @@ mod tests {
         let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
         let runtime_session_id = "anchored-runtime-session";
         anchor_repo
-            .upsert(&RuntimeSessionExecutionAnchor::new_dispatch(
+            .create_once(&RuntimeSessionExecutionAnchor::new_dispatch(
                 runtime_session_id,
                 uuid::Uuid::new_v4(),
                 uuid::Uuid::new_v4(),

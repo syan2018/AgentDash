@@ -7,7 +7,7 @@ export type {
   TabContentRenderProps,
   TabInstance,
   TabURI,
-  SessionTabLayout,
+  WorkspaceTabLayout,
 } from "./tab-type-registry";
 export type {
   WorkspacePanelHandle,

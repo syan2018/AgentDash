@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 
 import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
 import {
-  buildDraftSessionCommandState,
-  buildRuntimeSessionCommandState,
+  buildAgentRunConversationCommandState,
+  buildDraftConversationCommandState,
   resolveExecutorConfigForConversationCommand,
 } from "./AgentRunWorkspacePage.conversationCommandState";
 import type {
@@ -46,11 +46,9 @@ function workspaceView(
     shell: {
       display_title: "Workspace",
       title_source: "session_meta",
-      workspace_status: controlStatus,
       delivery_status: controlStatus,
       last_activity_at: "2026-06-12T00:00:00.000Z",
     },
-    delivery_runtime_ref: { runtime_session_id: "session-1" },
     control_plane: { status: controlStatus, ownership },
     subject_associations: [],
     children: [],
@@ -62,7 +60,6 @@ function workspaceView(
         project_id: "project-1",
       },
       lifecycle_context: {
-        delivery_runtime_ref: { runtime_session_id: "session-1" },
         subject_associations: [],
       },
       execution: {
@@ -90,12 +87,12 @@ function workspaceView(
 }
 
 function commandState(
-  projectionStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
+  workspaceStateStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
   workspace: AgentRunWorkspaceView | null,
 ) {
-  return buildRuntimeSessionCommandState({
-    projectionStatus,
-    projectionError: projectionStatus === "error" ? "refresh failed" : null,
+  return buildAgentRunConversationCommandState({
+    workspaceStateStatus,
+    workspaceStateError: workspaceStateStatus === "error" ? "refresh failed" : null,
     conversation: workspace?.conversation,
   });
 }
@@ -112,7 +109,6 @@ function command(kind: ConversationCommandView["kind"], commandId: string): Conv
       snapshot_id: `snapshot-${commandId}`,
       run_id: "run-1",
       agent_id: "agent-1",
-      runtime_session_id: "session-1",
       active_turn_id: undefined,
     },
   };
@@ -219,11 +215,11 @@ describe("AgentRun workspace conversation command authority", () => {
       },
       source: "project_agent",
     };
-    const state = buildDraftSessionCommandState({
+    const state = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-1",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
     });
 
     expect(state.executionStatus).toBe("model_required");
@@ -246,11 +242,11 @@ describe("AgentRun workspace conversation command authority", () => {
       },
       source: "project_agent",
     };
-    const state = buildDraftSessionCommandState({
+    const state = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-1",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
       explicitExecutorConfigOverride: {
         executor: "PI_AGENT",
         provider_id: "openai",
@@ -273,7 +269,7 @@ describe("AgentRun workspace conversation command authority", () => {
   });
 
   it("keeps reasoning-capable model selection valid even without thinking level", () => {
-    expect(buildDraftSessionCommandState({
+    expect(buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-1",
       agent: {
@@ -287,7 +283,7 @@ describe("AgentRun workspace conversation command authority", () => {
         },
         source: "project_agent",
       },
-      projectionReady: true,
+      workspaceStateReady: true,
       explicitExecutorConfigOverride: {
         executor: "PI_AGENT",
         provider_id: "openai",
@@ -308,11 +304,11 @@ describe("AgentRun workspace conversation command authority", () => {
       },
       source: "project_agent",
     };
-    const state = buildDraftSessionCommandState({
+    const state = buildDraftConversationCommandState({
       projectId: "project-1",
       agentKey: "agent-1",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
       explicitExecutorConfigOverride: {
         executor: "PI_AGENT",
         provider_id: "openai",
@@ -364,7 +360,6 @@ describe("AgentRun workspace conversation command authority", () => {
         snapshot_id: "snapshot-cmd-submit",
         run_id: "run-1",
         agent_id: "agent-1",
-        runtime_session_id: "session-1",
         active_turn_id: "turn-1",
       },
     };
@@ -387,14 +382,14 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
   });
 
-  it("keeps backend commands while projection is refreshing", () => {
+  it("freezes stale backend commands while projection is refreshing", () => {
     const state = commandState("refreshing", workspaceView("running", [
       command("submit_message", "cmd-submit"),
     ], { enter: "cmd-submit" }));
 
-    expect(state.executionStatus).toBe("running_active");
-    expect(state.commands.keyboard.enter).toBe("cmd-submit");
-    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.enabled).toBe(true);
+    expect(state.executionStatus).toBe("refreshing");
+    expect(state.commands.keyboard.enter).toBeUndefined();
+    expect(state.commands.commands).toHaveLength(0);
   });
 
   it("requires conversation snapshot before exposing commands", () => {
@@ -402,7 +397,7 @@ describe("AgentRun workspace conversation command authority", () => {
     workspace.conversation = undefined;
     const state = commandState("ready", workspace);
 
-    expect(state.executionStatus).toBe("delivery_missing");
+    expect(state.executionStatus).toBe("ready");
     expect(state.commands.commands).toHaveLength(0);
   });
 });
@@ -556,7 +551,6 @@ describe("Canvas workspace module selector and user-open flow", () => {
     const openOrActivate = vi.fn();
 
     await openUserCanvasModule({
-      runtimeSessionId: "session-1",
       option: {
         module_id: "canvas:cvs-mount-a",
         view_key: "preview",
@@ -573,7 +567,7 @@ describe("Canvas workspace module selector and user-open flow", () => {
     );
   });
 
-  it("does not open a tab without a runtime session or concrete Canvas presentation", async () => {
+  it("does not open a tab without a concrete Canvas presentation", async () => {
     const openOrActivate = vi.fn();
     const option = {
       module_id: "canvas:cvs-mount-a",
@@ -583,14 +577,13 @@ describe("Canvas workspace module selector and user-open flow", () => {
     };
 
     await expect(openUserCanvasModule({
-      runtimeSessionId: null,
       option,
       openOrActivate,
-    })).rejects.toThrow("当前 AgentRun 尚未就绪，无法打开 Canvas。");
-    expect(openOrActivate).not.toHaveBeenCalled();
+    })).resolves.toBeUndefined();
+    expect(openOrActivate).toHaveBeenCalledWith("canvas", "canvas://cvs-candidate", true);
 
+    openOrActivate.mockClear();
     await expect(openUserCanvasModule({
-      runtimeSessionId: "session-1",
       option: {
         ...option,
         presentation_uri: "canvas://",

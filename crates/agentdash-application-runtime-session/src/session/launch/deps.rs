@@ -4,15 +4,14 @@ use std::sync::Arc;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityPort;
 use agentdash_application_ports::frame_launch_envelope::{
-    AcceptedLaunchCommitInput, AcceptedLaunchCommitOutcome, AcceptedLaunchCommitPort,
-    SharedFrameLaunchEnvelopePort,
+    AcceptedLaunchCommitPort, SharedFrameLaunchEnvelopePort,
 };
 use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
 use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxRuntimePort;
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_domain::settings::SettingsRepository;
-use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::RuntimeToolProvider;
+use agentdash_spi::{AgentConnector, ConnectorError};
 
 use crate::context::SharedContextAuditBus;
 use crate::session::core::SessionCoreService;
@@ -20,7 +19,7 @@ use crate::session::effects_service::SessionEffectsService;
 use crate::session::eventing::SessionEventingService;
 use crate::session::hooks_service::SessionHookService;
 use crate::session::hub::SessionRuntimeInner;
-use crate::session::persistence::SessionStoreSet;
+use crate::session::persistence::SessionLaunchStores;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
 use crate::session::runtime_transition_service::SessionRuntimeTransitionService;
@@ -36,7 +35,7 @@ use agentdash_application_ports::backend_transport::RelayPromptTransport;
 pub(in crate::session) struct SessionLaunchDeps {
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) turn_supervisor: TurnSupervisor,
-    pub(super) stores: SessionStoreSet,
+    pub(super) stores: SessionLaunchStores,
     pub(super) frame_launch_envelope_provider:
         Arc<tokio::sync::RwLock<Option<SharedFrameLaunchEnvelopePort>>>,
     accepted_launch_commit_port:
@@ -67,7 +66,7 @@ impl SessionLaunchDeps {
             connector: inner.connector.clone(),
             runtime_registry: inner.runtime_registry.clone(),
             turn_supervisor: inner.turn_supervisor.clone(),
-            stores: inner.stores.clone(),
+            stores: inner.stores.launch_stores(),
             frame_launch_envelope_provider: inner.frame_launch_envelope_provider.clone(),
             accepted_launch_commit_port: inner.accepted_launch_commit_port.clone(),
             hook_effect_handler_registry: inner.hook_effect_handler_registry.clone(),
@@ -127,6 +126,7 @@ impl SessionLaunchDeps {
             connector: self.connector.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
             eventing: self.eventing.clone(),
+            effects: self.effects.clone(),
         }
     }
 
@@ -139,18 +139,24 @@ impl SessionLaunchDeps {
             eventing: self.eventing.clone(),
             core: self.core.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
+            effects: self.effects.clone(),
             accepted_launch_commit,
         }
     }
 
     pub(super) async fn current_accepted_launch_commit_port(
         &self,
-    ) -> Arc<dyn AcceptedLaunchCommitPort> {
+    ) -> Result<Arc<dyn AcceptedLaunchCommitPort>, ConnectorError> {
         self.accepted_launch_commit_port
             .read()
             .await
             .clone()
-            .unwrap_or_else(|| Arc::new(NoopAcceptedLaunchCommitPort))
+            .ok_or_else(|| {
+                ConnectorError::Runtime(
+                    "accepted_launch_commit_port 未注入，拒绝 RuntimeSession accepted launch"
+                        .to_string(),
+                )
+            })
     }
 
     pub(super) fn ingestion(&self) -> StreamIngestionDeps {
@@ -159,24 +165,6 @@ impl SessionLaunchDeps {
             eventing: self.eventing.clone(),
             effects: self.effects.clone(),
         }
-    }
-}
-
-struct NoopAcceptedLaunchCommitPort;
-
-#[async_trait::async_trait]
-impl AcceptedLaunchCommitPort for NoopAcceptedLaunchCommitPort {
-    async fn agent_needs_bootstrap(&self, _runtime_session_id: &str) -> bool {
-        false
-    }
-
-    async fn mark_agent_bootstrapped(&self, _runtime_session_id: &str) {}
-
-    async fn commit_accepted_launch(
-        &self,
-        _input: AcceptedLaunchCommitInput,
-    ) -> AcceptedLaunchCommitOutcome {
-        AcceptedLaunchCommitOutcome::empty()
     }
 }
 
@@ -242,13 +230,15 @@ pub(super) struct ConnectorStartDeps {
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) eventing: SessionEventingService,
+    pub(super) effects: SessionEffectsService,
 }
 
 #[derive(Clone)]
 pub(super) struct TurnCommitDeps {
-    pub(super) stores: SessionStoreSet,
+    pub(super) stores: SessionLaunchStores,
     pub(super) eventing: SessionEventingService,
     pub(super) turn_supervisor: TurnSupervisor,
+    pub(super) effects: SessionEffectsService,
     pub(super) accepted_launch_commit: Arc<dyn AcceptedLaunchCommitPort>,
     core: SessionCoreService,
 }

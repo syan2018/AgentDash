@@ -18,8 +18,9 @@ use agentdash_domain::backend::{
 };
 use agentdash_domain::workflow::{
     AgentFrame, AgentRunCommandKind, AgentRunCommandReceiptRepository, AgentRunCommandStatus,
-    AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleRun, LifecycleRunRepository,
-    NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
+    AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository, AgentSource, DeliveryBindingStatus,
+    LifecycleAgent, LifecycleRun, LifecycleRunRepository, NewAgentRunCommandReceipt,
+    RuntimeSessionExecutionAnchor,
 };
 use agentdash_spi::ConnectorError;
 use agentdash_spi::session_persistence::{SessionEventPage, SessionMeta};
@@ -32,7 +33,8 @@ use crate::agent_run::runtime_session_boundary::{
 };
 use crate::test_support::{
     MemoryAgentFrameRepository, MemoryAgentRunCommandReceiptRepository,
-    MemoryLifecycleAgentRepository, MemoryRuntimeSessionExecutionAnchorRepository,
+    MemoryAgentRunDeliveryBindingRepository, MemoryLifecycleAgentRepository,
+    MemoryRuntimeSessionExecutionAnchorRepository,
 };
 
 #[test]
@@ -158,6 +160,73 @@ fn mailbox_intake_command_uses_explicit_source_dedup_without_source_refs() {
 }
 
 #[tokio::test]
+async fn mailbox_intake_rejects_stale_frame_target() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+
+    let error = fixture
+        .service()
+        .accept_intake_message(AgentRunMailboxIntakeCommand {
+            run_id: fixture.run.id,
+            agent_id: fixture.agent.id,
+            frame_id: Uuid::new_v4(),
+            origin: MailboxMessageOrigin::Companion,
+            source: MailboxSourceIdentity::new("companion", "result", "agent"),
+            retain_payload: true,
+            schedule_on_submit: false,
+            input: text_user_input_blocks("hello"),
+            client_command_id: "stale-frame".to_string(),
+            source_dedup_key: None,
+            executor_config: None,
+            backend_selection: None,
+            identity: None,
+            delivery_intent: None,
+        })
+        .await
+        .expect_err("stale frame must be rejected");
+
+    assert!(
+        error.to_string().contains("不匹配当前 delivery frame"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
+async fn mailbox_target_rejects_stale_message_stream_evidence() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+
+    let error = fixture
+        .service()
+        .accept_intake_message_for_target(AgentRunMailboxIntakeTargetCommand {
+            target: AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+                fixture.run.id,
+                fixture.agent.id,
+                fixture.current_frame.id,
+                "stale-runtime",
+            ),
+            origin: MailboxMessageOrigin::Companion,
+            source: MailboxSourceIdentity::new("companion", "result", "agent"),
+            retain_payload: true,
+            schedule_on_submit: false,
+            input: text_user_input_blocks("hello"),
+            client_command_id: "stale-runtime".to_string(),
+            source_dedup_key: None,
+            executor_config: None,
+            backend_selection: None,
+            identity: None,
+            delivery_intent: None,
+        })
+        .await
+        .expect_err("stale runtime evidence must be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("不匹配当前 delivery runtime_session"),
+        "unexpected error: {error}"
+    );
+}
+
+#[tokio::test]
 async fn companion_dispatch_intake_persists_child_mailbox_wake_envelope() {
     let fixture = MailboxSteeringFixture::new(false).await;
     let source = MailboxSourceIdentity::new("companion", "dispatch", "agent")
@@ -174,7 +243,7 @@ async fn companion_dispatch_intake_persists_child_mailbox_wake_envelope() {
         .accept_intake_message(AgentRunMailboxIntakeCommand {
             run_id: fixture.run.id,
             agent_id: fixture.agent.id,
-            runtime_session_id: fixture.runtime_session_id.clone(),
+            frame_id: fixture.current_frame.id,
             origin: MailboxMessageOrigin::Companion,
             source,
             retain_payload: true,
@@ -235,14 +304,14 @@ async fn companion_result_intake_dedups_duplicate_gate_result_envelopes() {
         .accept_intake_message(AgentRunMailboxIntakeCommand {
             run_id: fixture.run.id,
             agent_id: fixture.agent.id,
-            runtime_session_id: fixture.runtime_session_id.clone(),
+            frame_id: fixture.current_frame.id,
             origin: MailboxMessageOrigin::Companion,
             source: source.clone(),
             retain_payload: true,
             schedule_on_submit: false,
             input: text_user_input_blocks("result available"),
             client_command_id: format!("companion-result:{gate_id}:attempt-1"),
-            source_dedup_key: Some("legacy-explicit-dedup".to_string()),
+            source_dedup_key: Some("caller-explicit-dedup".to_string()),
             executor_config: None,
             backend_selection: None,
             identity: None,
@@ -255,14 +324,14 @@ async fn companion_result_intake_dedups_duplicate_gate_result_envelopes() {
         .accept_intake_message(AgentRunMailboxIntakeCommand {
             run_id: fixture.run.id,
             agent_id: fixture.agent.id,
-            runtime_session_id: fixture.runtime_session_id.clone(),
+            frame_id: fixture.current_frame.id,
             origin: MailboxMessageOrigin::Companion,
             source,
             retain_payload: true,
             schedule_on_submit: false,
             input: text_user_input_blocks("result available retry"),
             client_command_id: format!("companion-result:{gate_id}:attempt-2"),
-            source_dedup_key: Some("legacy-explicit-dedup-changed".to_string()),
+            source_dedup_key: Some("caller-explicit-dedup-changed".to_string()),
             executor_config: None,
             backend_selection: None,
             identity: None,
@@ -295,7 +364,7 @@ async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() 
     fixture
         .service()
         .accept_hook_auto_resume_effect(
-            &fixture.runtime_session_id,
+            &fixture.delivery_runtime_session_id,
             effect_id,
             source_turn_id.clone(),
             42,
@@ -306,7 +375,7 @@ async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() 
     fixture
         .service()
         .accept_hook_auto_resume_effect(
-            &fixture.runtime_session_id,
+            &fixture.delivery_runtime_session_id,
             effect_id,
             source_turn_id.clone(),
             42,
@@ -333,14 +402,20 @@ async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() 
     );
     assert_eq!(
         message.source.correlation_ref.as_deref(),
-        Some(format!("{}:{source_turn_id}:42", fixture.runtime_session_id).as_str())
+        Some(
+            format!(
+                "{}:{source_turn_id}:42",
+                fixture.delivery_runtime_session_id
+            )
+            .as_str()
+        )
     );
     assert_eq!(
         message.source_dedup_key.as_deref(),
         Some(
             format!(
                 "source:core:hook_auto_resume:ref:{effect_id}:correlation:{}:{source_turn_id}:42",
-                fixture.runtime_session_id
+                fixture.delivery_runtime_session_id
             )
             .as_str()
         )
@@ -382,7 +457,7 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
 
     let delegate_messages = delegate
         .service()
-        .drain_agent_run_turn_boundary_for_delegate(&delegate.runtime_session_id)
+        .drain_agent_run_turn_boundary_for_delegate(&delegate.delivery_runtime_session_id)
         .await
         .expect("delegate drain");
 
@@ -411,7 +486,7 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
         scheduler.run.id,
         scheduler.agent.id,
         scheduler.current_frame.id,
-        scheduler.runtime_session_id.clone(),
+        scheduler.delivery_runtime_session_id.clone(),
     );
 
     let outcomes = scheduler
@@ -441,6 +516,51 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
 }
 
 #[tokio::test]
+async fn mailbox_launch_failure_marks_message_and_receipt_failed_without_accepted_refs() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+    *fixture.core.state.lock().await = SessionExecutionState::Idle;
+    let message = fixture
+        .seed_message(
+            "launch-accepted-boundary-failure",
+            MailboxDelivery::LaunchOrContinueTurn,
+            None,
+        )
+        .await;
+    let target = AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+        fixture.run.id,
+        fixture.agent.id,
+        fixture.current_frame.id,
+        fixture.delivery_runtime_session_id.clone(),
+    );
+
+    let outcomes = fixture
+        .service_with_launch(Arc::new(FailingLaunchPort))
+        .schedule_for_target(
+            target,
+            AgentRunMailboxScheduleTrigger::AgentRunTurnBoundary,
+            None,
+        )
+        .await
+        .expect("scheduler drain");
+
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].outcome, AgentRunMailboxCommandOutcome::Failed);
+    assert!(outcomes[0].accepted_refs.is_none());
+    let updated = fixture.mailbox.message(message.id).await;
+    assert_eq!(updated.status, MailboxMessageStatus::Failed);
+    assert!(updated.accepted_agent_run_turn_id.is_none());
+    assert!(updated.accepted_protocol_turn_id.is_none());
+    assert_error_contains(&updated, "accepted launch control-plane commit failed");
+    assert_receipt_terminal_failed(
+        fixture.receipts.as_ref(),
+        message.command_receipt_id.unwrap(),
+        "accepted launch control-plane commit failed",
+    )
+    .await;
+    assert!(!fixture.mailbox.cleaned(message.id).await);
+}
+
+#[tokio::test]
 async fn mailbox_steering_expected_turn_guard_is_consistent() {
     let delegate = MailboxSteeringFixture::new(false).await;
     let delegate_message = delegate
@@ -453,7 +573,7 @@ async fn mailbox_steering_expected_turn_guard_is_consistent() {
 
     let delegate_messages = delegate
         .service()
-        .drain_agent_run_turn_boundary_for_delegate(&delegate.runtime_session_id)
+        .drain_agent_run_turn_boundary_for_delegate(&delegate.delivery_runtime_session_id)
         .await
         .expect("delegate drain");
 
@@ -483,7 +603,7 @@ async fn mailbox_steering_expected_turn_guard_is_consistent() {
         scheduler.run.id,
         scheduler.agent.id,
         scheduler.current_frame.id,
-        scheduler.runtime_session_id.clone(),
+        scheduler.delivery_runtime_session_id.clone(),
     );
 
     let outcomes = scheduler
@@ -519,6 +639,7 @@ struct MailboxSteeringFixture {
     project_agents: Arc<MemoryProjectAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
     anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+    delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
     backend_access: Arc<MemoryProjectBackendAccessRepository>,
     receipts: Arc<MemoryAgentRunCommandReceiptRepository>,
     mailbox: Arc<MemoryMailboxRepository>,
@@ -529,7 +650,7 @@ struct MailboxSteeringFixture {
     run: LifecycleRun,
     agent: LifecycleAgent,
     current_frame: AgentFrame,
-    runtime_session_id: String,
+    delivery_runtime_session_id: String,
     active_turn_id: String,
 }
 
@@ -540,31 +661,33 @@ impl MailboxSteeringFixture {
         let project_agents = Arc::new(MemoryProjectAgentRepository);
         let frames = Arc::new(MemoryAgentFrameRepository::default());
         let anchors = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+        let delivery_bindings = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
         let backend_access = Arc::new(MemoryProjectBackendAccessRepository::default());
         let receipts = Arc::new(MemoryAgentRunCommandReceiptRepository::default());
         let mailbox = Arc::new(MemoryMailboxRepository::default());
-        let runtime_session_id = "runtime-steering".to_string();
+        let delivery_runtime_session_id = "runtime-steering".to_string();
         let active_turn_id = "active-turn".to_string();
 
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         runs.create(&run).await.expect("run");
-        let mut agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
         let launch_frame = AgentFrame::new_initial(agent.id);
         let current_frame = AgentFrame::new_revision(agent.id, 2, "test");
         let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            runtime_session_id.clone(),
+            delivery_runtime_session_id.clone(),
             run.id,
             launch_frame.id,
             agent.id,
         );
-        agent.bind_current_delivery_from_anchor(
+        let binding = AgentRunDeliveryBinding::from_anchor(
             &anchor,
             DeliveryBindingStatus::Running,
             anchor.updated_at,
         );
         frames.create(&launch_frame).await.expect("launch frame");
         frames.create(&current_frame).await.expect("current frame");
-        anchors.upsert(&anchor).await.expect("anchor");
+        anchors.create_once(&anchor).await.expect("anchor");
+        delivery_bindings.upsert(&binding).await.expect("binding");
         agents.create(&agent).await.expect("agent");
 
         Self {
@@ -573,6 +696,7 @@ impl MailboxSteeringFixture {
             project_agents,
             frames,
             anchors,
+            delivery_bindings,
             backend_access,
             receipts,
             mailbox,
@@ -590,25 +714,33 @@ impl MailboxSteeringFixture {
             run,
             agent,
             current_frame,
-            runtime_session_id,
+            delivery_runtime_session_id,
             active_turn_id,
         }
     }
 
     fn service(&self) -> AgentRunMailboxService<'_> {
+        self.service_with_launch(self.launch.clone())
+    }
+
+    fn service_with_launch(
+        &self,
+        launch: Arc<dyn RuntimeSessionLaunchPort>,
+    ) -> AgentRunMailboxService<'_> {
         AgentRunMailboxService::new(
             self.runs.as_ref(),
             self.agents.as_ref(),
             self.project_agents.as_ref(),
             self.frames.as_ref(),
             self.anchors.as_ref(),
+            self.delivery_bindings.as_ref(),
             self.backend_access.as_ref(),
             self.receipts.as_ref(),
             self.mailbox.as_ref(),
             SessionCoreService::new(self.core.clone()),
             SessionControlService::new(self.control.clone()),
             SessionEventingService::new(self.eventing.clone()),
-            SessionLaunchService::new(self.launch.clone()),
+            SessionLaunchService::new(launch),
         )
     }
 
@@ -632,7 +764,7 @@ impl MailboxSteeringFixture {
         let message = mailbox_message(
             self.run.id,
             self.agent.id,
-            &self.runtime_session_id,
+            &self.delivery_runtime_session_id,
             delivery,
             expected_active_turn.map(str::to_string),
             Some(receipt.receipt().id),
@@ -970,7 +1102,6 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
             }
             if message.run_id != request.run_id
                 || message.agent_id != request.agent_id
-                || request.runtime_session_id.as_deref() != Some(&message.runtime_session_id)
                 || !request.barriers.contains(&message.barrier)
                 || request
                     .drain_mode
@@ -981,6 +1112,9 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
                 )
             {
                 continue;
+            }
+            if let Some(delivery_runtime_session_id) = request.delivery_runtime_session_id.clone() {
+                message.delivery_runtime_session_id = Some(delivery_runtime_session_id);
             }
             message.status = MailboxMessageStatus::Consuming;
             message.claim_token = Some(request.claim_token);
@@ -1086,14 +1220,14 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        delivery_runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id,
+            delivery_runtime_session_id,
             paused: true,
             pause_reason: Some(reason),
             pause_message: message,
@@ -1111,12 +1245,12 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        delivery_runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id,
+            delivery_runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
@@ -1148,13 +1282,13 @@ impl AgentRunMailboxRepository for MemoryMailboxRepository {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        delivery_runtime_session_id: Option<String>,
         preference: serde_json::Value,
     ) -> Result<AgentRunMailboxState, DomainError> {
         let state = AgentRunMailboxState {
             run_id,
             agent_id,
-            runtime_session_id,
+            delivery_runtime_session_id,
             paused: false,
             pause_reason: None,
             pause_message: None,
@@ -1285,10 +1419,26 @@ impl RuntimeSessionLaunchPort for TestLaunchPort {
     }
 }
 
+struct FailingLaunchPort;
+
+#[async_trait::async_trait]
+impl RuntimeSessionLaunchPort for FailingLaunchPort {
+    async fn launch_command_in_task(
+        &self,
+        _session_id: String,
+        _command: LaunchCommand,
+        _planning_input: LaunchPlanningInput,
+    ) -> Result<String, WorkflowApplicationError> {
+        Err(WorkflowApplicationError::Internal(
+            "accepted launch control-plane commit failed".to_string(),
+        ))
+    }
+}
+
 fn mailbox_message(
     run_id: Uuid,
     agent_id: Uuid,
-    runtime_session_id: &str,
+    delivery_runtime_session_id: &str,
     delivery: MailboxDelivery,
     expected_active_agent_run_turn_id: Option<String>,
     command_receipt_id: Option<Uuid>,
@@ -1298,7 +1448,7 @@ fn mailbox_message(
         id: Uuid::new_v4(),
         run_id,
         agent_id,
-        runtime_session_id: runtime_session_id.to_string(),
+        delivery_runtime_session_id: Some(delivery_runtime_session_id.to_string()),
         origin: MailboxMessageOrigin::User,
         source: MailboxSourceIdentity::composer(),
         delivery,
@@ -1338,7 +1488,7 @@ fn message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailboxMessag
         id: Uuid::new_v4(),
         run_id: message.run_id,
         agent_id: message.agent_id,
-        runtime_session_id: message.runtime_session_id,
+        delivery_runtime_session_id: message.delivery_runtime_session_id,
         origin: message.origin,
         source: message.source,
         delivery: message.delivery,
@@ -1408,5 +1558,27 @@ async fn assert_receipt_accepted(
             .as_ref()
             .and_then(|refs| refs.agent_run_turn_id.as_deref()),
         accepted_turn_id
+    );
+}
+
+async fn assert_receipt_terminal_failed(
+    receipts: &dyn AgentRunCommandReceiptRepository,
+    receipt_id: Uuid,
+    expected_error: &str,
+) {
+    let receipt = receipts
+        .get(receipt_id)
+        .await
+        .expect("receipt read")
+        .expect("receipt");
+    assert_eq!(receipt.status, AgentRunCommandStatus::TerminalFailed);
+    assert!(receipt.accepted_refs.is_none());
+    assert!(
+        receipt
+            .error_message
+            .as_deref()
+            .is_some_and(|error| error.contains(expected_error)),
+        "expected receipt error to contain {expected_error}, got {:?}",
+        receipt.error_message
     );
 }

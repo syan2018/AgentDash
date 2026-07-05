@@ -8,11 +8,11 @@
 import { useSyncExternalStore } from "react";
 import type { TabTypeDescriptor } from "../workspace-runtime";
 export type {
-  SessionTabLayout,
   TabContentRenderProps,
   TabInstance,
   TabTypeDescriptor,
   TabURI,
+  WorkspaceTabLayout,
 } from "../workspace-runtime";
 
 // ─── Registry ───────────────────────────────────────────

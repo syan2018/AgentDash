@@ -18,7 +18,9 @@ use crate::session::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, PromptLaunchPath,
     ResolvedPromptPayload,
 };
-use agentdash_application_ports::frame_launch_envelope::FrameLaunchEnvelope;
+use agentdash_application_ports::frame_launch_envelope::{
+    FrameLaunchEnvelope, FrameRuntimeSurface,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
@@ -123,6 +125,7 @@ pub struct LaunchPlanTraceEntry {
 
 pub struct LaunchPlan {
     pub pending_frame: Option<AgentFrame>,
+    pub frame_surface: FrameRuntimeSurface,
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
@@ -168,6 +171,7 @@ pub struct LaunchPlanInput {
 impl LaunchPlan {
     pub fn build(input: LaunchPlanInput) -> Self {
         let pending_frame = input.launch_envelope.frame.pending_frame.clone();
+        let frame_surface = input.launch_envelope.frame.surface.clone();
         let working_directory = input.launch_envelope.runtime.working_directory.clone();
         let executor_config = input.launch_envelope.launch_executor_config().clone();
         let mcp_servers = input.launch_envelope.launch_mcp_servers().to_vec();
@@ -324,6 +328,7 @@ impl LaunchPlan {
         let context_bundle = input.launch_envelope.context.context_bundle.clone();
         Self {
             pending_frame,
+            frame_surface,
             resolved_payload: input.resolved_payload,
             title_hint,
             discovered_guidelines: input.launch_envelope.context.discovered_guidelines.clone(),

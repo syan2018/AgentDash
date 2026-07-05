@@ -200,9 +200,6 @@ pub struct WorkspaceModuleDescriptor {
 pub struct WorkspaceModulePresentRequest {
     pub module_id: String,
     pub view_key: String,
-    /// 可选展示上下文；HTTP 用户打开只校验归属，Agent 工具路径负责运行时授权。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_session_id: Option<String>,
     /// 可选 delivery trace context；HTTP user-open 不依赖它写事件。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,

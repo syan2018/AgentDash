@@ -80,7 +80,7 @@ export function selectVfsBackendTarget<T extends VfsMountBackendPolicy>(
 ### 3. Contracts
 
 - default mount 从 `runtimeSurface.vfs.mounts` 选择 requested mount，缺省使用 runtime surface default mount。
-- backend target 只从可浏览且携带 `backend_id` 的 mount 中选择；Project workspace binding fallback 在调用方转换成 mount policy 输入前完成。
+- backend target 只从可浏览且携带 `backend_id` 的 mount 中选择；Project workspace binding 作为第二输入源时，先由调用方转换成 mount policy 输入。
 - Extension webview bridge 的 `vfs.read` / `vfs.write` 使用同一 selector 生成请求上下文。
 
 ### 4. Validation & Error Matrix
@@ -95,13 +95,13 @@ export function selectVfsBackendTarget<T extends VfsMountBackendPolicy>(
 ### 5. Good/Base/Bad Cases
 
 - Good: VFS tab 和 extension iframe 指向同一个 session default mount 时得到同一个 backend id。
-- Base: Project workspace binding 只作为 extension tab 缺少 session backend 时的 fallback。
+- Base: Project workspace binding 只作为 extension tab 缺少 session backend 时的第二输入源。
 - Boundary mismatch: VFS tab 和 webview bridge 各自实现 mount/backend 选择会让同一 runtime surface 产生两个 UI 行为。
 - Canonical flow: 两个入口都调用 `selectDefaultVfsMount()` / `selectVfsBackendTarget()`，再按 selector 结果发起 API/bridge request。
 
 ### 6. Tests Required
 
-- `vfs-browser-panel.test.ts` 覆盖 default mount、requested mount、readonly 与 backend fallback。
+- `vfs-browser-panel.test.ts` 覆盖 default mount、requested mount、readonly 与 backend secondary-source selection。
 - `extension-runtime/model/bridge.test.ts` 覆盖 webview bridge 复用 policy 后的 VFS read/write request context。
 
 ### 7. Boundary Mismatch / Canonical
@@ -166,6 +166,7 @@ type RoundActionModel = {
 - `AgentRunWorkspacePage` owns product identity: route params, workspace snapshot, command submit, fork redirect navigation, and user-visible action state.
 - `SessionChatView` may render runtime feed entries but executes only passed intents. It does not decide whether a submit mutates parent AgentRun or creates a fork.
 - Runtime stream and projection calls from product workspace use AgentRun refs. A runtime session id can appear as a trace ref inside generated DTOs, but browser code does not compose product URLs from it.
+- AgentRun workspace model names product command/control state as AgentRun conversation/workspace state. When a runtime trace id is needed for stream diagnostics or terminal connector lookup, frontend state names it `delivery_trace_session_id` or `traceSessionId` inside runtime/diagnostic data, not `sessionId` as a product identity.
 - Composer submit handles `AgentRunMessageCommandResponse.fork` or equivalent fork outcome by navigating to `redirect.run_id + redirect.agent_id` and refreshing that workspace.
 - Copy action writes only the current conversation round's last readable agent reply. Tool results, user text, earlier assistant chunks, and reasoning-only entries are excluded from that clipboard payload.
 - Fork action sends a backend-provided stable `SessionMessageRefDto` / turn boundary. Frontend disabled state is UX guidance; backend remains the authority for boundary validity.

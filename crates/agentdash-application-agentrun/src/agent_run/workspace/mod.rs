@@ -1,22 +1,22 @@
 pub mod command_policy;
-pub mod projection;
 pub mod query;
+pub mod state;
 pub mod types;
 
 pub use command_policy::{
     AgentRunWorkspaceCommandConflict, AgentRunWorkspaceCommandPolicyContext,
-    AgentRunWorkspaceCommandPolicyError, AgentRunWorkspaceCommandPolicyService,
-    AgentRunWorkspaceCommandPrecondition,
+    AgentRunWorkspaceCommandPolicyDeps, AgentRunWorkspaceCommandPolicyError,
+    AgentRunWorkspaceCommandPolicyService, AgentRunWorkspaceCommandPrecondition,
 };
-pub use projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
 pub use query::{
-    AgentRunWorkspaceQueryService, load_hide_system_steer_messages_setting, mailbox_message_visible,
+    AgentRunWorkspaceQueryDeps, AgentRunWorkspaceQueryService,
+    load_hide_system_steer_messages_setting, mailbox_message_visible,
 };
+pub use state::{derive_workspace_state, is_terminal_agent_status};
 pub use types::{
-    AgentRunListProjection, AgentRunResourceSurfaceCoordinateModel,
+    AgentRunListItem, AgentRunResourceSurfaceCoordinateModel,
     AgentRunResourceSurfaceSourceAnchorModel, AgentRunWorkspaceFrameRefModel,
     AgentRunWorkspaceFrameRuntimeModel, AgentRunWorkspaceMailboxStateModel,
-    AgentRunWorkspaceProjectionInput, AgentRunWorkspaceProjectionModel,
     AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
-    AgentRunWorkspaceStateCode, AgentRunWorkspaceTraceMetaModel, SubjectRefModel,
+    AgentRunWorkspaceStateCode, AgentRunWorkspaceStateModel, SubjectRefModel,
 };

@@ -9,11 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
-  fetchSessionEvents,
-} from "../../../services/session";
-import {
-  fetchAgentRunConversationFeed,
-  fetchAgentRunRuntimeEvents,
+  fetchAgentRunJournalEvents,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
 import type {
@@ -22,12 +18,12 @@ import type {
   TokenUsageInfo,
 } from "./types";
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
-import { agentRunConversationFeedEntries } from "./agentRunConversationFeed";
 import {
   createInitialStreamState,
   reduceStreamState,
   resetEphemeralCursor,
   shouldFlushStreamEventImmediately,
+  extractTerminalTurnId,
   type SessionStreamState,
 } from "./sessionStreamReducer";
 import {
@@ -36,11 +32,9 @@ import {
 } from "./sessionPlatformEventDispatcher";
 
 export interface UseSessionStreamOptions {
-  sessionId: string;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   /** 设为 false 时跳过连接，返回空的初始状态。默认 true。 */
   enabled?: boolean;
-  endpoint?: string;
   initialEntries?: SessionDisplayEntry[];
   onConnectionChange?: (connected: boolean) => void;
   onError?: (error: Error) => void;
@@ -58,7 +52,6 @@ export interface UseSessionStreamResult {
   tokenUsage: TokenUsageInfo | null;
   reconnect: () => void;
   close: () => void;
-  sendCancel: () => Promise<void>;
 }
 
 const FLUSH_INTERVAL_MS = 50;
@@ -68,15 +61,14 @@ const EMPTY_INITIAL_ENTRIES: SessionDisplayEntry[] = [];
 
 export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
   const {
-    sessionId,
     agentRunTarget = null,
     enabled = true,
-    endpoint,
     initialEntries,
     onConnectionChange,
     onError,
   } = options;
   const normalizedInitialEntries = initialEntries ?? EMPTY_INITIAL_ENTRIES;
+  const hasStreamTarget = agentRunTarget != null;
 
   const [streamState, setStreamState] = useState<SessionStreamState>(() =>
     createInitialStreamState(normalizedInitialEntries),
@@ -121,6 +113,14 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     }, RECEIVING_IDLE_TIMEOUT_MS);
   }, []);
 
+  const clearReceiving = useCallback(() => {
+    if (receivingTimerRef.current) {
+      clearTimeout(receivingTimerRef.current);
+      receivingTimerRef.current = null;
+    }
+    setIsReceiving(false);
+  }, []);
+
   const flushPendingEvents = useCallback((mode: "async" | "sync" = "async") => {
     if (!mountedRef.current) return;
     const pending = pendingEventsRef.current;
@@ -146,7 +146,11 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     if (dispatchSessionPlatformEvent(event, callbackRefs.current.onError)) return;
 
     pendingEventsRef.current.push(event);
-    markReceiving();
+    if (extractTerminalTurnId(event)) {
+      clearReceiving();
+    } else {
+      markReceiving();
+    }
 
     if (shouldFlushStreamEventImmediately(event)) {
       if (flushTimerRef.current) {
@@ -162,23 +166,16 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
       flushTimerRef.current = null;
       flushPendingEvents();
     }, FLUSH_INTERVAL_MS);
-  }, [flushPendingEvents, markReceiving]);
+  }, [clearReceiving, flushPendingEvents, markReceiving]);
 
   useEffect(() => {
     enqueueEventRef.current = enqueueEvent;
   }, [enqueueEvent]);
 
-  const sendCancel = useCallback(async () => {
-    const err = new Error("RuntimeSession trace 不提供取消入口。");
-    setError(err);
-    callbackRefs.current.onError?.(err);
-    throw err;
-  }, []);
-
   useEffect(() => {
     mountedRef.current = true;
 
-    if (!enabled) {
+    if (!enabled || !hasStreamTarget) {
       setStreamState(createInitialStreamState(initialEntriesRef.current));
       setIsLoading(false);
       setError(null);
@@ -192,7 +189,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     const agentRunKey = agentRunTarget
       ? `${agentRunTarget.runId}:${agentRunTarget.agentId}`
       : "";
-    const sourceKey = `${sessionId}|${agentRunKey}|${endpoint ?? ""}`;
+    const sourceKey = `agentrun:${agentRunKey}`;
     const shouldResetState = sourceKeyRef.current !== sourceKey;
     sourceKeyRef.current = sourceKey;
 
@@ -222,27 +219,12 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
       let afterSeq = shouldResetState ? 0 : baseState.lastAppliedSeq;
 
       try {
-        if (agentRunTarget && shouldResetState) {
-          const feed = await fetchAgentRunConversationFeed(agentRunTarget);
-          const feedEntries = agentRunConversationFeedEntries(feed);
-          const runtimeReplayStartSeq = feed == null ? 0 : Number(feed.runtime_replay_start_seq);
-          nextState = createInitialStreamState([
-            ...initialEntriesRef.current,
-            ...feedEntries,
-          ]);
-          nextState = { ...nextState, lastAppliedSeq: runtimeReplayStartSeq };
-          afterSeq = runtimeReplayStartSeq;
-          if (!mountedRef.current || cancelled) return;
-          setStreamState(nextState);
-          stateRef.current = nextState;
-        }
-
         while (!cancelled) {
-          const page = agentRunTarget
-            ? await fetchAgentRunRuntimeEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE)
-            : await fetchSessionEvents(sessionId, afterSeq, HISTORY_PAGE_SIZE);
-          projectSessionTerminalPlatformEvents(page.events, callbackRefs.current.onError);
-          nextState = reduceStreamState(nextState, page.events);
+          if (!agentRunTarget) return;
+          const page = await fetchAgentRunJournalEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE);
+          const pageEvents = page.events;
+          projectSessionTerminalPlatformEvents(pageEvents, callbackRefs.current.onError);
+          nextState = reduceStreamState(nextState, pageEvents);
           afterSeq = page.next_after_seq;
           if (!mountedRef.current || cancelled) return;
           setStreamState(nextState);
@@ -258,9 +240,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
         }
 
         transportRef.current = createSessionStreamTransport({
-          sessionId,
           agentRunTarget,
-          endpoint,
           sinceId: nextState.lastAppliedSeq,
           onEvent: (event) => {
             if (!mountedRef.current) return;
@@ -297,11 +277,13 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
             if (lifecycle === "closed") {
               setIsConnected(false);
               setIsLoading(false);
+              clearReceiving();
               callbackRefs.current.onConnectionChange?.(false);
             }
           },
           onError: (transportError) => {
             if (!mountedRef.current) return;
+            clearReceiving();
             setError(transportError);
             callbackRefs.current.onError?.(transportError);
           },
@@ -341,9 +323,9 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     agentRunTarget,
     connectKey,
     enabled,
-    endpoint,
     flushPendingEvents,
-    sessionId,
+    hasStreamTarget,
+    clearReceiving,
   ]);
 
   const close = useCallback(() => {
@@ -379,7 +361,6 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     tokenUsage: streamState.tokenUsage,
     reconnect,
     close,
-    sendCancel,
   };
 }
 

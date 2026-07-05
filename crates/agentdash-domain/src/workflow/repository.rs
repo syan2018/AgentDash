@@ -2,6 +2,7 @@ use uuid::Uuid;
 
 use super::agent_frame::AgentFrame;
 use super::agent_lineage::AgentLineage;
+use super::agent_run_delivery_binding::AgentRunDeliveryBinding;
 use super::agent_run_lineage::AgentRunLineage;
 use super::entity::{AgentProcedure, LifecycleRun, WorkflowGraph};
 use super::lifecycle_agent::LifecycleAgent;
@@ -80,23 +81,23 @@ pub trait LifecycleAgentRepository: Send + Sync {
 }
 
 #[async_trait::async_trait]
+pub trait AgentRunDeliveryBindingRepository: Send + Sync {
+    async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError>;
+    async fn get_current(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<Option<AgentRunDeliveryBinding>, DomainError>;
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentRunDeliveryBinding>, DomainError>;
+    async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
 pub trait AgentFrameRepository: Send + Sync {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError>;
     async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError>;
-    async fn append_visible_canvas_mount(
-        &self,
-        frame_id: Uuid,
-        mount_id: &str,
-    ) -> Result<(), DomainError>;
-    async fn append_visible_workspace_module_ref(
-        &self,
-        _frame_id: Uuid,
-        _module_ref: &str,
-    ) -> Result<(), DomainError> {
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
@@ -151,8 +152,10 @@ pub trait AgentRunLineageRepository: Send + Sync {
 /// RuntimeSession → 控制面锚点的 repository。
 #[async_trait::async_trait]
 pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
-    /// 写入或更新 runtime_session 到 lifecycle / agent / frame / orchestration node 的锚点。
-    async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError>;
+    /// 创建 runtime_session 到 lifecycle / agent / frame / orchestration node 的锚点。
+    ///
+    /// 同一 runtime_session_id 已存在且控制面坐标一致时幂等成功；坐标不一致时返回 conflict。
+    async fn create_once(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError>;
     /// 按 runtime_session_id 删除锚点。
     async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError>;
     /// 按 runtime_session_id 查找锚点。
@@ -175,11 +178,4 @@ pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
         &self,
         runtime_session_ids: &[String],
     ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError>;
-    /// 按 `updated_at DESC` 查询 agent 最新写入的 raw anchor row。
-    ///
-    /// 该方法只表达 repository order，不表达 delivery/runtime selection policy。
-    async fn latest_updated_anchor_for_agent(
-        &self,
-        agent_id: Uuid,
-    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError>;
 }

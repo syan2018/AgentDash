@@ -255,10 +255,12 @@ impl VfsSurfaceResolver {
         story: Option<&Story>,
         target: SessionMountTarget,
     ) -> Result<Vfs, ApplicationError> {
-        let agent_run_repos = self.repos.to_agent_run_repository_set();
-        let workspace = crate::agent_run::resolve_project_workspace(&agent_run_repos, project)
-            .await
-            .map_err(ApplicationError::Internal)?;
+        let workspace = crate::agent_run::resolve_project_workspace(
+            self.repos.workspace_repo.as_ref(),
+            project,
+        )
+        .await
+        .map_err(ApplicationError::Internal)?;
         let project_vfs_mounts = self.load_project_vfs_mounts(project.id).await?;
         self.vfs_service
             .build_vfs(

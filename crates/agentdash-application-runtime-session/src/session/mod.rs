@@ -61,10 +61,7 @@ pub mod types;
 mod user_context_frame;
 
 pub use crate::runtime::McpServerSummary;
-pub use branching::{
-    SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,
-    SessionProjectionRollbackRequest, SessionProjectionRollbackResult,
-};
+pub use branching::{SessionBranchingService, SessionForkRequest, SessionForkResult};
 pub use context::ExecutorResolution;
 pub use context_projector::ContextProjector;
 pub use context_usage_projection::{
@@ -84,17 +81,17 @@ pub use hooks_service::SessionHookService;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommandOutcome, SessionLaunchService};
 #[cfg(test)]
-pub use memory_persistence::MemorySessionPersistence;
+pub use memory_persistence::MemoryRuntimeTraceStore;
 pub use persistence::{
     PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
     SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
-    SessionLineageStore, SessionMetaStore, SessionPersistence, SessionProjectionStore,
-    SessionRuntimeCommandStore, SessionTerminalEffectStore,
+    SessionLineageStore, SessionMetaStore, SessionProjectionStore, SessionRuntimeCommandStore,
+    SessionStoreSet, SessionTerminalEffectStore,
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
     EmptyTerminalHookEffectHandlerRegistry, PostTurnHandler, SessionTerminalCallback,
-    TerminalHookEffectBinding, TerminalHookEffectHandlerRegistry,
+    SessionTerminalNotification, TerminalHookEffectBinding, TerminalHookEffectHandlerRegistry,
 };
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_builder::SessionRuntimeBuilder;

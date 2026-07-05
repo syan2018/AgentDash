@@ -55,7 +55,7 @@ export function groupAgentRunsBySubject(entries: AgentRunWorkspaceListEntry[]): 
 
   const result = [...groups.values()];
   if (ungrouped.length > 0) {
-    result.push({ key: UNGROUPED_KEY, kind: "ungrouped", label: "项目会话", entries: ungrouped });
+    result.push({ key: UNGROUPED_KEY, kind: "ungrouped", label: "项目 AgentRun", entries: ungrouped });
   }
   return result;
 }

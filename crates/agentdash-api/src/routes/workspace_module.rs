@@ -125,16 +125,6 @@ pub async fn present_workspace_module(
             }
         })?;
 
-    if let Some(runtime_session_id) = request
-        .runtime_session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        ensure_runtime_session_belongs_to_project(state.as_ref(), runtime_session_id, project_id)
-            .await?;
-    }
-
     Ok(Json(presentation))
 }
 
@@ -162,35 +152,4 @@ async fn load_project_workspace_modules(
         &projection,
         &canvases,
     ))
-}
-
-async fn ensure_runtime_session_belongs_to_project(
-    state: &AppState,
-    runtime_session_id: &str,
-    expected_project_id: Uuid,
-) -> Result<(), ApiError> {
-    let anchor = state
-        .repos
-        .execution_anchor_repo
-        .find_by_session(runtime_session_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "runtime session 缺少 execution anchor: {runtime_session_id}"
-            ))
-        })?;
-    let run = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(anchor.run_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LifecycleRun 不存在: {}", anchor.run_id)))?;
-    if run.project_id != expected_project_id {
-        return Err(ApiError::Conflict(format!(
-            "runtime session `{runtime_session_id}` 不属于 Project `{expected_project_id}`"
-        )));
-    }
-    Ok(())
 }

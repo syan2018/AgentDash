@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::agent_run::frame::{FrameContextBundleSummary, FrameSurfaceDraft};
 #[cfg(test)]
 use crate::agent_run::runtime_capability::compose_vfs_with_overlay_and_directives;
-use crate::canvas::append_visible_canvas_mounts;
+use crate::canvas::project_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 use agentdash_application_ports::launch::LaunchPromptInput;
@@ -100,7 +100,7 @@ impl FrameAssemblyBuilder {
         identity: Option<&AuthIdentity>,
     ) -> Result<Self, String> {
         if let Some(space) = self.vfs.as_mut() {
-            append_visible_canvas_mounts(canvas_repo, project_id, space, mount_ids, identity)
+            project_visible_canvas_mounts(canvas_repo, project_id, space, mount_ids, identity)
                 .await
                 .map_err(|e| e.to_string())?;
         }

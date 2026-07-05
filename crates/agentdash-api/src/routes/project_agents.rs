@@ -1,18 +1,17 @@
 #![allow(clippy::items_after_test_module)]
 
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
+use agentdash_diagnostics::{Subsystem, diag};
 use std::sync::Arc;
 
 use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
     agent_run_session_launch,
 };
-use agentdash_application_agentrun::AgentRunRepositorySet;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunMailboxCommandOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
-    ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
-    ConversationModelConfigSourceModel, ProjectAgentRunStartCommand, ProjectAgentRunStartRepos,
-    ProjectAgentRunStartService, ResolvedProjectAgentContext, build_project_agent_context,
+    AgentRunAdmissionService, ConversationEffectiveExecutorConfigModel,
+    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
+    ProjectAgentRunStartCommand, ProjectAgentRunStartRepos, ProjectAgentRunStartService,
+    ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_domain::{
     agent::ProjectAgent, common::AgentPresetConfig, inline_file::InlineFileOwnerKind,
@@ -34,7 +33,7 @@ use agentdash_contracts::project_agent::{
 };
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunRefDto, ConversationEffectiveExecutorConfigView,
-    ConversationModelConfigSource, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
+    ConversationModelConfigSource, LifecycleRunRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -138,10 +137,9 @@ pub async fn list_project_agents(
         .await
         .map_err(ApiError::from)?;
 
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
-        let bridge = build_project_agent_context(&agent_run_repos, agent)
+        let bridge = build_project_agent_context(agent)
             .await
             .map_err(ApiError::Internal)?;
         response.push(build_project_agent_summary(&project, &bridge));
@@ -191,31 +189,34 @@ pub async fn create_project_agent_run(
         "ProjectAgent run start request parsed"
     );
 
-    let agent_run_repos = state.repos.to_agent_run_repository_set();
-    let (repos, initial_message) =
-        project_agent_run_start_service_parts(state.as_ref(), &agent_run_repos);
+    let repos = project_agent_run_start_repos(state.as_ref());
     let session_core = agent_run_session_core(state.services.session_core.clone());
-    let service = ProjectAgentRunStartService::new(repos, &session_core);
+    let service = ProjectAgentRunStartService::new(
+        repos,
+        &session_core,
+        session_core.clone(),
+        agent_run_session_control(state.services.session_control.clone()),
+        agent_run_session_eventing(state.services.session_eventing.clone()),
+        agent_run_session_launch(state.services.session_launch.clone()),
+    );
+    let admission = AgentRunAdmissionService::for_project_agent_start(service);
     diag!(Info, Subsystem::Api,
 
         project_id = %project_id,
         project_agent_id = %project_agent_id,
-        "ProjectAgent run start service dispatching"
+        "ProjectAgent run admission dispatching"
     );
-    let dispatch = service
-        .start_run(
-            ProjectAgentRunStartCommand {
-                project_id,
-                project_agent_id,
-                input: req.input,
-                client_command_id: req.client_command_id,
-                executor_config,
-                backend_selection: backend_selection_input(req.backend_selection),
-                subject_ref: parse_subject_ref(req.subject_ref)?,
-                identity: Some(current_user.clone()),
-            },
-            &initial_message,
-        )
+    let dispatch = admission
+        .admit_project_agent_start(ProjectAgentRunStartCommand {
+            project_id,
+            project_agent_id,
+            input: req.input,
+            client_command_id: req.client_command_id,
+            executor_config,
+            backend_selection: backend_selection_input(req.backend_selection),
+            subject_ref: parse_subject_ref(req.subject_ref)?,
+            identity: Some(current_user.clone()),
+        })
         .await
         .map_err(ApiError::from)?;
     diag!(Info, Subsystem::Api,
@@ -226,32 +227,14 @@ pub async fn create_project_agent_run(
         agent_id = %dispatch.agent_id,
         runtime_session_id = %dispatch.runtime_session_id,
         initial_outcome = ?dispatch.initial_message.outcome,
-        "ProjectAgent run start service returned"
+        "ProjectAgent run admission returned"
     );
 
-    let agent_context = build_project_agent_context(&agent_run_repos, &dispatch.project_agent)
+    let agent_context = build_project_agent_context(&dispatch.project_agent)
         .await
         .map_err(ApiError::Internal)?;
     let summary = build_project_agent_summary(&project, &agent_context);
     let effective_executor_config = Some(dispatch.effective_executor_config.clone());
-    if dispatch.initial_message.outcome == AgentRunMailboxCommandOutcome::Queued
-        && dispatch.initial_message.mailbox_message.is_some()
-    {
-        diag!(Info, Subsystem::Api,
-
-            run_id = %dispatch.run_id,
-            agent_id = %dispatch.agent_id,
-            runtime_session_id = %dispatch.runtime_session_id,
-            "ProjectAgent run start spawning initial mailbox schedule"
-        );
-        spawn_initial_project_agent_mailbox_schedule(
-            state.clone(),
-            dispatch.run_id,
-            dispatch.agent_id,
-            dispatch.runtime_session_id.clone(),
-            current_user.clone(),
-        );
-    }
 
     diag!(Info, Subsystem::Api,
 
@@ -275,9 +258,6 @@ pub async fn create_project_agent_run(
                 frame_id: dispatch.frame_id.to_string(),
                 revision: Some(dispatch.frame_revision),
             }),
-            runtime_session_ref: Some(RuntimeSessionRefDto {
-                runtime_session_id: dispatch.runtime_session_id.clone(),
-            }),
             turn_id: if dispatch.turn_id.is_empty() {
                 None
             } else {
@@ -286,12 +266,6 @@ pub async fn create_project_agent_run(
         },
         initial_message: agent_run_message_command_response(dispatch.initial_message),
         effective_executor_config,
-        runtime_session_id: dispatch.runtime_session_id,
-        turn_id: if dispatch.turn_id.is_empty() {
-            None
-        } else {
-            Some(dispatch.turn_id)
-        },
         agent: summary,
         run_ref: LifecycleRunRefDto {
             run_id: dispatch.run_id.to_string(),
@@ -312,75 +286,25 @@ pub async fn create_project_agent_run(
     }))
 }
 
-fn spawn_initial_project_agent_mailbox_schedule(
-    state: Arc<AppState>,
-    run_id: Uuid,
-    agent_id: Uuid,
-    runtime_session_id: String,
-    identity: agentdash_spi::platform::auth::AuthIdentity,
-) {
-    tokio::spawn(async move {
-        diag!(Info, Subsystem::Api,
-
-            runtime_session_id = %runtime_session_id,
-            run_id = %run_id,
-            agent_id = %agent_id,
-            "ProjectAgent initial mailbox background schedule entered"
-        );
-        let agent_run_repos = state.repos.to_agent_run_repository_set();
-        let repos = ProjectAgentRunStartRepos::from_repository_set(&agent_run_repos);
-        let service = repos.mailbox_service(
-            agent_run_session_core(state.services.session_core.clone()),
-            agent_run_session_control(state.services.session_control.clone()),
-            agent_run_session_eventing(state.services.session_eventing.clone()),
-            agent_run_session_launch(state.services.session_launch.clone()),
-        );
-        if let Err(error) = service
-            .schedule(
-                run_id,
-                agent_id,
-                &runtime_session_id,
-                AgentRunMailboxScheduleTrigger::UserMessageSubmitted,
-                Some(identity),
-            )
-            .await
-        {
-            let context =
-                DiagnosticErrorContext::new("project_agent.initial_mailbox_schedule", "schedule");
-            diag_error!(
-                Warn,
-                Subsystem::Api,
-                context = &context,
-                error = &error,
-                runtime_session_id = %runtime_session_id,
-                run_id = %run_id,
-                agent_id = %agent_id,
-                "ProjectAgent 初始 mailbox 后台调度失败"
-            );
-        } else {
-            diag!(Info, Subsystem::Api,
-
-                runtime_session_id = %runtime_session_id,
-                run_id = %run_id,
-                agent_id = %agent_id,
-                "ProjectAgent initial mailbox background schedule completed"
-            );
-        }
-    });
-}
-
-fn project_agent_run_start_service_parts<'a>(
-    state: &'a AppState,
-    agent_run_repos: &'a AgentRunRepositorySet,
-) -> (ProjectAgentRunStartRepos<'a>, AgentRunMailboxService<'a>) {
-    let repos = ProjectAgentRunStartRepos::from_repository_set(agent_run_repos);
-    let initial_message = repos.mailbox_service(
-        agent_run_session_core(state.services.session_core.clone()),
-        agent_run_session_control(state.services.session_control.clone()),
-        agent_run_session_eventing(state.services.session_eventing.clone()),
-        agent_run_session_launch(state.services.session_launch.clone()),
-    );
-    (repos, initial_message)
+fn project_agent_run_start_repos(state: &AppState) -> ProjectAgentRunStartRepos<'_> {
+    ProjectAgentRunStartRepos {
+        project_agent_repo: state.repos.project_agent_repo.as_ref(),
+        lifecycle_run_repo: state.repos.lifecycle_run_repo.as_ref(),
+        workflow_graph_repo: state.repos.workflow_graph_repo.as_ref(),
+        lifecycle_agent_repo: state.repos.lifecycle_agent_repo.as_ref(),
+        agent_frame_repo: state.repos.agent_frame_repo.as_ref(),
+        lifecycle_subject_association_repo: state.repos.lifecycle_subject_association_repo.as_ref(),
+        lifecycle_gate_repo: state.repos.lifecycle_gate_repo.as_ref(),
+        agent_lineage_repo: state.repos.agent_lineage_repo.as_ref(),
+        execution_anchor_repo: state.repos.execution_anchor_repo.as_ref(),
+        delivery_binding_repo: state.repos.agent_run_delivery_binding_repo.as_ref(),
+        project_backend_access_repo: state.repos.project_backend_access_repo.as_ref(),
+        command_receipt_repo: state.repos.agent_run_command_receipt_repo.as_ref(),
+        mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
+        runtime_session_creator: state.repos.runtime_session_creator.as_ref(),
+        agent_frame_construction: state.repos.agent_frame_construction.as_ref(),
+        project_agent_lifecycle_launch: state.repos.project_agent_lifecycle_launch.as_ref(),
+    }
 }
 
 fn build_project_agent_summary(

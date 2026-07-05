@@ -3,7 +3,6 @@ import type {
   SessionProjectionSegmentViewResponse,
   SessionProjectionViewResponse,
 } from "../../../generated/session-contracts";
-import { fetchSessionContextProjection } from "../../../services/session";
 import {
   fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,
@@ -11,7 +10,6 @@ import {
 import type { TokenUsageInfo } from "../model/types";
 
 export interface SessionProjectionViewProps {
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey?: number;
   tokenUsage?: TokenUsageInfo | null;
@@ -27,6 +25,17 @@ export interface SessionProjectionViewPanelProps {
   onRefresh?: () => void;
   /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
   embedded?: boolean;
+}
+
+async function fetchSessionProjectionForTarget({
+  agentRunTarget,
+}: {
+  agentRunTarget?: AgentRunRuntimeTarget | null;
+}): Promise<SessionProjectionViewResponse | null> {
+  if (agentRunTarget) {
+    return fetchAgentRunRuntimeContextProjection(agentRunTarget);
+  }
+  return null;
 }
 
 interface ContextCategoryRow {
@@ -335,7 +344,6 @@ export function SessionProjectionViewPanel({
 }
 
 export function SessionProjectionView({
-  sessionId,
   agentRunTarget = null,
   refreshKey = 0,
   tokenUsage = null,
@@ -346,23 +354,21 @@ export function SessionProjectionView({
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!sessionId) {
+    if (!agentRunTarget) {
       setProjection(null);
       return;
     }
     setIsLoading(true);
     setError(null);
     try {
-      const next = agentRunTarget
-        ? await fetchAgentRunRuntimeContextProjection(agentRunTarget)
-        : await fetchSessionContextProjection(sessionId);
+      const next = await fetchSessionProjectionForTarget({ agentRunTarget });
       setProjection(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载模型上下文失败");
     } finally {
       setIsLoading(false);
     }
-  }, [agentRunTarget, sessionId]);
+  }, [agentRunTarget]);
 
   useEffect(() => {
     void refresh();

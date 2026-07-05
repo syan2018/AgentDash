@@ -6,20 +6,19 @@ use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionExecutionState};
 use crate::agent_run::{
-    AgentFrameSurfaceExt, AgentRunCommandPreconditionModel, ConversationCommandAvailability,
-    ConversationCommandAvailabilityInput, ConversationCommandAvailabilityResolver,
-    ConversationCommandKindModel, ConversationCommandModel, ConversationExecutionStatusModel,
-    ConversationModelConfigInput, ConversationModelConfigResolver,
-    ConversationModelConfigStatusModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
-    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
-    conversation_command_id_for,
+    AgentFrameSurfaceExt, AgentRunCommandPreconditionModel, AgentRunExecutionState,
+    ConversationCommandAvailability, ConversationCommandAvailabilityInput,
+    ConversationCommandAvailabilityResolver, ConversationCommandKindModel,
+    ConversationCommandModel, ConversationExecutionStatusModel, ConversationModelConfigInput,
+    ConversationModelConfigResolver, ConversationModelConfigStatusModel, DeliveryRuntimeSelection,
+    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
+    DeliveryRuntimeSelectionService, conversation_command_id_for,
 };
 use crate::error::WorkflowApplicationError;
 
-use super::projection::is_terminal_agent_status;
 use super::query::mailbox_message_visible;
+use super::state::is_terminal_agent_status;
 
 #[derive(Clone, Copy)]
 pub struct AgentRunWorkspaceCommandPolicyDeps<'a> {
@@ -31,19 +30,16 @@ pub struct AgentRunWorkspaceCommandPolicyDeps<'a> {
 
 pub struct AgentRunWorkspaceCommandPolicyService<'a> {
     repos: AgentRunWorkspaceCommandPolicyDeps<'a>,
-    session_core: SessionCoreService,
     session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
 }
 
 impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
     pub fn new(
         repos: AgentRunWorkspaceCommandPolicyDeps<'a>,
-        session_core: SessionCoreService,
         session_control: crate::agent_run::runtime_session_boundary::SessionControlService,
     ) -> Self {
         Self {
             repos,
-            session_core,
             session_control,
         }
     }
@@ -57,14 +53,10 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         let delivery_runtime_session_id = current_delivery
             .as_ref()
             .map(|selection| selection.runtime_session_id.as_str());
-        let execution_state = match delivery_runtime_session_id {
-            Some(session_id) => {
-                self.session_core
-                    .inspect_session_execution_state(session_id)
-                    .await?
-            }
-            None => SessionExecutionState::Idle,
-        };
+        let execution_state = current_delivery
+            .as_ref()
+            .map(DeliveryRuntimeSelection::execution_state)
+            .unwrap_or(AgentRunExecutionState::Idle);
         let frame = self
             .resolve_current_frame(context.agent, current_delivery.as_ref())
             .await?;
@@ -123,14 +115,10 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         let delivery_runtime_session_id = current_delivery
             .as_ref()
             .map(|selection| selection.runtime_session_id.as_str());
-        let execution_state = match delivery_runtime_session_id {
-            Some(session_id) => {
-                self.session_core
-                    .inspect_session_execution_state(session_id)
-                    .await?
-            }
-            None => SessionExecutionState::Idle,
-        };
+        let execution_state = current_delivery
+            .as_ref()
+            .map(DeliveryRuntimeSelection::execution_state)
+            .unwrap_or(AgentRunExecutionState::Idle);
         diag!(Debug, Subsystem::AgentRun,
 
             run_id = %context.run.id,
@@ -175,11 +163,11 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         frame: Option<&AgentFrame>,
         frame_ref: Option<(Uuid, i32)>,
         delivery_runtime_session_id: Option<&str>,
-        execution_state: SessionExecutionState,
+        execution_state: AgentRunExecutionState,
         terminal_agent: bool,
     ) -> Result<ConversationCommandAvailability, AgentRunWorkspaceCommandPolicyError> {
         let supports_steering = match (&execution_state, delivery_runtime_session_id) {
-            (SessionExecutionState::Running { turn_id: Some(_) }, Some(session_id)) => {
+            (AgentRunExecutionState::Running { turn_id: Some(_) }, Some(session_id)) => {
                 self.session_control
                     .supports_session_steering(session_id)
                     .await
@@ -507,7 +495,7 @@ fn ensure_composer_command_precondition_matches_availability(
 }
 
 fn stale_command_conflict(
-    execution_state: &SessionExecutionState,
+    execution_state: &AgentRunExecutionState,
     terminal_agent: bool,
     detail: Value,
 ) -> AgentRunWorkspaceCommandPolicyError {
@@ -520,7 +508,7 @@ fn stale_command_conflict(
 }
 
 fn replacement_command_for_state(
-    _execution_state: &SessionExecutionState,
+    _execution_state: &AgentRunExecutionState,
     terminal_agent: bool,
 ) -> Option<&'static str> {
     if terminal_agent {
@@ -601,18 +589,18 @@ fn is_terminal_availability(availability: &ConversationCommandAvailability) -> b
 
 fn availability_execution_state(
     availability: &ConversationCommandAvailability,
-) -> SessionExecutionState {
+) -> AgentRunExecutionState {
     match availability.execution_status {
         ConversationExecutionStatusModel::StartingClaimed => {
-            SessionExecutionState::Running { turn_id: None }
+            AgentRunExecutionState::Running { turn_id: None }
         }
-        ConversationExecutionStatusModel::RunningActive => SessionExecutionState::Running {
+        ConversationExecutionStatusModel::RunningActive => AgentRunExecutionState::Running {
             turn_id: availability.active_turn_id.clone(),
         },
-        ConversationExecutionStatusModel::Cancelling => SessionExecutionState::Cancelling {
+        ConversationExecutionStatusModel::Cancelling => AgentRunExecutionState::Cancelling {
             turn_id: availability.active_turn_id.clone(),
         },
-        _ => SessionExecutionState::Idle,
+        _ => AgentRunExecutionState::Idle,
     }
 }
 
@@ -636,14 +624,14 @@ mod tests {
 
     fn availability(
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
-        execution_state: SessionExecutionState,
+        execution_state: AgentRunExecutionState,
     ) -> ConversationCommandAvailability {
         availability_with(context, execution_state, false)
     }
 
     fn availability_with(
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
-        execution_state: SessionExecutionState,
+        execution_state: AgentRunExecutionState,
         terminal_agent: bool,
     ) -> ConversationCommandAvailability {
         ConversationCommandAvailabilityResolver::resolve(ConversationCommandAvailabilityInput {
@@ -697,7 +685,7 @@ mod tests {
 
     #[test]
     fn composer_submit_accepts_fresh_submit_message_intent_after_completed_turn() {
-        let completed = SessionExecutionState::Completed {
+        let completed = AgentRunExecutionState::Completed {
             turn_id: "turn-1".to_string(),
         };
         let (run, agent) = test_context();
@@ -712,7 +700,7 @@ mod tests {
 
     #[test]
     fn composer_submit_rejects_non_text_control_command_intent() {
-        let running = SessionExecutionState::Running {
+        let running = AgentRunExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         };
         let (run, agent) = test_context();
@@ -737,7 +725,7 @@ mod tests {
 
     #[test]
     fn composer_submit_accepts_running_submit_message() {
-        let running = SessionExecutionState::Running {
+        let running = AgentRunExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         };
         let (run, agent) = test_context();
@@ -752,7 +740,7 @@ mod tests {
 
     #[test]
     fn composer_submit_rejects_stale_guard_mismatch() {
-        let running = SessionExecutionState::Running {
+        let running = AgentRunExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         };
         let (run, agent) = test_context();
@@ -778,7 +766,7 @@ mod tests {
 
     #[test]
     fn command_policy_rejects_stale_guard_mismatch() {
-        let running = SessionExecutionState::Running {
+        let running = AgentRunExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         };
         let (run, agent) = test_context();
@@ -803,7 +791,7 @@ mod tests {
 
     #[test]
     fn command_policy_accepts_delivery_runtime_rotation() {
-        let running = SessionExecutionState::Running {
+        let running = AgentRunExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         };
         let (run, agent) = test_context();
@@ -827,7 +815,7 @@ mod tests {
     fn command_policy_rejects_disabled_resolver_command() {
         let (run, agent) = test_context();
         let context = policy_context(&run, &agent);
-        let availability = availability(context, SessionExecutionState::Idle);
+        let availability = availability(context, AgentRunExecutionState::Idle);
         let command =
             command_from_availability(&availability, ConversationCommandKindModel::Cancel);
 
@@ -851,7 +839,7 @@ mod tests {
 
     #[test]
     fn composer_submit_rejects_terminal_availability() {
-        let completed = SessionExecutionState::Completed {
+        let completed = AgentRunExecutionState::Completed {
             turn_id: "turn-1".to_string(),
         };
         let (run, mut agent) = test_context();

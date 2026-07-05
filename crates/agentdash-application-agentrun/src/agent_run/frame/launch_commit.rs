@@ -208,6 +208,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 delivery_binding_repo,
                 &anchor,
                 pending_frame.agent_id,
+                turn_id,
             )
             .await?;
         self.advance_lifecycle_started(lifecycle_advance, runtime_session_id, turn_id)
@@ -296,6 +297,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                         delivery_binding_repo,
                         &anchor,
                         frame.agent_id,
+                        turn_id,
                     )
                     .await?;
                 self.advance_lifecycle_started(lifecycle_advance, runtime_session_id, turn_id)
@@ -336,6 +338,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         delivery_binding_repo: &dyn AgentRunDeliveryBindingRepository,
         anchor: &RuntimeSessionExecutionAnchor,
         agent_id: Uuid,
+        turn_id: &str,
     ) -> Result<bool, ConnectorError> {
         if anchor.agent_id != agent_id {
             return Err(connector_error(format!(
@@ -347,7 +350,8 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             anchor,
             DeliveryBindingStatus::Running,
             chrono::Utc::now(),
-        );
+        )
+        .mark_running(turn_id, chrono::Utc::now());
         if let Err(error) = delivery_binding_repo.upsert(&binding).await {
             let diagnostic_context =
                 DiagnosticErrorContext::new("agent_run.launch_commit", "bind_current_delivery");

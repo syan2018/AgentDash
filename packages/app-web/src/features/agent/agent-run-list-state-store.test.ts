@@ -1,4 +1,4 @@
-/// <reference types="node" />
+﻿/// <reference types="node" />
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it, beforeEach, vi } from "vitest";
@@ -7,9 +7,9 @@ import type { ProjectEventStreamEnvelope } from "../../generated/project-contrac
 import { fetchProjectAgentRuns } from "../../services/lifecycle";
 import type { AgentRunWorkspaceListEntry, AgentRunWorkspaceListView } from "../../types";
 import {
-  invalidateAgentRunListProjectionForProjectEvent,
-  useAgentRunListProjectionStore,
-} from "./agent-run-list-projection-store";
+  invalidateAgentRunListStateForProjectEvent,
+  useAgentRunListStateStore,
+} from "./agent-run-list-state-store";
 
 vi.mock("../../services/lifecycle", () => ({
   fetchProjectAgentRuns: vi.fn(),
@@ -65,10 +65,10 @@ function projectStateChanged(projectId: string): ProjectEventStreamEnvelope {
   };
 }
 
-describe("agent-run list projection store", () => {
+describe("agent-run list state store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useAgentRunListProjectionStore.setState({ byProjectId: {} });
+    useAgentRunListStateStore.setState({ byProjectId: {} });
   });
 
   it("保持后端列表顺序，不按 shell.last_activity_at 二次重排", async () => {
@@ -76,11 +76,11 @@ describe("agent-run list projection store", () => {
     const newer = agentRunEntry("run-new", "agent-new", "后端第二条", "2026-06-25T02:00:00Z");
     mockedFetchProjectAgentRuns.mockResolvedValueOnce(listView([older, newer]));
 
-    await useAgentRunListProjectionStore.getState().ensureFirstPage("project-1");
+    await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
 
     expect(mockedFetchProjectAgentRuns).toHaveBeenCalledWith("project-1", { limit: 30 });
     expect(
-      useAgentRunListProjectionStore
+      useAgentRunListStateStore
         .getState()
         .byProjectId["project-1"]
         ?.entries
@@ -88,19 +88,19 @@ describe("agent-run list projection store", () => {
     ).toEqual(["run-old", "run-new"]);
   });
 
-  it("Project 事件触发同一 Project 的 list projection refresh", async () => {
+  it("Project 事件触发同一 Project 的 list state refresh", async () => {
     const before = agentRunEntry("run-1", "agent-1", "刷新前", "2026-06-25T01:00:00Z");
     const after = agentRunEntry("run-2", "agent-2", "刷新后", "2026-06-25T02:00:00Z");
     mockedFetchProjectAgentRuns
       .mockResolvedValueOnce(listView([before]))
       .mockResolvedValueOnce(listView([after]));
 
-    await useAgentRunListProjectionStore.getState().ensureFirstPage("project-1");
-    await invalidateAgentRunListProjectionForProjectEvent(projectStateChanged("project-1"), "project-1");
+    await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
+    await invalidateAgentRunListStateForProjectEvent(projectStateChanged("project-1"), "project-1");
 
     expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(2);
     expect(
-      useAgentRunListProjectionStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
+      useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
     ).toBe("run-2");
   });
 
@@ -108,8 +108,8 @@ describe("agent-run list projection store", () => {
     const entry = agentRunEntry("run-1", "agent-1", "当前项目", "2026-06-25T01:00:00Z");
     mockedFetchProjectAgentRuns.mockResolvedValueOnce(listView([entry]));
 
-    await useAgentRunListProjectionStore.getState().ensureFirstPage("project-1");
-    await invalidateAgentRunListProjectionForProjectEvent(projectStateChanged("project-2"), "project-1");
+    await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
+    await invalidateAgentRunListStateForProjectEvent(projectStateChanged("project-2"), "project-1");
 
     expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(1);
   });
@@ -121,15 +121,15 @@ describe("agent-run list projection store", () => {
       .mockResolvedValueOnce(listView([first], "cursor-1"))
       .mockResolvedValueOnce(listView([second]));
 
-    await useAgentRunListProjectionStore.getState().ensureFirstPage("project-1");
-    await useAgentRunListProjectionStore.getState().loadMore("project-1");
+    await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
+    await useAgentRunListStateStore.getState().loadMore("project-1");
 
     expect(mockedFetchProjectAgentRuns).toHaveBeenLastCalledWith("project-1", {
       limit: 30,
       cursor: "cursor-1",
     });
     expect(
-      useAgentRunListProjectionStore
+      useAgentRunListStateStore
         .getState()
         .byProjectId["project-1"]
         ?.entries
@@ -151,7 +151,7 @@ describe("agent-run list projection store", () => {
     expect(activeListSource).not.toContain("setInterval");
   });
 
-  it("ActiveAgentRunList 主行删除入口使用确认、刷新投影和安全导航", () => {
+  it("ActiveAgentRunList 主行删除入口使用确认、刷新列表状态和安全导航", () => {
     const source = readFileSync(new URL("./active-agent-run-list.tsx", import.meta.url), "utf8");
 
     expect(source).toContain("CardMenu");

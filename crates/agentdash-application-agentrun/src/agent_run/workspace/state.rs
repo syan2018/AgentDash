@@ -1,24 +1,16 @@
-use crate::agent_run::runtime_session_boundary::SessionExecutionState;
+use crate::agent_run::AgentRunExecutionState;
 
-use super::types::{
-    AgentRunWorkspaceProjectionInput, AgentRunWorkspaceProjectionModel, AgentRunWorkspaceStateCode,
-};
+use super::types::{AgentRunWorkspaceStateCode, AgentRunWorkspaceStateModel};
 
-pub struct AgentRunWorkspaceProjection;
-
-impl AgentRunWorkspaceProjection {
-    pub fn derive(input: AgentRunWorkspaceProjectionInput<'_>) -> AgentRunWorkspaceProjectionModel {
-        let state_code = state_code(input.execution_state);
-        let active_turn_id = active_turn_id(input.execution_state);
-        let last_turn_id = last_turn_id(input.execution_state);
-        let delivery_status = delivery_status(input.execution_state, input.agent_status);
-
-        AgentRunWorkspaceProjectionModel {
-            state_code,
-            active_turn_id,
-            last_turn_id,
-            delivery_status,
-        }
+pub fn derive_workspace_state(
+    execution_state: &AgentRunExecutionState,
+    agent_status: &str,
+) -> AgentRunWorkspaceStateModel {
+    AgentRunWorkspaceStateModel {
+        state_code: state_code(execution_state),
+        active_turn_id: active_turn_id(execution_state),
+        last_turn_id: last_turn_id(execution_state),
+        delivery_status: delivery_status(execution_state, agent_status),
     }
 }
 
@@ -26,59 +18,59 @@ pub fn is_terminal_agent_status(status: &str) -> bool {
     matches!(status, "completed" | "failed" | "cancelled")
 }
 
-fn state_code(execution_state: &SessionExecutionState) -> AgentRunWorkspaceStateCode {
+fn state_code(execution_state: &AgentRunExecutionState) -> AgentRunWorkspaceStateCode {
     match execution_state {
-        SessionExecutionState::Idle => AgentRunWorkspaceStateCode::Ready,
-        SessionExecutionState::Running { turn_id: None } => {
+        AgentRunExecutionState::Idle => AgentRunWorkspaceStateCode::Ready,
+        AgentRunExecutionState::Running { turn_id: None } => {
             AgentRunWorkspaceStateCode::StartingClaimed
         }
-        SessionExecutionState::Running { turn_id: Some(_) } => {
+        AgentRunExecutionState::Running { turn_id: Some(_) } => {
             AgentRunWorkspaceStateCode::RunningActive
         }
-        SessionExecutionState::Cancelling { .. } => AgentRunWorkspaceStateCode::Cancelling,
-        SessionExecutionState::Completed { .. } => AgentRunWorkspaceStateCode::Completed,
-        SessionExecutionState::Failed { .. } => AgentRunWorkspaceStateCode::Failed,
-        SessionExecutionState::Interrupted { .. } => AgentRunWorkspaceStateCode::Interrupted,
-        SessionExecutionState::Lost { .. } => AgentRunWorkspaceStateCode::Lost,
+        AgentRunExecutionState::Cancelling { .. } => AgentRunWorkspaceStateCode::Cancelling,
+        AgentRunExecutionState::Completed { .. } => AgentRunWorkspaceStateCode::Completed,
+        AgentRunExecutionState::Failed { .. } => AgentRunWorkspaceStateCode::Failed,
+        AgentRunExecutionState::Interrupted { .. } => AgentRunWorkspaceStateCode::Interrupted,
+        AgentRunExecutionState::Lost { .. } => AgentRunWorkspaceStateCode::Lost,
     }
 }
 
-fn active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
+fn active_turn_id(execution_state: &AgentRunExecutionState) -> Option<String> {
     match execution_state {
-        SessionExecutionState::Running {
+        AgentRunExecutionState::Running {
             turn_id: Some(turn_id),
         }
-        | SessionExecutionState::Cancelling {
+        | AgentRunExecutionState::Cancelling {
             turn_id: Some(turn_id),
         } => Some(turn_id.clone()),
         _ => None,
     }
 }
 
-fn last_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
+fn last_turn_id(execution_state: &AgentRunExecutionState) -> Option<String> {
     match execution_state {
-        SessionExecutionState::Running { turn_id }
-        | SessionExecutionState::Cancelling { turn_id }
-        | SessionExecutionState::Interrupted { turn_id, .. }
-        | SessionExecutionState::Lost { turn_id, .. } => turn_id.clone(),
-        SessionExecutionState::Completed { turn_id }
-        | SessionExecutionState::Failed { turn_id, .. } => Some(turn_id.clone()),
-        SessionExecutionState::Idle => None,
+        AgentRunExecutionState::Running { turn_id }
+        | AgentRunExecutionState::Cancelling { turn_id }
+        | AgentRunExecutionState::Interrupted { turn_id, .. }
+        | AgentRunExecutionState::Lost { turn_id, .. } => turn_id.clone(),
+        AgentRunExecutionState::Completed { turn_id }
+        | AgentRunExecutionState::Failed { turn_id, .. } => Some(turn_id.clone()),
+        AgentRunExecutionState::Idle => None,
     }
 }
 
-fn delivery_status(execution_state: &SessionExecutionState, agent_status: &str) -> String {
+fn delivery_status(execution_state: &AgentRunExecutionState, agent_status: &str) -> String {
     match execution_state {
-        SessionExecutionState::Running { .. } => "running".to_string(),
-        SessionExecutionState::Cancelling { .. } => "cancelling".to_string(),
-        SessionExecutionState::Completed { .. } => "completed".to_string(),
-        SessionExecutionState::Failed { .. } => "failed".to_string(),
-        SessionExecutionState::Interrupted { .. } => "interrupted".to_string(),
-        SessionExecutionState::Lost { .. } => "lost".to_string(),
-        SessionExecutionState::Idle if is_terminal_agent_status(agent_status) => {
+        AgentRunExecutionState::Running { .. } => "running".to_string(),
+        AgentRunExecutionState::Cancelling { .. } => "cancelling".to_string(),
+        AgentRunExecutionState::Completed { .. } => "completed".to_string(),
+        AgentRunExecutionState::Failed { .. } => "failed".to_string(),
+        AgentRunExecutionState::Interrupted { .. } => "interrupted".to_string(),
+        AgentRunExecutionState::Lost { .. } => "lost".to_string(),
+        AgentRunExecutionState::Idle if is_terminal_agent_status(agent_status) => {
             agent_status.to_string()
         }
-        SessionExecutionState::Idle => "idle".to_string(),
+        AgentRunExecutionState::Idle => "idle".to_string(),
     }
 }
 
@@ -86,23 +78,20 @@ fn delivery_status(execution_state: &SessionExecutionState, agent_status: &str) 
 mod tests {
     use super::*;
 
-    fn project(execution_state: &SessionExecutionState) -> AgentRunWorkspaceProjectionModel {
-        project_with(execution_state, "active")
+    fn state(execution_state: &AgentRunExecutionState) -> AgentRunWorkspaceStateModel {
+        state_with(execution_state, "active")
     }
 
-    fn project_with(
-        execution_state: &SessionExecutionState,
+    fn state_with(
+        execution_state: &AgentRunExecutionState,
         agent_status: &str,
-    ) -> AgentRunWorkspaceProjectionModel {
-        AgentRunWorkspaceProjection::derive(AgentRunWorkspaceProjectionInput::new(
-            execution_state,
-            agent_status,
-        ))
+    ) -> AgentRunWorkspaceStateModel {
+        derive_workspace_state(execution_state, agent_status)
     }
 
     #[test]
     fn idle_workspace_is_ready() {
-        let model = project(&SessionExecutionState::Idle);
+        let model = state(&AgentRunExecutionState::Idle);
 
         assert_eq!(model.state_code, AgentRunWorkspaceStateCode::Ready);
         assert_eq!(model.state_code.as_str(), "ready");
@@ -113,7 +102,7 @@ mod tests {
 
     #[test]
     fn running_without_turn_is_starting_claimed() {
-        let model = project(&SessionExecutionState::Running { turn_id: None });
+        let model = state(&AgentRunExecutionState::Running { turn_id: None });
 
         assert_eq!(
             model.state_code,
@@ -126,7 +115,7 @@ mod tests {
 
     #[test]
     fn running_with_turn_is_running_active() {
-        let model = project(&SessionExecutionState::Running {
+        let model = state(&AgentRunExecutionState::Running {
             turn_id: Some("turn-1".to_string()),
         });
 
@@ -138,7 +127,7 @@ mod tests {
 
     #[test]
     fn cancelling_keeps_active_turn() {
-        let model = project(&SessionExecutionState::Cancelling {
+        let model = state(&AgentRunExecutionState::Cancelling {
             turn_id: Some("turn-1".to_string()),
         });
 
@@ -150,7 +139,7 @@ mod tests {
 
     #[test]
     fn completed_turn_is_ready_with_last_turn() {
-        let model = project(&SessionExecutionState::Completed {
+        let model = state(&AgentRunExecutionState::Completed {
             turn_id: "turn-1".to_string(),
         });
 
@@ -162,7 +151,7 @@ mod tests {
 
     #[test]
     fn failed_turn_keeps_failure_message() {
-        let model = project(&SessionExecutionState::Failed {
+        let model = state(&AgentRunExecutionState::Failed {
             turn_id: "turn-1".to_string(),
             message: Some("provider failed".to_string()),
         });
@@ -175,7 +164,7 @@ mod tests {
 
     #[test]
     fn interrupted_turn_keeps_last_turn_without_active_turn() {
-        let model = project(&SessionExecutionState::Interrupted {
+        let model = state(&AgentRunExecutionState::Interrupted {
             turn_id: Some("turn-1".to_string()),
             message: Some("user interrupted".to_string()),
         });
@@ -187,8 +176,8 @@ mod tests {
     }
 
     #[test]
-    fn lost_turn_projects_lost_delivery_status() {
-        let model = project(&SessionExecutionState::Lost {
+    fn lost_turn_reports_lost_delivery_status() {
+        let model = state(&AgentRunExecutionState::Lost {
             turn_id: Some("turn-1".to_string()),
             message: Some("backend disconnected".to_string()),
         });
@@ -201,7 +190,7 @@ mod tests {
 
     #[test]
     fn terminal_agent_status_sets_delivery_status() {
-        let model = project_with(&SessionExecutionState::Idle, "completed");
+        let model = state_with(&AgentRunExecutionState::Idle, "completed");
 
         assert_eq!(model.state_code, AgentRunWorkspaceStateCode::Ready);
         assert_eq!(model.delivery_status, "completed");
@@ -209,7 +198,7 @@ mod tests {
 
     #[test]
     fn active_agent_idle_state_reports_idle_delivery() {
-        let model = project_with(&SessionExecutionState::Idle, "active");
+        let model = state_with(&AgentRunExecutionState::Idle, "active");
 
         assert_eq!(model.delivery_status, "idle");
     }

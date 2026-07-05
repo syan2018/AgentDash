@@ -5,6 +5,7 @@ mod conversation_snapshot;
 mod delete_command;
 mod delivery_runtime_selection;
 mod effective_capability;
+mod execution_state;
 mod fork;
 pub mod frame;
 mod journal;
@@ -57,6 +58,7 @@ pub use effective_capability::{
     AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
     agent_run_effective_capability_port, runtime_session_effective_capability_port,
 };
+pub use execution_state::AgentRunExecutionState;
 pub use fork::{
     AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkRepos, AgentRunForkService,
     AgentRunForkSubmitCommand,

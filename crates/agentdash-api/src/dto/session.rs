@@ -11,16 +11,6 @@ pub struct SessionEventsQuery {
     pub limit: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionExecutionStateResponse {
-    pub session_id: String,
-    pub status: String,
-    pub turn_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct UpdateSessionMetaRequest {
     #[serde(default)]

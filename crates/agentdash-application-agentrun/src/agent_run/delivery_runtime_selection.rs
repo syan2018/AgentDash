@@ -7,6 +7,7 @@ use agentdash_domain::workflow::{
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::agent_run::AgentRunExecutionState;
 use crate::error::ApplicationError;
 use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection::{
@@ -29,10 +30,26 @@ pub struct DeliveryRuntimeSelection {
     pub node_path: Option<String>,
     pub node_attempt: Option<u32>,
     pub status: DeliveryBindingStatus,
+    pub active_turn_id: Option<String>,
+    pub last_turn_id: Option<String>,
+    pub terminal_state: Option<String>,
+    pub terminal_message: Option<String>,
     pub observed_at: DateTime<Utc>,
     pub address: AgentRunRuntimeAddress,
     pub message_stream: MessageStreamProjectionRef,
     pub anchor: RuntimeSessionExecutionAnchor,
+}
+
+impl DeliveryRuntimeSelection {
+    pub fn execution_state(&self) -> AgentRunExecutionState {
+        AgentRunExecutionState::from_delivery_parts(
+            self.status,
+            self.active_turn_id.clone(),
+            self.last_turn_id.clone(),
+            self.terminal_state.clone(),
+            self.terminal_message.clone(),
+        )
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -185,6 +202,10 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             current_frame.id,
             anchor,
             binding.status,
+            binding.active_turn_id,
+            binding.last_turn_id,
+            binding.terminal_state,
+            binding.terminal_message,
             binding.observed_at,
         )
         .await
@@ -226,6 +247,10 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
         current_frame_id: Uuid,
         anchor: RuntimeSessionExecutionAnchor,
         status: DeliveryBindingStatus,
+        active_turn_id: Option<String>,
+        last_turn_id: Option<String>,
+        terminal_state: Option<String>,
+        terminal_message: Option<String>,
         observed_at: DateTime<Utc>,
     ) -> Result<DeliveryRuntimeSelection, DeliveryRuntimeSelectionError> {
         self.repos.agent_frames.get(current_frame_id).await?.ok_or(
@@ -251,6 +276,10 @@ impl<'a> DeliveryRuntimeSelectionService<'a> {
             node_path: anchor.node_path.clone(),
             node_attempt: anchor.node_attempt,
             status,
+            active_turn_id,
+            last_turn_id,
+            terminal_state,
+            terminal_message,
             observed_at,
             address: AgentRunRuntimeAddress {
                 run_id: anchor.run_id,

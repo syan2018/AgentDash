@@ -7,12 +7,14 @@ use agentdash_application_agentrun::agent_run::{
     SessionCoreService, SessionEventingService, SessionLaunchService,
 };
 use agentdash_application_runtime_session::session::SessionTerminalCallback;
+use agentdash_application_runtime_session::session::SessionTerminalNotification;
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository,
-    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBinding,
+    AgentRunDeliveryBindingRepository, DeliveryBindingStatus, LifecycleAgentRepository,
+    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 
 #[derive(Clone)]
@@ -96,17 +98,63 @@ impl AgentRunMailboxTerminalCallback {
             .await?;
         Ok(())
     }
+
+    async fn record_agent_run_terminal_state(
+        &self,
+        notification: &SessionTerminalNotification,
+    ) -> Result<(), agentdash_application_agentrun::WorkflowApplicationError> {
+        let Some(anchor) = self
+            .deps
+            .execution_anchor_repo
+            .find_by_session(&notification.session_id)
+            .await?
+        else {
+            return Ok(());
+        };
+        let observed_at = chrono::Utc::now();
+        let binding = match self
+            .deps
+            .delivery_binding_repo
+            .get_current(anchor.run_id, anchor.agent_id)
+            .await?
+        {
+            Some(binding) => binding,
+            None => AgentRunDeliveryBinding::from_anchor(
+                &anchor,
+                DeliveryBindingStatus::Terminal,
+                observed_at,
+            ),
+        }
+        .mark_terminal(
+            notification.turn_id.clone(),
+            notification.terminal_state.clone(),
+            notification.terminal_message.clone(),
+            observed_at,
+        );
+        self.deps.delivery_binding_repo.upsert(&binding).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
-    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
-        match terminal_state {
+    async fn on_session_terminal(&self, notification: SessionTerminalNotification) {
+        if let Err(error) = self.record_agent_run_terminal_state(&notification).await {
+            diag!(Warn, Subsystem::Api,
+
+                runtime_session_id = %notification.session_id,
+                turn_id = %notification.turn_id,
+                terminal_state = %notification.terminal_state,
+                error = %error,
+                "AgentRun terminal state 写入失败"
+            );
+        }
+        match notification.terminal_state.as_str() {
             "completed" => {
-                if let Err(error) = self.schedule_turn_boundary(session_id).await {
+                if let Err(error) = self.schedule_turn_boundary(&notification.session_id).await {
                     diag!(Warn, Subsystem::Api,
 
-                        runtime_session_id = %session_id,
+                        runtime_session_id = %notification.session_id,
                         error = %error,
                         "AgentRun mailbox completed terminal fallback 调度失败"
                     );
@@ -116,7 +164,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                 if let Err(error) = self
                     .service()
                     .pause_for_terminal(
-                        session_id,
+                        &notification.session_id,
                         "turn_failed",
                         Some("上一轮失败，mailbox 已暂停。".to_string()),
                     )
@@ -124,7 +172,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                 {
                     diag!(Warn, Subsystem::Api,
 
-                        runtime_session_id = %session_id,
+                        runtime_session_id = %notification.session_id,
                         error = %error,
                         "AgentRun mailbox failed pause 写入失败"
                     );
@@ -134,7 +182,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                 if let Err(error) = self
                     .service()
                     .pause_for_terminal(
-                        session_id,
+                        &notification.session_id,
                         "turn_interrupted",
                         Some("上一轮已中断，mailbox 已暂停。".to_string()),
                     )
@@ -142,7 +190,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                 {
                     diag!(Warn, Subsystem::Api,
 
-                        runtime_session_id = %session_id,
+                        runtime_session_id = %notification.session_id,
                         error = %error,
                         "AgentRun mailbox interrupted pause 写入失败"
                     );

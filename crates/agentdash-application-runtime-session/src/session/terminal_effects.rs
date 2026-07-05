@@ -12,6 +12,7 @@ use super::hub_support::TurnTerminalKind;
 use super::persistence::SessionTerminalEffectStore;
 use super::post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
+    SessionTerminalNotification,
 };
 pub use agentdash_spi::session_persistence::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
@@ -25,7 +26,7 @@ enum TerminalEffectExecutor {
     },
     SessionTerminalCallback {
         callback: DynSessionTerminalCallback,
-        terminal_state: String,
+        notification: SessionTerminalNotification,
     },
     HookAutoResume,
     Unavailable {
@@ -127,7 +128,7 @@ impl SessionTerminalEffectDispatcher {
                         trigger: HookTrigger::SessionTerminal,
                         payload: Some(serde_json::json!({
                             "terminal_state": terminal_state,
-                            "message": input.terminal_message,
+                            "message": input.terminal_message.clone(),
                         })),
                         refresh_reason: "trigger:session_terminal",
                         source: input.source.clone(),
@@ -178,11 +179,18 @@ impl SessionTerminalEffectDispatcher {
                     effect_type: TerminalEffectType::SessionTerminalCallback,
                     payload: serde_json::json!({
                         "terminal_state": terminal_state,
+                        "terminal_message": input.terminal_message.clone(),
                     }),
                 },
                 TerminalEffectExecutor::SessionTerminalCallback {
                     callback,
-                    terminal_state: terminal_state.clone(),
+                    notification: SessionTerminalNotification {
+                        session_id: input.session_id.clone(),
+                        turn_id: input.turn_id.clone(),
+                        terminal_event_seq: input.terminal_event_seq,
+                        terminal_state: terminal_state.clone(),
+                        terminal_message: input.terminal_message.clone(),
+                    },
                 },
             )
             .await;
@@ -326,12 +334,22 @@ impl SessionTerminalEffectDispatcher {
                 match self.deps.terminal_callback.read().await.clone() {
                     Some(callback) => TerminalEffectExecutor::SessionTerminalCallback {
                         callback,
-                        terminal_state: record
-                            .payload
-                            .get("terminal_state")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
+                        notification: SessionTerminalNotification {
+                            session_id: record.session_id.clone(),
+                            turn_id: record.turn_id.clone(),
+                            terminal_event_seq: record.terminal_event_seq,
+                            terminal_state: record
+                                .payload
+                                .get("terminal_state")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("unknown")
+                                .to_string(),
+                            terminal_message: record
+                                .payload
+                                .get("terminal_message")
+                                .and_then(|value| value.as_str())
+                                .map(ToOwned::to_owned),
+                        },
                     },
                     None => TerminalEffectExecutor::Unavailable {
                         reason: "terminal callback 未注入，无法 replay session_terminal_callback"
@@ -395,11 +413,9 @@ impl SessionTerminalEffectDispatcher {
             }
             TerminalEffectExecutor::SessionTerminalCallback {
                 callback,
-                terminal_state,
+                notification,
             } => {
-                callback
-                    .on_session_terminal(&item.record.session_id, terminal_state)
-                    .await;
+                callback.on_session_terminal(notification.clone()).await;
                 Ok(())
             }
             TerminalEffectExecutor::HookAutoResume => self

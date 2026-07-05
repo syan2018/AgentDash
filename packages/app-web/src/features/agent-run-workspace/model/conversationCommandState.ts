@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ConversationCommandSetView,
   ConversationCommandView,
   ConversationMailboxSnapshotView,
@@ -43,6 +43,7 @@ export type AgentRunConversationCommand = ConversationCommandView | LocalDraftSt
 export interface AgentRunConversationCommandState {
   mode: "draft" | "runtime";
   executionStatus: string;
+  activeTurnId?: string | null;
   commands: ConversationCommandSetView;
   localDraftAction?: LocalDraftStartAction;
   modelConfig: ConversationModelConfigView;
@@ -176,7 +177,7 @@ function draftStartCommand(input: {
   projectId: string | null;
   agentKey: string | null;
   agent: ProjectAgentSummary | null;
-  projectionReady: boolean;
+  workspaceStateReady: boolean;
   modelConfig: ConversationModelConfigView;
 }): LocalDraftStartAction {
   const missingDraft = !input.projectId || !input.agentKey || !input.agent;
@@ -184,7 +185,7 @@ function draftStartCommand(input: {
     ? "当前 Draft 尚未就绪。"
     : input.modelConfig.status === "model_required"
       ? input.modelConfig.message ?? "请选择模型配置后再发送。"
-      : input.projectionReady
+      : input.workspaceStateReady
         ? undefined
         : "当前 Draft 正在加载。";
 
@@ -205,7 +206,7 @@ export function buildDraftConversationCommandState(input: {
   projectId: string | null;
   agentKey: string | null;
   agent: ProjectAgentSummary | null;
-  projectionReady: boolean;
+  workspaceStateReady: boolean;
   explicitExecutorConfigOverride?: ExecutorConfig | null;
 }): AgentRunConversationCommandState {
   const modelConfig = modelConfigForDraft({
@@ -225,20 +226,20 @@ export function buildDraftConversationCommandState(input: {
 
 export function buildAgentRunConversationCommandState(input: {
   conversation: {
-    execution: { status: string; reason?: string };
+    execution: { status: string; active_turn_id?: string; reason?: string };
     commands: ConversationCommandSetView;
     model_config: ConversationModelConfigView;
   } | null | undefined;
-  projectionStatus: string;
-  projectionError: string | null;
+  workspaceStateStatus: string;
+  workspaceStateError: string | null;
 }): AgentRunConversationCommandState {
   if (!input.conversation) {
-    const reason = input.projectionStatus !== "ready"
-      ? input.projectionError ?? "当前 AgentRun 工作台投影正在刷新。"
+    const reason = input.workspaceStateStatus !== "ready"
+      ? input.workspaceStateError ?? "当前 AgentRun 工作台状态正在刷新。"
       : "当前 AgentRun 尚未返回 conversation snapshot。";
     return {
       mode: "runtime",
-      executionStatus: input.projectionStatus !== "ready" ? input.projectionStatus : "ready",
+      executionStatus: input.workspaceStateStatus !== "ready" ? input.workspaceStateStatus : "ready",
       commands: emptyCommandSet(),
       modelConfig: {
         status: "model_required",
@@ -252,6 +253,7 @@ export function buildAgentRunConversationCommandState(input: {
   return {
     mode: "runtime",
     executionStatus: input.conversation.execution.status,
+    activeTurnId: input.conversation.execution.active_turn_id,
     commands: input.conversation.commands,
     modelConfig: input.conversation.model_config,
     helperText: input.conversation.execution.reason,

@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application_runtime_session::session::{
-    SessionContextProjectionReadModel, SessionExecutionState, SessionMeta,
+    SessionContextProjectionReadModel, SessionMeta,
 };
 use agentdash_contracts::session::{
     SessionAttachmentContextContributionResponse, SessionContextUsageAnalysisResponse,
@@ -32,10 +32,7 @@ use agentdash_contracts::session::{
 use agentdash_domain::workflow::LifecycleRun;
 
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::{
-    ContextAuditEventDto, ContextAuditQuery, NdjsonStreamQuery, SessionEventsQuery,
-    SessionExecutionStateResponse,
-};
+use crate::dto::{ContextAuditEventDto, ContextAuditQuery, NdjsonStreamQuery, SessionEventsQuery};
 
 /// Session trace 权限检查通过 RuntimeSessionExecutionAnchor 进入 LifecycleRun project。
 pub async fn ensure_session_permission(
@@ -74,10 +71,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
         .route("/sessions/{id}", axum::routing::get(get_session))
         .route("/sessions/{id}/meta", axum::routing::get(get_session_meta))
-        .route(
-            "/sessions/{id}/state",
-            axum::routing::get(get_session_state),
-        )
         .route(
             "/sessions/{id}/events",
             axum::routing::get(list_session_events),
@@ -131,73 +124,6 @@ fn stream_event_payload(
     event: agentdash_application_runtime_session::session::PersistedSessionEvent,
 ) -> SessionNdjsonEnvelope {
     SessionNdjsonEnvelope::event(event)
-}
-
-pub async fn get_session_state(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<SessionExecutionStateResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-
-    let execution_state = state
-        .services
-        .session_core
-        .inspect_session_execution_state(&session_id)
-        .await?;
-
-    let response = match execution_state {
-        SessionExecutionState::Idle => SessionExecutionStateResponse {
-            session_id,
-            status: "idle".to_string(),
-            turn_id: None,
-            message: None,
-        },
-        SessionExecutionState::Running { turn_id } => SessionExecutionStateResponse {
-            session_id,
-            status: "running".to_string(),
-            turn_id,
-            message: None,
-        },
-        SessionExecutionState::Cancelling { turn_id } => SessionExecutionStateResponse {
-            session_id,
-            status: "cancelling".to_string(),
-            turn_id,
-            message: Some("当前执行正在取消中。".to_string()),
-        },
-        SessionExecutionState::Completed { turn_id } => SessionExecutionStateResponse {
-            session_id,
-            status: "completed".to_string(),
-            turn_id: Some(turn_id),
-            message: None,
-        },
-        SessionExecutionState::Failed { turn_id, message } => SessionExecutionStateResponse {
-            session_id,
-            status: "failed".to_string(),
-            turn_id: Some(turn_id),
-            message,
-        },
-        SessionExecutionState::Interrupted { turn_id, message } => SessionExecutionStateResponse {
-            session_id,
-            status: "interrupted".to_string(),
-            turn_id,
-            message,
-        },
-        SessionExecutionState::Lost { turn_id, message } => SessionExecutionStateResponse {
-            session_id,
-            status: "lost".to_string(),
-            turn_id,
-            message,
-        },
-    };
-
-    Ok(Json(response))
 }
 
 async fn load_lifecycle_run_for_session(

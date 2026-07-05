@@ -1,5 +1,4 @@
 import { api, type ApiHttpError } from "../api/client";
-import { requireStringField } from "../api/mappers";
 import { settingsApi } from "../api/settings";
 import type {
   SessionEventResponse,
@@ -18,15 +17,6 @@ export type SessionExecutionStatusValue =
   | "completed"
   | "failed"
   | "interrupted";
-
-// `/sessions/{id}/state` 是 RuntimeSession trace 的诊断/legacy 查询入口。
-// AgentRun / workspace 控制 UI 使用 generated workspace/conversation DTO，不从这里派生命令事实。
-export interface RouteLocalSessionExecutionState {
-  session_id: string;
-  status: SessionExecutionStatusValue;
-  turn_id: string | null;
-  message: string | null;
-}
 
 export interface SessionMeta {
   id: string;
@@ -70,36 +60,6 @@ export async function fetchSessionContextProjection(
     if ((err as ApiHttpError).status === 404) return null;
     throw err;
   }
-}
-
-function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatusValue {
-  switch (value) {
-    case "idle":
-    case "running":
-    case "cancelling":
-    case "completed":
-    case "failed":
-    case "interrupted":
-      return value;
-    default:
-      throw new Error(`未知的会话执行状态: ${String(value ?? "")}`);
-  }
-}
-
-function mapSessionExecutionState(raw: Record<string, unknown>): RouteLocalSessionExecutionState {
-  return {
-    session_id: requireStringField(raw, "session_id"),
-    status: normalizeSessionExecutionStatus(raw.status),
-    turn_id: raw.turn_id != null ? String(raw.turn_id) : null,
-    message: raw.message != null ? String(raw.message) : null,
-  };
-}
-
-export async function fetchSessionExecutionState(
-  id: string,
-): Promise<RouteLocalSessionExecutionState> {
-  const raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(id)}/state`);
-  return mapSessionExecutionState(raw);
 }
 
 // ─── Tab 布局持久化 ──────────────────────────────────

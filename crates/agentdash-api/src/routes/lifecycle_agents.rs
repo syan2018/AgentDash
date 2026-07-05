@@ -209,7 +209,7 @@ pub async fn get_project_agent_runs(
     let cursor = query.cursor.as_deref().and_then(decode_cursor);
 
     // keyset 分页：按 run 级 last_activity_at desc（run_id desc tiebreak）稳定排序，
-    // 仅对**页内** run 跑投影——成本随页大小而非项目历史 Run 总量增长。
+    // 仅对**页内** run 解析列表条目——成本随页大小而非项目历史 Run 总量增长。
     let mut runs = state
         .repos
         .lifecycle_run_repo
@@ -253,19 +253,13 @@ pub async fn get_project_agent_runs(
         let (children_map, child_ids) = build_lineage_forest(&lineages);
 
         // 只对主 Run（控制树 root = 未作为任何 lineage child 出现的 agent）产出 entry，
-        // 并内联其直接子 Agent（一跳），均走轻量列表投影。
+        // 并内联其直接子 Agent（一跳），均走轻量列表条目。
         for agent in agents.iter().filter(|agent| !child_ids.contains(&agent.id)) {
             let subagent_count = count_descendants(agent.id, &children_map);
-            let projection =
-                load_agent_run_list_projection(&state, run.clone(), agent.clone()).await?;
+            let item = load_agent_run_list_item(&state, run.clone(), agent.clone()).await?;
             let children =
                 build_inline_children(&state, run, agent.id, &agents, &children_map, 0).await?;
-            entries.push(list_entry_from_projection(
-                run,
-                projection,
-                subagent_count,
-                children,
-            ));
+            entries.push(list_entry_from_item(run, item, subagent_count, children));
         }
 
         // 按 run 分页：本 run 全部 entry 产出后若已达页大小，游标指向本 run，下一页从其后开始。
@@ -341,7 +335,7 @@ fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
 
 /// 递归内联某节点的直接子 Agent 子树，每个节点携带真实 shell 状态。
 ///
-/// forest（`children_map`）已在 list 循环内建好，取子节点零额外 repo 查询；仅投影是新增异步调用。
+/// forest（`children_map`）已在 list 循环内建好，取子节点零额外 repo 查询；仅列表条目解析是新增异步调用。
 /// 深度上限保护 lineage 环 / 异常深树（与 `count_descendants` 同语义）。async 递归经 `Box::pin`。
 fn build_inline_children<'a>(
     state: &'a AppState,
@@ -369,12 +363,11 @@ fn build_inline_children<'a>(
                 continue;
             };
             let subagent_count = count_descendants(child_agent.id, children_map);
-            let projection =
-                load_agent_run_list_projection(state, run.clone(), child_agent.clone()).await?;
+            let item = load_agent_run_list_item(state, run.clone(), child_agent.clone()).await?;
             let nested =
                 build_inline_children(state, run, child_agent.id, agents, children_map, depth + 1)
                     .await?;
-            let mut node = list_child_from_projection(run, projection, subagent_count);
+            let mut node = list_child_from_item(run, item, subagent_count);
             node.children = nested;
             children.push(node);
         }
@@ -410,7 +403,7 @@ pub async fn get_agent_run_workspace(
 ///
 /// 一次 `list_by_run` 拿全 run 的 lineage 边，内存建 forest：parent 至多一个，
 /// children 为直接子节点；每个 ref 附其子树后代数（`subagent_count`）供前端决定是否可下钻。
-/// 标题走轻量列表投影，保证与列表/header 一致且不再为取标题做完整详情快照。
+/// 标题走轻量列表条目，保证与列表/header 一致且不再为取标题做完整详情快照。
 async fn resolve_agent_run_lineage(
     state: &AppState,
     run: &LifecycleRun,
@@ -488,7 +481,7 @@ async fn resolve_agent_run_lineage(
     Ok((parent, children))
 }
 
-/// 为 lineage 上的某 agent 构建一跳引用（标题走轻量投影，避免完整详情快照）。
+/// 为 lineage 上的某 agent 构建一跳引用（标题走轻量列表条目，避免完整详情快照）。
 async fn lineage_ref_for_agent(
     state: &AppState,
     run: &LifecycleRun,
@@ -496,13 +489,13 @@ async fn lineage_ref_for_agent(
     relation_kind: String,
     subagent_count: u32,
 ) -> Result<AgentRunLineageRef, ApiError> {
-    let projection = load_agent_run_list_projection(state, run.clone(), agent.clone()).await?;
+    let item = load_agent_run_list_item(state, run.clone(), agent.clone()).await?;
     Ok(AgentRunLineageRef {
         run_id: agent.run_id.to_string(),
         agent_id: agent.id.to_string(),
         source: agent.source.as_str().to_string(),
         relation_kind,
-        display_title: projection.shell.display_title,
+        display_title: item.shell.display_title,
         subagent_count,
     })
 }
@@ -1684,12 +1677,12 @@ fn timestamp_millis_to_rfc3339(timestamp_millis: i64) -> String {
         .to_rfc3339()
 }
 
-/// 轻量列表投影：列表/lineage ref 共用，避免为每个主 Run 走完整详情快照。
-async fn load_agent_run_list_projection(
+/// 轻量列表条目：列表/lineage ref 共用，避免为每个主 Run 走完整详情快照。
+async fn load_agent_run_list_item(
     state: &AppState,
     run: LifecycleRun,
     agent: LifecycleAgent,
-) -> Result<app_workspace::AgentRunListProjection, ApiError> {
+) -> Result<app_workspace::AgentRunListItem, ApiError> {
     let vfs_runtime = ApiVfsSurfaceRuntimeProjection::new(
         state.services.backend_registry.clone(),
         state.services.mount_provider_registry.clone(),
@@ -1706,7 +1699,7 @@ async fn load_agent_run_list_projection(
         state.services.lifecycle_read_model_query.as_ref(),
     );
     service
-        .resolve_list_projection(app_workspace::AgentRunWorkspaceQueryInput {
+        .resolve_list_item(app_workspace::AgentRunWorkspaceQueryInput {
             run,
             agent,
             viewer_user_id: None,
@@ -1755,10 +1748,10 @@ fn root_list_shell_model_to_contract(
     shell
 }
 
-/// 内联子 Agent 节点：复用列表投影的 shell（含真实 delivery_status / last_activity_at）。
-fn list_child_from_projection(
+/// 内联子 Agent 节点：复用列表条目的 shell（含真实 delivery_status / last_activity_at）。
+fn list_child_from_item(
     run: &LifecycleRun,
-    projection: app_workspace::AgentRunListProjection,
+    item: app_workspace::AgentRunListItem,
     subagent_count: u32,
 ) -> AgentRunListChild {
     AgentRunListChild {
@@ -1767,19 +1760,19 @@ fn list_child_from_projection(
         },
         agent_ref: AgentRunRefDto {
             run_id: run.id.to_string(),
-            agent_id: projection.agent.id.to_string(),
+            agent_id: item.agent.id.to_string(),
         },
-        project_agent_label: projection.project_agent_label,
-        source: projection.agent.source.as_str().to_string(),
-        shell: shell_model_to_contract(projection.shell),
+        project_agent_label: item.project_agent_label,
+        source: item.agent.source.as_str().to_string(),
+        shell: shell_model_to_contract(item.shell),
         subagent_count,
         children: Vec::new(),
     }
 }
 
-fn list_entry_from_projection(
+fn list_entry_from_item(
     run: &LifecycleRun,
-    projection: app_workspace::AgentRunListProjection,
+    item: app_workspace::AgentRunListItem,
     subagent_count: u32,
     children: Vec<AgentRunListChild>,
 ) -> AgentRunWorkspaceListEntry {
@@ -1789,19 +1782,19 @@ fn list_entry_from_projection(
         },
         agent_ref: AgentRunRefDto {
             run_id: run.id.to_string(),
-            agent_id: projection.agent.id.to_string(),
+            agent_id: item.agent.id.to_string(),
         },
         project_id: run.project_id.to_string(),
-        project_agent_label: projection.project_agent_label.clone(),
-        source: projection.agent.source.as_str().to_string(),
-        shell: root_list_shell_model_to_contract(run, projection.shell),
+        project_agent_label: item.project_agent_label.clone(),
+        source: item.agent.source.as_str().to_string(),
+        shell: root_list_shell_model_to_contract(run, item.shell),
         run_status: lifecycle_run_status_to_contract(run.status),
         subagent_count,
         children,
         // 列表 UI 不消费 frame_ref，省去 frame runtime 解析。
         frame_ref: None,
-        subject_ref: projection.subject_ref.map(subject_ref_to_contract),
-        subject_label: projection.subject_label,
+        subject_ref: item.subject_ref.map(subject_ref_to_contract),
+        subject_label: item.subject_label,
     }
 }
 
@@ -2583,7 +2576,6 @@ fn agent_run_workspace_command_policy(
             project_agent_repo: state.repos.project_agent_repo.as_ref(),
             agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
         },
-        agent_run_session_core(state.services.session_core.clone()),
         agent_run_session_control(state.services.session_control.clone()),
     )
 }
@@ -3210,10 +3202,10 @@ mod tests {
     }
 
     #[test]
-    fn list_entry_from_projection_carries_source_and_count() {
+    fn list_entry_from_item_carries_source_and_count() {
         let run = LifecycleRun::new_plain(Uuid::new_v4());
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let projection = app_workspace::AgentRunListProjection {
+        let item = app_workspace::AgentRunListItem {
             run: run.clone(),
             agent,
             shell: app_workspace::AgentRunWorkspaceShellModel {
@@ -3230,7 +3222,7 @@ mod tests {
             subject_label: None,
         };
 
-        let entry = list_entry_from_projection(&run, projection, 3, Vec::new());
+        let entry = list_entry_from_item(&run, item, 3, Vec::new());
 
         assert_eq!(entry.shell.display_title, "Session meta title");
         assert_eq!(entry.shell.title_source, "source");
@@ -3242,13 +3234,13 @@ mod tests {
     }
 
     #[test]
-    fn list_entry_from_projection_uses_run_activity_for_root_shell() {
+    fn list_entry_from_item_uses_run_activity_for_root_shell() {
         let mut run = LifecycleRun::new_plain(Uuid::new_v4());
         run.last_activity_at = DateTime::parse_from_rfc3339("2026-06-18T08:30:00Z")
             .expect("run activity")
             .with_timezone(&Utc);
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let projection = app_workspace::AgentRunListProjection {
+        let item = app_workspace::AgentRunListItem {
             run: run.clone(),
             agent,
             shell: app_workspace::AgentRunWorkspaceShellModel {
@@ -3265,7 +3257,7 @@ mod tests {
             subject_label: None,
         };
 
-        let entry = list_entry_from_projection(&run, projection, 0, Vec::new());
+        let entry = list_entry_from_item(&run, item, 0, Vec::new());
         let (cursor_millis, cursor_run_id) =
             decode_cursor(&encode_cursor(run.last_activity_at, run.id)).expect("cursor");
         let shell_activity = DateTime::parse_from_rfc3339(&entry.shell.last_activity_at)
@@ -3281,14 +3273,14 @@ mod tests {
     }
 
     #[test]
-    fn list_child_from_projection_preserves_agent_scoped_activity() {
+    fn list_child_from_item_preserves_agent_scoped_activity() {
         let mut run = LifecycleRun::new_plain(Uuid::new_v4());
         run.last_activity_at = DateTime::parse_from_rfc3339("2026-06-18T08:30:00Z")
             .expect("run activity")
             .with_timezone(&Utc);
         let child_activity = "2026-06-12T00:00:00Z";
         let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
-        let projection = app_workspace::AgentRunListProjection {
+        let item = app_workspace::AgentRunListItem {
             run: run.clone(),
             agent,
             shell: app_workspace::AgentRunWorkspaceShellModel {
@@ -3305,7 +3297,7 @@ mod tests {
             subject_label: None,
         };
 
-        let child = list_child_from_projection(&run, projection, 0);
+        let child = list_child_from_item(&run, item, 0);
 
         assert_eq!(child.shell.last_activity_at, child_activity);
     }

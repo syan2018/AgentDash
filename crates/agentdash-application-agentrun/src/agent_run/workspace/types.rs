@@ -2,7 +2,6 @@ use crate::agent_run::AgentRunOwnershipModel;
 use crate::agent_run::lifecycle_read_model_facade::{
     AgentRunView, LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
-use crate::agent_run::runtime_session_boundary::SessionExecutionState;
 use crate::agent_run::{AgentConversationSnapshotModel, ConversationEffectiveExecutorConfigModel};
 use agentdash_application_vfs::ResolvedVfsSurface;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage;
@@ -23,7 +22,7 @@ pub struct AgentRunWorkspaceSnapshot {
     pub ownership: AgentRunOwnershipModel,
     pub shell: AgentRunWorkspaceShellModel,
     pub delivery_runtime_session_id: Option<String>,
-    pub projection: AgentRunWorkspaceProjectionModel,
+    pub state: AgentRunWorkspaceStateModel,
     pub agent_view: Option<AgentRunView>,
     pub frame_runtime: Option<AgentRunWorkspaceFrameRuntimeModel>,
     pub subject_associations: Vec<LifecycleSubjectAssociationView>,
@@ -34,13 +33,13 @@ pub struct AgentRunWorkspaceSnapshot {
     pub conversation: AgentConversationSnapshotModel,
 }
 
-/// 列表视图专用的轻量投影。
+/// 列表视图专用的轻量条目。
 ///
 /// 只解析侧栏 / 主区列表实际消费的字段（标题、投递状态、subject 归属），
 /// 刻意跳过 vfs surface、lifecycle run view、mailbox、conversation 等重量级解析，
 /// 避免列表为每个主 Run 走一遍详情快照。
 #[derive(Debug, Clone)]
-pub struct AgentRunListProjection {
+pub struct AgentRunListItem {
     pub run: LifecycleRun,
     pub agent: LifecycleAgent,
     pub shell: AgentRunWorkspaceShellModel,
@@ -140,23 +139,8 @@ impl AgentRunWorkspaceStateCode {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct AgentRunWorkspaceProjectionInput<'a> {
-    pub execution_state: &'a SessionExecutionState,
-    pub agent_status: &'a str,
-}
-
-impl<'a> AgentRunWorkspaceProjectionInput<'a> {
-    pub fn new(execution_state: &'a SessionExecutionState, agent_status: &'a str) -> Self {
-        Self {
-            execution_state,
-            agent_status,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunWorkspaceProjectionModel {
+pub struct AgentRunWorkspaceStateModel {
     pub state_code: AgentRunWorkspaceStateCode,
     pub active_turn_id: Option<String>,
     pub last_turn_id: Option<String>,

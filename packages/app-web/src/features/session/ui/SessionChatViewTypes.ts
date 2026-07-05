@@ -43,6 +43,7 @@ export interface SessionChatCommandModel {
 export interface SessionChatCommandState {
   mode: "draft" | "runtime";
   executionStatus: string;
+  activeTurnId?: string | null;
   commands: SessionChatCommandModel[];
   keyboard: {
     enter?: string;

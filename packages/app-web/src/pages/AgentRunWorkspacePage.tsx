@@ -1,10 +1,10 @@
-/**
+﻿/**
  * AgentRunWorkspacePage — AgentRun 交互工作台。
  *
  * 用户认知中 "AgentRun = 一个可继续交互的工作台"。此页面是用户点击 AgentRun 后的主视图，
  * 提供 Chat + Workspace Panel 双面板布局、标题编辑、上下文导航等完整交互。
  *
- * 底层数据通过 AgentRun workspace 投影驱动（`useAgentRunWorkspaceState`），
+ * 底层数据通过 AgentRun workspace state 驱动（`useAgentRunWorkspaceState`），
  * 不直接暴露 lifecycle 技术概念给用户。
  */
 
@@ -17,7 +17,7 @@ import { InlineBackendSelector, type InlineBackendOption } from "../features/ses
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
-import { refreshAgentRunListProjection } from "../features/agent/agent-run-list-projection-store";
+import { refreshAgentRunListState } from "../features/agent/agent-run-list-state-store";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -260,7 +260,7 @@ export function AgentRunWorkspacePage({
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
   const refreshAgentRunList = useCallback((reason: string) => {
-    refreshAgentRunListProjection(ownerProjectId ?? draftProjectIdValue, reason);
+    refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, reason);
   }, [draftProjectIdValue, ownerProjectId]);
 
   useEffect(() => {
@@ -392,7 +392,7 @@ export function AgentRunWorkspacePage({
   }, [backendLabelById, chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
   const handleDraftAgentRunStarted = useCallback((response: ProjectAgentRunStartResult) => {
-    refreshAgentRunListProjection(draftProjectIdValue, "draft_started");
+    refreshAgentRunListState(draftProjectIdValue, "draft_started");
     navigate(`/agent-runs/${encodeURIComponent(response.run_ref.run_id)}/${encodeURIComponent(response.agent_ref.agent_id)}`, {
       replace: true,
       state: {
@@ -405,7 +405,7 @@ export function AgentRunWorkspacePage({
   }, [draftProjectIdValue, navigate]);
 
   const handleAgentRunRedirect = useCallback((target: { runId: string; agentId: string }) => {
-    refreshAgentRunListProjection(ownerProjectId ?? draftProjectIdValue, "agent_run_redirect");
+    refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, "agent_run_redirect");
     navigate(`/agent-runs/${encodeURIComponent(target.runId)}/${encodeURIComponent(target.agentId)}`, {
       state: {
         trace_agent: {

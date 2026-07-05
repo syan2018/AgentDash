@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ActiveAgentRunList — 以后端 AgentRunWorkspaceListView 展示项目 AgentRun。
  *
  * 主 Run 行内联其直接子 Agent（一跳，含真实 shell 状态），`+N` 药丸就地展开；
@@ -14,9 +14,9 @@ import { deleteAgentRun } from "../../services/agentRun";
 import { formatRelativeTime } from "../../lib/format";
 import { agentSourceLabel } from "../../lib/agent-source";
 import {
-  useAgentRunListProjection,
-  useAgentRunListProjectionStore,
-} from "./agent-run-list-projection-store";
+  useAgentRunListState,
+  useAgentRunListStateStore,
+} from "./agent-run-list-state-store";
 import {
   groupAgentRunsBySubject,
   groupKindLabel,
@@ -429,16 +429,16 @@ export function ActiveAgentRunList({
   selectedAgentId,
   onOpenAgentRun,
 }: ActiveAgentRunListProps) {
-  const projection = useAgentRunListProjection(projectId, PAGE_SIZE);
-  const loadMoreProjectAgentRuns = useAgentRunListProjectionStore((state) => state.loadMore);
-  const refreshProjectAgentRuns = useAgentRunListProjectionStore((state) => state.refreshProject);
+  const listState = useAgentRunListState(projectId, PAGE_SIZE);
+  const loadMoreProjectAgentRuns = useAgentRunListStateStore((state) => state.loadMore);
+  const refreshProjectAgentRuns = useAgentRunListStateStore((state) => state.refreshProject);
   const navigate = useNavigate();
   const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
-  const agentRuns = projection.entries;
-  const nextCursor = projection.next_cursor;
-  const isFetching = projection.status === "loading";
-  const isLoadingMore = projection.is_loading_more;
-  const error = projection.error;
+  const agentRuns = listState.entries;
+  const nextCursor = listState.next_cursor;
+  const isFetching = listState.status === "loading";
+  const isLoadingMore = listState.is_loading_more;
+  const error = listState.error;
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilterGroup>("all");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());

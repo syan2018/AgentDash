@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AgentRunShortcutList — 侧栏 AgentRun 快捷列表。
  *
  * 展示当前项目的活跃 AgentRun，以 workspace shell title 为主。
@@ -10,7 +10,7 @@ import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { StatusDot, type StatusDotTone } from "@agentdash/ui";
 import type { SessionExecutionStatusValue } from "../../services/session";
 import type { AgentRunWorkspaceListEntry } from "../../types";
-import { useAgentRunListProjection } from "../../features/agent/agent-run-list-projection-store";
+import { useAgentRunListState } from "../../features/agent/agent-run-list-state-store";
 
 /** 基于 delivery 执行状态的视觉映射 */
 const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> = {
@@ -91,10 +91,10 @@ export function AgentRunShortcutList({ projectId }: LifecycleShortcutListProps) 
   const navigate = useNavigate();
   const location = useLocation();
   const agentRunRouteMatch = useMatch("/agent-runs/:runId/:agentId");
-  const projection = useAgentRunListProjection(projectId);
-  const entries = projection.entries;
-  const hasMoreOnServer = Boolean(projection.next_cursor);
-  const error = projection.error;
+  const listState = useAgentRunListState(projectId);
+  const entries = listState.entries;
+  const hasMoreOnServer = Boolean(listState.next_cursor);
+  const error = listState.error;
   const listRef = useRef<HTMLDivElement | null>(null);
   const [maxVisible, setMaxVisible] = useState(8);
 

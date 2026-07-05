@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import type {
   AgentRunOwnershipView,
@@ -133,8 +133,8 @@ describe("AgentRun conversation command state", () => {
         },
         model_config: resolvedModelConfig(),
       },
-      projectionStatus: "ready",
-      projectionError: null,
+      workspaceStateStatus: "ready",
+      workspaceStateError: null,
     });
 
     const model = projectAgentRunChatCommandState(commandState);
@@ -160,11 +160,11 @@ describe("AgentRun conversation command state", () => {
     expect(model.helperText).toBe("正在运行");
   });
 
-  it("keeps projection loading and error states visible when conversation snapshot is missing", () => {
+  it("keeps workspace state loading and error states visible when conversation snapshot is missing", () => {
     const commandState = buildAgentRunConversationCommandState({
       conversation: null,
-      projectionStatus: "error",
-      projectionError: "工作台投影加载失败",
+      workspaceStateStatus: "error",
+      workspaceStateError: "工作台状态加载失败",
     });
 
     const model = projectAgentRunChatCommandState(commandState);
@@ -174,9 +174,9 @@ describe("AgentRun conversation command state", () => {
     expect(model.modelConfig).toEqual({
       status: "model_required",
       missing_fields: [],
-      message: "工作台投影加载失败",
+      message: "工作台状态加载失败",
     });
-    expect(model.helperText).toBe("工作台投影加载失败");
+    expect(model.helperText).toBe("工作台状态加载失败");
   });
 
   it("uses draft model policy as the local draft command authority", () => {
@@ -196,7 +196,7 @@ describe("AgentRun conversation command state", () => {
       projectId: "project-1",
       agentKey: "agent-key",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
     });
     expect(missingModel.executionStatus).toBe("model_required");
     expect(missingModel.localDraftAction?.enabled).toBe(false);
@@ -206,7 +206,7 @@ describe("AgentRun conversation command state", () => {
       projectId: "project-1",
       agentKey: "agent-key",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
       explicitExecutorConfigOverride: {
         executor: "CODEX",
         provider_id: "openai",
@@ -260,8 +260,8 @@ describe("AgentRun conversation command state", () => {
         },
         model_config: resolvedModelConfig(),
       },
-      projectionStatus: "ready",
-      projectionError: null,
+      workspaceStateStatus: "ready",
+      workspaceStateError: null,
     });
     const mailbox: ConversationMailboxSnapshotView = {
       visible_message_count: 1,

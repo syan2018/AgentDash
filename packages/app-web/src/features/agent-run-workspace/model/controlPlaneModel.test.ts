@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { JsonValue } from "../../../generated/common-contracts";
@@ -104,8 +104,8 @@ describe("AgentRun control-plane model", () => {
         },
         model_config: resolvedModelConfig(),
       },
-      projectionStatus: "ready",
-      projectionError: null,
+      workspaceStateStatus: "ready",
+      workspaceStateError: null,
     });
 
     const result = resolveAgentRunSubmitCommand(commandState, submitIntent("cmd-submit"));
@@ -130,7 +130,7 @@ describe("AgentRun control-plane model", () => {
       projectId: "project-1",
       agentKey: "agent-key",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
     });
     const draftCommand = commandState.localDraftAction;
     if (!draftCommand) throw new Error("draft command missing");
@@ -155,8 +155,8 @@ describe("AgentRun control-plane model", () => {
         },
         model_config: resolvedModelConfig(),
       },
-      projectionStatus: "ready",
-      projectionError: null,
+      workspaceStateStatus: "ready",
+      workspaceStateError: null,
     });
 
     expect(resolveAgentRunSubmitCommand(

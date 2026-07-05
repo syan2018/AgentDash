@@ -27,6 +27,7 @@ import type {
 export interface UseSessionFeedOptions {
   sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
+  activeTurnId?: string | null;
   endpoint?: string;
   enableAggregation?: boolean;
   enabled?: boolean;
@@ -715,6 +716,7 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
 export function segmentByTurn(
   displayItems: SessionDisplayItem[],
   rawEvents: SessionEventEnvelope[],
+  activeTurnId?: string | null,
 ): TurnSegment[] {
   const turnMeta = new Map<string, TurnMeta>();
 
@@ -758,6 +760,12 @@ export function segmentByTurn(
   const seenTurnIds = new Set<string>();
   let currentTurnId: string | null = null;
   let currentItems: SessionDisplayItem[] = [];
+  const fallbackStatus = (turnId: string | null, items: SessionDisplayItem[]): TurnSegment["status"] => {
+    if (activeTurnId !== undefined) {
+      return turnId != null && turnId === activeTurnId ? "active" : "completed";
+    }
+    return items.some(isProjectedTranscriptItem) ? "completed" : "active";
+  };
 
   const flush = () => {
     if (currentItems.length === 0) return;
@@ -774,7 +782,7 @@ export function segmentByTurn(
     }
     segments.push({
       turnId: currentTurnId,
-      status: meta?.status ?? (currentItems.some(isProjectedTranscriptItem) ? "completed" : "active"),
+      status: meta?.status ?? fallbackStatus(currentTurnId, currentItems),
       startedAtMs: meta?.startedAtMs,
       durationMs: meta?.durationMs,
       activity: meta?.activity,
@@ -833,7 +841,14 @@ export function segmentByTurn(
 }
 
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
-  const { sessionId, agentRunTarget = null, endpoint, enableAggregation = true, enabled } = options;
+  const {
+    sessionId,
+    agentRunTarget = null,
+    activeTurnId,
+    endpoint,
+    enableAggregation = true,
+    enabled,
+  } = options;
   const { prefs } = useDebugPrefs();
 
   const {
@@ -866,8 +881,8 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
   }, [entries, providerWaitingSeqs, enableAggregation, prefs.hookVerbose]);
 
   const turnSegments = useMemo(
-    () => segmentByTurn(displayItems, rawEvents),
-    [displayItems, rawEvents],
+    () => segmentByTurn(displayItems, rawEvents, activeTurnId),
+    [activeTurnId, displayItems, rawEvents],
   );
 
   const streamingEntryId = useMemo(() => {

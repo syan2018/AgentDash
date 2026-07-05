@@ -104,9 +104,9 @@ state。waiting item 使用 generated `ConversationWaitingItemView`，显示 `ki
 workspace snapshot refresh，从后端重新读取 waiting projection。
 
 `AgentRunWorkspaceControlPlaneView.status` 使用 AgentRun workspace 语义：
-`ready | running | terminal | frame_missing | delivery_missing`。RuntimeSession detail 使用
-`SessionRuntimeControlView`，原因是 runtime trace/detail 从 runtime session identity 出发，而
-AgentRun workspace 从 run / agent identity 出发。
+`ready | running | terminal | frame_missing | delivery_missing`。RuntimeSession detail 只使用
+trace meta、events、stream、context projection 与 audit 诊断面，原因是 runtime trace/detail 从
+runtime session identity 出发，而 AgentRun workspace 从 run / agent identity 出发。
 
 SessionChatView 的职责是执行传入 command/intent，不持有业务分派规则。Enter、Ctrl/Cmd+Enter、
 按钮点击、round action fork 与 copy 都由 AgentRun workspace composition root 组装成可测试的

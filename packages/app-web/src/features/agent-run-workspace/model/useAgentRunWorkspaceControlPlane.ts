@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ExecutorConfig } from "../../../services/executor";
@@ -12,7 +12,7 @@ import type {
 } from "../../../types";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type {
-  AgentRunWorkspaceProjectionState,
+  AgentRunWorkspaceState,
 } from "../../workspace-panel/model/useAgentRunWorkspaceState";
 import {
   planAgentRunMessageSent,
@@ -43,7 +43,7 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
   draftProjectAgentKey: string | null;
   draftProjectAgent: ProjectAgentSummary | null;
   isProjectAgentDraft: boolean;
-  agentRunWorkspaceState: AgentRunWorkspaceProjectionState;
+  agentRunWorkspaceState: AgentRunWorkspaceState;
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
   refreshAgentRunHookRuntime: () => Promise<unknown>;
   traceExecutorHint?: string | null;
@@ -171,13 +171,13 @@ export function useAgentRunWorkspaceControlPlane({
           projectId: draftProjectId,
           agentKey: draftProjectAgentKey,
           agent: draftProjectAgent,
-          projectionReady: Boolean(draftProjectId && draftProjectAgentKey && draftProjectAgent),
+          workspaceStateReady: Boolean(draftProjectId && draftProjectAgentKey && draftProjectAgent),
           explicitExecutorConfigOverride,
         })
       : buildAgentRunConversationCommandState({
           conversation: workspaceControl?.conversation,
-          projectionStatus: agentRunWorkspaceState.status,
-          projectionError: agentRunWorkspaceState.error,
+          workspaceStateStatus: agentRunWorkspaceState.status,
+          workspaceStateError: agentRunWorkspaceState.error,
         }),
     [
       agentRunWorkspaceState.error,

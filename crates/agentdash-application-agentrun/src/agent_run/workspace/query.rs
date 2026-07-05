@@ -17,13 +17,13 @@ use uuid::Uuid;
 use crate::agent_run::lifecycle_read_model_facade::{
     LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
-use crate::agent_run::runtime_session_boundary::{SessionCoreService, SessionExecutionState};
+use crate::agent_run::runtime_session_boundary::SessionCoreService;
 use crate::agent_run::{
     AgentConversationSnapshotInput, AgentConversationSnapshotResolver, AgentFrameSurfaceExt,
-    AgentRunOwnershipModel, ConversationModelConfigInput, ConversationModelConfigResolver,
-    ConversationModelConfigSourceModel, ConversationWaitingItemModel, DeliveryRuntimeSelection,
-    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
-    DeliveryRuntimeSelectionService, ValidationSeverityModel,
+    AgentRunExecutionState, AgentRunOwnershipModel, ConversationModelConfigInput,
+    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
+    ConversationWaitingItemModel, DeliveryRuntimeSelection, DeliveryRuntimeSelectionError,
+    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService, ValidationSeverityModel,
 };
 use crate::error::WorkflowApplicationError;
 use agentdash_application_vfs::{
@@ -31,13 +31,12 @@ use agentdash_application_vfs::{
     build_surface_summary,
 };
 
-use super::projection::{AgentRunWorkspaceProjection, is_terminal_agent_status};
+use super::state::{derive_workspace_state, is_terminal_agent_status};
 use super::types::{
     AgentRunResourceSurfaceCoordinateModel, AgentRunResourceSurfaceSourceAnchorModel,
     AgentRunWorkspaceFrameRefModel, AgentRunWorkspaceFrameRuntimeModel,
-    AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceProjectionInput,
-    AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
-    SubjectRefModel,
+    AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel,
+    AgentRunWorkspaceSnapshot, SubjectRefModel,
 };
 
 #[derive(Clone, Copy)]
@@ -155,20 +154,16 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .cloned();
         let subject_associations =
             filter_agent_subject_associations(run_view.subject_associations, agent.id);
-        let execution_state = match delivery_runtime_session_id.as_deref() {
-            Some(session_id) => {
-                self.session_core
-                    .inspect_session_execution_state(session_id)
-                    .await?
-            }
-            None => SessionExecutionState::Idle,
-        };
+        let execution_state = current_delivery
+            .as_ref()
+            .map(DeliveryRuntimeSelection::execution_state)
+            .unwrap_or(AgentRunExecutionState::Idle);
         let terminal_agent = is_terminal_agent_status(&agent.status);
         let supports_steering = match delivery_runtime_session_id.as_deref() {
             Some(session_id)
                 if matches!(
                     execution_state,
-                    SessionExecutionState::Running { turn_id: Some(_) }
+                    AgentRunExecutionState::Running { turn_id: Some(_) }
                 ) =>
             {
                 self.session_control
@@ -177,9 +172,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             }
             _ => false,
         };
-        let projection = AgentRunWorkspaceProjection::derive(
-            AgentRunWorkspaceProjectionInput::new(&execution_state, &agent.status),
-        );
+        let workspace_state = derive_workspace_state(&execution_state, &agent.status);
 
         let mailbox_messages = self
             .repos
@@ -265,8 +258,8 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             meta.as_ref(),
             project_agent.as_ref(),
             &agent,
-            &projection.delivery_status,
-            projection.last_turn_id.clone(),
+            &workspace_state.delivery_status,
+            workspace_state.last_turn_id.clone(),
         );
         Ok(AgentRunWorkspaceSnapshot {
             run,
@@ -274,7 +267,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             ownership,
             shell,
             delivery_runtime_session_id,
-            projection,
+            state: workspace_state,
             agent_view,
             frame_runtime,
             subject_associations,
@@ -288,10 +281,10 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
 
     /// 列表视图的轻量解析：只取标题 / 投递状态 / subject 归属，
     /// 跳过 vfs surface、run view、mailbox、conversation 等重量级解析。
-    pub async fn resolve_list_projection(
+    pub async fn resolve_list_item(
         &self,
         input: AgentRunWorkspaceQueryInput,
-    ) -> Result<super::types::AgentRunListProjection, WorkflowApplicationError> {
+    ) -> Result<super::types::AgentRunListItem, WorkflowApplicationError> {
         let _viewer_user_id = input.viewer_user_id;
         let run = input.run;
         let agent = input.agent;
@@ -303,24 +296,18 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             Some(session_id) => self.session_core.get_session_meta(session_id).await?,
             None => None,
         };
-        let execution_state = match delivery_runtime_session_id.as_deref() {
-            Some(session_id) => {
-                self.session_core
-                    .inspect_session_execution_state(session_id)
-                    .await?
-            }
-            None => SessionExecutionState::Idle,
-        };
-        let projection = AgentRunWorkspaceProjection::derive(
-            AgentRunWorkspaceProjectionInput::new(&execution_state, &agent.status),
-        );
+        let execution_state = current_delivery
+            .as_ref()
+            .map(DeliveryRuntimeSelection::execution_state)
+            .unwrap_or(AgentRunExecutionState::Idle);
+        let workspace_state = derive_workspace_state(&execution_state, &agent.status);
         let project_agent = self.load_project_agent(&run, &agent).await?;
         let shell = shell_model(
             meta.as_ref(),
             project_agent.as_ref(),
             &agent,
-            &projection.delivery_status,
-            projection.last_turn_id.clone(),
+            &workspace_state.delivery_status,
+            workspace_state.last_turn_id.clone(),
         );
         let association = self
             .repos
@@ -338,7 +325,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .as_ref()
             .and_then(|assoc| subject_label_from_metadata(assoc.metadata_json.as_ref()));
 
-        Ok(super::types::AgentRunListProjection {
+        Ok(super::types::AgentRunListItem {
             run,
             agent: agent.clone(),
             shell,

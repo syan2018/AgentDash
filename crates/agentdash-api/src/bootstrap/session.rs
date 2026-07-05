@@ -38,8 +38,9 @@ use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
     SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
     SessionLaunchService, SessionRuntimeBuilder, SessionRuntimeService,
-    SessionRuntimeTransitionService, SessionStoreSet, SessionTerminalCallback, SessionTitleService,
-    SessionToolResultCache, SessionToolResultCachePut,
+    SessionRuntimeTransitionService, SessionStoreSet, SessionTerminalCallback,
+    SessionTerminalNotification, SessionTitleService, SessionToolResultCache,
+    SessionToolResultCachePut,
 };
 use agentdash_application_vfs::tools::RuntimeVfsState;
 use agentdash_application_vfs::tools::{ShellTerminalRegistration, ShellTerminalRegistry};
@@ -566,11 +567,11 @@ struct LifecycleTerminalCallbackAdapter {
 
 #[async_trait]
 impl SessionTerminalCallback for LifecycleTerminalCallbackAdapter {
-    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
+    async fn on_session_terminal(&self, notification: SessionTerminalNotification) {
         agentdash_application_lifecycle::lifecycle::orchestrator::SessionTerminalCallback::on_session_terminal(
             self.inner.as_ref(),
-            session_id,
-            terminal_state,
+            &notification.session_id,
+            &notification.terminal_state,
         )
             .await;
     }
@@ -578,11 +579,9 @@ impl SessionTerminalCallback for LifecycleTerminalCallbackAdapter {
 
 #[async_trait]
 impl SessionTerminalCallback for CompositeSessionTerminalCallback {
-    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
+    async fn on_session_terminal(&self, notification: SessionTerminalNotification) {
         for callback in &self.callbacks {
-            callback
-                .on_session_terminal(session_id, terminal_state)
-                .await;
+            callback.on_session_terminal(notification.clone()).await;
         }
     }
 }

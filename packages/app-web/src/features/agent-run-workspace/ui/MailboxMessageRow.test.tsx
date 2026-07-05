@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from "react-dom/server";
+﻿import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
@@ -330,7 +330,7 @@ describe("MailboxMessageList", () => {
     expect(markup).toContain("[图]");
   });
 
-  it("renders waiting items from the workspace conversation mailbox projection", () => {
+  it("renders waiting items from the workspace conversation mailbox snapshot", () => {
     const markup = renderMailboxList({
       messages: [],
       mailbox: {

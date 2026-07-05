@@ -291,6 +291,7 @@ export function SessionChatView({
   } = useSessionFeed({
     sessionId,
     agentRunTarget,
+    activeTurnId: agentRunTarget ? commandState.activeTurnId ?? null : undefined,
     enabled: hasRuntimeStreamTarget,
   });
 

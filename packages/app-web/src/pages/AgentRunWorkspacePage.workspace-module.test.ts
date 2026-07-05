@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 
 import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
@@ -88,12 +88,12 @@ function workspaceView(
 }
 
 function commandState(
-  projectionStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
+  workspaceStateStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
   workspace: AgentRunWorkspaceView | null,
 ) {
   return buildAgentRunConversationCommandState({
-    projectionStatus,
-    projectionError: projectionStatus === "error" ? "refresh failed" : null,
+    workspaceStateStatus,
+    workspaceStateError: workspaceStateStatus === "error" ? "refresh failed" : null,
     conversation: workspace?.conversation,
   });
 }
@@ -220,7 +220,7 @@ describe("AgentRun workspace conversation command authority", () => {
       projectId: "project-1",
       agentKey: "agent-1",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
     });
 
     expect(state.executionStatus).toBe("model_required");
@@ -247,7 +247,7 @@ describe("AgentRun workspace conversation command authority", () => {
       projectId: "project-1",
       agentKey: "agent-1",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
       explicitExecutorConfigOverride: {
         executor: "PI_AGENT",
         provider_id: "openai",
@@ -284,7 +284,7 @@ describe("AgentRun workspace conversation command authority", () => {
         },
         source: "project_agent",
       },
-      projectionReady: true,
+      workspaceStateReady: true,
       explicitExecutorConfigOverride: {
         executor: "PI_AGENT",
         provider_id: "openai",
@@ -309,7 +309,7 @@ describe("AgentRun workspace conversation command authority", () => {
       projectId: "project-1",
       agentKey: "agent-1",
       agent,
-      projectionReady: true,
+      workspaceStateReady: true,
       explicitExecutorConfigOverride: {
         executor: "PI_AGENT",
         provider_id: "openai",

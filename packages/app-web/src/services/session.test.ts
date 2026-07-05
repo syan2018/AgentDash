@@ -20,7 +20,6 @@ vi.mock("../api/settings", () => ({
 }));
 
 import {
-  fetchSessionExecutionState,
   loadWorkspaceTabLayout,
   saveWorkspaceTabLayout,
 } from "./session";
@@ -30,36 +29,6 @@ describe("session service", () => {
     mocks.apiGetMock.mockReset();
     mocks.settingsListMock.mockReset();
     mocks.settingsUpdateMock.mockReset();
-  });
-
-  it("normalizes cancelling execution state", async () => {
-    mocks.apiGetMock.mockResolvedValue({
-      session_id: "session-1",
-      status: "cancelling",
-      turn_id: "turn-1",
-      message: "取消中",
-    });
-
-    await expect(fetchSessionExecutionState("session-1")).resolves.toEqual({
-      session_id: "session-1",
-      status: "cancelling",
-      turn_id: "turn-1",
-      message: "取消中",
-    });
-    expect(mocks.apiGetMock).toHaveBeenCalledWith("/sessions/session-1/state");
-  });
-
-  it("rejects unknown route-local execution status", async () => {
-    mocks.apiGetMock.mockResolvedValue({
-      session_id: "session-1",
-      status: "ready",
-      turn_id: null,
-      message: null,
-    });
-
-    await expect(fetchSessionExecutionState("session-1")).rejects.toThrow(
-      "未知的会话执行状态: ready",
-    );
   });
 
   it("persists workspace tab layout with AgentRun workspace setting key", async () => {

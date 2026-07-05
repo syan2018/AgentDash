@@ -835,6 +835,17 @@ describe("aggregateEntries — tool burst", () => {
     expect(segments[0]?.finalOutput).toBe(projected);
   });
 
+  it("T25d: AgentRun controlled active turn does not mark unrelated turn items active", () => {
+    const segments = segmentByTurn(
+      [mkMessageEntry("fork-marker", "已从父会话分叉出当前会话")],
+      [],
+      "turn-active",
+    );
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.status).toBe("completed");
+  });
+
   it("T26: retry exhausted does not create a status-only turn segment", () => {
     const segments = segmentByTurn([], [
       rawTurnStarted(1),

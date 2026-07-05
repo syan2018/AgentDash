@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { AgentFrameRuntimeView, AgentRunWorkspaceView } from "../../../types";
 import type { AgentFrameHookRuntimeInfo } from "../../../types";
@@ -7,7 +7,7 @@ import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchAgentRunWorkspace } from "../../../services/lifecycle";
 import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
 
-export interface AgentRunWorkspaceProjectionState {
+export interface AgentRunWorkspaceState {
   run_id: string | null;
   agent_id: string | null;
   source_key: string | null;
@@ -28,7 +28,7 @@ interface UseAgentRunWorkspaceStateInput {
 
 type AgentRunWorkspaceLoadMode = "replace" | "refresh";
 
-export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceProjectionState {
+export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceState {
   return {
     run_id: null,
     agent_id: null,
@@ -44,7 +44,7 @@ export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceProjectionState 
 }
 
 function stateMatches(
-  state: AgentRunWorkspaceProjectionState,
+  state: AgentRunWorkspaceState,
   runId: string,
   agentId: string,
   sourceKey: string,
@@ -63,12 +63,12 @@ export function agentRunWorkspaceResourceSurface(
 }
 
 export function beginAgentRunWorkspaceStateLoad(
-  current: AgentRunWorkspaceProjectionState,
+  current: AgentRunWorkspaceState,
   runId: string,
   agentId: string,
   sourceKey: string,
   mode: AgentRunWorkspaceLoadMode,
-): AgentRunWorkspaceProjectionState {
+): AgentRunWorkspaceState {
   if (mode === "refresh" && stateMatches(current, runId, agentId, sourceKey)) {
     return {
       ...current,
@@ -88,13 +88,13 @@ export function beginAgentRunWorkspaceStateLoad(
 }
 
 export function failAgentRunWorkspaceStateLoad(
-  current: AgentRunWorkspaceProjectionState,
+  current: AgentRunWorkspaceState,
   runId: string,
   agentId: string,
   sourceKey: string,
   mode: AgentRunWorkspaceLoadMode,
   message: string,
-): AgentRunWorkspaceProjectionState {
+): AgentRunWorkspaceState {
   if (mode === "refresh" && stateMatches(current, runId, agentId, sourceKey)) {
     return {
       ...current,
@@ -118,7 +118,7 @@ export function useAgentRunWorkspaceState({
   agentId,
   sourceKey,
 }: UseAgentRunWorkspaceStateInput) {
-  const [state, setState] = useState<AgentRunWorkspaceProjectionState>(() => emptyAgentRunWorkspaceState());
+  const [state, setState] = useState<AgentRunWorkspaceState>(() => emptyAgentRunWorkspaceState());
   const setAgent = useLifecycleStore((s) => s.setAgent);
   const setFrame = useLifecycleStore((s) => s.setFrame);
 

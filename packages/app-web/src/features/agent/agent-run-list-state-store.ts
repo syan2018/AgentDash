@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+﻿import { useEffect } from "react";
 import { create, type StoreApi } from "zustand";
 
 import { fetchProjectAgentRuns } from "../../services/lifecycle";
@@ -8,16 +8,16 @@ import type { AgentRunWorkspaceListEntry } from "../../types";
 
 export const AGENT_RUN_LIST_FIRST_PAGE_LIMIT = 30;
 
-export type AgentRunListProjectionStatus =
+export type AgentRunListStateStatus =
   | "idle"
   | "loading"
   | "refreshing"
   | "ready"
   | "error";
 
-export interface AgentRunListProjectionState {
+export interface AgentRunListState {
   project_id: string | null;
-  status: AgentRunListProjectionStatus;
+  status: AgentRunListStateStatus;
   entries: AgentRunWorkspaceListEntry[];
   next_cursor: string | null;
   first_page_limit: number;
@@ -25,8 +25,8 @@ export interface AgentRunListProjectionState {
   error: string | null;
 }
 
-interface AgentRunListProjectionStoreState {
-  byProjectId: Record<string, AgentRunListProjectionState>;
+interface AgentRunListStoreState {
+  byProjectId: Record<string, AgentRunListState>;
   ensureFirstPage: (projectId: string, limit?: number) => Promise<void>;
   refreshProject: (projectId: string, reason: string, limit?: number) => Promise<void>;
   invalidateProject: (projectId: string, reason: string, limit?: number) => Promise<void>;
@@ -34,15 +34,15 @@ interface AgentRunListProjectionStoreState {
   resetProject: (projectId: string) => void;
 }
 
-type AgentRunListProjectionSet = StoreApi<AgentRunListProjectionStoreState>["setState"];
-type AgentRunListProjectionGet = StoreApi<AgentRunListProjectionStoreState>["getState"];
+type AgentRunListStateSet = StoreApi<AgentRunListStoreState>["setState"];
+type AgentRunListStateGet = StoreApi<AgentRunListStoreState>["getState"];
 
 const firstPageInflight = new Map<string, Promise<void>>();
 const loadMoreInflight = new Map<string, Promise<void>>();
 
-export function idleAgentRunListProjectionState(
+export function idleAgentRunListState(
   projectId: string | null = null,
-): AgentRunListProjectionState {
+): AgentRunListState {
   return {
     project_id: projectId,
     status: "idle",
@@ -84,10 +84,10 @@ function appendPageEntries(
 
 function loadingFirstPageState(
   projectId: string,
-  current: AgentRunListProjectionState | undefined,
+  current: AgentRunListState | undefined,
   limit: number,
   force: boolean,
-): AgentRunListProjectionState {
+): AgentRunListState {
   const hasEntries = (current?.entries.length ?? 0) > 0;
   return {
     project_id: projectId,
@@ -101,8 +101,8 @@ function loadingFirstPageState(
 }
 
 async function fetchFirstPage(
-  set: AgentRunListProjectionSet,
-  get: AgentRunListProjectionGet,
+  set: AgentRunListStateSet,
+  get: AgentRunListStateGet,
   projectId: string,
   limit: number,
   force: boolean,
@@ -173,7 +173,7 @@ async function fetchFirstPage(
   await request;
 }
 
-export const useAgentRunListProjectionStore = create<AgentRunListProjectionStoreState>()((set, get) => ({
+export const useAgentRunListStateStore = create<AgentRunListStoreState>()((set, get) => ({
   byProjectId: {},
 
   async ensureFirstPage(projectId, limit) {
@@ -204,7 +204,7 @@ export const useAgentRunListProjectionStore = create<AgentRunListProjectionStore
 
     const requestLimit = normalizeLimit(limit ?? current?.first_page_limit);
     set((state) => {
-      const previous = state.byProjectId[trimmed] ?? idleAgentRunListProjectionState(trimmed);
+      const previous = state.byProjectId[trimmed] ?? idleAgentRunListState(trimmed);
       return {
         byProjectId: {
           ...state.byProjectId,
@@ -220,7 +220,7 @@ export const useAgentRunListProjectionStore = create<AgentRunListProjectionStore
     const request = fetchProjectAgentRuns(trimmed, { limit: requestLimit, cursor })
       .then((view) => {
         set((state) => {
-          const previous = state.byProjectId[trimmed] ?? idleAgentRunListProjectionState(trimmed);
+          const previous = state.byProjectId[trimmed] ?? idleAgentRunListState(trimmed);
           return {
             byProjectId: {
               ...state.byProjectId,
@@ -239,7 +239,7 @@ export const useAgentRunListProjectionStore = create<AgentRunListProjectionStore
       })
       .catch((error: unknown) => {
         set((state) => {
-          const previous = state.byProjectId[trimmed] ?? idleAgentRunListProjectionState(trimmed);
+          const previous = state.byProjectId[trimmed] ?? idleAgentRunListState(trimmed);
           return {
             byProjectId: {
               ...state.byProjectId,
@@ -272,47 +272,47 @@ export const useAgentRunListProjectionStore = create<AgentRunListProjectionStore
   },
 }));
 
-export function selectAgentRunListProjectionState(
+export function selectAgentRunListState(
   projectId: string | null,
-): AgentRunListProjectionState {
-  if (!projectId) return idleAgentRunListProjectionState(null);
-  return useAgentRunListProjectionStore.getState().byProjectId[projectId]
-    ?? idleAgentRunListProjectionState(projectId);
+): AgentRunListState {
+  if (!projectId) return idleAgentRunListState(null);
+  return useAgentRunListStateStore.getState().byProjectId[projectId]
+    ?? idleAgentRunListState(projectId);
 }
 
-export function shouldRefreshAgentRunListProjectionForProjectEvent(
+export function shouldRefreshAgentRunListStateForProjectEvent(
   event: ProjectEventStreamEnvelope,
   projectId: string,
 ): boolean {
   return event.type === "StateChanged" && event.data.project_id === projectId;
 }
 
-export async function invalidateAgentRunListProjectionForProjectEvent(
+export async function invalidateAgentRunListStateForProjectEvent(
   event: ProjectEventStreamEnvelope,
   projectId: string,
 ): Promise<void> {
-  if (!shouldRefreshAgentRunListProjectionForProjectEvent(event, projectId)) return;
-  await useAgentRunListProjectionStore
+  if (!shouldRefreshAgentRunListStateForProjectEvent(event, projectId)) return;
+  await useAgentRunListStateStore
     .getState()
     .invalidateProject(projectId, `project_event:${event.type}`);
 }
 
-export function refreshAgentRunListProjection(
+export function refreshAgentRunListState(
   projectId: string | null,
   reason: string,
 ): void {
   if (!projectId) return;
-  void useAgentRunListProjectionStore.getState().refreshProject(projectId, reason);
+  void useAgentRunListStateStore.getState().refreshProject(projectId, reason);
 }
 
-export function useAgentRunListProjection(
+export function useAgentRunListState(
   projectId: string | null,
   firstPageLimit = AGENT_RUN_LIST_FIRST_PAGE_LIMIT,
-): AgentRunListProjectionState {
-  const projection = useAgentRunListProjectionStore((state) => (
+): AgentRunListState {
+  const listState = useAgentRunListStateStore((state) => (
     projectId ? state.byProjectId[projectId] : undefined
   ));
-  const ensureFirstPage = useAgentRunListProjectionStore((state) => state.ensureFirstPage);
+  const ensureFirstPage = useAgentRunListStateStore((state) => state.ensureFirstPage);
 
   useEffect(() => {
     if (!projectId) return;
@@ -322,9 +322,9 @@ export function useAgentRunListProjection(
   useEffect(() => {
     if (!projectId) return;
     return subscribeProjectEvents((event) => {
-      void invalidateAgentRunListProjectionForProjectEvent(event, projectId);
+      void invalidateAgentRunListStateForProjectEvent(event, projectId);
     });
   }, [projectId]);
 
-  return projection ?? idleAgentRunListProjectionState(projectId);
+  return listState ?? idleAgentRunListState(projectId);
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import type { AgentRunOwnershipView } from "../../../generated/workflow-contracts";
@@ -11,7 +11,7 @@ import {
   beginAgentRunWorkspaceStateLoad,
   emptyAgentRunWorkspaceState,
   failAgentRunWorkspaceStateLoad,
-  type AgentRunWorkspaceProjectionState,
+  type AgentRunWorkspaceState,
 } from "./useAgentRunWorkspaceState";
 
 const frameRuntime: AgentFrameRuntimeView = {
@@ -75,7 +75,7 @@ const runtimeSurface: ResolvedVfsSurface = {
   default_mount_id: "main",
 };
 
-function loadedState(): AgentRunWorkspaceProjectionState {
+function loadedState(): AgentRunWorkspaceState {
   return {
     ...emptyAgentRunWorkspaceState(),
     run_id: "run-1",

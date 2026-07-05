@@ -4,6 +4,7 @@ pub(crate) mod command_receipt;
 mod conversation_snapshot;
 mod delete_command;
 mod delivery_runtime_selection;
+mod delivery_state;
 mod effective_capability;
 mod execution_state;
 mod fork;
@@ -52,6 +53,10 @@ pub use delete_command::{
 pub use delivery_runtime_selection::{
     DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionPolicy,
     DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
+};
+pub use delivery_state::{
+    AgentRunDeliveryStateRepos, AgentRunDeliveryStateService, AgentRunTerminalTransition,
+    AgentRunTerminalTransitionInput,
 };
 pub use effective_capability::{
     AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityAdapter,

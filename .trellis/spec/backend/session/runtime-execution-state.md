@@ -154,14 +154,19 @@ persist terminal event -> persist rewind marker -> clear_active_turn
 
 原因是浏览器和 Lifecycle 都会在看到 terminal event 后读取 AgentRun workspace / journal
 状态；AgentRun delivery binding 必须已经收敛到 terminal，才能让 command state、workspace
-status、list status 与后继编排看到同一份运行事实。`SessionTerminalCallback` 的 durable outbox
-记录仍保留 replay 能力，但即时路径的控制面回写是 terminal 可见性边界的一部分，而不是
-terminal 广播后的异步 UI 补偿。
+status、list status 与后继编排看到同一份运行事实。AgentRun terminal transition 由
+`AgentRunDeliveryStateService` 写入 `AgentRunDeliveryBinding`，这是用户可见运行态的唯一写入口；
+RuntimeSession terminal event 只是该状态机的输入信号。
+
+`SessionTerminalCallback` 的即时路径先执行控制面 callback。callback 成功表示控制面已在 terminal
+可见性边界内收敛；callback 失败时写入 durable outbox 作为 replay evidence。这样 outbox 的
+pending/running/failed 状态只表达控制面副作用重放进度，AgentRun running/terminal 始终由
+`AgentRunDeliveryBinding` 表达。
 
 `SessionTerminalCallback` 返回 `Result<(), String>`。AgentRun delivery binding、mailbox terminal
-pause / turn-boundary 调度、Lifecycle 编排等控制面写入失败时，terminal effect 记录保持 failed /
-dead-letter 语义并可由 durable outbox replay。这样做的原因是 terminal event 已经持久化，后续
-控制面必须要么同步收敛，要么留下可重试证据；日志不能成为唯一失败载体。
+pause / turn-boundary 调度、Lifecycle 编排等控制面写入失败时，失败 callback 写入 terminal effect
+outbox 并可由 durable replay 重试。这样做的原因是 terminal event 已经持久化，后续控制面必须要么
+同步收敛，要么留下可重试证据；日志不能成为唯一失败载体。
 
 ## Internal Follow-up
 

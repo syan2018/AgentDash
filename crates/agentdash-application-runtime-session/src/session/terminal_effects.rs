@@ -117,15 +117,39 @@ impl SessionTerminalEffectDispatcher {
         Self { deps }
     }
 
-    pub async fn enqueue_terminal_callback_effect(
+    pub async fn execute_terminal_callback_control_plane(
         &self,
         input: TerminalCallbackDispatchInput,
-    ) -> EnqueuedTerminalEffects {
-        let mut batch = EnqueuedTerminalEffects::default();
+    ) {
         let terminal_state = input.terminal_kind.state_tag().to_string();
-        self.enqueue_terminal_callback(&mut batch, &input, terminal_state)
-            .await;
-        batch
+        let Some(callback) = self.deps.terminal_callback.read().await.clone() else {
+            return;
+        };
+        let notification = SessionTerminalNotification {
+            session_id: input.session_id.clone(),
+            turn_id: input.turn_id.clone(),
+            terminal_event_seq: input.terminal_event_seq,
+            terminal_state: terminal_state.clone(),
+            terminal_message: input.terminal_message.clone(),
+        };
+
+        if let Err(error) = callback.on_session_terminal(notification).await {
+            let context =
+                DiagnosticErrorContext::new("session.terminal_effects", "terminal_callback");
+            diag_error!(
+                Warn,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &std::io::Error::other(error.clone()),
+                session_id = %input.session_id,
+                turn_id = %input.turn_id,
+                terminal_event_seq = input.terminal_event_seq,
+                terminal_state = %terminal_state,
+                "Session terminal control-plane callback 失败，写入 durable replay outbox"
+            );
+            self.persist_terminal_callback_retry(&input, terminal_state)
+                .await;
+        }
     }
 
     pub async fn enqueue_terminal_effects(
@@ -208,37 +232,39 @@ impl SessionTerminalEffectDispatcher {
         batch
     }
 
-    async fn enqueue_terminal_callback(
+    async fn persist_terminal_callback_retry(
         &self,
-        batch: &mut EnqueuedTerminalEffects,
         input: &TerminalCallbackDispatchInput,
         terminal_state: String,
     ) {
-        if let Some(callback) = self.deps.terminal_callback.read().await.clone() {
-            self.enqueue(
-                batch,
-                NewTerminalEffectRecord {
-                    session_id: input.session_id.clone(),
-                    turn_id: input.turn_id.clone(),
-                    terminal_event_seq: input.terminal_event_seq,
-                    effect_type: TerminalEffectType::SessionTerminalCallback,
-                    payload: serde_json::json!({
-                        "terminal_state": terminal_state,
-                        "terminal_message": input.terminal_message.clone(),
-                    }),
-                },
-                TerminalEffectExecutor::SessionTerminalCallback {
-                    callback,
-                    notification: SessionTerminalNotification {
-                        session_id: input.session_id.clone(),
-                        turn_id: input.turn_id.clone(),
-                        terminal_event_seq: input.terminal_event_seq,
-                        terminal_state,
-                        terminal_message: input.terminal_message.clone(),
-                    },
-                },
-            )
-            .await;
+        let effect = NewTerminalEffectRecord {
+            session_id: input.session_id.clone(),
+            turn_id: input.turn_id.clone(),
+            terminal_event_seq: input.terminal_event_seq,
+            effect_type: TerminalEffectType::SessionTerminalCallback,
+            payload: serde_json::json!({
+                "terminal_state": terminal_state,
+                "terminal_message": input.terminal_message.clone(),
+            }),
+        };
+        if let Err(error) = self
+            .deps
+            .terminal_effects
+            .insert_terminal_effect(effect)
+            .await
+        {
+            let context =
+                DiagnosticErrorContext::new("session.terminal_effects", "persist_callback_retry");
+            diag_error!(
+                Error,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
+                session_id = %input.session_id,
+                turn_id = %input.turn_id,
+                terminal_event_seq = input.terminal_event_seq,
+                "Session terminal callback retry outbox 写入失败"
+            );
         }
     }
 
@@ -775,6 +801,119 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
+    #[tokio::test]
+    async fn terminal_callback_control_plane_success_does_not_create_replay_effect() {
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        persistence
+            .create_session(&SessionMeta {
+                id: "sess-callback-success".to_string(),
+                title: "callback success".to_string(),
+                title_source: TitleSource::Auto,
+                created_at: 1,
+                updated_at: 1,
+                last_event_seq: 0,
+                last_delivery_status: ExecutionStatus::Idle,
+                last_turn_id: None,
+                last_terminal_message: None,
+                executor_session_id: None,
+            })
+            .await
+            .expect("session should be created");
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let dispatcher = SessionTerminalEffectDispatcher::new(TerminalEffectDeps {
+            terminal_effects: persistence.clone(),
+            hook_trigger: Arc::new(NoopTerminalHookTrigger),
+            terminal_callback: Arc::new(RwLock::new(Some(Arc::new(CountingTerminalCallback {
+                attempts: attempts.clone(),
+            })))),
+            hook_effect_handler_registry: Arc::new(RwLock::new(None)),
+            auto_resume: Arc::new(NoopAutoResume),
+        });
+
+        dispatcher
+            .execute_terminal_callback_control_plane(TerminalCallbackDispatchInput {
+                session_id: "sess-callback-success".to_string(),
+                turn_id: "turn-1".to_string(),
+                terminal_event_seq: 8,
+                terminal_kind: TurnTerminalKind::Failed,
+                terminal_message: Some("provider failed".to_string()),
+            })
+            .await;
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        let pending = persistence
+            .list_terminal_effects_by_status(
+                &[
+                    TerminalEffectStatus::Pending,
+                    TerminalEffectStatus::Failed,
+                    TerminalEffectStatus::Succeeded,
+                ],
+                10,
+            )
+            .await
+            .expect("effects should be queryable");
+        assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn terminal_callback_control_plane_failure_creates_replay_effect() {
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        persistence
+            .create_session(&SessionMeta {
+                id: "sess-callback-direct-failure".to_string(),
+                title: "callback direct failure".to_string(),
+                title_source: TitleSource::Auto,
+                created_at: 1,
+                updated_at: 1,
+                last_event_seq: 0,
+                last_delivery_status: ExecutionStatus::Idle,
+                last_turn_id: None,
+                last_terminal_message: None,
+                executor_session_id: None,
+            })
+            .await
+            .expect("session should be created");
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let callback = Arc::new(FailingTerminalCallback {
+            attempts: attempts.clone(),
+        });
+        let dispatcher = SessionTerminalEffectDispatcher::new(TerminalEffectDeps {
+            terminal_effects: persistence.clone(),
+            hook_trigger: Arc::new(NoopTerminalHookTrigger),
+            terminal_callback: Arc::new(RwLock::new(Some(callback))),
+            hook_effect_handler_registry: Arc::new(RwLock::new(None)),
+            auto_resume: Arc::new(NoopAutoResume),
+        });
+
+        dispatcher
+            .execute_terminal_callback_control_plane(TerminalCallbackDispatchInput {
+                session_id: "sess-callback-direct-failure".to_string(),
+                turn_id: "turn-1".to_string(),
+                terminal_event_seq: 9,
+                terminal_kind: TurnTerminalKind::Failed,
+                terminal_message: Some("provider failed".to_string()),
+            })
+            .await;
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        let pending = persistence
+            .list_terminal_effects_by_status(&[TerminalEffectStatus::Pending], 10)
+            .await
+            .expect("pending effects should be queryable");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].effect_type,
+            TerminalEffectType::SessionTerminalCallback
+        );
+
+        let replayed = dispatcher
+            .replay_durable_outbox(10)
+            .await
+            .expect("replay should query durable outbox");
+        assert_eq!(replayed, 1);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
     struct NoopTerminalHookTrigger;
 
     #[async_trait::async_trait]
@@ -827,6 +966,21 @@ mod tests {
         ) -> Result<(), String> {
             self.attempts.fetch_add(1, Ordering::SeqCst);
             Err("control plane write failed".to_string())
+        }
+    }
+
+    struct CountingTerminalCallback {
+        attempts: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl super::super::post_turn_handler::SessionTerminalCallback for CountingTerminalCallback {
+        async fn on_session_terminal(
+            &self,
+            _notification: SessionTerminalNotification,
+        ) -> Result<(), String> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
     }
 

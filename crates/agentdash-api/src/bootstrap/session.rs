@@ -586,10 +586,17 @@ impl SessionTerminalCallback for CompositeSessionTerminalCallback {
         &self,
         notification: SessionTerminalNotification,
     ) -> Result<(), String> {
+        let mut errors = Vec::new();
         for callback in &self.callbacks {
-            callback.on_session_terminal(notification.clone()).await?;
+            if let Err(error) = callback.on_session_terminal(notification.clone()).await {
+                errors.push(error);
+            }
         }
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
     }
 }
 

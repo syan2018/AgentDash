@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use agentdash_application_agentrun::agent_run::{
-    AgentRunMailboxScheduleTrigger, AgentRunMailboxService, SessionControlService,
+    AgentRunDeliveryStateRepos, AgentRunDeliveryStateService, AgentRunMailboxScheduleTrigger,
+    AgentRunMailboxService, AgentRunTerminalTransitionInput, SessionControlService,
     SessionCoreService, SessionEventingService, SessionLaunchService,
 };
 use agentdash_application_runtime_session::session::SessionTerminalCallback;
@@ -12,9 +13,8 @@ use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::backend::ProjectBackendAccessRepository;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBinding,
-    AgentRunDeliveryBindingRepository, DeliveryBindingStatus, LifecycleAgentRepository,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
 };
 
 #[derive(Clone)]
@@ -103,35 +103,18 @@ impl AgentRunMailboxTerminalCallback {
         &self,
         notification: &SessionTerminalNotification,
     ) -> Result<(), agentdash_application_agentrun::WorkflowApplicationError> {
-        let Some(anchor) = self
-            .deps
-            .execution_anchor_repo
-            .find_by_session(&notification.session_id)
-            .await?
-        else {
-            return Ok(());
-        };
-        let observed_at = chrono::Utc::now();
-        let binding = match self
-            .deps
-            .delivery_binding_repo
-            .get_current(anchor.run_id, anchor.agent_id)
-            .await?
-        {
-            Some(binding) => binding,
-            None => AgentRunDeliveryBinding::from_anchor(
-                &anchor,
-                DeliveryBindingStatus::Terminal,
-                observed_at,
-            ),
-        }
-        .mark_terminal(
-            notification.turn_id.clone(),
-            notification.terminal_state.clone(),
-            notification.terminal_message.clone(),
-            observed_at,
-        );
-        self.deps.delivery_binding_repo.upsert(&binding).await?;
+        AgentRunDeliveryStateService::new(AgentRunDeliveryStateRepos {
+            execution_anchor_repo: self.deps.execution_anchor_repo.as_ref(),
+            delivery_binding_repo: self.deps.delivery_binding_repo.as_ref(),
+        })
+        .mark_terminal_from_runtime_session(AgentRunTerminalTransitionInput {
+            runtime_session_id: notification.session_id.clone(),
+            turn_id: notification.turn_id.clone(),
+            terminal_state: notification.terminal_state.clone(),
+            terminal_message: notification.terminal_message.clone(),
+            observed_at: chrono::Utc::now(),
+        })
+        .await?;
         Ok(())
     }
 }

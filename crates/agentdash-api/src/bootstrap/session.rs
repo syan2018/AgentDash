@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::agent_run_mailbox::{
-    AgentRunMailboxTerminalCallback, AgentRunMailboxTerminalCallbackDeps,
+use crate::agent_run_terminal_control::{
+    AgentRunTerminalControlCallback, AgentRunTerminalControlCallbackDeps,
 };
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
@@ -417,8 +417,8 @@ pub(crate) async fn build_session_runtime(
         )
         .with_function_runner(function_runner),
     );
-    let mailbox_terminal_callback = Arc::new(AgentRunMailboxTerminalCallback::new(
-        AgentRunMailboxTerminalCallbackDeps {
+    let agent_run_terminal_control_callback = Arc::new(AgentRunTerminalControlCallback::new(
+        AgentRunTerminalControlCallbackDeps {
             lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
             lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
             project_agent_repo: repos.project_agent_repo.clone(),
@@ -437,7 +437,7 @@ pub(crate) async fn build_session_runtime(
     session_runtime_builder
         .set_terminal_callback(Arc::new(CompositeSessionTerminalCallback {
             callbacks: vec![
-                mailbox_terminal_callback,
+                agent_run_terminal_control_callback,
                 Arc::new(LifecycleTerminalCallbackAdapter {
                     inner: orchestrator,
                 }),

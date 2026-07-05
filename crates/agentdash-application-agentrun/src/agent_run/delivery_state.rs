@@ -3,7 +3,6 @@ use agentdash_domain::workflow::{
     RuntimeSessionExecutionAnchorRepository,
 };
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
 
 use crate::WorkflowApplicationError;
 
@@ -16,16 +15,6 @@ pub struct AgentRunDeliveryStateService<'a> {
     repos: AgentRunDeliveryStateRepos<'a>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunTerminalTransition {
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub runtime_session_id: String,
-    pub turn_id: String,
-    pub terminal_state: String,
-    pub terminal_message: Option<String>,
-}
-
 impl<'a> AgentRunDeliveryStateService<'a> {
     pub fn new(repos: AgentRunDeliveryStateRepos<'a>) -> Self {
         Self { repos }
@@ -34,14 +23,14 @@ impl<'a> AgentRunDeliveryStateService<'a> {
     pub async fn mark_terminal_from_runtime_session(
         &self,
         input: AgentRunTerminalTransitionInput,
-    ) -> Result<Option<AgentRunTerminalTransition>, WorkflowApplicationError> {
+    ) -> Result<bool, WorkflowApplicationError> {
         let Some(anchor) = self
             .repos
             .execution_anchor_repo
             .find_by_session(&input.runtime_session_id)
             .await?
         else {
-            return Ok(None);
+            return Ok(false);
         };
 
         let binding = match self
@@ -65,14 +54,7 @@ impl<'a> AgentRunDeliveryStateService<'a> {
         );
         self.repos.delivery_binding_repo.upsert(&binding).await?;
 
-        Ok(Some(AgentRunTerminalTransition {
-            run_id: anchor.run_id,
-            agent_id: anchor.agent_id,
-            runtime_session_id: anchor.runtime_session_id,
-            turn_id: input.turn_id,
-            terminal_state: input.terminal_state,
-            terminal_message: input.terminal_message,
-        }))
+        Ok(true)
     }
 }
 
@@ -95,6 +77,7 @@ mod tests {
         AgentRunDeliveryBindingRepository, DeliveryBindingStatus, RuntimeSessionExecutionAnchor,
         RuntimeSessionExecutionAnchorRepository,
     };
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn terminal_transition_updates_agent_run_binding() {
@@ -112,7 +95,7 @@ mod tests {
             execution_anchor_repo: &anchors,
             delivery_binding_repo: &bindings,
         });
-        let transition = service
+        let updated = service
             .mark_terminal_from_runtime_session(AgentRunTerminalTransitionInput {
                 runtime_session_id: "runtime-a".to_string(),
                 turn_id: "turn-1".to_string(),
@@ -121,11 +104,9 @@ mod tests {
                 observed_at: Utc::now(),
             })
             .await
-            .expect("terminal transition")
-            .expect("anchored runtime");
+            .expect("terminal transition");
 
-        assert_eq!(transition.run_id, anchor.run_id);
-        assert_eq!(transition.agent_id, anchor.agent_id);
+        assert!(updated);
         let binding = bindings
             .get_current(anchor.run_id, anchor.agent_id)
             .await

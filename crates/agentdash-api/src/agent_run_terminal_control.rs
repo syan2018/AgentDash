@@ -18,7 +18,7 @@ use agentdash_domain::workflow::{
 };
 
 #[derive(Clone)]
-pub(crate) struct AgentRunMailboxTerminalCallbackDeps {
+pub(crate) struct AgentRunTerminalControlCallbackDeps {
     pub(crate) lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     pub(crate) lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub(crate) project_agent_repo: Arc<dyn ProjectAgentRepository>,
@@ -31,17 +31,17 @@ pub(crate) struct AgentRunMailboxTerminalCallbackDeps {
 }
 
 #[derive(Clone)]
-pub(crate) struct AgentRunMailboxTerminalCallback {
-    deps: AgentRunMailboxTerminalCallbackDeps,
+pub(crate) struct AgentRunTerminalControlCallback {
+    deps: AgentRunTerminalControlCallbackDeps,
     session_core: SessionCoreService,
     session_control: SessionControlService,
     session_eventing: SessionEventingService,
     session_launch: SessionLaunchService,
 }
 
-impl AgentRunMailboxTerminalCallback {
+impl AgentRunTerminalControlCallback {
     pub(crate) fn new(
-        deps: AgentRunMailboxTerminalCallbackDeps,
+        deps: AgentRunTerminalControlCallbackDeps,
         session_core: SessionCoreService,
         session_control: SessionControlService,
         session_eventing: SessionEventingService,
@@ -99,7 +99,7 @@ impl AgentRunMailboxTerminalCallback {
         Ok(())
     }
 
-    async fn record_agent_run_terminal_state(
+    async fn sync_terminal_delivery_state(
         &self,
         notification: &SessionTerminalNotification,
     ) -> Result<(), agentdash_application_agentrun::WorkflowApplicationError> {
@@ -120,12 +120,12 @@ impl AgentRunMailboxTerminalCallback {
 }
 
 #[async_trait]
-impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
+impl SessionTerminalCallback for AgentRunTerminalControlCallback {
     async fn on_session_terminal(
         &self,
         notification: SessionTerminalNotification,
     ) -> Result<(), String> {
-        self.record_agent_run_terminal_state(&notification)
+        self.sync_terminal_delivery_state(&notification)
             .await
             .map_err(|error| error.to_string())?;
         match notification.terminal_state.as_str() {

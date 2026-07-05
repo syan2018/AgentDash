@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality gate for tests, cleanup, and clippy-sensitive changes."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality gate for session UI and stream reducer changes."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Checker must verify there is no split active-state fact source."}
+{"file": ".trellis/spec/backend/session/streaming-protocol.md", "reason": "Checker must verify durable/ephemeral cursor behavior and provider waiting."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Checker must verify backend snapshot and frontend command consumption agree."}
+{"file": ".trellis/tasks/07-05-agentrun-execution-fact-source-convergence/research/evidence.md", "reason": "Checker verifies the single-worker patch against the anchored stale-path searches from task evidence."}

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Backend execution-state source contract for AgentRun and RuntimeSession convergence."}
+{"file": ".trellis/spec/backend/session/session-lineage-projection.md", "reason": "Fork lineage and inherited conversation projection constraints."}
+{"file": ".trellis/spec/backend/session/streaming-protocol.md", "reason": "Durable and ephemeral stream semantics for replay and provider waiting."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Frontend state ownership and reducer boundaries for stream state cleanup."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Cross-layer API contract expectations for command/execution/read-model convergence."}
+{"file": ".trellis/tasks/07-05-agentrun-execution-fact-source-convergence/research/evidence.md", "reason": "Task-specific evidence and file anchors for scoped worker implementation."}

@@ -11,7 +11,6 @@ import type {
   LifecycleRunView,
   ProjectActiveAgentsView,
   RuntimeSessionTraceView,
-  SessionRuntimeControlView,
   SubjectExecutionView,
 } from "../types";
 import type { AgentRunWorkspaceView } from "../generated/workflow-contracts";
@@ -57,14 +56,6 @@ export async function fetchProjectAgentRuns(
   const query = params.toString();
   return api.get<AgentRunWorkspaceListView>(
     `/projects/${encodeURIComponent(projectId)}/agent-runs${query ? `?${query}` : ""}`,
-  );
-}
-
-export async function fetchSessionRuntimeControl(
-  runtimeSessionId: string,
-): Promise<SessionRuntimeControlView> {
-  return api.get<SessionRuntimeControlView>(
-    `/sessions/${encodeURIComponent(runtimeSessionId)}/runtime-control`,
   );
 }
 

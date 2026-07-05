@@ -52,7 +52,7 @@ pub(crate) struct SessionBranchingStores {
 }
 
 #[derive(Clone)]
-pub(crate) struct SessionRuntimeControlStores {
+pub(crate) struct SessionRuntimeStores {
     pub(crate) meta: Arc<dyn SessionMetaStore>,
     pub(crate) events: Arc<dyn SessionEventStore>,
 }
@@ -118,8 +118,8 @@ impl SessionStoreSet {
         }
     }
 
-    pub(crate) fn runtime_control_stores(&self) -> SessionRuntimeControlStores {
-        SessionRuntimeControlStores {
+    pub(crate) fn runtime_stores(&self) -> SessionRuntimeStores {
+        SessionRuntimeStores {
             meta: self.meta.clone(),
             events: self.events.clone(),
         }

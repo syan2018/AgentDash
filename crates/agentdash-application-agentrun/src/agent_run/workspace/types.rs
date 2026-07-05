@@ -3,7 +3,6 @@ use crate::agent_run::lifecycle_read_model_facade::{
     AgentRunView, LifecycleSubjectAssociationView, RuntimeSessionRefView,
 };
 use crate::agent_run::runtime_session_boundary::SessionExecutionState;
-use crate::agent_run::runtime_session_boundary::SessionMeta;
 use crate::agent_run::{AgentConversationSnapshotModel, ConversationEffectiveExecutorConfigModel};
 use agentdash_application_vfs::ResolvedVfsSurface;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxMessage;
@@ -24,7 +23,6 @@ pub struct AgentRunWorkspaceSnapshot {
     pub ownership: AgentRunOwnershipModel,
     pub shell: AgentRunWorkspaceShellModel,
     pub delivery_runtime_session_id: Option<String>,
-    pub delivery_trace_meta: Option<AgentRunWorkspaceTraceMetaModel>,
     pub projection: AgentRunWorkspaceProjectionModel,
     pub agent_view: Option<AgentRunView>,
     pub frame_runtime: Option<AgentRunWorkspaceFrameRuntimeModel>,
@@ -50,7 +48,6 @@ pub struct AgentRunListProjection {
     /// 无绑定（ad-hoc / 已删除）时为 None。
     pub project_agent_label: Option<String>,
     pub delivery_runtime_session_id: Option<String>,
-    pub delivery_trace_meta: Option<AgentRunWorkspaceTraceMetaModel>,
     pub subject_ref: Option<SubjectRefModel>,
     pub subject_label: Option<String>,
 }
@@ -69,35 +66,6 @@ pub struct AgentRunWorkspaceShellModel {
     pub delivery_status: String,
     pub last_turn_id: Option<String>,
     pub last_activity_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunWorkspaceTraceMetaModel {
-    pub runtime_session_id: String,
-    pub last_event_seq: u64,
-    pub executor_session_id: Option<String>,
-    pub trace_title: String,
-    pub trace_title_source: String,
-    pub delivery_status: String,
-    pub last_turn_id: Option<String>,
-    pub terminal_summary: Option<String>,
-    pub updated_at: i64,
-}
-
-impl AgentRunWorkspaceTraceMetaModel {
-    pub fn from_session_meta(meta: &SessionMeta) -> Self {
-        Self {
-            runtime_session_id: meta.id.clone(),
-            last_event_seq: meta.last_event_seq,
-            executor_session_id: meta.executor_session_id.clone(),
-            trace_title: meta.title.clone(),
-            trace_title_source: serialized_string(&meta.title_source),
-            delivery_status: serialized_string(&meta.last_delivery_status),
-            last_turn_id: meta.last_turn_id.clone(),
-            terminal_summary: meta.last_terminal_message.clone(),
-            updated_at: meta.updated_at,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -32,15 +32,6 @@ const ownership: AgentRunOwnershipView = {
   current_user_controls_run: true,
 };
 
-const deliveryTraceMeta = {
-  runtime_session_ref: { runtime_session_id: "session-1" },
-  last_event_seq: 1n,
-  trace_title: "Workspace title",
-  trace_title_source: "session_meta",
-  delivery_status: "running",
-  updated_at: 1783000000000n,
-};
-
 const workspace: AgentRunWorkspaceView = {
   run_ref: { run_id: "run-1" },
   agent_ref: { run_id: "run-1", agent_id: "agent-1" },
@@ -52,7 +43,6 @@ const workspace: AgentRunWorkspaceView = {
     delivery_status: "running",
     last_activity_at: "2026-06-12T00:00:00.000Z",
   },
-  delivery_trace_meta: deliveryTraceMeta,
   control_plane: {
     status: "running",
     ownership,
@@ -93,7 +83,6 @@ function loadedState(): AgentRunWorkspaceProjectionState {
     source_key: "agentrun:run-1:agent-1",
     status: "ready",
     workspace,
-    delivery_trace_session_id: "session-1",
     runtime_surface: runtimeSurface,
     frame: frameRuntime,
   };
@@ -150,7 +139,7 @@ describe("AgentRun workspace refresh state", () => {
     expect(agentRunWorkspaceResourceSurface(snapshotWorkspace)).toBe(runtimeSurface);
   });
 
-  it("初始加载成功后触发 refresh 时 pending 期间保留 trace identity 与 workspace", () => {
+  it("初始加载成功后触发 refresh 时 pending 期间保留 workspace", () => {
     const refreshing = beginAgentRunWorkspaceStateLoad(
       loadedState(),
       "run-1",
@@ -160,14 +149,13 @@ describe("AgentRun workspace refresh state", () => {
     );
 
     expect(refreshing.status).toBe("refreshing");
-    expect(refreshing.delivery_trace_session_id).toBe("session-1");
     expect(refreshing.workspace).toBe(workspace);
     expect(refreshing.runtime_surface).toBe(runtimeSurface);
     expect(refreshing.frame).toBe(frameRuntime);
     expect(refreshing.error).toBeNull();
   });
 
-  it("refresh 失败时不清空上一帧 trace identity", () => {
+  it("refresh 失败时不清空上一帧 workspace", () => {
     const refreshing = beginAgentRunWorkspaceStateLoad(
       loadedState(),
       "run-1",
@@ -186,7 +174,6 @@ describe("AgentRun workspace refresh state", () => {
 
     expect(failed.status).toBe("error");
     expect(failed.error).toBe("refresh failed");
-    expect(failed.delivery_trace_session_id).toBe("session-1");
     expect(failed.workspace).toBe(workspace);
     expect(failed.runtime_surface).toBe(runtimeSurface);
     expect(failed.frame).toBe(frameRuntime);

@@ -7,9 +7,6 @@ import type {
   AgentRunToolCallApprovalResponse,
   AgentRunToolCallRejectionResponse,
 } from "../generated/agent-run-mailbox-contracts";
-import type {
-  AgentConversationFeedSnapshot,
-} from "../generated/workflow-contracts";
 
 export interface AgentRunRuntimeTarget {
   runId: string;
@@ -46,12 +43,12 @@ export async function fetchAgentRunRuntimeContextProjection(
   }
 }
 
-export async function fetchAgentRunConversationFeed(
+export async function fetchAgentRunConversationSeedEvents(
   target: AgentRunRuntimeTarget,
-): Promise<AgentConversationFeedSnapshot | null> {
+): Promise<SessionEventsPageResponse | null> {
   try {
-    return await api.get<AgentConversationFeedSnapshot>(
-      agentRunScopedPath(target, "/conversation/feed"),
+    return await api.get<SessionEventsPageResponse>(
+      agentRunScopedPath(target, "/conversation/seed-events"),
     );
   } catch (err) {
     if ((err as ApiHttpError).status === 404) return null;

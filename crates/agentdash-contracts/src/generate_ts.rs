@@ -188,10 +188,8 @@ use agentdash_contracts::vfs::{
 };
 use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition,
-    AgentConversationContentPartView, AgentConversationFeedMessage, AgentConversationFeedSnapshot,
-    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationMessageRefView,
-    AgentConversationMessageRole, AgentConversationSnapshot, AgentConversationSourceRangeView,
-    AgentConversationToolCallView, AgentConversationToolResultView, AgentFrameRefDto,
+    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
+    AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
     AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunRefDto,
     AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
@@ -210,10 +208,8 @@ use agentdash_contracts::workflow::{
     LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
     OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
-    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionExecutionAnchorDto,
-    RuntimeSessionRefDto, RuntimeSessionTraceMeta, RuntimeSessionTraceView,
-    SessionRuntimeControlPlaneStatus, SessionRuntimeControlPlaneView, SessionRuntimeControlView,
-    SessionShellDto, SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
+    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionRefDto, RuntimeSessionTraceView,
+    SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
     WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
@@ -749,8 +745,6 @@ fn main() {
             export_all::<AgentRunRefDto>(dir);
             export_all::<AgentFrameRefDto>(dir);
             export_all::<RuntimeSessionRefDto>(dir);
-            export_all::<SessionShellDto>(dir);
-            export_all::<RuntimeSessionExecutionAnchorDto>(dir);
             export_all::<AgentRunCommandPreconditionView>(dir);
             export_all::<AgentRunCommandOnlyRequest>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
@@ -766,7 +760,6 @@ fn main() {
             export_all::<OpenedHumanGateDto>(dir);
             export_all::<AgentRunView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
-            export_all::<RuntimeSessionTraceMeta>(dir);
             export_all::<AgentRunWorkspaceShell>(dir);
             export_all::<AgentRunWorkspaceControlPlaneStatus>(dir);
             export_all::<AgentRunWorkspaceControlPlaneView>(dir);
@@ -790,22 +783,11 @@ fn main() {
             export_all::<AgentConversationIdentity>(dir);
             export_all::<AgentConversationLifecycleContext>(dir);
             export_all::<AgentConversationSnapshot>(dir);
-            export_all::<AgentConversationMessageRefView>(dir);
-            export_all::<AgentConversationSourceRangeView>(dir);
-            export_all::<AgentConversationMessageRole>(dir);
-            export_all::<AgentConversationContentPartView>(dir);
-            export_all::<AgentConversationToolCallView>(dir);
-            export_all::<AgentConversationToolResultView>(dir);
-            export_all::<AgentConversationFeedMessage>(dir);
-            export_all::<AgentConversationFeedSnapshot>(dir);
             export_all::<AgentRunWorkspaceView>(dir);
             export_all::<SubjectRuntimeAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
-            export_all::<SessionRuntimeControlPlaneStatus>(dir);
-            export_all::<SessionRuntimeControlPlaneView>(dir);
-            export_all::<SessionRuntimeControlView>(dir);
             export_all::<AgentRunWorkspaceListEntry>(dir);
             export_all::<AgentRunWorkspaceListView>(dir);
             export_all::<DefinitionSource>(dir);

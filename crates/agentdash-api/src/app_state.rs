@@ -14,9 +14,7 @@ use agentdash_application::context::{
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_session_agent_run_bridge::{
-    agent_run_session_core, agent_run_session_eventing,
-};
+use agentdash_application::runtime_session_agent_run_bridge::agent_run_session_eventing;
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::runtime_surface::{
@@ -317,10 +315,8 @@ impl AppState {
                     lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
                     execution_anchor_repo: repos.execution_anchor_repo.clone(),
                 },
-                session_core: agent_run_session_core(session_core.clone()),
                 session_eventing: agent_run_session_eventing(session_eventing.clone()),
                 surface_query: runtime_surface_query_port.clone(),
-                lifecycle_read_model: lifecycle_read_model_query.clone(),
             });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
             runtime_surface_query.clone(),

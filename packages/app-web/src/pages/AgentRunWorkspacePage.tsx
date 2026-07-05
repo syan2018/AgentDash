@@ -155,7 +155,6 @@ export function AgentRunWorkspacePage({
   });
 
   const workspaceControl: AgentRunWorkspaceView | null = agentRunWorkspaceState.workspace;
-  const deliveryTraceSessionId = agentRunWorkspaceState.delivery_trace_session_id;
   const draftWorkspaceTitle =
     draftProjectAgent?.display_name
     ?? traceAgentContext?.display_name
@@ -187,9 +186,7 @@ export function AgentRunWorkspacePage({
   const hasIdentityBar =
     !isProjectAgentDraft
     && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
-  const activeHookRuntime = agentRunWorkspaceState.hook_runtime?.runtime_adapter_session_id === deliveryTraceSessionId
-    ? agentRunWorkspaceState.hook_runtime
-    : null;
+  const activeHookRuntime = agentRunWorkspaceState.hook_runtime;
   const deliveryRuntimeSurface = agentRunWorkspaceState.runtime_surface;
   const sessionContextSnapshot = null;
   const sessionCapabilities = null;
@@ -503,7 +500,7 @@ export function AgentRunWorkspacePage({
       : "返回 Story";
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
-    traceSessionId: deliveryTraceSessionId,
+    traceSessionId: null,
     agentRunRuntimeTarget,
     lifecycleRun: null,
     lifecycleAgent: workspaceControl?.agent ?? null,
@@ -522,7 +519,6 @@ export function AgentRunWorkspacePage({
     sessionCapabilities,
   }), [
     ownerProjectId,
-    deliveryTraceSessionId,
     agentRunRuntimeTarget,
     workspaceControl,
     agentRunWorkspaceState.status,

@@ -8,12 +8,12 @@ use super::eventing::SessionEventingService;
 use super::hub_support::{
     TurnTerminalKind, build_turn_terminal_envelope, parse_turn_terminal_event_from_envelope,
 };
-use super::persistence::SessionRuntimeControlStores;
+use super::persistence::SessionRuntimeStores;
 use super::turn_supervisor::TurnSupervisor;
 
 #[derive(Clone)]
 pub struct SessionRuntimeService {
-    stores: SessionRuntimeControlStores,
+    stores: SessionRuntimeStores,
     turn_supervisor: TurnSupervisor,
     eventing: SessionEventingService,
     connector: Arc<dyn agentdash_spi::AgentConnector>,
@@ -21,7 +21,7 @@ pub struct SessionRuntimeService {
 
 impl SessionRuntimeService {
     pub(super) fn new(
-        stores: SessionRuntimeControlStores,
+        stores: SessionRuntimeStores,
         turn_supervisor: TurnSupervisor,
         eventing: SessionEventingService,
         connector: Arc<dyn agentdash_spi::AgentConnector>,

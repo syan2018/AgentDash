@@ -25,27 +25,11 @@ export type ActivityTransitionKind = "flow" | "artifact";
 
 export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
-export type AgentConversationContentPartView = { "type": "text", text: string, } | { "type": "image", mime_type: string, data: string, } | { "type": "reasoning", text: string, id?: string, signature?: string, };
-
-export type AgentConversationFeedMessage = { message_ref: AgentConversationMessageRefView, role: AgentConversationMessageRole, text: string, content_parts?: Array<AgentConversationContentPartView>, tool_calls?: Array<AgentConversationToolCallView>, tool_result?: AgentConversationToolResultView, origin: string, synthetic: boolean, projection_kind: string, source_event_seq?: number, source_range?: AgentConversationSourceRangeView, projection_segment_id?: string, timestamp_ms?: number, };
-
-export type AgentConversationFeedSnapshot = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, runtime_session_ref?: RuntimeSessionRefDto, projection_kind: string, projection_version: number, head_event_seq: number, runtime_replay_start_seq: number, active_compaction_id?: string, message_count: number, messages: Array<AgentConversationFeedMessage>, };
-
 export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, };
 
 export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
 
-export type AgentConversationMessageRefView = { turn_id: string, entry_index: number, };
-
-export type AgentConversationMessageRole = "user" | "assistant" | "tool_result" | "compaction_summary";
-
 export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, mailbox: ConversationMailboxSnapshotView, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
-
-export type AgentConversationSourceRangeView = { start_event_seq: number, end_event_seq: number, };
-
-export type AgentConversationToolCallView = { id: string, call_id?: string, name: string, arguments: JsonValue, };
-
-export type AgentConversationToolResultView = { tool_call_id: string, call_id?: string, tool_name?: string, details?: JsonValue, is_error: boolean, };
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 
@@ -138,7 +122,7 @@ subagent_count: number,
 /**
  * 该主 Run 的直接子 Agent（一跳），已内联 shell 状态，前端免懒加载。
  */
-children: Array<AgentRunListChild>, delivery_trace_meta?: RuntimeSessionTraceMeta, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
+children: Array<AgentRunListChild>, frame_ref?: AgentFrameRefDto, subject_ref?: SubjectRefDto, subject_label?: string, };
 
 export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<AgentRunWorkspaceListEntry>,
 /**
@@ -148,7 +132,7 @@ next_cursor?: string, };
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, delivery_trace_meta?: RuntimeSessionTraceMeta, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot,
+export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot,
 /**
  * lineage 父节点：本 Run 若为 subagent 则指向其父，供"隶属于"跳转。
  */
@@ -262,23 +246,11 @@ export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 
 export type RuntimeNodeView = { node_id: string, node_path: string, kind: string, status: string, attempt: number, executor_run_ref?: ExecutorRunRef, started_at?: string, completed_at?: string, children: Array<RuntimeNodeView>, };
 
-export type RuntimeSessionExecutionAnchorDto = { runtime_session_id: string, run_id: string, agent_id: string, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, created_by_kind: string, created_at: string, updated_at: string, };
-
 export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
 
 export type RuntimeSessionRefDto = { runtime_session_id: string, };
 
-export type RuntimeSessionTraceMeta = { runtime_session_ref: RuntimeSessionRefDto, last_event_seq: bigint, executor_session_id?: string, trace_title: string, trace_title_source: string, delivery_status: string, last_turn_id?: string, terminal_summary?: string, updated_at: bigint, };
-
 export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDto, frame_ref?: AgentFrameRefDto, events: Array<JsonValue>, turns: Array<JsonValue>, };
-
-export type SessionRuntimeControlPlaneStatus = "unbound_trace" | "anchored_idle" | "anchored_running" | "anchored_cancelling" | "terminal" | "frame_missing";
-
-export type SessionRuntimeControlPlaneView = { status: SessionRuntimeControlPlaneStatus, reason?: string, };
-
-export type SessionRuntimeControlView = { runtime_session_ref: RuntimeSessionRefDto, session_meta: SessionShellDto, control_plane: SessionRuntimeControlPlaneView, anchor?: RuntimeSessionExecutionAnchorDto, run?: LifecycleRunView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, };
-
-export type SessionShellDto = { id: string, title: string, title_source: string, created_at: bigint, updated_at: bigint, last_event_seq: bigint, last_turn_id?: string, last_delivery_status: string, };
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 

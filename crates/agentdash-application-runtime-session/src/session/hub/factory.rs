@@ -49,7 +49,7 @@ impl SessionRuntimeInner {
 
     pub fn runtime_service(&self) -> super::super::runtime_control::SessionRuntimeService {
         super::super::runtime_control::SessionRuntimeService::new(
-            self.stores.runtime_control_stores(),
+            self.stores.runtime_stores(),
             self.turn_supervisor.clone(),
             self.eventing_service(),
             self.connector.clone(),

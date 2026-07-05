@@ -7,7 +7,7 @@ import type { SessionEventEnvelope } from "../model/types";
 import {
   agentRunSyntheticSessionId,
   type AgentRunStreamIdentityTarget,
-} from "../model/agentRunConversationFeed";
+} from "../model/agentRunStreamIdentity";
 import { extractPlatformEventType, isRecord } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 

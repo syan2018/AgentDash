@@ -62,7 +62,6 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
 
 interface UseAgentRunWorkspaceControlPlaneResult {
   workspaceControl: AgentRunWorkspaceView | null;
-  deliveryTraceSessionId: string | null;
   chatModel: AgentRunChatModel;
   chatIntents: AgentRunChatViewIntents;
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
@@ -101,7 +100,6 @@ export function useAgentRunWorkspaceControlPlane({
   }>({ scopeKey: null, config: null });
 
   const workspaceControl = agentRunWorkspaceState.workspace;
-  const deliveryTraceSessionId = agentRunWorkspaceState.delivery_trace_session_id;
 
   const executorOverrideScopeKey = isProjectAgentDraft
     ? `draft:${draftProjectId ?? ""}:${draftProjectAgentKey ?? ""}`
@@ -403,7 +401,6 @@ export function useAgentRunWorkspaceControlPlane({
 
   return {
     workspaceControl,
-    deliveryTraceSessionId,
     chatModel,
     chatIntents,
     refreshAgentRunWorkspaceState,

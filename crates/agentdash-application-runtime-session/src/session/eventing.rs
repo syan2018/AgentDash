@@ -436,16 +436,6 @@ impl SessionEventingService {
             .into_projected_transcript())
     }
 
-    pub async fn build_raw_projected_transcript_at_event(
-        &self,
-        session_id: &str,
-        head_event_seq: u64,
-    ) -> io::Result<agentdash_agent_types::ProjectedTranscript> {
-        ContextProjector::new(self.stores.projection_stores())
-            .build_raw_projected_transcript_at_event(session_id, head_event_seq)
-            .await
-    }
-
     pub async fn build_agent_context_envelope(
         &self,
         session_id: &str,

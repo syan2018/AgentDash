@@ -11,11 +11,6 @@ use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, workspace as app_workspace,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentConversationContentPartModel, AgentConversationDisplaySeedInput,
-    AgentConversationFeedInput, AgentConversationFeedMessageModel, AgentConversationFeedModel,
-    AgentConversationFeedProjector, AgentConversationMessageRoleModel,
-};
-use agentdash_application_agentrun::agent_run::{
     AgentRunAdmissionService, AgentRunCancelCommand, AgentRunCancelCommandService,
     AgentRunCommandReceiptView, AgentRunDeleteCommand, AgentRunDeleteCommandService,
     AgentRunDeleteRepos, AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkRepos,
@@ -35,12 +30,10 @@ use agentdash_contracts::agent_run_mailbox::{
     AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
     AgentRunToolCallRejectionResponse, MailboxMessageView, MailboxStateView,
 };
-use agentdash_contracts::session::SessionMessageRefDto;
+use agentdash_contracts::session::{SessionEventsPageResponse, SessionMessageRefDto};
 use agentdash_contracts::workflow::{
-    AgentConversationContentPartView, AgentConversationFeedMessage, AgentConversationFeedSnapshot,
-    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationMessageRefView,
-    AgentConversationMessageRole, AgentConversationSnapshot, AgentConversationSourceRangeView,
-    AgentConversationToolCallView, AgentConversationToolResultView, AgentFrameRefDto,
+    AgentConversationIdentity, AgentConversationLifecycleContext, AgentConversationSnapshot,
+    AgentFrameRefDto,
     AgentFrameRuntimeView, AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView,
     AgentRunLineageRef, AgentRunListChild, AgentRunOwnershipView, AgentRunRefDto,
     AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
@@ -52,8 +45,8 @@ use agentdash_contracts::workflow::{
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
     ConversationModelConfigView, ConversationWaitingItemView, DeleteAgentRunResponse,
-    LifecycleRunRefDto, LifecycleSubjectAssociationDto, RuntimeSessionRefDto,
-    RuntimeSessionTraceMeta, SubjectRefDto, ValidationSeverity,
+    LifecycleRunRefDto, LifecycleSubjectAssociationDto, RuntimeSessionRefDto, SubjectRefDto,
+    ValidationSeverity,
 };
 use agentdash_domain::workflow::{AgentLineage, LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -115,8 +108,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_workspace),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/conversation/feed",
-            axum::routing::get(get_agent_run_conversation_feed),
+            "/agent-runs/{run_id}/agents/{agent_id}/conversation/seed-events",
+            axum::routing::get(get_agent_run_conversation_seed_events),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
@@ -412,11 +405,11 @@ pub async fn get_agent_run_workspace(
     Ok(Json(view))
 }
 
-pub async fn get_agent_run_conversation_feed(
+pub async fn get_agent_run_conversation_seed_events(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<AgentConversationFeedSnapshot>, ApiError> {
+) -> Result<Json<SessionEventsPageResponse>, ApiError> {
     let context = resolve_agent_run_context(
         &state,
         &current_user,
@@ -431,161 +424,64 @@ pub async fn get_agent_run_conversation_feed(
         .ok_or_else(|| {
             ApiError::NotFound("AgentRun 当前没有可读取的 delivery RuntimeSession".to_string())
         })?;
-    if let Some(lineage) = state
+    let Some(lineage) = state
         .services
         .session_branching
         .lineage_parent(runtime_session_id)
         .await
         .map_err(ApiError::from)?
         .filter(|lineage| lineage.relation_kind == SessionLineageRelationKind::Fork)
-    {
-        let head_event_seq = lineage.fork_point_event_seq.unwrap_or_default();
-        let transcript = state
+    else {
+        return Err(ApiError::NotFound(
+            "AgentRun 当前 delivery RuntimeSession 没有 fork seed events".to_string(),
+        ));
+    };
+
+    let head_event_seq = lineage.fork_point_event_seq.unwrap_or_default();
+    let events = load_runtime_session_events_until(
+        state.as_ref(),
+        &lineage.parent_session_id,
+        head_event_seq,
+    )
+    .await?;
+
+    Ok(Json(SessionEventsPageResponse {
+        snapshot_seq: head_event_seq,
+        events,
+        has_more: false,
+        next_after_seq: head_event_seq,
+    }))
+}
+
+async fn load_runtime_session_events_until(
+    state: &AppState,
+    session_id: &str,
+    head_event_seq: u64,
+) -> Result<Vec<agentdash_contracts::session::SessionEventResponse>, ApiError> {
+    if head_event_seq == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut after_seq = 0;
+    let mut events = Vec::new();
+    loop {
+        let page = state
             .services
             .session_eventing
-            .build_raw_projected_transcript_at_event(&lineage.parent_session_id, head_event_seq)
+            .list_event_page(session_id, after_seq, 2_000)
             .await
             .map_err(ApiError::from)?;
-        let model = AgentConversationFeedProjector::derive_display_seed(
-            AgentConversationDisplaySeedInput {
-                run: context.run.clone(),
-                agent: context.agent.clone(),
-                runtime_session_id: runtime_session_id.to_string(),
-                head_event_seq,
-                transcript,
-            },
-        );
-
-        return Ok(Json(agent_conversation_feed_snapshot(model)));
-    }
-
-    let envelope = state
-        .services
-        .session_eventing
-        .build_agent_context_envelope(runtime_session_id)
-        .await
-        .map_err(ApiError::from)?;
-    let model = AgentConversationFeedProjector::derive(AgentConversationFeedInput {
-        run: context.run,
-        agent: context.agent,
-        runtime_session_id: runtime_session_id.to_string(),
-        envelope,
-    });
-
-    Ok(Json(agent_conversation_feed_snapshot(model)))
-}
-
-fn agent_conversation_feed_snapshot(
-    model: AgentConversationFeedModel,
-) -> AgentConversationFeedSnapshot {
-    let messages = model
-        .messages
-        .into_iter()
-        .map(agent_conversation_feed_message)
-        .collect::<Vec<_>>();
-    AgentConversationFeedSnapshot {
-        run_ref: LifecycleRunRefDto {
-            run_id: model.run_id.clone(),
-        },
-        agent_ref: AgentRunRefDto {
-            run_id: model.run_id,
-            agent_id: model.agent_id,
-        },
-        runtime_session_ref: Some(RuntimeSessionRefDto {
-            runtime_session_id: model.runtime_session_id,
-        }),
-        projection_kind: model.projection_kind,
-        projection_version: model.projection_version,
-        head_event_seq: model.head_event_seq,
-        runtime_replay_start_seq: model.runtime_replay_start_seq,
-        active_compaction_id: model.active_compaction_id,
-        message_count: messages.len() as u64,
-        messages,
-    }
-}
-
-fn agent_conversation_feed_message(
-    message: AgentConversationFeedMessageModel,
-) -> AgentConversationFeedMessage {
-    AgentConversationFeedMessage {
-        message_ref: AgentConversationMessageRefView {
-            turn_id: message.message_ref.turn_id,
-            entry_index: message.message_ref.entry_index,
-        },
-        role: agent_conversation_message_role(message.role),
-        text: message.text,
-        content_parts: message
-            .content_parts
-            .into_iter()
-            .map(agent_conversation_content_part)
-            .collect(),
-        tool_calls: message
-            .tool_calls
-            .into_iter()
-            .map(|tool_call| AgentConversationToolCallView {
-                id: tool_call.id,
-                call_id: tool_call.call_id,
-                name: tool_call.name,
-                arguments: tool_call.arguments,
-            })
-            .collect(),
-        tool_result: message
-            .tool_result
-            .map(|tool_result| AgentConversationToolResultView {
-                tool_call_id: tool_result.tool_call_id,
-                call_id: tool_result.call_id,
-                tool_name: tool_result.tool_name,
-                details: tool_result.details,
-                is_error: tool_result.is_error,
-            }),
-        origin: message.origin,
-        synthetic: message.synthetic,
-        projection_kind: message.projection_kind,
-        source_event_seq: message.source_event_seq,
-        source_range: message
-            .source_range
-            .map(|range| AgentConversationSourceRangeView {
-                start_event_seq: range.start_event_seq,
-                end_event_seq: range.end_event_seq,
-            }),
-        projection_segment_id: message.projection_segment_id,
-        timestamp_ms: message.timestamp_ms,
-    }
-}
-
-fn agent_conversation_message_role(
-    role: AgentConversationMessageRoleModel,
-) -> AgentConversationMessageRole {
-    match role {
-        AgentConversationMessageRoleModel::User => AgentConversationMessageRole::User,
-        AgentConversationMessageRoleModel::Assistant => AgentConversationMessageRole::Assistant,
-        AgentConversationMessageRoleModel::ToolResult => AgentConversationMessageRole::ToolResult,
-        AgentConversationMessageRoleModel::CompactionSummary => {
-            AgentConversationMessageRole::CompactionSummary
+        for event in page.events {
+            if event.event_seq <= head_event_seq {
+                events.push(event.into());
+            }
         }
-    }
-}
-
-fn agent_conversation_content_part(
-    part: AgentConversationContentPartModel,
-) -> AgentConversationContentPartView {
-    match part {
-        AgentConversationContentPartModel::Text { text } => {
-            AgentConversationContentPartView::Text { text }
+        if !page.has_more || page.next_after_seq >= head_event_seq {
+            break;
         }
-        AgentConversationContentPartModel::Image { mime_type, data } => {
-            AgentConversationContentPartView::Image { mime_type, data }
-        }
-        AgentConversationContentPartModel::Reasoning {
-            text,
-            id,
-            signature,
-        } => AgentConversationContentPartView::Reasoning {
-            text,
-            id,
-            signature,
-        },
+        after_seq = page.next_after_seq;
     }
+    Ok(events)
 }
 
 /// 解析当前 AgentRun 的 lineage 一跳父子，供右侧会话栏展示从属关系与跳转。
@@ -720,12 +616,12 @@ pub async fn submit_agent_run_composer_input(
     )
     .await?;
     let frame_id = delivery_frame_id_from_agent_run_context(&context)?;
-    let delivery_trace_session_id = context.delivery_runtime_session_id.as_deref();
+    let delivery_runtime_session_id = context.delivery_runtime_session_id.as_deref();
     diag!(Debug, Subsystem::Api,
 
         run_id = %context.run.id,
         agent_id = %context.agent.id,
-        delivery_trace_session_id = ?delivery_trace_session_id,
+        delivery_runtime_session_id = ?delivery_runtime_session_id,
         "AgentRun composer submit context resolved"
     );
     agent_run_workspace_command_policy(state.as_ref())
@@ -739,7 +635,7 @@ pub async fn submit_agent_run_composer_input(
 
         run_id = %context.run.id,
         agent_id = %context.agent.id,
-        delivery_trace_session_id = ?delivery_trace_session_id,
+        delivery_runtime_session_id = ?delivery_runtime_session_id,
         "AgentRun composer submit policy accepted"
     );
     let executor_config = req
@@ -801,7 +697,7 @@ pub async fn submit_agent_run_composer_input(
 
         run_id = %context.run.id,
         agent_id = %context.agent.id,
-        delivery_trace_session_id = ?delivery_trace_session_id,
+        delivery_runtime_session_id = ?delivery_runtime_session_id,
         outcome = ?response.outcome,
         "AgentRun composer submit mailbox accepted"
     );
@@ -1726,9 +1622,6 @@ fn list_entry_from_projection(
         run_status: lifecycle_run_status_to_contract(run.status),
         subagent_count,
         children,
-        delivery_trace_meta: projection
-            .delivery_trace_meta
-            .map(workspace_trace_meta_to_contract),
         // 列表 UI 不消费 frame_ref，省去 frame runtime 解析。
         frame_ref: None,
         subject_ref: projection.subject_ref.map(subject_ref_to_contract),
@@ -1772,9 +1665,6 @@ fn agent_run_workspace_view(
             last_turn_id: snapshot.shell.last_turn_id,
             last_activity_at: snapshot.shell.last_activity_at,
         },
-        delivery_trace_meta: snapshot
-            .delivery_trace_meta
-            .map(workspace_trace_meta_to_contract),
         control_plane,
         agent: snapshot.agent_view.map(|agent| AgentRunView {
             agent_ref: AgentRunRefDto {
@@ -2191,24 +2081,6 @@ fn subject_ref_to_contract(subject_ref: app_workspace::SubjectRefModel) -> Subje
     SubjectRefDto {
         kind: subject_ref.kind,
         id: subject_ref.id,
-    }
-}
-
-fn workspace_trace_meta_to_contract(
-    meta: app_workspace::AgentRunWorkspaceTraceMetaModel,
-) -> RuntimeSessionTraceMeta {
-    RuntimeSessionTraceMeta {
-        runtime_session_ref: RuntimeSessionRefDto {
-            runtime_session_id: meta.runtime_session_id,
-        },
-        last_event_seq: meta.last_event_seq,
-        executor_session_id: meta.executor_session_id,
-        trace_title: meta.trace_title,
-        trace_title_source: meta.trace_title_source,
-        delivery_status: meta.delivery_status,
-        last_turn_id: meta.last_turn_id,
-        terminal_summary: meta.terminal_summary,
-        updated_at: meta.updated_at,
     }
 }
 
@@ -3178,7 +3050,6 @@ mod tests {
             },
             project_agent_label: Some("Code Reviewer".to_string()),
             delivery_runtime_session_id: None,
-            delivery_trace_meta: None,
             subject_ref: None,
             subject_label: None,
         };
@@ -3214,7 +3085,6 @@ mod tests {
             },
             project_agent_label: None,
             delivery_runtime_session_id: None,
-            delivery_trace_meta: None,
             subject_ref: None,
             subject_label: None,
         };
@@ -3255,7 +3125,6 @@ mod tests {
             },
             project_agent_label: None,
             delivery_runtime_session_id: None,
-            delivery_trace_meta: None,
             subject_ref: None,
             subject_label: None,
         };

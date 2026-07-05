@@ -37,7 +37,7 @@ use super::types::{
     AgentRunWorkspaceFrameRefModel, AgentRunWorkspaceFrameRuntimeModel,
     AgentRunWorkspaceMailboxStateModel, AgentRunWorkspaceProjectionInput,
     AgentRunWorkspaceQueryInput, AgentRunWorkspaceShellModel, AgentRunWorkspaceSnapshot,
-    AgentRunWorkspaceTraceMetaModel, SubjectRefModel,
+    SubjectRefModel,
 };
 
 #[derive(Clone, Copy)]
@@ -268,17 +268,12 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             &projection.delivery_status,
             projection.last_turn_id.clone(),
         );
-        let delivery_trace_meta = meta
-            .as_ref()
-            .map(AgentRunWorkspaceTraceMetaModel::from_session_meta);
-
         Ok(AgentRunWorkspaceSnapshot {
             run,
             agent,
             ownership,
             shell,
             delivery_runtime_session_id,
-            delivery_trace_meta,
             projection,
             agent_view,
             frame_runtime,
@@ -327,10 +322,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             &projection.delivery_status,
             projection.last_turn_id.clone(),
         );
-        let delivery_trace_meta = meta
-            .as_ref()
-            .map(AgentRunWorkspaceTraceMetaModel::from_session_meta);
-
         let association = self
             .repos
             .lifecycle_subject_association_repo
@@ -353,7 +344,6 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             shell,
             project_agent_label: project_agent.as_ref().map(project_agent_display_label),
             delivery_runtime_session_id,
-            delivery_trace_meta,
             subject_ref,
             subject_label,
         })

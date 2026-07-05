@@ -22,11 +22,8 @@ export type {
   OrchestrationInstanceView,
   ProjectActiveAgentsView,
   RuntimeNodeView,
-  RuntimeSessionExecutionAnchorDto,
   RuntimeSessionRefDto,
   RuntimeSessionTraceView,
-  SessionRuntimeControlView,
-  SessionShellDto,
   SubjectExecutionView,
   SubjectRuntimeAttemptView,
 } from "../generated/workflow-contracts";

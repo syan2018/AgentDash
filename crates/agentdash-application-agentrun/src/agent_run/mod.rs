@@ -1,7 +1,6 @@
 mod admission;
 mod cancel_command;
 pub(crate) mod command_receipt;
-mod conversation_feed;
 mod conversation_snapshot;
 mod delete_command;
 mod delivery_runtime_selection;
@@ -29,13 +28,6 @@ pub use cancel_command::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCancelRuntimePort,
 };
 pub use command_receipt::AgentRunCommandReceiptView;
-pub use conversation_feed::{
-    AgentConversationContentPartModel, AgentConversationDisplaySeedInput,
-    AgentConversationFeedInput, AgentConversationFeedMessageModel, AgentConversationFeedModel,
-    AgentConversationFeedProjector, AgentConversationMessageRefModel,
-    AgentConversationMessageRoleModel, AgentConversationSourceRangeModel,
-    AgentConversationToolCallModel, AgentConversationToolResultModel,
-};
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,
     AgentConversationLifecycleContextModel, AgentConversationSnapshotInput,
@@ -120,8 +112,7 @@ pub use presentation_read_model::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
     AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
     AgentRunPresentationReadModelQueryRepos, RuntimeSessionRefReadModel,
-    RuntimeSessionTraceReadModel, SessionRuntimeControlPlaneReadModel,
-    SessionRuntimeControlPlaneStatusModel, SessionRuntimeControlReadModel,
+    RuntimeSessionTraceReadModel,
 };
 pub use project_agent_context::{
     PROJECT_AGENT_BINDING_LABEL_PREFIX, ResolvedProjectAgentContext, build_project_agent_context,

@@ -12,7 +12,7 @@ import {
   fetchSessionEvents,
 } from "../../../services/session";
 import {
-  fetchAgentRunConversationFeed,
+  fetchAgentRunConversationSeedEvents,
   fetchAgentRunRuntimeEvents,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
@@ -23,9 +23,9 @@ import type {
 } from "./types";
 import { createSessionStreamTransport, type SessionStreamTransport } from "./streamTransport";
 import {
-  agentRunConversationFeedEntries,
+  agentRunSeedEntries,
   normalizeAgentRunStreamEventIdentity,
-} from "./agentRunConversationFeed";
+} from "./agentRunStreamIdentity";
 import {
   createInitialStreamState,
   reduceStreamState,
@@ -232,15 +232,14 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
 
       try {
         if (agentRunTarget && shouldResetState) {
-          const feed = await fetchAgentRunConversationFeed(agentRunTarget);
-          const feedEntries = agentRunConversationFeedEntries(feed);
-          const runtimeReplayStartSeq = feed == null ? 0 : Number(feed.runtime_replay_start_seq);
+          const seed = await fetchAgentRunConversationSeedEvents(agentRunTarget);
+          const feedEntries = agentRunSeedEntries(seed?.events ?? [], agentRunTarget);
           nextState = createInitialStreamState([
             ...initialEntriesRef.current,
             ...feedEntries,
           ]);
-          nextState = { ...nextState, lastAppliedSeq: runtimeReplayStartSeq };
-          afterSeq = runtimeReplayStartSeq;
+          nextState = { ...nextState, lastAppliedSeq: 0, rawEvents: [] };
+          afterSeq = 0;
           if (!mountedRef.current || cancelled) return;
           setStreamState(nextState);
           stateRef.current = nextState;

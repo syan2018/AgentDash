@@ -854,62 +854,6 @@ pub struct RuntimeSessionRefDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionShellDto {
-    pub id: String,
-    pub title: String,
-    pub title_source: String,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub last_event_seq: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub last_turn_id: Option<String>,
-    pub last_delivery_status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct RuntimeSessionExecutionAnchorDto {
-    pub runtime_session_id: String,
-    pub run_id: String,
-    pub agent_id: String,
-    pub launch_frame_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub orchestration_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub node_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub node_attempt: Option<u32>,
-    pub created_by_kind: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct RuntimeSessionTraceMeta {
-    pub runtime_session_ref: RuntimeSessionRefDto,
-    pub last_event_seq: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub executor_session_id: Option<String>,
-    pub trace_title: String,
-    pub trace_title_source: String,
-    pub delivery_status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub last_turn_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub terminal_summary: Option<String>,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct AgentRunWorkspaceShell {
     pub display_title: String,
     pub title_source: String,
@@ -1236,141 +1180,11 @@ pub struct AgentConversationSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentConversationMessageRefView {
-    pub turn_id: String,
-    pub entry_index: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentConversationSourceRangeView {
-    #[ts(type = "number")]
-    pub start_event_seq: u64,
-    #[ts(type = "number")]
-    pub end_event_seq: u64,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentConversationMessageRole {
-    User,
-    Assistant,
-    ToolResult,
-    CompactionSummary,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentConversationFeedMessage {
-    pub message_ref: AgentConversationMessageRefView,
-    pub role: AgentConversationMessageRole,
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub content_parts: Vec<AgentConversationContentPartView>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_calls: Vec<AgentConversationToolCallView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub tool_result: Option<AgentConversationToolResultView>,
-    pub origin: String,
-    pub synthetic: bool,
-    pub projection_kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "number")]
-    pub source_event_seq: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub source_range: Option<AgentConversationSourceRangeView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub projection_segment_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "number")]
-    pub timestamp_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AgentConversationContentPartView {
-    Text {
-        text: String,
-    },
-    Image {
-        mime_type: String,
-        data: String,
-    },
-    Reasoning {
-        text: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        signature: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentConversationToolCallView {
-    pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub call_id: Option<String>,
-    pub name: String,
-    #[ts(type = "JsonValue")]
-    pub arguments: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentConversationToolResultView {
-    pub tool_call_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub call_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub tool_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub details: Option<Value>,
-    pub is_error: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentConversationFeedSnapshot {
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
-    pub projection_kind: String,
-    #[ts(type = "number")]
-    pub projection_version: u64,
-    #[ts(type = "number")]
-    pub head_event_seq: u64,
-    #[ts(type = "number")]
-    pub runtime_replay_start_seq: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub active_compaction_id: Option<String>,
-    #[ts(type = "number")]
-    pub message_count: u64,
-    pub messages: Vec<AgentConversationFeedMessage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct AgentRunWorkspaceView {
     pub run_ref: LifecycleRunRefDto,
     pub agent_ref: AgentRunRefDto,
     pub project_id: String,
     pub shell: AgentRunWorkspaceShell,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_trace_meta: Option<RuntimeSessionTraceMeta>,
     pub control_plane: AgentRunWorkspaceControlPlaneView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -1586,48 +1400,6 @@ pub struct RuntimeSessionTraceView {
     pub turns: Vec<Value>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionRuntimeControlPlaneStatus {
-    UnboundTrace,
-    AnchoredIdle,
-    AnchoredRunning,
-    AnchoredCancelling,
-    Terminal,
-    FrameMissing,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionRuntimeControlPlaneView {
-    pub status: SessionRuntimeControlPlaneStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionRuntimeControlView {
-    pub runtime_session_ref: RuntimeSessionRefDto,
-    pub session_meta: SessionShellDto,
-    pub control_plane: SessionRuntimeControlPlaneView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub anchor: Option<RuntimeSessionExecutionAnchorDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub run: Option<LifecycleRunView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub agent: Option<AgentRunView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub frame_runtime: Option<AgentFrameRuntimeView>,
-    #[serde(default)]
-    pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunCommandOnlyRequest {
@@ -1701,9 +1473,6 @@ pub struct AgentRunWorkspaceListEntry {
     /// 该主 Run 的直接子 Agent（一跳），已内联 shell 状态，前端免懒加载。
     #[serde(default)]
     pub children: Vec<AgentRunListChild>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub delivery_trace_meta: Option<RuntimeSessionTraceMeta>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub frame_ref: Option<AgentFrameRefDto>,

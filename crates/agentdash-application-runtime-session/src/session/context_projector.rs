@@ -111,19 +111,6 @@ impl ContextProjector {
         ))
     }
 
-    pub async fn build_raw_projected_transcript_at_event(
-        &self,
-        session_id: &str,
-        head_event_seq: u64,
-    ) -> io::Result<ProjectedTranscript> {
-        let events = self.list_events_from(session_id, 0).await?;
-        Ok(build_raw_projected_transcript_from_filtered_events(
-            events
-                .iter()
-                .filter(|event| event.event_seq <= head_event_seq),
-        ))
-    }
-
     pub async fn build_model_context_from_compaction(
         &self,
         session_id: &str,

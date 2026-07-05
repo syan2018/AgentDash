@@ -54,10 +54,10 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         command: AgentRunWorkspaceCommandPrecondition,
     ) -> Result<(), AgentRunWorkspaceCommandPolicyError> {
         let current_delivery = self.resolve_current_delivery(context).await?;
-        let delivery_trace_session_id = current_delivery
+        let delivery_runtime_session_id = current_delivery
             .as_ref()
             .map(|selection| selection.runtime_session_id.as_str());
-        let execution_state = match delivery_trace_session_id {
+        let execution_state = match delivery_runtime_session_id {
             Some(session_id) => {
                 self.session_core
                     .inspect_session_execution_state(session_id)
@@ -75,7 +75,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 context,
                 frame.as_ref(),
                 frame_ref,
-                delivery_trace_session_id,
+                delivery_runtime_session_id,
                 execution_state.clone(),
                 terminal_agent,
             )
@@ -84,7 +84,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             serde_json::json!({
                 "run_id": context.run.id.to_string(),
                 "agent_id": context.agent.id.to_string(),
-                "delivery_trace_session_id": delivery_trace_session_id,
+                "delivery_runtime_session_id": delivery_runtime_session_id,
                 "state": availability.execution_status,
                 "active_turn_id": &availability.active_turn_id,
             })
@@ -120,10 +120,10 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             "AgentRun composer policy inspect state"
         );
         let current_delivery = self.resolve_current_delivery(context).await?;
-        let delivery_trace_session_id = current_delivery
+        let delivery_runtime_session_id = current_delivery
             .as_ref()
             .map(|selection| selection.runtime_session_id.as_str());
-        let execution_state = match delivery_trace_session_id {
+        let execution_state = match delivery_runtime_session_id {
             Some(session_id) => {
                 self.session_core
                     .inspect_session_execution_state(session_id)
@@ -135,7 +135,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
 
             run_id = %context.run.id,
             agent_id = %context.agent.id,
-            delivery_trace_session_id = ?delivery_trace_session_id,
+            delivery_runtime_session_id = ?delivery_runtime_session_id,
             execution_state = ?execution_state,
             "AgentRun composer policy state resolved"
         );
@@ -149,7 +149,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 context,
                 frame.as_ref(),
                 frame_ref,
-                delivery_trace_session_id,
+                delivery_runtime_session_id,
                 execution_state,
                 terminal_agent,
             )
@@ -174,11 +174,11 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
         context: AgentRunWorkspaceCommandPolicyContext<'_>,
         frame: Option<&AgentFrame>,
         frame_ref: Option<(Uuid, i32)>,
-        delivery_trace_session_id: Option<&str>,
+        delivery_runtime_session_id: Option<&str>,
         execution_state: SessionExecutionState,
         terminal_agent: bool,
     ) -> Result<ConversationCommandAvailability, AgentRunWorkspaceCommandPolicyError> {
-        let supports_steering = match (&execution_state, delivery_trace_session_id) {
+        let supports_steering = match (&execution_state, delivery_runtime_session_id) {
             (SessionExecutionState::Running { turn_id: Some(_) }, Some(session_id)) => {
                 self.session_control
                     .supports_session_steering(session_id)
@@ -211,7 +211,7 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
                 run_id: context.run.id,
                 agent_id: context.agent.id,
                 frame_ref,
-                delivery_runtime_session_id: delivery_trace_session_id.map(str::to_string),
+                delivery_runtime_session_id: delivery_runtime_session_id.map(str::to_string),
                 execution_state,
                 terminal_agent,
                 supports_steering,
@@ -483,7 +483,7 @@ fn ensure_composer_command_precondition_matches_availability(
         serde_json::json!({
             "run_id": context.run.id.to_string(),
             "agent_id": context.agent.id.to_string(),
-            "delivery_trace_session_id": availability.runtime_session_id.as_deref(),
+            "delivery_runtime_session_id": availability.runtime_session_id.as_deref(),
             "state": availability.execution_status,
             "submitted_command_kind": command.command_kind,
             "submitted_command_id": command.command_id,

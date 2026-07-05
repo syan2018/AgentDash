@@ -10,7 +10,6 @@ use agentdash_application_agentrun::agent_run::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
     AgentRunRuntimeSurfaceQueryError, ConversationEffectiveExecutorConfigModel,
     ConversationModelConfigSourceModel, RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel,
-    SessionRuntimeControlPlaneStatusModel,
 };
 use agentdash_application_lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
@@ -18,7 +17,7 @@ use agentdash_application_lifecycle::run_view_builder::{
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentFrameRuntimeView, ConversationEffectiveExecutorConfigView,
     ConversationModelConfigSource, LifecycleRunView, ProjectActiveAgentsView, RuntimeSessionRefDto,
-    RuntimeSessionTraceView, SessionRuntimeControlPlaneStatus, SubjectExecutionView,
+    RuntimeSessionTraceView, SubjectExecutionView,
 };
 use agentdash_domain::workflow::{LifecycleRun, SubjectRef};
 
@@ -321,31 +320,6 @@ fn runtime_session_trace_to_contract(
         frame_ref: trace.frame_ref.map(agent_frame_ref_to_contract),
         events: trace.events,
         turns: trace.turns,
-    }
-}
-
-pub(crate) fn session_runtime_control_status_to_contract(
-    status: SessionRuntimeControlPlaneStatusModel,
-) -> SessionRuntimeControlPlaneStatus {
-    match status {
-        SessionRuntimeControlPlaneStatusModel::UnboundTrace => {
-            SessionRuntimeControlPlaneStatus::UnboundTrace
-        }
-        SessionRuntimeControlPlaneStatusModel::AnchoredIdle => {
-            SessionRuntimeControlPlaneStatus::AnchoredIdle
-        }
-        SessionRuntimeControlPlaneStatusModel::AnchoredRunning => {
-            SessionRuntimeControlPlaneStatus::AnchoredRunning
-        }
-        SessionRuntimeControlPlaneStatusModel::AnchoredCancelling => {
-            SessionRuntimeControlPlaneStatus::AnchoredCancelling
-        }
-        SessionRuntimeControlPlaneStatusModel::Terminal => {
-            SessionRuntimeControlPlaneStatus::Terminal
-        }
-        SessionRuntimeControlPlaneStatusModel::FrameMissing => {
-            SessionRuntimeControlPlaneStatus::FrameMissing
-        }
     }
 }
 

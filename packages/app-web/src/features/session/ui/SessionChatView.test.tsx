@@ -368,19 +368,12 @@ describe("isAgentRunWorkspaceActionRunning", () => {
   it("uses AgentRun execution projection without requiring a runtime trace session id", () => {
     expect(isAgentRunWorkspaceActionRunning({
       executionStatus: "running_active",
-      optimisticRunning: false,
     })).toBe(true);
     expect(isAgentRunWorkspaceActionRunning({
       executionStatus: "ready",
-      optimisticRunning: true,
-    })).toBe(true);
-    expect(isAgentRunWorkspaceActionRunning({
-      executionStatus: "ready",
-      optimisticRunning: false,
     })).toBe(false);
     expect(isAgentRunWorkspaceActionRunning({
       executionStatus: "cancelling",
-      optimisticRunning: false,
     })).toBe(true);
   });
 });

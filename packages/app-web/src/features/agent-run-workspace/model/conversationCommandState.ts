@@ -233,13 +233,26 @@ export function buildAgentRunConversationCommandState(input: {
   workspaceStateStatus: string;
   workspaceStateError: string | null;
 }): AgentRunConversationCommandState {
-  if (!input.conversation) {
-    const reason = input.workspaceStateStatus !== "ready"
-      ? input.workspaceStateError ?? "当前 AgentRun 工作台状态正在刷新。"
-      : "当前 AgentRun 尚未返回 conversation snapshot。";
+  if (input.workspaceStateStatus !== "ready") {
+    const reason = input.workspaceStateError ?? "当前 AgentRun 工作台状态正在刷新。";
     return {
       mode: "runtime",
-      executionStatus: input.workspaceStateStatus !== "ready" ? input.workspaceStateStatus : "ready",
+      executionStatus: input.workspaceStateStatus,
+      commands: emptyCommandSet(),
+      modelConfig: {
+        status: "model_required",
+        missing_fields: [],
+        message: reason,
+      },
+      helperText: reason,
+    };
+  }
+
+  if (!input.conversation) {
+    const reason = "当前 AgentRun 尚未返回 conversation snapshot。";
+    return {
+      mode: "runtime",
+      executionStatus: "ready",
       commands: emptyCommandSet(),
       modelConfig: {
         status: "model_required",

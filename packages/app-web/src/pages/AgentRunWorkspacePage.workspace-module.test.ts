@@ -382,14 +382,14 @@ describe("AgentRun workspace conversation command authority", () => {
     expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
   });
 
-  it("keeps backend commands while projection is refreshing", () => {
+  it("freezes stale backend commands while projection is refreshing", () => {
     const state = commandState("refreshing", workspaceView("running", [
       command("submit_message", "cmd-submit"),
     ], { enter: "cmd-submit" }));
 
-    expect(state.executionStatus).toBe("running_active");
-    expect(state.commands.keyboard.enter).toBe("cmd-submit");
-    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.enabled).toBe(true);
+    expect(state.executionStatus).toBe("refreshing");
+    expect(state.commands.keyboard.enter).toBeUndefined();
+    expect(state.commands.commands).toHaveLength(0);
   });
 
   it("requires conversation snapshot before exposing commands", () => {

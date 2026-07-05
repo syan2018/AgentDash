@@ -179,6 +179,40 @@ describe("AgentRun conversation command state", () => {
     expect(model.helperText).toBe("工作台状态加载失败");
   });
 
+  it("does not expose stale running commands while workspace state is refreshing", () => {
+    const submit = command({
+      kind: "submit_message",
+      command_id: "cmd-submit",
+      shortcut: "enter",
+      placement: ["composer_primary"],
+    });
+    const commandState = buildAgentRunConversationCommandState({
+      conversation: {
+        execution: {
+          status: "running_active",
+          active_turn_id: "turn-1",
+          reason: "当前 AgentRun 正在执行中。",
+        },
+        commands: {
+          ownership,
+          keyboard: {
+            enter: "cmd-submit",
+          },
+          commands: [submit],
+        },
+        model_config: resolvedModelConfig(),
+      },
+      workspaceStateStatus: "refreshing",
+      workspaceStateError: null,
+    });
+
+    const model = projectAgentRunChatCommandState(commandState);
+
+    expect(model.executionStatus).toBe("refreshing");
+    expect(model.commands).toEqual([]);
+    expect(model.helperText).toBe("当前 AgentRun 工作台状态正在刷新。");
+  });
+
   it("uses draft model policy as the local draft command authority", () => {
     const agent: ProjectAgentSummary = {
       key: "agent-key",

@@ -46,8 +46,6 @@ import { SessionWorkspacePanelActionProvider } from "./SessionWorkspacePanelActi
 
 // ─── 主组件 ────────────────────────────────────────────
 
-const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
-
 function isSilentCommandRefreshError(error: unknown): boolean {
   return Boolean(
     error
@@ -100,14 +98,10 @@ export function SessionChatView({
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
-  const [optimisticRunning, setOptimisticRunning] = useState(false);
-  const [stableActionRunning, setStableActionRunning] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
   const appliedHintRef = useRef<string | null>(null);
-  const optimisticRunningUntilRef = useRef(0);
-  const actionRunningReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
   const initialValueAppliedRef = useRef(false);
@@ -311,48 +305,9 @@ export function SessionChatView({
 
   // ─── Action running 检测 ──────────────────────────────
 
-  const targetActionRunning = isAgentRunWorkspaceActionRunning({
+  const isActionRunning = isAgentRunWorkspaceActionRunning({
     executionStatus: commandState.executionStatus,
-    optimisticRunning,
   });
-
-  useEffect(() => {
-    if (targetActionRunning) {
-      if (actionRunningReleaseTimerRef.current) {
-        clearTimeout(actionRunningReleaseTimerRef.current);
-        actionRunningReleaseTimerRef.current = null;
-      }
-      setStableActionRunning(true);
-      return;
-    }
-    if (actionRunningReleaseTimerRef.current) clearTimeout(actionRunningReleaseTimerRef.current);
-    actionRunningReleaseTimerRef.current = setTimeout(() => {
-      actionRunningReleaseTimerRef.current = null;
-      setStableActionRunning(false);
-    }, ACTION_RUNNING_RELEASE_DELAY_MS);
-  }, [targetActionRunning]);
-
-  useEffect(() => () => {
-    if (actionRunningReleaseTimerRef.current) clearTimeout(actionRunningReleaseTimerRef.current);
-  }, []);
-
-  const isActionRunning = stableActionRunning;
-
-  useEffect(() => {
-    if (!optimisticRunning) return;
-    const remainMs = Math.max(optimisticRunningUntilRef.current - Date.now(), 0);
-    const timer = window.setTimeout(() => setOptimisticRunning(false), remainMs);
-    return () => window.clearTimeout(timer);
-  }, [optimisticRunning]);
-
-  useEffect(() => {
-    if (isAgentRunWorkspaceActionRunning({
-      executionStatus: commandState.executionStatus,
-      optimisticRunning: false,
-    })) return;
-    optimisticRunningUntilRef.current = 0;
-    setOptimisticRunning(false);
-  }, [commandState.executionStatus]);
 
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
@@ -370,21 +325,30 @@ export function SessionChatView({
   }, [agentRunTargetKey, sessionId]);
 
   useEffect(() => {
-    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
-    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? historyReplayBoundarySeq;
+    if (!hasRuntimeStreamTarget || !rawEventsBelongToCurrentSession || rawEvents.length === 0) return;
+    if (!agentRunTarget && historyReplayBoundarySeq == null) return;
+    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? (agentRunTarget ? 0 : historyReplayBoundarySeq ?? 0);
     lastTurnLifecycleEventSeqRef.current = afterSeq;
     const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
     lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
+    let terminalSeen = false;
     for (const item of result.items) {
       if (item.eventType === "turn_started") {
-        setOptimisticRunning(false);
+        continue;
       } else {
-        optimisticRunningUntilRef.current = 0;
-        setOptimisticRunning(false);
-        onTurnEndRef.current?.();
+        terminalSeen = true;
       }
     }
-  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
+    if (terminalSeen) {
+      onTurnEndRef.current?.();
+    }
+  }, [
+    agentRunTarget,
+    hasRuntimeStreamTarget,
+    historyReplayBoundarySeq,
+    rawEvents,
+    rawEventsBelongToCurrentSession,
+  ]);
 
   useEffect(() => {
     if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
@@ -462,8 +426,6 @@ export function SessionChatView({
     }
 
     setSendError(null);
-    setOptimisticRunning(true);
-    optimisticRunningUntilRef.current = Date.now() + 2500;
     setIsSending(true);
 
     try {
@@ -479,8 +441,6 @@ export function SessionChatView({
       clearInput();
       onMessageSent?.();
     } catch (e) {
-      optimisticRunningUntilRef.current = 0;
-      setOptimisticRunning(false);
       if (isSilentCommandRefreshError(e)) {
         setSendError(null);
         return;

@@ -130,6 +130,11 @@ RuntimeSession stream 中的 turn 终态以 `Platform(SessionMetaUpdate)` 的 `t
 active turn cleanup 与 command projection 已在后端完成，前端应重新读取权威 snapshot，而不是继续
 使用上一帧 running command。
 
+AgentRun workspace refresh 期间，上一帧 conversation snapshot 只用于 feed/布局连续展示，不继续作为
+composer command authority。这样做的原因是刷新本身表示后端 read model 正在重新收敛；输入区命令、
+helper、停止按钮和 keyboard mapping 必须等待新的 `AgentConversationSnapshot.commands`，否则终态
+到达后旧的 running snapshot 会继续向用户暴露可执行控制面。
+
 `ConversationCommandView.stale_guard.snapshot_id` 是一次 workspace projection 的不透明前置条件。
 文本输入提交使用 AgentRun `composer-submit` command：前端把当时选中的 command id、kind 与 stale
 guard 原样回传，后端只把它作为用户意图上下文，然后用当前 run / agent / frame / runtime /

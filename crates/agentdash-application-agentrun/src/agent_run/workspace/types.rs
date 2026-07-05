@@ -61,7 +61,6 @@ pub struct SubjectRefModel {
 pub struct AgentRunWorkspaceShellModel {
     pub display_title: String,
     pub title_source: String,
-    pub workspace_status: String,
     pub delivery_status: String,
     pub last_turn_id: Option<String>,
     pub last_activity_at: String,

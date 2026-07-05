@@ -437,10 +437,10 @@ pub(crate) async fn build_session_runtime(
     session_runtime_builder
         .set_terminal_callback(Arc::new(CompositeSessionTerminalCallback {
             callbacks: vec![
+                mailbox_terminal_callback,
                 Arc::new(LifecycleTerminalCallbackAdapter {
                     inner: orchestrator,
                 }),
-                mailbox_terminal_callback,
             ],
         }))
         .await;
@@ -567,22 +567,29 @@ struct LifecycleTerminalCallbackAdapter {
 
 #[async_trait]
 impl SessionTerminalCallback for LifecycleTerminalCallbackAdapter {
-    async fn on_session_terminal(&self, notification: SessionTerminalNotification) {
+    async fn on_session_terminal(
+        &self,
+        notification: SessionTerminalNotification,
+    ) -> Result<(), String> {
         agentdash_application_lifecycle::lifecycle::orchestrator::SessionTerminalCallback::on_session_terminal(
             self.inner.as_ref(),
             &notification.session_id,
             &notification.terminal_state,
         )
-            .await;
+            .await
     }
 }
 
 #[async_trait]
 impl SessionTerminalCallback for CompositeSessionTerminalCallback {
-    async fn on_session_terminal(&self, notification: SessionTerminalNotification) {
+    async fn on_session_terminal(
+        &self,
+        notification: SessionTerminalNotification,
+    ) -> Result<(), String> {
         for callback in &self.callbacks {
-            callback.on_session_terminal(notification.clone()).await;
+            callback.on_session_terminal(notification.clone()).await?;
         }
+        Ok(())
     }
 }
 

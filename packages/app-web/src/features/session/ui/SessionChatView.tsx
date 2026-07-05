@@ -641,8 +641,6 @@ export function SessionChatView({
         <SessionChatStatusBar
           connectionColor={connectionColor}
           connectionLabel={connectionLabel}
-          isActionRunning={isActionRunning}
-          isConnected={isConnected}
         />
       )}
 

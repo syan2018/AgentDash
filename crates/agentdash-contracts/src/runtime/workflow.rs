@@ -857,7 +857,6 @@ pub struct RuntimeSessionRefDto {
 pub struct AgentRunWorkspaceShell {
     pub display_title: String,
     pub title_source: String,
-    pub workspace_status: String,
     pub delivery_status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

@@ -216,13 +216,9 @@ function ContextUsageRing({
 export function SessionChatStatusBar({
   connectionColor,
   connectionLabel,
-  isActionRunning,
-  isConnected,
 }: {
   connectionColor: string;
   connectionLabel: string;
-  isActionRunning: boolean;
-  isConnected: boolean;
 }) {
   return (
     <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
@@ -230,12 +226,6 @@ export function SessionChatStatusBar({
         <span className={`inline-block h-1.5 w-1.5 rounded-[8px] ${connectionColor}`} />
         {connectionLabel}
       </span>
-      {isActionRunning && (
-        <span className="flex items-center gap-1 rounded-[8px] border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
-          <span className="inline-block h-1.5 w-1.5 rounded-[8px] bg-primary" />
-          {isConnected ? "接收中" : "执行中"}
-        </span>
-      )}
     </div>
   );
 }

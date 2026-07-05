@@ -46,7 +46,6 @@ function workspaceView(
     shell: {
       display_title: "Workspace",
       title_source: "session_meta",
-      workspace_status: controlStatus,
       delivery_status: controlStatus,
       last_activity_at: "2026-06-12T00:00:00.000Z",
     },

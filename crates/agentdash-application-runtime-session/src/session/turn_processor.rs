@@ -2,7 +2,7 @@
 //!
 //! 统一 cloud-native 和 relay 两条路径的 notification 处理逻辑。
 //! 所有 turn 生命周期内的 notification（无论来自 connector stream 还是 relay 注入）
-//! 都经由此处处理：on_event → persist → broadcast → terminal hook → effects。
+//! 都经由此处处理：on_event → persist → terminal control-plane sync → broadcast → effects。
 
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent};
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
@@ -15,7 +15,7 @@ use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
 use super::hub_support::*;
 use super::post_turn_handler::DynPostTurnHandler;
-use super::terminal_effects::TerminalEffectDispatchInput;
+use super::terminal_effects::{TerminalCallbackDispatchInput, TerminalEffectDispatchInput};
 use super::turn_supervisor::TurnSupervisor;
 
 /// Processor 消费的事件类型。
@@ -315,6 +315,17 @@ pub(in crate::session) async fn process_turn_terminal(
 
     deps.turn_supervisor.clear_active_turn(&session_id).await;
 
+    let terminal_callback_input = TerminalCallbackDispatchInput {
+        session_id: session_id.clone(),
+        turn_id: turn_id.clone(),
+        terminal_event_seq,
+        terminal_kind,
+        terminal_message: terminal_message.clone(),
+    };
+    deps.effects
+        .dispatch_terminal_callback(terminal_callback_input)
+        .await;
+
     deps.eventing
         .broadcast_persisted_event(&session_id, terminal_event)
         .await;
@@ -354,7 +365,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use futures::stream;
-    use tokio::sync::{Mutex, RwLock, mpsc};
+    use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
     use uuid::Uuid;
 
     use super::super::MemoryRuntimeTraceStore;
@@ -656,6 +667,8 @@ mod tests {
             .await
             .expect("create session meta");
         let notifications = Arc::new(Mutex::new(Vec::new()));
+        let broadcast_rx = Arc::new(Mutex::new(registry.subscribe(session_id).await));
+        let broadcast_seen_before_callback = Arc::new(Mutex::new(None));
         let deps = SessionTurnProcessorDeps {
             turn_supervisor: supervisor.clone(),
             eventing: SessionEventingService::new(
@@ -669,6 +682,10 @@ mod tests {
                 terminal_callback: Arc::new(RwLock::new(Some(Arc::new(
                     RecordingTerminalCallback {
                         notifications: notifications.clone(),
+                        broadcast_rx: Some(broadcast_rx),
+                        broadcast_seen_before_callback: Some(
+                            broadcast_seen_before_callback.clone(),
+                        ),
                     },
                 )))),
                 hook_effect_handler_registry: Arc::new(RwLock::new(None)),
@@ -706,16 +723,34 @@ mod tests {
             Some("connector start failed")
         );
         assert!(notification.terminal_event_seq > 0);
+        assert_eq!(*broadcast_seen_before_callback.lock().await, Some(false));
     }
 
     struct RecordingTerminalCallback {
         notifications: Arc<Mutex<Vec<SessionTerminalNotification>>>,
+        broadcast_rx: Option<Arc<Mutex<broadcast::Receiver<PersistedSessionEvent>>>>,
+        broadcast_seen_before_callback: Option<Arc<Mutex<Option<bool>>>>,
     }
 
     #[async_trait]
     impl SessionTerminalCallback for RecordingTerminalCallback {
-        async fn on_session_terminal(&self, notification: SessionTerminalNotification) {
+        async fn on_session_terminal(
+            &self,
+            notification: SessionTerminalNotification,
+        ) -> Result<(), String> {
+            if let (Some(rx), Some(result)) =
+                (&self.broadcast_rx, &self.broadcast_seen_before_callback)
+            {
+                let saw_broadcast = match rx.lock().await.try_recv() {
+                    Ok(_) => true,
+                    Err(broadcast::error::TryRecvError::Lagged(_)) => true,
+                    Err(broadcast::error::TryRecvError::Empty) => false,
+                    Err(broadcast::error::TryRecvError::Closed) => false,
+                };
+                *result.lock().await = Some(saw_broadcast);
+            }
             self.notifications.lock().await.push(notification);
+            Ok(())
         }
     }
 

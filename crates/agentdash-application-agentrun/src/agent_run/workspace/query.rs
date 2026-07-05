@@ -172,7 +172,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             }
             _ => false,
         };
-        let workspace_state = derive_workspace_state(&execution_state, &agent.status);
+        let workspace_state = derive_workspace_state(&execution_state);
 
         let mailbox_messages = self
             .repos
@@ -258,7 +258,7 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             meta.as_ref(),
             project_agent.as_ref(),
             &agent,
-            &workspace_state.delivery_status,
+            &workspace_state,
             workspace_state.last_turn_id.clone(),
         );
         Ok(AgentRunWorkspaceSnapshot {
@@ -300,13 +300,13 @@ impl<'a> AgentRunWorkspaceQueryService<'a> {
             .as_ref()
             .map(DeliveryRuntimeSelection::execution_state)
             .unwrap_or(AgentRunExecutionState::Idle);
-        let workspace_state = derive_workspace_state(&execution_state, &agent.status);
+        let workspace_state = derive_workspace_state(&execution_state);
         let project_agent = self.load_project_agent(&run, &agent).await?;
         let shell = shell_model(
             meta.as_ref(),
             project_agent.as_ref(),
             &agent,
-            &workspace_state.delivery_status,
+            &workspace_state,
             workspace_state.last_turn_id.clone(),
         );
         let association = self
@@ -521,7 +521,7 @@ fn shell_model(
     meta: Option<&crate::agent_run::runtime_session_boundary::SessionMeta>,
     project_agent: Option<&ProjectAgent>,
     agent: &LifecycleAgent,
-    delivery_status: &str,
+    workspace_state: &super::types::AgentRunWorkspaceStateModel,
     last_turn_id: Option<String>,
 ) -> AgentRunWorkspaceShellModel {
     let (display_title, title_source) = match meta {
@@ -537,8 +537,7 @@ fn shell_model(
     AgentRunWorkspaceShellModel {
         display_title,
         title_source,
-        workspace_status: agent.status.clone(),
-        delivery_status: delivery_status.to_string(),
+        delivery_status: workspace_state.delivery_status.clone(),
         last_turn_id,
         last_activity_at: agent.updated_at.to_rfc3339(),
     }

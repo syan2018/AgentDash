@@ -144,6 +144,25 @@ persist terminal event -> clear_active_turn -> if persist failed: stop effects a
 - `clear_turn_and_hook` 必须中止 pending adapter task，并清空 hook runtime。
 - terminal event 持久化失败时，`has_active_turn(session_id)` 必须变为 `false`。
 
+terminal event 持久化成功后，AgentRun / Lifecycle 控制面同步发生在 terminal / rewind 事件
+广播之前：
+
+```text
+persist terminal event -> persist rewind marker -> clear_active_turn
+-> session terminal control-plane callback -> broadcast terminal/rewind -> hook effects / auto-resume
+```
+
+原因是浏览器和 Lifecycle 都会在看到 terminal event 后读取 AgentRun workspace / journal
+状态；AgentRun delivery binding 必须已经收敛到 terminal，才能让 command state、workspace
+status、list status 与后继编排看到同一份运行事实。`SessionTerminalCallback` 的 durable outbox
+记录仍保留 replay 能力，但即时路径的控制面回写是 terminal 可见性边界的一部分，而不是
+terminal 广播后的异步 UI 补偿。
+
+`SessionTerminalCallback` 返回 `Result<(), String>`。AgentRun delivery binding、mailbox terminal
+pause / turn-boundary 调度、Lifecycle 编排等控制面写入失败时，terminal effect 记录保持 failed /
+dead-letter 语义并可由 durable outbox replay。这样做的原因是 terminal event 已经持久化，后续
+控制面必须要么同步收敛，要么留下可重试证据；日志不能成为唯一失败载体。
+
 ## Internal Follow-up
 
 Hook auto-resume、companion parent resume 等内部 follow-up 仍从主数据流进入：
@@ -296,7 +315,7 @@ let execution_state = current_delivery
     .map(DeliveryRuntimeSelection::execution_state)
     .unwrap_or(AgentRunExecutionState::Idle);
 
-let workspace_state = derive_workspace_state(&execution_state, agent.status.as_str());
+let workspace_state = derive_workspace_state(&execution_state);
 ```
 
 #### 3. Contracts
@@ -364,7 +383,7 @@ let execution_state = current_delivery
     .as_ref()
     .map(DeliveryRuntimeSelection::execution_state)
     .unwrap_or(AgentRunExecutionState::Idle);
-let workspace_state = derive_workspace_state(&execution_state, agent.status.as_str());
+let workspace_state = derive_workspace_state(&execution_state);
 ```
 
 ### Scenario: AgentRun Workspace Mailbox Commands

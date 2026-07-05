@@ -4,13 +4,12 @@ use super::types::{AgentRunWorkspaceStateCode, AgentRunWorkspaceStateModel};
 
 pub fn derive_workspace_state(
     execution_state: &AgentRunExecutionState,
-    agent_status: &str,
 ) -> AgentRunWorkspaceStateModel {
     AgentRunWorkspaceStateModel {
         state_code: state_code(execution_state),
         active_turn_id: active_turn_id(execution_state),
         last_turn_id: last_turn_id(execution_state),
-        delivery_status: delivery_status(execution_state, agent_status),
+        delivery_status: delivery_status(execution_state),
     }
 }
 
@@ -59,7 +58,7 @@ fn last_turn_id(execution_state: &AgentRunExecutionState) -> Option<String> {
     }
 }
 
-fn delivery_status(execution_state: &AgentRunExecutionState, agent_status: &str) -> String {
+fn delivery_status(execution_state: &AgentRunExecutionState) -> String {
     match execution_state {
         AgentRunExecutionState::Running { .. } => "running".to_string(),
         AgentRunExecutionState::Cancelling { .. } => "cancelling".to_string(),
@@ -67,9 +66,6 @@ fn delivery_status(execution_state: &AgentRunExecutionState, agent_status: &str)
         AgentRunExecutionState::Failed { .. } => "failed".to_string(),
         AgentRunExecutionState::Interrupted { .. } => "interrupted".to_string(),
         AgentRunExecutionState::Lost { .. } => "lost".to_string(),
-        AgentRunExecutionState::Idle if is_terminal_agent_status(agent_status) => {
-            agent_status.to_string()
-        }
         AgentRunExecutionState::Idle => "idle".to_string(),
     }
 }
@@ -79,14 +75,7 @@ mod tests {
     use super::*;
 
     fn state(execution_state: &AgentRunExecutionState) -> AgentRunWorkspaceStateModel {
-        state_with(execution_state, "active")
-    }
-
-    fn state_with(
-        execution_state: &AgentRunExecutionState,
-        agent_status: &str,
-    ) -> AgentRunWorkspaceStateModel {
-        derive_workspace_state(execution_state, agent_status)
+        derive_workspace_state(execution_state)
     }
 
     #[test]
@@ -189,16 +178,8 @@ mod tests {
     }
 
     #[test]
-    fn terminal_agent_status_sets_delivery_status() {
-        let model = state_with(&AgentRunExecutionState::Idle, "completed");
-
-        assert_eq!(model.state_code, AgentRunWorkspaceStateCode::Ready);
-        assert_eq!(model.delivery_status, "completed");
-    }
-
-    #[test]
     fn active_agent_idle_state_reports_idle_delivery() {
-        let model = state_with(&AgentRunExecutionState::Idle, "active");
+        let model = state(&AgentRunExecutionState::Idle);
 
         assert_eq!(model.delivery_status, "idle");
     }

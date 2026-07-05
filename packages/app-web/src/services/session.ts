@@ -16,7 +16,8 @@ export type SessionExecutionStatusValue =
   | "cancelling"
   | "completed"
   | "failed"
-  | "interrupted";
+  | "interrupted"
+  | "lost";
 
 export interface SessionMeta {
   id: string;

@@ -130,7 +130,7 @@ export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<
  */
 next_cursor?: string, };
 
-export type AgentRunWorkspaceShell = { display_title: string, title_source: string, workspace_status: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
+export type AgentRunWorkspaceShell = { display_title: string, title_source: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
 export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot,
 /**

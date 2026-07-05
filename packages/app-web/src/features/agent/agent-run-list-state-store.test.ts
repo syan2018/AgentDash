@@ -30,7 +30,6 @@ function agentRunEntry(
     shell: {
       display_title: title,
       title_source: "runtime_session",
-      workspace_status: "ready",
       delivery_status: "idle",
       last_activity_at: lastActivityAt,
     },

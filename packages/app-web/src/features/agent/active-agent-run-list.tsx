@@ -34,6 +34,7 @@ const executionStatusLabel: Record<SessionExecutionStatusValue, string> = {
   completed: "已完成",
   failed: "失败",
   interrupted: "已中断",
+  lost: "已丢失",
 };
 
 const executionStatusDotColor: Record<SessionExecutionStatusValue, string> = {
@@ -43,6 +44,7 @@ const executionStatusDotColor: Record<SessionExecutionStatusValue, string> = {
   completed: "bg-blue-500",
   failed: "bg-red-500",
   interrupted: "bg-amber-500",
+  lost: "bg-red-500",
 };
 
 type StatusFilterGroup = "all" | "running" | "idle" | "ended";
@@ -62,6 +64,7 @@ function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
     || status === "completed"
     || status === "failed"
     || status === "interrupted"
+    || status === "lost"
   ) {
     return status;
   }
@@ -76,6 +79,7 @@ function statusGroupOf(status: SessionExecutionStatusValue): Exclude<StatusFilte
     case "completed":
     case "failed":
     case "interrupted":
+    case "lost":
     default: return "ended";
   }
 }

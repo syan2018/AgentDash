@@ -1,7 +1,8 @@
 use std::io;
 
 use super::terminal_effects::{
-    SessionTerminalEffectDispatcher, TerminalEffectDeps, TerminalEffectDispatchInput,
+    SessionTerminalEffectDispatcher, TerminalCallbackDispatchInput, TerminalEffectDeps,
+    TerminalEffectDispatchInput,
 };
 
 #[derive(Clone)]
@@ -18,6 +19,12 @@ impl SessionEffectsService {
         SessionTerminalEffectDispatcher::new(self.deps.clone())
             .replay_durable_outbox(limit)
             .await
+    }
+
+    pub(crate) async fn dispatch_terminal_callback(&self, input: TerminalCallbackDispatchInput) {
+        let dispatcher = SessionTerminalEffectDispatcher::new(self.deps.clone());
+        let terminal_callback = dispatcher.enqueue_terminal_callback_effect(input).await;
+        dispatcher.execute_enqueued(terminal_callback).await;
     }
 
     pub(crate) async fn dispatch_terminal_effects(&self, input: TerminalEffectDispatchInput) {

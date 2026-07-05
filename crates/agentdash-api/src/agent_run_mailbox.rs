@@ -138,17 +138,13 @@ impl AgentRunMailboxTerminalCallback {
 
 #[async_trait]
 impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
-    async fn on_session_terminal(&self, notification: SessionTerminalNotification) {
-        if let Err(error) = self.record_agent_run_terminal_state(&notification).await {
-            diag!(Warn, Subsystem::Api,
-
-                runtime_session_id = %notification.session_id,
-                turn_id = %notification.turn_id,
-                terminal_state = %notification.terminal_state,
-                error = %error,
-                "AgentRun terminal state 写入失败"
-            );
-        }
+    async fn on_session_terminal(
+        &self,
+        notification: SessionTerminalNotification,
+    ) -> Result<(), String> {
+        self.record_agent_run_terminal_state(&notification)
+            .await
+            .map_err(|error| error.to_string())?;
         match notification.terminal_state.as_str() {
             "completed" => {
                 if let Err(error) = self.schedule_turn_boundary(&notification.session_id).await {
@@ -158,6 +154,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                         error = %error,
                         "AgentRun mailbox completed terminal fallback 调度失败"
                     );
+                    return Err(error.to_string());
                 }
             }
             "failed" => {
@@ -176,6 +173,7 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                         error = %error,
                         "AgentRun mailbox failed pause 写入失败"
                     );
+                    return Err(error.to_string());
                 }
             }
             "interrupted" => {
@@ -194,9 +192,11 @@ impl SessionTerminalCallback for AgentRunMailboxTerminalCallback {
                         error = %error,
                         "AgentRun mailbox interrupted pause 写入失败"
                     );
+                    return Err(error.to_string());
                 }
             }
             _ => {}
         }
+        Ok(())
     }
 }

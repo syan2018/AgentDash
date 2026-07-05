@@ -26,6 +26,7 @@ import {
   reduceStreamState,
   resetEphemeralCursor,
   shouldFlushStreamEventImmediately,
+  extractTerminalTurnId,
   type SessionStreamState,
 } from "./sessionStreamReducer";
 import {
@@ -121,6 +122,14 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     }, RECEIVING_IDLE_TIMEOUT_MS);
   }, []);
 
+  const clearReceiving = useCallback(() => {
+    if (receivingTimerRef.current) {
+      clearTimeout(receivingTimerRef.current);
+      receivingTimerRef.current = null;
+    }
+    setIsReceiving(false);
+  }, []);
+
   const flushPendingEvents = useCallback((mode: "async" | "sync" = "async") => {
     if (!mountedRef.current) return;
     const pending = pendingEventsRef.current;
@@ -146,7 +155,11 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     if (dispatchSessionPlatformEvent(event, callbackRefs.current.onError)) return;
 
     pendingEventsRef.current.push(event);
-    markReceiving();
+    if (extractTerminalTurnId(event)) {
+      clearReceiving();
+    } else {
+      markReceiving();
+    }
 
     if (shouldFlushStreamEventImmediately(event)) {
       if (flushTimerRef.current) {
@@ -162,7 +175,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
       flushTimerRef.current = null;
       flushPendingEvents();
     }, FLUSH_INTERVAL_MS);
-  }, [flushPendingEvents, markReceiving]);
+  }, [clearReceiving, flushPendingEvents, markReceiving]);
 
   useEffect(() => {
     enqueueEventRef.current = enqueueEvent;
@@ -285,11 +298,13 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
             if (lifecycle === "closed") {
               setIsConnected(false);
               setIsLoading(false);
+              clearReceiving();
               callbackRefs.current.onConnectionChange?.(false);
             }
           },
           onError: (transportError) => {
             if (!mountedRef.current) return;
+            clearReceiving();
             setError(transportError);
             callbackRefs.current.onError?.(transportError);
           },
@@ -334,6 +349,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     hasStreamTarget,
     rawSessionId,
     sessionId,
+    clearReceiving,
   ]);
 
   const close = useCallback(() => {

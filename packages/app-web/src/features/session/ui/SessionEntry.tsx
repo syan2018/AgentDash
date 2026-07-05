@@ -222,7 +222,7 @@ function SessionErrorCard({ notification }: { notification: ErrorNotification })
       </pre>
 
       {details && (
-        <details className="mt-2 text-xs text-destructive/80">
+        <details className="mt-2 text-xs text-destructive/80" open>
           <summary className="cursor-pointer select-none">错误详情</summary>
           <pre className="mt-1 whitespace-pre-wrap wrap-anywhere rounded-[6px] bg-background/60 px-2 py-1.5 font-mono text-[11px] leading-5 text-foreground/80">
             {details}

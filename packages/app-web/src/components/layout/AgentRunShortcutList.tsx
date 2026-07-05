@@ -20,6 +20,7 @@ const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> 
   completed: "info",
   failed: "danger",
   interrupted: "warning",
+  lost: "danger",
 };
 
 const EXECUTION_STATUS_LABEL: Record<SessionExecutionStatusValue, string> = {
@@ -29,6 +30,7 @@ const EXECUTION_STATUS_LABEL: Record<SessionExecutionStatusValue, string> = {
   completed: "已完成",
   failed: "失败",
   interrupted: "已中断",
+  lost: "已丢失",
 };
 
 function executionStatusTone(status: SessionExecutionStatusValue): StatusDotTone {
@@ -70,6 +72,7 @@ function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
     || status === "completed"
     || status === "failed"
     || status === "interrupted"
+    || status === "lost"
   ) {
     return status;
   }

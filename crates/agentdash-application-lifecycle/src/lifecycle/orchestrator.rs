@@ -36,7 +36,11 @@ use crate::lifecycle::session_terminal_summary;
 
 #[async_trait::async_trait]
 pub trait SessionTerminalCallback: Send + Sync + 'static {
-    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str);
+    async fn on_session_terminal(
+        &self,
+        session_id: &str,
+        terminal_state: &str,
+    ) -> Result<(), String>;
 }
 
 #[derive(Debug)]
@@ -403,7 +407,11 @@ impl LifecycleOrchestrator {
 
 #[async_trait::async_trait]
 impl SessionTerminalCallback for LifecycleOrchestrator {
-    async fn on_session_terminal(&self, session_id: &str, terminal_state: &str) {
+    async fn on_session_terminal(
+        &self,
+        session_id: &str,
+        terminal_state: &str,
+    ) -> Result<(), String> {
         match self.on_session_terminal(session_id, terminal_state).await {
             Ok(Some(result)) => {
                 diag!(
@@ -416,15 +424,10 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
             }
             Ok(None) => {}
             Err(e) => {
-                diag!(
-                    Warn,
-                    Subsystem::Lifecycle,
-                    session_id = %session_id,
-                    error = %e,
-                    "Orchestrator callback failed"
-                );
+                return Err(e);
             }
         }
+        Ok(())
     }
 }
 

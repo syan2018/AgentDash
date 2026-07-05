@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::hooks::HookEffect;
@@ -106,7 +106,10 @@ pub struct SessionTerminalNotification {
 pub trait SessionTerminalCallback: Send + Sync + 'static {
     /// session 完全终止后（hook 评估、effect 执行、running 状态清理之后）调用。
     /// 实现方可安全地创建新 session、修改 lifecycle run 等。
-    async fn on_session_terminal(&self, notification: SessionTerminalNotification);
+    async fn on_session_terminal(
+        &self,
+        notification: SessionTerminalNotification,
+    ) -> Result<(), String>;
 }
 
 pub type DynSessionTerminalCallback = Arc<dyn SessionTerminalCallback>;

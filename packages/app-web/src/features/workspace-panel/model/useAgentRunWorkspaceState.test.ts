@@ -39,7 +39,6 @@ const workspace: AgentRunWorkspaceView = {
   shell: {
     display_title: "Workspace title",
     title_source: "session_meta",
-    workspace_status: "running",
     delivery_status: "running",
     last_activity_at: "2026-06-12T00:00:00.000Z",
   },

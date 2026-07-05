@@ -1731,7 +1731,6 @@ fn shell_model_to_contract(
     AgentRunWorkspaceShell {
         display_title: shell.display_title,
         title_source: shell.title_source,
-        workspace_status: shell.workspace_status,
         delivery_status: shell.delivery_status,
         last_turn_id: shell.last_turn_id,
         last_activity_at: shell.last_activity_at,
@@ -1829,7 +1828,6 @@ fn agent_run_workspace_view(
         shell: AgentRunWorkspaceShell {
             display_title: snapshot.shell.display_title,
             title_source: snapshot.shell.title_source,
-            workspace_status: snapshot.shell.workspace_status,
             delivery_status: snapshot.shell.delivery_status,
             last_turn_id: snapshot.shell.last_turn_id,
             last_activity_at: snapshot.shell.last_activity_at,
@@ -3211,7 +3209,6 @@ mod tests {
             shell: app_workspace::AgentRunWorkspaceShellModel {
                 display_title: "Session meta title".to_string(),
                 title_source: "source".to_string(),
-                workspace_status: "running".to_string(),
                 delivery_status: "idle".to_string(),
                 last_turn_id: None,
                 last_activity_at: "2026-06-12T00:00:00Z".to_string(),
@@ -3246,7 +3243,6 @@ mod tests {
             shell: app_workspace::AgentRunWorkspaceShellModel {
                 display_title: "Root AgentRun".to_string(),
                 title_source: "source".to_string(),
-                workspace_status: "running".to_string(),
                 delivery_status: "idle".to_string(),
                 last_turn_id: None,
                 last_activity_at: "2026-06-12T00:00:00Z".to_string(),
@@ -3286,7 +3282,6 @@ mod tests {
             shell: app_workspace::AgentRunWorkspaceShellModel {
                 display_title: "Child AgentRun".to_string(),
                 title_source: "source".to_string(),
-                workspace_status: "running".to_string(),
                 delivery_status: "idle".to_string(),
                 last_turn_id: None,
                 last_activity_at: child_activity.to_string(),

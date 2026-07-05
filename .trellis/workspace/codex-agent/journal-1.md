@@ -1935,3 +1935,37 @@ M1 suffix-only 投影读取消除全量重放读放大；Step 0.5 新增 ItemUpd
 ### Next Steps
 
 - None - task complete
+
+
+## Session 54: AgentRun执行事实源收束
+
+**Date**: 2026-07-05
+**Task**: AgentRun执行事实源收束
+**Branch**: `codex/agentrun-lifecycle-repository-convergence`
+
+### Summary
+
+完成AgentRun/RuntimeSession执行事实源收束：AgentRun scoped runtime-control改为workspace projection，fork display seed改用父级可见transcript切片，前端移除AgentRun侧SessionRuntimeControlView消费，并补充长期spec与验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fe685508` | (see git log) |
+| `9901613a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

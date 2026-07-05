@@ -235,11 +235,11 @@ view 中，原因是 AgentRun command 需要一个实际 delivery runtime 通道
 
 `SessionRuntimeControlPlaneView` 与 `SessionRuntimeControlView` 保留给 RuntimeSession detail 诊断入口。
 产品 runtime control 使用 `GET/POST /agent-runs/{run_id}/agents/{agent_id}/runtime/control`，从
-run / agent identity 出发解析当前 delivery RuntimeSession；诊断入口从 runtime trace identity
-出发，经 `RuntimeSessionExecutionAnchor` 反查 run / agent / frame，只表达 trace/detail 与
-anchor backlink。AgentRun workspace 入口返回 conversation snapshot，原因是用户侧工作台的
-command/control 必须以 AgentRun durable mailbox 与 command snapshot 为唯一投影，RuntimeSession
-detail 不复制 mailbox/action 控制面。
+run / agent identity 出发读取 `AgentRunWorkspaceView` / command snapshot；诊断入口从 runtime trace
+identity 出发，经 `RuntimeSessionExecutionAnchor` 反查 run / agent / frame，只表达 trace/detail 与
+anchor backlink。AgentRun scoped runtime-control 入口返回 AgentRun workspace projection，原因是
+用户侧工作台的 command/control 必须以 AgentRun durable mailbox 与 command snapshot 为唯一投影，
+RuntimeSession detail 不复制 mailbox/action 控制面。
 
 AgentRun delivery/control command 使用 AgentRun Workspace public identity：
 
@@ -271,6 +271,96 @@ rehydrate 仍通过 trace metadata 保存的 `executor_session_id` 与 `last_eve
 
 详细 mailbox envelope、scheduler、hook convergence 和 recovery 契约见
 [AgentRun Mailbox And Turn Boundary Contract](./agentrun-mailbox.md)。
+
+### Scenario: AgentRun Public Execution Snapshot
+
+#### 1. Scope / Trigger
+
+AgentRun workspace、conversation snapshot、runtime-control、composer helper、fork readiness 和
+workspace action state 都是用户可见执行状态。它们必须由 AgentRun execution/display snapshot 统一派生；
+RuntimeSession 只提供 execution inspection、event replay、ephemeral stream、recovery metadata 和 trace
+diagnostics。
+
+#### 2. Signatures
+
+```text
+GET /agent-runs/{run_id}/agents/{agent_id}/workspace -> AgentRunWorkspaceView
+GET /agent-runs/{run_id}/agents/{agent_id}/runtime/control -> AgentRunWorkspaceView
+GET /agent-runs/{run_id}/agents/{agent_id}/conversation-feed -> AgentConversationFeedSnapshot
+GET /sessions/{runtime_session_id}/runtime-control -> SessionRuntimeControlView  # diagnostic only
+```
+
+Application derivation entry:
+
+```rust
+AgentRunWorkspaceProjection::derive(
+    AgentRunWorkspaceProjectionInput::new(&SessionExecutionState, agent.status.as_str()),
+)
+```
+
+#### 3. Contracts
+
+- `AgentRunWorkspaceProjection` is the public active-state derivation for AgentRun workspace shell/control-plane.
+- `ConversationExecutionView.active_turn_id` and workspace command stale guards are present only for
+  `SessionExecutionState::Running` and `SessionExecutionState::Cancelling`.
+- `Completed`、`Failed`、`Interrupted` 和 `Lost` keep `last_turn_id` for display/recovery, but expose no
+  active turn to user command surfaces.
+- `SessionMeta.last_delivery_status` remains runtime trace/recovery metadata. It must not make
+  `AgentRunWorkspaceView`、`ConversationExecutionView` or AgentRun scoped `/runtime/control` appear running.
+- `RuntimeSessionTraceMeta` may carry runtime trace ref, event cursor and diagnostic delivery summary. AgentRun UI
+  may use the ref as stream/trace handle, but status, command availability and fork readiness come from AgentRun
+  workspace/conversation projection.
+- Fork conversation feed for a child RuntimeSession uses the parent visible transcript slice at the fork event as
+  display seed. Child durable runtime replay uses the child runtime cursor only.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `last_delivery_status=running` but `inspect_session_execution_state=Completed` | AgentRun workspace/control/conversation project non-running; submit uses fresh mailbox command |
+| `inspect_session_execution_state=Running { turn_id }` | AgentRun workspace projects running and exposes active turn for stale guard |
+| `inspect_session_execution_state=Cancelling { turn_id }` | AgentRun workspace projects cancelling and exposes cancel/idempotent state |
+| `inspect_session_execution_state=Interrupted/Lost/Failed` | status is terminal-like/non-running, active turn is absent, last turn remains display/recovery data |
+| AgentRun scoped `/runtime/control` is called | response is AgentRun workspace projection, not `SessionRuntimeControlView` |
+| Raw RuntimeSession detail is called | response may be `SessionRuntimeControlView`, but it is diagnostic and not a product command source |
+| Fork child feed is requested | inherited entries come from parent display transcript; durable replay starts from child runtime cursor |
+
+#### 5. Good/Base/Bad Cases
+
+- Good: completed parent with stale runtime summary can be forked; child opens with parent-visible history and composer is usable.
+- Good: running AgentRun shows running helper, provider waiting ephemeral state renders thinking, and terminal durable event refreshes workspace projection.
+- Base: no delivery RuntimeSession returns delivery-missing/frame-missing AgentRun projection without reading SessionMeta.
+- Bad: AgentRun UI maps `delivery_trace_meta.delivery_status` into `sessionMeta.last_delivery_status` and uses it for helper or submit/cancel state.
+
+#### 6. Tests Required
+
+- `cargo test -p agentdash-application-agentrun` covers workspace projection, conversation snapshot command guards,
+  stale completed-state runtime-control projection and fork display seed projection.
+- `cargo test -p agentdash-application-runtime-session` covers raw transcript projection, lineage and provider
+  ephemeral behavior.
+- `cargo check -p agentdash-api` verifies AgentRun scoped `/runtime/control` response type remains
+  `AgentRunWorkspaceView`.
+- `pnpm --filter app-web test -- session` covers feed seed/cursor separation, terminal refresh and thinking state.
+- Fact-source audit grep includes `last_delivery_status`, `SessionRuntimeControlView`, `SessionShellDto`,
+  `delivery_trace_meta`, `runtime_session_ref`, `session_meta`, `fetchSessionRuntimeControl` and
+  `fetchAgentRunRuntimeControl`.
+
+#### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let running = meta.last_delivery_status == ExecutionStatus::Running
+    || matches!(execution_state, SessionExecutionState::Running { .. });
+```
+
+#### Correct
+
+```rust
+let projection = AgentRunWorkspaceProjection::derive(
+    AgentRunWorkspaceProjectionInput::new(&execution_state, agent.status.as_str()),
+);
+```
 
 ### Scenario: AgentRun Workspace Mailbox Commands
 

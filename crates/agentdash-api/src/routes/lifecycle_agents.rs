@@ -11,9 +11,9 @@ use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, workspace as app_workspace,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentConversationContentPartModel, AgentConversationFeedInput,
-    AgentConversationFeedMessageModel, AgentConversationFeedModel, AgentConversationFeedProjector,
-    AgentConversationMessageRoleModel,
+    AgentConversationContentPartModel, AgentConversationDisplaySeedInput,
+    AgentConversationFeedInput, AgentConversationFeedMessageModel, AgentConversationFeedModel,
+    AgentConversationFeedProjector, AgentConversationMessageRoleModel,
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunAdmissionService, AgentRunCancelCommand, AgentRunCancelCommandService,
@@ -25,7 +25,9 @@ use agentdash_application_agentrun::agent_run::{
     DeliveryRuntimeSelectionService,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
-use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
+use agentdash_application_runtime_session::session::{
+    SessionLineageRelationKind, terminal_cache::TerminalState,
+};
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
     AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
@@ -51,7 +53,7 @@ use agentdash_contracts::workflow::{
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
     ConversationModelConfigView, ConversationWaitingItemView, DeleteAgentRunResponse,
     LifecycleRunRefDto, LifecycleSubjectAssociationDto, RuntimeSessionRefDto,
-    RuntimeSessionTraceMeta, SessionRuntimeControlView, SubjectRefDto, ValidationSeverity,
+    RuntimeSessionTraceMeta, SubjectRefDto, ValidationSeverity,
 };
 use agentdash_domain::workflow::{AgentLineage, LifecycleAgent, LifecycleRun};
 use agentdash_spi::AgentConfig;
@@ -429,6 +431,34 @@ pub async fn get_agent_run_conversation_feed(
         .ok_or_else(|| {
             ApiError::NotFound("AgentRun 当前没有可读取的 delivery RuntimeSession".to_string())
         })?;
+    if let Some(lineage) = state
+        .services
+        .session_branching
+        .lineage_parent(runtime_session_id)
+        .await
+        .map_err(ApiError::from)?
+        .filter(|lineage| lineage.relation_kind == SessionLineageRelationKind::Fork)
+    {
+        let head_event_seq = lineage.fork_point_event_seq.unwrap_or_default();
+        let transcript = state
+            .services
+            .session_eventing
+            .build_raw_projected_transcript_at_event(&lineage.parent_session_id, head_event_seq)
+            .await
+            .map_err(ApiError::from)?;
+        let model = AgentConversationFeedProjector::derive_display_seed(
+            AgentConversationDisplaySeedInput {
+                run: context.run.clone(),
+                agent: context.agent.clone(),
+                runtime_session_id: runtime_session_id.to_string(),
+                head_event_seq,
+                transcript,
+            },
+        );
+
+        return Ok(Json(agent_conversation_feed_snapshot(model)));
+    }
+
     let envelope = state
         .services
         .session_eventing
@@ -1153,7 +1183,7 @@ async fn get_agent_run_runtime_control(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<SessionRuntimeControlView>, ApiError> {
+) -> Result<Json<AgentRunWorkspaceView>, ApiError> {
     let context = resolve_agent_run_context(
         &state,
         &current_user,
@@ -1162,20 +1192,14 @@ async fn get_agent_run_runtime_control(
         ProjectPermission::Use,
     )
     .await?;
-    let runtime_session_id = context
-        .delivery_runtime_session_id
-        .as_deref()
-        .ok_or_else(|| {
-            ApiError::NotFound("AgentRun 当前没有可读取的 delivery RuntimeSession".to_string())
-        })?;
-    Ok(Json(
-        sessions::load_session_runtime_control_view(
-            state.as_ref(),
-            &current_user,
-            runtime_session_id,
-        )
-        .await?,
-    ))
+    let mut view = agent_run_workspace_view(
+        load_agent_run_workspace_snapshot(&state, &context, &current_user.user_id).await?,
+    );
+    let (parent, children) =
+        resolve_agent_run_lineage(&state, &context.run, &context.agent).await?;
+    view.parent = parent;
+    view.children = children;
+    Ok(Json(view))
 }
 
 async fn list_agent_run_runtime_events(

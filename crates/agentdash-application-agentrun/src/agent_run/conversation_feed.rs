@@ -5,7 +5,9 @@
 //! 由 AgentRun scoped runtime events/stream 端点提供；调用方应从 `runtime_replay_start_seq`
 //! 开始回放 runtime events。
 
-use agentdash_agent_types::{AgentContextEnvelope, AgentMessage, ContentPart, ProjectedEntry};
+use agentdash_agent_types::{
+    AgentContextEnvelope, AgentMessage, ContentPart, ProjectedEntry, ProjectedTranscript,
+};
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use serde_json::Value;
 
@@ -15,6 +17,15 @@ pub struct AgentConversationFeedInput {
     pub agent: LifecycleAgent,
     pub runtime_session_id: String,
     pub envelope: AgentContextEnvelope,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentConversationDisplaySeedInput {
+    pub run: LifecycleRun,
+    pub agent: LifecycleAgent,
+    pub runtime_session_id: String,
+    pub head_event_seq: u64,
+    pub transcript: ProjectedTranscript,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -142,6 +153,35 @@ impl AgentConversationFeedProjector {
             head_event_seq,
             runtime_replay_start_seq: 0,
             active_compaction_id,
+            messages,
+        }
+    }
+
+    pub fn derive_display_seed(
+        input: AgentConversationDisplaySeedInput,
+    ) -> AgentConversationFeedModel {
+        let AgentConversationDisplaySeedInput {
+            run,
+            agent,
+            runtime_session_id,
+            head_event_seq,
+            transcript,
+        } = input;
+        let messages = transcript
+            .entries
+            .into_iter()
+            .filter_map(conversation_feed_message)
+            .collect::<Vec<_>>();
+
+        AgentConversationFeedModel {
+            run_id: run.id.to_string(),
+            agent_id: agent.id.to_string(),
+            runtime_session_id,
+            projection_kind: "agent_run_display_seed".to_string(),
+            projection_version: 1,
+            head_event_seq,
+            runtime_replay_start_seq: 0,
+            active_compaction_id: None,
             messages,
         }
     }
@@ -348,6 +388,35 @@ mod tests {
         assert_eq!(model.messages.len(), 1);
         assert_eq!(model.messages[0].message_ref.turn_id, "parent-turn");
         assert_eq!(model.messages[0].text, "parent answer");
+    }
+
+    #[test]
+    fn display_seed_uses_parent_visible_transcript_entries() {
+        let run = LifecycleRun::new_plain(uuid::Uuid::new_v4());
+        let agent = LifecycleAgent::new_root(run.id, run.project_id, AgentSource::ProjectAgent);
+        let model = AgentConversationFeedProjector::derive_display_seed(
+            AgentConversationDisplaySeedInput {
+                run,
+                agent,
+                runtime_session_id: "sess-child".to_string(),
+                head_event_seq: 8,
+                transcript: agentdash_agent_types::ProjectedTranscript {
+                    entries: vec![
+                        current_runtime_message("parent-turn", 0, 4, "parent answer").into(),
+                        current_runtime_message("parent-turn-2", 0, 8, "visible follow-up").into(),
+                    ],
+                },
+            },
+        );
+
+        assert_eq!(model.projection_kind, "agent_run_display_seed");
+        assert_eq!(model.runtime_replay_start_seq, 0);
+        assert_eq!(model.head_event_seq, 8);
+        assert_eq!(model.messages.len(), 2);
+        assert_eq!(model.messages[0].origin, "event");
+        assert!(!model.messages[0].synthetic);
+        assert_eq!(model.messages[0].text, "parent answer");
+        assert_eq!(model.messages[1].source_event_seq, Some(8));
     }
 
     fn fork_projection_message(turn_id: &str, entry_index: u32, text: &str) -> AgentInputMessage {

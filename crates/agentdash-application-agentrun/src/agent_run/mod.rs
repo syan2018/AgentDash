@@ -30,11 +30,11 @@ pub use cancel_command::{
 };
 pub use command_receipt::AgentRunCommandReceiptView;
 pub use conversation_feed::{
-    AgentConversationContentPartModel, AgentConversationFeedInput,
-    AgentConversationFeedMessageModel, AgentConversationFeedModel, AgentConversationFeedProjector,
-    AgentConversationMessageRefModel, AgentConversationMessageRoleModel,
-    AgentConversationSourceRangeModel, AgentConversationToolCallModel,
-    AgentConversationToolResultModel,
+    AgentConversationContentPartModel, AgentConversationDisplaySeedInput,
+    AgentConversationFeedInput, AgentConversationFeedMessageModel, AgentConversationFeedModel,
+    AgentConversationFeedProjector, AgentConversationMessageRefModel,
+    AgentConversationMessageRoleModel, AgentConversationSourceRangeModel,
+    AgentConversationToolCallModel, AgentConversationToolResultModel,
 };
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,

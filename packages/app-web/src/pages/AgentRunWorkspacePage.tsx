@@ -505,18 +505,6 @@ export function AgentRunWorkspacePage({
     projectId: ownerProjectId,
     traceSessionId: deliveryTraceSessionId,
     agentRunRuntimeTarget,
-    sessionMeta: workspaceControl?.delivery_trace_meta
-      ? {
-          id: workspaceControl.delivery_trace_meta.runtime_session_ref.runtime_session_id,
-          title: workspaceControl.delivery_trace_meta.trace_title,
-          title_source: workspaceControl.delivery_trace_meta.trace_title_source,
-          created_at: workspaceControl.delivery_trace_meta.updated_at,
-          updated_at: workspaceControl.delivery_trace_meta.updated_at,
-          last_event_seq: workspaceControl.delivery_trace_meta.last_event_seq,
-          last_delivery_status: workspaceControl.delivery_trace_meta.delivery_status,
-        }
-      : null,
-    controlAnchor: null,
     lifecycleRun: null,
     lifecycleAgent: workspaceControl?.agent ?? null,
     frameRuntime: workspaceControl?.frame_runtime ?? null,

@@ -5,11 +5,9 @@ import type {
   LifecycleRunView,
   AgentRunView,
   LifecycleSubjectAssociationDto,
-  RuntimeSessionExecutionAnchorDto,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionContextSnapshot,
-  SessionShellDto,
   Story,
   TaskSessionExecutorSummary,
 } from "../../../types";
@@ -48,8 +46,6 @@ export interface WorkspaceRuntimeData {
   agentRunRuntimeTarget?: AgentRunRuntimeTarget | null;
   agentRunCanvasBridgeBase?: AgentRunCanvasBridgeBase | null;
   refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;
-  sessionMeta: SessionShellDto | null;
-  controlAnchor: RuntimeSessionExecutionAnchorDto | null;
   lifecycleRun: LifecycleRunView | null;
   lifecycleAgent: AgentRunView | null;
   frameRuntime: AgentFrameRuntimeView | null;

@@ -1047,7 +1047,7 @@ fn validate_project_agent_subject_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_run::runtime_session_boundary::{ExecutionStatus, TitleSource};
+    use crate::agent_run::runtime_session_boundary::TitleSource;
     use crate::test_support::{
         MemoryAgentRunCommandReceiptRepository, MemoryAgentRunDeliveryBindingRepository,
     };
@@ -1064,6 +1064,7 @@ mod tests {
         DeliveryBindingStatus, LifecycleAgent, LifecycleGate, LifecycleRun,
         LifecycleSubjectAssociation, RuntimeSessionExecutionAnchor, WorkflowGraph,
     };
+    use agentdash_spi::session_persistence::ExecutionStatus;
     use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};

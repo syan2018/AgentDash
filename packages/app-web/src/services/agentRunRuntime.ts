@@ -10,7 +10,6 @@ import type {
 import type {
   AgentConversationFeedSnapshot,
 } from "../generated/workflow-contracts";
-import type { SessionRuntimeControlView } from "../types";
 
 export interface AgentRunRuntimeTarget {
   runId: string;
@@ -58,12 +57,6 @@ export async function fetchAgentRunConversationFeed(
     if ((err as ApiHttpError).status === 404) return null;
     throw err;
   }
-}
-
-export async function fetchAgentRunRuntimeControl(
-  target: AgentRunRuntimeTarget,
-): Promise<SessionRuntimeControlView> {
-  return api.get<SessionRuntimeControlView>(agentRunScopedPath(target, "/runtime/control"));
 }
 
 export async function approveAgentRunToolCall(

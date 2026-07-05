@@ -530,8 +530,6 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
     contextSnapshot: null,
     ownerStory: null,
     ownerProjectName: "Project",
-    sessionMeta: null,
-    controlAnchor: null,
     lifecycleRun: null,
     lifecycleAgent: null,
     frameRuntime: null,

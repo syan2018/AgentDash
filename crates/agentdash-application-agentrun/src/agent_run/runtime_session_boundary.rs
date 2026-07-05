@@ -11,8 +11,7 @@ use async_trait::async_trait;
 use crate::error::WorkflowApplicationError;
 
 pub use agentdash_spi::session_persistence::{
-    ExecutionStatus, RuntimeCommandRecord, SessionEventPage, SessionMeta, SessionStoreError,
-    TitleSource,
+    RuntimeCommandRecord, SessionEventPage, SessionMeta, SessionStoreError, TitleSource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

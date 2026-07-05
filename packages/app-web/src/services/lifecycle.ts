@@ -15,11 +15,7 @@ import type {
   SubjectExecutionView,
 } from "../types";
 import type { AgentRunWorkspaceView } from "../generated/workflow-contracts";
-import {
-  agentRunScopedPath,
-  fetchAgentRunRuntimeControl as fetchScopedAgentRunRuntimeControl,
-  type AgentRunRuntimeTarget,
-} from "./agentRunRuntime";
+import { agentRunScopedPath } from "./agentRunRuntime";
 
 function agentRunCommandPath(runId: string, agentId: string, route: string): string {
   return agentRunScopedPath({ runId, agentId }, route);
@@ -70,12 +66,6 @@ export async function fetchSessionRuntimeControl(
   return api.get<SessionRuntimeControlView>(
     `/sessions/${encodeURIComponent(runtimeSessionId)}/runtime-control`,
   );
-}
-
-export async function fetchAgentRunRuntimeControl(
-  target: AgentRunRuntimeTarget,
-): Promise<SessionRuntimeControlView> {
-  return fetchScopedAgentRunRuntimeControl(target);
 }
 
 export async function fetchAgentFrameRuntime(frameId: string): Promise<AgentFrameRuntimeView> {

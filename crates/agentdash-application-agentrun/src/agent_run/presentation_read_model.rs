@@ -15,8 +15,11 @@ use crate::agent_run::lifecycle_read_model_facade::{
     AgentRunView, LifecycleRunView, LifecycleSubjectAssociationView,
 };
 use crate::agent_run::runtime_session_boundary::{
-    ExecutionStatus, SessionCoreService, SessionEventingService, SessionExecutionState,
-    SessionMeta, SessionStoreError,
+    SessionCoreService, SessionEventingService, SessionMeta, SessionStoreError,
+};
+use crate::agent_run::workspace::{
+    AgentRunWorkspaceProjection, AgentRunWorkspaceProjectionInput,
+    AgentRunWorkspaceProjectionModel, AgentRunWorkspaceStateCode,
 };
 use crate::agent_run::{
     AgentRunRuntimeSurfaceQueryError, AgentRunRuntimeSurfaceQueryPort,
@@ -224,38 +227,16 @@ impl AgentRunPresentationReadModelQuery {
             .session_core
             .inspect_session_execution_state(runtime_session_id)
             .await?;
-        let delivery_running = session_meta.last_delivery_status == ExecutionStatus::Running
-            || matches!(execution_state, SessionExecutionState::Running { .. });
-        let delivery_cancelling =
-            matches!(execution_state, SessionExecutionState::Cancelling { .. });
+        let execution_projection = AgentRunWorkspaceProjection::derive(
+            AgentRunWorkspaceProjectionInput::new(&execution_state, &agent.status),
+        );
         let terminal_agent = is_terminal_agent_status(&agent.status);
         let has_frame = frame_runtime.is_some();
-        let control_plane = if terminal_agent {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::Terminal,
-                reason: Some("当前 Agent 已结束。".to_string()),
-            }
-        } else if !has_frame {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::FrameMissing,
-                reason: Some("当前 Agent 没有可投递的 runtime frame。".to_string()),
-            }
-        } else if delivery_cancelling {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::AnchoredCancelling,
-                reason: Some("当前 Session 正在取消中，等待执行器收口。".to_string()),
-            }
-        } else if delivery_running {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::AnchoredRunning,
-                reason: Some("当前 Session 正在执行中。".to_string()),
-            }
-        } else {
-            SessionRuntimeControlPlaneReadModel {
-                status: SessionRuntimeControlPlaneStatusModel::AnchoredIdle,
-                reason: None,
-            }
-        };
+        let control_plane = session_runtime_control_plane_from_agent_run_projection(
+            &execution_projection,
+            terminal_agent,
+            has_frame,
+        );
 
         Ok(SessionRuntimeControlReadModel {
             runtime_session_id: runtime_session_id.to_string(),
@@ -447,4 +428,140 @@ fn agent_frame_ref_model(frame: &AgentFrame) -> AgentFrameRefReadModel {
 
 fn is_terminal_agent_status(status: &str) -> bool {
     matches!(status, "completed" | "failed" | "cancelled")
+}
+
+fn session_runtime_control_plane_from_agent_run_projection(
+    projection: &AgentRunWorkspaceProjectionModel,
+    terminal_agent: bool,
+    has_frame: bool,
+) -> SessionRuntimeControlPlaneReadModel {
+    if terminal_agent {
+        return SessionRuntimeControlPlaneReadModel {
+            status: SessionRuntimeControlPlaneStatusModel::Terminal,
+            reason: Some("当前 AgentRun 已结束。".to_string()),
+        };
+    }
+    if !has_frame {
+        return SessionRuntimeControlPlaneReadModel {
+            status: SessionRuntimeControlPlaneStatusModel::FrameMissing,
+            reason: Some("当前 AgentRun 没有可投递的 runtime frame。".to_string()),
+        };
+    }
+    match projection.state_code {
+        AgentRunWorkspaceStateCode::StartingClaimed | AgentRunWorkspaceStateCode::RunningActive => {
+            SessionRuntimeControlPlaneReadModel {
+                status: SessionRuntimeControlPlaneStatusModel::AnchoredRunning,
+                reason: Some("当前 AgentRun 正在执行中。".to_string()),
+            }
+        }
+        AgentRunWorkspaceStateCode::Cancelling => SessionRuntimeControlPlaneReadModel {
+            status: SessionRuntimeControlPlaneStatusModel::AnchoredCancelling,
+            reason: Some("当前 AgentRun 正在取消中，等待执行器收口。".to_string()),
+        },
+        AgentRunWorkspaceStateCode::Ready
+        | AgentRunWorkspaceStateCode::Completed
+        | AgentRunWorkspaceStateCode::Failed
+        | AgentRunWorkspaceStateCode::Interrupted
+        | AgentRunWorkspaceStateCode::Lost => SessionRuntimeControlPlaneReadModel {
+            status: SessionRuntimeControlPlaneStatusModel::AnchoredIdle,
+            reason: None,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_run::runtime_session_boundary::SessionExecutionState;
+
+    fn control_plane_for(
+        execution_state: SessionExecutionState,
+    ) -> SessionRuntimeControlPlaneReadModel {
+        let projection = AgentRunWorkspaceProjection::derive(
+            AgentRunWorkspaceProjectionInput::new(&execution_state, "active"),
+        );
+        session_runtime_control_plane_from_agent_run_projection(&projection, false, true)
+    }
+
+    #[test]
+    fn completed_execution_projects_idle_control_plane() {
+        let control_plane = control_plane_for(SessionExecutionState::Completed {
+            turn_id: "turn-1".to_string(),
+        });
+
+        assert_eq!(
+            control_plane.status,
+            SessionRuntimeControlPlaneStatusModel::AnchoredIdle
+        );
+        assert_eq!(control_plane.reason, None);
+    }
+
+    #[test]
+    fn non_running_terminal_execution_states_do_not_project_running() {
+        for execution_state in [
+            SessionExecutionState::Failed {
+                turn_id: "turn-1".to_string(),
+                message: Some("provider failed".to_string()),
+            },
+            SessionExecutionState::Interrupted {
+                turn_id: Some("turn-1".to_string()),
+                message: Some("user interrupted".to_string()),
+            },
+            SessionExecutionState::Lost {
+                turn_id: Some("turn-1".to_string()),
+                message: Some("backend lost".to_string()),
+            },
+        ] {
+            let control_plane = control_plane_for(execution_state);
+            assert_eq!(
+                control_plane.status,
+                SessionRuntimeControlPlaneStatusModel::AnchoredIdle
+            );
+        }
+    }
+
+    #[test]
+    fn running_and_cancelling_project_active_control_plane() {
+        let running = control_plane_for(SessionExecutionState::Running {
+            turn_id: Some("turn-1".to_string()),
+        });
+        let starting = control_plane_for(SessionExecutionState::Running { turn_id: None });
+        let cancelling = control_plane_for(SessionExecutionState::Cancelling {
+            turn_id: Some("turn-1".to_string()),
+        });
+
+        assert_eq!(
+            running.status,
+            SessionRuntimeControlPlaneStatusModel::AnchoredRunning
+        );
+        assert_eq!(
+            starting.status,
+            SessionRuntimeControlPlaneStatusModel::AnchoredRunning
+        );
+        assert_eq!(
+            cancelling.status,
+            SessionRuntimeControlPlaneStatusModel::AnchoredCancelling
+        );
+    }
+
+    #[test]
+    fn terminal_agent_and_missing_frame_keep_precedence() {
+        let projection =
+            AgentRunWorkspaceProjection::derive(AgentRunWorkspaceProjectionInput::new(
+                &SessionExecutionState::Running {
+                    turn_id: Some("turn-1".to_string()),
+                },
+                "active",
+            ));
+
+        assert_eq!(
+            session_runtime_control_plane_from_agent_run_projection(&projection, true, true).status,
+            SessionRuntimeControlPlaneStatusModel::Terminal
+        );
+        assert_eq!(
+            session_runtime_control_plane_from_agent_run_projection(&projection, false, false)
+                .status,
+            SessionRuntimeControlPlaneStatusModel::FrameMissing
+        );
+    }
 }

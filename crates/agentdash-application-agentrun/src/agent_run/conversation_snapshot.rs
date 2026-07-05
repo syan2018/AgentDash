@@ -934,12 +934,12 @@ fn unavailable_reason_for_submit(
 fn active_turn_id(execution_state: &SessionExecutionState) -> Option<String> {
     match execution_state {
         SessionExecutionState::Running { turn_id }
-        | SessionExecutionState::Cancelling { turn_id }
-        | SessionExecutionState::Interrupted { turn_id, .. }
-        | SessionExecutionState::Lost { turn_id, .. } => turn_id.clone(),
-        SessionExecutionState::Completed { turn_id }
-        | SessionExecutionState::Failed { turn_id, .. } => Some(turn_id.clone()),
-        SessionExecutionState::Idle => None,
+        | SessionExecutionState::Cancelling { turn_id } => turn_id.clone(),
+        SessionExecutionState::Idle
+        | SessionExecutionState::Completed { .. }
+        | SessionExecutionState::Failed { .. }
+        | SessionExecutionState::Interrupted { .. }
+        | SessionExecutionState::Lost { .. } => None,
     }
 }
 
@@ -1369,6 +1369,14 @@ mod tests {
         assert_eq!(
             completed.commands.keyboard.ctrl_enter.as_deref(),
             Some("submit_message")
+        );
+        assert_eq!(completed.execution.active_turn_id, None);
+        assert!(
+            completed
+                .commands
+                .commands
+                .iter()
+                .all(|command| command.stale_guard.active_turn_id.is_none())
         );
     }
 

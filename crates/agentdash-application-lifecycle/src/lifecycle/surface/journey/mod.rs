@@ -20,9 +20,8 @@ use crate::lifecycle::{
     SessionToolResultCache, SessionToolResultCacheRead as LocalSessionToolResultCacheRead,
     SessionToolResultCacheStatus, SessionToolResultCacheStatusKind,
 };
-use agentdash_spi::{
-    PersistedSessionEvent, SessionCompactionStore, SessionEventStore, SessionMetaStore,
-};
+use agentdash_spi::{PersistedSessionEvent, SessionCompactionStore, SessionMetaStore};
+use async_trait::async_trait;
 
 pub mod session_items;
 
@@ -60,9 +59,57 @@ impl std::error::Error for LifecycleJourneyError {}
 pub struct LifecycleJourneyProjection {
     inline_file_repo: Arc<dyn InlineFileRepository>,
     session_meta_store: Arc<dyn SessionMetaStore>,
-    session_event_store: Arc<dyn SessionEventStore>,
     session_compaction_store: Arc<dyn SessionCompactionStore>,
     tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
+    agent_run_journal_reader: Arc<dyn AgentRunJournalReader>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunJournalRef {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+}
+
+impl AgentRunJournalRef {
+    pub fn journal_session_id(&self) -> String {
+        format!("agentrun:{}:{}", self.run_id, self.agent_id)
+    }
+
+    pub fn new(run_id: Uuid, agent_id: Uuid) -> Self {
+        Self { run_id, agent_id }
+    }
+
+    pub fn projection_session_id(&self) -> String {
+        self.journal_session_id()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentRunJournalProjection {
+    pub delivery_runtime_session_id: String,
+    pub events: Vec<PersistedSessionEvent>,
+}
+
+#[async_trait]
+pub trait AgentRunJournalReader: Send + Sync {
+    async fn visible_journal(
+        &self,
+        reference: AgentRunJournalRef,
+    ) -> JourneyResult<AgentRunJournalProjection>;
+}
+
+struct MissingAgentRunJournalReader;
+
+#[async_trait]
+impl AgentRunJournalReader for MissingAgentRunJournalReader {
+    async fn visible_journal(
+        &self,
+        _reference: AgentRunJournalRef,
+    ) -> JourneyResult<AgentRunJournalProjection> {
+        Err(LifecycleJourneyError::OperationFailed(
+            "LifecycleJourneyProjection 缺少 AgentRun journal reader".to_string(),
+        ))
+    }
 }
 
 pub trait SessionToolResultCacheReader: Send + Sync {
@@ -101,15 +148,14 @@ impl LifecycleJourneyProjection {
     pub fn new(
         inline_file_repo: Arc<dyn InlineFileRepository>,
         session_meta_store: Arc<dyn SessionMetaStore>,
-        session_event_store: Arc<dyn SessionEventStore>,
         session_compaction_store: Arc<dyn SessionCompactionStore>,
     ) -> Self {
         Self::new_with_tool_result_cache(
             inline_file_repo,
             session_meta_store,
-            session_event_store,
             session_compaction_store,
             SessionToolResultCache::new(),
+            Arc::new(MissingAgentRunJournalReader),
         )
     }
 
@@ -117,16 +163,16 @@ impl LifecycleJourneyProjection {
     pub fn new_with_tool_result_cache(
         inline_file_repo: Arc<dyn InlineFileRepository>,
         session_meta_store: Arc<dyn SessionMetaStore>,
-        session_event_store: Arc<dyn SessionEventStore>,
         session_compaction_store: Arc<dyn SessionCompactionStore>,
         tool_result_cache: Arc<dyn SessionToolResultCacheReader>,
+        agent_run_journal_reader: Arc<dyn AgentRunJournalReader>,
     ) -> Self {
         Self {
             inline_file_repo,
             session_meta_store,
-            session_event_store,
             session_compaction_store,
             tool_result_cache,
+            agent_run_journal_reader,
         }
     }
 
@@ -134,28 +180,35 @@ impl LifecycleJourneyProjection {
         self.session_compaction_store.as_ref()
     }
 
-    pub async fn session_events(
+    pub async fn journal_projection(
         &self,
-        session_id: &str,
-    ) -> JourneyResult<Vec<PersistedSessionEvent>> {
-        self.session_event_store
-            .list_all_events(session_id)
+        source: &AgentRunJournalRef,
+    ) -> JourneyResult<AgentRunJournalProjection> {
+        self.agent_run_journal_reader
+            .visible_journal(source.clone())
             .await
-            .map_err(|e| {
-                LifecycleJourneyError::OperationFailed(format!("读取 session events 失败: {e}"))
-            })
+    }
+
+    pub async fn journal_events(
+        &self,
+        source: &AgentRunJournalRef,
+    ) -> JourneyResult<Vec<PersistedSessionEvent>> {
+        Ok(self.journal_projection(source).await?.events)
     }
 
     pub async fn read_session_projection(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         rest: &[&str],
     ) -> JourneyResult<String> {
+        let projection_session_id = source.projection_session_id();
         match rest {
             ["meta"] => {
+                let journal = self.journal_projection(source).await?;
+                let runtime_session_id = journal.delivery_runtime_session_id.as_str();
                 let meta = self
                     .session_meta_store
-                    .get_session_meta(session_id)
+                    .get_session_meta(runtime_session_id)
                     .await
                     .map_err(|e| {
                         LifecycleJourneyError::OperationFailed(format!(
@@ -163,10 +216,12 @@ impl LifecycleJourneyProjection {
                         ))
                     })?
                     .ok_or_else(|| {
-                        LifecycleJourneyError::NotFound(format!("session 不存在: {session_id}"))
+                        LifecycleJourneyError::NotFound(format!(
+                            "session 不存在: {runtime_session_id}"
+                        ))
                     })?;
                 let meta_json = serde_json::json!({
-                    "session_id": session_id,
+                    "session_id": projection_session_id,
                     "title": meta.title,
                     "status": meta.last_delivery_status,
                     "last_event_seq": meta.last_event_seq,
@@ -176,64 +231,61 @@ impl LifecycleJourneyProjection {
                 to_json_pretty(&meta_json)
             }
             ["events.json"] => {
-                let events = self.session_events(session_id).await?;
+                let events = self.journal_events(source).await?;
                 to_json_pretty(&events)
             }
-            ["items"] => {
-                self.read_items_index(session_id, SessionItemView::Items)
-                    .await
-            }
+            ["items"] => self.read_items_index(source, SessionItemView::Items).await,
             ["items", rest @ ..] => {
-                self.read_item_file(session_id, SessionItemView::Items, rest)
+                self.read_item_file(source, SessionItemView::Items, rest)
                     .await
             }
             ["messages"] => {
-                self.read_items_index(session_id, SessionItemView::Messages)
+                self.read_items_index(source, SessionItemView::Messages)
                     .await
             }
             ["messages", rest @ ..] => {
-                self.read_item_file(session_id, SessionItemView::Messages, rest)
+                self.read_item_file(source, SessionItemView::Messages, rest)
                     .await
             }
-            ["tools"] => {
-                self.read_items_index(session_id, SessionItemView::Tools)
-                    .await
-            }
+            ["tools"] => self.read_items_index(source, SessionItemView::Tools).await,
             ["tools", rest @ ..] => {
-                self.read_item_file(session_id, SessionItemView::Tools, rest)
+                self.read_item_file(source, SessionItemView::Tools, rest)
                     .await
             }
-            ["tool-results"] => self.read_tool_results_index(session_id).await,
+            ["tool-results"] => self.read_tool_results_index(source).await,
             ["tool-results", turn_alias] => {
-                self.read_tool_results_turn_index(session_id, turn_alias)
-                    .await
+                self.read_tool_results_turn_index(source, turn_alias).await
             }
             ["tool-results", turn_alias, body_alias, "metadata.json"] => {
                 let item_id = tool_result_item_id(turn_alias, body_alias);
-                self.read_tool_result_metadata(session_id, &item_id).await
+                self.read_tool_result_metadata(source, &item_id).await
             }
             ["tool-results", turn_alias, body_alias, "result.txt"] => {
                 let item_id = tool_result_item_id(turn_alias, body_alias);
-                self.read_tool_result_body_status(session_id, &item_id)
-                    .await
+                self.read_tool_result_body_status(source, &item_id).await
             }
-            ["writes"] => {
-                self.read_items_index(session_id, SessionItemView::Writes)
-                    .await
-            }
+            ["writes"] => self.read_items_index(source, SessionItemView::Writes).await,
             ["writes", rest @ ..] => {
-                self.read_item_file(session_id, SessionItemView::Writes, rest)
+                self.read_item_file(source, SessionItemView::Writes, rest)
                     .await
             }
-            ["summaries"] => self.read_compaction_summary_index(session_id).await,
-            ["summaries", rest @ ..] => self.read_compaction_summary(session_id, rest).await,
+            ["summaries"] => {
+                let journal = self.journal_projection(source).await?;
+                self.read_compaction_summary_index(&journal.delivery_runtime_session_id)
+                    .await
+            }
+            ["summaries", rest @ ..] => {
+                let journal = self.journal_projection(source).await?;
+                self.read_compaction_summary(&journal.delivery_runtime_session_id, rest)
+                    .await
+            }
             ["turns"] => {
-                let events = self.session_events(session_id).await?;
+                let events = self.journal_events(source).await?;
                 let summaries = group_events_into_turn_summaries(&events);
                 to_json_pretty(&summaries)
             }
             ["turns", turn_id] | ["turns", turn_id, "events.json"] => {
-                let events = self.session_events(session_id).await?;
+                let events = self.journal_events(source).await?;
                 let turn_events: Vec<&PersistedSessionEvent> = events
                     .iter()
                     .filter(|event| event.turn_id.as_deref() == Some(*turn_id))
@@ -249,16 +301,14 @@ impl LifecycleJourneyProjection {
                 let terminal_alias = file_name
                     .strip_suffix(".metadata.json")
                     .unwrap_or(file_name);
-                self.read_terminal_metadata(session_id, terminal_alias)
-                    .await
+                self.read_terminal_metadata(source, terminal_alias).await
             }
             ["terminal", file_name] if file_name.ends_with(".log") => {
                 let terminal_alias = file_name.strip_suffix(".log").unwrap_or(file_name);
-                self.read_terminal_log_status(session_id, terminal_alias)
-                    .await
+                self.read_terminal_log_status(source, terminal_alias).await
             }
             ["terminal"] => {
-                let events = self.session_events(session_id).await?;
+                let events = self.journal_events(source).await?;
                 let output = events
                     .iter()
                     .filter_map(|event| match &event.notification.event {
@@ -281,16 +331,21 @@ impl LifecycleJourneyProjection {
         }
     }
 
-    pub async fn read_tool_results_index(&self, session_id: &str) -> JourneyResult<String> {
-        let projections = self.session_item_projections(session_id).await?;
+    pub async fn read_tool_results_index(
+        &self,
+        source: &AgentRunJournalRef,
+    ) -> JourneyResult<String> {
+        let journal = self.journal_projection(source).await?;
+        let projections = session_item_projections(&journal.events);
+        let projection_session_id = source.projection_session_id();
         let metadata = filter_session_items(&projections, SessionItemView::Tools)
             .iter()
             .filter_map(|projection| {
                 let item_id = projection.summary.item_id.as_str();
                 tool_result_metadata_for_projection_with_status(
-                    session_id,
+                    &projection_session_id,
                     projection,
-                    self.tool_result_body_status(session_id, item_id),
+                    self.tool_result_body_status(&journal.delivery_runtime_session_id, item_id),
                 )
             })
             .collect::<Vec<_>>();
@@ -299,18 +354,20 @@ impl LifecycleJourneyProjection {
 
     pub async fn read_tool_results_turn_index(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         turn_alias: &str,
     ) -> JourneyResult<String> {
-        let projections = self.session_item_projections(session_id).await?;
+        let journal = self.journal_projection(source).await?;
+        let projections = session_item_projections(&journal.events);
+        let projection_session_id = source.projection_session_id();
         let metadata = filter_session_items(&projections, SessionItemView::Tools)
             .iter()
             .filter_map(|projection| {
                 let item_id = projection.summary.item_id.as_str();
                 tool_result_metadata_for_projection_with_status(
-                    session_id,
+                    &projection_session_id,
                     projection,
-                    self.tool_result_body_status(session_id, item_id),
+                    self.tool_result_body_status(&journal.delivery_runtime_session_id, item_id),
                 )
             })
             .filter(|entry| entry.turn_alias == turn_alias)
@@ -325,18 +382,20 @@ impl LifecycleJourneyProjection {
 
     pub async fn read_tool_result_metadata(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         item_id: &str,
     ) -> JourneyResult<String> {
-        let projections = self.session_item_projections(session_id).await?;
+        let journal = self.journal_projection(source).await?;
+        let projections = session_item_projections(&journal.events);
+        let projection_session_id = source.projection_session_id();
         let metadata = filter_session_items(&projections, SessionItemView::Tools)
             .iter()
             .find(|projection| projection.summary.item_id == item_id)
             .and_then(|projection| {
                 tool_result_metadata_for_projection_with_status(
-                    session_id,
+                    &projection_session_id,
                     projection,
-                    self.tool_result_body_status(session_id, item_id),
+                    self.tool_result_body_status(&journal.delivery_runtime_session_id, item_id),
                 )
             })
             .ok_or_else(|| {
@@ -347,10 +406,11 @@ impl LifecycleJourneyProjection {
 
     pub async fn read_tool_result_body_status(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         item_id: &str,
     ) -> JourneyResult<String> {
-        let projections = self.session_item_projections(session_id).await?;
+        let journal = self.journal_projection(source).await?;
+        let projections = session_item_projections(&journal.events);
         let exists = filter_session_items(&projections, SessionItemView::Tools)
             .iter()
             .any(|projection| projection.summary.item_id == item_id);
@@ -359,7 +419,10 @@ impl LifecycleJourneyProjection {
                 "tool result 不存在: {item_id}"
             )));
         }
-        match self.tool_result_cache.read_text(session_id, item_id) {
+        match self
+            .tool_result_cache
+            .read_text(&journal.delivery_runtime_session_id, item_id)
+        {
             SessionToolResultCacheReadResult::Available { text, .. } => Ok(text),
             SessionToolResultCacheReadResult::Unavailable(status) => Ok(status.message),
         }
@@ -386,9 +449,10 @@ impl LifecycleJourneyProjection {
 
     pub async fn terminal_metadata_entries(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
     ) -> JourneyResult<Vec<SessionTerminalMetadata>> {
-        let events = self.session_events(session_id).await?;
+        let events = self.journal_events(source).await?;
+        let projection_session_id = source.projection_session_id();
         let mut entries: BTreeMap<String, SessionTerminalMetadataBuilder> = BTreeMap::new();
         for event in &events {
             match &event.notification.event {
@@ -398,7 +462,7 @@ impl LifecycleJourneyProjection {
                         .entry(terminal_id.clone())
                         .or_insert_with(|| {
                             SessionTerminalMetadataBuilder::new(
-                                session_id,
+                                &projection_session_id,
                                 terminal_id,
                                 format_readable_alias("term", next_index),
                             )
@@ -416,7 +480,7 @@ impl LifecycleJourneyProjection {
                         .entry(terminal_id.clone())
                         .or_insert_with(|| {
                             SessionTerminalMetadataBuilder::new(
-                                session_id,
+                                &projection_session_id,
                                 terminal_id,
                                 format_readable_alias("term", next_index),
                             )
@@ -434,11 +498,11 @@ impl LifecycleJourneyProjection {
 
     pub async fn read_terminal_metadata(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         terminal_id: &str,
     ) -> JourneyResult<String> {
         let metadata = self
-            .terminal_metadata_entries(session_id)
+            .terminal_metadata_entries(source)
             .await?
             .into_iter()
             .find(|entry| entry.terminal_id == terminal_id)
@@ -450,11 +514,11 @@ impl LifecycleJourneyProjection {
 
     pub async fn read_terminal_log_status(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         terminal_id: &str,
     ) -> JourneyResult<String> {
         let metadata = self
-            .terminal_metadata_entries(session_id)
+            .terminal_metadata_entries(source)
             .await?
             .into_iter()
             .find(|entry| entry.terminal_id == terminal_id)
@@ -462,25 +526,27 @@ impl LifecycleJourneyProjection {
                 LifecycleJourneyError::NotFound(format!("terminal 不存在: {terminal_id}"))
             })?;
         Ok(format!(
-            "[terminal log cache missing]\nsession_id: {session_id}\nterminal_id: {}\nlifecycle_path: {}\nThe original terminal log is not available from the retained output cache.",
-            metadata.terminal_id, metadata.lifecycle_path
+            "[terminal log cache missing]\nsession_id: {}\nterminal_id: {}\nlifecycle_path: {}\nThe original terminal log is not available from the retained output cache.",
+            source.projection_session_id(),
+            metadata.terminal_id,
+            metadata.lifecycle_path
         ))
     }
 
     pub async fn session_item_projections(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
     ) -> JourneyResult<Vec<SessionItemProjection>> {
-        let events = self.session_events(session_id).await?;
+        let events = self.journal_events(source).await?;
         Ok(session_item_projections(&events))
     }
 
     pub async fn read_items_index(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         view: SessionItemView,
     ) -> JourneyResult<String> {
-        let projections = self.session_item_projections(session_id).await?;
+        let projections = self.session_item_projections(source).await?;
         let summaries = filter_session_items(&projections, view)
             .iter()
             .map(|projection| item_summary_for_view(projection, view))
@@ -490,12 +556,12 @@ impl LifecycleJourneyProjection {
 
     pub async fn read_item_file(
         &self,
-        session_id: &str,
+        source: &AgentRunJournalRef,
         view: SessionItemView,
         rest: &[&str],
     ) -> JourneyResult<String> {
         let name = join_rest(rest)?;
-        let projections = self.session_item_projections(session_id).await?;
+        let projections = self.session_item_projections(source).await?;
         let projection = filter_session_items(&projections, view)
             .into_iter()
             .find(|projection| item_file_name(projection, view) == name)

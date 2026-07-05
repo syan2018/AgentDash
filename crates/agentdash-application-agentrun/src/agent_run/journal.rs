@@ -6,7 +6,9 @@ use agentdash_agent_protocol::{
 use agentdash_application_runtime_session::session::{
     SessionBranchingService, SessionLineageRecord, SessionLineageRelationKind,
 };
-use agentdash_spi::session_persistence::PersistedSessionEvent;
+use agentdash_spi::session_persistence::{
+    PersistedSessionEvent, SessionEventPage, SessionEventStore, SessionLineageStore,
+};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -66,7 +68,7 @@ pub struct AgentRunJournalQuery {
 
 pub struct AgentRunJournalService {
     lineage: Arc<dyn AgentRunJournalLineagePort>,
-    session_eventing: SessionEventingService,
+    event_reader: Arc<dyn AgentRunJournalEventPageReader>,
 }
 
 impl AgentRunJournalService {
@@ -76,7 +78,17 @@ impl AgentRunJournalService {
     ) -> Self {
         Self {
             lineage: Arc::new(session_branching),
-            session_eventing,
+            event_reader: Arc::new(SessionEventingJournalEventPageReader { session_eventing }),
+        }
+    }
+
+    pub fn new_from_session_stores(
+        lineage_store: Arc<dyn SessionLineageStore>,
+        event_store: Arc<dyn SessionEventStore>,
+    ) -> Self {
+        Self {
+            lineage: Arc::new(SessionLineageStoreJournalLineagePort { lineage_store }),
+            event_reader: Arc::new(SessionEventStoreJournalEventPageReader { event_store }),
         }
     }
 
@@ -252,7 +264,7 @@ impl AgentRunJournalService {
         let mut latest = 0;
         loop {
             let page = self
-                .session_eventing
+                .event_reader
                 .list_event_page(runtime_session_id, after_seq, JOURNAL_EVENT_PAGE_SIZE)
                 .await
                 .map_err(map_session_io_error)?;
@@ -275,7 +287,7 @@ impl AgentRunJournalService {
         let mut events = Vec::new();
         loop {
             let page = self
-                .session_eventing
+                .event_reader
                 .list_event_page(
                     &segment.runtime_session_id,
                     after_seq,
@@ -303,9 +315,70 @@ trait AgentRunJournalLineagePort: Send + Sync {
 }
 
 #[async_trait]
+trait AgentRunJournalEventPageReader: Send + Sync {
+    async fn list_event_page(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+        limit: u32,
+    ) -> io::Result<SessionEventPage>;
+}
+
+#[async_trait]
 impl AgentRunJournalLineagePort for SessionBranchingService {
     async fn lineage_parent(&self, session_id: &str) -> io::Result<Option<SessionLineageRecord>> {
         SessionBranchingService::lineage_parent(self, session_id).await
+    }
+}
+
+struct SessionEventingJournalEventPageReader {
+    session_eventing: SessionEventingService,
+}
+
+#[async_trait]
+impl AgentRunJournalEventPageReader for SessionEventingJournalEventPageReader {
+    async fn list_event_page(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+        limit: u32,
+    ) -> io::Result<SessionEventPage> {
+        self.session_eventing
+            .list_event_page(session_id, after_seq, limit)
+            .await
+    }
+}
+
+struct SessionEventStoreJournalEventPageReader {
+    event_store: Arc<dyn SessionEventStore>,
+}
+
+#[async_trait]
+impl AgentRunJournalEventPageReader for SessionEventStoreJournalEventPageReader {
+    async fn list_event_page(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+        limit: u32,
+    ) -> io::Result<SessionEventPage> {
+        self.event_store
+            .list_event_page(session_id, after_seq, limit)
+            .await
+            .map_err(Into::into)
+    }
+}
+
+struct SessionLineageStoreJournalLineagePort {
+    lineage_store: Arc<dyn SessionLineageStore>,
+}
+
+#[async_trait]
+impl AgentRunJournalLineagePort for SessionLineageStoreJournalLineagePort {
+    async fn lineage_parent(&self, session_id: &str) -> io::Result<Option<SessionLineageRecord>> {
+        self.lineage_store
+            .get_session_lineage(session_id)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -523,7 +596,9 @@ mod tests {
         }));
         AgentRunJournalService {
             lineage,
-            session_eventing: eventing,
+            event_reader: Arc::new(SessionEventingJournalEventPageReader {
+                session_eventing: eventing,
+            }),
         }
     }
 

@@ -37,7 +37,12 @@ pub(crate) fn build_vfs_kernel(
             repos.skill_asset_repo.clone(),
             session_stores.meta.clone(),
             session_stores.events.clone(),
+            session_stores.lineage.clone(),
             session_stores.compactions.clone(),
+            repos.lifecycle_agent_repo.clone(),
+            repos.agent_frame_repo.clone(),
+            repos.execution_anchor_repo.clone(),
+            repos.agent_run_delivery_binding_repo.clone(),
             tool_result_cache,
         )
         .register(Arc::new(RelayFsMountProvider::new(

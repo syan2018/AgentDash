@@ -615,6 +615,7 @@ fn project_surface_with_effective_skill_keys(
             };
             let lifecycle_mount = build_lifecycle_mount_with_node_scope(
                 node.run_id,
+                Some(input.address.agent_id),
                 node.orchestration_id,
                 &node.node_path,
                 &node.lifecycle_key,
@@ -945,6 +946,7 @@ mod tests {
         let mut vfs = Vfs {
             mounts: vec![build_lifecycle_mount_with_node_scope(
                 Uuid::new_v4(),
+                None,
                 Uuid::new_v4(),
                 "plan",
                 "dev",
@@ -1199,6 +1201,7 @@ mod tests {
         };
         base.mounts.push(build_lifecycle_mount_with_node_scope(
             Uuid::new_v4(),
+            None,
             Uuid::new_v4(),
             "stale",
             "stale",
@@ -1354,6 +1357,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let orchestration_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
         let surface = project_surface_with_effective_skill_keys(
             AgentRunLifecycleSurfaceInput {
                 base_vfs: Some(Vfs {
@@ -1365,7 +1369,7 @@ mod tests {
                 }),
                 address: AgentRunRuntimeAddress {
                     run_id,
-                    agent_id: Uuid::new_v4(),
+                    agent_id,
                     frame_id: Uuid::new_v4(),
                 },
                 message_stream: Some(MessageStreamProjectionRef {
@@ -1403,6 +1407,13 @@ mod tests {
                 .get("scope")
                 .and_then(serde_json::Value::as_str),
             Some("node_runtime")
+        );
+        assert_eq!(
+            lifecycle
+                .metadata
+                .get("agent_id")
+                .and_then(serde_json::Value::as_str),
+            Some(agent_id.to_string().as_str())
         );
         assert_eq!(
             lifecycle

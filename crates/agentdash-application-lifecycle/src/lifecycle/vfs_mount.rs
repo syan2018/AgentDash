@@ -52,6 +52,7 @@ pub(crate) fn build_agent_run_session_lifecycle_mount(
 
 pub(crate) fn build_lifecycle_mount_with_node_scope(
     run_id: Uuid,
+    agent_id: Option<Uuid>,
     orchestration_id: Uuid,
     node_path: &str,
     lifecycle_key: &str,
@@ -74,6 +75,9 @@ pub(crate) fn build_lifecycle_mount_with_node_scope(
         "writable_port_keys": writable_port_keys,
         "directory_hint": lifecycle_directory_hint()
     });
+    if let Some(agent_id) = agent_id {
+        metadata["agent_id"] = serde_json::json!(agent_id.to_string());
+    }
     if let Some(attempt) = attempt {
         metadata["attempt"] = serde_json::json!(attempt);
     }

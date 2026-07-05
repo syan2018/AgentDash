@@ -64,6 +64,7 @@ pub(crate) fn lifecycle_mount_overlay_for_surface(surface: &LifecycleMountSurfac
     Vfs {
         mounts: vec![build_lifecycle_mount_with_node_scope(
             surface.run_id,
+            None,
             surface.orchestration_id,
             surface.node_path,
             surface.lifecycle_key,

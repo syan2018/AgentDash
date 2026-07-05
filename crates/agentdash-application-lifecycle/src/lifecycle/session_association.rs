@@ -583,6 +583,7 @@ mod tests {
         let launch_frame = AgentFrame::new_revision(agent.id, 1, "launch");
         let lifecycle_mount = build_lifecycle_mount_with_node_scope(
             run_id,
+            None,
             orchestration_id,
             "agent",
             "test_lifecycle",

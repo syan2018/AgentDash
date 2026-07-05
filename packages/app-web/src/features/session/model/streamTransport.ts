@@ -14,9 +14,7 @@ const RETRY_MAX_MS = 8000;
 export type SessionStreamLifecycle = "connecting" | "connected" | "reconnecting" | "closed";
 
 export interface SessionStreamTransportOptions {
-  sessionId: string | null;
-  agentRunTarget?: AgentRunRuntimeTarget | null;
-  endpoint?: string;
+  agentRunTarget: AgentRunRuntimeTarget;
   sinceId?: number;
   onEvent: (event: SessionEventEnvelope) => void;
   onLifecycleChange: (lifecycle: SessionStreamLifecycle) => void;
@@ -29,37 +27,8 @@ export interface SessionStreamTransport {
   close: () => void;
 }
 
-function buildStreamEndpoint(
-  sessionId: string | null | undefined,
-  endpoint?: string,
-  agentRunTarget?: AgentRunRuntimeTarget | null,
-): string {
-  if (endpoint && endpoint.trim().length > 0) {
-    return endpoint;
-  }
-  if (agentRunTarget) {
-    return `/api/agent-runs/${encodeURIComponent(agentRunTarget.runId)}/agents/${encodeURIComponent(agentRunTarget.agentId)}/journal/stream/ndjson`;
-  }
-  const rawSessionId = sessionId?.trim();
-  if (!rawSessionId) {
-    throw new Error("Session stream requires sessionId unless agentRunTarget is provided.");
-  }
-  return `/api/sessions/${encodeURIComponent(rawSessionId)}/stream/ndjson`;
-}
-
-function buildNdjsonEndpoint(
-  sessionId: string | null | undefined,
-  endpoint?: string,
-  agentRunTarget?: AgentRunRuntimeTarget | null,
-): string {
-  const streamEndpoint = buildStreamEndpoint(sessionId, endpoint, agentRunTarget);
-  const [path, query = ""] = streamEndpoint.split("?");
-  const ndjsonPath = path.endsWith("/stream/ndjson")
-    ? path
-    : path.endsWith("/stream")
-      ? `${path}/ndjson`
-      : `${path}/stream/ndjson`;
-  return query ? `${ndjsonPath}?${query}` : ndjsonPath;
+function buildStreamEndpoint(agentRunTarget: AgentRunRuntimeTarget): string {
+  return `/api/agent-runs/${encodeURIComponent(agentRunTarget.runId)}/agents/${encodeURIComponent(agentRunTarget.agentId)}/journal/stream/ndjson`;
 }
 
 function normalizeError(error: unknown, fallbackMessage: string): Error {
@@ -104,11 +73,7 @@ class FetchNdjsonTransport implements SessionStreamTransport {
 
     try {
       const response = await authenticatedFetch(
-        resolveApiUrl(buildNdjsonEndpoint(
-          this.options.sessionId,
-          this.options.endpoint,
-          this.options.agentRunTarget,
-        )),
+        resolveApiUrl(buildStreamEndpoint(this.options.agentRunTarget)),
         {
           method: "GET",
           headers,

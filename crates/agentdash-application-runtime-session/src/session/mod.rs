@@ -61,10 +61,7 @@ pub mod types;
 mod user_context_frame;
 
 pub use crate::runtime::McpServerSummary;
-pub use branching::{
-    SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,
-    SessionProjectionRollbackRequest, SessionProjectionRollbackResult,
-};
+pub use branching::{SessionBranchingService, SessionForkRequest, SessionForkResult};
 pub use context::ExecutorResolution;
 pub use context_projector::ContextProjector;
 pub use context_usage_projection::{

@@ -89,12 +89,10 @@ function getItemKey(item: SessionDisplayItem): string {
  */
 function ContextUsageRing({
   usage,
-  sessionId,
   agentRunTarget,
   refreshKey,
 }: {
   usage: TokenUsageInfo | null;
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey: number;
 }) {
@@ -121,8 +119,7 @@ function ContextUsageRing({
     };
   }, [open]);
 
-  // 没有上下文投影目标时不渲染入口
-  if (!agentRunTarget && !sessionId) return null;
+  if (!agentRunTarget) return null;
 
   const maxTokens = usage ? usage.effectiveContextWindow ?? usage.modelContextWindow : undefined;
   const currentContextTokens = usage?.currentContextTokens ?? 0;
@@ -201,7 +198,6 @@ function ContextUsageRing({
       {open && (
         <div className="absolute bottom-full right-0 z-50 mb-1.5 w-[min(680px,calc(100vw-2rem))]">
           <SessionProjectionView
-            sessionId={sessionId}
             agentRunTarget={agentRunTarget}
             refreshKey={refreshKey}
             tokenUsage={usage}
@@ -237,7 +233,6 @@ export function SessionChatStream({
   agentRunTarget,
   hasRuntimeStreamTarget,
   isLoading,
-  sessionId,
   streamingEntryId,
   streamPrefixContent,
   onForkFromMessageRef,
@@ -249,7 +244,6 @@ export function SessionChatStream({
   agentRunTarget?: AgentRunRuntimeTarget | null;
   hasRuntimeStreamTarget: boolean;
   isLoading: boolean;
-  sessionId: string | null;
   streamingEntryId: string | null;
   streamPrefixContent?: ReactNode;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
@@ -273,7 +267,6 @@ export function SessionChatStream({
                 key={segment.turnId ?? `gap-${idx}`}
                 segment={segment}
                 agentRunTarget={agentRunTarget}
-                sessionId={sessionId}
                 streamingEntryId={streamingEntryId}
                 onForkFromMessageRef={onForkFromMessageRef}
               />
@@ -288,7 +281,6 @@ export function SessionChatStream({
                     item={item}
                     agentRunTarget={agentRunTarget}
                     isStreaming={key === streamingEntryId}
-                    sessionId={sessionId}
                     followedByMessage={followed}
                   />
                 </div>
@@ -398,13 +390,11 @@ function useActiveTurnElapsedMs(startedAtMs: number | undefined, active: boolean
 function TurnSection({
   segment,
   agentRunTarget,
-  sessionId,
   streamingEntryId,
   onForkFromMessageRef,
 }: {
   segment: TurnSegment;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  sessionId: string | null;
   streamingEntryId: string | null;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
@@ -449,7 +439,6 @@ function TurnSection({
                 item={item}
                 agentRunTarget={agentRunTarget}
                 isStreaming={key === streamingEntryId}
-                sessionId={sessionId}
                 followedByMessage={followed}
               />
             </div>
@@ -480,7 +469,6 @@ function TurnSection({
           item={segment.finalOutput}
           agentRunTarget={agentRunTarget}
           isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
-          sessionId={sessionId}
         />
       )}
       <RoundActionToolbar
@@ -597,7 +585,6 @@ export function SessionChatComposer({
   showExecutorSelector,
   workspaceId,
   tokenUsage,
-  sessionId,
   agentRunTarget,
   projectionRefreshKey,
   onAtTrigger,
@@ -629,7 +616,6 @@ export function SessionChatComposer({
   showExecutorSelector: boolean;
   workspaceId?: string | null;
   tokenUsage: TokenUsageInfo | null;
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   projectionRefreshKey: number;
   onAtTrigger: (query: string) => void;
@@ -796,7 +782,6 @@ export function SessionChatComposer({
           <div className={isExpanded ? "order-4 flex items-center gap-0.5" : "order-3 flex items-center gap-0.5"}>
             <ContextUsageRing
               usage={tokenUsage}
-              sessionId={sessionId}
               agentRunTarget={agentRunTarget}
               refreshKey={projectionRefreshKey}
             />

@@ -13,32 +13,11 @@ use agentdash_relay::*;
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::relay::registry::BackendCommandError;
-use crate::routes::sessions::ensure_session_permission;
+use crate::routes::runtime_traces::ensure_runtime_trace_permission;
 use crate::{app_state::AppState, rpc::ApiError};
-
-/// Internal diagnostics: GET /api/sessions/:session_id/terminals
-pub async fn list_terminals(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<Vec<TerminalState>>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    let terminals = state.services.terminal_cache.list_terminals(&session_id);
-    Ok(Json(terminals))
-}
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
-        .route(
-            "/sessions/{id}/terminals",
-            axum::routing::get(list_terminals),
-        )
         .route("/terminals/{id}/input", axum::routing::post(terminal_input))
         .route(
             "/terminals/{id}/resize",
@@ -60,7 +39,7 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
         .await
     {
         return Err(ApiError::Conflict(format!(
-            "RuntimeSession 默认 workspace 所属 Backend 当前不在线: {}",
+            "runtime trace 默认 workspace 所属 Backend 当前不在线: {}",
             target.backend_id
         )));
     }
@@ -242,7 +221,7 @@ async fn load_terminal_for_user(
         .terminal_cache
         .get_terminal(terminal_id)
         .ok_or_else(|| ApiError::NotFound("terminal not found".to_string()))?;
-    ensure_session_permission(
+    ensure_runtime_trace_permission(
         state.as_ref(),
         current_user,
         &term_state.session_id,

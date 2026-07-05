@@ -16,7 +16,6 @@ export type {
   SessionChatViewIntents,
   SessionChatViewProps,
 } from "./SessionChatViewTypes";
-export { SessionList, type SessionListProps } from "./SessionList";
 export { SessionEntry, type SessionEntryProps } from "./SessionEntry";
 export {
   ToolCallCardShell,
@@ -42,10 +41,6 @@ export {
   type SessionProjectionViewPanelProps,
   type SessionProjectionViewProps,
 } from "./SessionProjectionView";
-export {
-  SessionLineageViewPanel,
-  type SessionLineageViewPanelProps,
-} from "./SessionLineageView";
 export { ContentBlockCard, type ContentBlockCardProps } from "./ContentBlockCard";
 export {
   SessionTaskContextCard as SessionTaskContextCard,

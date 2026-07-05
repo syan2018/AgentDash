@@ -95,7 +95,7 @@ Frontend type entrypoints re-export generated contracts directly when the wire s
 
 Session projection view DTOs expose `AgentContextEnvelope` provenance to the browser: segment origin, synthetic marker, source range, projection segment id and compaction metadata remain generated contract fields. Frontend service code consumes the generated projection response directly and must not redefine this projection shape outside generated session contracts.
 
-Session diagnostic branch DTOs live in `agentdash-contracts::session`: fork request/response, lineage record/view and projection rollback response. They describe RuntimeSession trace provenance for internal detail/debug surfaces. Product fork flows use AgentRun scoped workflow DTOs so frontend navigation, command receipts, mailbox outcome and ownership remain keyed by `run_id + agent_id`.
+Runtime trace projection DTOs live in `agentdash-contracts::session` when the browser needs generated event, projection or context wire shapes. Runtime trace branching and lineage stay application-internal primitives; product fork flows use AgentRun scoped workflow DTOs so frontend navigation, command receipts, mailbox outcome and ownership remain keyed by `run_id + agent_id`.
 
 LLM Provider DTOs live in `agentdash-contracts::llm_provider`，原因是管理员 Provider Catalog、用户 BYOK effective list、credential mode、probe 请求、用户凭据验证状态和 Codex OAuth 登录状态都由前端设置页与执行器 discovery 共同消费。前端 API 层消费 `generated/llm-provider-contracts.ts`，只保留 service 调用和轻量 view model 状态；`credential_mode`、`effective_api_key_source`、`global_api_key_configured`、`user_api_key_configured`、`user_credential_verification_status`、`CodexOAuthStatusResponse.status` 等字段不在前端手写重声明。
 
@@ -132,7 +132,7 @@ LLM Provider DTOs live in `agentdash-contracts::llm_provider`，原因是管理�
 ### 1. Scope / Trigger
 
 - Trigger: AgentRun workspace, runtime-control, conversation feed, composer helper and fork flow share a browser-visible execution state contract.
-- Scope: `AgentRunWorkspaceView`, `AgentConversationSnapshot`, `AgentConversationFeedSnapshot`, AgentRun scoped runtime routes, frontend AgentRun workspace services/hooks, and raw RuntimeSession diagnostic surfaces.
+- Scope: `AgentRunWorkspaceView`, `AgentConversationSnapshot`, `AgentConversationFeedSnapshot`, AgentRun scoped runtime routes, frontend AgentRun workspace services/hooks, and RuntimeTraceView diagnostics.
 
 ### 2. Signatures
 
@@ -169,9 +169,9 @@ fetchAgentRunWorkspace(target): Promise<AgentRunWorkspaceView>
   Session feed grouping may use runtime events for terminal metadata, but AgentRun pages only mark a segment active
   when this active turn id matches the segment turn id. This keeps fork markers, replayed parent transcript slices and
   terminal child replay from fabricating an execution label.
-- Frontend AgentRun pages do not expose a session-control service and do not map `delivery_trace_meta` into session shell state.
+- Frontend AgentRun pages use AgentRun workspace services for control state; `delivery_trace_meta` remains a trace link and diagnostics ref.
 - `RuntimeSessionTraceMeta.runtime_session_ref` may feed stream connection or trace link construction. Its `delivery_status` is diagnostic summary, not AgentRun command/status authority.
-- Raw RuntimeSession diagnostics remain trace/event/context surfaces; they do not expose a control state view.
+- Runtime trace diagnostics are exposed as `RuntimeTraceView` for trace meta, events and turns. AgentRun scoped context projection/audit routes resolve the current delivery RuntimeSession internally.
 - Fork display seed is delivered as `AgentConversationFeedSnapshot` entries and reduced into display entries before child durable runtime replay begins from `runtime_replay_start_seq`.
 
 ### 4. Validation & Error Matrix
@@ -179,9 +179,9 @@ fetchAgentRunWorkspace(target): Promise<AgentRunWorkspaceView>
 | Condition | Required behavior |
 | --- | --- |
 | AgentRun scoped runtime-control returns session trace state | Contract drift; replace with `AgentRunWorkspaceView` mapping |
-| Frontend imports session runtime-control helpers | Contract drift; consume AgentRun workspace state |
-| Frontend maps `delivery_trace_meta.delivery_status` to `last_delivery_status` | Contract drift; use AgentRun shell/control/conversation state |
-| RuntimeSession diagnostic panel needs state | Use trace meta, events, stream, context projection or audit surfaces |
+| Frontend control helpers are needed | Consume AgentRun workspace state and generated AgentRun command DTOs |
+| Runtime trace metadata is present | AgentRun shell/control/conversation state remains the user-visible status source |
+| Runtime trace diagnostic panel needs state | Use `RuntimeTraceView` for trace meta/events/turns and AgentRun scoped context projection/audit when the UI is in a workspace |
 | Stale RuntimeSession summary says running but inspected execution is completed | AgentRun workspace and composer show non-running/fresh command state |
 | AgentRun conversation has fork marker/replayed inherited entries but `active_turn_id` is absent or different | Chat segment is not rendered as active/executing |
 | Fork child feed has parent visible messages | Display entries are seeded before child durable replay and do not advance child durable cursor |
@@ -189,31 +189,21 @@ fetchAgentRunWorkspace(target): Promise<AgentRunWorkspaceView>
 ### 5. Good/Base/Bad Cases
 
 - Good: AgentRun page opens, reads workspace state, starts stream using the trace handle, and all user-visible controls come from `conversation.commands`.
-- Good: RuntimeSession detail panel opens from a trace link and renders trace meta/events/context diagnostics.
+- Good: Runtime trace detail opens from a trace link and renders trace meta/events/turn diagnostics.
 - Base: AgentRun has no current delivery trace; workspace still renders shell/control state without a session control view.
-- Bad: AgentRun page constructs `sessionMeta` from `delivery_trace_meta` and displays “running” from `last_delivery_status`.
+- Base: Runtime trace metadata can be shown as a trace link while status and command availability stay on AgentRun workspace/conversation state.
 
 ### 6. Tests Required
 
 - `cargo check -p agentdash-api` verifies route response signatures and API mapping.
 - `pnpm run contracts:check` verifies generated DTO drift.
-- `pnpm --filter app-web typecheck` catches stale session-control service imports.
+- `pnpm --filter app-web typecheck` verifies AgentRun workspace service imports and generated DTO usage.
 - `pnpm --filter app-web test -- session` covers AgentRun feed seed, stream cursor, terminal refresh and provider waiting.
-- Audit search:
-  `rg -n "delivery_trace_meta|runtime_session_ref|last_delivery_status|sessionMeta|controlAnchor" packages/app-web/src crates/agentdash-api/src/routes crates/agentdash-contracts/src crates/agentdash-application-agentrun/src`
+- Audit search confirms product code consumes AgentRun workspace state for status and command authority while runtime trace metadata remains diagnostic.
 
 ### 7. Wrong vs Correct
 
-#### Wrong
-
-```ts
-const sessionMeta = {
-  id: workspace.delivery_trace_meta.runtime_session_ref.runtime_session_id,
-  last_delivery_status: workspace.delivery_trace_meta.delivery_status,
-};
-```
-
-#### Correct
+#### Canonical
 
 ```ts
 const status = workspace.conversation?.execution.status ?? workspace.control_plane.status;
@@ -340,8 +330,8 @@ HTTP surface:
 POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
 POST /agent-runs/{run_id}/agents/{agent_id}/fork
 POST /agent-runs/{run_id}/agents/{agent_id}/fork-submit
-GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/events
-GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/stream/ndjson
+GET  /agent-runs/{run_id}/agents/{agent_id}/journal/events
+GET  /agent-runs/{run_id}/agents/{agent_id}/journal/stream/ndjson
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context/audit
 POST /agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/approve
@@ -379,8 +369,8 @@ Generated TypeScript is consumed directly from `packages/app-web/src/generated/w
 - Project `Use` authorizes AgentRun workspace read, runtime trace read, start, continue own run, explicit fork, and fork-submit. Project `Configure` authorizes Project / ProjectAgent / VFS / backend access / workflow / MCP preset / skill asset mutation. Project `ManageSharing` authorizes membership changes.
 - AgentRun owner is persisted on LifecycleRun / LifecycleAgent and controls whether composer submit writes parent mailbox or returns a fork outcome.
 - `AgentRunMessageCommandResponse.fork` is present when the effective write target is a newly created child AgentRun. Frontend navigation uses `fork.redirect`.
-- AgentRun runtime endpoints resolve the current delivery RuntimeSession server-side, then return existing generated session/runtime event or projection DTOs.
-- Retained Session diagnostic endpoints can reuse session contracts but must not appear in product service imports for fork / lineage / rollback.
+- AgentRun runtime endpoints resolve the current delivery RuntimeSession server-side, then return generated journal, projection, audit or tool-approval DTOs from the AgentRun product identity.
+- Runtime trace lineage primitives remain behind AgentRun fork/materialization services; browser-facing fork state is generated from workflow contracts.
 
 ### 4. Validation & Error Matrix
 
@@ -406,9 +396,9 @@ Generated TypeScript is consumed directly from `packages/app-web/src/generated/w
 ### 6. Tests Required
 
 - Contract check asserts `AgentRunForkOutcomeView`, fork command request/response DTOs, `AgentRunMessageCommandResponse.fork`, and runtime endpoint response DTOs generate to TypeScript.
-- API tests cover member `Use`, editor/owner no silent parent takeover, fork redirect shape, duplicate replay, and retained Session diagnostic permission.
+- API tests cover member `Use`, editor/owner no silent parent takeover, fork redirect shape, duplicate replay, and runtime trace diagnostic permission.
 - Frontend service tests assert AgentRun scoped URLs and generated DTO consumption.
-- Workspace tests assert composer fork redirect, explicit fork from round action, copy-last-agent-reply payload, and no product imports for raw Session fork / lineage / rollback services.
+- Workspace tests assert composer fork redirect, explicit fork from round action, copy-last-agent-reply payload, and AgentRun scoped service usage.
 
 ### 7. Boundary Mismatch / Canonical
 
@@ -911,7 +901,7 @@ const editable = canvas.access.can_edit_source === true;
 ### 1. Scope / Trigger
 
 - Trigger: AgentRun runtime 可以在同一个 delivery session 内采用新的 `AgentFrame` revision，例如 Canvas create/bind/present 写入新的 VFS mount 和 workspace module visibility。
-- Scope: backend session-facing frame resolver、AgentRun Workspace projection、Canvas runtime snapshot、Session control view、WorkspacePanel Canvas tab opening。
+- Scope: backend runtime-trace-facing frame resolver、AgentRun Workspace projection、Canvas runtime snapshot、AgentRun runtime surface view、WorkspacePanel Canvas tab opening。
 
 ### 2. Signatures
 
@@ -965,10 +955,10 @@ agent_run_delivery_bindings(
 
 ### 3. Contracts
 
-- Session-facing frame reads start from `runtime_session_id` and resolve through `RuntimeSessionExecutionAnchor`.
+- Runtime-trace-facing frame reads start from `runtime_session_id` and resolve through `RuntimeSessionExecutionAnchor`.
 - `RuntimeSessionExecutionAnchor.launch_frame_id` is launch evidence; it is not the current workspace surface after runtime adoption.
 - `resolve_current_frame_from_delivery_trace_ref` validates anchor -> agent -> run ownership before returning the effective `AgentFrame`.
-- `AgentFrameRepository.get_current(agent_id)` is a repository-level revision lookup used inside resolvers or static non-session views. Frontend-facing AgentRun, Canvas, VFS and Session runtime paths must not choose a frame from a raw agent id when a delivery runtime session is available.
+- `AgentFrameRepository.get_current(agent_id)` is a repository-level revision lookup used inside resolvers or static non-delivery views. Frontend-facing AgentRun, Canvas, VFS and runtime trace paths resolve through the current delivery binding when a delivery runtime session is available.
 - `AgentRunDeliveryBinding` stores the current delivery binding keyed by `run_id + agent_id`. `LifecycleAgent` does not store current delivery or current frame pointers.
 - Canvas presentation opens from `workspace_module_presented.presentation_uri = canvas://{canvas_mount_id}`. The runtime surface refresh may happen before opening, but the concrete presentation URI is authoritative for tab creation.
 
@@ -986,7 +976,7 @@ agent_run_delivery_bindings(
 ### 5. Reference Cases
 
 - Canvas presentation flow: `workspace_module_present(canvas:{canvas_mount_id}, preview)` creates/adopts a new frame revision; Agent runtime tools, AgentRun Workspace `resource_surface`, Canvas runtime snapshot, and WorkspacePanel tab all observe the same mount.
-- Session control flow: Session control view receives a runtime session id and resolves frame runtime through `resolve_current_frame_from_delivery_trace_ref`.
+- Runtime trace flow: trace view receives a runtime session id and resolves frame runtime through `resolve_current_frame_from_delivery_trace_ref`.
 - Draft/static run flow: A draft/static run view with no delivery runtime may show the latest frame revision via `AgentFrameRepository.get_current(agent_id)` because no session anchor exists.
 - Frame freshness: Canvas snapshot and AgentRun resource surface resolve from the current adopted frame revision so late Canvas exposure is visible to both runtime and UI.
 - Presentation ordering: WorkspacePanel opens `canvas://{canvas_mount_id}` from the presentation payload while runtime surface refresh catches up.

@@ -1,20 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
-pub struct NdjsonStreamQuery {
+pub struct AgentRunJournalStreamQuery {
     pub since_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct SessionEventsQuery {
+pub struct AgentRunJournalEventsQuery {
     pub after_seq: Option<u64>,
     pub limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateSessionMetaRequest {
-    #[serde(default)]
-    pub title: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -4,6 +4,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::routes::runtime_traces;
 use agentdash_agent::MessageRef;
 use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_cancel_runtime, agent_run_session_control, agent_run_session_core,
@@ -65,8 +66,8 @@ use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 use crate::dto::{
-    ContextAuditQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionEventsQuery,
-    SpawnTerminalBody,
+    AgentRunJournalEventsQuery, AgentRunJournalStreamQuery, ContextAuditQuery,
+    RejectToolApprovalRequest, SpawnTerminalBody,
 };
 use crate::{
     agent_run_runtime_surface::resolve_terminal_launch_target_for_runtime_session,
@@ -78,7 +79,7 @@ use crate::{
             backend_selection_input, command_receipt_view, mailbox_command_outcome_view,
             mailbox_message_view, mailbox_message_visible, mailbox_state_view,
         },
-        sessions, terminals,
+        terminals,
         vfs_surfaces::dto as vfs_surface_dto,
     },
     rpc::{ApiError, ApiErrorWithCode},
@@ -1017,7 +1018,7 @@ async fn list_agent_run_journal_events(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Query(query): Query<SessionEventsQuery>,
+    Query(query): Query<AgentRunJournalEventsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let context = resolve_agent_run_context(
         state.as_ref(),
@@ -1146,7 +1147,7 @@ async fn get_agent_run_runtime_context_projection(
     let runtime_session_id =
         resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
     Ok(Json(
-        sessions::load_runtime_session_context_projection(state.as_ref(), &runtime_session_id)
+        runtime_traces::load_runtime_trace_context_projection(state.as_ref(), &runtime_session_id)
             .await?,
     ))
 }
@@ -1160,8 +1161,12 @@ async fn get_agent_run_runtime_context_audit(
     let runtime_session_id =
         resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
     Ok(Json(
-        sessions::load_runtime_session_context_audit(state.as_ref(), &runtime_session_id, query)
-            .await?,
+        runtime_traces::load_runtime_trace_context_audit(
+            state.as_ref(),
+            &runtime_session_id,
+            query,
+        )
+        .await?,
     ))
 }
 
@@ -1170,7 +1175,7 @@ async fn agent_run_journal_stream_route(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     headers: HeaderMap,
-    Query(query): Query<NdjsonStreamQuery>,
+    Query(query): Query<AgentRunJournalStreamQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let context = resolve_agent_run_context(
         state.as_ref(),
@@ -1187,7 +1192,7 @@ async fn agent_run_journal_stream_ndjson(
     state: &AppState,
     context: AgentRunContext,
     headers: HeaderMap,
-    query: NdjsonStreamQuery,
+    query: AgentRunJournalStreamQuery,
 ) -> Result<Response, ApiError> {
     let resume_from = parse_agent_run_journal_resume_from_header(&headers)?
         .or(query.since_id)

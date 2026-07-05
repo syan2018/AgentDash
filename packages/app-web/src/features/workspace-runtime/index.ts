@@ -1,7 +1,7 @@
 export type {
   ProjectExtensionRuntimeState,
   ProjectExtensionRuntimeStatus,
-  SessionRuntimeStateStatus,
+  WorkspaceRuntimeStateStatus,
   WorkspaceBackendTarget,
   WorkspaceRuntimeData,
 } from "./model/types";

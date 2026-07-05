@@ -48,7 +48,6 @@ export interface SessionEntryProps {
   item: SessionDisplayItem;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   isStreaming?: boolean;
-  sessionId?: string | null;
   /** 该条目后面是否紧跟 agent message（用于 tool group 自动折叠） */
   followedByMessage?: boolean;
 }
@@ -57,7 +56,6 @@ export const SessionEntry = memo(function SessionEntry({
   item,
   agentRunTarget,
   isStreaming,
-  sessionId,
   followedByMessage,
 }: SessionEntryProps) {
   if (isAggregatedGroup(item)) {
@@ -65,7 +63,6 @@ export const SessionEntry = memo(function SessionEntry({
       <AggregatedToolGroupEntry
         group={item}
         agentRunTarget={agentRunTarget}
-        sessionId={sessionId}
         followedByMessage={followedByMessage}
       />
     );
@@ -85,7 +82,6 @@ export const SessionEntry = memo(function SessionEntry({
         entry={item}
         agentRunTarget={agentRunTarget}
         isStreaming={!!isStreaming}
-        sessionId={sessionId}
       />
     );
   }
@@ -97,12 +93,10 @@ export function SingleEntry({
   entry,
   agentRunTarget,
   isStreaming = false,
-  sessionId,
 }: {
   entry: SessionDisplayEntry;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   isStreaming?: boolean;
-  sessionId?: string | null;
 }) {
   const { event, isPendingApproval, accumulatedText } = entry;
   const { prefs } = useDebugPrefs();
@@ -133,7 +127,7 @@ export function SingleEntry({
     case "item_completed": {
       const threadItem = event.payload.item;
       const card = renderToolCallCard(threadItem, {
-        sessionId: sessionId ?? undefined,
+        sessionId: entry.sessionId,
         outputText: accumulatedText,
       });
       return (
@@ -184,7 +178,7 @@ export function SingleEntry({
         return (
           <SessionSystemEventCard
             event={event}
-            sessionId={sessionId ?? undefined}
+            sessionId={entry.sessionId}
             contextFrame={entry.contextFrame}
           />
         );
@@ -291,12 +285,10 @@ function AggregatedContextFrameGroupEntry({
 function AggregatedToolGroupEntry({
   group,
   agentRunTarget,
-  sessionId,
   followedByMessage = false,
 }: {
   group: AggregatedEntryGroup;
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  sessionId?: string | null;
   /** 后续有 agent message 时自动折叠 */
   followedByMessage?: boolean;
 }) {
@@ -344,7 +336,6 @@ function AggregatedToolGroupEntry({
               key={entry.id}
               entry={entry}
               agentRunTarget={agentRunTarget}
-              sessionId={sessionId}
             />
           ))}
         </div>

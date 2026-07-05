@@ -69,7 +69,6 @@ export interface SessionChatMailboxModel {
 }
 
 export interface SessionChatModel {
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   workspaceId?: string | null;
   executorHint?: string | null;

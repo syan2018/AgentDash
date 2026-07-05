@@ -72,7 +72,7 @@ function submitIntent(commandId: string): AgentRunChatSubmitIntent {
   };
 }
 
-function sessionMetaEvent(key: string, value: JsonValue): BackboneEvent {
+function platformMetaUpdateEvent(key: string, value: JsonValue): BackboneEvent {
   return {
     type: "platform",
     payload: {
@@ -207,7 +207,7 @@ describe("AgentRun control-plane model", () => {
   it("plans workspace refresh from companion wait-related events", () => {
     expect(planAgentRunSystemEvent(
       "companion_human_request",
-      sessionMetaEvent("companion_human_request", {
+      platformMetaUpdateEvent("companion_human_request", {
         gate_id: "gate-1",
         companion_label: "Research Agent",
       }),
@@ -218,7 +218,7 @@ describe("AgentRun control-plane model", () => {
 
     expect(planAgentRunSystemEvent(
       "companion_result_returned",
-      sessionMetaEvent("companion_result_returned", {
+      platformMetaUpdateEvent("companion_result_returned", {
         gate_id: "gate-1",
         mailbox_message_id: "mailbox-1",
       }),
@@ -231,7 +231,7 @@ describe("AgentRun control-plane model", () => {
   it("plans capability refresh from context frame events", () => {
     const plan = planAgentRunSystemEvent(
       "context_frame",
-      sessionMetaEvent("context_frame", {
+      platformMetaUpdateEvent("context_frame", {
         kind: "capability_state_delta",
       }),
     );
@@ -246,7 +246,7 @@ describe("AgentRun control-plane model", () => {
   it("opens Canvas presentation from presentation_uri after refreshing runtime surface", () => {
     const plan = planAgentRunSystemEvent(
       "workspace_module_presented",
-      sessionMetaEvent("workspace_module_presented", {
+      platformMetaUpdateEvent("workspace_module_presented", {
         module_id: "canvas:canvas-1",
         view_key: "preview",
         renderer_kind: "canvas",
@@ -272,7 +272,7 @@ describe("AgentRun control-plane model", () => {
   it("does not synthesize Canvas presentation URI from view_key", () => {
     const plan = planAgentRunSystemEvent(
       "workspace_module_presented",
-      sessionMetaEvent("workspace_module_presented", {
+      platformMetaUpdateEvent("workspace_module_presented", {
         module_id: "canvas:canvas-1",
         view_key: "canvas-1",
         renderer_kind: "canvas",

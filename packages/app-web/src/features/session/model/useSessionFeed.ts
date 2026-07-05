@@ -25,10 +25,8 @@ import type {
 } from "./types";
 
 export interface UseSessionFeedOptions {
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   activeTurnId?: string | null;
-  endpoint?: string;
   enableAggregation?: boolean;
   enabled?: boolean;
 }
@@ -45,7 +43,6 @@ export interface UseSessionFeedResult {
   error: Error | null;
   reconnect: () => void;
   close: () => void;
-  sendCancel: () => Promise<void>;
   streamingEntryId: string | null;
   tokenUsage: TokenUsageInfo | null;
 }
@@ -842,10 +839,8 @@ export function segmentByTurn(
 
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
   const {
-    sessionId,
     agentRunTarget = null,
     activeTurnId,
-    endpoint,
     enableAggregation = true,
     enabled,
   } = options;
@@ -863,11 +858,8 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     tokenUsage,
     reconnect,
     close,
-    sendCancel,
   } = useSessionStream({
-    sessionId,
     agentRunTarget,
-    endpoint,
     enabled,
   });
 
@@ -904,7 +896,6 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     error,
     reconnect,
     close,
-    sendCancel,
     streamingEntryId,
     tokenUsage,
   };

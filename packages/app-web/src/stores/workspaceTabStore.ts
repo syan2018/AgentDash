@@ -7,7 +7,10 @@
 
 import { create } from "zustand";
 import type { TabInstance, WorkspaceTabLayout } from "../features/workspace-runtime";
-import { saveWorkspaceTabLayout, loadWorkspaceTabLayout } from "../services/session";
+import {
+  loadWorkspaceTabLayout,
+  saveWorkspaceTabLayout,
+} from "../services/agentRunWorkspaceLayout";
 
 let nextTabSeq = 1;
 function generateTabId(): string {

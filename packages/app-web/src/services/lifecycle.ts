@@ -65,7 +65,7 @@ export async function fetchAgentFrameRuntime(frameId: string): Promise<AgentFram
 
 export async function fetchRuntimeTrace(runtimeSessionId: string): Promise<RuntimeSessionTraceView> {
   return api.get<RuntimeSessionTraceView>(
-    `/sessions/${encodeURIComponent(runtimeSessionId)}/trace`,
+    `/runtime-traces/${encodeURIComponent(runtimeSessionId)}`,
   );
 }
 

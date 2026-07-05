@@ -231,7 +231,6 @@ describe("createSessionStreamTransport", () => {
       body: null,
     } as Response);
     const transport = createSessionStreamTransport({
-      sessionId: null,
       agentRunTarget: { runId: "run 1", agentId: "agent/1" },
       onEvent: vi.fn(),
       onLifecycleChange: vi.fn(),
@@ -248,23 +247,6 @@ describe("createSessionStreamTransport", () => {
         cache: "no-store",
       }),
     );
-
-    transport.close();
-  });
-
-  it("rejects raw session stream when session id is missing", () => {
-    const onError = vi.fn();
-    const transport = createSessionStreamTransport({
-      sessionId: null,
-      onEvent: vi.fn(),
-      onLifecycleChange: vi.fn(),
-      onError,
-    });
-
-    expect(mocks.authenticatedFetch).not.toHaveBeenCalled();
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-      message: "Session stream requires sessionId unless agentRunTarget is provided.",
-    }));
 
     transport.close();
   });

@@ -158,39 +158,22 @@ describe("computeProjectionRefreshKey", () => {
 });
 
 describe("rawEventsBelongToRuntimeStreamTarget", () => {
-  it("matches raw session events by raw session id", () => {
-    const events = [eventEnvelope(1, agentDeltaEvent("assistant-1"), "session-1")];
-
-    expect(rawEventsBelongToRuntimeStreamTarget({
-      rawEvents: events,
-      sessionId: "session-1",
-      agentRunTarget: null,
-    })).toBe(true);
-    expect(rawEventsBelongToRuntimeStreamTarget({
-      rawEvents: events,
-      sessionId: "other-session",
-      agentRunTarget: null,
-    })).toBe(false);
-  });
-
   it("matches AgentRun events by synthetic stream key when raw session id is absent", () => {
     const syntheticSessionId = "agentrun:run-1:agent-1";
     const events = [eventEnvelope(1, turnTerminalMetaEvent("turn_completed"), syntheticSessionId)];
 
     expect(rawEventsBelongToRuntimeStreamTarget({
       rawEvents: events,
-      sessionId: null,
       agentRunTarget: { runId: "run-1", agentId: "agent-1" },
     })).toBe(true);
   });
 
-  it("prefers AgentRun synthetic stream key when diagnostic session id is present", () => {
+  it("matches AgentRun synthetic stream key as the only chat stream identity", () => {
     const syntheticSessionId = "agentrun:run-1:agent-1";
     const events = [eventEnvelope(1, turnTerminalMetaEvent("turn_completed"), syntheticSessionId)];
 
     expect(rawEventsBelongToRuntimeStreamTarget({
       rawEvents: events,
-      sessionId: "runtime-session-1",
       agentRunTarget: { runId: "run-1", agentId: "agent-1" },
     })).toBe(true);
   });
@@ -200,7 +183,6 @@ describe("rawEventsBelongToRuntimeStreamTarget", () => {
 
     expect(rawEventsBelongToRuntimeStreamTarget({
       rawEvents: events,
-      sessionId: null,
       agentRunTarget: { runId: "run-1", agentId: "agent-1" },
     })).toBe(false);
   });

@@ -11,20 +11,14 @@ GET /api/events/stream/ndjson?project_id=<uuid>
 Header: x-stream-since-id: <i64> (optional)
 ```
 
-AgentRun runtime 事件流：
+AgentRun journal 事件流：
 
 ```text
-GET /agent-runs/{run_id}/agents/{agent_id}/runtime/stream/ndjson
+GET /agent-runs/{run_id}/agents/{agent_id}/journal/stream/ndjson
 Header: x-stream-since-id: <u64>
 ```
 
-诊断会话事件流：
-
-```text
-GET /api/acp/sessions/{id}/stream/ndjson
-Header: x-stream-since-id: <u64>
-Query: since_id=<u64> (direct debugging only)
-```
+Runtime trace 诊断读取通过 `GET /runtime-traces/{runtime_session_id}` 返回只读 trace view；它服务事件、turn 与 frame 诊断，不承担实时产品流。
 
 ## Project Stream Contract
 

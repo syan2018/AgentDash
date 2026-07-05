@@ -187,7 +187,7 @@ async fn ensure_runtime_session_exists(
         .session_core
         .get_session_meta(session_id)
         .await?
-        .ok_or_else(|| ApiError::NotFound(format!("RuntimeSession trace {session_id} 不存在")))?;
+        .ok_or_else(|| ApiError::NotFound(format!("runtime trace {session_id} 不存在")))?;
     Ok(())
 }
 
@@ -203,7 +203,7 @@ fn runtime_surface_query_error_to_api(error: AgentRunRuntimeSurfaceQueryError) -
         AgentRunRuntimeSurfaceQueryError::MissingAnchor {
             runtime_session_id, ..
         } => ApiError::NotFound(format!(
-            "RuntimeSession trace 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
+            "runtime trace 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
         )),
         AgentRunRuntimeSurfaceQueryError::MissingLifecycleRun { run_id, .. } => {
             ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}"))

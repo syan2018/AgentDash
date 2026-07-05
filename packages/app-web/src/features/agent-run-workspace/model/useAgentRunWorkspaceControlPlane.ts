@@ -279,8 +279,6 @@ export function useAgentRunWorkspaceControlPlane({
   }, [handleMoveMailboxMessage, refreshAgentRunList]);
 
   const chatModel = useMemo<AgentRunChatModel>(() => ({
-    // AgentRun streams by agentRunTarget; raw session id is only for diagnostic trace paths.
-    sessionId: null,
     executorHint,
     agentDefaults: draftProjectAgent?.effective_executor_config
       ?? workspaceControl?.conversation?.model_config.effective_executor_config

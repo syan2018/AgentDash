@@ -423,8 +423,7 @@ Tool output:
 - Mailbox adapter tests assert wake/result observation does not claim or drain messages.
 - AgentRun workspace projection tests assert running exec terminal rows appear as `ConversationWaitingItemView`
   entries without adding terminal output to mailbox messages.
-- Static grep/check tests assert no source-specific `wait_exec`/`wait_human` top-level tools and no product
-  `/sessions/*` wait/control route are introduced.
+- Static grep/check tests assert wait tooling remains one AgentRun runtime tool and product wait/control routes stay AgentRun scoped.
 
 ### 7. Wrong vs Correct
 

@@ -143,9 +143,7 @@ use agentdash_contracts::routine::{
     RoutineTriggerConfigResponse, UpdateRoutineRequest,
 };
 use agentdash_contracts::session::{
-    SessionCommandStateResponse, SessionEventResponse, SessionEventsPageResponse,
-    SessionLineageRecordResponse, SessionLineageRelationKindDto, SessionLineageStatusDto,
-    SessionLineageViewResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
+    SessionEventResponse, SessionEventsPageResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
     SessionProjectionMessageRefResponse, SessionProjectionSegmentProvenanceResponse,
     SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
     SessionProjectionViewResponse,
@@ -573,17 +571,12 @@ fn main() {
             export_all::<SessionEventResponse>(dir);
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
-            export_all::<SessionCommandStateResponse>(dir);
             export_all::<SessionProjectionSourceRangeResponse>(dir);
             export_all::<SessionProjectionMessageRefResponse>(dir);
             export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
             export_all::<SessionProjectionSegmentViewResponse>(dir);
             export_all::<SessionProjectionViewResponse>(dir);
-            export_all::<SessionLineageRelationKindDto>(dir);
-            export_all::<SessionLineageStatusDto>(dir);
             export_all::<SessionMessageRefDto>(dir);
-            export_all::<SessionLineageRecordResponse>(dir);
-            export_all::<SessionLineageViewResponse>(dir);
         },
     );
 

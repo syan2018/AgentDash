@@ -208,21 +208,21 @@ raw `turn_id`、raw `tool_call_id` 和 provider trace 留在结构化 metadata /
 和 cache writer 只消费同一个 allocator/provider 返回的 typed ref，原因是 Backbone projection、
 cache key 与 lifecycle VFS 路径必须共享一个 session scoped item identity。
 
-## NDJSON Session Stream
+## AgentRun Journal Stream
 
 Product workspace stream:
 
 ```text
-GET /agent-runs/{run_id}/agents/{agent_id}/runtime/stream/ndjson
+GET /agent-runs/{run_id}/agents/{agent_id}/journal/stream/ndjson
 ```
 
-Diagnostic trace stream:
+Runtime trace detail:
 
 ```text
-GET /api/acp/sessions/{id}/stream/ndjson
+GET /runtime-traces/{runtime_session_id}
 ```
 
-The product stream resolves the current delivery RuntimeSession from AgentRun refs before opening the same Backbone NDJSON envelope. The diagnostic trace stream is retained for runtime inspection and must pass the same Project `Use` permission through `RuntimeSessionExecutionAnchor`.
+The product stream resolves the current delivery RuntimeSession from AgentRun refs, then projects durable Backbone events through AgentRun journal sequence. Runtime trace detail is a read-only inspection view and must pass the same Project `Use` permission through `RuntimeSessionExecutionAnchor`.
 
 Product AgentRun stream 使用 AgentRun journal cursor，而不是 raw RuntimeSession cursor。Fork 后的父级可见事件、子 session fork marker 与子 session 后续事件在后端合并为一个单调 AgentRun journal sequence；前端只消费 NDJSON envelope，不根据 fork lineage、runtime session id 或 event seq 做 prefix/replay 特例。
 

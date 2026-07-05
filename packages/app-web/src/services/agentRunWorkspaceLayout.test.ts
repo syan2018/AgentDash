@@ -1,15 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  apiGetMock: vi.fn(),
   settingsListMock: vi.fn(),
   settingsUpdateMock: vi.fn(),
-}));
-
-vi.mock("../api/client", () => ({
-  api: {
-    get: mocks.apiGetMock,
-  },
 }));
 
 vi.mock("../api/settings", () => ({
@@ -22,11 +15,10 @@ vi.mock("../api/settings", () => ({
 import {
   loadWorkspaceTabLayout,
   saveWorkspaceTabLayout,
-} from "./session";
+} from "./agentRunWorkspaceLayout";
 
-describe("session service", () => {
+describe("agentRunWorkspaceLayout service", () => {
   beforeEach(() => {
-    mocks.apiGetMock.mockReset();
     mocks.settingsListMock.mockReset();
     mocks.settingsUpdateMock.mockReset();
   });

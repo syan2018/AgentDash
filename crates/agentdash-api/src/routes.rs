@@ -27,7 +27,7 @@ pub mod projects;
 pub mod release_info;
 pub mod routines;
 pub mod runner_registration_tokens;
-pub mod sessions;
+pub mod runtime_traces;
 pub mod settings;
 pub mod shared_library;
 pub mod skill_assets;
@@ -103,7 +103,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(workspace_module::router())
         .merge(project_extensions::router())
         .merge(extension_package_artifacts::router())
-        .merge(sessions::router())
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .merge(vfs::router())
         .merge(vfs_surfaces::router())

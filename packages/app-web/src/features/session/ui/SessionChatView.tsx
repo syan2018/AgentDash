@@ -5,7 +5,7 @@
  * 执行器选择、上下文用量指示、发送/取消。
  *
  * AgentRun workspace 等 runtime trace 场景复用此组件，
- * 由父组件管理 sessionId 生命周期和外层导航。
+ * 由父组件提供 AgentRun journal target 与外层导航。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -71,7 +71,6 @@ export function SessionChatView({
   openWorkspacePanel,
 }: SessionChatViewProps) {
   const {
-    sessionId,
     agentRunTarget,
     workspaceId,
     executorHint,
@@ -143,7 +142,7 @@ export function SessionChatView({
     setSendError(null);
     setIsCancelling(false);
     cancelInFlightRef.current = false;
-  }, [agentRunTargetKey, sessionId]);
+  }, [agentRunTargetKey]);
 
   // ─── 执行器配置 ──────────────────────────────────────
 
@@ -171,7 +170,6 @@ export function SessionChatView({
   );
   const executorHydrationKey = useMemo(() => {
     if (executorStateKey) return executorStateKey;
-    if (sessionId) return sessionId;
     const source = toExecutorConfigSource(snapshotExecutorDefaults ?? agentDefaults);
     if (source) {
       return [
@@ -184,7 +182,7 @@ export function SessionChatView({
       ].join(":");
     }
     return resolvedHint ? `draft:${resolvedHint}` : null;
-  }, [agentDefaults, executorStateKey, resolvedHint, sessionId, snapshotExecutorDefaults]);
+  }, [agentDefaults, executorStateKey, resolvedHint, snapshotExecutorDefaults]);
 
   // 每个 session 仅 hydrate 一次（用户手改后切走再切回不会被再次覆盖）。
   // 首帧 agentDefaults 可能还没到，effect 会等 agentDefaults 就绪后再命中条件。
@@ -267,7 +265,7 @@ export function SessionChatView({
 
   // ─── 会话流 ──────────────────────────────────────────
 
-  const hasRuntimeStreamTarget = agentRunTarget != null || sessionId !== null;
+  const hasRuntimeStreamTarget = agentRunTarget != null;
 
   const {
     displayItems,
@@ -279,13 +277,11 @@ export function SessionChatView({
     isLoading,
     error: wsError,
     reconnect,
-    sendCancel,
     streamingEntryId,
     tokenUsage,
   } = useSessionFeed({
-    sessionId,
     agentRunTarget,
-    activeTurnId: agentRunTarget ? commandState.activeTurnId ?? null : undefined,
+    activeTurnId: commandState.activeTurnId ?? null,
     enabled: hasRuntimeStreamTarget,
   });
 
@@ -294,8 +290,8 @@ export function SessionChatView({
     [rawEvents],
   );
   const rawEventsBelongToCurrentSession = useMemo(
-    () => rawEventsBelongToRuntimeStreamTarget({ rawEvents, sessionId, agentRunTarget }),
-    [agentRunTarget, rawEvents, sessionId],
+    () => rawEventsBelongToRuntimeStreamTarget({ rawEvents, agentRunTarget }),
+    [agentRunTarget, rawEvents],
   );
   const canApplyLiveEventSideEffects =
     hasRuntimeStreamTarget &&
@@ -322,12 +318,11 @@ export function SessionChatView({
     lastSystemEventSeqRef.current = null;
     lastTaskToolEventSeqRef.current = null;
     lastTurnLifecycleEventSeqRef.current = null;
-  }, [agentRunTargetKey, sessionId]);
+  }, [agentRunTargetKey]);
 
   useEffect(() => {
     if (!hasRuntimeStreamTarget || !rawEventsBelongToCurrentSession || rawEvents.length === 0) return;
-    if (!agentRunTarget && historyReplayBoundarySeq == null) return;
-    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? (agentRunTarget ? 0 : historyReplayBoundarySeq ?? 0);
+    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? 0;
     lastTurnLifecycleEventSeqRef.current = afterSeq;
     const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
     lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
@@ -475,10 +470,6 @@ export function SessionChatView({
     try {
       if (cancelAction) {
         await cancelAction();
-      } else {
-        if (sessionId) {
-          await sendCancel();
-        }
       }
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "取消失败，请重试。");
@@ -486,7 +477,7 @@ export function SessionChatView({
       cancelInFlightRef.current = false;
       setIsCancelling(false);
     }
-  }, [cancelAction, commandState.cancelCommand, sendCancel, sessionId]);
+  }, [cancelAction, commandState.cancelCommand]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -633,7 +624,6 @@ export function SessionChatView({
         agentRunTarget={agentRunTarget}
         hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
-        sessionId={sessionId}
         streamingEntryId={streamingEntryId}
         streamPrefixContent={streamPrefixContent}
         onForkFromMessageRef={intents.forkFromMessageRef}
@@ -674,7 +664,6 @@ export function SessionChatView({
           showExecutorSelector={showExecutorSelector}
           workspaceId={workspaceId}
           tokenUsage={tokenUsage}
-          sessionId={sessionId}
           agentRunTarget={agentRunTarget}
           projectionRefreshKey={projectionRefreshKey}
           onAtTrigger={handleAtTrigger}

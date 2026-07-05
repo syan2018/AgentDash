@@ -9,9 +9,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
-  fetchSessionEvents,
-} from "../../../services/session";
-import {
   fetchAgentRunJournalEvents,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
@@ -35,11 +32,9 @@ import {
 } from "./sessionPlatformEventDispatcher";
 
 export interface UseSessionStreamOptions {
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   /** 设为 false 时跳过连接，返回空的初始状态。默认 true。 */
   enabled?: boolean;
-  endpoint?: string;
   initialEntries?: SessionDisplayEntry[];
   onConnectionChange?: (connected: boolean) => void;
   onError?: (error: Error) => void;
@@ -57,7 +52,6 @@ export interface UseSessionStreamResult {
   tokenUsage: TokenUsageInfo | null;
   reconnect: () => void;
   close: () => void;
-  sendCancel: () => Promise<void>;
 }
 
 const FLUSH_INTERVAL_MS = 50;
@@ -67,17 +61,14 @@ const EMPTY_INITIAL_ENTRIES: SessionDisplayEntry[] = [];
 
 export function useSessionStream(options: UseSessionStreamOptions): UseSessionStreamResult {
   const {
-    sessionId,
     agentRunTarget = null,
     enabled = true,
-    endpoint,
     initialEntries,
     onConnectionChange,
     onError,
   } = options;
   const normalizedInitialEntries = initialEntries ?? EMPTY_INITIAL_ENTRIES;
-  const rawSessionId = sessionId?.trim() || null;
-  const hasStreamTarget = agentRunTarget != null || rawSessionId != null;
+  const hasStreamTarget = agentRunTarget != null;
 
   const [streamState, setStreamState] = useState<SessionStreamState>(() =>
     createInitialStreamState(normalizedInitialEntries),
@@ -181,13 +172,6 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     enqueueEventRef.current = enqueueEvent;
   }, [enqueueEvent]);
 
-  const sendCancel = useCallback(async () => {
-    const err = new Error("RuntimeSession trace 不提供取消入口。");
-    setError(err);
-    callbackRefs.current.onError?.(err);
-    throw err;
-  }, []);
-
   useEffect(() => {
     mountedRef.current = true;
 
@@ -205,7 +189,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     const agentRunKey = agentRunTarget
       ? `${agentRunTarget.runId}:${agentRunTarget.agentId}`
       : "";
-    const sourceKey = `session:${rawSessionId ?? ""}|agentrun:${agentRunKey}|${endpoint ?? ""}`;
+    const sourceKey = `agentrun:${agentRunKey}`;
     const shouldResetState = sourceKeyRef.current !== sourceKey;
     sourceKeyRef.current = sourceKey;
 
@@ -236,11 +220,8 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
 
       try {
         while (!cancelled) {
-          const page = agentRunTarget
-            ? await fetchAgentRunJournalEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE)
-            : rawSessionId
-              ? await fetchSessionEvents(rawSessionId, afterSeq, HISTORY_PAGE_SIZE)
-              : { events: [], next_after_seq: afterSeq, has_more: false };
+          if (!agentRunTarget) return;
+          const page = await fetchAgentRunJournalEvents(agentRunTarget, afterSeq, HISTORY_PAGE_SIZE);
           const pageEvents = page.events;
           projectSessionTerminalPlatformEvents(pageEvents, callbackRefs.current.onError);
           nextState = reduceStreamState(nextState, pageEvents);
@@ -259,9 +240,7 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
         }
 
         transportRef.current = createSessionStreamTransport({
-          sessionId: rawSessionId,
           agentRunTarget,
-          endpoint,
           sinceId: nextState.lastAppliedSeq,
           onEvent: (event) => {
             if (!mountedRef.current) return;
@@ -344,11 +323,8 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     agentRunTarget,
     connectKey,
     enabled,
-    endpoint,
     flushPendingEvents,
     hasStreamTarget,
-    rawSessionId,
-    sessionId,
     clearReceiving,
   ]);
 
@@ -385,7 +361,6 @@ export function useSessionStream(options: UseSessionStreamOptions): UseSessionSt
     tokenUsage: streamState.tokenUsage,
     reconnect,
     close,
-    sendCancel,
   };
 }
 

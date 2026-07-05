@@ -27,12 +27,11 @@ export function isAgentRunWorkspaceActionRunning(input: {
 
 export function rawEventsBelongToRuntimeStreamTarget(input: {
   rawEvents: SessionEventEnvelope[];
-  sessionId: string | null;
   agentRunTarget?: AgentRunJournalIdentityTarget | null;
 }): boolean {
   const expectedSessionId = input.agentRunTarget
     ? agentRunJournalSessionId(input.agentRunTarget)
-    : input.sessionId?.trim() || null;
+    : null;
   if (!expectedSessionId) {
     return input.rawEvents.length === 0;
   }

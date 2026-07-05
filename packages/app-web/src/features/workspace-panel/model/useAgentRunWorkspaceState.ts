@@ -5,13 +5,13 @@ import type { AgentFrameHookRuntimeInfo } from "../../../types";
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchAgentRunWorkspace } from "../../../services/lifecycle";
-import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
+import type { WorkspaceRuntimeStateStatus } from "../../workspace-runtime";
 
 export interface AgentRunWorkspaceState {
   run_id: string | null;
   agent_id: string | null;
   source_key: string | null;
-  status: SessionRuntimeStateStatus;
+  status: WorkspaceRuntimeStateStatus;
   workspace: AgentRunWorkspaceView | null;
   runtime_surface: ResolvedVfsSurface | null;
   hook_runtime: AgentFrameHookRuntimeInfo | null;

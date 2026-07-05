@@ -5,20 +5,14 @@ import { SessionProjectionViewPanel } from "./SessionProjectionView";
 
 const mocks = vi.hoisted(() => ({
   fetchAgentRunRuntimeContextProjection: vi.fn(),
-  fetchSessionContextProjection: vi.fn(),
 }));
 
 vi.mock("../../../services/agentRunRuntime", () => ({
   fetchAgentRunRuntimeContextProjection: mocks.fetchAgentRunRuntimeContextProjection,
 }));
 
-vi.mock("../../../services/session", () => ({
-  fetchSessionContextProjection: mocks.fetchSessionContextProjection,
-}));
-
 beforeEach(() => {
   mocks.fetchAgentRunRuntimeContextProjection.mockReset();
-  mocks.fetchSessionContextProjection.mockReset();
 });
 
 afterEach(() => {
@@ -88,7 +82,6 @@ describe("fetchSessionProjectionForTarget", () => {
     const { SessionProjectionView } = await importProjectionViewWithImmediateEffects();
 
     SessionProjectionView({
-      sessionId: null,
       agentRunTarget: { runId: "run-1", agentId: "agent-1" },
       refreshKey: 0,
       tokenUsage: null,
@@ -100,25 +93,6 @@ describe("fetchSessionProjectionForTarget", () => {
       runId: "run-1",
       agentId: "agent-1",
     });
-    expect(mocks.fetchSessionContextProjection).not.toHaveBeenCalled();
-  });
-
-  it("raw session projection 仍要求 session id 作为 fallback target", async () => {
-    const projection = sampleProjection();
-    mocks.fetchSessionContextProjection.mockResolvedValue(projection);
-    const { SessionProjectionView } = await importProjectionViewWithImmediateEffects();
-
-    SessionProjectionView({
-      sessionId: "sess-1",
-      agentRunTarget: null,
-      refreshKey: 0,
-      tokenUsage: null,
-      embedded: false,
-    });
-    await flushPromises();
-
-    expect(mocks.fetchSessionContextProjection).toHaveBeenCalledWith("sess-1");
-    expect(mocks.fetchAgentRunRuntimeContextProjection).not.toHaveBeenCalled();
   });
 });
 

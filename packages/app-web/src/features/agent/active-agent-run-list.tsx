@@ -9,10 +9,14 @@ import { CardMenu, ConfirmDialog, type CardMenuItem } from "@agentdash/ui";
 import { useCallback, useMemo, useState } from "react";
 import { useMatch, useNavigate } from "react-router-dom";
 import type { AgentRunListChild, AgentRunWorkspaceListEntry } from "../../types";
-import type { SessionExecutionStatusValue } from "../../services/session";
 import { deleteAgentRun } from "../../services/agentRun";
 import { formatRelativeTime } from "../../lib/format";
 import { agentSourceLabel } from "../../lib/agent-source";
+import {
+  AGENT_RUN_DELIVERY_STATUS_LABEL,
+  normalizeAgentRunDeliveryStatus,
+  type AgentRunDeliveryStatus,
+} from "./agent-run-delivery-status";
 import {
   useAgentRunListState,
   useAgentRunListStateStore,
@@ -27,17 +31,7 @@ import {
 /** 首屏 / 每批分页大小（与后端默认一致）。 */
 const PAGE_SIZE = 30;
 
-const executionStatusLabel: Record<SessionExecutionStatusValue, string> = {
-  idle: "就绪",
-  running: "执行中",
-  cancelling: "取消中",
-  completed: "已完成",
-  failed: "失败",
-  interrupted: "已中断",
-  lost: "已丢失",
-};
-
-const executionStatusDotColor: Record<SessionExecutionStatusValue, string> = {
+const executionStatusDotColor: Record<AgentRunDeliveryStatus, string> = {
   idle: "bg-gray-400",
   running: "bg-emerald-500 animate-pulse",
   cancelling: "bg-amber-500 animate-pulse",
@@ -56,22 +50,7 @@ const STATUS_TAB_OPTIONS: Array<{ value: StatusFilterGroup; label: string }> = [
   { value: "ended", label: "已结束" },
 ];
 
-function normalizeExecutionStatus(status: string): SessionExecutionStatusValue {
-  if (
-    status === "idle"
-    || status === "running"
-    || status === "cancelling"
-    || status === "completed"
-    || status === "failed"
-    || status === "interrupted"
-    || status === "lost"
-  ) {
-    return status;
-  }
-  return "idle";
-}
-
-function statusGroupOf(status: SessionExecutionStatusValue): Exclude<StatusFilterGroup, "all"> {
+function statusGroupOf(status: AgentRunDeliveryStatus): Exclude<StatusFilterGroup, "all"> {
   switch (status) {
     case "running": return "running";
     case "cancelling": return "running";
@@ -92,11 +71,11 @@ function updatedAtTimestamp(value: string | null | undefined): number | null {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
-function StatusDot({ status }: { status: SessionExecutionStatusValue }) {
+function StatusDot({ status }: { status: AgentRunDeliveryStatus }) {
   return (
     <span
       className={`inline-block h-2 w-2 shrink-0 rounded-full ${executionStatusDotColor[status] ?? "bg-gray-400"}`}
-      title={executionStatusLabel[status] ?? status}
+      title={AGENT_RUN_DELIVERY_STATUS_LABEL[status] ?? status}
     />
   );
 }
@@ -237,7 +216,7 @@ interface AgentRunChildRowProps {
 
 function AgentRunChildRow({ child, depth, selectedAgentId, onOpenAgentRun }: AgentRunChildRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const status = normalizeExecutionStatus(child.shell.delivery_status);
+  const status = normalizeAgentRunDeliveryStatus(child.shell.delivery_status);
   const updatedAt = updatedAtTimestamp(child.shell.last_activity_at);
   const title = child.shell.display_title.trim() || child.project_agent_label?.trim() || "Companion";
   const isSelected = selectedAgentId === child.agent_ref.agent_id;
@@ -279,7 +258,7 @@ function AgentRunChildRow({ child, depth, selectedAgentId, onOpenAgentRun }: Age
             />
           )}
           <span className="shrink-0 text-[10px] text-muted-foreground/60">
-            {executionStatusLabel[status] ?? status}
+            {AGENT_RUN_DELIVERY_STATUS_LABEL[status] ?? status}
           </span>
         </div>
       </button>
@@ -311,7 +290,7 @@ function AgentRunRow({
   onRequestDelete,
 }: AgentRunRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const status = normalizeExecutionStatus(entry.shell.delivery_status);
+  const status = normalizeAgentRunDeliveryStatus(entry.shell.delivery_status);
   const updatedAt = updatedAtTimestamp(entry.shell.last_activity_at);
   const title = entry.shell.display_title.trim() || "AgentRun 加载中...";
   const children = entry.children ?? [];
@@ -369,7 +348,7 @@ function AgentRunRow({
             />
           )}
           <span className="shrink-0 text-[10px] text-muted-foreground/60">
-            {executionStatusLabel[status] ?? status}
+            {AGENT_RUN_DELIVERY_STATUS_LABEL[status] ?? status}
           </span>
         </div>
       </div>
@@ -509,7 +488,7 @@ export function ActiveAgentRunList({
 
     if (statusFilter !== "all") {
       list = list.filter((entry) =>
-        statusGroupOf(normalizeExecutionStatus(entry.shell.delivery_status)) === statusFilter
+        statusGroupOf(normalizeAgentRunDeliveryStatus(entry.shell.delivery_status)) === statusFilter
       );
     }
 

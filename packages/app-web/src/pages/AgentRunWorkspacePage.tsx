@@ -500,7 +500,6 @@ export function AgentRunWorkspacePage({
       : "返回 Story";
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
     projectId: ownerProjectId,
-    traceSessionId: null,
     agentRunRuntimeTarget,
     lifecycleRun: null,
     lifecycleAgent: workspaceControl?.agent ?? null,

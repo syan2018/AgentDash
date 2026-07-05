@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     auth::{ProjectPermission, load_project_with_permission},
-    routes::sessions::ensure_session_permission,
+    routes::runtime_traces::ensure_runtime_trace_permission,
     rpc::ApiError,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
@@ -51,7 +51,8 @@ async fn ensure_surface_permission(
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {
     if let ResolvedVfsSurfaceSource::SessionRuntime { session_id } = source {
-        ensure_session_permission(state.as_ref(), current_user, session_id, permission).await?;
+        ensure_runtime_trace_permission(state.as_ref(), current_user, session_id, permission)
+            .await?;
         return Ok(());
     }
 

@@ -112,7 +112,7 @@ function SubjectExecutionContent({ view }: { view: SubjectExecutionView | null }
                     key={ref.runtime_session_id}
                     className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                   >
-                    RuntimeSession trace {ref.runtime_session_id.slice(0, 8)}
+                    Runtime trace {ref.runtime_session_id.slice(0, 8)}
                   </span>
                 ))}
               </div>

@@ -3,7 +3,6 @@ import type {
   SessionProjectionSegmentViewResponse,
   SessionProjectionViewResponse,
 } from "../../../generated/session-contracts";
-import { fetchSessionContextProjection } from "../../../services/session";
 import {
   fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,
@@ -11,7 +10,6 @@ import {
 import type { TokenUsageInfo } from "../model/types";
 
 export interface SessionProjectionViewProps {
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey?: number;
   tokenUsage?: TokenUsageInfo | null;
@@ -30,17 +28,12 @@ export interface SessionProjectionViewPanelProps {
 }
 
 async function fetchSessionProjectionForTarget({
-  sessionId,
   agentRunTarget,
 }: {
-  sessionId: string | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
 }): Promise<SessionProjectionViewResponse | null> {
   if (agentRunTarget) {
     return fetchAgentRunRuntimeContextProjection(agentRunTarget);
-  }
-  if (sessionId) {
-    return fetchSessionContextProjection(sessionId);
   }
   return null;
 }
@@ -351,7 +344,6 @@ export function SessionProjectionViewPanel({
 }
 
 export function SessionProjectionView({
-  sessionId,
   agentRunTarget = null,
   refreshKey = 0,
   tokenUsage = null,
@@ -362,21 +354,21 @@ export function SessionProjectionView({
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!agentRunTarget && !sessionId) {
+    if (!agentRunTarget) {
       setProjection(null);
       return;
     }
     setIsLoading(true);
     setError(null);
     try {
-      const next = await fetchSessionProjectionForTarget({ sessionId, agentRunTarget });
+      const next = await fetchSessionProjectionForTarget({ agentRunTarget });
       setProjection(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载模型上下文失败");
     } finally {
       setIsLoading(false);
     }
-  }, [agentRunTarget, sessionId]);
+  }, [agentRunTarget]);
 
   useEffect(() => {
     void refresh();

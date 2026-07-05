@@ -31,27 +31,6 @@ pub struct SessionForkResult {
     pub projection_commit: CompactionProjectionCommitResult,
 }
 
-#[derive(Debug, Clone)]
-pub struct SessionProjectionRollbackRequest {
-    pub session_id: String,
-    pub target_event_seq: u64,
-    pub active_compaction_id: Option<String>,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionProjectionRollbackResult {
-    pub event: PersistedSessionEvent,
-    pub head: SessionProjectionHeadRecord,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionLineageView {
-    pub lineage: Option<SessionLineageRecord>,
-    pub ancestors: Vec<SessionLineageRecord>,
-    pub children: Vec<SessionLineageRecord>,
-}
-
 #[derive(Clone)]
 pub struct SessionBranchingService {
     stores: SessionBranchingStores,
@@ -161,115 +140,6 @@ impl SessionBranchingService {
         })
     }
 
-    pub async fn rollback_model_projection(
-        &self,
-        request: SessionProjectionRollbackRequest,
-    ) -> io::Result<SessionProjectionRollbackResult> {
-        let meta = self
-            .stores
-            .meta
-            .get_session_meta(&request.session_id)
-            .await?
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("session {} 不存在", request.session_id),
-                )
-            })?;
-        if request.target_event_seq > meta.last_event_seq {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "rollback target {} 超过 session head {}",
-                    request.target_event_seq, meta.last_event_seq
-                ),
-            ));
-        }
-
-        let previous_head = self
-            .stores
-            .projections
-            .read_projection_head(&request.session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
-            .await?;
-        let previous_head_event_seq = previous_head
-            .as_ref()
-            .map(|head| head.head_event_seq)
-            .unwrap_or(meta.last_event_seq);
-        if request.target_event_seq > previous_head_event_seq {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "rollback target {} 超过当前模型可见 head {}",
-                    request.target_event_seq, previous_head_event_seq
-                ),
-            ));
-        }
-        let previous_compaction_id = previous_head
-            .as_ref()
-            .and_then(|head| head.active_compaction_id.clone());
-        let active_compaction_id = self
-            .resolve_active_compaction_after_rollback(
-                &request.session_id,
-                request.target_event_seq,
-                request
-                    .active_compaction_id
-                    .clone()
-                    .or_else(|| previous_compaction_id.clone()),
-            )
-            .await?;
-
-        let rollback_event = self
-            .stores
-            .events
-            .append_event(
-                &request.session_id,
-                &rollback_envelope(
-                    &request.session_id,
-                    request.target_event_seq,
-                    previous_head_event_seq,
-                    previous_compaction_id.as_deref(),
-                    active_compaction_id.as_deref(),
-                    request.reason.as_deref(),
-                ),
-            )
-            .await?;
-        let head = SessionProjectionHeadRecord {
-            session_id: request.session_id,
-            projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
-            projection_version: previous_head
-                .map(|head| head.projection_version.saturating_add(1))
-                .unwrap_or(1),
-            head_event_seq: request.target_event_seq,
-            active_compaction_id,
-            updated_by_event_seq: Some(rollback_event.event_seq),
-            updated_at_ms: rollback_event.committed_at_ms,
-        };
-        self.stores
-            .projections
-            .upsert_projection_head(head.clone())
-            .await?;
-        Ok(SessionProjectionRollbackResult {
-            event: rollback_event,
-            head,
-        })
-    }
-
-    pub async fn lineage_view(&self, session_id: &str) -> io::Result<SessionLineageView> {
-        Ok(SessionLineageView {
-            lineage: self.stores.lineage.get_session_lineage(session_id).await?,
-            ancestors: self
-                .stores
-                .lineage
-                .list_session_ancestors(session_id)
-                .await?,
-            children: self
-                .stores
-                .lineage
-                .list_session_children(session_id, None, None)
-                .await?,
-        })
-    }
-
     pub async fn lineage_parent(
         &self,
         session_id: &str,
@@ -364,21 +234,6 @@ impl SessionBranchingService {
             parent_head_event_seq: current_head_event_seq,
             parent_active_compaction_id: current_active_compaction_id,
         })
-    }
-
-    async fn resolve_active_compaction_after_rollback(
-        &self,
-        session_id: &str,
-        target_event_seq: u64,
-        candidate_compaction_id: Option<String>,
-    ) -> io::Result<Option<String>> {
-        let Some(compaction_id) = candidate_compaction_id else {
-            return Ok(None);
-        };
-        let compaction = self
-            .committed_compaction_for_projection_restore(session_id, &compaction_id, "rollback")
-            .await?;
-        Ok(compaction_valid_for_head(&compaction, target_event_seq).then_some(compaction_id))
     }
 
     async fn committed_compaction_for_projection_restore(
@@ -567,34 +422,6 @@ fn branch_forked_envelope(
     )
     .with_trace(agentdash_agent_protocol::TraceInfo {
         turn_id: Some(format!("session-fork:{child_session_id}")),
-        entry_index: None,
-    })
-}
-
-fn rollback_envelope(
-    session_id: &str,
-    target_event_seq: u64,
-    previous_head_event_seq: u64,
-    previous_compaction_id: Option<&str>,
-    active_compaction_id: Option<&str>,
-    reason: Option<&str>,
-) -> BackboneEnvelope {
-    BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-            key: "session_projection_rolled_back".to_string(),
-            value: serde_json::json!({
-                "target_event_seq": target_event_seq,
-                "previous_head_event_seq": previous_head_event_seq,
-                "previous_active_compaction_id": previous_compaction_id,
-                "active_compaction_id": active_compaction_id,
-                "reason": reason,
-            }),
-        }),
-        session_id,
-        platform_source(),
-    )
-    .with_trace(agentdash_agent_protocol::TraceInfo {
-        turn_id: Some(format!("projection-rollback:{target_event_seq}")),
         entry_index: None,
     })
 }
@@ -1104,66 +931,6 @@ mod tests {
         );
         assert!(child_context.messages[0].synthetic);
         assert_eq!(child_context.messages[0].origin.as_str(), "projection");
-    }
-
-    #[tokio::test]
-    async fn rollback_moves_model_head_without_deleting_events() {
-        let (_persistence, stores) = test_stores();
-        stores
-            .meta
-            .create_session(&session_meta("session"))
-            .await
-            .expect("应能创建 session");
-        stores
-            .events
-            .append_event("session", &user_message("session", "turn-1", 0, "one"))
-            .await
-            .expect("应能写入 first message");
-        stores
-            .events
-            .append_event("session", &user_message("session", "turn-2", 0, "two"))
-            .await
-            .expect("应能写入 second message");
-
-        let service = SessionBranchingService::new(stores.branching_stores());
-        let rollback = service
-            .rollback_model_projection(SessionProjectionRollbackRequest {
-                session_id: "session".to_string(),
-                target_event_seq: 1,
-                active_compaction_id: None,
-                reason: Some("test".to_string()),
-            })
-            .await
-            .expect("rollback 应成功");
-        assert_eq!(rollback.head.head_event_seq, 1);
-        assert_eq!(rollback.event.event_seq, 3);
-
-        let forward_rollback = service
-            .rollback_model_projection(SessionProjectionRollbackRequest {
-                session_id: "session".to_string(),
-                target_event_seq: 2,
-                active_compaction_id: None,
-                reason: Some("should fail".to_string()),
-            })
-            .await;
-        assert!(matches!(
-            forward_rollback,
-            Err(error) if error.kind() == io::ErrorKind::InvalidInput
-        ));
-
-        let all_events = stores
-            .events
-            .list_all_events("session")
-            .await
-            .expect("应能读取事件");
-        assert_eq!(all_events.len(), 3);
-
-        let context = ContextProjector::new(stores.projection_stores())
-            .build_model_context("session")
-            .await
-            .expect("应能按 rollback head 恢复 context");
-        assert_eq!(context.messages.len(), 1);
-        assert_eq!(context.messages[0].message.first_text(), Some("one"));
     }
 
     #[tokio::test]

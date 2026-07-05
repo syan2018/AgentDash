@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use crate::error::WorkflowApplicationError;
 
 pub use agentdash_spi::session_persistence::{
-    RuntimeCommandRecord, SessionEventPage, SessionMeta, SessionStoreError, TitleSource,
+    PersistedSessionEvent, RuntimeCommandRecord, SessionEventPage, SessionMeta, SessionStoreError,
+    TitleSource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +205,21 @@ pub trait RuntimeSessionEventingPort: Send + Sync {
         kind: UserInputSubmissionKind,
         input: Vec<UserInputBlock>,
     ) -> Result<(), WorkflowApplicationError>;
+
+    async fn subscribe_after(
+        &self,
+        _session_id: &str,
+        _after_seq: u64,
+    ) -> io::Result<RuntimeSessionEventSubscription> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "runtime session event subscription is not available",
+        ))
+    }
+
+    fn ephemeral_epoch(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Clone)]
@@ -247,6 +263,25 @@ impl SessionEventingService {
             .emit_user_input_submitted(session_id, turn_id, event_id, kind, input)
             .await
     }
+
+    pub async fn subscribe_after(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+    ) -> io::Result<RuntimeSessionEventSubscription> {
+        self.port.subscribe_after(session_id, after_seq).await
+    }
+
+    pub fn ephemeral_epoch(&self) -> u64 {
+        self.port.ephemeral_epoch()
+    }
+}
+
+pub struct RuntimeSessionEventSubscription {
+    pub snapshot_seq: u64,
+    pub backlog: Vec<PersistedSessionEvent>,
+    pub ephemeral_backlog: Vec<PersistedSessionEvent>,
+    pub rx: tokio::sync::broadcast::Receiver<PersistedSessionEvent>,
 }
 
 #[async_trait]

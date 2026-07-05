@@ -172,6 +172,8 @@ cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts
 
 `PersistedSessionEvent.notification` 字段即 `BackboneEnvelope`。`session_events` 持久化只保存 event sequence、时间戳与 `notification_json`；`session_update_type`、`turn_id`、`entry_index`、`tool_call_id` 是 repository 从 envelope 派生出的传输/内存视图字段。领域判断必须回到 `notification` 中的 typed event / trace 解析，派生字段只服务分页响应、NDJSON 和展示定位，不能落成独立事实源。
 
+AgentRun journal、Lifecycle journey 和前端 replay 都必须保留 `PersistedSessionEvent.notification.event` 的 typed `BackboneEvent`。重放、fork prefix、VFS journey 或 NDJSON stream 只允许改写外层坐标字段（例如 product-facing `session_id` 与 AgentRun journal `event_seq`），不能根据 `session_update_type`、tool 名称或 payload 文本重新构造默认 tool / system event。原因是工具卡片、thread item kind、approval、context frame 和 platform event 都以 typed Backbone variant 为唯一渲染与归并入口。
+
 Persisted `BackboneEnvelope` 必须表达模型和前端实际消费的 bounded fact。工具、MCP、shell、
 terminal 等 producer 进入 Backbone 前应完成有界化；`SessionEventingService` 在 append/broadcast 前
 仍测量 envelope size，并对已知 oversized output 字段写入小型
@@ -209,6 +211,10 @@ GET /api/acp/sessions/{id}/stream/ndjson
 ```
 
 The product stream resolves the current delivery RuntimeSession from AgentRun refs before opening the same Backbone NDJSON envelope. The diagnostic trace stream is retained for runtime inspection and must pass the same Project `Use` permission through `RuntimeSessionExecutionAnchor`.
+
+Product AgentRun stream 使用 AgentRun journal cursor，而不是 raw RuntimeSession cursor。Fork 后的父级可见事件、子 session fork marker 与子 session 后续事件在后端合并为一个单调 AgentRun journal sequence；前端只消费 NDJSON envelope，不根据 fork lineage、runtime session id 或 event seq 做 prefix/replay 特例。
+
+`session_branch_forked` 是 child RuntimeSession 在 fork initial projection commit 中持久化的 `PlatformEvent::SessionMetaUpdate`。AgentRun journal 读取这条 child event 并映射到 AgentRun journal sequence；journal 本身不再合成第二条 fork marker。其 payload 至少包含 `child_session_id`、`parent_session_id`、`fork_point_event_seq`、`relation_kind`，可包含 compaction/projection provenance 字段。
 
 每行 JSON：
 

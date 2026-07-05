@@ -18,6 +18,7 @@ Session lineage projection applies to AgentDash-owned cross-session fork and rol
 
 - `fork_session` resolves a message ref, compaction fork point or the current projection head; creates child `SessionMeta`; writes a `Fork` lineage edge; commits a child initial compaction; and initializes the child model context projection head.
 - `fork_session` accepts an explicit compaction fork point only when that compaction has committed projection facts and covers the requested fork event head, because the child initial projection must not inherit model context that is outside the parent boundary.
+- Fork initial projection commit persists the child `session_branch_forked` Backbone platform event as the child RuntimeSession durable event. Product AgentRun journal reuses that event as the single fork marker and maps it into AgentRun journal sequence.
 - Explicit message refs are resolved against the current projected transcript and must land on a complete model-input boundary. Turn completion is judged from the persisted `BackboneEnvelope` terminal event (`TurnCompleted` or platform `turn_terminal`), while `session_update_type` and session summary status remain query/projection fields. A ref gives the fork service both a stable user-facing coordinate and the persisted source range needed to materialize the child context.
 - `rollback_model_projection` appends `session_projection_rolled_back` as a platform event and upserts `session_projection_heads(model_context)` to the requested target head. The target is bounded by the current model-visible projection head, because append-only `session_events` can contain facts that rollback has already hidden from model input.
 - `lineage_view` returns the direct parent edge, ancestors and direct children. List surfaces that only need parent grouping read the direct parent edge instead of the full lineage view.
@@ -131,6 +132,7 @@ lifecycle_agents.created_by_user_id
 - Application tests cover explicit fork, fork-submit, current-user ownership, cross-run lineage, duplicate replay, pending duplicate conflict, terminal failure replay, and parent immutability.
 - API tests cover Project `Use` permission, no Project `Configure` requirement for participation, `composer-submit` fork outcome, and retained diagnostic Session route permission.
 - Frontend tests cover fork redirect navigation, round action disabled reasons, and no product caller using raw Session fork / lineage / rollback services.
+- AgentRun journal tests cover the child `session_branch_forked` event appearing exactly once in the visible journal after parent lineage prefix.
 
 ### 7. Boundary Mismatch / Canonical
 

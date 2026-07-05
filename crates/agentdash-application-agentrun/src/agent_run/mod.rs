@@ -76,8 +76,9 @@ pub use frame::{
     agent_frame_write_boundaries, hook_target_runtime_port,
 };
 pub use journal::{
-    AgentRunJournalEvent, AgentRunJournalPage, AgentRunJournalQuery, AgentRunJournalSegment,
-    AgentRunJournalSegmentRole, AgentRunJournalService, AgentRunJournalView,
+    AgentRunJournalEvent, AgentRunJournalLiveEvent, AgentRunJournalPage, AgentRunJournalQuery,
+    AgentRunJournalSegment, AgentRunJournalSegmentRole, AgentRunJournalService,
+    AgentRunJournalStreamState, AgentRunJournalStreamSubscription, AgentRunJournalView,
     agent_run_journal_session_id, project_event_to_agent_run_journal,
 };
 pub use lifecycle_read_model_facade::{
@@ -147,10 +148,11 @@ pub use runtime_capability_projection::{
 };
 pub use runtime_session_boundary::{
     PromptLaunchPath, RuntimeCommandRecord, RuntimeSessionControlPort, RuntimeSessionCorePort,
-    RuntimeSessionEventingPort, RuntimeSessionLaunchPort, RuntimeTraceLaunchState,
-    SessionControlService, SessionCoreService, SessionEventPage, SessionEventingService,
-    SessionExecutionState, SessionLaunchService, SessionMeta, SessionRepositoryRehydrateMode,
-    SessionTurnSteerCommand, TitleSource, resolve_prompt_launch_path,
+    RuntimeSessionEventSubscription, RuntimeSessionEventingPort, RuntimeSessionLaunchPort,
+    RuntimeTraceLaunchState, SessionControlService, SessionCoreService, SessionEventPage,
+    SessionEventingService, SessionExecutionState, SessionLaunchService, SessionMeta,
+    SessionRepositoryRehydrateMode, SessionTurnSteerCommand, TitleSource,
+    resolve_prompt_launch_path,
 };
 pub use runtime_surface::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,

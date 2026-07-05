@@ -168,6 +168,24 @@ impl agent_run_boundary::RuntimeSessionEventingPort for SessionEventingBridge {
             .map(|_| ())
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))
     }
+
+    async fn subscribe_after(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+    ) -> std::io::Result<agent_run_boundary::RuntimeSessionEventSubscription> {
+        let subscription = self.service.subscribe_after(session_id, after_seq).await?;
+        Ok(agent_run_boundary::RuntimeSessionEventSubscription {
+            snapshot_seq: subscription.snapshot_seq,
+            backlog: subscription.backlog,
+            ephemeral_backlog: subscription.ephemeral_backlog,
+            rx: subscription.rx,
+        })
+    }
+
+    fn ephemeral_epoch(&self) -> u64 {
+        self.service.ephemeral_epoch()
+    }
 }
 
 struct SessionLaunchBridge {

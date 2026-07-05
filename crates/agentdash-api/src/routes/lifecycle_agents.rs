@@ -1196,43 +1196,28 @@ async fn agent_run_journal_stream_ndjson(
     headers: HeaderMap,
     query: NdjsonStreamQuery,
 ) -> Result<Response, ApiError> {
-    let runtime_session_id = delivery_runtime_session_from_agent_run_context(&context)?;
-    sessions::ensure_runtime_session_trace_exists(state, &runtime_session_id).await?;
-    let service = agent_run_journal_service(state);
-    let prefix = service
-        .load_inherited_prefix(app_agent_run::AgentRunJournalQuery {
-            run_id: context.run.id,
-            agent_id: context.agent.id,
-            delivery_runtime_session_id: Some(runtime_session_id.clone()),
-        })
-        .await
-        .map_err(ApiError::from)?;
-    let prefix_len = prefix
-        .events
-        .last()
-        .map(|event| event.journal_seq)
-        .unwrap_or_default();
-    let journal_session_id =
-        app_agent_run::agent_run_journal_session_id(context.run.id, context.agent.id);
     let resume_from = parse_agent_run_journal_resume_from_header(&headers)?
         .or(query.since_id)
         .unwrap_or(0);
-    let runtime_resume_from = resume_from.saturating_sub(prefix_len);
-
-    let subscription = state
-        .services
-        .session_eventing
-        .subscribe_after(&runtime_session_id, runtime_resume_from)
+    let subscription = agent_run_journal_service(state)
+        .subscribe_visible_journal_stream(
+            app_agent_run::AgentRunJournalQuery {
+                run_id: context.run.id,
+                agent_id: context.agent.id,
+                delivery_runtime_session_id: context.delivery_runtime_session_id.clone(),
+            },
+            resume_from,
+        )
         .await
         .map_err(ApiError::from)?;
-    let ephemeral_epoch = state.services.session_eventing.ephemeral_epoch();
+    let stream_state = subscription.state;
+    let mut rx = subscription.live_events;
+    let journal_session_id = stream_state.journal_session_id.clone();
+    let delivery_runtime_session_id = stream_state.delivery_runtime_session_id.clone();
 
     let stream = async_stream::stream! {
         let mut seq = resume_from;
-        for event in prefix.events {
-            if event.journal_seq <= resume_from {
-                continue;
-            }
+        for event in stream_state.prefix_events.iter().cloned() {
             seq = event.journal_seq;
             let projected = app_agent_run::project_event_to_agent_run_journal(
                 event.event,
@@ -1244,12 +1229,11 @@ async fn agent_run_journal_stream_ndjson(
             }
         }
 
-        for event in subscription.backlog {
-            let journal_seq = prefix_len + event.event_seq;
-            seq = journal_seq;
+        for event in stream_state.backlog_events.iter().cloned() {
+            seq = event.journal_seq;
             let projected = app_agent_run::project_event_to_agent_run_journal(
-                event,
-                journal_seq,
+                event.event,
+                event.journal_seq,
                 &journal_session_id,
             );
             if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::event(projected)) {
@@ -1257,19 +1241,17 @@ async fn agent_run_journal_stream_ndjson(
             }
         }
 
-        let connected_seq = std::cmp::max(seq, prefix_len + subscription.snapshot_seq);
         if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::connected(
-            connected_seq,
-            ephemeral_epoch,
+            stream_state.connected_seq,
+            stream_state.ephemeral_epoch,
         )) {
             yield Ok::<Bytes, Infallible>(line);
         }
 
-        for event in subscription.ephemeral_backlog {
-            let journal_seq = prefix_len + event.event_seq;
+        for event in stream_state.ephemeral_backlog_events.iter().cloned() {
             let projected = app_agent_run::project_event_to_agent_run_journal(
-                event,
-                journal_seq,
+                event.event,
+                event.journal_seq,
                 &journal_session_id,
             );
             if let Some(line) = agent_run_journal_ndjson_line(&SessionNdjsonEnvelope::ephemeral_event(projected)) {
@@ -1279,27 +1261,33 @@ async fn agent_run_journal_stream_ndjson(
 
         let mut heartbeat_tick = tokio::time::interval(AGENT_RUN_JOURNAL_STREAM_HEARTBEAT_INTERVAL);
         heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let mut rx = subscription.rx;
 
         loop {
             tokio::select! {
                 next = rx.recv() => {
                     match next {
                         Ok(event) => {
-                            let journal_seq = prefix_len + event.event_seq;
-                            let projected = app_agent_run::project_event_to_agent_run_journal(
-                                event,
-                                journal_seq,
-                                &journal_session_id,
-                            );
-                            let envelope = if projected.ephemeral {
-                                SessionNdjsonEnvelope::ephemeral_event(projected)
-                            } else {
-                                if journal_seq <= prefix_len + subscription.snapshot_seq {
+                            let envelope = match stream_state.project_live_event(event) {
+                                app_agent_run::AgentRunJournalLiveEvent::Durable(event) => {
+                                    seq = event.journal_seq;
+                                    let projected = app_agent_run::project_event_to_agent_run_journal(
+                                        event.event,
+                                        event.journal_seq,
+                                        &journal_session_id,
+                                    );
+                                    SessionNdjsonEnvelope::event(projected)
+                                }
+                                app_agent_run::AgentRunJournalLiveEvent::Ephemeral(event) => {
+                                    let projected = app_agent_run::project_event_to_agent_run_journal(
+                                        event.event,
+                                        event.journal_seq,
+                                        &journal_session_id,
+                                    );
+                                    SessionNdjsonEnvelope::ephemeral_event(projected)
+                                }
+                                app_agent_run::AgentRunJournalLiveEvent::StaleDurable => {
                                     continue;
                                 }
-                                seq = journal_seq;
-                                SessionNdjsonEnvelope::event(projected)
                             };
                             if let Some(line) = agent_run_journal_ndjson_line(&envelope) {
                                 yield Ok::<Bytes, Infallible>(line);
@@ -1309,7 +1297,7 @@ async fn agent_run_journal_stream_ndjson(
                             diag!(Warn, Subsystem::Api,
                                 run_id = %context.run.id,
                                 agent_id = %context.agent.id,
-                                runtime_session_id = %runtime_session_id,
+                                runtime_session_id = %delivery_runtime_session_id,
                                 lagged = n,
                                 "AgentRun journal stream 订阅落后，部分消息被跳过（NDJSON）"
                             );
@@ -1319,7 +1307,7 @@ async fn agent_run_journal_stream_ndjson(
                             diag!(Info, Subsystem::Api,
                                 run_id = %context.run.id,
                                 agent_id = %context.agent.id,
-                                runtime_session_id = %runtime_session_id,
+                                runtime_session_id = %delivery_runtime_session_id,
                                 last_seq = seq,
                                 "AgentRun journal stream 连接关闭：广播通道关闭（NDJSON）"
                             );

@@ -560,6 +560,13 @@ AgentRun 侧回调先通过 `RuntimeSessionExecutionAnchor` 解析 `run_id + age
 terminal evidence；用户可见的 running/terminal 状态必须落回 AgentRun current delivery binding，
 这样 workspace、Lifecycle AgentRun 访问、composer helper 和 fork readiness 读取同一事实。
 
+RuntimeSession 的 turn terminal 只有一条处理路径：正常 stream 收到 terminal、connector start
+失败、accepted launch boundary 失败、processor 不可达的 cancel fallback 与启动恢复补偿，都经由
+同一个 terminal processor 完成 terminal event 持久化、active turn 释放、event broadcast 和
+terminal effect dispatch。原因是 AgentRun 的用户可见执行态由 `session_terminal_callback` 回写
+`AgentRunDeliveryBinding` 收口；任何 runtime 终态只写 trace 而不派发 terminal effect，都会留下
+已失败但 AgentRun 仍 running 的不一致状态。
+
 Task hook terminal effect 从 runtime trace callback 进入后构造 task runtime coordinate，并在持久化
 artifact 或 status context 时记录 `orchestration_id + node_path + attempt`。这样任务投影、artifact
 审计和 lifecycle node runtime facts 能共享同一定位方式。

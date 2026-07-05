@@ -6,11 +6,14 @@ use std::fmt::Display;
 
 use super::connector_start::ConnectorAcceptedTurn;
 use super::deps::TurnCommitDeps;
+use super::preparation::PreparedTurn;
 use crate::session::hub_support::{
-    TurnTerminalKind, build_turn_started_envelope, build_turn_terminal_envelope,
-    build_user_input_submitted_envelope,
+    TurnTerminalKind, build_turn_started_envelope, build_user_input_submitted_envelope,
 };
 use crate::session::persistence::SessionRuntimeCommandStore;
+use crate::session::turn_processor::{
+    SessionTurnProcessorDeps, TurnTerminalDispatch, process_turn_terminal,
+};
 use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource};
 
 /// Accepted-after-commit boundary: connector accepted 后的 user/start/context/runtime
@@ -49,13 +52,7 @@ impl TurnCommitter {
             .await
         {
             return Err(self
-                .fail_accepted_boundary(
-                    session_id,
-                    &prepared.source,
-                    turn_id,
-                    "accepted launch events commit",
-                    error,
-                )
+                .fail_accepted_boundary(prepared, "accepted launch events commit", error)
                 .await);
         }
 
@@ -76,13 +73,7 @@ impl TurnCommitter {
                 .map_err(|error| connector_commit_error("ContextDeliveryRecord 提交失败", error))
         {
             return Err(self
-                .fail_accepted_boundary(
-                    session_id,
-                    &prepared.source,
-                    turn_id,
-                    "context delivery record commit",
-                    error,
-                )
+                .fail_accepted_boundary(prepared, "context delivery record commit", error)
                 .await);
         }
 
@@ -96,13 +87,7 @@ impl TurnCommitter {
                 .map_err(|error| connector_commit_error("pending context_frame 提交失败", error))
             {
                 return Err(self
-                    .fail_accepted_boundary(
-                        session_id,
-                        &prepared.source,
-                        turn_id,
-                        "pending context frame commit",
-                        error,
-                    )
+                    .fail_accepted_boundary(prepared, "pending context frame commit", error)
                     .await);
             }
         }
@@ -116,13 +101,7 @@ impl TurnCommitter {
                 .map_err(|error| connector_commit_error("accepted context_frame 提交失败", error))
             {
                 return Err(self
-                    .fail_accepted_boundary(
-                        session_id,
-                        &prepared.source,
-                        turn_id,
-                        "accepted context frame commit",
-                        error,
-                    )
+                    .fail_accepted_boundary(prepared, "accepted context frame commit", error)
                     .await);
             }
         }
@@ -143,13 +122,7 @@ impl TurnCommitter {
             .map_err(|error| connector_commit_error("session meta accepted 状态提交失败", error))
         {
             return Err(self
-                .fail_accepted_boundary(
-                    session_id,
-                    &prepared.source,
-                    turn_id,
-                    "session meta commit",
-                    error,
-                )
+                .fail_accepted_boundary(prepared, "session meta commit", error)
                 .await);
         }
 
@@ -161,13 +134,7 @@ impl TurnCommitter {
         .await
         {
             return Err(self
-                .fail_accepted_boundary(
-                    session_id,
-                    &prepared.source,
-                    turn_id,
-                    "runtime commands applied commit",
-                    error,
-                )
+                .fail_accepted_boundary(prepared, "runtime commands applied commit", error)
                 .await);
         }
 
@@ -195,13 +162,7 @@ impl TurnCommitter {
             Ok(outcome) => outcome,
             Err(error) => {
                 return Err(self
-                    .fail_accepted_boundary(
-                        session_id,
-                        &prepared.source,
-                        turn_id,
-                        "AgentRun accepted launch commit",
-                        error,
-                    )
+                    .fail_accepted_boundary(prepared, "AgentRun accepted launch commit", error)
                     .await);
             }
         };
@@ -290,44 +251,37 @@ impl TurnCommitter {
 
     async fn fail_accepted_boundary(
         &self,
-        session_id: &str,
-        source: &SourceInfo,
-        turn_id: &str,
+        prepared: &PreparedTurn,
         stage: &'static str,
         error: ConnectorError,
     ) -> ConnectorError {
         let error_message = error.to_string();
-        self.deps
-            .turn_supervisor
-            .clear_turn_and_hook(session_id)
-            .await;
-        let failed = build_turn_terminal_envelope(
-            session_id,
-            source,
-            turn_id,
-            TurnTerminalKind::Failed,
-            Some(error_message.clone()),
+        process_turn_terminal(
+            &SessionTurnProcessorDeps {
+                turn_supervisor: self.deps.turn_supervisor.clone(),
+                eventing: self.deps.eventing.clone(),
+                effects: self.deps.effects.clone(),
+            },
+            TurnTerminalDispatch {
+                session_id: prepared.session_id.clone(),
+                turn_id: prepared.turn_id.clone(),
+                source: prepared.source.clone(),
+                terminal_kind: TurnTerminalKind::Failed,
+                terminal_message: Some(error_message.clone()),
+                hook_runtime: prepared.hook_runtime.clone(),
+                post_turn_handler: prepared.post_turn_handler.clone(),
+            },
+        )
+        .await;
+        diag!(
+            Warn,
+            Subsystem::SessionLaunch,
+            session_id = %prepared.session_id,
+            turn_id = %prepared.turn_id,
+            stage = stage,
+            accepted_boundary_error = %error_message,
+            "accepted boundary 失败后已走统一 terminal 收口"
         );
-        if let Err(failed_error) = self
-            .deps
-            .eventing
-            .persist_notification(session_id, failed)
-            .await
-        {
-            let context =
-                DiagnosticErrorContext::new("session.launch.commit", "accepted_boundary_failed");
-            diag_error!(
-                Warn,
-                Subsystem::SessionLaunch,
-                context = &context,
-                error = &failed_error,
-                session_id = %session_id,
-                turn_id = %turn_id,
-                stage = stage,
-                accepted_boundary_error = %error_message,
-                "accepted boundary 失败后写入 failed terminal 事件失败"
-            );
-        }
         error
     }
 }

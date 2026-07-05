@@ -864,12 +864,13 @@ mod tests {
     }
 
     fn platform_turn_completed(session_id: &str, turn_id: &str) -> BackboneEnvelope {
-        crate::session::hub_support::build_turn_terminal_envelope(
+        crate::session::hub_support::build_turn_terminal_envelope_with_timing(
             session_id,
             &platform_source(),
             turn_id,
             TurnTerminalKind::Completed,
             Some("done".to_string()),
+            None,
         )
     }
 

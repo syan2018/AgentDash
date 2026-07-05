@@ -4,11 +4,13 @@ use std::{collections::HashMap, io, sync::Arc};
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 
+use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
-use super::hub_support::{
-    TurnTerminalKind, build_turn_terminal_envelope, parse_turn_terminal_event_from_envelope,
-};
+use super::hub_support::{TurnTerminalKind, parse_turn_terminal_event_from_envelope};
 use super::persistence::SessionRuntimeStores;
+use super::turn_processor::{
+    SessionTurnProcessorDeps, TurnTerminalDispatch, process_turn_terminal,
+};
 use super::turn_supervisor::TurnSupervisor;
 
 #[derive(Clone)]
@@ -16,6 +18,7 @@ pub struct SessionRuntimeService {
     stores: SessionRuntimeStores,
     turn_supervisor: TurnSupervisor,
     eventing: SessionEventingService,
+    effects: SessionEffectsService,
     connector: Arc<dyn agentdash_spi::AgentConnector>,
 }
 
@@ -24,12 +27,14 @@ impl SessionRuntimeService {
         stores: SessionRuntimeStores,
         turn_supervisor: TurnSupervisor,
         eventing: SessionEventingService,
+        effects: SessionEffectsService,
         connector: Arc<dyn agentdash_spi::AgentConnector>,
     ) -> Self {
         Self {
             stores,
             turn_supervisor,
             eventing,
+            effects,
             connector,
         }
     }
@@ -71,6 +76,16 @@ impl SessionRuntimeService {
                         turn_id = %cancel_snapshot.current_turn_id.as_deref().unwrap_or(""),
                         "向 turn processor 发送 Terminal 失败（通道可能已关闭）"
                     );
+                    if let Some(turn_id) = cancel_snapshot.current_turn_id.clone() {
+                        self.process_terminal(
+                            session_id.to_string(),
+                            turn_id,
+                            self.connector_source(None),
+                            TurnTerminalKind::Interrupted,
+                            Some("执行已取消".to_string()),
+                        )
+                        .await;
+                    }
                 }
             } else {
                 diag!(Warn, Subsystem::AgentRun,
@@ -81,6 +96,16 @@ impl SessionRuntimeService {
                     turn_id = %cancel_snapshot.current_turn_id.as_deref().unwrap_or(""),
                     "running=true 但 processor_tx 缺失，无法向 turn processor 发送终止信号"
                 );
+                if let Some(turn_id) = cancel_snapshot.current_turn_id.clone() {
+                    self.process_terminal(
+                        session_id.to_string(),
+                        turn_id,
+                        self.connector_source(None),
+                        TurnTerminalKind::Interrupted,
+                        Some("执行已取消".to_string()),
+                    )
+                    .await;
+                }
             }
             return Ok(());
         }
@@ -115,19 +140,15 @@ impl SessionRuntimeService {
             return Ok(());
         }
 
-        let interrupted = build_turn_terminal_envelope(
-            session_id,
-            &self.connector_source(None),
-            &turn_id,
+        let _ = cancel_snapshot.tx;
+        self.process_terminal(
+            session_id.to_string(),
+            turn_id,
+            self.connector_source(None),
             TurnTerminalKind::Interrupted,
             Some("检测到未收尾的旧执行，已手动标记为 interrupted".to_string()),
-        );
-        let _ = cancel_snapshot.tx;
-        let _ = self
-            .eventing
-            .persist_notification(session_id, interrupted)
-            .await
-            .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
+        )
+        .await;
         Ok(())
     }
 
@@ -149,21 +170,18 @@ impl SessionRuntimeService {
                 .last_turn_id
                 .clone()
                 .unwrap_or_else(|| format!("t_recovery_{}", chrono::Utc::now().timestamp_millis()));
-            let notification = build_turn_terminal_envelope(
-                &meta.id,
-                &SourceInfo {
+            self.process_terminal(
+                meta.id.clone(),
+                turn_id,
+                SourceInfo {
                     connector_id: "agentdash-server".to_string(),
                     connector_type: "system".to_string(),
                     executor_id: None,
                 },
-                &turn_id,
                 TurnTerminalKind::Interrupted,
                 Some("检测到进程重启，已将上次未完成执行标记为 interrupted".to_string()),
-            );
-            let _ = self
-                .eventing
-                .persist_notification(&meta.id, notification)
-                .await?;
+            )
+            .await;
         }
         Ok(())
     }
@@ -184,5 +202,32 @@ impl SessionRuntimeService {
             connector_type: connector_type.to_string(),
             executor_id,
         }
+    }
+
+    async fn process_terminal(
+        &self,
+        session_id: String,
+        turn_id: String,
+        source: SourceInfo,
+        terminal_kind: TurnTerminalKind,
+        terminal_message: Option<String>,
+    ) {
+        process_turn_terminal(
+            &SessionTurnProcessorDeps {
+                turn_supervisor: self.turn_supervisor.clone(),
+                eventing: self.eventing.clone(),
+                effects: self.effects.clone(),
+            },
+            TurnTerminalDispatch {
+                session_id,
+                turn_id,
+                source,
+                terminal_kind,
+                terminal_message,
+                hook_runtime: None,
+                post_turn_handler: None,
+            },
+        )
+        .await;
     }
 }

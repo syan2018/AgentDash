@@ -39,10 +39,20 @@ pub struct SessionTurnProcessorConfig {
 }
 
 #[derive(Clone)]
-pub(super) struct SessionTurnProcessorDeps {
-    pub(super) turn_supervisor: TurnSupervisor,
-    pub(super) eventing: SessionEventingService,
-    pub(super) effects: SessionEffectsService,
+pub(in crate::session) struct SessionTurnProcessorDeps {
+    pub(in crate::session) turn_supervisor: TurnSupervisor,
+    pub(in crate::session) eventing: SessionEventingService,
+    pub(in crate::session) effects: SessionEffectsService,
+}
+
+pub(in crate::session) struct TurnTerminalDispatch {
+    pub(in crate::session) session_id: String,
+    pub(in crate::session) turn_id: String,
+    pub(in crate::session) source: SourceInfo,
+    pub(in crate::session) terminal_kind: TurnTerminalKind,
+    pub(in crate::session) terminal_message: Option<String>,
+    pub(in crate::session) hook_runtime: Option<SharedHookRuntime>,
+    pub(in crate::session) post_turn_handler: Option<DynPostTurnHandler>,
 }
 
 /// Per-turn 事件处理器句柄。
@@ -122,118 +132,19 @@ impl SessionTurnProcessor {
             terminal_message = message;
         }
 
-        let completed_at_ms = chrono::Utc::now().timestamp_millis();
-        let terminal_timing = deps
-            .turn_supervisor
-            .active_turn_started_at_ms(&session_id, &turn_id)
-            .await
-            .map(|started_at_ms| TurnTiming::complete(started_at_ms, completed_at_ms));
-
-        // 生成并持久化终态 notification
-        let terminal_notification = build_turn_terminal_notification_with_timing(
-            &session_id,
-            &source,
-            &turn_id,
-            terminal_kind,
-            terminal_message.clone(),
-            terminal_timing,
-        );
-        let terminal_event = deps
-            .eventing
-            .persist_notification_deferred_broadcast(&session_id, terminal_notification)
-            .await;
-
-        let (terminal_event_seq, terminal_event) = match terminal_event {
-            Ok(event) => {
-                let event_seq = event.event_seq;
-                (event_seq, event)
-            }
-            Err(error) => {
-                // terminal 持久化失败仍然释放 active turn，避免 session 永久卡住。
-                deps.turn_supervisor.clear_active_turn(&session_id).await;
-                let context =
-                    DiagnosticErrorContext::new("session.turn_processor", "persist_terminal_event");
-                diag_error!(
-                    Error,
-                    Subsystem::AgentRun,
-                    context = &context,
-                    error = &error,
-                    session_id = %session_id,
-                    turn_id = %turn_id,
-                    terminal_kind = ?terminal_kind,
-                    "Turn terminal event 持久化失败，跳过 terminal effect outbox"
-                );
-                return;
-            }
-        };
-
-        let rewind_event = if terminal_kind.requires_rewind_marker() {
-            match deps
-                .eventing
-                .persist_session_rewound_marker(
-                    &session_id,
-                    &source,
-                    &turn_id,
-                    terminal_kind.rewind_reason(),
-                    terminal_message.clone(),
-                    terminal_event_seq,
-                    false,
-                )
-                .await
-            {
-                Ok(event) => Some(event),
-                Err(error) => {
-                    let context = DiagnosticErrorContext::new(
-                        "session.turn_processor",
-                        "persist_rewind_marker",
-                    );
-                    diag_error!(
-                        Error,
-                        Subsystem::AgentRun,
-                        context = &context,
-                        error = &error,
-                        session_id = %session_id,
-                        turn_id = %turn_id,
-                        terminal_event_seq,
-                        terminal_kind = ?terminal_kind,
-                        "Session rewind marker 持久化失败，仍释放 active turn"
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // 清理 turn 状态 — 回到 Idle。
-        // 这里必须早于 auto-resume effect 执行，否则下一轮 prompt reservation
-        // 会被当前 terminal turn 拦住。即使 rewind marker 持久化失败，也必须
-        // 释放 active turn，避免 session 永久卡在 running。
-        deps.turn_supervisor.clear_active_turn(&session_id).await;
-
-        deps.eventing
-            .broadcast_persisted_event(&session_id, terminal_event)
-            .await;
-        if let Some(rewind_event) = rewind_event {
-            deps.eventing
-                .broadcast_persisted_event(&session_id, rewind_event)
-                .await;
-        }
-
-        let terminal_effect_input = TerminalEffectDispatchInput {
-            session_id: session_id.clone(),
-            turn_id: turn_id.clone(),
-            terminal_event_seq,
-            terminal_kind,
-            terminal_message: terminal_message.clone(),
-            source,
-            hook_runtime,
-            post_turn_handler,
-        };
-
-        deps.effects
-            .dispatch_terminal_effects(terminal_effect_input)
-            .await;
+        process_turn_terminal(
+            &deps,
+            TurnTerminalDispatch {
+                session_id,
+                turn_id,
+                source,
+                terminal_kind,
+                terminal_message,
+                hook_runtime,
+                post_turn_handler,
+            },
+        )
+        .await;
     }
 
     /// 处理单条 notification：on_event → persist。
@@ -309,6 +220,126 @@ impl TurnTerminalKind {
     }
 }
 
+pub(in crate::session) async fn process_turn_terminal(
+    deps: &SessionTurnProcessorDeps,
+    input: TurnTerminalDispatch,
+) {
+    let TurnTerminalDispatch {
+        session_id,
+        turn_id,
+        source,
+        terminal_kind,
+        terminal_message,
+        hook_runtime,
+        post_turn_handler,
+    } = input;
+
+    let completed_at_ms = chrono::Utc::now().timestamp_millis();
+    let terminal_timing = deps
+        .turn_supervisor
+        .active_turn_started_at_ms(&session_id, &turn_id)
+        .await
+        .map(|started_at_ms| TurnTiming::complete(started_at_ms, completed_at_ms));
+
+    let terminal_notification = build_turn_terminal_notification_with_timing(
+        &session_id,
+        &source,
+        &turn_id,
+        terminal_kind,
+        terminal_message.clone(),
+        terminal_timing,
+    );
+    let terminal_event = deps
+        .eventing
+        .persist_notification_deferred_broadcast(&session_id, terminal_notification)
+        .await;
+
+    let (terminal_event_seq, terminal_event) = match terminal_event {
+        Ok(event) => {
+            let event_seq = event.event_seq;
+            (event_seq, event)
+        }
+        Err(error) => {
+            deps.turn_supervisor.clear_active_turn(&session_id).await;
+            let context =
+                DiagnosticErrorContext::new("session.turn_processor", "persist_terminal_event");
+            diag_error!(
+                Error,
+                Subsystem::AgentRun,
+                context = &context,
+                error = &error,
+                session_id = %session_id,
+                turn_id = %turn_id,
+                terminal_kind = ?terminal_kind,
+                "Turn terminal event 持久化失败，跳过 terminal effect outbox"
+            );
+            return;
+        }
+    };
+
+    let rewind_event = if terminal_kind.requires_rewind_marker() {
+        match deps
+            .eventing
+            .persist_session_rewound_marker(
+                &session_id,
+                &source,
+                &turn_id,
+                terminal_kind.rewind_reason(),
+                terminal_message.clone(),
+                terminal_event_seq,
+                false,
+            )
+            .await
+        {
+            Ok(event) => Some(event),
+            Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("session.turn_processor", "persist_rewind_marker");
+                diag_error!(
+                    Error,
+                    Subsystem::AgentRun,
+                    context = &context,
+                    error = &error,
+                    session_id = %session_id,
+                    turn_id = %turn_id,
+                    terminal_event_seq,
+                    terminal_kind = ?terminal_kind,
+                    "Session rewind marker 持久化失败，仍释放 active turn"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    deps.turn_supervisor.clear_active_turn(&session_id).await;
+
+    deps.eventing
+        .broadcast_persisted_event(&session_id, terminal_event)
+        .await;
+    if let Some(rewind_event) = rewind_event {
+        deps.eventing
+            .broadcast_persisted_event(&session_id, rewind_event)
+            .await;
+    }
+
+    let terminal_effect_input = TerminalEffectDispatchInput {
+        session_id: session_id.clone(),
+        turn_id: turn_id.clone(),
+        terminal_event_seq,
+        terminal_kind,
+        terminal_message: terminal_message.clone(),
+        source,
+        hook_runtime,
+        post_turn_handler,
+    };
+
+    deps.effects
+        .dispatch_terminal_effects(terminal_effect_input)
+        .await;
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -334,6 +365,7 @@ mod tests {
         PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionEventStore,
         SessionStoreSet,
     };
+    use super::super::post_turn_handler::{SessionTerminalCallback, SessionTerminalNotification};
     use super::super::runtime_registry::SessionRuntimeRegistry;
     use super::super::terminal_effects::{
         TerminalAutoResumePort, TerminalAutoResumeRequest, TerminalEffectDeps,
@@ -565,6 +597,125 @@ mod tests {
                 );
             }
             event => panic!("expected session_rewound event, got {event:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn process_turn_terminal_dispatches_session_terminal_callback() {
+        let session_id = "sess-terminal-callback";
+        let turn_id = "turn-1";
+        let registry = SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new())));
+        let supervisor = TurnSupervisor::new(registry.clone());
+        supervisor
+            .claim_prompt(session_id)
+            .await
+            .expect("claim should succeed");
+        supervisor
+            .activate_turn(
+                session_id,
+                SessionProfile {
+                    capability_state: CapabilityState::default(),
+                },
+                TurnExecution::new(
+                    turn_id.to_string(),
+                    ExecutionSessionFrame {
+                        turn_id: turn_id.to_string(),
+                        working_directory: PathBuf::from("."),
+                        environment_variables: HashMap::new(),
+                        executor_config: AgentConfig::new("PI_AGENT"),
+                        mcp_servers: Vec::new(),
+                        vfs: None,
+                        vfs_access_policy: None,
+                        backend_execution: None,
+                        runtime_backend_anchor: None,
+                        identity: None,
+                    },
+                    CapabilityState::default(),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                ),
+            )
+            .await;
+
+        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
+        stores
+            .meta
+            .create_session(&SessionMeta {
+                id: session_id.to_string(),
+                title: "Test".to_string(),
+                title_source: TitleSource::Auto,
+                created_at: 1,
+                updated_at: 1,
+                last_event_seq: 0,
+                last_delivery_status: ExecutionStatus::Running,
+                last_turn_id: Some(turn_id.to_string()),
+                last_terminal_message: None,
+                executor_session_id: None,
+            })
+            .await
+            .expect("create session meta");
+        let notifications = Arc::new(Mutex::new(Vec::new()));
+        let deps = SessionTurnProcessorDeps {
+            turn_supervisor: supervisor.clone(),
+            eventing: SessionEventingService::new(
+                stores.eventing_stores(),
+                registry.clone(),
+                Arc::new(NoopConnector),
+            ),
+            effects: SessionEffectsService::new(TerminalEffectDeps {
+                terminal_effects: stores.terminal_effects.clone(),
+                hook_trigger: Arc::new(NoopHookTrigger),
+                terminal_callback: Arc::new(RwLock::new(Some(Arc::new(
+                    RecordingTerminalCallback {
+                        notifications: notifications.clone(),
+                    },
+                )))),
+                hook_effect_handler_registry: Arc::new(RwLock::new(None)),
+                auto_resume: Arc::new(NoopAutoResume),
+            }),
+        };
+
+        process_turn_terminal(
+            &deps,
+            TurnTerminalDispatch {
+                session_id: session_id.to_string(),
+                turn_id: turn_id.to_string(),
+                source: SourceInfo {
+                    connector_id: "test".to_string(),
+                    connector_type: "unit".to_string(),
+                    executor_id: None,
+                },
+                terminal_kind: TurnTerminalKind::Failed,
+                terminal_message: Some("connector start failed".to_string()),
+                hook_runtime: None,
+                post_turn_handler: None,
+            },
+        )
+        .await;
+
+        assert!(!registry.has_active_turn(session_id).await);
+        let notifications = notifications.lock().await;
+        assert_eq!(notifications.len(), 1);
+        let notification = &notifications[0];
+        assert_eq!(notification.session_id, session_id);
+        assert_eq!(notification.turn_id, turn_id);
+        assert_eq!(notification.terminal_state, "failed");
+        assert_eq!(
+            notification.terminal_message.as_deref(),
+            Some("connector start failed")
+        );
+        assert!(notification.terminal_event_seq > 0);
+    }
+
+    struct RecordingTerminalCallback {
+        notifications: Arc<Mutex<Vec<SessionTerminalNotification>>>,
+    }
+
+    #[async_trait]
+    impl SessionTerminalCallback for RecordingTerminalCallback {
+        async fn on_session_terminal(&self, notification: SessionTerminalNotification) {
+            self.notifications.lock().await.push(notification);
         }
     }
 

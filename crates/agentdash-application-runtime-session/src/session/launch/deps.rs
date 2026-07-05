@@ -126,6 +126,7 @@ impl SessionLaunchDeps {
             connector: self.connector.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
             eventing: self.eventing.clone(),
+            effects: self.effects.clone(),
         }
     }
 
@@ -138,6 +139,7 @@ impl SessionLaunchDeps {
             eventing: self.eventing.clone(),
             core: self.core.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
+            effects: self.effects.clone(),
             accepted_launch_commit,
         }
     }
@@ -228,6 +230,7 @@ pub(super) struct ConnectorStartDeps {
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) eventing: SessionEventingService,
+    pub(super) effects: SessionEffectsService,
 }
 
 #[derive(Clone)]
@@ -235,6 +238,7 @@ pub(super) struct TurnCommitDeps {
     pub(super) stores: SessionLaunchStores,
     pub(super) eventing: SessionEventingService,
     pub(super) turn_supervisor: TurnSupervisor,
+    pub(super) effects: SessionEffectsService,
     pub(super) accepted_launch_commit: Arc<dyn AcceptedLaunchCommitPort>,
     core: SessionCoreService,
 }

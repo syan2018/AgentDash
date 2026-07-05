@@ -3,7 +3,10 @@ use agentdash_spi::{ConnectorError, ExecutionStream};
 
 use super::deps::ConnectorStartDeps;
 use super::preparation::PreparedTurn;
-use crate::session::hub_support::{TurnTerminalKind, build_turn_terminal_envelope};
+use crate::session::hub_support::TurnTerminalKind;
+use crate::session::turn_processor::{
+    SessionTurnProcessorDeps, TurnTerminalDispatch, process_turn_terminal,
+};
 
 /// Session turn accepted boundary: connector.prompt 已返回 ExecutionStream。
 ///
@@ -63,22 +66,23 @@ impl ConnectorStarter {
                 stream
             }
             Err(error) => {
-                self.deps
-                    .turn_supervisor
-                    .clear_turn_and_hook(&prepared.session_id)
-                    .await;
-                let failed = build_turn_terminal_envelope(
-                    &prepared.session_id,
-                    &prepared.source,
-                    &prepared.turn_id,
-                    TurnTerminalKind::Failed,
-                    Some(error.to_string()),
-                );
-                let _ = self
-                    .deps
-                    .eventing
-                    .persist_notification(&prepared.session_id, failed)
-                    .await;
+                process_turn_terminal(
+                    &SessionTurnProcessorDeps {
+                        turn_supervisor: self.deps.turn_supervisor.clone(),
+                        eventing: self.deps.eventing.clone(),
+                        effects: self.deps.effects.clone(),
+                    },
+                    TurnTerminalDispatch {
+                        session_id: prepared.session_id.clone(),
+                        turn_id: prepared.turn_id.clone(),
+                        source: prepared.source.clone(),
+                        terminal_kind: TurnTerminalKind::Failed,
+                        terminal_message: Some(error.to_string()),
+                        hook_runtime: prepared.hook_runtime.clone(),
+                        post_turn_handler: prepared.post_turn_handler.clone(),
+                    },
+                )
+                .await;
                 return Err(error);
             }
         };

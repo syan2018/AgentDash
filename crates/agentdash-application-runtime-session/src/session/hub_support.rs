@@ -85,23 +85,6 @@ pub(super) fn build_turn_terminal_notification_with_timing(
     )
 }
 
-pub(super) fn build_turn_terminal_envelope(
-    session_id: &str,
-    source: &SourceInfo,
-    turn_id: &str,
-    terminal_kind: TurnTerminalKind,
-    message: Option<String>,
-) -> BackboneEnvelope {
-    build_turn_terminal_envelope_with_timing(
-        session_id,
-        source,
-        turn_id,
-        terminal_kind,
-        message,
-        None,
-    )
-}
-
 pub(super) fn build_turn_terminal_envelope_with_timing(
     session_id: &str,
     source: &SourceInfo,

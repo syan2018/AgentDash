@@ -2217,11 +2217,12 @@ mod tests {
         let stable_terminal = service
             .persist_notification(
                 session_id,
-                crate::session::hub_support::build_turn_terminal_envelope(
+                crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                     session_id,
                     &source,
                     "turn-stable",
                     TurnTerminalKind::Completed,
+                    None,
                     None,
                 ),
             )
@@ -2268,12 +2269,13 @@ mod tests {
         let failed_terminal = service
             .persist_notification(
                 session_id,
-                crate::session::hub_support::build_turn_terminal_envelope(
+                crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                     session_id,
                     &source,
                     "turn-failed",
                     TurnTerminalKind::Failed,
                     Some("provider disconnected".to_string()),
+                    None,
                 ),
             )
             .await
@@ -2358,11 +2360,12 @@ mod tests {
         service
             .persist_notification(
                 session_id,
-                crate::session::hub_support::build_turn_terminal_envelope(
+                crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                     session_id,
                     &source,
                     "turn-stable",
                     TurnTerminalKind::Completed,
+                    None,
                     None,
                 ),
             )
@@ -2410,12 +2413,13 @@ mod tests {
             let failed_terminal = service
                 .persist_notification(
                     session_id,
-                    crate::session::hub_support::build_turn_terminal_envelope(
+                    crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                         session_id,
                         &source,
                         failed_turn,
                         TurnTerminalKind::Failed,
                         Some("provider disconnected".to_string()),
+                        None,
                     ),
                 )
                 .await
@@ -2827,11 +2831,12 @@ mod tests {
         service
             .persist_notification(
                 session_id,
-                crate::session::hub_support::build_turn_terminal_envelope(
+                crate::session::hub_support::build_turn_terminal_envelope_with_timing(
                     session_id,
                     &source,
                     "turn-eph",
                     TurnTerminalKind::Completed,
+                    None,
                     None,
                 ),
             )

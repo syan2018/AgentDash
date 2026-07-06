@@ -2,7 +2,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -30,6 +30,36 @@ test("validateProject accepts generated operation catalog, backend services, and
   const root = await fixtureProject({ withProjectionFields: true });
   const result = await validateProject(root);
   assert.deepEqual(result.errors, []);
+});
+
+test("validateProject rejects invalid backend service package contract fields", async () => {
+  const root = await fixtureProject({
+    withProjectionFields: true,
+    omitBackendServiceEntryFile: true,
+    backendServiceOverride: {
+      runtime: "python",
+      entry: "../server.js",
+      routes: ["api/**"],
+      health_path: "health",
+    },
+  });
+
+  const result = await validateProject(root);
+  const errors = result.errors.join("\n");
+  assert.match(errors, /backend_services\[\]\.runtime 当前必须是 node/);
+  assert.match(errors, /backend_services\[\]\.entry 必须是 package 内相对文件路径/);
+  assert.match(errors, /backend_services\[\]\.routes 必须以 \/ 或 http\(s\):\/\/ 开头/);
+  assert.match(errors, /backend_services\[\]\.health_path 必须以 \/ 开头/);
+});
+
+test("validateProject rejects missing backend service entry files", async () => {
+  const root = await fixtureProject({
+    withProjectionFields: true,
+    omitBackendServiceEntryFile: true,
+  });
+
+  const result = await validateProject(root);
+  assert.match(result.errors.join("\n"), /backend_services\[\]\.entry 文件不存在: src\/server\/index\.ts/);
 });
 
 test("validateProject rejects unknown runtime process permission key", async () => {
@@ -78,13 +108,17 @@ test("validateProject rejects non self-contained dependencies and native constra
 });
 
 /**
- * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withProjectionFields?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean }} [options]
+ * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withProjectionFields?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean, backendServiceOverride?: Record<string, unknown>, omitBackendServiceEntryFile?: boolean }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentdash-extension-"));
   const bundle = "console.log('hello');";
   await writeFile(path.join(root, "dist-extension.js"), bundle);
+  if (options.withProjectionFields && !options.omitBackendServiceEntryFile) {
+    await mkdir(path.join(root, "src", "server"), { recursive: true });
+    await writeFile(path.join(root, "src", "server", "index.ts"), "export const ready = true;\n");
+  }
   await writeFile(
     path.join(root, "package.json"),
     JSON.stringify({
@@ -212,6 +246,7 @@ async function fixtureProject(options = {}) {
               entry: "src/server/index.ts",
               routes: ["/api/**"],
               health_path: "/health",
+              ...options.backendServiceOverride,
             },
           ]
         : undefined,

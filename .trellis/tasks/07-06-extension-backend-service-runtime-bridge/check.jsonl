@@ -5,3 +5,4 @@
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Check Rust tests, diagnostics and quality gates."}
 {"file": ".trellis/spec/frontend/architecture.md", "reason": "Check extension panel bridge behavior and frontend fact ownership."}
 {"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Check backend selection and local bridge routing facts."}
+{"file": ".trellis/tasks/07-06-extension-backend-service-runtime-bridge/research/integration-map.md", "reason": "Check implementation stays on the shared extension runtime transport spine."}

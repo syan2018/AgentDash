@@ -25,9 +25,11 @@ const PANEL_ENTRY_CANDIDATES = [
   "src/panel/index.tsx",
   "src/panel/index.ts",
 ];
+const BACKEND_SERVICE_OUTPUT_DIR = "dist/backend-services";
 
 /**
  * @typedef {{ archive_path: string, archive_digest: string, manifest_digest: string, manifest: import("./manifest.js").UnknownRecord }} PackResult
+ * @typedef {{ service_key: string, entry: string, digest: string }} BackendServiceBundle
  */
 
 /**
@@ -41,6 +43,11 @@ export async function packProject(projectRoot, options = {}) {
   const extensionEntry = path.join(root, "src", "extension.ts");
   await rm(distDir, { recursive: true, force: true });
   await mkdir(distDir, { recursive: true });
+
+  const preflight = await validateProject(root, { requireBundles: false });
+  if (preflight.errors.length > 0) {
+    throw new Error(preflight.errors.join("\n"));
+  }
 
   await build({
     entryPoints: [extensionEntry],
@@ -56,8 +63,9 @@ export async function packProject(projectRoot, options = {}) {
 
   await copyPanelAssets(root, distDir);
   await buildPanelBundle(root, distDir);
+  const backendServiceBundles = await buildBackendServiceBundles(root);
   await validatePackedRuntimeSurface(root);
-  const manifest = await writePackedManifest(root);
+  const manifest = await writePackedManifest(root, backendServiceBundles);
   const validation = await validateProject(root, { requireBundles: true });
   if (validation.errors.length > 0) {
     throw new Error(validation.errors.join("\n"));
@@ -83,6 +91,40 @@ export async function packProject(projectRoot, options = {}) {
     manifest_digest: sha256Digest(Buffer.from(JSON.stringify(manifest))),
     manifest,
   };
+}
+
+/**
+ * @param {string} root
+ * @returns {Promise<BackendServiceBundle[]>}
+ */
+async function buildBackendServiceBundles(root) {
+  const manifest = asRecord(await readJsonFile(path.join(root, MANIFEST_FILE)));
+  if (!manifest) throw new Error(`${MANIFEST_FILE} 必须是对象`);
+  const bundles = [];
+  for (const service of backendServiceRecords(manifest)) {
+    const serviceKey = stringValue(service.service_key, "");
+    const entry = stringValue(service.entry, "");
+    if (!serviceKey || !entry) continue;
+    const outfile = `${BACKEND_SERVICE_OUTPUT_DIR}/${safeFileName(serviceKey)}/index.js`;
+    const outfilePath = path.join(root, outfile);
+    await mkdir(path.dirname(outfilePath), { recursive: true });
+    await build({
+      entryPoints: [path.join(root, ...entry.split("/"))],
+      outfile: outfilePath,
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "es2022",
+      sourcemap: false,
+      plugins: [agentdashSdkPackagesPlugin()],
+    });
+    bundles.push({
+      service_key: serviceKey,
+      entry: outfile,
+      digest: sha256Digest(await readFile(outfilePath)),
+    });
+  }
+  return bundles;
 }
 
 /**
@@ -251,14 +293,33 @@ function isPanelSourceFile(filePath) {
 
 /**
  * @param {string} root
+ * @param {BackendServiceBundle[]} backendServiceBundles
  * @returns {Promise<import("./manifest.js").UnknownRecord>}
  */
-async function writePackedManifest(root) {
+async function writePackedManifest(root, backendServiceBundles) {
   const manifest = asRecord(await readJsonFile(path.join(root, MANIFEST_FILE)));
   if (!manifest) throw new Error(`${MANIFEST_FILE} 必须是对象`);
   const bundlePath = path.join(root, "dist", "extension.js");
   const digest = sha256Digest(await readFile(bundlePath));
-  manifest.bundles = [{ kind: "extension_host", entry: "dist/extension.js", digest }];
+  const backendBundleByServiceKey = new Map(
+    backendServiceBundles.map((bundle) => [bundle.service_key, bundle]),
+  );
+  if (Array.isArray(manifest.backend_services)) {
+    manifest.backend_services = manifest.backend_services.map((service) => {
+      const record = asRecord(service);
+      if (!record) return service;
+      const bundle = backendBundleByServiceKey.get(stringValue(record.service_key, ""));
+      return bundle ? { ...record, entry: bundle.entry } : service;
+    });
+  }
+  manifest.bundles = [
+    { kind: "extension_host", entry: "dist/extension.js", digest },
+    ...backendServiceBundles.map((bundle) => ({
+      kind: "backend_service",
+      entry: bundle.entry,
+      digest: bundle.digest,
+    })),
+  ];
   await writeFile(path.join(root, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
@@ -310,6 +371,18 @@ async function collectDirectory(root, directory) {
  */
 function stringValue(value, fallback) {
   return typeof value === "string" && value.trim() !== "" ? value : fallback;
+}
+
+/**
+ * @param {import("./manifest.js").UnknownRecord} manifest
+ * @returns {import("./manifest.js").UnknownRecord[]}
+ */
+function backendServiceRecords(manifest) {
+  const services = manifest.backend_services;
+  if (!Array.isArray(services)) return [];
+  return services
+    .map((service) => asRecord(service))
+    .filter((service) => service != null);
 }
 
 /**

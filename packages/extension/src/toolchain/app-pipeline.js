@@ -13,6 +13,7 @@ import {
   MANIFEST_FILE,
   asRecord,
   validateManifest,
+  validateBackendServiceEntryRefs,
   validatePackageJson,
   validateProject,
   validateRuntimeSurfaceParity,
@@ -244,6 +245,7 @@ export async function validateAppProject(projectRoot, options = {}) {
   const errors = [];
   validateManifest(generated.manifest, errors);
   validatePackageJson(generated.package_json, generated.manifest, errors);
+  await validateBackendServiceEntryRefs(projectRoot, generated.manifest, errors);
   validateRuntimeSurfaceParity(generated.manifest, generated.registered_surface, errors);
   return {
     errors,
@@ -350,6 +352,7 @@ export async function prepareAppProjectForLegacyToolchain(projectRoot, options =
   await writeJson(path.join(stageRoot, "package.json"), generated.package_json);
   await writeFile(path.join(stageRoot, "src", "extension.ts"), generated.host_entry, "utf8");
   await writePanelStage(root, stageRoot, generated.normalized.panel_entry);
+  await writeBackendServiceStageEntries(root, stageRoot, generated.manifest);
   return { stageRoot, generated };
 }
 
@@ -800,12 +803,52 @@ async function writePanelStage(root, stageRoot, panelEntry) {
 }
 
 /**
+ * @param {string} root
+ * @param {string} stageRoot
+ * @param {UnknownRecord} manifest
+ * @returns {Promise<void>}
+ */
+async function writeBackendServiceStageEntries(root, stageRoot, manifest) {
+  for (const service of arrayRecordField(manifest, "backend_services")) {
+    const entry = stringField(service, "entry");
+    if (!entry) continue;
+    const sourceEntry = resolvePackageRelativePath(root, entry, "backend_services[].entry");
+    if (!await isFile(sourceEntry)) {
+      throw new Error(`backend_services[].entry 文件不存在: ${entry}`);
+    }
+    const targetEntry = resolvePackageRelativePath(stageRoot, entry, "backend_services[].entry");
+    await mkdir(path.dirname(targetEntry), { recursive: true });
+    const relativeImport = normalizeImportPath(path.relative(path.dirname(targetEntry), sourceEntry));
+    await writeFile(targetEntry, `import ${JSON.stringify(relativeImport)};\n`, "utf8");
+  }
+}
+
+/**
  * @param {string} raw
  * @returns {string}
  */
 function normalizeImportPath(raw) {
   const normalized = raw.replaceAll("\\", "/");
   return normalized.startsWith(".") ? normalized : `./${normalized}`;
+}
+
+/**
+ * @param {string} root
+ * @param {string} entry
+ * @param {string} label
+ * @returns {string}
+ */
+function resolvePackageRelativePath(root, entry, label) {
+  if (
+    entry.includes("\\")
+    || entry.includes("\0")
+    || entry.startsWith("/")
+    || path.isAbsolute(entry)
+    || entry.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error(`${label} 必须是 package 内相对文件路径: ${entry}`);
+  }
+  return path.join(root, ...entry.split("/"));
 }
 
 /**

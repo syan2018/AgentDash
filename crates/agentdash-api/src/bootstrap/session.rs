@@ -18,6 +18,8 @@ use agentdash_application::runtime_tools::{
 use agentdash_application::wait_activity::{
     WaitActivityDeps, WaitActivityService, WaitRuntimeToolProvider,
 };
+use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
+use agentdash_application_agentrun::agent_run::AgentRunWorkspaceTitleAdapter;
 use agentdash_application_agentrun::agent_run::{
     AgentRunEffectiveCapabilityView as ApplicationAgentRunEffectiveCapabilityView,
     AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
@@ -33,8 +35,6 @@ use agentdash_application_ports::agent_run_surface::{
     AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort,
 };
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
-use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
-use agentdash_application_agentrun::agent_run::AgentRunWorkspaceTitleAdapter;
 use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
     SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
@@ -441,19 +441,12 @@ pub(crate) async fn build_session_runtime(
     );
     let agent_run_terminal_control_callback = Arc::new(AgentRunTerminalControlCallback::new(
         AgentRunTerminalControlCallbackDeps {
-            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
-            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
-            project_agent_repo: repos.project_agent_repo.clone(),
-            agent_frame_repo: repos.agent_frame_repo.clone(),
-            execution_anchor_repo: repos.execution_anchor_repo.clone(),
-            delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
-            project_backend_access_repo: repos.project_backend_access_repo.clone(),
-            command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
-            mailbox_repo: repos.agent_run_mailbox_repo.clone(),
+            repos: repos.clone(),
         },
         agent_run_session_core(session_core.clone()),
         agent_run_session_control(session_control.clone()),
         agent_run_session_eventing(session_eventing.clone()),
+        session_eventing.clone(),
         agent_run_session_launch(session_launch.clone()),
     ));
     session_runtime_builder

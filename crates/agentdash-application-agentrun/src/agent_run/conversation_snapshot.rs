@@ -221,7 +221,9 @@ impl ConversationWaitingItemModel {
             kind: kind.to_string(),
             source_ref: Some(gate.id.to_string()),
             correlation_ref: non_empty_string(Some(&gate.correlation_id)),
-            status: gate.status.clone(),
+            status: gate
+                .resolved_payload_status()
+                .unwrap_or_else(|| gate.status.clone()),
             source_label: waiting_source_label(kind, payload),
             preview: waiting_preview(payload),
             created_at: gate.created_at.to_rfc3339(),
@@ -1544,5 +1546,30 @@ mod tests {
             blocking_human_wait.preview.as_deref(),
             Some("Waiting for approval")
         );
+    }
+
+    #[test]
+    fn resolved_gate_waiting_item_uses_payload_status() {
+        let mut gate = LifecycleGate::open(
+            Uuid::new_v4(),
+            Some(Uuid::new_v4()),
+            Some(Uuid::new_v4()),
+            "companion_wait_follow_up",
+            "dispatch-failed",
+            Some(serde_json::json!({
+                "status": "failed",
+                "summary": "provider model unsupported",
+                "companion_label": "reviewer"
+            })),
+        );
+        gate.resolve("runtime_terminal");
+
+        let item = ConversationWaitingItemModel::from_lifecycle_gate(&gate);
+
+        assert_eq!(item.kind, "subagent");
+        assert_eq!(item.status, "failed");
+        assert_eq!(item.source_label.as_deref(), Some("reviewer"));
+        assert_eq!(item.preview.as_deref(), Some("provider model unsupported"));
+        assert!(item.resolved_at.is_some());
     }
 }

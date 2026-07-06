@@ -13,7 +13,7 @@ pub(crate) fn gate_item_from_gate(gate: &LifecycleGate) -> WaitActivityItem {
     WaitActivityItem {
         activity_ref: gate.id.to_string(),
         kind: kind.to_string(),
-        status: gate_status(&gate.status).to_string(),
+        status: gate_status(gate).to_string(),
         source_ref: Some(gate.id.to_string()),
         correlation_ref: Some(gate.correlation_id.clone()),
         preview: payload_preview(gate.payload_json.as_ref()),
@@ -36,12 +36,15 @@ pub(crate) fn gate_item_from_gate(gate: &LifecycleGate) -> WaitActivityItem {
     }
 }
 
-fn gate_status(status: &str) -> &str {
-    match status {
+fn gate_status(gate: &LifecycleGate) -> String {
+    if let Some(status) = gate.resolved_payload_status() {
+        return status;
+    }
+    match gate.status.as_str() {
         "open" => "pending",
-        "resolved" => "completed",
         other => other,
     }
+    .to_string()
 }
 
 fn waiting_kind_from_gate(gate_kind: &str, payload: Option<&Value>) -> &'static str {

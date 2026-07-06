@@ -39,7 +39,8 @@ impl<'a> AgentRunDeliveryStateService<'a> {
             .get_current(anchor.run_id, anchor.agent_id)
             .await?
         {
-            Some(binding) => binding,
+            Some(binding) if binding.runtime_session_id == input.runtime_session_id => binding,
+            Some(_) => return Ok(false),
             None => AgentRunDeliveryBinding::from_anchor(
                 &anchor,
                 DeliveryBindingStatus::Terminal,
@@ -117,5 +118,67 @@ mod tests {
         assert_eq!(binding.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(binding.terminal_state.as_deref(), Some("failed"));
         assert_eq!(binding.terminal_message.as_deref(), Some("provider failed"));
+    }
+
+    #[tokio::test]
+    async fn terminal_transition_ignores_stale_runtime_when_current_binding_changed() {
+        let anchors = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let bindings = MemoryAgentRunDeliveryBindingRepository::default();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let launch_frame_id = Uuid::new_v4();
+        let old_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-old",
+            run_id,
+            launch_frame_id,
+            agent_id,
+        );
+        let current_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-current",
+            run_id,
+            launch_frame_id,
+            agent_id,
+        );
+        anchors.create_once(&old_anchor).await.expect("old anchor");
+        anchors
+            .create_once(&current_anchor)
+            .await
+            .expect("current anchor");
+        let current_binding = AgentRunDeliveryBinding::from_anchor(
+            &current_anchor,
+            DeliveryBindingStatus::Running,
+            Utc::now(),
+        )
+        .mark_running("turn-current", Utc::now());
+        bindings
+            .upsert(&current_binding)
+            .await
+            .expect("current binding");
+
+        let service = AgentRunDeliveryStateService::new(AgentRunDeliveryStateRepos {
+            execution_anchor_repo: &anchors,
+            delivery_binding_repo: &bindings,
+        });
+        let updated = service
+            .mark_terminal_from_runtime_session(AgentRunTerminalTransitionInput {
+                runtime_session_id: "runtime-old".to_string(),
+                turn_id: "turn-old".to_string(),
+                terminal_state: "failed".to_string(),
+                terminal_message: Some("old runtime failed late".to_string()),
+                observed_at: Utc::now(),
+            })
+            .await
+            .expect("stale terminal transition");
+
+        assert!(!updated);
+        let binding = bindings
+            .get_current(run_id, agent_id)
+            .await
+            .expect("binding read")
+            .expect("binding");
+        assert_eq!(binding.runtime_session_id, "runtime-current");
+        assert_eq!(binding.status, DeliveryBindingStatus::Running);
+        assert_eq!(binding.active_turn_id.as_deref(), Some("turn-current"));
+        assert_eq!(binding.terminal_state, None);
     }
 }

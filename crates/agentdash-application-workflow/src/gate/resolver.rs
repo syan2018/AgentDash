@@ -385,6 +385,11 @@ impl LifecycleGateResolver {
             "findings": command.payload.get("findings"),
             "follow_ups": command.payload.get("follow_ups"),
             "artifact_refs": command.payload.get("artifact_refs"),
+            "terminal_state": command.payload.get("terminal_state"),
+            "terminal_message": command.payload.get("terminal_message"),
+            "delivery_trace_ref": command.payload.get("delivery_trace_ref"),
+            "failure_kind": command.payload.get("failure_kind"),
+            "source": command.payload.get("source"),
             "child_agent_id": command.child_agent_id.to_string(),
             "parent_agent_id": command.parent_agent_id.to_string(),
             "resolved_turn_id": command.resolved_turn_id,
@@ -472,8 +477,10 @@ fn normalize_companion_result_status(
         "completed" => Ok("completed"),
         "blocked" => Ok("blocked"),
         "needs_follow_up" => Ok("needs_follow_up"),
+        "failed" => Ok("failed"),
+        "cancelled" => Ok("cancelled"),
         other => Err(WorkflowApplicationError::BadRequest(format!(
-            "payload.status 不支持 `{other}`，应为 completed/blocked/needs_follow_up"
+            "payload.status 不支持 `{other}`，应为 completed/blocked/needs_follow_up/failed/cancelled"
         ))),
     }
 }
@@ -520,6 +527,22 @@ mod tests {
                 .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
                 .cloned()
                 .collect())
+        }
+
+        async fn find_by_agent_and_correlation(
+            &self,
+            agent_id: Uuid,
+            correlation_id: &str,
+        ) -> Result<Option<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .lock()
+                .unwrap()
+                .values()
+                .find(|gate| {
+                    gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id
+                })
+                .cloned())
         }
 
         async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {

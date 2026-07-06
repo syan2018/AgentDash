@@ -605,6 +605,24 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         .collect()
     }
 
+    async fn find_by_agent_and_correlation(
+        &self,
+        agent_id: Uuid,
+        correlation_id: &str,
+    ) -> Result<Option<LifecycleGate>, DomainError> {
+        sqlx::query_as::<_, GateRow>(
+            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
+               FROM lifecycle_gates WHERE agent_id=$1 AND correlation_id=$2 ORDER BY created_at DESC LIMIT 1"#,
+        )
+        .bind(agent_id.to_string())
+        .bind(correlation_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
     async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
         let payload = gate
             .payload_json

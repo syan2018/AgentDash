@@ -59,4 +59,19 @@ impl LifecycleGate {
     pub fn is_open(&self) -> bool {
         self.status == "open"
     }
+
+    pub fn resolved_payload_status(&self) -> Option<String> {
+        if self.status != "resolved" {
+            return None;
+        }
+        let status = self
+            .payload_json
+            .as_ref()
+            .and_then(|payload| payload.get("status"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("completed");
+        Some(status.to_string())
+    }
 }

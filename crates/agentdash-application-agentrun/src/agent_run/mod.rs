@@ -24,6 +24,7 @@ mod runtime_session_boundary;
 pub mod runtime_surface;
 mod runtime_surface_update;
 mod runtime_target;
+mod terminal_convergence;
 pub mod terminal_registry;
 pub mod workspace;
 pub mod workspace_title;
@@ -159,8 +160,7 @@ pub use runtime_session_boundary::{
     RuntimeSessionEventSubscription, RuntimeSessionEventingPort, RuntimeSessionLaunchPort,
     RuntimeTraceLaunchState, SessionControlService, SessionCoreService, SessionEventPage,
     SessionEventingService, SessionExecutionState, SessionLaunchService, SessionMeta,
-    SessionRepositoryRehydrateMode, SessionTurnSteerCommand,
-    resolve_prompt_launch_path,
+    SessionRepositoryRehydrateMode, SessionTurnSteerCommand, resolve_prompt_launch_path,
 };
 pub use runtime_surface::{
     AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,
@@ -173,5 +173,9 @@ pub use runtime_surface_update::{
     AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
 };
 pub use runtime_target::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};
+pub use terminal_convergence::{
+    AgentRunDeliveryTerminalEvent, AgentRunRuntimeTerminalCommand, AgentRunTerminalConvergenceDeps,
+    AgentRunTerminalConvergenceService,
+};
 pub use terminal_registry::{AgentRunKey, AgentRunTerminalRegistry, TerminalState};
 pub use workspace_title::AgentRunWorkspaceTitleAdapter;

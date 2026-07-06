@@ -2,32 +2,24 @@ use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use agentdash_application_agentrun::agent_run::{
-    AgentRunDeliveryStateRepos, AgentRunDeliveryStateService, AgentRunMailboxScheduleTrigger,
-    AgentRunMailboxService, AgentRunTerminalTransitionInput, SessionControlService,
-    SessionCoreService, SessionEventingService, SessionLaunchService,
+use agentdash_application::companion::{
+    AgentRunCompanionMailboxDelivery, CompanionGateControlRepos, CompanionGateControlService,
+    CompleteCompanionChildTerminalCommand,
 };
-use agentdash_application_runtime_session::session::SessionTerminalCallback;
-use agentdash_application_runtime_session::session::SessionTerminalNotification;
-use agentdash_domain::agent::ProjectAgentRepository;
-use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
-use agentdash_domain::backend::ProjectBackendAccessRepository;
-use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository,
-    LifecycleAgentRepository, LifecycleRunRepository, RuntimeSessionExecutionAnchorRepository,
+use agentdash_application::repository_set::RepositorySet;
+use agentdash_application::session::SessionEventingService as ApplicationSessionEventingService;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunDeliveryTerminalEvent, AgentRunRuntimeTerminalCommand, AgentRunTerminalConvergenceDeps,
+    AgentRunTerminalConvergenceService, SessionControlService, SessionCoreService,
+    SessionEventingService as AgentRunSessionEventingService, SessionLaunchService,
+};
+use agentdash_application_runtime_session::session::{
+    SessionTerminalCallback, SessionTerminalNotification,
 };
 
 #[derive(Clone)]
 pub(crate) struct AgentRunTerminalControlCallbackDeps {
-    pub(crate) lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    pub(crate) lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
-    pub(crate) project_agent_repo: Arc<dyn ProjectAgentRepository>,
-    pub(crate) agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    pub(crate) execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub(crate) delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-    pub(crate) project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
-    pub(crate) command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
-    pub(crate) mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
+    pub(crate) repos: RepositorySet,
 }
 
 #[derive(Clone)]
@@ -35,7 +27,8 @@ pub(crate) struct AgentRunTerminalControlCallback {
     deps: AgentRunTerminalControlCallbackDeps,
     session_core: SessionCoreService,
     session_control: SessionControlService,
-    session_eventing: SessionEventingService,
+    agent_run_eventing: AgentRunSessionEventingService,
+    companion_eventing: ApplicationSessionEventingService,
     session_launch: SessionLaunchService,
 }
 
@@ -44,77 +37,91 @@ impl AgentRunTerminalControlCallback {
         deps: AgentRunTerminalControlCallbackDeps,
         session_core: SessionCoreService,
         session_control: SessionControlService,
-        session_eventing: SessionEventingService,
+        agent_run_eventing: AgentRunSessionEventingService,
+        companion_eventing: ApplicationSessionEventingService,
         session_launch: SessionLaunchService,
     ) -> Self {
         Self {
             deps,
             session_core,
             session_control,
-            session_eventing,
+            agent_run_eventing,
+            companion_eventing,
             session_launch,
         }
     }
 
-    fn service(&self) -> AgentRunMailboxService<'_> {
-        AgentRunMailboxService::new(
-            self.deps.lifecycle_run_repo.as_ref(),
-            self.deps.lifecycle_agent_repo.as_ref(),
-            self.deps.project_agent_repo.as_ref(),
-            self.deps.agent_frame_repo.as_ref(),
-            self.deps.execution_anchor_repo.as_ref(),
-            self.deps.delivery_binding_repo.as_ref(),
-            self.deps.project_backend_access_repo.as_ref(),
-            self.deps.command_receipt_repo.as_ref(),
-            self.deps.mailbox_repo.as_ref(),
-            self.session_core.clone(),
-            self.session_control.clone(),
-            self.session_eventing.clone(),
-            self.session_launch.clone(),
-        )
-    }
-
-    async fn schedule_turn_boundary(
-        &self,
-        session_id: &str,
-    ) -> Result<(), agentdash_application_agentrun::WorkflowApplicationError> {
-        let Some(anchor) = self
-            .deps
-            .execution_anchor_repo
-            .find_by_session(session_id)
-            .await?
-        else {
-            return Ok(());
-        };
-        let _ = self
-            .service()
-            .schedule(
-                anchor.run_id,
-                anchor.agent_id,
-                session_id,
-                AgentRunMailboxScheduleTrigger::AgentRunTurnBoundary,
-                None,
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn sync_terminal_delivery_state(
+    async fn converge_terminal(
         &self,
         notification: &SessionTerminalNotification,
-    ) -> Result<(), agentdash_application_agentrun::WorkflowApplicationError> {
-        AgentRunDeliveryStateService::new(AgentRunDeliveryStateRepos {
-            execution_anchor_repo: self.deps.execution_anchor_repo.as_ref(),
-            delivery_binding_repo: self.deps.delivery_binding_repo.as_ref(),
-        })
-        .mark_terminal_from_runtime_session(AgentRunTerminalTransitionInput {
+    ) -> Result<
+        Option<AgentRunDeliveryTerminalEvent>,
+        agentdash_application_agentrun::WorkflowApplicationError,
+    > {
+        AgentRunTerminalConvergenceService::new(
+            AgentRunTerminalConvergenceDeps {
+                lifecycle_run_repo: self.deps.repos.lifecycle_run_repo.clone(),
+                lifecycle_agent_repo: self.deps.repos.lifecycle_agent_repo.clone(),
+                project_agent_repo: self.deps.repos.project_agent_repo.clone(),
+                agent_frame_repo: self.deps.repos.agent_frame_repo.clone(),
+                execution_anchor_repo: self.deps.repos.execution_anchor_repo.clone(),
+                delivery_binding_repo: self.deps.repos.agent_run_delivery_binding_repo.clone(),
+                project_backend_access_repo: self.deps.repos.project_backend_access_repo.clone(),
+                command_receipt_repo: self.deps.repos.agent_run_command_receipt_repo.clone(),
+                mailbox_repo: self.deps.repos.agent_run_mailbox_repo.clone(),
+            },
+            self.session_core.clone(),
+            self.session_control.clone(),
+            self.agent_run_eventing.clone(),
+            self.session_launch.clone(),
+        )
+        .converge_runtime_terminal(AgentRunRuntimeTerminalCommand {
             runtime_session_id: notification.session_id.clone(),
             turn_id: notification.turn_id.clone(),
             terminal_state: notification.terminal_state.clone(),
             terminal_message: notification.terminal_message.clone(),
             observed_at: chrono::Utc::now(),
         })
-        .await?;
+        .await
+    }
+
+    async fn converge_companion_terminal(
+        &self,
+        event: AgentRunDeliveryTerminalEvent,
+    ) -> Result<(), agentdash_application::ApplicationError> {
+        let service = CompanionGateControlService::with_session_eventing(
+            CompanionGateControlRepos {
+                gate_repo: self.deps.repos.lifecycle_gate_repo.clone(),
+                run_repo: self.deps.repos.lifecycle_run_repo.clone(),
+                agent_repo: self.deps.repos.lifecycle_agent_repo.clone(),
+                frame_repo: self.deps.repos.agent_frame_repo.clone(),
+                anchor_repo: self.deps.repos.execution_anchor_repo.clone(),
+                delivery_binding_repo: self.deps.repos.agent_run_delivery_binding_repo.clone(),
+                lineage_repo: self.deps.repos.agent_lineage_repo.clone(),
+            },
+            self.companion_eventing.clone(),
+        )
+        .with_parent_mailbox_delivery(Arc::new(
+            AgentRunCompanionMailboxDelivery::from_runtime_services(
+                self.deps.repos.clone(),
+                self.session_core.clone(),
+                self.session_control.clone(),
+                self.agent_run_eventing.clone(),
+                self.session_launch.clone(),
+            ),
+        ));
+
+        service
+            .complete_child_terminal_to_parent(CompleteCompanionChildTerminalCommand {
+                run_id: event.run_id,
+                child_agent_id: event.agent_id,
+                child_frame_id: event.frame_id,
+                delivery_trace_ref: event.delivery_trace_ref,
+                resolved_turn_id: event.turn_id,
+                terminal_state: event.terminal_state,
+                terminal_message: event.terminal_message,
+            })
+            .await?;
         Ok(())
     }
 }
@@ -125,60 +132,23 @@ impl SessionTerminalCallback for AgentRunTerminalControlCallback {
         &self,
         notification: SessionTerminalNotification,
     ) -> Result<(), String> {
-        self.sync_terminal_delivery_state(&notification)
+        let event = self
+            .converge_terminal(&notification)
             .await
             .map_err(|error| error.to_string())?;
-        match notification.terminal_state.as_str() {
-            "completed" => {
-                if let Err(error) = self.schedule_turn_boundary(&notification.session_id).await {
-                    diag!(Warn, Subsystem::Api,
 
-                        runtime_session_id = %notification.session_id,
-                        error = %error,
-                        "AgentRun mailbox completed terminal fallback 调度失败"
-                    );
-                    return Err(error.to_string());
-                }
-            }
-            "failed" => {
-                if let Err(error) = self
-                    .service()
-                    .pause_for_terminal(
-                        &notification.session_id,
-                        "turn_failed",
-                        Some("上一轮失败，mailbox 已暂停。".to_string()),
-                    )
-                    .await
-                {
-                    diag!(Warn, Subsystem::Api,
-
-                        runtime_session_id = %notification.session_id,
-                        error = %error,
-                        "AgentRun mailbox failed pause 写入失败"
-                    );
-                    return Err(error.to_string());
-                }
-            }
-            "interrupted" => {
-                if let Err(error) = self
-                    .service()
-                    .pause_for_terminal(
-                        &notification.session_id,
-                        "turn_interrupted",
-                        Some("上一轮已中断，mailbox 已暂停。".to_string()),
-                    )
-                    .await
-                {
-                    diag!(Warn, Subsystem::Api,
-
-                        runtime_session_id = %notification.session_id,
-                        error = %error,
-                        "AgentRun mailbox interrupted pause 写入失败"
-                    );
-                    return Err(error.to_string());
-                }
-            }
-            _ => {}
+        if let Some(event) = event
+            && let Err(error) = self.converge_companion_terminal(event).await
+        {
+            diag!(
+                Warn,
+                Subsystem::Api,
+                runtime_session_id = %notification.session_id,
+                terminal_state = %notification.terminal_state,
+                error = %error,
+                "AgentRun companion terminal gate 收束失败"
+            );
+            return Err(error.to_string());
         }
         Ok(())
     }

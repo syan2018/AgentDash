@@ -154,6 +154,53 @@ async fn wait_returns_resolved_lifecycle_gate_activity() {
 }
 
 #[tokio::test]
+async fn wait_uses_resolved_lifecycle_gate_payload_status() {
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    let gate_repo = Arc::new(MemoryGateRepo::default());
+    let mut gate = LifecycleGate::open(
+        Uuid::new_v4(),
+        Some(Uuid::new_v4()),
+        Some(Uuid::new_v4()),
+        "companion_wait_follow_up",
+        "dispatch-failed",
+        Some(json!({
+            "status": "failed",
+            "summary": "provider model unsupported"
+        })),
+    );
+    let gate_id = gate.id;
+    gate.resolve("runtime_terminal");
+    gate_repo.create(&gate).await.expect("create gate");
+
+    let service = test_service_with_gate_repo(terminal_registry, gate_repo);
+    let result = service
+        .wait(
+            WaitToolContext {
+                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                turn_id: "turn-1".to_string(),
+            },
+            WaitActivityRequest {
+                activity_refs: vec![gate_id.to_string()],
+                kinds: vec!["subagent".to_string()],
+                timeout_ms: Some(0),
+                max_items: Some(10),
+                after_cursor: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("wait result");
+
+    assert!(!result.timed_out);
+    assert_eq!(result.items[0].kind, "subagent");
+    assert_eq!(result.items[0].status, "failed");
+    assert_eq!(
+        result.items[0].preview.as_deref(),
+        Some("provider model unsupported")
+    );
+}
+
+#[tokio::test]
 async fn scoped_gate_wait_keeps_observed_gate_ref_after_resolution() {
     let terminal_registry = AgentRunTerminalRegistry::new();
     let gate_repo = Arc::new(MemoryGateRepo::default());
@@ -305,7 +352,8 @@ async fn wait_after_cursor_filters_older_items() {
 
 #[tokio::test]
 async fn runtime_tool_catalog_includes_wait() {
-    let provider = WaitRuntimeToolProvider::from_service(test_service(AgentRunTerminalRegistry::new()));
+    let provider =
+        WaitRuntimeToolProvider::from_service(test_service(AgentRunTerminalRegistry::new()));
     let composer =
         crate::runtime_tools::provider::SessionRuntimeToolComposer::new(vec![Arc::new(provider)]);
     let context = ExecutionContext {
@@ -372,6 +420,20 @@ impl LifecycleGateRepository for MemoryGateRepo {
             .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
             .cloned()
             .collect())
+    }
+
+    async fn find_by_agent_and_correlation(
+        &self,
+        agent_id: Uuid,
+        correlation_id: &str,
+    ) -> Result<Option<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .unwrap()
+            .values()
+            .find(|gate| gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id)
+            .cloned())
     }
 
     async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {

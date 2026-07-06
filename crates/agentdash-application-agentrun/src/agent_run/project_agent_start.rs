@@ -1442,6 +1442,14 @@ mod tests {
             Ok(Vec::new())
         }
 
+        async fn find_by_agent_and_correlation(
+            &self,
+            _agent_id: Uuid,
+            _correlation_id: &str,
+        ) -> Result<Option<LifecycleGate>, DomainError> {
+            Ok(None)
+        }
+
         async fn update(&self, _gate: &LifecycleGate) -> Result<(), DomainError> {
             Ok(())
         }

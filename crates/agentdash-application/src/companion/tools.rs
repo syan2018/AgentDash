@@ -2818,6 +2818,22 @@ mod companion_tests {
                 .collect())
         }
 
+        async fn find_by_agent_and_correlation(
+            &self,
+            agent_id: Uuid,
+            correlation_id: &str,
+        ) -> Result<Option<LifecycleGate>, agentdash_domain::DomainError> {
+            Ok(self
+                .gates
+                .lock()
+                .unwrap()
+                .values()
+                .find(|gate| {
+                    gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id
+                })
+                .cloned())
+        }
+
         async fn update(&self, gate: &LifecycleGate) -> Result<(), agentdash_domain::DomainError> {
             self.gates.lock().unwrap().insert(gate.id, gate.clone());
             Ok(())

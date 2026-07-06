@@ -120,6 +120,11 @@ pub trait LifecycleGateRepository: Send + Sync {
     async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError>;
     async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError>;
     async fn list_open_for_agent(&self, agent_id: Uuid) -> Result<Vec<LifecycleGate>, DomainError>;
+    async fn find_by_agent_and_correlation(
+        &self,
+        agent_id: Uuid,
+        correlation_id: &str,
+    ) -> Result<Option<LifecycleGate>, DomainError>;
     async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError>;
 }
 

@@ -61,10 +61,7 @@ pub(crate) struct MemoryRuntimeSessionExecutionAnchorRepository {
 
 #[async_trait::async_trait]
 impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAnchorRepository {
-    async fn create_once(
-        &self,
-        anchor: &RuntimeSessionExecutionAnchor,
-    ) -> Result<(), DomainError> {
+    async fn create_once(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError> {
         let mut anchors = self.anchors.lock().await;
         if let Some(existing) = anchors
             .iter()
@@ -141,7 +138,6 @@ impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAn
             .cloned()
             .collect())
     }
-
 }
 
 #[derive(Default)]
@@ -316,6 +312,20 @@ impl LifecycleGateRepository for MemoryLifecycleGateRepository {
             .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
             .cloned()
             .collect())
+    }
+
+    async fn find_by_agent_and_correlation(
+        &self,
+        agent_id: Uuid,
+        correlation_id: &str,
+    ) -> Result<Option<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .find(|gate| gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id)
+            .cloned())
     }
 
     async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {

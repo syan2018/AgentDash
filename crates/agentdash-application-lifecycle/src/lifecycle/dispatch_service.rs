@@ -769,6 +769,23 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        async fn find_by_agent_and_correlation(
+            &self,
+            agent_id: Uuid,
+            correlation_id: &str,
+        ) -> Result<Option<LifecycleGate>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|gate| {
+                    gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id
+                })
+                .cloned())
+        }
+
         async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|g| g.id == gate.id) {

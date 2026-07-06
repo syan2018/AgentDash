@@ -71,12 +71,19 @@ impl SessionRuntimeInner {
         super::super::hooks_service::SessionHookService::new(self.clone())
     }
 
+    pub fn agent_run_terminal_hook_trigger_port(
+        &self,
+    ) -> Arc<
+        dyn agentdash_application_ports::agent_run_control_effect::AgentRunTerminalHookTriggerPort,
+    > {
+        Arc::new(self.clone())
+    }
+
     pub fn terminal_boundary_service(
         &self,
     ) -> super::super::terminal_boundary_service::RuntimeTerminalBoundaryService {
         super::super::terminal_boundary_service::RuntimeTerminalBoundaryService::new(
             super::super::terminal_boundary::RuntimeTerminalBoundaryDeps {
-                hook_trigger: Arc::new(self.clone()),
                 control_effect_port: self.agent_run_control_effect_port.clone(),
             },
         )

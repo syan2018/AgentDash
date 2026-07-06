@@ -65,12 +65,21 @@ If context is compacted, restore the working state in this order:
 - Native sub-agent dispatch:
   - `019f38a9-03cf-7352-a021-eac294a178bd` (`trellis-implement`, nickname `Chandrasekhar`) owns final WP3/WP4 RuntimeSession business replay externalization.
   - Dispatch prompt required reading task artifacts/spec manifests, preserving the existing `AgentRunControlEffectStore` / `0053_agent_run_control_effects` model, and not committing.
+  - This implement agent timed out twice and was closed without usable output; main session owns the remaining repair.
+  - `019f38c3-5a8e-73e2-b315-02c0faa90cec` (`trellis-check`, nickname `Poincare`) ran a read-only check after commit `9d62140b` and reported three blocking findings.
 - Current remaining WP3/WP4 boundary:
   - AgentRun control-effect executor/intake implementation exists in `crates/agentdash-application-agentrun/src/agent_run/control_effects.rs` and must be committed with this cleanup slice.
   - RuntimeSession terminal path now uses `RuntimeTerminalBoundaryService` / `RuntimeTerminalBoundaryEvidence` and hands evidence to `AgentRunControlEffectPort`; `terminal_effects.rs` and `effects_service.rs` have been deleted.
   - API/bootstrap now wires `AgentRunControlEffectService` plus `ApiWaitProducerTerminalConvergenceAdapter` and `ApiLifecycleTerminalConvergenceAdapter`; the `SessionTerminalCallback` composite fanout is gone.
   - `SessionStoreSet` exposes the outbox store as `control_effects`, not `terminal_effects`, so the composition root no longer presents the AgentRun outbox as Session-owned.
   - Static grep after this slice should only find historical migration names and task planning text for `runtime_session_terminal_effects` / `SessionTerminalEffectStore`; product code should not contain `SessionEffectsService`, `terminal_effects`, `SessionTerminalCallback`, or `TerminalEffectType`.
+- Check-agent blocking findings and resolution:
+  - `0053_agent_run_control_effects.sql` used an invalid dollar quote in the PL/pgSQL block; fixed to `DO $$ ... END $$`.
+  - RuntimeSession terminal boundary still triggered terminal hook effects directly; moved terminal hook trigger and BeforeStop continue detection into AgentRun control-effect service through an AgentRun-scoped trigger port. RuntimeSession now only passes live hook runtime evidence.
+  - Workspace module successful presentation still emitted `SessionMetaUpdate { key = "workspace_module_presented" }`; changed it to typed `ControlPlaneProjectionChanged` with `projection = resource_surface` and `reason = workspace_module_presented`.
+- Remaining non-blocking audit items:
+  - `MailboxWakeDelivery` and `HookRuntimeProjectionChanged` executor branches are currently no-op when replayed, but no production producer was found in this slice.
+  - `MailboxStateChanged` and `SessionMetaUpdate` remain protocol/trace/feed concepts; they must not become AgentRun workspace refresh authority again.
 
 ## Commit Slicing
 

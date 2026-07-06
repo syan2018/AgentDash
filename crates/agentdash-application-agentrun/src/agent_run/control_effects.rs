@@ -4,13 +4,13 @@ use agentdash_agent_protocol::text_user_input_blocks;
 use agentdash_application_ports::agent_run_control_effect::{
     AgentRunControlEffectPort, AgentRunControlEffectReplayPort,
     AgentRunLifecycleTerminalConvergencePort, AgentRunPostTurnHandler,
-    AgentRunTerminalControlInput, AgentRunTerminalHookEffects,
-    AgentRunWaitProducerTerminalConvergencePort, AgentRunWaitProducerTerminalEvent,
-    DynAgentRunHookEffectHandlerRegistry,
+    AgentRunTerminalControlInput, AgentRunTerminalHookEffects, AgentRunTerminalHookTriggerInput,
+    AgentRunTerminalHookTriggerPort, AgentRunWaitProducerTerminalConvergencePort,
+    AgentRunWaitProducerTerminalEvent, DynAgentRunHookEffectHandlerRegistry,
 };
 use agentdash_application_ports::frame_launch_envelope::TerminalHookEffectBinding;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
-use agentdash_spi::hooks::HookEffect;
+use agentdash_spi::hooks::{HookEffect, HookTraceTrigger};
 use agentdash_spi::session_persistence::{
     AgentRunControlEffectKind, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
     AgentRunControlEffectStore, NewAgentRunControlEffectRecord,
@@ -45,6 +45,7 @@ pub struct AgentRunControlEffectDeps {
     pub session_eventing: SessionEventingService,
     pub session_launch: SessionLaunchService,
     pub mailbox_runtime: AgentRunMailboxRuntimeAdapter,
+    pub terminal_hook_trigger_port: Arc<dyn AgentRunTerminalHookTriggerPort>,
     pub wait_producer_terminal_port: Arc<dyn AgentRunWaitProducerTerminalConvergencePort>,
     pub lifecycle_terminal_port: Arc<dyn AgentRunLifecycleTerminalConvergencePort>,
     pub hook_effect_handler_registry: Arc<RwLock<Option<DynAgentRunHookEffectHandlerRegistry>>>,
@@ -74,6 +75,65 @@ impl AgentRunControlEffectService {
         registry: DynAgentRunHookEffectHandlerRegistry,
     ) {
         *self.deps.hook_effect_handler_registry.write().await = Some(registry);
+    }
+
+    async fn collect_terminal_hook_outputs(
+        &self,
+        input: &AgentRunTerminalControlInput,
+    ) -> Option<AgentRunTerminalHookEffects> {
+        let context = input.terminal_hook_context.as_ref()?;
+        let effects = self
+            .deps
+            .terminal_hook_trigger_port
+            .emit_agent_run_terminal_hook_trigger(
+                context.hook_runtime.as_ref(),
+                AgentRunTerminalHookTriggerInput {
+                    delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
+                    turn_id: input.turn_id.clone(),
+                    terminal_state: input.terminal_state.clone(),
+                    terminal_message: input.terminal_message.clone(),
+                    source: context.source.clone(),
+                },
+            )
+            .await;
+        if effects.is_empty() {
+            return None;
+        }
+
+        let durable_binding =
+            context
+                .post_turn_handler
+                .as_ref()
+                .map(|handler| TerminalHookEffectBinding {
+                    handler: handler
+                        .durable_effect_handler()
+                        .unwrap_or(serde_json::Value::Null),
+                    supported_effect_kinds: handler
+                        .supported_effect_kinds()
+                        .iter()
+                        .map(|kind| (*kind).to_string())
+                        .collect(),
+                });
+
+        Some(AgentRunTerminalHookEffects {
+            control_target: Some(context.hook_runtime.control_target()),
+            effects,
+            handler: context.post_turn_handler.clone(),
+            durable_binding,
+        })
+    }
+
+    fn should_deliver_hook_auto_resume(&self, input: &AgentRunTerminalControlInput) -> bool {
+        input.terminal_state == "completed"
+            && input.terminal_hook_context.as_ref().is_some_and(|context| {
+                context
+                    .hook_runtime
+                    .trace()
+                    .iter()
+                    .rev()
+                    .find(|entry| matches!(entry.trigger, HookTraceTrigger::BeforeStop))
+                    .is_some_and(|entry| entry.decision == "continue")
+            })
     }
 
     async fn enqueue_effect(
@@ -518,6 +578,9 @@ impl AgentRunControlEffectPort for AgentRunControlEffectService {
         &self,
         input: AgentRunTerminalControlInput,
     ) -> Result<(), String> {
+        let terminal_hook_outputs = self.collect_terminal_hook_outputs(&input).await;
+        let hook_auto_resume_requested = self.should_deliver_hook_auto_resume(&input);
+
         let delivery = self.insert_terminal_delivery_effect(&input).await?;
         self.execute_record(delivery, ControlEffectExecutor::AgentRunDeliveryConvergence)
             .await?;
@@ -529,7 +592,7 @@ impl AgentRunControlEffectPort for AgentRunControlEffectService {
         )
         .await?;
 
-        if let Some(hook_effects) = input.terminal_hook_outputs.as_ref() {
+        if let Some(hook_effects) = terminal_hook_outputs.as_ref() {
             let record = self.insert_hook_effects(&input, hook_effects).await?;
             self.execute_record(
                 record,
@@ -540,9 +603,9 @@ impl AgentRunControlEffectPort for AgentRunControlEffectService {
             .await?;
         }
 
-        if input.before_stop_continue_observed {
+        if hook_auto_resume_requested {
             let record = self
-                .insert_hook_auto_resume(&input, input.terminal_hook_outputs.as_ref())
+                .insert_hook_auto_resume(&input, terminal_hook_outputs.as_ref())
                 .await?;
             self.execute_record(record, ControlEffectExecutor::HookAutoResumeDelivery)
                 .await?;

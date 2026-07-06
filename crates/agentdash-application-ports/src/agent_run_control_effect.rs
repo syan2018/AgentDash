@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::frame_launch_envelope::TerminalHookEffectBinding;
-use agentdash_agent_protocol::BackboneEnvelope;
-use agentdash_spi::hooks::{HookControlTarget, HookEffect};
+use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo};
+use agentdash_spi::hooks::{HookControlTarget, HookEffect, HookRuntimeAccess, SharedHookRuntime};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -60,14 +60,37 @@ pub struct AgentRunTerminalHookEffects {
 }
 
 #[derive(Clone)]
+pub struct AgentRunTerminalHookContext {
+    pub hook_runtime: SharedHookRuntime,
+    pub post_turn_handler: Option<DynAgentRunPostTurnHandler>,
+    pub source: SourceInfo,
+}
+
+#[derive(Clone)]
 pub struct AgentRunTerminalControlInput {
     pub delivery_runtime_session_id: String,
     pub turn_id: String,
     pub terminal_event_seq: u64,
     pub terminal_state: String,
     pub terminal_message: Option<String>,
-    pub terminal_hook_outputs: Option<AgentRunTerminalHookEffects>,
-    pub before_stop_continue_observed: bool,
+    pub terminal_hook_context: Option<AgentRunTerminalHookContext>,
+}
+
+pub struct AgentRunTerminalHookTriggerInput {
+    pub delivery_runtime_session_id: String,
+    pub turn_id: String,
+    pub terminal_state: String,
+    pub terminal_message: Option<String>,
+    pub source: SourceInfo,
+}
+
+#[async_trait]
+pub trait AgentRunTerminalHookTriggerPort: Send + Sync {
+    async fn emit_agent_run_terminal_hook_trigger(
+        &self,
+        hook_runtime: &dyn HookRuntimeAccess,
+        input: AgentRunTerminalHookTriggerInput,
+    ) -> Vec<HookEffect>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

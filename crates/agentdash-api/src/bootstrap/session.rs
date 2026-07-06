@@ -477,6 +477,7 @@ pub(crate) async fn build_session_runtime(
         session_eventing: agent_run_session_eventing(session_eventing.clone()),
         session_launch: agent_run_session_launch(session_launch.clone()),
         mailbox_runtime: mailbox_runtime_adapter,
+        terminal_hook_trigger_port: session_runtime_builder.agent_run_terminal_hook_trigger_port(),
         wait_producer_terminal_port,
         lifecycle_terminal_port,
         hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),

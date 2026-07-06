@@ -347,7 +347,6 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_agent_protocol::{PlatformEvent, SourceInfo};
-    use agentdash_spi::hooks::{HookEffect, HookRuntimeAccess};
     use agentdash_spi::{
         AgentConfig, AgentConnector, CapabilityState, ConnectorCapabilities, ConnectorError,
         ConnectorType, ExecutionContext, ExecutionSessionFrame, ExecutionStream, PromptPayload,
@@ -365,9 +364,7 @@ mod tests {
         SessionStoreSet,
     };
     use super::super::runtime_registry::SessionRuntimeRegistry;
-    use super::super::terminal_boundary::{
-        RuntimeTerminalBoundaryDeps, TerminalHookTriggerPort, TerminalHookTriggerRequest,
-    };
+    use super::super::terminal_boundary::RuntimeTerminalBoundaryDeps;
     use super::super::terminal_boundary_service::RuntimeTerminalBoundaryService;
     use super::super::turn_supervisor::TurnSupervisor;
     use super::super::types::{ExecutionStatus, SessionMeta};
@@ -429,7 +426,6 @@ mod tests {
                 Arc::new(NoopConnector),
             ),
             terminal_boundary: RuntimeTerminalBoundaryService::new(RuntimeTerminalBoundaryDeps {
-                hook_trigger: Arc::new(NoopHookTrigger),
                 control_effect_port: Arc::new(RwLock::new(None)),
             }),
         };
@@ -520,7 +516,6 @@ mod tests {
                 Arc::new(NoopConnector),
             ),
             terminal_boundary: RuntimeTerminalBoundaryService::new(RuntimeTerminalBoundaryDeps {
-                hook_trigger: Arc::new(NoopHookTrigger),
                 control_effect_port: Arc::new(RwLock::new(None)),
             }),
         };
@@ -662,7 +657,6 @@ mod tests {
                 Arc::new(NoopConnector),
             ),
             terminal_boundary: RuntimeTerminalBoundaryService::new(RuntimeTerminalBoundaryDeps {
-                hook_trigger: Arc::new(NoopHookTrigger),
                 control_effect_port: Arc::new(RwLock::new(Some(control_port))),
             }),
         };
@@ -780,19 +774,6 @@ mod tests {
             _from_seq: u64,
         ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
             Ok(Vec::new())
-        }
-    }
-
-    struct NoopHookTrigger;
-
-    #[async_trait]
-    impl TerminalHookTriggerPort for NoopHookTrigger {
-        async fn emit_terminal_hook_trigger(
-            &self,
-            _hook_runtime: &dyn HookRuntimeAccess,
-            _input: TerminalHookTriggerRequest<'_>,
-        ) -> Vec<HookEffect> {
-            Vec::new()
         }
     }
 

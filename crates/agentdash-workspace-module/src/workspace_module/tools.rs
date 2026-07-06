@@ -897,13 +897,14 @@ pub struct WorkspaceModulePresentParams {
 
 /// `workspace_module_present`：best-effort 请求宿主向前端 panel 展示某 module 的 UI 入口。
 ///
-/// 复用 `PlatformEvent::SessionMetaUpdate{ key: "workspace_module_presented" }` +
-/// AgentRun notification bridge，不新增 PlatformEvent 变体（D2-5）。
+/// 通过 `ControlPlaneProjectionChanged(reason=workspace_module_presented)` 触发
+/// AgentRun workspace/resource-surface refresh。
 /// 无可展示目标（module 不可见 / view_key 不存在）时返回**可操作诊断**结构化错误（R4）。
 #[derive(Clone)]
 pub struct WorkspaceModulePresentTool {
     installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
     canvas_repo: Arc<dyn CanvasRepository>,
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     project_id: Uuid,
     vfs: SharedRuntimeVfs,
     agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
@@ -918,6 +919,7 @@ impl WorkspaceModulePresentTool {
     pub fn new(
         installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
+        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         project_id: Uuid,
         vfs: SharedRuntimeVfs,
         agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
@@ -931,6 +933,7 @@ impl WorkspaceModulePresentTool {
         Self {
             installation_repo,
             canvas_repo,
+            execution_anchor_repo,
             project_id,
             vfs,
             agent_run_bridge_handle,
@@ -1010,6 +1013,7 @@ impl AgentTool for WorkspaceModulePresentTool {
                 WorkspaceModulePresentCommand {
                     installation_repo: &self.installation_repo,
                     canvas_repo: &self.canvas_repo,
+                    execution_anchor_repo: &self.execution_anchor_repo,
                     project_id: self.project_id,
                     turn_id: &self.turn_id,
                     visibility_source: &self.visibility_source,
@@ -2207,7 +2211,7 @@ mod tests {
             install_repo,
             canvas_repo,
             fake_canvas_runtime_state_repo(),
-            Arc::new(FakeRuntimeSessionExecutionAnchorRepository::default()),
+            Arc::new(FixtureRuntimeSessionExecutionAnchorRepository::default()),
             project_id,
             "session-1".to_string(),
             None,
@@ -2521,7 +2525,7 @@ mod tests {
     #[tokio::test]
     async fn invoke_backend_service_generated_operation_dispatches_to_bridge() {
         let project_id = Uuid::new_v4();
-        let install_repo = Arc::new(FakeInstallationRepo::default());
+        let install_repo = Arc::new(FixtureInstallationRepo::default());
         install_repo
             .installations
             .lock()
@@ -2530,7 +2534,7 @@ mod tests {
                 project_id,
                 ExtensionGeneratedOperationVisibility::AgentAndPanel,
             ));
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let transport = Arc::new(CapturingBackendServiceTransport::default());
         let tool = invoke_tool_with_backend_service_transport(
             install_repo,
@@ -2610,7 +2614,7 @@ mod tests {
     #[tokio::test]
     async fn invoke_panel_only_backend_service_operation_is_not_exposed_to_agent() {
         let project_id = Uuid::new_v4();
-        let install_repo = Arc::new(FakeInstallationRepo::default());
+        let install_repo = Arc::new(FixtureInstallationRepo::default());
         install_repo
             .installations
             .lock()
@@ -2619,7 +2623,7 @@ mod tests {
                 project_id,
                 ExtensionGeneratedOperationVisibility::PanelOnly,
             ));
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let transport = Arc::new(CapturingBackendServiceTransport::default());
         let tool = invoke_tool_with_backend_service_transport(
             install_repo,

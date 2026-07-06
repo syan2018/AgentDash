@@ -303,6 +303,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 WorkspaceModulePresentTool::new(
                     self.installation_repo.clone(),
                     self.canvas_repo.clone(),
+                    self.execution_anchor_repo.clone(),
                     project_id,
                     shared_vfs,
                     self.agent_run_bridge_handle.clone(),

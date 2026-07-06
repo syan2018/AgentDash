@@ -580,6 +580,11 @@ pub(crate) struct RuntimeTerminalBoundaryEvidence {
 
 其中 `delivery_runtime_session_id`、`turn_id` 和 `terminal_event_seq` 只作为 trace evidence
 进入 payload 或记录列；用户可见的 running/terminal 状态由 AgentRun current delivery binding 表达。
+RuntimeSession 可以在 evidence 中携带当前 live hook runtime 和 post-turn handler，原因是它们来自
+delivery trace 的执行器现场；terminal hook trigger、hook effect durability 和 BeforeStop continue
+判定由 `AgentRunControlEffectService` 通过 AgentRun-scoped hook trigger port 完成，原因是 hook
+生效面绑定 `run_id + agent_id + frame_id`，RuntimeSession 不能根据 session terminal 自行生成业务
+续跑或 hook projection effect。
 
 RuntimeSession 的 turn terminal 只有一条处理路径：正常 stream 收到 terminal、connector start
 失败、accepted launch boundary 失败、processor 不可达的 cancel fallback 与启动恢复补偿，都经由

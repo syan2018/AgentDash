@@ -56,7 +56,7 @@ BEGIN
     END IF;
 END $$;
 
-DO $
+DO $$
 BEGIN
     IF to_regclass('public.agent_run_control_effects') IS NOT NULL THEN
         ALTER TABLE public.agent_run_control_effects
@@ -72,7 +72,7 @@ BEGIN
                 ADD CONSTRAINT agent_run_control_effects_pkey PRIMARY KEY (id);
         END IF;
     END IF;
-END $;
+END $$;
 
 ALTER INDEX IF EXISTS public.idx_runtime_session_terminal_effects_session_turn
     RENAME TO idx_agent_run_control_effects_delivery_turn;

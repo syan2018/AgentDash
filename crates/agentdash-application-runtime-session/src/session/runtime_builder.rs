@@ -1,6 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
-use agentdash_application_ports::agent_run_control_effect::AgentRunControlEffectPort;
+use agentdash_application_ports::agent_run_control_effect::{
+    AgentRunControlEffectPort, AgentRunTerminalHookTriggerPort,
+};
 use agentdash_application_ports::agent_run_surface::{
     AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurfaceQueryPort,
 };
@@ -167,6 +169,10 @@ impl SessionRuntimeBuilder {
 
     pub fn runtime_surface_adoption_port(&self) -> Arc<dyn RuntimeSurfaceAdoptionPort> {
         Arc::new(self.inner.clone())
+    }
+
+    pub fn agent_run_terminal_hook_trigger_port(&self) -> Arc<dyn AgentRunTerminalHookTriggerPort> {
+        self.inner.agent_run_terminal_hook_trigger_port()
     }
 
     pub fn terminal_boundary_service(&self) -> RuntimeTerminalBoundaryService {

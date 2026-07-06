@@ -11,8 +11,10 @@ use super::super::hook_injection_sink::{
 };
 use super::super::hub_support::session_hook_trace_decision;
 use super::SessionRuntimeInner;
-use crate::session::terminal_boundary::{TerminalHookTriggerPort, TerminalHookTriggerRequest};
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_application_ports::agent_run_control_effect::{
+    AgentRunTerminalHookTriggerInput, AgentRunTerminalHookTriggerPort,
+};
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::hooks::{
@@ -216,20 +218,23 @@ impl SessionRuntimeInner {
 }
 
 #[async_trait::async_trait]
-impl TerminalHookTriggerPort for SessionRuntimeInner {
-    async fn emit_terminal_hook_trigger(
+impl AgentRunTerminalHookTriggerPort for SessionRuntimeInner {
+    async fn emit_agent_run_terminal_hook_trigger(
         &self,
         hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
-        input: TerminalHookTriggerRequest<'_>,
+        input: AgentRunTerminalHookTriggerInput,
     ) -> Vec<HookEffect> {
         self.emit_session_hook_trigger(
             hook_runtime,
             &HookTriggerInput {
-                session_id: input.session_id,
-                turn_id: input.turn_id,
-                trigger: input.trigger,
-                payload: input.payload,
-                refresh_reason: input.refresh_reason,
+                session_id: &input.delivery_runtime_session_id,
+                turn_id: Some(&input.turn_id),
+                trigger: HookTrigger::SessionTerminal,
+                payload: Some(serde_json::json!({
+                    "terminal_state": input.terminal_state,
+                    "message": input.terminal_message,
+                })),
+                refresh_reason: "trigger:session_terminal",
                 source: input.source,
             },
         )

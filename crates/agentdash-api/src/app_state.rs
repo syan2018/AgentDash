@@ -14,7 +14,10 @@ use agentdash_application::context::{
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_session_agent_run_bridge::agent_run_session_eventing;
+use agentdash_application::runtime_session_agent_run_bridge::{
+    agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
+    agent_run_session_launch,
+};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::runtime_surface::{
@@ -345,10 +348,35 @@ impl AppState {
             repos.state_change_repo.clone();
         let story_repo_port: Arc<dyn StoryRepository> = repos.story_repo.clone();
 
-        // 启动对账管线：Session → Task → Infrastructure（有序不可跳过）
+        // 启动对账管线：Session → Wait obligation → Task → Infrastructure（有序不可跳过）
         //
         // M2-c：Task 对账改为从 LifecycleRun/step state 反投影，不再需要 session 状态读取器。
         {
+            let wait_obligation_terminal_convergence: Arc<
+                dyn agentdash_application::reconcile::boot::WaitObligationTerminalConvergencePort,
+            > = Arc::new(
+                agentdash_application::companion::CompanionGateControlService::with_session_eventing(
+                    agentdash_application::companion::CompanionGateControlRepos {
+                        gate_repo: repos.lifecycle_gate_repo.clone(),
+                        run_repo: repos.lifecycle_run_repo.clone(),
+                        frame_repo: repos.agent_frame_repo.clone(),
+                        agent_repo: repos.lifecycle_agent_repo.clone(),
+                        anchor_repo: repos.execution_anchor_repo.clone(),
+                        delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
+                        lineage_repo: repos.agent_lineage_repo.clone(),
+                    },
+                    session_eventing.clone(),
+                )
+                .with_parent_mailbox_delivery(Arc::new(
+                    agentdash_application::companion::AgentRunCompanionMailboxDelivery::from_runtime_services(
+                        repos.clone(),
+                        agent_run_session_core(session_core.clone()),
+                        agent_run_session_control(session_control.clone()),
+                        agent_run_session_eventing(session_eventing.clone()),
+                        agent_run_session_launch(session_launch.clone()),
+                    ),
+                )),
+            );
             let deps = agentdash_application::reconcile::boot::BootReconcileDeps {
                 session_runtime: session_runtime.clone(),
                 project_repo: project_repo_port.clone(),
@@ -360,6 +388,9 @@ impl AppState {
                 lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
                 lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
                 execution_anchor_repo: repos.execution_anchor_repo.clone(),
+                lifecycle_gate_repo: repos.lifecycle_gate_repo.clone(),
+                agent_run_delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
+                wait_obligation_terminal_convergence,
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
             if report.has_errors() {

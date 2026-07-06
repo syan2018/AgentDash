@@ -606,6 +606,34 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         .collect()
     }
 
+    async fn list_open_wait_obligations(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        sqlx::query_as::<_, GateRow>(
+            r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
+               FROM lifecycle_gates
+               WHERE status='open'
+                 AND payload_json IS NOT NULL
+                 AND payload_json::jsonb ? 'wait_source'
+                 AND payload_json::jsonb ? 'expected_result'
+                 AND payload_json::jsonb ? 'on_producer_terminal_without_result'
+               ORDER BY created_at
+               LIMIT $1"#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+    }
+
     async fn list_by_wait_producer(
         &self,
         producer: &WaitProducerRef,

@@ -92,6 +92,10 @@ pub struct WaitObligationDeclaration {
 Repository and convergence surface:
 
 ```rust
+LifecycleGateRepository::list_open_wait_obligations(
+    limit: usize,
+) -> Result<Vec<LifecycleGate>, DomainError>
+
 LifecycleGateRepository::list_by_wait_producer(
     producer: &WaitProducerRef,
 ) -> Result<Vec<LifecycleGate>, DomainError>
@@ -133,6 +137,7 @@ Companion child wait gates currently persist the declaration in `LifecycleGate.p
 ### 3. Contracts
 
 - `WaitProducerRef` is the business location of the producer. Runtime session ids remain trace refs and diagnostics; AgentRun delivery producers use `run_id + agent_id + frame_id`.
+- `list_open_wait_obligations` is the bounded boot/retry scan for gates that declare `wait_source`、`expected_result` and `on_producer_terminal_without_result`.
 - `list_by_wait_producer` is a precise lookup over declared wait source fields. It is not a gate-kind scan, because the same gate kind can later represent different producer/result contracts.
 - `observe_producer_terminal` resolves only gates whose declaration matches the producer and whose `expected_result.kind` is supported by the convergence implementation.
 - If the gate is open, convergence writes a result payload with `source="producer_terminal"`, terminal diagnostics, status mapped by `on_producer_terminal_without_result`, and preserved wait declaration metadata.

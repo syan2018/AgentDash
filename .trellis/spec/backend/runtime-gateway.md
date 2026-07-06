@@ -257,3 +257,114 @@ pub struct ExtensionChannelInvokeRequest {
 ```
 
 宿主侧负责把 Project、session、backend placement 与 trace 写入 `RuntimeInvocationRequest`，Gateway 负责入站校验和 relay payload 生成。
+
+## Scenario: Extension backendService Bridge Invocation
+
+### 1. Scope / Trigger
+
+- Trigger: Extension `backend_services[]` 把 packaged Web App 的本机 Node service 暴露给 panel fetch route 和 Workspace Module Agent operation，属于跨 Gateway、relay、本机 runtime、contracts 与 frontend bridge 的可执行合同。
+- Scope: `ExtensionRuntimeBackendServiceInvoker`、`ExtensionBackendServiceTransport`、AgentRun scoped backendService invoke API、relay `command.extension_backend_service_invoke`、local backend service manager、Workspace Module backendService dispatch。
+
+### 2. Signatures
+
+```rust
+pub struct ExtensionBackendServiceInvokeRequest {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub service_key: String,
+    pub route: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub method: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Option<Vec<u8>>,
+    pub package_artifact: ExtensionPackageArtifactPayload,
+    pub workspace: Option<ExtensionInvocationWorkspacePayload>,
+    pub trace_id: String,
+    pub invocation_id: String,
+}
+
+pub struct ExtensionBackendServiceInvokeResponse {
+    pub metadata: ExtensionBackendServiceInvokeMetadataPayload,
+    pub response: Option<ExtensionBackendServiceHttpResponsePayload>,
+    pub diagnostic: Option<ExtensionBackendServiceInvokeDiagnosticPayload>,
+}
+```
+
+HTTP panel bridge route:
+
+```text
+POST /api/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-backend-service
+```
+
+Relay messages:
+
+```text
+command.extension_backend_service_invoke
+response.extension_backend_service_invoke
+```
+
+### 3. Contracts
+
+- API/panel submits only `extension_key + service_key + route + method + headers + body`; Project, AgentRun delivery runtime, backend target, workspace root, trace and artifact are resolved by host/API.
+- `ExtensionRuntimeBackendServiceInvoker` resolves Project enabled extension installation, requires `package_artifact`, checks `backend_services[].service_key`, and checks route against declared `backend_services[].routes` before relay transport.
+- Declared backendService routes may be relative paths or explicit HTTP(S) loopback URLs; Gateway/API/Workspace Module validation strips query from the requested route and compares absolute declarations by their URL path component, while the relay invoke payload keeps the original `pathname + search` for HTTP forwarding.
+- Relay command payload wraps identity in `metadata { project_id, backend_id, extension_key, extension_id, service_key, route, trace_id, invocation_id }`; local runtime echoes the same metadata in response.
+- Cloud/API sends invoke intent only. Local runtime downloads/cache-validates package artifact, materializes backend service, starts/reuses the Node process, runs health/readiness, and proxies HTTP bytes to the service endpoint.
+- Service state failures return payload `diagnostic { readiness, code, message, retryable, details }`; relay top-level `error` is reserved for transport/protocol failures.
+- HTTP `204 | 205 | 304` responses carry `body = None` through relay, API and browser bridge.
+- Workspace Module Agent surface only invokes operations from `operation_catalog`; `visibility = panel_only` remains filtered from describe and invoke.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| installation missing or disabled | Gateway/provider unavailable before relay |
+| installation lacks package artifact | `missing_artifact` diagnostic |
+| `service_key` not in `backend_services[]` | invalid request / provider unavailable before relay |
+| route not declared in `backend_services[].routes` | invalid request before relay or local diagnostic |
+| backend target unavailable | Workspace Module readiness unavailable; panel/API returns transport error |
+| local service starting/health failed/process exited | relay payload diagnostic with retryable set from readiness |
+| local service returns 204/205/304 | response body omitted |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Panel calls `fetch("/api/search", { method: "POST", body })`; parent bridge matches explicit backendService fetch route and sends bytes to the AgentRun scoped backendService API.
+- Good: Agent invokes an `operation_catalog` backendService operation; Workspace Module serializes input as JSON bytes, sets `POST`, and routes through the same backendService invoker.
+- Base: Service is declared but still starting; caller receives structured readiness diagnostic and can present a stable unavailable state.
+- Bad: Treating `runtime_actions` or arbitrary localhost routes as Agent operations would bypass author intent and Project/backend routing facts.
+
+### 6. Tests Required
+
+- `agentdash-application-runtime-gateway` tests assert declared route dispatch and route mismatch rejection.
+- `agentdash-api` tests assert API response mapping, relay metadata, unavailable diagnostic and pending response routing.
+- `agentdash-relay` protocol tests assert command/response roundtrip and no-body response shape.
+- `agentdash-local` tests assert materialize, Node start/health/stop, process exit logs and unsupported runtime diagnostics.
+- `agentdash-workspace-module` tests assert backendService readiness, bridge dispatch and `panel_only` filtering.
+- Frontend bridge tests assert POST headers/body, route mismatch and 204/205/304 no-body behavior.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```json
+{
+  "route": "http://127.0.0.1:4317/api/search",
+  "backend_id": "from-iframe"
+}
+```
+
+#### Correct
+
+```json
+{
+  "extension_key": "local-webapp",
+  "service_key": "local-webapp.api",
+  "route": "/api/search",
+  "method": "POST",
+  "headers": { "content-type": "application/json" },
+  "body": [123, 34, 113, 34, 58, 34, 100, 101, 109, 111, 34, 125]
+}
+```
+
+Host/API resolves Project, backend placement, package artifact and trace before relay; local runtime performs private service access.

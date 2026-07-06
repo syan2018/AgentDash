@@ -956,6 +956,7 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseMcpClose { .. }
             | RelayMessage::ResponseExtensionActionInvoke { .. }
             | RelayMessage::ResponseExtensionChannelInvoke { .. }
+            | RelayMessage::ResponseExtensionBackendServiceInvoke { .. }
             | RelayMessage::ResponseVfsMaterialize { .. }
             | RelayMessage::ResponseTerminalSpawn { .. }
             | RelayMessage::ResponseTerminalInput { .. }
@@ -1314,6 +1315,17 @@ mod tests {
     fn extension_action_response_is_routed_to_pending_requests() {
         let response = RelayMessage::ResponseExtensionActionInvoke {
             id: "extension-action-1".to_string(),
+            payload: None,
+            error: None,
+        };
+
+        assert!(is_pending_response_message(&response));
+    }
+
+    #[test]
+    fn extension_backend_service_response_is_routed_to_pending_requests() {
+        let response = RelayMessage::ResponseExtensionBackendServiceInvoke {
+            id: "extension-backend-service-1".to_string(),
             payload: None,
             error: None,
         };

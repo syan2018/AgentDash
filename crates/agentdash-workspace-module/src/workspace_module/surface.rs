@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{
@@ -8,11 +9,12 @@ use agentdash_application_ports::agent_frame_materialization::{
 };
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_application_runtime_gateway::{
-    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
-    ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker, RuntimeActionKey,
-    RuntimeActor, RuntimeContext, RuntimeGateway, RuntimeInvocationError,
-    RuntimeInvocationErrorKind, RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget,
-    RuntimeTrace, attach_extension_invocation_workspace,
+    ExtensionRuntimeBackendServiceInvokeRequest, ExtensionRuntimeBackendServiceInvokeResult,
+    ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelConsumer,
+    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult,
+    ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeGateway,
+    RuntimeInvocationError, RuntimeInvocationErrorKind, RuntimeInvocationRequest,
+    RuntimeInvocationResult, RuntimeTarget, RuntimeTrace, attach_extension_invocation_workspace,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
@@ -130,6 +132,7 @@ pub(crate) struct WorkspaceModuleOperationRuntimeSource {
     agent_id: Option<String>,
     channel_transport_available: bool,
     backend_readiness: WorkspaceModuleOperationReadiness,
+    backend_service_readiness: WorkspaceModuleOperationReadiness,
 }
 
 impl Default for WorkspaceModuleOperationRuntimeSource {
@@ -144,6 +147,10 @@ impl Default for WorkspaceModuleOperationRuntimeSource {
                 WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor,
                 "runtime backend anchor is not available in this workspace module context",
             ),
+            backend_service_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
+                "backendService bridge transport is not available in this workspace module context",
+            ),
         }
     }
 }
@@ -156,12 +163,14 @@ impl WorkspaceModuleOperationRuntimeSource {
         agent_id: Option<String>,
         channel_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
+        backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.runtime_gateway_handle = Some(runtime_gateway_handle);
         self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
         self.agent_id = agent_id;
         self.channel_transport_available = channel_transport_available;
         self.backend_readiness = backend_readiness;
+        self.backend_service_readiness = backend_service_readiness;
         self
     }
 
@@ -172,12 +181,14 @@ impl WorkspaceModuleOperationRuntimeSource {
         agent_id: Option<String>,
         channel_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
+        backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.runtime_gateway = Some(runtime_gateway);
         self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
         self.agent_id = agent_id;
         self.channel_transport_available = channel_transport_available;
         self.backend_readiness = backend_readiness;
+        self.backend_service_readiness = backend_service_readiness;
         self
     }
 
@@ -187,6 +198,7 @@ impl WorkspaceModuleOperationRuntimeSource {
             runtime_actions,
             channel_readiness: self.channel_readiness(),
             backend_readiness: self.backend_readiness.clone(),
+            backend_service_readiness: self.backend_service_readiness.clone(),
         }
     }
 
@@ -287,6 +299,7 @@ pub(crate) struct WorkspaceModuleInvokeCommand<'a> {
     pub project_id: Uuid,
     pub gateway: &'a Arc<RuntimeGateway>,
     pub channel_invoker: &'a Arc<ExtensionRuntimeChannelInvoker>,
+    pub backend_service_invoker: Option<&'a ExtensionRuntimeBackendServiceInvoker>,
     pub visibility_source: &'a WorkspaceModuleVisibilitySource,
     pub operation_runtime_source: &'a WorkspaceModuleOperationRuntimeSource,
     pub runtime_context: &'a WorkspaceModuleRuntimeContext,
@@ -321,6 +334,10 @@ pub(crate) enum WorkspaceModuleOperationOutcome {
     },
     ProtocolChannelInvoked {
         result: ExtensionRuntimeChannelInvokeResult,
+        provenance: serde_json::Value,
+    },
+    BackendServiceInvoked {
+        result: ExtensionRuntimeBackendServiceInvokeResult,
         provenance: serde_json::Value,
     },
     CanvasBindingApplied {
@@ -726,20 +743,76 @@ async fn invoke(
             }
             Ok(WorkspaceModuleOperationOutcome::ProtocolChannelInvoked { result, provenance })
         }
-        WorkspaceModuleOperationDispatch::BackendService { service_key, route } => Ok(
-            WorkspaceModuleOperationOutcome::Diagnostic(WorkspaceModuleCommandDiagnostic {
-                code: "backend_service_unimplemented",
-                message: format!(
-                    "backendService operation `{service_key}` route `{route}` is not implemented in this runtime"
-                ),
-                details: serde_json::json!({
-                    "module_id": module_id,
-                    "operation_key": operation_key,
-                    "service_key": service_key,
-                    "route": route,
-                }),
-            }),
-        ),
+        WorkspaceModuleOperationDispatch::BackendService { service_key, route } => {
+            let backend = match require_backend(command.runtime_context.backend()) {
+                Ok(backend) => backend,
+                Err(diagnostic) => {
+                    return Ok(WorkspaceModuleOperationOutcome::Diagnostic(diagnostic));
+                }
+            };
+            let Some(invoker) = command.backend_service_invoker else {
+                return Ok(WorkspaceModuleOperationOutcome::Diagnostic(
+                    WorkspaceModuleCommandDiagnostic {
+                        code: "backend_service_unavailable",
+                        message: "backendService bridge transport is not attached to this runtime"
+                            .to_string(),
+                        details: serde_json::json!({
+                            "module_id": module_id,
+                            "operation_key": operation_key,
+                            "service_key": service_key,
+                            "route": route,
+                        }),
+                    },
+                ));
+            };
+            let trace = RuntimeTrace::new();
+            let body = serde_json::to_string(&command.input).map_err(|error| {
+                WorkspaceModuleSurfaceError::InvalidArguments(format!(
+                    "backendService operation input 序列化失败: {error}"
+                ))
+            })?;
+            let mut headers = BTreeMap::new();
+            headers.insert(
+                "content-type".to_string(),
+                "application/json; charset=utf-8".to_string(),
+            );
+            let result = invoker
+                .invoke(ExtensionRuntimeBackendServiceInvokeRequest {
+                    project_id: command.project_id,
+                    session_id: command
+                        .runtime_context
+                        .delivery_runtime_session_id()
+                        .to_string(),
+                    backend_id: backend.backend_id.clone(),
+                    workspace: backend.workspace.clone(),
+                    extension_key: module.summary.source.clone(),
+                    service_key: service_key.clone(),
+                    route: route.clone(),
+                    method: "POST".to_string(),
+                    headers,
+                    body: Some(body.into_bytes()),
+                    trace,
+                })
+                .await
+                .map_err(runtime_error_to_surface_error)?;
+
+            let mut provenance = provenance;
+            if let Some(obj) = provenance.as_object_mut() {
+                obj.insert("backend".to_string(), serde_json::json!(backend.backend_id));
+                obj.insert(
+                    "service_key".to_string(),
+                    serde_json::json!(&result.metadata.service_key),
+                );
+                obj.insert(
+                    "route".to_string(),
+                    serde_json::json!(&result.metadata.route),
+                );
+                if let Some(response) = &result.response {
+                    obj.insert("status".to_string(), serde_json::json!(response.status));
+                }
+            }
+            Ok(WorkspaceModuleOperationOutcome::BackendServiceInvoked { result, provenance })
+        }
         WorkspaceModuleOperationDispatch::HostCanvas { canvas_action } => match canvas_action {
             WorkspaceModuleCanvasHostAction::BindData => {
                 let editable_canvas = match load_canvas_for_runtime_binding(
@@ -1966,6 +2039,7 @@ mod tests {
                 project_id,
                 gateway: &gateway,
                 channel_invoker: &channel_invoker,
+                backend_service_invoker: None,
                 visibility_source: &visibility_source,
                 operation_runtime_source: &operation_runtime_source,
                 runtime_context: &runtime_context,

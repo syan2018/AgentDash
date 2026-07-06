@@ -3,7 +3,15 @@
 
 import type { JsonValue } from "./common-contracts";
 
+export type ExtensionBackendServiceDiagnosticResponse = { readiness: ExtensionBackendServiceReadinessResponse, code: string, message: string, retryable: boolean, details?: JsonValue | null, };
+
+export type ExtensionBackendServiceHttpResponse = { status: number, headers?: { [key in string]?: string }, body?: Array<number> | null, };
+
+export type ExtensionBackendServiceInvokeMetadataResponse = { project_id: string, backend_id: string, extension_key: string, extension_id: string, service_key: string, route: string, trace_id: string, invocation_id: string, };
+
 export type ExtensionBackendServiceProjectionResponse = { extension_key: string, extension_id: string, service_key: string, runtime: string, entry: string, routes: Array<string>, health_path?: string | null, };
+
+export type ExtensionBackendServiceReadinessResponse = "ready" | "missing_artifact" | "materialize_failed" | "starting" | "health_failed" | "process_exited" | "unsupported_runtime" | "service_unavailable";
 
 export type ExtensionBundleKindResponse = "extension_host" | "backend_service";
 
@@ -68,6 +76,10 @@ export type ExtensionRuntimeInvocationOutputResponse = { output: JsonValue, meta
 export type ExtensionRuntimeInvokeActionRequest = { action_key: string, input: JsonValue, };
 
 export type ExtensionRuntimeInvokeActionResponse = { action_key: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
+
+export type ExtensionRuntimeInvokeBackendServiceRequest = { extension_key: string, service_key: string, route: string, method: string, headers?: { [key in string]?: string }, body?: Array<number> | null, };
+
+export type ExtensionRuntimeInvokeBackendServiceResponse = { trace: ExtensionRuntimeTraceResponse, metadata: ExtensionBackendServiceInvokeMetadataResponse, response?: ExtensionBackendServiceHttpResponse | null, diagnostic?: ExtensionBackendServiceDiagnosticResponse | null, };
 
 export type ExtensionRuntimeInvokeChannelRequest = { channel_key: string, method: string, input: JsonValue, consumer_extension_key?: string | null, dependency_alias?: string | null, };
 

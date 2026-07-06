@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use std::collections::BTreeMap;
+
 use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +80,70 @@ pub struct ExtensionChannelInvokeResponse {
     pub metadata: Map<String, Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionBackendServiceInvokeMetadataPayload {
+    pub project_id: String,
+    pub backend_id: String,
+    pub extension_key: String,
+    pub extension_id: String,
+    pub service_key: String,
+    pub route: String,
+    pub trace_id: String,
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionBackendServiceInvokeRequest {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub service_key: String,
+    pub route: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub method: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Option<Vec<u8>>,
+    pub package_artifact: ExtensionPackageArtifactPayload,
+    pub workspace: Option<ExtensionInvocationWorkspacePayload>,
+    pub trace_id: String,
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionBackendServiceHttpResponsePayload {
+    pub status: u16,
+    pub headers: BTreeMap<String, String>,
+    pub body: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtensionBackendServiceReadinessPayload {
+    Ready,
+    MissingArtifact,
+    MaterializeFailed,
+    Starting,
+    HealthFailed,
+    ProcessExited,
+    UnsupportedRuntime,
+    ServiceUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionBackendServiceInvokeDiagnosticPayload {
+    pub readiness: ExtensionBackendServiceReadinessPayload,
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+    pub details: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionBackendServiceInvokeResponse {
+    pub metadata: ExtensionBackendServiceInvokeMetadataPayload,
+    pub response: Option<ExtensionBackendServiceHttpResponsePayload>,
+    pub diagnostic: Option<ExtensionBackendServiceInvokeDiagnosticPayload>,
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ExtensionRuntimeActionTransportError {
     #[error("backend offline: {backend_id}")]
@@ -106,4 +172,13 @@ pub trait ExtensionRuntimeChannelTransport: Send + Sync {
         backend_id: &str,
         request: ExtensionChannelInvokeRequest,
     ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError>;
+}
+
+#[async_trait]
+pub trait ExtensionBackendServiceTransport: Send + Sync {
+    async fn invoke_extension_backend_service(
+        &self,
+        backend_id: &str,
+        request: ExtensionBackendServiceInvokeRequest,
+    ) -> Result<ExtensionBackendServiceInvokeResponse, ExtensionRuntimeActionTransportError>;
 }

@@ -128,12 +128,13 @@ export function createRoutedFetch(routes, bridge, options = {}) {
       throw new Error(`fetch route 未声明: ${requestUrl}`);
     }
     const method = init?.method ?? fetchInputMethod(input) ?? "GET";
+    const body = await fetchInputBody(input, init);
     const output = await bridge.invokeFetchRoute({
       route: match.route,
       url: match.url,
       method,
       headers: headersToRecord(init?.headers ?? fetchInputHeaders(input)),
-      body: typeof init?.body === "string" ? init.body : undefined,
+      body,
     });
     return new Response(responseBodyForStatus(output.status, output.body), {
       status: output.status,
@@ -324,6 +325,27 @@ function fetchInputMethod(input) {
 function fetchInputHeaders(input) {
   if (typeof input === "string" || input instanceof URL) return undefined;
   return input.headers;
+}
+
+/**
+ * @param {RequestInfo | URL} input
+ * @param {RequestInit | undefined} init
+ * @returns {Promise<string | undefined>}
+ */
+async function fetchInputBody(input, init) {
+  if (typeof init?.body === "string") return init.body;
+  if (init?.body instanceof URLSearchParams) return init.body.toString();
+  if (typeof Blob !== "undefined" && init?.body instanceof Blob) return init.body.text();
+  if (init?.body != null) return undefined;
+  if (
+    typeof Request !== "undefined"
+    && input instanceof Request
+    && input.method !== "GET"
+    && input.method !== "HEAD"
+  ) {
+    return input.clone().text();
+  }
+  return undefined;
 }
 
 /**

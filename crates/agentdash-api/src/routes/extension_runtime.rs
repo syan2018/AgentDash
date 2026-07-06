@@ -26,6 +26,14 @@ use agentdash_application::extension_runtime::{
     uninstall_extension_installation,
 };
 use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
+use agentdash_application_ports::extension_runtime::{
+    ExtensionBackendServiceInvokeRequest as BackendServiceTransportRequest,
+    ExtensionBackendServiceInvokeResponse as BackendServiceTransportResponse,
+    ExtensionBackendServiceReadinessPayload, ExtensionBackendServiceTransport,
+    ExtensionInvocationWorkspacePayload as BackendServiceWorkspacePayload,
+    ExtensionPackageArtifactPayload as BackendServicePackageArtifactPayload,
+    ExtensionRuntimeActionTransportError,
+};
 use agentdash_application_runtime_gateway::{
     ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
     ExtensionRuntimeChannelInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
@@ -33,8 +41,11 @@ use agentdash_application_runtime_gateway::{
     attach_extension_invocation_workspace, resolve_extension_invocation_workspace,
 };
 use agentdash_contracts::extension_runtime::{
+    ExtensionBackendServiceDiagnosticResponse, ExtensionBackendServiceHttpResponse,
+    ExtensionBackendServiceInvokeMetadataResponse, ExtensionBackendServiceReadinessResponse,
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
-    ExtensionRuntimeInvokeActionResponse,
+    ExtensionRuntimeInvokeActionResponse, ExtensionRuntimeInvokeBackendServiceRequest,
+    ExtensionRuntimeInvokeBackendServiceResponse,
     ExtensionRuntimeInvokeChannelRequest as ExtensionRuntimeInvokeChannelRequestDto,
     ExtensionRuntimeInvokeChannelResponse, ExtensionRuntimeTraceResponse,
     UninstallExtensionInstallationResponse,
@@ -59,6 +70,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-channel",
             axum::routing::post(invoke_agent_run_extension_runtime_channel),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-backend-service",
+            axum::routing::post(invoke_agent_run_extension_backend_service),
         )
         .route(
             "/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}",
@@ -227,6 +242,127 @@ pub async fn invoke_agent_run_extension_runtime_channel(
     Ok(Json(extension_runtime_channel_invoke_response(result)))
 }
 
+/// POST `/api/agent-runs/:run_id/agents/:agent_id/extension-runtime/invoke-backend-service`
+pub async fn invoke_agent_run_extension_backend_service(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<AgentRunExtensionRuntimePath>,
+    Json(req): Json<ExtensionRuntimeInvokeBackendServiceRequest>,
+) -> Result<Json<ExtensionRuntimeInvokeBackendServiceResponse>, ApiError> {
+    let runtime_surface = resolve_current_runtime_surface_with_backend_for_agent_run_for_api(
+        &state,
+        &current_user,
+        &path.run_id,
+        &path.agent_id,
+        ProjectPermission::Use,
+        RuntimeSurfaceQueryPurpose::new("extension_backend_service"),
+        "Extension backend service",
+    )
+    .await?;
+    let project_id = runtime_surface.project_id;
+    let session_id = runtime_surface.runtime_session_id.clone();
+    let backend_anchor = &runtime_surface.runtime_backend_anchor;
+    let backend_id = backend_anchor.backend_id().to_string();
+    ensure_project_backend_access(&state, project_id, &backend_id).await?;
+
+    let extension_key = require_non_empty(req.extension_key, "extension_key")?;
+    let service_key = require_non_empty(req.service_key, "service_key")?;
+    let route = require_non_empty(req.route, "route")?;
+    let method = require_non_empty(req.method, "method")?.to_ascii_uppercase();
+    let trace = RuntimeTrace::new();
+
+    let installations = state
+        .repos
+        .project_extension_installation_repo
+        .list_enabled_by_project(project_id)
+        .await
+        .map_err(ApiError::from)?;
+    let installation = installations
+        .into_iter()
+        .find(|installation| installation.extension_key == extension_key)
+        .ok_or_else(|| ApiError::NotFound("Extension installation 不存在".into()))?;
+    let extension_id = installation.manifest.extension_id.clone();
+    let service = installation
+        .manifest
+        .backend_services
+        .iter()
+        .find(|service| service.service_key == service_key)
+        .ok_or_else(|| ApiError::NotFound("Extension backend service 不存在".into()))?;
+    if !backend_service_route_matches(&service.routes, &route) {
+        return Err(ApiError::BadRequest(format!(
+            "route `{route}` 不在 backend service `{service_key}` 声明范围内"
+        )));
+    }
+
+    let workspace =
+        resolve_extension_invocation_workspace(&runtime_surface.surface.vfs, backend_anchor)
+            .into_workspace()
+            .map(|workspace| BackendServiceWorkspacePayload {
+                mount_id: workspace.mount_id,
+                root_ref: workspace.root_ref,
+            });
+
+    let metadata = ExtensionBackendServiceInvokeMetadataResponse {
+        project_id: project_id.to_string(),
+        backend_id: backend_id.clone(),
+        extension_key: extension_key.clone(),
+        extension_id: extension_id.clone(),
+        service_key: service_key.clone(),
+        route: route.clone(),
+        trace_id: trace.trace_id.clone(),
+        invocation_id: trace.invocation_id.clone(),
+    };
+
+    let Some(artifact) = installation.package_artifact.as_ref() else {
+        return Ok(Json(ExtensionRuntimeInvokeBackendServiceResponse {
+            trace: extension_runtime_trace_response(&trace),
+            metadata,
+            response: None,
+            diagnostic: Some(ExtensionBackendServiceDiagnosticResponse {
+                readiness: ExtensionBackendServiceReadinessResponse::MissingArtifact,
+                code: "missing_artifact".to_string(),
+                message: "Extension backend service 缺少 package artifact".to_string(),
+                retryable: false,
+                details: Some(serde_json::json!({
+                    "extension_key": extension_key,
+                    "service_key": service_key,
+                })),
+            }),
+        }));
+    };
+
+    let output = state
+        .services
+        .backend_registry
+        .invoke_extension_backend_service(
+            &backend_id,
+            BackendServiceTransportRequest {
+                extension_key,
+                extension_id,
+                service_key,
+                route,
+                project_id: project_id.to_string(),
+                session_id,
+                method,
+                headers: req.headers,
+                body: req.body,
+                package_artifact: BackendServicePackageArtifactPayload {
+                    artifact_id: artifact.artifact_id.to_string(),
+                    archive_digest: artifact.archive_digest.clone(),
+                },
+                workspace,
+                trace_id: trace.trace_id.clone(),
+                invocation_id: trace.invocation_id.clone(),
+            },
+        )
+        .await
+        .map_err(extension_backend_service_transport_error_to_api)?;
+
+    Ok(Json(extension_backend_service_invoke_response(
+        trace, output,
+    )))
+}
+
 /// DELETE `/api/projects/:project_id/extensions/:installation_id`
 pub async fn uninstall_extension_installation_route(
     State(state): State<Arc<AppState>>,
@@ -301,17 +437,62 @@ fn parse_project_id(raw: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
 }
 
+fn require_non_empty(raw: String, field: &str) -> Result<String, ApiError> {
+    let value = raw.trim().to_string();
+    if value.is_empty() {
+        Err(ApiError::BadRequest(format!("{field} 不能为空")))
+    } else {
+        Ok(value)
+    }
+}
+
+fn backend_service_route_matches(patterns: &[String], route: &str) -> bool {
+    let route = strip_query(route.trim());
+    patterns.iter().any(|pattern| {
+        let pattern = route_pattern_path(pattern);
+        if pattern == route {
+            return true;
+        }
+        if let Some(prefix) = pattern.strip_suffix("/**") {
+            return route == prefix || route.starts_with(&format!("{prefix}/"));
+        }
+        if let Some(prefix) = pattern.strip_suffix('*') {
+            return route.starts_with(prefix);
+        }
+        false
+    })
+}
+
+fn route_pattern_path(pattern: &str) -> &str {
+    let pattern = strip_query(pattern.trim());
+    let Some(rest) = pattern
+        .strip_prefix("http://")
+        .or_else(|| pattern.strip_prefix("https://"))
+    else {
+        return pattern;
+    };
+    rest.find('/').map_or("/", |index| &rest[index..])
+}
+
+fn strip_query(value: &str) -> &str {
+    value.split_once('?').map_or(value, |(path, _)| path)
+}
+
+fn extension_runtime_trace_response(trace: &RuntimeTrace) -> ExtensionRuntimeTraceResponse {
+    ExtensionRuntimeTraceResponse {
+        trace_id: trace.trace_id.clone(),
+        invocation_id: trace.invocation_id.clone(),
+        parent_trace_id: trace.parent_trace_id.clone(),
+        created_at: trace.created_at.to_rfc3339(),
+    }
+}
+
 fn extension_runtime_invoke_response(
     result: RuntimeInvocationResult,
 ) -> ExtensionRuntimeInvokeActionResponse {
     ExtensionRuntimeInvokeActionResponse {
         action_key: result.action_key.to_string(),
-        trace: ExtensionRuntimeTraceResponse {
-            trace_id: result.trace.trace_id,
-            invocation_id: result.trace.invocation_id,
-            parent_trace_id: result.trace.parent_trace_id,
-            created_at: result.trace.created_at.to_rfc3339(),
-        },
+        trace: extension_runtime_trace_response(&result.trace),
         output: ExtensionRuntimeInvocationOutputResponse {
             output: result.output.output,
             metadata: result.output.metadata,
@@ -325,16 +506,100 @@ fn extension_runtime_channel_invoke_response(
     ExtensionRuntimeInvokeChannelResponse {
         channel_key: result.channel_key,
         method: result.method,
-        trace: ExtensionRuntimeTraceResponse {
-            trace_id: result.trace.trace_id,
-            invocation_id: result.trace.invocation_id,
-            parent_trace_id: result.trace.parent_trace_id,
-            created_at: result.trace.created_at.to_rfc3339(),
-        },
+        trace: extension_runtime_trace_response(&result.trace),
         output: ExtensionRuntimeInvocationOutputResponse {
             output: result.output.output,
             metadata: result.output.metadata,
         },
+    }
+}
+
+fn extension_backend_service_invoke_response(
+    trace: RuntimeTrace,
+    result: BackendServiceTransportResponse,
+) -> ExtensionRuntimeInvokeBackendServiceResponse {
+    ExtensionRuntimeInvokeBackendServiceResponse {
+        trace: extension_runtime_trace_response(&trace),
+        metadata: ExtensionBackendServiceInvokeMetadataResponse {
+            project_id: result.metadata.project_id,
+            backend_id: result.metadata.backend_id,
+            extension_key: result.metadata.extension_key,
+            extension_id: result.metadata.extension_id,
+            service_key: result.metadata.service_key,
+            route: result.metadata.route,
+            trace_id: result.metadata.trace_id,
+            invocation_id: result.metadata.invocation_id,
+        },
+        response: result
+            .response
+            .map(|response| ExtensionBackendServiceHttpResponse {
+                status: response.status,
+                headers: response.headers,
+                body: response.body,
+            }),
+        diagnostic: result
+            .diagnostic
+            .map(|diagnostic| ExtensionBackendServiceDiagnosticResponse {
+                readiness: backend_service_readiness_response(diagnostic.readiness),
+                code: diagnostic.code,
+                message: diagnostic.message,
+                retryable: diagnostic.retryable,
+                details: diagnostic.details,
+            }),
+    }
+}
+
+fn backend_service_readiness_response(
+    readiness: ExtensionBackendServiceReadinessPayload,
+) -> ExtensionBackendServiceReadinessResponse {
+    match readiness {
+        ExtensionBackendServiceReadinessPayload::Ready => {
+            ExtensionBackendServiceReadinessResponse::Ready
+        }
+        ExtensionBackendServiceReadinessPayload::MissingArtifact => {
+            ExtensionBackendServiceReadinessResponse::MissingArtifact
+        }
+        ExtensionBackendServiceReadinessPayload::MaterializeFailed => {
+            ExtensionBackendServiceReadinessResponse::MaterializeFailed
+        }
+        ExtensionBackendServiceReadinessPayload::Starting => {
+            ExtensionBackendServiceReadinessResponse::Starting
+        }
+        ExtensionBackendServiceReadinessPayload::HealthFailed => {
+            ExtensionBackendServiceReadinessResponse::HealthFailed
+        }
+        ExtensionBackendServiceReadinessPayload::ProcessExited => {
+            ExtensionBackendServiceReadinessResponse::ProcessExited
+        }
+        ExtensionBackendServiceReadinessPayload::UnsupportedRuntime => {
+            ExtensionBackendServiceReadinessResponse::UnsupportedRuntime
+        }
+        ExtensionBackendServiceReadinessPayload::ServiceUnavailable => {
+            ExtensionBackendServiceReadinessResponse::ServiceUnavailable
+        }
+    }
+}
+
+fn extension_backend_service_transport_error_to_api(
+    error: ExtensionRuntimeActionTransportError,
+) -> ApiError {
+    match error {
+        ExtensionRuntimeActionTransportError::Offline { backend_id } => {
+            ApiError::ServiceUnavailable(format!("目标 Backend 当前不在线: {backend_id}"))
+        }
+        ExtensionRuntimeActionTransportError::Timeout { backend_id } => {
+            ApiError::ServiceUnavailable(format!(
+                "等待 Backend backendService response 超时: {backend_id}"
+            ))
+        }
+        ExtensionRuntimeActionTransportError::ResponseDropped { backend_id } => {
+            ApiError::ServiceUnavailable(format!(
+                "Backend backendService response 通道已断开: {backend_id}"
+            ))
+        }
+        ExtensionRuntimeActionTransportError::Failed(message) => {
+            ApiError::ServiceUnavailable(message)
+        }
     }
 }
 
@@ -381,5 +646,80 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
         ExtensionPackageArtifactUseCaseError::Forbidden(error) => ApiError::Forbidden(error),
         ExtensionPackageArtifactUseCaseError::Conflict(error) => ApiError::Conflict(error),
         ExtensionPackageArtifactUseCaseError::Integrity(error) => ApiError::Internal(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_application_ports::extension_runtime::{
+        ExtensionBackendServiceHttpResponsePayload, ExtensionBackendServiceInvokeMetadataPayload,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn backend_service_route_patterns_match_declared_routes() {
+        let routes = vec![
+            "/api/**".to_string(),
+            "/health".to_string(),
+            "/assets/*".to_string(),
+        ];
+
+        assert!(backend_service_route_matches(&routes, "/api"));
+        assert!(backend_service_route_matches(&routes, "/api/search"));
+        assert!(backend_service_route_matches(&routes, "/health"));
+        assert!(backend_service_route_matches(&routes, "/assets/app.js"));
+        assert!(!backend_service_route_matches(&routes, "/private/search"));
+
+        let absolute_routes = vec!["http://localhost:4510/api/**".to_string()];
+        assert!(backend_service_route_matches(
+            &absolute_routes,
+            "/api/search?q=abc"
+        ));
+        assert!(!backend_service_route_matches(
+            &absolute_routes,
+            "/other/search"
+        ));
+    }
+
+    #[test]
+    fn backend_service_transport_response_maps_metadata_and_diagnostic() {
+        let trace = RuntimeTrace::new();
+        let result = BackendServiceTransportResponse {
+            metadata: ExtensionBackendServiceInvokeMetadataPayload {
+                project_id: "project-1".to_string(),
+                backend_id: "backend-1".to_string(),
+                extension_key: "local-webapp".to_string(),
+                extension_id: "local-webapp".to_string(),
+                service_key: "local-webapp.api".to_string(),
+                route: "/api/search".to_string(),
+                trace_id: trace.trace_id.clone(),
+                invocation_id: trace.invocation_id.clone(),
+            },
+            response: Some(ExtensionBackendServiceHttpResponsePayload {
+                status: 204,
+                headers: BTreeMap::new(),
+                body: None,
+            }),
+            diagnostic: Some(
+                agentdash_application_ports::extension_runtime::ExtensionBackendServiceInvokeDiagnosticPayload {
+                    readiness: ExtensionBackendServiceReadinessPayload::ServiceUnavailable,
+                    code: "service_unavailable".to_string(),
+                    message: "service unavailable".to_string(),
+                    retryable: true,
+                    details: None,
+                },
+            ),
+        };
+
+        let response = extension_backend_service_invoke_response(trace, result);
+
+        assert_eq!(response.metadata.backend_id, "backend-1");
+        assert_eq!(response.metadata.service_key, "local-webapp.api");
+        assert_eq!(response.response.expect("http response").status, 204);
+        assert_eq!(
+            response.diagnostic.expect("diagnostic").readiness,
+            ExtensionBackendServiceReadinessResponse::ServiceUnavailable
+        );
     }
 }

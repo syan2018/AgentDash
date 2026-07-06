@@ -1,8 +1,12 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
-use agentdash_application_ports::extension_runtime::ExtensionRuntimeChannelTransport;
-use agentdash_application_runtime_gateway::{ExtensionRuntimeChannelInvoker, RuntimeGateway};
+use agentdash_application_ports::extension_runtime::{
+    ExtensionBackendServiceTransport, ExtensionRuntimeChannelTransport,
+};
+use agentdash_application_runtime_gateway::{
+    ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelInvoker, RuntimeGateway,
+};
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleOperationReadiness, WorkspaceModuleOperationReadinessKind,
 };
@@ -38,6 +42,7 @@ pub struct WorkspaceModuleRuntimeToolProvider {
     agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
     runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
     extension_channel_transport: Option<Arc<dyn ExtensionRuntimeChannelTransport>>,
+    extension_backend_service_transport: Option<Arc<dyn ExtensionBackendServiceTransport>>,
 }
 
 impl WorkspaceModuleRuntimeToolProvider {
@@ -59,6 +64,7 @@ impl WorkspaceModuleRuntimeToolProvider {
             agent_run_bridge_handle,
             runtime_gateway_handle,
             extension_channel_transport: None,
+            extension_backend_service_transport: None,
         }
     }
 
@@ -67,6 +73,14 @@ impl WorkspaceModuleRuntimeToolProvider {
         transport: Arc<dyn ExtensionRuntimeChannelTransport>,
     ) -> Self {
         self.extension_channel_transport = Some(transport);
+        self
+    }
+
+    pub fn with_extension_backend_service_transport(
+        mut self,
+        transport: Arc<dyn ExtensionBackendServiceTransport>,
+    ) -> Self {
+        self.extension_backend_service_transport = Some(transport);
         self
     }
 }
@@ -188,6 +202,10 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             .map(project_authorization_context_from_identity);
         let channel_transport_available = self.extension_channel_transport.is_some();
         let backend_readiness = operation_backend_readiness(context, &delivery_runtime_session_id);
+        let backend_service_readiness = operation_backend_service_readiness(
+            &backend_readiness,
+            self.extension_backend_service_transport.is_some(),
+        );
         let mut tools: Vec<DynAgentTool> = Vec::new();
 
         if flow.is_capability_tool_enabled(
@@ -211,6 +229,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     delivery_runtime_session_id.clone(),
                     channel_transport_available,
                     backend_readiness.clone(),
+                    backend_service_readiness.clone(),
                 ),
             ));
         }
@@ -236,6 +255,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     delivery_runtime_session_id.clone(),
                     channel_transport_available,
                     backend_readiness.clone(),
+                    backend_service_readiness.clone(),
                 ),
             ));
         }
@@ -294,6 +314,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     self.runtime_gateway_handle.clone(),
                     channel_transport_available,
                     backend_readiness.clone(),
+                    backend_service_readiness.clone(),
                 ),
             ));
         }
@@ -324,6 +345,23 @@ fn operation_backend_readiness(
             WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor,
             error.to_string(),
         ),
+    }
+}
+
+fn operation_backend_service_readiness(
+    backend_readiness: &WorkspaceModuleOperationReadiness,
+    transport_available: bool,
+) -> WorkspaceModuleOperationReadiness {
+    if !backend_readiness.is_ready() {
+        return backend_readiness.clone();
+    }
+    if transport_available {
+        WorkspaceModuleOperationReadiness::ready()
+    } else {
+        WorkspaceModuleOperationReadiness::unavailable(
+            WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
+            "backendService bridge transport is not attached to this runtime",
+        )
     }
 }
 
@@ -385,6 +423,15 @@ impl WorkspaceModuleRuntimeToolProvider {
             self.installation_repo.clone(),
             transport,
         ));
+        let backend_service_invoker =
+            self.extension_backend_service_transport
+                .as_ref()
+                .map(|transport| {
+                    Arc::new(ExtensionRuntimeBackendServiceInvoker::new(
+                        self.installation_repo.clone(),
+                        transport.clone(),
+                    ))
+                });
         tools.push(Arc::new(
             WorkspaceModuleInvokeTool::new(
                 self.installation_repo.clone(),
@@ -397,6 +444,7 @@ impl WorkspaceModuleRuntimeToolProvider {
                 backend,
                 gateway,
                 channel_invoker,
+                backend_service_invoker,
             )
             .with_current_user(current_user)
             .with_agent_run_visibility(self.agent_run_bridge_handle.clone()),

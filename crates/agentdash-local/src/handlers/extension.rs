@@ -1,16 +1,22 @@
 use std::path::PathBuf;
 
 use agentdash_relay::{
-    CommandExtensionActionInvokePayload, CommandExtensionChannelInvokePayload,
+    CommandExtensionActionInvokePayload, CommandExtensionBackendServiceInvokePayload,
+    CommandExtensionChannelInvokePayload, ExtensionBackendServiceHttpResponseRelay,
+    ExtensionBackendServiceInvokeDiagnosticRelay, ExtensionBackendServiceReadinessRelay,
     ExtensionInvocationWorkspaceRelay, ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay,
     RelayError, RelayMessage, ResponseExtensionActionInvokePayload,
-    ResponseExtensionChannelInvokePayload,
+    ResponseExtensionBackendServiceInvokePayload, ResponseExtensionChannelInvokePayload,
 };
 use serde_json::{Map, json};
 
 use super::CommandDispatchPlan;
 use crate::{
-    ExtensionArtifactDownloadRequest, LocalExtensionHostActivation, LocalExtensionHostManager,
+    ExtensionArtifactDownloadRequest, ExtensionBackendServiceArtifact,
+    ExtensionBackendServiceInstanceIdentity, ExtensionBackendServiceInvokeError,
+    ExtensionBackendServiceInvokeRequest, ExtensionBackendServiceReadiness,
+    ExtensionBackendServiceStartRequest, ExtensionBackendServiceStatus,
+    LocalExtensionBackendServiceManager, LocalExtensionHostActivation, LocalExtensionHostManager,
     download_and_cache_extension_artifact,
 };
 
@@ -19,6 +25,7 @@ pub(super) struct ExtensionCommandHandler {
     backend_id: String,
     workspace_roots: Vec<PathBuf>,
     extension_host: LocalExtensionHostManager,
+    backend_services: LocalExtensionBackendServiceManager,
     artifact_api_base_url: String,
     artifact_access_token: String,
     artifact_cache_root: PathBuf,
@@ -28,6 +35,7 @@ pub(super) struct ExtensionCommandHandlerConfig {
     pub backend_id: String,
     pub workspace_roots: Vec<PathBuf>,
     pub extension_host: LocalExtensionHostManager,
+    pub backend_services: LocalExtensionBackendServiceManager,
     pub artifact_api_base_url: String,
     pub artifact_access_token: String,
     pub artifact_cache_root: PathBuf,
@@ -39,6 +47,7 @@ impl ExtensionCommandHandler {
             backend_id: config.backend_id,
             workspace_roots: config.workspace_roots,
             extension_host: config.extension_host,
+            backend_services: config.backend_services,
             artifact_api_base_url: config.artifact_api_base_url,
             artifact_access_token: config.artifact_access_token,
             artifact_cache_root: config.artifact_cache_root,
@@ -48,7 +57,8 @@ impl ExtensionCommandHandler {
     pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
         match msg {
             RelayMessage::CommandExtensionActionInvoke { .. }
-            | RelayMessage::CommandExtensionChannelInvoke { .. } => {
+            | RelayMessage::CommandExtensionChannelInvoke { .. }
+            | RelayMessage::CommandExtensionBackendServiceInvoke { .. } => {
                 Some(CommandDispatchPlan::INLINE)
             }
             _ => None,
@@ -195,6 +205,116 @@ impl ExtensionCommandHandler {
         }
     }
 
+    pub(super) async fn handle_extension_backend_service_invoke(
+        &self,
+        id: String,
+        payload: CommandExtensionBackendServiceInvokePayload,
+    ) -> RelayMessage {
+        let metadata = payload.metadata.clone();
+        let cache_entry =
+            match download_and_cache_extension_artifact(ExtensionArtifactDownloadRequest {
+                api_base_url: self.artifact_api_base_url.clone(),
+                access_token: self.artifact_access_token.clone(),
+                project_id: metadata.project_id.clone(),
+                artifact_id: payload.package_artifact.artifact_id.clone(),
+                archive_digest: payload.package_artifact.archive_digest.clone(),
+                cache_root: self.artifact_cache_root.clone(),
+            })
+            .await
+            {
+                Ok(cache_entry) => cache_entry,
+                Err(error) => {
+                    return RelayMessage::ResponseExtensionBackendServiceInvoke {
+                        id,
+                        payload: Some(ResponseExtensionBackendServiceInvokePayload {
+                            metadata,
+                            response: None,
+                            diagnostic: Some(ExtensionBackendServiceInvokeDiagnosticRelay {
+                                readiness: ExtensionBackendServiceReadinessRelay::MissingArtifact,
+                                code: "artifact_unavailable".to_string(),
+                                message: error.to_string(),
+                                retryable: true,
+                                details: None,
+                            }),
+                        }),
+                        error: None,
+                    };
+                }
+            };
+
+        let identity = ExtensionBackendServiceInstanceIdentity {
+            project_id: metadata.project_id.clone(),
+            backend_id: metadata.backend_id.clone(),
+            extension_key: metadata.extension_key.clone(),
+            service_key: metadata.service_key.clone(),
+            artifact_id: payload.package_artifact.artifact_id.clone(),
+            archive_digest: payload.package_artifact.archive_digest.clone(),
+        };
+        let status = self
+            .backend_services
+            .start(ExtensionBackendServiceStartRequest {
+                project_id: metadata.project_id.clone(),
+                backend_id: metadata.backend_id.clone(),
+                extension_key: metadata.extension_key.clone(),
+                extension_id: metadata.extension_id.clone(),
+                service_key: metadata.service_key.clone(),
+                artifact: Some(ExtensionBackendServiceArtifact {
+                    artifact_id: payload.package_artifact.artifact_id,
+                    archive_digest: payload.package_artifact.archive_digest,
+                }),
+                cache_entry: Some(cache_entry),
+            })
+            .await;
+        if status.readiness != ExtensionBackendServiceReadiness::Ready {
+            return RelayMessage::ResponseExtensionBackendServiceInvoke {
+                id,
+                payload: Some(ResponseExtensionBackendServiceInvokePayload {
+                    metadata,
+                    response: None,
+                    diagnostic: Some(diagnostic_from_status(&status)),
+                }),
+                error: None,
+            };
+        }
+
+        match self
+            .backend_services
+            .invoke(ExtensionBackendServiceInvokeRequest {
+                identity,
+                extension_id: metadata.extension_id.clone(),
+                route: metadata.route.clone(),
+                method: payload.method,
+                headers: payload.headers,
+                body: payload.body,
+                trace_id: metadata.trace_id.clone(),
+            })
+            .await
+        {
+            Ok(response) => RelayMessage::ResponseExtensionBackendServiceInvoke {
+                id,
+                payload: Some(ResponseExtensionBackendServiceInvokePayload {
+                    metadata,
+                    response: Some(ExtensionBackendServiceHttpResponseRelay {
+                        status: response.status,
+                        headers: response.headers,
+                        body: response.body,
+                    }),
+                    diagnostic: None,
+                }),
+                error: None,
+            },
+            Err(error) => RelayMessage::ResponseExtensionBackendServiceInvoke {
+                id,
+                payload: Some(ResponseExtensionBackendServiceInvokePayload {
+                    metadata,
+                    response: None,
+                    diagnostic: Some(diagnostic_from_invoke_error(error)),
+                }),
+                error: None,
+            },
+        }
+    }
+
     async fn ensure_extension_host_activation(
         &self,
         payload: &CommandExtensionActionInvokePayload,
@@ -287,6 +407,101 @@ impl ExtensionCommandHandler {
             .await
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+}
+
+fn diagnostic_from_invoke_error(
+    error: ExtensionBackendServiceInvokeError,
+) -> ExtensionBackendServiceInvokeDiagnosticRelay {
+    match error {
+        ExtensionBackendServiceInvokeError::Unavailable { status } => {
+            diagnostic_from_status(&status)
+        }
+        ExtensionBackendServiceInvokeError::InvalidRequest(message) => {
+            ExtensionBackendServiceInvokeDiagnosticRelay {
+                readiness: ExtensionBackendServiceReadinessRelay::ServiceUnavailable,
+                code: "invalid_request".to_string(),
+                message,
+                retryable: false,
+                details: None,
+            }
+        }
+        ExtensionBackendServiceInvokeError::Http(message) => {
+            ExtensionBackendServiceInvokeDiagnosticRelay {
+                readiness: ExtensionBackendServiceReadinessRelay::HealthFailed,
+                code: "backend_service_http_failed".to_string(),
+                message,
+                retryable: true,
+                details: None,
+            }
+        }
+    }
+}
+
+fn diagnostic_from_status(
+    status: &ExtensionBackendServiceStatus,
+) -> ExtensionBackendServiceInvokeDiagnosticRelay {
+    ExtensionBackendServiceInvokeDiagnosticRelay {
+        readiness: readiness_to_relay(status.readiness.clone()),
+        code: readiness_code(&status.readiness).to_string(),
+        message: status
+            .message
+            .clone()
+            .unwrap_or_else(|| "backend service is not ready".to_string()),
+        retryable: matches!(
+            status.readiness,
+            ExtensionBackendServiceReadiness::MissingArtifact
+                | ExtensionBackendServiceReadiness::MaterializeFailed
+                | ExtensionBackendServiceReadiness::Starting
+                | ExtensionBackendServiceReadiness::HealthFailed
+        ),
+        details: Some(json!({
+            "project_id": status.identity.project_id,
+            "backend_id": status.identity.backend_id,
+            "extension_key": status.identity.extension_key,
+            "service_key": status.identity.service_key,
+            "endpoint": status.endpoint,
+            "pid": status.pid,
+            "updated_at": status.updated_at,
+        })),
+    }
+}
+
+fn readiness_to_relay(
+    readiness: ExtensionBackendServiceReadiness,
+) -> ExtensionBackendServiceReadinessRelay {
+    match readiness {
+        ExtensionBackendServiceReadiness::MissingArtifact => {
+            ExtensionBackendServiceReadinessRelay::MissingArtifact
+        }
+        ExtensionBackendServiceReadiness::MaterializeFailed => {
+            ExtensionBackendServiceReadinessRelay::MaterializeFailed
+        }
+        ExtensionBackendServiceReadiness::Starting => {
+            ExtensionBackendServiceReadinessRelay::Starting
+        }
+        ExtensionBackendServiceReadiness::HealthFailed => {
+            ExtensionBackendServiceReadinessRelay::HealthFailed
+        }
+        ExtensionBackendServiceReadiness::Ready => ExtensionBackendServiceReadinessRelay::Ready,
+        ExtensionBackendServiceReadiness::ProcessExited => {
+            ExtensionBackendServiceReadinessRelay::ProcessExited
+        }
+        ExtensionBackendServiceReadiness::UnsupportedRuntime => {
+            ExtensionBackendServiceReadinessRelay::UnsupportedRuntime
+        }
+    }
+}
+
+fn readiness_code(readiness: &ExtensionBackendServiceReadiness) -> &'static str {
+    match readiness {
+        ExtensionBackendServiceReadiness::MissingArtifact => "missing_artifact",
+        ExtensionBackendServiceReadiness::MaterializeFailed => "materialize_failed",
+        ExtensionBackendServiceReadiness::Starting => "starting",
+        ExtensionBackendServiceReadiness::HealthFailed => "health_failed",
+        ExtensionBackendServiceReadiness::Ready => "ready",
+        ExtensionBackendServiceReadiness::ProcessExited => "process_exited",
+        ExtensionBackendServiceReadiness::UnsupportedRuntime => "unsupported_runtime",
     }
 }
 

@@ -2,15 +2,19 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_application_ports::extension_runtime::{
-    ExtensionActionInvokeRequest, ExtensionChannelConsumerPayload, ExtensionChannelInvokeRequest,
+    ExtensionActionInvokeRequest, ExtensionBackendServiceHttpResponsePayload,
+    ExtensionBackendServiceInvokeDiagnosticPayload, ExtensionBackendServiceInvokeMetadataPayload,
+    ExtensionBackendServiceInvokeRequest, ExtensionBackendServiceInvokeResponse,
+    ExtensionBackendServiceReadinessPayload, ExtensionBackendServiceTransport,
+    ExtensionChannelConsumerPayload, ExtensionChannelInvokeRequest,
     ExtensionInvocationWorkspacePayload, ExtensionPackageArtifactPayload,
     ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
     ExtensionRuntimeChannelTransport, ExtensionRuntimeHostPayload,
 };
 use agentdash_domain::shared_library::{
-    ExtensionDependencyDeclaration, ExtensionProtocolChannelDefinition,
-    ExtensionProtocolChannelMethodDefinition, ExtensionRuntimeActionDefinition,
-    ExtensionRuntimeActionKind, ProjectExtensionInstallation,
+    ExtensionBackendServiceDefinition, ExtensionDependencyDeclaration,
+    ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
+    ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ProjectExtensionInstallation,
     ProjectExtensionInstallationRepository,
 };
 use async_trait::async_trait;
@@ -602,6 +606,111 @@ pub struct ExtensionRuntimeChannelInvokeResult {
     pub output: RuntimeInvocationOutput,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionRuntimeBackendServiceInvokeRequest {
+    pub project_id: Uuid,
+    pub session_id: String,
+    pub backend_id: String,
+    pub workspace: Option<ExtensionInvocationWorkspaceContext>,
+    pub extension_key: String,
+    pub service_key: String,
+    pub route: String,
+    pub method: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Option<Vec<u8>>,
+    pub trace: super::RuntimeTrace,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionRuntimeBackendServiceInvokeResult {
+    pub metadata: ExtensionBackendServiceInvokeMetadataPayload,
+    pub response: Option<ExtensionBackendServiceHttpResponsePayload>,
+    pub diagnostic: Option<ExtensionBackendServiceInvokeDiagnosticPayload>,
+    pub trace: super::RuntimeTrace,
+    pub output: RuntimeInvocationOutput,
+}
+
+pub struct ExtensionRuntimeBackendServiceInvoker {
+    installations: Arc<dyn ProjectExtensionInstallationRepository>,
+    transport: Arc<dyn ExtensionBackendServiceTransport>,
+}
+
+impl ExtensionRuntimeBackendServiceInvoker {
+    pub fn new(
+        installations: Arc<dyn ProjectExtensionInstallationRepository>,
+        transport: Arc<dyn ExtensionBackendServiceTransport>,
+    ) -> Self {
+        Self {
+            installations,
+            transport,
+        }
+    }
+
+    pub async fn invoke(
+        &self,
+        request: ExtensionRuntimeBackendServiceInvokeRequest,
+    ) -> Result<ExtensionRuntimeBackendServiceInvokeResult, RuntimeInvocationError> {
+        let installations = self
+            .installations
+            .list_enabled_by_project(request.project_id)
+            .await
+            .map_err(|error| {
+                RuntimeInvocationError::provider_failed(
+                    format!("读取 Project extension installation 失败: {error}"),
+                    Some(request.trace.clone()),
+                )
+            })?;
+        let (provider, service) = resolve_backend_service_invocation(&installations, &request)?;
+        let artifact = provider.package_artifact.as_ref().ok_or_else(|| {
+            RuntimeInvocationError::conflict(
+                format!(
+                    "extension backendService provider `{}` 缺少 package artifact",
+                    provider.extension_key
+                ),
+                Some(request.trace.clone()),
+            )
+        })?;
+        let transport_request = ExtensionBackendServiceInvokeRequest {
+            extension_key: provider.extension_key.clone(),
+            extension_id: provider.manifest.extension_id.clone(),
+            service_key: service.service_key.clone(),
+            route: request.route.clone(),
+            project_id: request.project_id.to_string(),
+            session_id: request.session_id.clone(),
+            method: normalize_backend_service_method(&request.method),
+            headers: request.headers.clone(),
+            body: request.body.clone(),
+            package_artifact: ExtensionPackageArtifactPayload {
+                artifact_id: artifact.artifact_id.to_string(),
+                archive_digest: artifact.archive_digest.clone(),
+            },
+            workspace: request
+                .workspace
+                .clone()
+                .map(ExtensionInvocationWorkspaceContext::into_payload),
+            trace_id: request.trace.trace_id.clone(),
+            invocation_id: request.trace.invocation_id.clone(),
+        };
+        let response = self
+            .transport
+            .invoke_extension_backend_service(&request.backend_id, transport_request)
+            .await
+            .map_err(|error| transport_error_to_backend_service_invocation(error, &request))?;
+        let metadata = backend_service_runtime_metadata(&response.metadata);
+        let output = RuntimeInvocationOutput {
+            output: backend_service_output(&response),
+            metadata,
+        };
+        Ok(ExtensionRuntimeBackendServiceInvokeResult {
+            metadata: response.metadata,
+            response: response.response,
+            diagnostic: response.diagnostic,
+            trace: request.trace,
+            output,
+        })
+    }
+}
+
 pub struct ExtensionRuntimeChannelInvoker {
     installations: Arc<dyn ProjectExtensionInstallationRepository>,
     transport: Arc<dyn ExtensionRuntimeChannelTransport>,
@@ -1033,6 +1142,222 @@ fn channel_consumer_payload(
     }
 }
 
+fn resolve_backend_service_invocation<'a>(
+    installations: &'a [ProjectExtensionInstallation],
+    request: &ExtensionRuntimeBackendServiceInvokeRequest,
+) -> Result<
+    (
+        &'a ProjectExtensionInstallation,
+        &'a ExtensionBackendServiceDefinition,
+    ),
+    RuntimeInvocationError,
+> {
+    let extension_key = request.extension_key.trim();
+    if extension_key.is_empty() {
+        return Err(RuntimeInvocationError::invalid_request(
+            "backendService invoke 缺少 provider extension key",
+            Some(request.trace.clone()),
+        ));
+    }
+    let service_key = request.service_key.trim();
+    if service_key.is_empty() {
+        return Err(RuntimeInvocationError::invalid_request(
+            "backendService invoke 缺少 service_key",
+            Some(request.trace.clone()),
+        ));
+    }
+    let route = request.route.trim();
+    if route.is_empty() {
+        return Err(RuntimeInvocationError::invalid_request(
+            "backendService invoke 缺少 route",
+            Some(request.trace.clone()),
+        ));
+    }
+    let provider = installations
+        .iter()
+        .find(|installation| installation.extension_key == extension_key)
+        .ok_or_else(|| {
+            RuntimeInvocationError::capability_denied(
+                format!("backendService provider extension 未启用: {extension_key}"),
+                Some(request.trace.clone()),
+            )
+        })?;
+    let service = provider
+        .manifest
+        .backend_services
+        .iter()
+        .find(|service| service.service_key == service_key)
+        .ok_or_else(|| {
+            RuntimeInvocationError::capability_denied(
+                format!(
+                    "extension `{}` 未声明 backendService `{service_key}`",
+                    provider.extension_key
+                ),
+                Some(request.trace.clone()),
+            )
+        })?;
+    if !service
+        .routes
+        .iter()
+        .any(|pattern| route_matches(pattern, route))
+    {
+        return Err(RuntimeInvocationError::invalid_request(
+            format!("backendService `{service_key}` route `{route}` 不在 manifest routes 声明中"),
+            Some(request.trace.clone()),
+        ));
+    }
+    Ok((provider, service))
+}
+
+fn route_matches(pattern: &str, route: &str) -> bool {
+    let pattern = route_pattern_path(pattern);
+    let route = strip_query(route.trim());
+    if pattern == route {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix("/**") {
+        return route == prefix || route.starts_with(&format!("{prefix}/"));
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return route.starts_with(prefix);
+    }
+    false
+}
+
+fn route_pattern_path(pattern: &str) -> &str {
+    let pattern = strip_query(pattern.trim());
+    let Some(rest) = pattern
+        .strip_prefix("http://")
+        .or_else(|| pattern.strip_prefix("https://"))
+    else {
+        return pattern;
+    };
+    rest.find('/').map_or("/", |index| &rest[index..])
+}
+
+fn strip_query(value: &str) -> &str {
+    value.split_once('?').map_or(value, |(path, _)| path)
+}
+
+fn normalize_backend_service_method(method: &str) -> String {
+    let trimmed = method.trim();
+    if trimmed.is_empty() {
+        "GET".to_string()
+    } else {
+        trimmed.to_ascii_uppercase()
+    }
+}
+
+fn backend_service_output(response: &ExtensionBackendServiceInvokeResponse) -> Value {
+    json!({
+        "metadata": backend_service_metadata_value(&response.metadata),
+        "response": response
+            .response
+            .as_ref()
+            .map(backend_service_http_response_value),
+        "diagnostic": response
+            .diagnostic
+            .as_ref()
+            .map(backend_service_diagnostic_value),
+    })
+}
+
+fn backend_service_runtime_metadata(
+    metadata: &ExtensionBackendServiceInvokeMetadataPayload,
+) -> BTreeMap<String, Value> {
+    BTreeMap::from([
+        ("project_id".to_string(), json!(metadata.project_id)),
+        ("backend_id".to_string(), json!(metadata.backend_id)),
+        ("extension_key".to_string(), json!(metadata.extension_key)),
+        ("extension_id".to_string(), json!(metadata.extension_id)),
+        ("service_key".to_string(), json!(metadata.service_key)),
+        ("route".to_string(), json!(metadata.route)),
+        ("trace_id".to_string(), json!(metadata.trace_id)),
+        ("invocation_id".to_string(), json!(metadata.invocation_id)),
+    ])
+}
+
+fn backend_service_metadata_value(
+    metadata: &ExtensionBackendServiceInvokeMetadataPayload,
+) -> Value {
+    json!({
+        "project_id": metadata.project_id,
+        "backend_id": metadata.backend_id,
+        "extension_key": metadata.extension_key,
+        "extension_id": metadata.extension_id,
+        "service_key": metadata.service_key,
+        "route": metadata.route,
+        "trace_id": metadata.trace_id,
+        "invocation_id": metadata.invocation_id,
+    })
+}
+
+fn backend_service_http_response_value(
+    response: &ExtensionBackendServiceHttpResponsePayload,
+) -> Value {
+    json!({
+        "status": response.status,
+        "headers": response.headers,
+        "body": response.body,
+    })
+}
+
+fn backend_service_diagnostic_value(
+    diagnostic: &ExtensionBackendServiceInvokeDiagnosticPayload,
+) -> Value {
+    json!({
+        "readiness": backend_service_readiness_key(diagnostic.readiness),
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "retryable": diagnostic.retryable,
+        "details": diagnostic.details,
+    })
+}
+
+fn backend_service_readiness_key(
+    readiness: ExtensionBackendServiceReadinessPayload,
+) -> &'static str {
+    match readiness {
+        ExtensionBackendServiceReadinessPayload::Ready => "ready",
+        ExtensionBackendServiceReadinessPayload::MissingArtifact => "missing_artifact",
+        ExtensionBackendServiceReadinessPayload::MaterializeFailed => "materialize_failed",
+        ExtensionBackendServiceReadinessPayload::Starting => "starting",
+        ExtensionBackendServiceReadinessPayload::HealthFailed => "health_failed",
+        ExtensionBackendServiceReadinessPayload::ProcessExited => "process_exited",
+        ExtensionBackendServiceReadinessPayload::UnsupportedRuntime => "unsupported_runtime",
+        ExtensionBackendServiceReadinessPayload::ServiceUnavailable => "service_unavailable",
+    }
+}
+
+fn transport_error_to_backend_service_invocation(
+    error: ExtensionRuntimeActionTransportError,
+    request: &ExtensionRuntimeBackendServiceInvokeRequest,
+) -> RuntimeInvocationError {
+    match error {
+        ExtensionRuntimeActionTransportError::Offline { backend_id } => {
+            RuntimeInvocationError::conflict(
+                format!("extension backendService backend offline: {backend_id}"),
+                Some(request.trace.clone()),
+            )
+        }
+        ExtensionRuntimeActionTransportError::Timeout { backend_id } => {
+            RuntimeInvocationError::timeout(
+                format!("extension backendService backend timeout: {backend_id}"),
+                Some(request.trace.clone()),
+            )
+        }
+        ExtensionRuntimeActionTransportError::ResponseDropped { backend_id } => {
+            RuntimeInvocationError::provider_failed(
+                format!("extension backendService backend response dropped: {backend_id}"),
+                Some(request.trace.clone()),
+            )
+        }
+        ExtensionRuntimeActionTransportError::Failed(message) => {
+            RuntimeInvocationError::provider_failed(message, Some(request.trace.clone()))
+        }
+    }
+}
+
 fn transport_error_to_channel_invocation(
     error: ExtensionRuntimeActionTransportError,
     request: &ExtensionRuntimeChannelInvokeRequest,
@@ -1096,14 +1421,17 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     use agentdash_application_ports::extension_runtime::{
-        ExtensionActionInvokeResponse, ExtensionChannelInvokeResponse,
+        ExtensionActionInvokeResponse, ExtensionBackendServiceHttpResponsePayload,
+        ExtensionBackendServiceInvokeMetadataPayload, ExtensionBackendServiceInvokeRequest,
+        ExtensionBackendServiceInvokeResponse, ExtensionChannelInvokeResponse,
     };
     use agentdash_domain::DomainError;
     use agentdash_domain::extension_package::{
         ExtensionPackageArtifactRef, ExtensionPackageMetadata,
     };
     use agentdash_domain::shared_library::{
-        ExtensionDependencyDeclaration, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
+        ExtensionBackendServiceDefinition, ExtensionDependencyDeclaration,
+        ExtensionPermissionAccess, ExtensionPermissionDeclaration,
         ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
         ExtensionRuntimeActionDefinition, ExtensionTemplatePayload, InstalledAssetSource,
         ProjectExtensionInstallation,
@@ -1209,6 +1537,37 @@ mod tests {
             *self.last_payload.lock().expect("lock") = Some(payload);
             self.result.clone()
         }
+    }
+
+    struct FakeBackendServiceTransport {
+        result: Result<ExtensionBackendServiceInvokeResponse, ExtensionRuntimeActionTransportError>,
+        last_payload: StdMutex<Option<ExtensionBackendServiceInvokeRequest>>,
+    }
+
+    #[async_trait]
+    impl ExtensionBackendServiceTransport for FakeBackendServiceTransport {
+        async fn invoke_extension_backend_service(
+            &self,
+            backend_id: &str,
+            payload: ExtensionBackendServiceInvokeRequest,
+        ) -> Result<ExtensionBackendServiceInvokeResponse, ExtensionRuntimeActionTransportError>
+        {
+            assert_eq!(backend_id, "backend-1");
+            *self.last_payload.lock().expect("lock") = Some(payload);
+            self.result.clone()
+        }
+    }
+
+    #[test]
+    fn backend_service_route_matches_absolute_pattern_by_path() {
+        assert!(route_matches(
+            "http://localhost:4510/api/**",
+            "/api/search?q=abc"
+        ));
+        assert!(!route_matches(
+            "http://localhost:4510/api/**",
+            "/private/search"
+        ));
     }
 
     #[tokio::test]
@@ -1781,6 +2140,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn backend_service_invoker_dispatches_declared_route_to_transport() {
+        let project_id = Uuid::new_v4();
+        let request = backend_service_request(project_id, "/api/search");
+        let response_body = br#"{"ok":true}"#.to_vec();
+        let transport = Arc::new(FakeBackendServiceTransport {
+            result: Ok(backend_service_response_payload(
+                &request,
+                200,
+                [("content-type".to_string(), "application/json".to_string())].into(),
+                Some(response_body.clone()),
+            )),
+            last_payload: StdMutex::new(None),
+        });
+        let invoker = ExtensionRuntimeBackendServiceInvoker::new(
+            Arc::new(FakeInstallationRepo {
+                installations: vec![installation(project_id, true, true)],
+            }),
+            transport.clone(),
+        );
+
+        let result = invoker
+            .invoke(request.clone())
+            .await
+            .expect("backend service invoke");
+
+        let http_response = result.response.as_ref().expect("http response");
+        assert_eq!(http_response.status, 200);
+        assert_eq!(
+            http_response.body.as_deref(),
+            Some(response_body.as_slice())
+        );
+        assert_eq!(result.output.output["response"]["status"], 200);
+        assert_eq!(
+            result.output.output["response"]["body"],
+            json!(response_body.clone())
+        );
+        assert_eq!(result.output.metadata["service_key"], "local-hello.api");
+        assert_eq!(result.output.metadata["extension_key"], "local-hello");
+        assert_eq!(result.metadata.backend_id, "backend-1");
+        assert_eq!(result.metadata.extension_id, "local-hello");
+        let payload = transport
+            .last_payload
+            .lock()
+            .expect("lock")
+            .clone()
+            .expect("payload");
+        assert_eq!(payload.extension_key, "local-hello");
+        assert_eq!(payload.extension_id, "local-hello");
+        assert_eq!(payload.service_key, "local-hello.api");
+        assert_eq!(payload.route, "/api/search");
+        assert_eq!(payload.method, "POST");
+        assert_eq!(
+            payload.headers.get("content-type").map(String::as_str),
+            Some("application/json")
+        );
+        assert_eq!(
+            payload.body.as_deref(),
+            Some(br#"{"query":"abc"}"#.as_slice())
+        );
+        assert_eq!(
+            payload
+                .workspace
+                .as_ref()
+                .map(|workspace| (workspace.mount_id.as_str(), workspace.root_ref.as_str())),
+            Some(("main", "D:/Workspaces/demo"))
+        );
+    }
+
+    #[tokio::test]
+    async fn backend_service_invoker_rejects_route_mismatch_before_transport() {
+        let project_id = Uuid::new_v4();
+        let response_request = backend_service_request(project_id, "/api/search");
+        let transport = Arc::new(FakeBackendServiceTransport {
+            result: Ok(backend_service_response_payload(
+                &response_request,
+                200,
+                Default::default(),
+                None,
+            )),
+            last_payload: StdMutex::new(None),
+        });
+        let invoker = ExtensionRuntimeBackendServiceInvoker::new(
+            Arc::new(FakeInstallationRepo {
+                installations: vec![installation(project_id, true, true)],
+            }),
+            transport.clone(),
+        );
+
+        let err = invoker
+            .invoke(backend_service_request(project_id, "/private/search"))
+            .await
+            .expect_err("route mismatch");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::InvalidRequest);
+        assert!(transport.last_payload.lock().expect("lock").is_none());
+    }
+
+    #[tokio::test]
     async fn provider_supports_enabled_session_extension_action() {
         let project_id = Uuid::new_v4();
         let provider = ExtensionRuntimeActionProvider::new(
@@ -1875,6 +2332,54 @@ mod tests {
             method: "echo".to_string(),
             input: json!({ "source": "test" }),
             trace: RuntimeTrace::new(),
+        }
+    }
+
+    fn backend_service_request(
+        project_id: Uuid,
+        route: &str,
+    ) -> ExtensionRuntimeBackendServiceInvokeRequest {
+        ExtensionRuntimeBackendServiceInvokeRequest {
+            project_id,
+            session_id: "session-1".to_string(),
+            backend_id: "backend-1".to_string(),
+            workspace: Some(ExtensionInvocationWorkspaceContext::new(
+                "main",
+                "D:/Workspaces/demo",
+            )),
+            extension_key: "local-hello".to_string(),
+            service_key: "local-hello.api".to_string(),
+            route: route.to_string(),
+            method: "post".to_string(),
+            headers: [("content-type".to_string(), "application/json".to_string())].into(),
+            body: Some(br#"{"query":"abc"}"#.to_vec()),
+            trace: RuntimeTrace::new(),
+        }
+    }
+
+    fn backend_service_response_payload(
+        request: &ExtensionRuntimeBackendServiceInvokeRequest,
+        status: u16,
+        headers: BTreeMap<String, String>,
+        body: Option<Vec<u8>>,
+    ) -> ExtensionBackendServiceInvokeResponse {
+        ExtensionBackendServiceInvokeResponse {
+            metadata: ExtensionBackendServiceInvokeMetadataPayload {
+                project_id: request.project_id.to_string(),
+                backend_id: request.backend_id.clone(),
+                extension_key: request.extension_key.clone(),
+                extension_id: "local-hello".to_string(),
+                service_key: request.service_key.clone(),
+                route: request.route.clone(),
+                trace_id: request.trace.trace_id.clone(),
+                invocation_id: request.trace.invocation_id.clone(),
+            },
+            response: Some(ExtensionBackendServiceHttpResponsePayload {
+                status,
+                headers,
+                body,
+            }),
+            diagnostic: None,
         }
     }
 
@@ -2014,7 +2519,13 @@ mod tests {
             },
             fetch_routes: vec![],
             operation_catalog: vec![],
-            backend_services: vec![],
+            backend_services: vec![ExtensionBackendServiceDefinition {
+                service_key: "local-hello.api".to_string(),
+                runtime: "node".to_string(),
+                entry: "dist/backend/server.mjs".to_string(),
+                routes: vec!["/api/**".to_string()],
+                health_path: Some("/health".to_string()),
+            }],
             bundles: vec![],
         }
     }

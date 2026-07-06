@@ -16,7 +16,7 @@
 - app-pipeline 已生成 `backend_services`、`fetch_routes`、`operation_catalog`。
 - domain `ExtensionTemplatePayload` 已持久化这些字段。
 - extension runtime projection 已投出 backend services。
-- Workspace Module 目前识别 backendService operation，但 fail-closed。
+- Workspace Module 已识别 backendService operation；当前任务负责把它接入 local runtime readiness-aware bridge invoke。
 - Relay protocol 已有 backendService dispatch 形状，但没有完整 handler/lifecycle。
 
 ## Runtime Identity

@@ -41,7 +41,7 @@ Main session owns integration, validation, spec update and commits.
 
 ### M4: Workspace Module And Panel Fetch
 
-- Replace fail-closed backendService dispatch with readiness-aware bridge invoke.
+- Connect backendService dispatch to readiness-aware bridge invoke.
 - Keep `panel_only` blocked for Agent invoke.
 - Connect panel `fetch_routes` backendService target to the same bridge path.
 - Cover no-body status and route mismatch behavior.

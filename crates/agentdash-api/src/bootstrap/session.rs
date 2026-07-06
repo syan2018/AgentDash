@@ -646,7 +646,8 @@ fn build_session_runtime_tool_composer(
         deps.workspace_module_agent_run_bridge_handle,
         deps.workspace_module_runtime_gateway_handle,
     )
-    .with_extension_channel_transport(deps.backend_registry);
+    .with_extension_channel_transport(deps.backend_registry.clone())
+    .with_extension_backend_service_transport(deps.backend_registry);
 
     Arc::new(SessionRuntimeToolComposer::new(vec![
         Arc::new(vfs_provider) as Arc<dyn RuntimeToolProvider>,

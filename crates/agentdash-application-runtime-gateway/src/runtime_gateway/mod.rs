@@ -11,8 +11,8 @@ mod tool_adapter;
 mod types;
 
 pub use agentdash_application_ports::extension_runtime::{
-    ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
-    ExtensionRuntimeChannelTransport,
+    ExtensionBackendServiceTransport, ExtensionRuntimeActionTransport,
+    ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
 };
 pub use agentdash_application_ports::runtime_gateway_setup::{
     MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput,
@@ -32,9 +32,11 @@ pub use extension_actions::{
     EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_ID_METADATA,
     EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA,
     EXTENSION_RUNTIME_DESCRIPTOR_INSTALLATION_ID_METADATA, ExtensionInvocationWorkspaceContext,
-    ExtensionRuntimeActionProvider, ExtensionRuntimeChannelConsumer,
-    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult,
-    ExtensionRuntimeChannelInvoker, attach_extension_invocation_workspace,
+    ExtensionRuntimeActionProvider, ExtensionRuntimeBackendServiceInvokeRequest,
+    ExtensionRuntimeBackendServiceInvokeResult, ExtensionRuntimeBackendServiceInvoker,
+    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
+    ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker,
+    attach_extension_invocation_workspace,
 };
 pub use extension_workspace::{
     ExtensionInvocationWorkspaceResolution, ExtensionInvocationWorkspaceUnavailableReason,

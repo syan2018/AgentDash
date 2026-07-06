@@ -576,12 +576,18 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::CommandMcpClose { .. } => "command.mcp_close",
         RelayMessage::CommandExtensionActionInvoke { .. } => "command.extension_action_invoke",
         RelayMessage::CommandExtensionChannelInvoke { .. } => "command.extension_channel_invoke",
+        RelayMessage::CommandExtensionBackendServiceInvoke { .. } => {
+            "command.extension_backend_service_invoke"
+        }
         RelayMessage::ResponseMcpProbeTransport { .. } => "response.mcp_probe_transport",
         RelayMessage::ResponseMcpListTools { .. } => "response.mcp_list_tools",
         RelayMessage::ResponseMcpCallTool { .. } => "response.mcp_call_tool",
         RelayMessage::ResponseMcpClose { .. } => "response.mcp_close",
         RelayMessage::ResponseExtensionActionInvoke { .. } => "response.extension_action_invoke",
         RelayMessage::ResponseExtensionChannelInvoke { .. } => "response.extension_channel_invoke",
+        RelayMessage::ResponseExtensionBackendServiceInvoke { .. } => {
+            "response.extension_backend_service_invoke"
+        }
         RelayMessage::EventToolShellOutput { .. } => "event.tool.shell_output",
         RelayMessage::CommandTerminalSpawn { .. } => "command.terminal.spawn",
         RelayMessage::CommandTerminalInput { .. } => "command.terminal.input",

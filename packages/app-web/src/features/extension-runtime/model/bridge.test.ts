@@ -6,6 +6,8 @@ import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type {
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,
+  ExtensionRuntimeInvokeBackendServiceRequest,
+  ExtensionRuntimeInvokeBackendServiceResponse,
   ExtensionRuntimeInvokeChannelRequest,
   ExtensionRuntimeInvokeChannelResponse,
   ExtensionWorkspaceTabProjectionResponse,
@@ -89,6 +91,9 @@ describe("extension bridge message validation", () => {
       async invokeChannel(target, request) {
         channelCalls.push({ target, request });
         return channelResponse(request.channel_key, request.method, { channel: true });
+      },
+      async invokeBackendService() {
+        throw new Error("unexpected backendService invoke");
       },
       async readFile(request) {
         readCalls.push(request);
@@ -191,6 +196,152 @@ describe("extension bridge message validation", () => {
       typeId: "protocol-demo.panel",
       uri: "protocol-demo://panel",
     }]);
+  });
+
+  it("把 backendService fetch route 请求转发到同一 bridge invoke path", async () => {
+    const calls: Array<{
+      target: AgentRunRuntimeTarget;
+      request: ExtensionRuntimeInvokeBackendServiceRequest;
+    }> = [];
+    const services: ExtensionWebviewBridgeServices = {
+      ...noopServices(),
+      async invokeBackendService(target, request) {
+        calls.push({ target, request });
+        return backendServiceResponse(201, { "content-type": "application/json" }, "{\"ok\":true}");
+      },
+    };
+    const workspaceData = workspaceRuntimeData({
+      extensionRuntime: extensionRuntimeWithBackendFetchRoute("/api/**", "/api/**"),
+    });
+
+    await expect(handleExtensionWebviewBridgeRequest({
+      message: bridgeRequest("fetch.request", {
+        url: "https://panel.local/api/search?q=abc",
+        method: "POST",
+        headers: { "x-demo": "yes" },
+        body: "payload",
+        route: {
+          target: { kind: "backend_service", service_key: "protocol-demo.api" },
+        },
+      }),
+      workspaceData,
+      tab: webviewTab(),
+      uri: "protocol-demo://panel",
+      backend: { backend_id: "backend-1", label: "Local", online: true },
+      services,
+    })).resolves.toEqual({
+      status: 201,
+      headers: { "content-type": "application/json" },
+      body: "{\"ok\":true}",
+    });
+
+    expect(calls).toEqual([{
+      target: { runId: "run-1", agentId: "agent-1" },
+      request: {
+        extension_key: "protocol-demo",
+        service_key: "protocol-demo.api",
+        route: "/api/search?q=abc",
+        method: "POST",
+        headers: { "x-demo": "yes" },
+        body: Array.from(new TextEncoder().encode("payload")),
+      },
+    }]);
+  });
+
+  it("backendService fetch route mismatch 不会调用 bridge", async () => {
+    const calls: ExtensionRuntimeInvokeBackendServiceRequest[] = [];
+    const services: ExtensionWebviewBridgeServices = {
+      ...noopServices(),
+      async invokeBackendService(_target, request) {
+        calls.push(request);
+        return backendServiceResponse(200, {}, "");
+      },
+    };
+
+    await expect(handleExtensionWebviewBridgeRequest({
+      message: bridgeRequest("fetch.request", {
+        url: "https://panel.local/private/search",
+        method: "GET",
+      }),
+      workspaceData: workspaceRuntimeData({
+        extensionRuntime: extensionRuntimeWithBackendFetchRoute("/api/**", "/api/**"),
+      }),
+      tab: webviewTab(),
+      uri: "protocol-demo://panel",
+      backend: { backend_id: "backend-1", label: "Local", online: true },
+      services,
+    })).rejects.toThrow("Extension fetch route 未匹配: /private/search");
+    expect(calls).toEqual([]);
+  });
+
+  it("backendService fetch route 支持绝对 localhost pattern", async () => {
+    const calls: ExtensionRuntimeInvokeBackendServiceRequest[] = [];
+    const services: ExtensionWebviewBridgeServices = {
+      ...noopServices(),
+      async invokeBackendService(_target, request) {
+        calls.push(request);
+        return backendServiceResponse(200, {}, "ok");
+      },
+    };
+
+    await expect(handleExtensionWebviewBridgeRequest({
+      message: bridgeRequest("fetch.request", {
+        url: "http://localhost:4510/api/search?q=abc",
+        method: "GET",
+      }),
+      workspaceData: workspaceRuntimeData({
+        extensionRuntime: extensionRuntimeWithBackendFetchRoute(
+          "http://localhost:4510/api/**",
+          "http://localhost:4510/api/**",
+        ),
+      }),
+      tab: webviewTab(),
+      uri: "protocol-demo://panel",
+      backend: { backend_id: "backend-1", label: "Local", online: true },
+      services,
+    })).resolves.toEqual({
+      status: 200,
+      headers: {},
+      body: "ok",
+    });
+
+    expect(calls).toEqual([{
+      extension_key: "protocol-demo",
+      service_key: "protocol-demo.api",
+      route: "/api/search?q=abc",
+      method: "GET",
+      headers: {},
+      body: null,
+    }]);
+  });
+
+  it("backendService fetch route 对 no-body status 返回 null body", async () => {
+    for (const status of [204, 205, 304]) {
+      const services: ExtensionWebviewBridgeServices = {
+        ...noopServices(),
+        async invokeBackendService() {
+          return backendServiceResponse(status, {}, "ignored");
+        },
+      };
+
+      await expect(handleExtensionWebviewBridgeRequest({
+        message: bridgeRequest("fetch.request", {
+          url: "https://panel.local/api/search",
+          method: "GET",
+        }),
+        workspaceData: workspaceRuntimeData({
+          extensionRuntime: extensionRuntimeWithBackendFetchRoute("/api/**", "/api/**"),
+        }),
+        tab: webviewTab(),
+        uri: "protocol-demo://panel",
+        backend: { backend_id: "backend-1", label: "Local", online: true },
+        services,
+      })).resolves.toEqual({
+        status,
+        headers: {},
+        body: null,
+      });
+    }
   });
 
   it("extension VFS bridge 复用 VFS mount 默认选择策略", async () => {
@@ -423,6 +574,9 @@ function noopServices(): ExtensionWebviewBridgeServices {
     async invokeChannel(_target, request) {
       return channelResponse(request.channel_key, request.method, null);
     },
+    async invokeBackendService() {
+      return backendServiceResponse(204, {}, null);
+    },
     async readFile() {
       return { content: "" };
     },
@@ -460,12 +614,72 @@ function channelResponse(
   };
 }
 
+function backendServiceResponse(
+  status: number,
+  headers: Record<string, string>,
+  body: string | null,
+): ExtensionRuntimeInvokeBackendServiceResponse {
+  return {
+    trace: runtimeTrace(),
+    metadata: {
+      project_id: "project-1",
+      backend_id: "backend-1",
+      extension_key: "protocol-demo",
+      extension_id: "protocol-demo",
+      service_key: "protocol-demo.api",
+      route: "/api/search",
+      trace_id: "trace-1",
+      invocation_id: "invoke-1",
+    },
+    response: {
+      status,
+      headers,
+      body: body == null ? null : Array.from(new TextEncoder().encode(body)),
+    },
+    diagnostic: null,
+  };
+}
+
 function runtimeTrace() {
   return {
     trace_id: "trace-1",
     invocation_id: "invoke-1",
     parent_trace_id: null,
     created_at: "2026-05-27T00:00:00Z",
+  };
+}
+
+function extensionRuntimeWithBackendFetchRoute(
+  pattern: string,
+  targetRoute: string,
+): WorkspaceData["extensionRuntime"] {
+  const extensionRuntime = workspaceRuntimeData().extensionRuntime;
+  return {
+    ...extensionRuntime,
+    projection: {
+      ...extensionRuntime.projection,
+      fetch_routes: [{
+        extension_key: "protocol-demo",
+        extension_id: "protocol-demo",
+        route_key: "protocol-demo.api",
+        pattern,
+        panel_only: true,
+        target: {
+          kind: "backend_service",
+          service_key: "protocol-demo.api",
+          route: targetRoute,
+        },
+      }],
+      backend_services: [{
+        extension_key: "protocol-demo",
+        extension_id: "protocol-demo",
+        service_key: "protocol-demo.api",
+        runtime: "node",
+        entry: "dist/backend/server.mjs",
+        routes: [targetRoute],
+        health_path: "/health",
+      }],
+    },
   };
 }
 

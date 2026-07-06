@@ -77,7 +77,9 @@ use agentdash_contracts::extension_package::{
     ImportExtensionPackageResponse, InstallExtensionPackageArtifactRequest,
 };
 use agentdash_contracts::extension_runtime::{
-    ExtensionBackendServiceProjectionResponse, ExtensionBundleKindResponse,
+    ExtensionBackendServiceDiagnosticResponse, ExtensionBackendServiceHttpResponse,
+    ExtensionBackendServiceInvokeMetadataResponse, ExtensionBackendServiceProjectionResponse,
+    ExtensionBackendServiceReadinessResponse, ExtensionBundleKindResponse,
     ExtensionBundleProjectionResponse, ExtensionCommandHandlerResponse,
     ExtensionCommandProjectionResponse, ExtensionDependencyDeclarationResponse,
     ExtensionDependencyProjectionResponse, ExtensionFetchRouteProjectionResponse,
@@ -92,6 +94,7 @@ use agentdash_contracts::extension_runtime::{
     ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
     ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeInvocationOutputResponse,
     ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
+    ExtensionRuntimeInvokeBackendServiceRequest, ExtensionRuntimeInvokeBackendServiceResponse,
     ExtensionRuntimeInvokeChannelRequest, ExtensionRuntimeInvokeChannelResponse,
     ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
@@ -905,10 +908,16 @@ fn main() {
             export_all::<ExtensionRuntimeProjectionResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
             export_all::<ExtensionRuntimeInvokeChannelRequest>(dir);
+            export_all::<ExtensionRuntimeInvokeBackendServiceRequest>(dir);
             export_all::<ExtensionRuntimeTraceResponse>(dir);
             export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
             export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
+            export_all::<ExtensionBackendServiceInvokeMetadataResponse>(dir);
+            export_all::<ExtensionBackendServiceHttpResponse>(dir);
+            export_all::<ExtensionBackendServiceReadinessResponse>(dir);
+            export_all::<ExtensionBackendServiceDiagnosticResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeBackendServiceResponse>(dir);
             export_all::<UninstallExtensionInstallationResponse>(dir);
         },
     );

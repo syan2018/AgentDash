@@ -346,6 +346,18 @@ pub struct ExtensionRuntimeInvokeChannelRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionRuntimeInvokeBackendServiceRequest {
+    pub extension_key: String,
+    pub service_key: String,
+    pub route: String,
+    pub method: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionRuntimeTraceResponse {
     pub trace_id: String,
     pub invocation_id: String,
@@ -375,6 +387,60 @@ pub struct ExtensionRuntimeInvokeChannelResponse {
     pub method: String,
     pub trace: ExtensionRuntimeTraceResponse,
     pub output: ExtensionRuntimeInvocationOutputResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionBackendServiceInvokeMetadataResponse {
+    pub project_id: String,
+    pub backend_id: String,
+    pub extension_key: String,
+    pub extension_id: String,
+    pub service_key: String,
+    pub route: String,
+    pub trace_id: String,
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionBackendServiceHttpResponse {
+    pub status: u16,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionBackendServiceReadinessResponse {
+    Ready,
+    MissingArtifact,
+    MaterializeFailed,
+    Starting,
+    HealthFailed,
+    ProcessExited,
+    UnsupportedRuntime,
+    ServiceUnavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionBackendServiceDiagnosticResponse {
+    pub readiness: ExtensionBackendServiceReadinessResponse,
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionRuntimeInvokeBackendServiceResponse {
+    pub trace: ExtensionRuntimeTraceResponse,
+    pub metadata: ExtensionBackendServiceInvokeMetadataResponse,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<ExtensionBackendServiceHttpResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<ExtensionBackendServiceDiagnosticResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
+  invokeAgentRunExtensionBackendService,
   invokeAgentRunExtensionRuntimeAction,
   invokeAgentRunExtensionRuntimeChannel,
 } from "../../../services/extensionRuntime";
@@ -32,6 +33,7 @@ const webviewBridgeServices: ExtensionWebviewBridgeServices = {
   },
   invokeAction: invokeAgentRunExtensionRuntimeAction,
   invokeChannel: invokeAgentRunExtensionRuntimeChannel,
+  invokeBackendService: invokeAgentRunExtensionBackendService,
   readFile: readSurfaceFile,
   writeFile: writeSurfaceFile,
 };

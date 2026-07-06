@@ -670,6 +670,9 @@ const relayState = localRuntimeSnapshot?.relay_connection?.state ?? "not_configu
 - Relay `command.extension_action_invoke` 进入本机 CommandHandler 后调用 TS Extension Host，原因是 RuntimeGateway 只拥有 action/trace/placement 意图，具体插件执行发生在 local runtime。
 - Extension action/channel relay payload 携带 session workspace context 时，`root_ref` 来自当前 session VFS default mount；TS Extension Host 将它作为 workspace/process Host API 的默认 root，原因是插件执行目录必须跟随本次 session 的工作区事实。
 - Relay payload 携带 package artifact 时，CommandHandler 先按 `artifact_id + archive_digest` 准备本机 cache，再用 extension key、backend id、project/session id、session workspace root 与 registered workspace roots 激活 TS Extension Host，原因是 packaged extension 的执行上下文由 Project 安装、session workspace 和本机登记事实共同确定。
+- Extension backendService 使用同一个 package artifact cache 作为来源，再 materialize 到 local runtime service cache 并启动 Node service。服务实例 identity 是 `project_id + backend_id + extension_key + service_key + artifact_id + archive_digest`，原因是同一 extension 可安装到多个 Project/backend，artifact digest 改变时必须形成新的本机执行实例。
+- backendService Node process 由 local runtime 注入 `AGENTDASH_BACKEND_SERVICE_HOST=127.0.0.1`、`AGENTDASH_BACKEND_SERVICE_PORT`、`AGENTDASH_BACKEND_SERVICE_URL`、`HOST` 和 `PORT`。`health_path` 存在时以 HTTP 2xx 作为 ready；缺省时以进程存活作为 ready。readiness 使用 `missing_artifact | materialize_failed | starting | health_failed | ready | process_exited | unsupported_runtime`。
+- backendService 本机 HTTP 转发使用 invoke payload 的 `route` path 与 query 访问本机服务；route 声明可来自相对路径或 explicit HTTP(S) loopback URL，local runtime 对 absolute 声明取 URL path 参与匹配，原因是运行时端口由 local manager 分配，声明中的 loopback origin 只用于 panel/toolchain 的显式 route intent。
 
 ## Scenario: Local Relay Command Routing And Extension Host API
 
@@ -722,6 +725,7 @@ pub async fn resolve_host_api(
 | `process.exec` 设置 env key 但未声明 `process.env.set` 或 `process.env.set:{KEY}` | 返回 permission denied |
 | Host API 参数尝试传 raw workspace root | 使用 activation workspace context，越界路径按 workspace guard 失败 |
 | action/channel output 不满足 output schema | 返回 host 调用错误 |
+| `command.extension_backend_service_invoke` service 未 ready | 返回 response payload diagnostic，不升级成 relay envelope error |
 
 ### 5. Good/Base/Bad Cases
 

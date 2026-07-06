@@ -319,18 +319,18 @@ mod tests {
     // ── in-memory mocks ──────────────────────────────────────────────
 
     #[derive(Default, Clone)]
-    struct MockProjectAgentRepo {
+    struct FixtureProjectAgentRepo {
         agents: Arc<Mutex<Vec<ProjectAgent>>>,
     }
 
-    impl MockProjectAgentRepo {
+    impl FixtureProjectAgentRepo {
         async fn insert(&self, agent: ProjectAgent) {
             self.agents.lock().await.push(agent);
         }
     }
 
     #[async_trait]
-    impl ProjectAgentRepository for MockProjectAgentRepo {
+    impl ProjectAgentRepository for FixtureProjectAgentRepo {
         async fn create(&self, agent: &ProjectAgent) -> Result<(), DomainError> {
             self.agents.lock().await.push(agent.clone());
             Ok(())
@@ -400,18 +400,18 @@ mod tests {
     }
 
     #[derive(Default, Clone)]
-    struct MockLifecycleDefRepo {
+    struct FixtureLifecycleDefRepo {
         defs: Arc<Mutex<Vec<WorkflowGraph>>>,
     }
 
-    impl MockLifecycleDefRepo {
+    impl FixtureLifecycleDefRepo {
         async fn insert(&self, def: WorkflowGraph) {
             self.defs.lock().await.push(def);
         }
     }
 
     #[async_trait]
-    impl WorkflowGraphRepository for MockLifecycleDefRepo {
+    impl WorkflowGraphRepository for FixtureLifecycleDefRepo {
         async fn create(&self, def: &WorkflowGraph) -> Result<(), DomainError> {
             self.defs.lock().await.push(def.clone());
             Ok(())
@@ -459,18 +459,18 @@ mod tests {
     }
 
     #[derive(Default, Clone)]
-    struct MockWorkflowDefRepo {
+    struct FixtureWorkflowDefRepo {
         defs: Arc<Mutex<Vec<AgentProcedure>>>,
     }
 
-    impl MockWorkflowDefRepo {
+    impl FixtureWorkflowDefRepo {
         async fn insert(&self, def: AgentProcedure) {
             self.defs.lock().await.push(def);
         }
     }
 
     #[async_trait]
-    impl AgentProcedureRepository for MockWorkflowDefRepo {
+    impl AgentProcedureRepository for FixtureWorkflowDefRepo {
         async fn create(&self, def: &AgentProcedure) -> Result<(), DomainError> {
             self.defs.lock().await.push(def.clone());
             Ok(())
@@ -611,7 +611,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
         project_agent_repo
             .insert(make_project_agent(
                 project_id,
@@ -620,10 +620,10 @@ mod tests {
             ))
             .await;
 
-        let lifecycle_repo = MockLifecycleDefRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
         workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
@@ -649,13 +649,13 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
         project_agent_repo
             .insert(make_project_agent(project_id, project_agent_id, None))
             .await;
 
-        let lifecycle_repo = MockLifecycleDefRepo::default();
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -678,7 +678,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
         project_agent_repo
             .insert(make_project_agent(
                 project_id,
@@ -688,8 +688,8 @@ mod tests {
             .await;
 
         // lifecycle_repo 不注册任何定义
-        let lifecycle_repo = MockLifecycleDefRepo::default();
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -712,9 +712,9 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
-        let lifecycle_repo = MockLifecycleDefRepo::default();
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
 
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
@@ -737,7 +737,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
         project_agent_repo
             .insert(make_project_agent(
                 project_id,
@@ -746,12 +746,12 @@ mod tests {
             ))
             .await;
 
-        let lifecycle_repo = MockLifecycleDefRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
         lifecycle_repo
             .insert(lifecycle_without_entry_step(project_id))
             .await;
 
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
         workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
@@ -781,7 +781,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
         project_agent_repo
             .insert(make_project_agent(
                 project_id,
@@ -790,10 +790,10 @@ mod tests {
             ))
             .await;
 
-        let lifecycle_repo = MockLifecycleDefRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
         workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         // Step 1: helper 解析 workflow 上下文
@@ -892,7 +892,7 @@ mod tests {
         let story_default_agent = Uuid::new_v4();
         let non_story_agent = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
         // 非 story-default agent（应被忽略）
         project_agent_repo
             .insert(make_story_project_agent(
@@ -912,10 +912,10 @@ mod tests {
             ))
             .await;
 
-        let lifecycle_repo = MockLifecycleDefRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
         workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
@@ -938,7 +938,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
         // 有 ProjectAgent 但 is_default_for_story=false
         project_agent_repo
             .insert(make_story_project_agent(
@@ -949,10 +949,10 @@ mod tests {
             ))
             .await;
 
-        let lifecycle_repo = MockLifecycleDefRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
         workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(
@@ -973,7 +973,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let project_agent_id = Uuid::new_v4();
 
-        let project_agent_repo = MockProjectAgentRepo::default();
+        let project_agent_repo = FixtureProjectAgentRepo::default();
         project_agent_repo
             .insert(make_project_agent(
                 project_id,
@@ -982,10 +982,10 @@ mod tests {
             ))
             .await;
 
-        let lifecycle_repo = MockLifecycleDefRepo::default();
+        let lifecycle_repo = FixtureLifecycleDefRepo::default();
         lifecycle_repo.insert(admin_lifecycle(project_id)).await;
 
-        let workflow_repo = MockWorkflowDefRepo::default();
+        let workflow_repo = FixtureWorkflowDefRepo::default();
         workflow_repo.insert(admin_entry_workflow(project_id)).await;
 
         let ctx = resolve_session_workflow_context(

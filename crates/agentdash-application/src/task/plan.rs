@@ -503,12 +503,12 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct InMemoryLifecycleRunRepo {
+    struct FixtureLifecycleRunRepo {
         runs: Mutex<Vec<LifecycleRun>>,
     }
 
     #[async_trait]
-    impl LifecycleRunRepository for InMemoryLifecycleRunRepo {
+    impl LifecycleRunRepository for FixtureLifecycleRunRepo {
         async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             self.runs.lock().expect("runs").push(run.clone());
             Ok(())
@@ -569,12 +569,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryAssociationRepo {
+    struct FixtureAssociationRepo {
         associations: Mutex<Vec<LifecycleSubjectAssociation>>,
     }
 
     #[async_trait]
-    impl LifecycleSubjectAssociationRepository for InMemoryAssociationRepo {
+    impl LifecycleSubjectAssociationRepository for FixtureAssociationRepo {
         async fn create(&self, assoc: &LifecycleSubjectAssociation) -> Result<(), DomainError> {
             self.associations
                 .lock()
@@ -629,7 +629,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_scoped_task_command_creates_updates_and_archives_task() {
-        let repo = InMemoryLifecycleRunRepo::default();
+        let repo = FixtureLifecycleRunRepo::default();
         let run = run(Uuid::new_v4());
         let run_id = run.id;
         repo.create(&run).await.expect("seed run");
@@ -659,8 +659,8 @@ mod tests {
 
     #[tokio::test]
     async fn story_projection_includes_story_bound_and_story_ref_but_excludes_unrelated() {
-        let lifecycle_repo = InMemoryLifecycleRunRepo::default();
-        let association_repo = InMemoryAssociationRepo::default();
+        let lifecycle_repo = FixtureLifecycleRunRepo::default();
+        let association_repo = FixtureAssociationRepo::default();
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
 

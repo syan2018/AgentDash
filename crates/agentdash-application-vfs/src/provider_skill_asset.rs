@@ -1,4 +1,4 @@
-//! `skill_asset_fs` mount：把项目级 SkillAsset 只读投影为 `skills/<key>/...`。
+﻿//! `skill_asset_fs` mount：把项目级 SkillAsset 只读投影为 `skills/<key>/...`。
 
 use agentdash_diagnostics::{Subsystem, diag};
 use std::collections::{BTreeMap, BTreeSet};
@@ -718,85 +718,11 @@ impl MountProvider for SkillAssetFsMountProvider {
 mod tests {
     use super::*;
     use crate::build_project_skill_asset_management_mount;
-    use agentdash_domain::DomainError;
     use agentdash_domain::common::MountCapability;
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
-    use std::sync::Mutex;
+    use agentdash_test_support::skill::MemorySkillAssetRepository;
 
-    #[derive(Default)]
-    struct InMemorySkillAssetRepo {
-        assets: Mutex<Vec<SkillAsset>>,
-    }
-
-    #[async_trait::async_trait]
-    impl SkillAssetRepository for InMemorySkillAssetRepo {
-        async fn create(&self, asset: &SkillAsset) -> Result<(), DomainError> {
-            self.assets.lock().unwrap().push(asset.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| asset.id == id)
-                .cloned())
-        }
-
-        async fn get_by_project_and_key(
-            &self,
-            project_id: Uuid,
-            key: &str,
-        ) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| asset.project_id == project_id && asset.key == key)
-                .cloned())
-        }
-
-        async fn get_by_project_and_builtin_key(
-            &self,
-            _project_id: Uuid,
-            _builtin_key: &str,
-        ) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(None)
-        }
-
-        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|asset| asset.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, asset: &SkillAsset) -> Result<(), DomainError> {
-            let mut assets = self.assets.lock().unwrap();
-            let Some(existing) = assets.iter_mut().find(|existing| existing.id == asset.id) else {
-                return Err(DomainError::NotFound {
-                    entity: "skill_asset",
-                    id: asset.id.to_string(),
-                });
-            };
-            *existing = asset.clone();
-            Ok(())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    fn repo_with_skill(project_id: Uuid) -> Arc<InMemorySkillAssetRepo> {
-        let repo = Arc::new(InMemorySkillAssetRepo::default());
+    fn repo_with_skill(project_id: Uuid) -> Arc<MemorySkillAssetRepository> {
         let mut asset = SkillAsset::new_user(project_id, "writer", "Writer", "写作辅助", true);
         asset.files = vec![
             SkillAssetFile::new(
@@ -819,8 +745,7 @@ mod tests {
                 agentdash_domain::skill_asset::SkillAssetFileKind::Asset,
             ),
         ];
-        repo.assets.lock().unwrap().push(asset);
-        repo
+        Arc::new(MemorySkillAssetRepository::new_with_assets(vec![asset]))
     }
 
     #[tokio::test]

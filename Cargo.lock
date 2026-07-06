@@ -168,6 +168,7 @@ dependencies = [
  "agentdash-mcp",
  "agentdash-relay",
  "agentdash-spi",
+ "agentdash-test-support",
  "agentdash-workspace-module",
  "anyhow",
  "async-stream",
@@ -223,6 +224,7 @@ dependencies = [
  "agentdash-infrastructure",
  "agentdash-relay",
  "agentdash-spi",
+ "agentdash-test-support",
  "agentdash-workspace-module",
  "async-trait",
  "base64 0.22.1",
@@ -268,6 +270,7 @@ dependencies = [
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-test-support",
  "agentdash-workspace-module",
  "async-trait",
  "chrono",
@@ -314,6 +317,7 @@ dependencies = [
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-test-support",
  "agentdash-workspace-module",
  "async-trait",
  "chrono",
@@ -354,6 +358,7 @@ dependencies = [
  "agentdash-application-ports",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-test-support",
  "async-trait",
  "chrono",
  "serde",
@@ -398,6 +403,7 @@ dependencies = [
  "agentdash-application-workflow",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-test-support",
  "async-trait",
  "base64 0.22.1",
  "chrono",
@@ -415,6 +421,7 @@ dependencies = [
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-test-support",
  "async-trait",
  "chrono",
  "serde",
@@ -437,6 +444,7 @@ dependencies = [
  "agentdash-domain",
  "agentdash-relay",
  "agentdash-spi",
+ "agentdash-test-support",
  "async-trait",
  "base64 0.22.1",
  "chrono",
@@ -468,6 +476,7 @@ dependencies = [
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-test-support",
  "async-trait",
  "chrono",
  "schemars 1.2.1",
@@ -751,6 +760,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-test-support"
+version = "0.1.0"
+dependencies = [
+ "agentdash-application-ports",
+ "agentdash-domain",
+ "async-trait",
+ "chrono",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "agentdash-workspace-module"
 version = "0.1.0"
 dependencies = [
@@ -762,6 +784,7 @@ dependencies = [
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
+ "agentdash-test-support",
  "async-trait",
  "chrono",
  "regex",

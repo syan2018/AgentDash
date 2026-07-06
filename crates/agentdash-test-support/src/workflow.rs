@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
 use agentdash_application_ports::agent_run_fork_materialization::{
     AgentRunForkMaterializationError, AgentRunForkMaterializationInput,
     AgentRunForkMaterializationPort, AgentRunForkMaterializationResult,
@@ -15,19 +16,22 @@ use agentdash_domain::backend::{
     ProjectBackendAccess, ProjectBackendAccessRepository, ProjectBackendAccessStatus,
 };
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentRunCommandClaim, AgentRunCommandReceipt,
+    AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentProcedure,
+    AgentProcedureRepository, AgentRunCommandClaim, AgentRunCommandReceipt,
     AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunDeliveryBinding,
     AgentRunDeliveryBindingRepository, AgentRunLineage, AgentRunLineageRepository,
-    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
-    LifecycleRunRepository, NewAgentRunCommandReceipt, RuntimeSessionExecutionAnchor,
-    RuntimeSessionExecutionAnchorRepository,
+    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
+    LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociation,
+    LifecycleSubjectAssociationRepository, NewAgentRunCommandReceipt,
+    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
+    WaitObligationDeclaration, WaitProducerRef, WorkflowGraph, WorkflowGraphRepository,
 };
 use chrono::Utc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[derive(Default)]
-pub(crate) struct MemoryLifecycleRunRepository {
+pub struct MemoryLifecycleRunRepository {
     runs: Mutex<Vec<LifecycleRun>>,
 }
 
@@ -84,13 +88,19 @@ impl LifecycleRunRepository for MemoryLifecycleRunRepository {
     }
 }
 
+impl MemoryLifecycleRunRepository {
+    pub async fn debug_list(&self) -> Vec<LifecycleRun> {
+        self.runs.lock().await.clone()
+    }
+}
+
 #[derive(Default)]
-pub(crate) struct MemoryAgentFrameRepository {
+pub struct MemoryAgentFrameRepository {
     frames: Mutex<Vec<AgentFrame>>,
 }
 
 #[derive(Default)]
-pub(crate) struct MemoryAgentRunLineageRepository {
+pub struct MemoryAgentRunLineageRepository {
     lineages: Mutex<Vec<AgentRunLineage>>,
 }
 
@@ -157,7 +167,7 @@ impl AgentRunLineageRepository for MemoryAgentRunLineageRepository {
     }
 }
 
-pub(crate) struct MemoryAgentRunForkMaterialization {
+pub struct MemoryAgentRunForkMaterialization {
     runs: Arc<MemoryLifecycleRunRepository>,
     agents: Arc<MemoryLifecycleAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
@@ -168,7 +178,7 @@ pub(crate) struct MemoryAgentRunForkMaterialization {
 }
 
 impl MemoryAgentRunForkMaterialization {
-    pub(crate) fn new(
+    pub fn new(
         runs: Arc<MemoryLifecycleRunRepository>,
         agents: Arc<MemoryLifecycleAgentRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
@@ -187,7 +197,7 @@ impl MemoryAgentRunForkMaterialization {
         }
     }
 
-    pub(crate) async fn fail_next(&self, message: impl Into<String>) {
+    pub async fn fail_next(&self, message: impl Into<String>) {
         *self.fail_message.lock().await = Some(message.into());
     }
 }
@@ -346,8 +356,314 @@ impl AgentFrameRepository for MemoryAgentFrameRepository {
     }
 }
 
+impl MemoryAgentFrameRepository {
+    pub async fn debug_list(&self) -> Vec<AgentFrame> {
+        self.frames.lock().await.clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl agent_frame_materialization_port::AgentRunFrameConstructionPort
+    for MemoryAgentFrameRepository
+{
+    async fn execute_frame_construction_command(
+        &self,
+        command: agent_frame_materialization_port::FrameConstructionCommand,
+    ) -> Result<
+        agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
+        agent_frame_materialization_port::AgentRunFrameSurfaceError,
+    > {
+        let agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
+            agent_id,
+            runtime_session_id,
+            created_by_id,
+            ..
+        } = command
+        else {
+            return Err(
+                agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: "memory frame construction supports DispatchLaunchAnchor".to_string(),
+                },
+            );
+        };
+
+        let next_revision = self
+            .frames
+            .lock()
+            .await
+            .iter()
+            .filter(|frame| frame.agent_id == agent_id)
+            .map(|frame| frame.revision)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let mut frame = AgentFrame::new_revision(agent_id, next_revision, "frame_construction");
+        frame.created_by_id = created_by_id;
+        self.create(&frame).await.map_err(|error| {
+            agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                message: error.to_string(),
+            }
+        })?;
+
+        let mut outcome = agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome::new(
+            agent_frame_materialization_port::AgentFrameWriteRole::FrameConstruction,
+        );
+        outcome.frame_id = Some(frame.id);
+        outcome.agent_id = Some(frame.agent_id);
+        outcome.runtime_session_id = Some(runtime_session_id);
+        outcome.wrote_frame_revision = true;
+        Ok(outcome)
+    }
+}
+
 #[derive(Default)]
-pub(crate) struct MemoryRuntimeSessionExecutionAnchorRepository {
+pub struct MemoryWorkflowGraphRepository {
+    graphs: Mutex<Vec<WorkflowGraph>>,
+}
+
+#[async_trait::async_trait]
+impl WorkflowGraphRepository for MemoryWorkflowGraphRepository {
+    async fn create(&self, graph: &WorkflowGraph) -> Result<(), DomainError> {
+        self.graphs.lock().await.push(graph.clone());
+        Ok(())
+    }
+
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
+        Ok(self
+            .graphs
+            .lock()
+            .await
+            .iter()
+            .find(|graph| graph.id == id)
+            .cloned())
+    }
+
+    async fn get_by_project_and_key(
+        &self,
+        project_id: Uuid,
+        key: &str,
+    ) -> Result<Option<WorkflowGraph>, DomainError> {
+        Ok(self
+            .graphs
+            .lock()
+            .await
+            .iter()
+            .find(|graph| graph.project_id == project_id && graph.key == key)
+            .cloned())
+    }
+
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<WorkflowGraph>, DomainError> {
+        Ok(self
+            .graphs
+            .lock()
+            .await
+            .iter()
+            .filter(|graph| graph.project_id == project_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn update(&self, graph: &WorkflowGraph) -> Result<(), DomainError> {
+        let mut graphs = self.graphs.lock().await;
+        if let Some(existing) = graphs.iter_mut().find(|item| item.id == graph.id) {
+            *existing = graph.clone();
+        }
+        Ok(())
+    }
+
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+        self.graphs.lock().await.retain(|graph| graph.id != id);
+        Ok(())
+    }
+}
+
+impl MemoryWorkflowGraphRepository {
+    pub async fn debug_list(&self) -> Vec<WorkflowGraph> {
+        self.graphs.lock().await.clone()
+    }
+}
+
+#[derive(Default)]
+pub struct MemoryAgentProcedureRepository {
+    procedures: Mutex<Vec<AgentProcedure>>,
+}
+
+#[async_trait::async_trait]
+impl AgentProcedureRepository for MemoryAgentProcedureRepository {
+    async fn create(&self, procedure: &AgentProcedure) -> Result<(), DomainError> {
+        self.procedures.lock().await.push(procedure.clone());
+        Ok(())
+    }
+
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<AgentProcedure>, DomainError> {
+        Ok(self
+            .procedures
+            .lock()
+            .await
+            .iter()
+            .find(|procedure| procedure.id == id)
+            .cloned())
+    }
+
+    async fn get_by_key(&self, key: &str) -> Result<Option<AgentProcedure>, DomainError> {
+        Ok(self
+            .procedures
+            .lock()
+            .await
+            .iter()
+            .find(|procedure| procedure.key == key)
+            .cloned())
+    }
+
+    async fn get_by_project_and_key(
+        &self,
+        project_id: Uuid,
+        key: &str,
+    ) -> Result<Option<AgentProcedure>, DomainError> {
+        Ok(self
+            .procedures
+            .lock()
+            .await
+            .iter()
+            .find(|procedure| procedure.project_id == project_id && procedure.key == key)
+            .cloned())
+    }
+
+    async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError> {
+        Ok(self.procedures.lock().await.clone())
+    }
+
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<AgentProcedure>, DomainError> {
+        Ok(self
+            .procedures
+            .lock()
+            .await
+            .iter()
+            .filter(|procedure| procedure.project_id == project_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn update(&self, procedure: &AgentProcedure) -> Result<(), DomainError> {
+        let mut procedures = self.procedures.lock().await;
+        if let Some(existing) = procedures.iter_mut().find(|item| item.id == procedure.id) {
+            *existing = procedure.clone();
+        }
+        Ok(())
+    }
+
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+        self.procedures
+            .lock()
+            .await
+            .retain(|procedure| procedure.id != id);
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+pub struct MemoryLifecycleSubjectAssociationRepository {
+    associations: Mutex<Vec<LifecycleSubjectAssociation>>,
+}
+
+#[async_trait::async_trait]
+impl LifecycleSubjectAssociationRepository for MemoryLifecycleSubjectAssociationRepository {
+    async fn create(&self, assoc: &LifecycleSubjectAssociation) -> Result<(), DomainError> {
+        self.associations.lock().await.push(assoc.clone());
+        Ok(())
+    }
+
+    async fn list_by_subject(
+        &self,
+        subject: &SubjectRef,
+    ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
+        Ok(self
+            .associations
+            .lock()
+            .await
+            .iter()
+            .filter(|assoc| assoc.subject_kind == subject.kind && assoc.subject_id == subject.id)
+            .cloned()
+            .collect())
+    }
+
+    async fn list_by_anchor(
+        &self,
+        run_id: Uuid,
+        agent_id: Option<Uuid>,
+    ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
+        Ok(self
+            .associations
+            .lock()
+            .await
+            .iter()
+            .filter(|assoc| assoc.anchor_run_id == run_id && assoc.anchor_agent_id == agent_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+        self.associations
+            .lock()
+            .await
+            .retain(|assoc| assoc.id != id);
+        Ok(())
+    }
+}
+
+impl MemoryLifecycleSubjectAssociationRepository {
+    pub async fn debug_list(&self) -> Vec<LifecycleSubjectAssociation> {
+        self.associations.lock().await.clone()
+    }
+}
+
+#[derive(Default)]
+pub struct MemoryAgentLineageRepository {
+    lineages: Mutex<Vec<AgentLineage>>,
+}
+
+#[async_trait::async_trait]
+impl AgentLineageRepository for MemoryAgentLineageRepository {
+    async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError> {
+        self.lineages.lock().await.push(lineage.clone());
+        Ok(())
+    }
+
+    async fn list_children(&self, agent_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+        Ok(self
+            .lineages
+            .lock()
+            .await
+            .iter()
+            .filter(|lineage| lineage.parent_agent_id == Some(agent_id))
+            .cloned()
+            .collect())
+    }
+
+    async fn find_parent(&self, child_agent_id: Uuid) -> Result<Option<AgentLineage>, DomainError> {
+        Ok(self
+            .lineages
+            .lock()
+            .await
+            .iter()
+            .find(|lineage| lineage.child_agent_id == child_agent_id)
+            .cloned())
+    }
+
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+        Ok(self
+            .lineages
+            .lock()
+            .await
+            .iter()
+            .filter(|lineage| lineage.run_id == run_id)
+            .cloned()
+            .collect())
+    }
+}
+
+#[derive(Default)]
+pub struct MemoryRuntimeSessionExecutionAnchorRepository {
     anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
 }
 
@@ -432,8 +748,14 @@ impl RuntimeSessionExecutionAnchorRepository for MemoryRuntimeSessionExecutionAn
     }
 }
 
+impl MemoryRuntimeSessionExecutionAnchorRepository {
+    pub async fn debug_list(&self) -> Vec<RuntimeSessionExecutionAnchor> {
+        self.anchors.lock().await.clone()
+    }
+}
+
 #[derive(Default)]
-pub(crate) struct MemoryAgentRunDeliveryBindingRepository {
+pub struct MemoryAgentRunDeliveryBindingRepository {
     bindings: Mutex<Vec<AgentRunDeliveryBinding>>,
 }
 
@@ -486,8 +808,14 @@ impl AgentRunDeliveryBindingRepository for MemoryAgentRunDeliveryBindingReposito
     }
 }
 
+impl MemoryAgentRunDeliveryBindingRepository {
+    pub async fn debug_list(&self) -> Vec<AgentRunDeliveryBinding> {
+        self.bindings.lock().await.clone()
+    }
+}
+
 #[derive(Default)]
-pub(crate) struct MemoryAgentRunCommandReceiptRepository {
+pub struct MemoryAgentRunCommandReceiptRepository {
     receipts: Mutex<Vec<AgentRunCommandReceipt>>,
 }
 
@@ -628,13 +956,13 @@ impl AgentRunCommandReceiptRepository for MemoryAgentRunCommandReceiptRepository
 }
 
 impl MemoryAgentRunCommandReceiptRepository {
-    pub(crate) async fn debug_list(&self) -> Vec<AgentRunCommandReceipt> {
+    pub async fn debug_list(&self) -> Vec<AgentRunCommandReceipt> {
         self.receipts.lock().await.clone()
     }
 }
 
 #[derive(Default)]
-pub(crate) struct MemoryLifecycleAgentRepository {
+pub struct MemoryLifecycleAgentRepository {
     agents: Mutex<Vec<LifecycleAgent>>,
 }
 
@@ -675,8 +1003,14 @@ impl LifecycleAgentRepository for MemoryLifecycleAgentRepository {
     }
 }
 
+impl MemoryLifecycleAgentRepository {
+    pub async fn debug_list(&self) -> Vec<LifecycleAgent> {
+        self.agents.lock().await.clone()
+    }
+}
+
 #[derive(Default)]
-pub(crate) struct MemoryProjectAgentRepository {
+pub struct MemoryProjectAgentRepository {
     agents: Mutex<Vec<ProjectAgent>>,
 }
 
@@ -754,7 +1088,7 @@ impl ProjectAgentRepository for MemoryProjectAgentRepository {
 }
 
 #[derive(Default)]
-pub(crate) struct MemoryProjectBackendAccessRepository {
+pub struct MemoryProjectBackendAccessRepository {
     accesses: Mutex<Vec<ProjectBackendAccess>>,
 }
 
@@ -874,18 +1208,14 @@ impl ProjectBackendAccessRepository for MemoryProjectBackendAccessRepository {
 }
 
 #[derive(Default)]
-pub(crate) struct MemoryAgentRunMailboxRepository {
+pub struct MemoryAgentRunMailboxRepository {
     messages: Mutex<Vec<AgentRunMailboxMessage>>,
     states: Mutex<Vec<AgentRunMailboxState>>,
     cleaned: Mutex<Vec<Uuid>>,
 }
 
 impl MemoryAgentRunMailboxRepository {
-    pub(crate) async fn messages_for(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-    ) -> Vec<AgentRunMailboxMessage> {
+    pub async fn messages_for(&self, run_id: Uuid, agent_id: Uuid) -> Vec<AgentRunMailboxMessage> {
         self.list_messages(run_id, agent_id)
             .await
             .unwrap_or_default()
@@ -1221,5 +1551,263 @@ fn mailbox_message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailb
         updated_at: now,
         consumed_at: None,
         deleted_at: None,
+    }
+}
+
+#[derive(Default)]
+pub struct MemoryLifecycleGateRepository {
+    gates: Mutex<Vec<LifecycleGate>>,
+}
+
+#[async_trait::async_trait]
+impl LifecycleGateRepository for MemoryLifecycleGateRepository {
+    async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+        self.gates.lock().await.push(gate.clone());
+        Ok(())
+    }
+
+    async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .find(|gate| gate.id == id)
+            .cloned())
+    }
+
+    async fn list_open_for_agent(&self, agent_id: Uuid) -> Result<Vec<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+            .cloned()
+            .collect())
+    }
+
+    async fn list_open_wait_obligations(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .filter(|gate| {
+                gate.is_open()
+                    && gate
+                        .payload_json
+                        .as_ref()
+                        .and_then(WaitObligationDeclaration::from_payload)
+                        .is_some()
+            })
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    async fn list_by_wait_producer(
+        &self,
+        producer: &WaitProducerRef,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .filter(|gate| {
+                gate.payload_json
+                    .as_ref()
+                    .and_then(WaitObligationDeclaration::from_payload)
+                    .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn find_by_agent_and_correlation(
+        &self,
+        agent_id: Uuid,
+        correlation_id: &str,
+    ) -> Result<Option<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .find(|gate| gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id)
+            .cloned())
+    }
+
+    async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+        let mut gates = self.gates.lock().await;
+        let existing = gates
+            .iter_mut()
+            .find(|existing| existing.id == gate.id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "lifecycle_gate",
+                id: gate.id.to_string(),
+            })?;
+        *existing = gate.clone();
+        Ok(())
+    }
+}
+
+impl MemoryLifecycleGateRepository {
+    pub async fn debug_list(&self) -> Vec<LifecycleGate> {
+        self.gates.lock().await.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_domain::workflow::AgentRunCommandKind;
+    use chrono::TimeDelta;
+
+    #[tokio::test]
+    async fn current_frame_uses_revision_then_created_at() {
+        let repo = MemoryAgentFrameRepository::default();
+        let agent_id = Uuid::new_v4();
+        let other_agent_id = Uuid::new_v4();
+        let base = Utc::now();
+
+        let mut older_high_revision = AgentFrame::new_revision(agent_id, 2, "test");
+        older_high_revision.created_at = base + TimeDelta::seconds(1);
+        let older_high_revision_id = older_high_revision.id;
+
+        let mut lower_revision_newer_time = AgentFrame::new_revision(agent_id, 1, "test");
+        lower_revision_newer_time.created_at = base + TimeDelta::seconds(3);
+
+        let mut latest_high_revision = AgentFrame::new_revision(agent_id, 2, "test");
+        latest_high_revision.created_at = base + TimeDelta::seconds(4);
+        let latest_high_revision_id = latest_high_revision.id;
+
+        let mut other_agent_frame = AgentFrame::new_revision(other_agent_id, 9, "test");
+        other_agent_frame.created_at = base + TimeDelta::seconds(9);
+
+        repo.create(&older_high_revision).await.unwrap();
+        repo.create(&lower_revision_newer_time).await.unwrap();
+        repo.create(&latest_high_revision).await.unwrap();
+        repo.create(&other_agent_frame).await.unwrap();
+
+        let current = repo.get_current(agent_id).await.unwrap().unwrap();
+
+        assert_eq!(current.id, latest_high_revision_id);
+        assert_ne!(current.id, older_high_revision_id);
+        assert_eq!(current.revision, 2);
+    }
+
+    #[tokio::test]
+    async fn anchor_create_once_is_idempotent_and_rejects_immutable_conflict() {
+        let repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
+        let anchor =
+            RuntimeSessionExecutionAnchor::new_dispatch("runtime-a", run_id, frame_id, agent_id);
+
+        repo.create_once(&anchor).await.unwrap();
+        repo.create_once(&anchor).await.unwrap();
+
+        let anchors = repo.list_by_run(run_id).await.unwrap();
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].runtime_session_id, "runtime-a");
+
+        let conflicting = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-a",
+            run_id,
+            Uuid::new_v4(),
+            agent_id,
+        );
+
+        let error = repo.create_once(&conflicting).await.unwrap_err();
+        assert!(matches!(
+            error,
+            DomainError::Conflict {
+                entity: "runtime_session_execution_anchor",
+                constraint: "runtime_session_id_immutable",
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn delivery_binding_upsert_replaces_current_binding_for_run_agent() {
+        let repo = MemoryAgentRunDeliveryBindingRepository::default();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+
+        let first_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-a",
+            run_id,
+            Uuid::new_v4(),
+            agent_id,
+        );
+        let second_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            "runtime-b",
+            run_id,
+            Uuid::new_v4(),
+            agent_id,
+        );
+
+        let first = AgentRunDeliveryBinding::from_anchor(
+            &first_anchor,
+            DeliveryBindingStatus::Ready,
+            Utc::now(),
+        );
+        let second = AgentRunDeliveryBinding::from_anchor(
+            &second_anchor,
+            DeliveryBindingStatus::Running,
+            Utc::now() + TimeDelta::seconds(1),
+        );
+
+        repo.upsert(&first).await.unwrap();
+        repo.upsert(&second).await.unwrap();
+
+        let current = repo.get_current(run_id, agent_id).await.unwrap().unwrap();
+        let bindings = repo.list_by_run(run_id).await.unwrap();
+
+        assert_eq!(current.runtime_session_id, "runtime-b");
+        assert_eq!(current.status, DeliveryBindingStatus::Running);
+        assert_eq!(bindings.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn command_receipt_claim_detects_duplicate_and_digest_conflict() {
+        let repo = MemoryAgentRunCommandReceiptRepository::default();
+        let receipt = new_receipt("command-a", "digest-a");
+
+        let created = repo.claim(receipt.clone()).await.unwrap();
+        let duplicate = repo.claim(receipt).await.unwrap();
+        let conflict = repo
+            .claim(new_receipt("command-a", "digest-b"))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(created, AgentRunCommandClaim::Created(_)));
+        assert!(matches!(duplicate, AgentRunCommandClaim::Duplicate(_)));
+        assert!(matches!(
+            conflict,
+            DomainError::Conflict {
+                entity: "agent_run_command_receipt",
+                constraint: "request_digest",
+                ..
+            }
+        ));
+        assert_eq!(repo.debug_list().await.len(), 1);
+    }
+
+    fn new_receipt(client_command_id: &str, request_digest: &str) -> NewAgentRunCommandReceipt {
+        NewAgentRunCommandReceipt {
+            scope_kind: "agent_run".to_string(),
+            scope_key: "run-a:agent-a".to_string(),
+            command_kind: AgentRunCommandKind::MessageSubmit,
+            client_command_id: client_command_id.to_string(),
+            request_digest: request_digest.to_string(),
+        }
     }
 }

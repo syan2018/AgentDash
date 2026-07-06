@@ -34,4 +34,5 @@ uuid = { workspace = true }
 walkdir = "2.5"
 
 [dev-dependencies]
+agentdash-test-support = { workspace = true }
 tempfile = "3.18"

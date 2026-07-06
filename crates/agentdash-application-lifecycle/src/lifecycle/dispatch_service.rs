@@ -452,8 +452,14 @@ mod tests {
     use std::sync::Mutex;
 
     use agentdash_application_workflow::orchestration::ROOT_ORCHESTRATION_ROLE;
-    use agentdash_domain::DomainError;
     use agentdash_domain::workflow::*;
+    use agentdash_test_support::workflow::{
+        MemoryAgentFrameRepository, MemoryAgentLineageRepository,
+        MemoryAgentRunDeliveryBindingRepository, MemoryLifecycleAgentRepository,
+        MemoryLifecycleGateRepository, MemoryLifecycleRunRepository,
+        MemoryLifecycleSubjectAssociationRepository, MemoryRuntimeSessionExecutionAnchorRepository,
+        MemoryWorkflowGraphRepository,
+    };
 
     use super::*;
 
@@ -462,427 +468,6 @@ mod tests {
     const TEST_ACTIVITY_KEY: &str = "main";
 
     // ─── In-Memory Repositories ──────────────────────────────────────────
-
-    #[derive(Default)]
-    struct InMemoryRunRepo {
-        items: Mutex<Vec<LifecycleRun>>,
-    }
-    #[async_trait::async_trait]
-    impl LifecycleRunRepository for InMemoryRunRepo {
-        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(run.clone());
-            Ok(())
-        }
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|r| r.id == id)
-                .cloned())
-        }
-        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|r| ids.contains(&r.id))
-                .cloned()
-                .collect())
-        }
-        async fn list_by_project(
-            &self,
-            _project_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(vec![])
-        }
-        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items.iter_mut().find(|r| r.id == run.id) {
-                *existing = run.clone();
-            }
-            Ok(())
-        }
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryWorkflowGraphRepo {
-        items: Mutex<Vec<WorkflowGraph>>,
-    }
-    #[async_trait::async_trait]
-    impl WorkflowGraphRepository for InMemoryWorkflowGraphRepo {
-        async fn create(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(lifecycle.clone());
-            Ok(())
-        }
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|graph| graph.id == id)
-                .cloned())
-        }
-        async fn get_by_project_and_key(
-            &self,
-            project_id: Uuid,
-            key: &str,
-        ) -> Result<Option<WorkflowGraph>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|graph| graph.project_id == project_id && graph.key == key)
-                .cloned())
-        }
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<WorkflowGraph>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|graph| graph.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-        async fn update(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items.iter_mut().find(|graph| graph.id == lifecycle.id) {
-                *existing = lifecycle.clone();
-            }
-            Ok(())
-        }
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.items.lock().unwrap().retain(|graph| graph.id != id);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryAgentRepo {
-        items: Mutex<Vec<LifecycleAgent>>,
-    }
-    #[async_trait::async_trait]
-    impl LifecycleAgentRepository for InMemoryAgentRepo {
-        async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(agent.clone());
-            Ok(())
-        }
-        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|a| a.id == id)
-                .cloned())
-        }
-        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|a| a.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-        async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items.iter_mut().find(|a| a.id == agent.id) {
-                *existing = agent.clone();
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryFrameRepo {
-        items: Mutex<Vec<AgentFrame>>,
-    }
-    #[async_trait::async_trait]
-    impl AgentFrameRepository for InMemoryFrameRepo {
-        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(frame.clone());
-            Ok(())
-        }
-        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|frame| frame.id == frame_id)
-                .cloned())
-        }
-        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            let items = self.items.lock().unwrap();
-            let mut frames: Vec<_> = items.iter().filter(|f| f.agent_id == agent_id).collect();
-            frames.sort_by_key(|f| f.revision);
-            Ok(frames.last().cloned().cloned())
-        }
-        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|f| f.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl agent_frame_materialization_port::AgentRunFrameConstructionPort for InMemoryFrameRepo {
-        async fn execute_frame_construction_command(
-            &self,
-            command: agent_frame_materialization_port::FrameConstructionCommand,
-        ) -> Result<
-            agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
-            agent_frame_materialization_port::AgentRunFrameSurfaceError,
-        > {
-            let agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
-                agent_id,
-                runtime_session_id,
-                created_by_id,
-                ..
-            } = command
-            else {
-                return Err(
-                    agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
-                        message: "test frame repo only supports DispatchLaunchAnchor".to_string(),
-                    },
-                );
-            };
-            let next_revision = self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|frame| frame.agent_id == agent_id)
-                .map(|frame| frame.revision)
-                .max()
-                .unwrap_or(0)
-                + 1;
-            let mut frame = AgentFrame::new_revision(agent_id, next_revision, "frame_construction");
-            frame.created_by_id = created_by_id;
-            self.create(&frame).await.map_err(|error| {
-                agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
-                    message: error.to_string(),
-                }
-            })?;
-            let mut outcome =
-                agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome::new(
-                    agent_frame_materialization_port::AgentFrameWriteRole::FrameConstruction,
-                );
-            outcome.frame_id = Some(frame.id);
-            outcome.agent_id = Some(frame.agent_id);
-            outcome.runtime_session_id = Some(runtime_session_id);
-            outcome.wrote_frame_revision = true;
-            Ok(outcome)
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryAssociationRepo {
-        items: Mutex<Vec<LifecycleSubjectAssociation>>,
-    }
-    #[async_trait::async_trait]
-    impl LifecycleSubjectAssociationRepository for InMemoryAssociationRepo {
-        async fn create(&self, assoc: &LifecycleSubjectAssociation) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(assoc.clone());
-            Ok(())
-        }
-        async fn list_by_subject(
-            &self,
-            subject: &SubjectRef,
-        ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|a| a.subject_kind == subject.kind && a.subject_id == subject.id)
-                .cloned()
-                .collect())
-        }
-        async fn list_by_anchor(
-            &self,
-            run_id: Uuid,
-            agent_id: Option<Uuid>,
-        ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|a| a.anchor_run_id == run_id && a.anchor_agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.items.lock().unwrap().retain(|a| a.id != id);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryGateRepo {
-        items: Mutex<Vec<LifecycleGate>>,
-    }
-    #[async_trait::async_trait]
-    impl LifecycleGateRepository for InMemoryGateRepo {
-        async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(gate.clone());
-            Ok(())
-        }
-        async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|g| g.id == id)
-                .cloned())
-        }
-        async fn list_open_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|g| g.agent_id == Some(agent_id) && g.is_open())
-                .cloned()
-                .collect())
-        }
-
-        async fn list_open_wait_obligations(
-            &self,
-            limit: usize,
-        ) -> Result<Vec<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|gate| {
-                    gate.is_open()
-                        && gate
-                            .payload_json
-                            .as_ref()
-                            .and_then(
-                                agentdash_domain::workflow::WaitObligationDeclaration::from_payload,
-                            )
-                            .is_some()
-                })
-                .take(limit)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_wait_producer(
-            &self,
-            producer: &agentdash_domain::workflow::WaitProducerRef,
-        ) -> Result<Vec<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|gate| {
-                    gate.payload_json
-                        .as_ref()
-                        .and_then(
-                            agentdash_domain::workflow::WaitObligationDeclaration::from_payload,
-                        )
-                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn find_by_agent_and_correlation(
-            &self,
-            agent_id: Uuid,
-            correlation_id: &str,
-        ) -> Result<Option<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|gate| {
-                    gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id
-                })
-                .cloned())
-        }
-
-        async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items.iter_mut().find(|g| g.id == gate.id) {
-                *existing = gate.clone();
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryLineageRepo {
-        items: Mutex<Vec<AgentLineage>>,
-    }
-    #[async_trait::async_trait]
-    impl AgentLineageRepository for InMemoryLineageRepo {
-        async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(lineage.clone());
-            Ok(())
-        }
-        async fn list_children(&self, agent_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|l| l.parent_agent_id == Some(agent_id))
-                .cloned()
-                .collect())
-        }
-        async fn find_parent(
-            &self,
-            child_agent_id: Uuid,
-        ) -> Result<Option<AgentLineage>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|l| l.child_agent_id == child_agent_id)
-                .cloned())
-        }
-        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|l| l.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-    }
 
     #[derive(Default)]
     struct InMemoryRuntimeSessionCreator {
@@ -908,151 +493,6 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct InMemoryExecutionAnchorRepo {
-        items: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
-    }
-    #[async_trait::async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for InMemoryExecutionAnchorRepo {
-        async fn create_once(
-            &self,
-            anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items
-                .iter()
-                .find(|item| item.runtime_session_id == anchor.runtime_session_id)
-            {
-                if existing.has_same_launch_coordinates_as(anchor) {
-                    return Ok(());
-                }
-                return Err(existing.immutable_conflict(anchor));
-            }
-            items.push(anchor.clone());
-            Ok(())
-        }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.items
-                .lock()
-                .unwrap()
-                .retain(|item| item.runtime_session_id != runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_by_session(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|item| item.runtime_session_id == runtime_session_id)
-                .cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project_session_ids(
-            &self,
-            runtime_session_ids: &[String],
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| runtime_session_ids.contains(&item.runtime_session_id))
-                .cloned()
-                .collect())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryDeliveryBindingRepo {
-        items: Mutex<Vec<AgentRunDeliveryBinding>>,
-    }
-
-    #[async_trait::async_trait]
-    impl AgentRunDeliveryBindingRepository for InMemoryDeliveryBindingRepo {
-        async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items
-                .iter_mut()
-                .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
-            {
-                *existing = binding.clone();
-            } else {
-                items.push(binding.clone());
-            }
-            Ok(())
-        }
-
-        async fn get_current(
-            &self,
-            run_id: Uuid,
-            agent_id: Uuid,
-        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|item| item.run_id == run_id && item.agent_id == agent_id)
-                .cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.items
-                .lock()
-                .unwrap()
-                .retain(|item| item.runtime_session_id != runtime_session_id);
-            Ok(())
-        }
-    }
-
     // ─── Helper ──────────────────────────────────────────────────────────
 
     #[allow(clippy::too_many_arguments)]
@@ -1060,7 +500,7 @@ mod tests {
         run_repo: &'a dyn LifecycleRunRepository,
         workflow_graph_repo: &'a dyn WorkflowGraphRepository,
         agent_repo: &'a dyn LifecycleAgentRepository,
-        frame_repo: &'a InMemoryFrameRepo,
+        frame_repo: &'a MemoryAgentFrameRepository,
         association_repo: &'a dyn LifecycleSubjectAssociationRepository,
         gate_repo: &'a dyn LifecycleGateRepository,
         lineage_repo: &'a dyn AgentLineageRepository,
@@ -1137,13 +577,13 @@ mod tests {
         }
     }
 
-    fn seed_test_workflow_graph(
-        repo: &InMemoryWorkflowGraphRepo,
+    async fn seed_test_workflow_graph(
+        repo: &MemoryWorkflowGraphRepository,
         project_id: Uuid,
     ) -> WorkflowGraph {
         let graph =
             build_test_workflow_graph(project_id, TEST_WORKFLOW_GRAPH_KEY, TEST_ACTIVITY_KEY);
-        repo.items.lock().unwrap().push(graph.clone());
+        repo.create(&graph).await.expect("seed workflow graph");
         graph
     }
 
@@ -1177,16 +617,16 @@ mod tests {
     #[tokio::test]
     async fn agent_launch_creates_plain_surface_without_orchestration_binding() {
         let project_id = Uuid::new_v4();
-        let run_repo = InMemoryRunRepo::default();
-        let workflow_repo = InMemoryWorkflowGraphRepo::default();
-        let agent_repo = InMemoryAgentRepo::default();
-        let frame_repo = InMemoryFrameRepo::default();
-        let assoc_repo = InMemoryAssociationRepo::default();
-        let gate_repo = InMemoryGateRepo::default();
-        let lineage_repo = InMemoryLineageRepo::default();
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let anchor_repo = InMemoryExecutionAnchorRepo::default();
-        let delivery_binding_repo = InMemoryDeliveryBindingRepo::default();
+        let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1205,21 +645,21 @@ mod tests {
             .await
             .expect("dispatch");
 
-        let runs = run_repo.items.lock().unwrap().clone();
+        let runs = run_repo.debug_list().await;
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].topology, LifecycleRunTopology::Plain);
         assert!(runs[0].orchestrations.is_empty());
         assert_eq!(result.runtime_refs.orchestration_ref(), None);
-        assert_eq!(agent_repo.items.lock().unwrap().len(), 1);
-        let frames = frame_repo.items.lock().unwrap().clone();
+        assert_eq!(agent_repo.debug_list().await.len(), 1);
+        let frames = frame_repo.debug_list().await;
         assert_eq!(frames.len(), 1);
         assert_eq!(runtime_session_creator.items.lock().unwrap().len(), 1);
-        assert_eq!(assoc_repo.items.lock().unwrap().len(), 1);
+        assert_eq!(assoc_repo.debug_list().await.len(), 1);
         assert!(result.delivery_runtime_ref.is_some());
-        let anchors = anchor_repo.items.lock().unwrap().clone();
+        let anchors = anchor_repo.debug_list().await;
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[0].orchestration_id, None);
-        let bindings = delivery_binding_repo.items.lock().unwrap().clone();
+        let bindings = delivery_binding_repo.debug_list().await;
         assert_eq!(bindings.len(), 1);
         assert_eq!(
             bindings[0].runtime_session_id,
@@ -1232,13 +672,13 @@ mod tests {
     async fn story_root_launch_creates_agent_scoped_story_association() {
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
-        let run_repo = InMemoryRunRepo::default();
-        let workflow_repo = InMemoryWorkflowGraphRepo::default();
-        let agent_repo = InMemoryAgentRepo::default();
-        let frame_repo = InMemoryFrameRepo::default();
-        let assoc_repo = InMemoryAssociationRepo::default();
-        let gate_repo = InMemoryGateRepo::default();
-        let lineage_repo = InMemoryLineageRepo::default();
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let service = make_service(
             &run_repo,
@@ -1256,7 +696,7 @@ mod tests {
             .await
             .expect("story launch dispatch");
 
-        let associations = assoc_repo.items.lock().unwrap().clone();
+        let associations = assoc_repo.debug_list().await;
         assert_eq!(associations.len(), 1);
         assert_eq!(associations[0].subject_kind, "story");
         assert_eq!(associations[0].subject_id, story_id);
@@ -1273,17 +713,17 @@ mod tests {
     async fn subject_execution_initializes_orchestration_node_and_anchor_binding() {
         let project_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
-        let run_repo = InMemoryRunRepo::default();
-        let workflow_repo = InMemoryWorkflowGraphRepo::default();
-        let agent_repo = InMemoryAgentRepo::default();
-        let frame_repo = InMemoryFrameRepo::default();
-        let assoc_repo = InMemoryAssociationRepo::default();
-        let gate_repo = InMemoryGateRepo::default();
-        let lineage_repo = InMemoryLineageRepo::default();
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let anchor_repo = InMemoryExecutionAnchorRepo::default();
-        let delivery_binding_repo = InMemoryDeliveryBindingRepo::default();
-        seed_test_workflow_graph(&workflow_repo, project_id);
+        let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
+        seed_test_workflow_graph(&workflow_repo, project_id).await;
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1301,7 +741,7 @@ mod tests {
         intent.workflow_graph_ref = Some(test_workflow_graph_ref(project_id));
         let result = service.execute_subject(&intent).await.expect("dispatch");
 
-        let runs = run_repo.items.lock().unwrap().clone();
+        let runs = run_repo.debug_list().await;
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].orchestrations.len(), 1);
         let orchestration = &runs[0].orchestrations[0];
@@ -1325,10 +765,10 @@ mod tests {
         assert!(orchestration.node_tree[0].trace_refs.is_empty());
         assert!(orchestration.node_tree[0].started_at.is_none());
 
-        let frames = frame_repo.items.lock().unwrap().clone();
+        let frames = frame_repo.debug_list().await;
         assert_eq!(frames.len(), 1);
 
-        let anchors = anchor_repo.items.lock().unwrap().clone();
+        let anchors = anchor_repo.debug_list().await;
         assert_eq!(anchors.len(), 1);
         assert_eq!(
             anchors[0].orchestration_id,
@@ -1336,7 +776,7 @@ mod tests {
         );
         assert_eq!(anchors[0].node_path.as_deref(), Some(TEST_ACTIVITY_KEY));
         assert_eq!(anchors[0].node_attempt, Some(1));
-        let bindings = delivery_binding_repo.items.lock().unwrap().clone();
+        let bindings = delivery_binding_repo.debug_list().await;
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].runtime_session_id, session_id.to_string());
         assert_eq!(bindings[0].node_path.as_deref(), Some(TEST_ACTIVITY_KEY));
@@ -1348,15 +788,15 @@ mod tests {
     #[tokio::test]
     async fn dispatch_resolves_workflow_graph_by_key_inside_service() {
         let project_id = Uuid::new_v4();
-        let run_repo = InMemoryRunRepo::default();
-        let workflow_repo = InMemoryWorkflowGraphRepo::default();
-        let agent_repo = InMemoryAgentRepo::default();
-        let frame_repo = InMemoryFrameRepo::default();
-        let assoc_repo = InMemoryAssociationRepo::default();
-        let gate_repo = InMemoryGateRepo::default();
-        let lineage_repo = InMemoryLineageRepo::default();
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
+        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id).await;
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1376,7 +816,7 @@ mod tests {
 
         let result = service.launch_agent(&intent).await.expect("dispatch");
 
-        let runs = run_repo.items.lock().unwrap().clone();
+        let runs = run_repo.debug_list().await;
         assert_eq!(runs[0].orchestrations.len(), 1);
         let orchestration = &runs[0].orchestrations[0];
         assert_eq!(orchestration.role, ROOT_ORCHESTRATION_ROLE);
@@ -1406,15 +846,15 @@ mod tests {
     #[tokio::test]
     async fn lifecycle_run_start_intent_initializes_root_orchestration_state() {
         let project_id = Uuid::new_v4();
-        let run_repo = InMemoryRunRepo::default();
-        let workflow_repo = InMemoryWorkflowGraphRepo::default();
-        let agent_repo = InMemoryAgentRepo::default();
-        let frame_repo = InMemoryFrameRepo::default();
-        let assoc_repo = InMemoryAssociationRepo::default();
-        let gate_repo = InMemoryGateRepo::default();
-        let lineage_repo = InMemoryLineageRepo::default();
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id);
+        let workflow_graph = seed_test_workflow_graph(&workflow_repo, project_id).await;
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1435,7 +875,7 @@ mod tests {
             .await
             .expect("start lifecycle run");
 
-        let runs = run_repo.items.lock().unwrap().clone();
+        let runs = run_repo.debug_list().await;
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].id, result.run_ref);
         assert_eq!(runs[0].orchestrations.len(), 1);
@@ -1473,19 +913,19 @@ mod tests {
         assert_eq!(orchestration.node_tree[0].status, RuntimeNodeStatus::Ready);
         assert_eq!(orchestration.node_tree[0].executor_run_ref, None);
         assert!(orchestration.node_tree[0].trace_refs.is_empty());
-        assert!(agent_repo.items.lock().unwrap().is_empty());
+        assert!(agent_repo.debug_list().await.is_empty());
     }
 
     #[tokio::test]
     async fn lifecycle_run_start_rejects_blocking_compiler_diagnostics_without_creating_run() {
         let project_id = Uuid::new_v4();
-        let run_repo = InMemoryRunRepo::default();
-        let workflow_repo = InMemoryWorkflowGraphRepo::default();
-        let agent_repo = InMemoryAgentRepo::default();
-        let frame_repo = InMemoryFrameRepo::default();
-        let assoc_repo = InMemoryAssociationRepo::default();
-        let gate_repo = InMemoryGateRepo::default();
-        let lineage_repo = InMemoryLineageRepo::default();
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let mut workflow_graph =
             build_test_workflow_graph(project_id, TEST_WORKFLOW_GRAPH_KEY, TEST_ACTIVITY_KEY);
@@ -1495,7 +935,10 @@ mod tests {
                 agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
                 runtime_session_policy: RuntimeSessionPolicy::DeliverToCurrentTrace,
             });
-        workflow_repo.items.lock().unwrap().push(workflow_graph);
+        workflow_repo
+            .create(&workflow_graph)
+            .await
+            .expect("seed workflow graph");
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1521,30 +964,39 @@ mod tests {
             err.to_string()
                 .contains("unsupported_agent_executor_policy")
         );
-        assert!(run_repo.items.lock().unwrap().is_empty());
-        assert!(agent_repo.items.lock().unwrap().is_empty());
+        assert!(run_repo.debug_list().await.is_empty());
+        assert!(agent_repo.debug_list().await.is_empty());
     }
 
     #[tokio::test]
     async fn reuse_existing_with_parent_agent_id_resumes_explicit_agent() {
         let project_id = Uuid::new_v4();
-        let run_repo = InMemoryRunRepo::default();
-        let workflow_repo = InMemoryWorkflowGraphRepo::default();
-        let agent_repo = InMemoryAgentRepo::default();
-        let frame_repo = InMemoryFrameRepo::default();
-        let assoc_repo = InMemoryAssociationRepo::default();
-        let gate_repo = InMemoryGateRepo::default();
-        let lineage_repo = InMemoryLineageRepo::default();
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
-        seed_test_workflow_graph(&workflow_repo, project_id);
+        seed_test_workflow_graph(&workflow_repo, project_id).await;
         let existing_run = LifecycleRun::new_control(project_id);
         let first_agent =
             LifecycleAgent::new_root(existing_run.id, project_id, AgentSource::Routine);
         let target_agent =
             LifecycleAgent::new_root(existing_run.id, project_id, AgentSource::Routine);
-        run_repo.items.lock().unwrap().push(existing_run.clone());
-        agent_repo.items.lock().unwrap().push(first_agent.clone());
-        agent_repo.items.lock().unwrap().push(target_agent.clone());
+        run_repo
+            .create(&existing_run.clone())
+            .await
+            .expect("seed run");
+        agent_repo
+            .create(&first_agent.clone())
+            .await
+            .expect("seed agent");
+        agent_repo
+            .create(&target_agent.clone())
+            .await
+            .expect("seed agent");
         let service = make_service(
             &run_repo,
             &workflow_repo,
@@ -1565,7 +1017,7 @@ mod tests {
         let result = service.execute_subject(&intent).await.expect("dispatch");
 
         assert_eq!(result.runtime_refs.agent_ref, target_agent.id);
-        let frames = frame_repo.items.lock().unwrap().clone();
+        let frames = frame_repo.debug_list().await;
         let updated_target = frames
             .iter()
             .filter(|frame| frame.agent_id == target_agent.id)

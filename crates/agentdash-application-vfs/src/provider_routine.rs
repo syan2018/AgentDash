@@ -511,12 +511,12 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct MemoryInlineRepo {
+    struct FixtureInlineRepo {
         files: Mutex<Vec<InlineFile>>,
     }
 
     #[async_trait]
-    impl InlineFileRepository for MemoryInlineRepo {
+    impl InlineFileRepository for FixtureInlineRepo {
         async fn get_file(
             &self,
             owner_kind: InlineFileOwnerKind,
@@ -650,12 +650,12 @@ mod tests {
         }
     }
 
-    struct MemoryExecutionRepo {
+    struct FixtureExecutionRepo {
         execution: RoutineExecution,
     }
 
     #[async_trait]
-    impl RoutineExecutionRepository for MemoryExecutionRepo {
+    impl RoutineExecutionRepository for FixtureExecutionRepo {
         async fn create(&self, _execution: &RoutineExecution) -> Result<(), DomainError> {
             Ok(())
         }
@@ -715,8 +715,8 @@ mod tests {
         };
 
         let provider = RoutineMountProvider::new(
-            Arc::new(MemoryExecutionRepo { execution }),
-            Arc::new(MemoryInlineRepo::default()),
+            Arc::new(FixtureExecutionRepo { execution }),
+            Arc::new(FixtureInlineRepo::default()),
         );
         let mount = crate::build_routine_mount(routine_id, execution_id, "webhook", Some("PR/42"));
         (provider, mount, MountOperationContext::default())

@@ -68,3 +68,6 @@ agentdash-agent-protocol = { workspace = true }
 json-patch = "2.0"
 regex.workspace = true
 postgresql_embedded = { workspace = true }
+
+[dev-dependencies]
+agentdash-test-support = { workspace = true }

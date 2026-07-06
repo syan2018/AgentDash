@@ -393,10 +393,10 @@ mod tests {
 
     struct ClaimHarness {
         project_id: Uuid,
-        token_repo: InMemoryRunnerRegistrationTokenRepository,
-        project_repo: InMemoryProjectRepository,
-        backend_repo: InMemoryBackendRepository,
-        access_repo: InMemoryProjectBackendAccessRepository,
+        token_repo: FixtureRunnerRegistrationTokenRepository,
+        project_repo: FixtureProjectRepository,
+        backend_repo: FixtureBackendRepository,
+        access_repo: FixtureProjectBackendAccessRepository,
     }
 
     impl ClaimHarness {
@@ -404,10 +404,10 @@ mod tests {
             let project_id = Uuid::new_v4();
             Self {
                 project_id,
-                token_repo: InMemoryRunnerRegistrationTokenRepository::default(),
-                project_repo: InMemoryProjectRepository::new(project_id),
-                backend_repo: InMemoryBackendRepository::default(),
-                access_repo: InMemoryProjectBackendAccessRepository::default(),
+                token_repo: FixtureRunnerRegistrationTokenRepository::default(),
+                project_repo: FixtureProjectRepository::new(project_id),
+                backend_repo: FixtureBackendRepository::default(),
+                access_repo: FixtureProjectBackendAccessRepository::default(),
             }
         }
 
@@ -458,14 +458,14 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryRunnerRegistrationTokenRepository {
+    struct FixtureRunnerRegistrationTokenRepository {
         tokens: Mutex<HashMap<String, RunnerRegistrationToken>>,
         usage_records: Mutex<Vec<(String, String, DateTime<Utc>)>>,
         fail_get_with_database: AtomicBool,
         fail_record_usage_with_database: AtomicBool,
     }
 
-    impl InMemoryRunnerRegistrationTokenRepository {
+    impl FixtureRunnerRegistrationTokenRepository {
         async fn insert(&self, token: RunnerRegistrationToken) {
             self.tokens.lock().await.insert(token.id.clone(), token);
         }
@@ -485,7 +485,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl RunnerRegistrationTokenRepository for InMemoryRunnerRegistrationTokenRepository {
+    impl RunnerRegistrationTokenRepository for FixtureRunnerRegistrationTokenRepository {
         async fn create(&self, token: &RunnerRegistrationToken) -> Result<(), DomainError> {
             self.insert(token.clone()).await;
             Ok(())
@@ -550,13 +550,13 @@ mod tests {
         }
     }
 
-    struct InMemoryProjectRepository {
+    struct FixtureProjectRepository {
         project_id: Uuid,
         exists: AtomicBool,
         fail_get_with_database: AtomicBool,
     }
 
-    impl InMemoryProjectRepository {
+    impl FixtureProjectRepository {
         fn new(project_id: Uuid) -> Self {
             Self {
                 project_id,
@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl ProjectRepository for InMemoryProjectRepository {
+    impl ProjectRepository for FixtureProjectRepository {
         async fn create(&self, _project: &Project) -> Result<(), DomainError> {
             Ok(())
         }
@@ -631,21 +631,21 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryBackendRepository {
+    struct FixtureBackendRepository {
         backends: Mutex<HashMap<String, BackendConfig>>,
         claims: Mutex<Vec<LocalBackendClaim>>,
         fail_ensure_with_database: AtomicBool,
         return_missing_auth_token: AtomicBool,
     }
 
-    impl InMemoryBackendRepository {
+    impl FixtureBackendRepository {
         async fn claims(&self) -> Vec<LocalBackendClaim> {
             self.claims.lock().await.clone()
         }
     }
 
     #[async_trait::async_trait]
-    impl BackendRepository for InMemoryBackendRepository {
+    impl BackendRepository for FixtureBackendRepository {
         async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
             self.backends
                 .lock()
@@ -734,7 +734,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryProjectBackendAccessRepository {
+    struct FixtureProjectBackendAccessRepository {
         accesses: Mutex<Vec<ProjectBackendAccess>>,
         create_mode: Mutex<AccessCreateMode>,
     }
@@ -748,7 +748,7 @@ mod tests {
         Database,
     }
 
-    impl InMemoryProjectBackendAccessRepository {
+    impl FixtureProjectBackendAccessRepository {
         async fn set_create_mode(&self, mode: AccessCreateMode) {
             *self.create_mode.lock().await = mode;
         }
@@ -759,7 +759,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl ProjectBackendAccessRepository for InMemoryProjectBackendAccessRepository {
+    impl ProjectBackendAccessRepository for FixtureProjectBackendAccessRepository {
         async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
             match &*self.create_mode.lock().await {
                 AccessCreateMode::Ok => {

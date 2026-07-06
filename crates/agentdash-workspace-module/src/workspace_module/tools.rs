@@ -1134,13 +1134,13 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeCanvasRuntimeStateRepository {
+    struct FixtureCanvasRuntimeStateRepository {
         observation: Mutex<Option<agentdash_domain::canvas::CanvasRuntimeObservation>>,
         snapshot: Mutex<Option<agentdash_domain::canvas::CanvasInteractionSnapshot>>,
     }
 
     #[async_trait]
-    impl CanvasRuntimeStateRepository for FakeCanvasRuntimeStateRepository {
+    impl CanvasRuntimeStateRepository for FixtureCanvasRuntimeStateRepository {
         async fn upsert_runtime_observation(
             &self,
             observation: agentdash_domain::canvas::CanvasRuntimeObservation,
@@ -1179,7 +1179,7 @@ mod tests {
     }
 
     fn fake_canvas_runtime_state_repo() -> Arc<dyn CanvasRuntimeStateRepository> {
-        Arc::new(FakeCanvasRuntimeStateRepository::default())
+        Arc::new(FixtureCanvasRuntimeStateRepository::default())
     }
 
     #[derive(Default)]
@@ -1309,12 +1309,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeInstallationRepo {
+    struct FixtureInstallationRepo {
         installations: Mutex<Vec<ProjectExtensionInstallation>>,
     }
 
     #[async_trait]
-    impl ProjectExtensionInstallationRepository for FakeInstallationRepo {
+    impl ProjectExtensionInstallationRepository for FixtureInstallationRepo {
         async fn create(&self, item: &ProjectExtensionInstallation) -> Result<(), DomainError> {
             self.installations.lock().unwrap().push(item.clone());
             Ok(())
@@ -1384,13 +1384,13 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeProjectRepo {
+    struct FixtureProjectRepo {
         projects: RwLock<HashMap<Uuid, Project>>,
         grants: RwLock<Vec<ProjectSubjectGrant>>,
     }
 
     #[async_trait]
-    impl ProjectRepository for FakeProjectRepo {
+    impl ProjectRepository for FixtureProjectRepo {
         async fn create(&self, project: &Project) -> Result<(), DomainError> {
             self.projects
                 .write()
@@ -1464,7 +1464,7 @@ mod tests {
     }
 
     async fn fake_project_repo(project_id: Uuid) -> Arc<dyn ProjectRepository> {
-        let repo = Arc::new(FakeProjectRepo::default());
+        let repo = Arc::new(FixtureProjectRepo::default());
         let mut project = Project::new_with_creator(
             "Test Project".to_string(),
             String::new(),
@@ -1485,12 +1485,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeCanvasRepo {
+    struct FixtureCanvasRepo {
         canvases: RwLock<HashMap<Uuid, Canvas>>,
     }
 
     #[async_trait]
-    impl CanvasRepository for FakeCanvasRepo {
+    impl CanvasRepository for FixtureCanvasRepo {
         async fn create(&self, canvas: &Canvas) -> Result<(), DomainError> {
             self.canvases
                 .write()
@@ -1538,12 +1538,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeRuntimeSessionExecutionAnchorRepository {
+    struct FixtureRuntimeSessionExecutionAnchorRepository {
         anchors: RwLock<HashMap<String, RuntimeSessionExecutionAnchor>>,
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for FakeRuntimeSessionExecutionAnchorRepository {
+    impl RuntimeSessionExecutionAnchorRepository for FixtureRuntimeSessionExecutionAnchorRepository {
         async fn create_once(
             &self,
             anchor: &RuntimeSessionExecutionAnchor,
@@ -1617,13 +1617,13 @@ mod tests {
         Uuid,
     ) {
         let project_id = Uuid::new_v4();
-        let install_repo = Arc::new(FakeInstallationRepo::default());
+        let install_repo = Arc::new(FixtureInstallationRepo::default());
         install_repo
             .installations
             .lock()
             .unwrap()
             .push(installation(project_id, "demo"));
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let canvas = build_personal_canvas(
             project_id,
             TEST_USER_ID.to_string(),
@@ -1894,7 +1894,7 @@ mod tests {
     async fn operate_canvas_without_runtime_session_returns_diagnostic() {
         let project_id = Uuid::new_v4();
         let project_repo = fake_project_repo(project_id).await;
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let shared_vfs = SharedRuntimeVfs::new(agentdash_spi::Vfs::default());
         let tool = WorkspaceModuleOperateTool::new(
             project_repo,
@@ -1936,7 +1936,7 @@ mod tests {
     async fn operate_copy_to_personal_materializes_editable_canvas_with_random_mount_suffix() {
         let project_id = Uuid::new_v4();
         let project_repo = fake_project_repo(project_id).await;
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let source = Canvas::new_project_shared(
             project_id,
             "cvs-shared-dashboard".to_string(),
@@ -2170,7 +2170,7 @@ mod tests {
             install_repo,
             canvas_repo,
             fake_canvas_runtime_state_repo(),
-            Arc::new(FakeRuntimeSessionExecutionAnchorRepository::default()),
+            Arc::new(FixtureRuntimeSessionExecutionAnchorRepository::default()),
             project_id,
             "session-1".to_string(),
             None,
@@ -2280,7 +2280,7 @@ mod tests {
             project_repo,
             canvas_repo,
             fake_canvas_runtime_state_repo(),
-            Arc::new(FakeRuntimeSessionExecutionAnchorRepository::default()),
+            Arc::new(FixtureRuntimeSessionExecutionAnchorRepository::default()),
             SharedWorkspaceModuleAgentRunBridgeHandle::default(),
             gateway_handle,
         )
@@ -2319,7 +2319,7 @@ mod tests {
             project_repo,
             canvas_repo,
             fake_canvas_runtime_state_repo(),
-            Arc::new(FakeRuntimeSessionExecutionAnchorRepository::default()),
+            Arc::new(FixtureRuntimeSessionExecutionAnchorRepository::default()),
             SharedWorkspaceModuleAgentRunBridgeHandle::default(),
             SharedWorkspaceModuleRuntimeGatewayHandle::default(),
         );
@@ -2383,7 +2383,7 @@ mod tests {
             project_repo,
             canvas_repo,
             fake_canvas_runtime_state_repo(),
-            Arc::new(FakeRuntimeSessionExecutionAnchorRepository::default()),
+            Arc::new(FixtureRuntimeSessionExecutionAnchorRepository::default()),
             SharedWorkspaceModuleAgentRunBridgeHandle::default(),
             gateway_handle,
         )
@@ -2464,7 +2464,7 @@ mod tests {
     #[tokio::test]
     async fn invoke_panel_only_generated_operation_is_not_exposed_to_agent() {
         let project_id = Uuid::new_v4();
-        let install_repo = Arc::new(FakeInstallationRepo::default());
+        let install_repo = Arc::new(FixtureInstallationRepo::default());
         let mut installed = installation(project_id, "demo");
         installed
             .manifest
@@ -2486,7 +2486,7 @@ mod tests {
                 },
             });
         install_repo.installations.lock().unwrap().push(installed);
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let (tool, invoke_count) = invoke_tool_with_backend_and_counter(
             install_repo,
             canvas_repo,
@@ -2732,8 +2732,8 @@ mod tests {
     #[tokio::test]
     async fn invoke_canvas_bind_data_allows_shared_canvas_runtime_binding() {
         let project_id = Uuid::new_v4();
-        let install_repo = Arc::new(FakeInstallationRepo::default());
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let install_repo = Arc::new(FixtureInstallationRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let shared_canvas = build_canvas(
             project_id,
             Some("cvs-shared-dashboard".to_string()),

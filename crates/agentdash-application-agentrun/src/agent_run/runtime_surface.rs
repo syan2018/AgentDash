@@ -1145,6 +1145,10 @@ mod tests {
         DeliveryBindingStatus, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
     };
     use agentdash_spi::{AgentConfig, McpTransportConfig, ToolCluster};
+    use agentdash_test_support::workflow::{
+        MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
+        MemoryRuntimeSessionExecutionAnchorRepository,
+    };
     use chrono::{DateTime, Utc};
     use tokio::sync::Mutex;
 
@@ -1152,210 +1156,12 @@ mod tests {
     use crate::test_support::MemoryAgentRunDeliveryBindingRepository;
 
     #[derive(Default)]
-    struct TestFrameRepo {
-        frames: Mutex<HashMap<Uuid, AgentFrame>>,
-    }
-
-    impl TestFrameRepo {
-        async fn insert(&self, frame: AgentFrame) {
-            self.frames.lock().await.insert(frame.id, frame);
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl AgentFrameRepository for TestFrameRepo {
-        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
-            self.frames.lock().await.insert(frame.id, frame.clone());
-            Ok(())
-        }
-
-        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self.frames.lock().await.get(&frame_id).cloned())
-        }
-
-        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .frames
-                .lock()
-                .await
-                .values()
-                .filter(|frame| frame.agent_id == agent_id)
-                .max_by_key(|frame| frame.revision)
-                .cloned())
-        }
-
-        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
-            Ok(self
-                .frames
-                .lock()
-                .await
-                .values()
-                .filter(|frame| frame.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-    }
-
-    #[derive(Default)]
-    struct TestRunRepo {
-        runs: Mutex<HashMap<Uuid, LifecycleRun>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LifecycleRunRepository for TestRunRepo {
-        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            self.runs.lock().await.insert(run.id, run.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-            Ok(self.runs.lock().await.get(&id).cloned())
-        }
-
-        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            let runs = self.runs.lock().await;
-            Ok(ids.iter().filter_map(|id| runs.get(id).cloned()).collect())
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .await
-                .values()
-                .filter(|run| run.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            self.runs.lock().await.insert(run.id, run.clone());
-            Ok(())
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.runs.lock().await.remove(&id);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct TestAgentRepo {
-        agents: Mutex<HashMap<Uuid, LifecycleAgent>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LifecycleAgentRepository for TestAgentRepo {
-        async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
-            self.agents.lock().await.insert(agent.id, agent.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
-            Ok(self.agents.lock().await.get(&id).cloned())
-        }
-
-        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
-            Ok(self
-                .agents
-                .lock()
-                .await
-                .values()
-                .filter(|agent| agent.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
-            self.agents.lock().await.insert(agent.id, agent.clone());
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct TestAnchorRepo {
-        anchors: Mutex<HashMap<String, RuntimeSessionExecutionAnchor>>,
-    }
-
-    #[async_trait::async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for TestAnchorRepo {
-        async fn create_once(
-            &self,
-            anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
-            let mut anchors = self.anchors.lock().await;
-            if let Some(existing) = anchors.get(&anchor.runtime_session_id) {
-                if existing.has_same_launch_coordinates_as(anchor) {
-                    return Ok(());
-                }
-                return Err(existing.immutable_conflict(anchor));
-            }
-            anchors.insert(anchor.runtime_session_id.clone(), anchor.clone());
-            Ok(())
-        }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.anchors.lock().await.remove(runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_by_session(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self.anchors.lock().await.get(runtime_session_id).cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .await
-                .values()
-                .filter(|anchor| anchor.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .await
-                .values()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project_session_ids(
-            &self,
-            runtime_session_ids: &[String],
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            let anchors = self.anchors.lock().await;
-            Ok(runtime_session_ids
-                .iter()
-                .filter_map(|id| anchors.get(id).cloned())
-                .collect())
-        }
-    }
-
-    #[derive(Default)]
-    struct TestPermissionGrantRepo {
+    struct FixturePermissionGrantRepo {
         grants: Mutex<HashMap<Uuid, PermissionGrant>>,
     }
 
     #[async_trait::async_trait]
-    impl PermissionGrantRepository for TestPermissionGrantRepo {
+    impl PermissionGrantRepository for FixturePermissionGrantRepo {
         async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
             self.grants.lock().await.insert(grant.id, grant.clone());
             Ok(())
@@ -1509,12 +1315,12 @@ mod tests {
 
     struct Fixture {
         query: AgentRunRuntimeSurfaceQuery,
-        anchor_repo: Arc<TestAnchorRepo>,
-        run_repo: Arc<TestRunRepo>,
-        agent_repo: Arc<TestAgentRepo>,
-        frame_repo: Arc<TestFrameRepo>,
+        anchor_repo: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        run_repo: Arc<MemoryLifecycleRunRepository>,
+        agent_repo: Arc<MemoryLifecycleAgentRepository>,
+        frame_repo: Arc<MemoryAgentFrameRepository>,
         delivery_binding_repo: Arc<MemoryAgentRunDeliveryBindingRepository>,
-        permission_grant_repo: Arc<TestPermissionGrantRepo>,
+        permission_grant_repo: Arc<FixturePermissionGrantRepo>,
         run_id: Uuid,
         project_id: Uuid,
         agent_id: Uuid,
@@ -1522,12 +1328,12 @@ mod tests {
     }
 
     async fn fixture() -> Fixture {
-        let anchor_repo = Arc::new(TestAnchorRepo::default());
-        let run_repo = Arc::new(TestRunRepo::default());
-        let agent_repo = Arc::new(TestAgentRepo::default());
-        let frame_repo = Arc::new(TestFrameRepo::default());
+        let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
         let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
-        let permission_grant_repo = Arc::new(TestPermissionGrantRepo::default());
+        let permission_grant_repo = Arc::new(FixturePermissionGrantRepo::default());
         let project_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);
         let run_id = run.id;
@@ -1552,7 +1358,10 @@ mod tests {
         );
         run_repo.create(&run).await.expect("run");
         agent_repo.create(&agent).await.expect("agent");
-        frame_repo.insert(launch_frame).await;
+        frame_repo
+            .create(&launch_frame)
+            .await
+            .expect("launch frame");
         anchor_repo.create_once(&anchor).await.expect("anchor");
         delivery_binding_repo
             .upsert(&binding)
@@ -1647,7 +1456,11 @@ mod tests {
     }
 
     async fn insert_current_frame(fixture: &Fixture, frame: AgentFrame) {
-        fixture.frame_repo.insert(frame).await;
+        fixture
+            .frame_repo
+            .create(&frame)
+            .await
+            .expect("current frame");
     }
 
     #[tokio::test]

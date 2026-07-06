@@ -547,120 +547,15 @@ fn normalize_required_api(field: &str, value: &str) -> Result<String, ApiError> 
 mod tests {
     use std::sync::Mutex;
 
-    use agentdash_domain::DomainError;
     use agentdash_domain::shared_library::{
-        LibraryAsset, LibraryAssetListFilter, LibraryAssetPayload, LibraryAssetSource,
-        SkillTemplatePayload,
+        LibraryAssetPayload, LibraryAssetSource, SkillTemplatePayload,
     };
     use agentdash_integration_api::{MarketplaceFetchedAsset, MarketplaceFetchedAssetPayload};
+    use agentdash_test_support::shared_library::MemoryLibraryAssetRepository;
     use async_trait::async_trait;
     use serde_json::json;
-    use uuid::Uuid;
 
     use super::*;
-
-    #[derive(Default)]
-    struct InMemoryLibraryAssetRepository {
-        assets: Mutex<Vec<LibraryAsset>>,
-    }
-
-    #[async_trait]
-    impl LibraryAssetRepository for InMemoryLibraryAssetRepository {
-        async fn create(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
-            asset.typed_payload()?;
-            self.assets.lock().expect("lock").push(asset.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .find(|asset| asset.id == id)
-                .cloned())
-        }
-
-        async fn find_by_identity(
-            &self,
-            asset_type: LibraryAssetType,
-            scope: LibraryAssetScope,
-            owner_id: Option<&str>,
-            key: &str,
-        ) -> Result<Option<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .find(|asset| {
-                    asset.asset_type == asset_type
-                        && asset.scope == scope
-                        && asset.owner_id.as_deref() == owner_id
-                        && asset.key == key
-                })
-                .cloned())
-        }
-
-        async fn list(
-            &self,
-            filter: LibraryAssetListFilter,
-        ) -> Result<Vec<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .filter(|asset| {
-                    filter
-                        .asset_type
-                        .is_none_or(|value| value == asset.asset_type)
-                        && filter.scope.is_none_or(|value| value == asset.scope)
-                        && filter
-                            .owner_id
-                            .as_deref()
-                            .is_none_or(|value| asset.owner_id.as_deref() == Some(value))
-                        && (filter.include_deprecated || !asset.deprecated)
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
-            asset.typed_payload()?;
-            let mut assets = self.assets.lock().expect("lock");
-            let existing = assets
-                .iter_mut()
-                .find(|existing| existing.id == asset.id)
-                .ok_or_else(|| DomainError::NotFound {
-                    entity: "library_asset",
-                    id: asset.id.to_string(),
-                })?;
-            *existing = asset.clone();
-            Ok(())
-        }
-
-        async fn upsert(&self, asset: &LibraryAsset) -> Result<LibraryAsset, DomainError> {
-            if let Some(existing) = self
-                .find_by_identity(
-                    asset.asset_type,
-                    asset.scope,
-                    asset.owner_id.as_deref(),
-                    &asset.key,
-                )
-                .await?
-            {
-                let mut updated = asset.clone();
-                updated.id = existing.id;
-                updated.created_at = existing.created_at;
-                self.update(&updated).await?;
-                return Ok(updated);
-            }
-            self.create(asset).await?;
-            Ok(asset.clone())
-        }
-    }
 
     struct TestMarketplaceSourceProvider {
         descriptor: MarketplaceSourceDescriptor,
@@ -835,7 +730,7 @@ mod tests {
 
     #[tokio::test]
     async fn marketplace_import_external_asset_writes_remote_imported_library_asset() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let provider = Arc::new(TestMarketplaceSourceProvider::new(test_descriptor()));
         *provider.fetch_result.lock().expect("lock") =
             Ok(fetched_skill(valid_skill_template_payload()));
@@ -854,7 +749,7 @@ mod tests {
             response.asset.source_ref.as_deref(),
             Some("market:test.source:skill_template:skill-1")
         );
-        let assets = repo.assets.lock().expect("lock");
+        let assets = repo.debug_list().await;
         assert_eq!(assets.len(), 1);
         let asset = &assets[0];
         assert_eq!(asset.source, LibraryAssetSource::RemoteImported);
@@ -873,7 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn marketplace_import_external_asset_maps_invalid_payload_to_bad_request() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let provider = Arc::new(TestMarketplaceSourceProvider::new(test_descriptor()));
         *provider.fetch_result.lock().expect("lock") =
             Ok(fetched_skill(json!({"files": "not-array"})));

@@ -46,6 +46,7 @@
     "deploy:compose:update:dry-run": "node deploy/compose/update.mjs --dry-run",
     "release:metadata": "node scripts/release-metadata.js",
     "migration:guard": "node scripts/check-migration-history.js",
+    "test-support:guard": "node scripts/check-test-support-boundaries.js",
     "quality:gates": "node scripts/quality-gates.js",
     "quality:gates:check": "node scripts/quality-gates.js check",
     "quality:gates:test": "node --test scripts/lib/quality-gates.test.js",

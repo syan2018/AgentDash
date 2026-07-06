@@ -196,7 +196,12 @@ describe("desktop local runtime bridge", () => {
     const runtimeStart = vi.fn(async () => createStatus("running"));
     const client = createClient(runtimeStart);
     installDesktopBridge(client);
-    vi.mocked(window.__AGENTDASH_DESKTOP_APP__.getUpdatePolicySnapshot).mockResolvedValue({
+    const desktopApp = window.__AGENTDASH_DESKTOP_APP__;
+    expect(desktopApp).toBeDefined();
+    if (!desktopApp) {
+      throw new Error("desktop app bridge should be installed");
+    }
+    vi.mocked(desktopApp.getUpdatePolicySnapshot).mockResolvedValue({
       current_version: "0.1.0",
       status: "force_update_required",
       force_update_required: true,

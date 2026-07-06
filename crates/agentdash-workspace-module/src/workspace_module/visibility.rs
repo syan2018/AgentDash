@@ -124,12 +124,12 @@ mod tests {
     use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
 
     #[derive(Default)]
-    struct FakeInstallationRepo {
+    struct FixtureInstallationRepo {
         installations: Mutex<Vec<ProjectExtensionInstallation>>,
     }
 
     #[async_trait::async_trait]
-    impl ProjectExtensionInstallationRepository for FakeInstallationRepo {
+    impl ProjectExtensionInstallationRepository for FixtureInstallationRepo {
         async fn create(&self, item: &ProjectExtensionInstallation) -> Result<(), DomainError> {
             self.installations.lock().unwrap().push(item.clone());
             Ok(())
@@ -205,12 +205,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeCanvasRepo {
+    struct FixtureCanvasRepo {
         canvases: Mutex<HashMap<(Uuid, String), Canvas>>,
     }
 
     #[async_trait::async_trait]
-    impl CanvasRepository for FakeCanvasRepo {
+    impl CanvasRepository for FixtureCanvasRepo {
         async fn create(&self, canvas: &Canvas) -> Result<(), DomainError> {
             self.canvases
                 .lock()
@@ -327,12 +327,12 @@ mod tests {
         Uuid,
     ) {
         let project_id = Uuid::new_v4();
-        let install_repo = Arc::new(FakeInstallationRepo::default());
+        let install_repo = Arc::new(FixtureInstallationRepo::default());
         install_repo
             .create(&installation(project_id, "demo"))
             .await
             .expect("install extension");
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let canvas = build_canvas(
             project_id,
             Some("cvs-dashboard-a".to_string()),

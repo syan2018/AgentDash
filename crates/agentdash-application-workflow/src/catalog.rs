@@ -193,11 +193,11 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct TestAgentProcedureRepo {
+    struct FixtureAgentProcedureRepo {
         items: Mutex<BTreeMap<String, AgentProcedure>>,
     }
 
-    impl TestAgentProcedureRepo {
+    impl FixtureAgentProcedureRepo {
         fn seed(&self, workflow: AgentProcedure) {
             self.items
                 .lock()
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl AgentProcedureRepository for TestAgentProcedureRepo {
+    impl AgentProcedureRepository for FixtureAgentProcedureRepo {
         async fn create(&self, workflow: &AgentProcedure) -> Result<(), DomainError> {
             self.seed(workflow.clone());
             Ok(())
@@ -285,12 +285,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestWorkflowGraphRepo {
+    struct FixtureWorkflowGraphRepo {
         items: Mutex<BTreeMap<String, WorkflowGraph>>,
     }
 
     #[async_trait::async_trait]
-    impl WorkflowGraphRepository for TestWorkflowGraphRepo {
+    impl WorkflowGraphRepository for FixtureWorkflowGraphRepo {
         async fn create(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
             self.items
                 .lock()
@@ -422,14 +422,14 @@ mod tests {
     async fn validate_workflow_graph_resolves_agent_workflow_in_same_project_only() {
         let lifecycle_project_id = Uuid::new_v4();
         let other_project_id = Uuid::new_v4();
-        let workflow_repo = TestAgentProcedureRepo::default();
+        let workflow_repo = FixtureAgentProcedureRepo::default();
         workflow_repo.seed(workflow_with_ports_in_project(
             other_project_id,
             "wf_plan",
             &[],
             &[],
         ));
-        let activity_lifecycle_repo = TestWorkflowGraphRepo::default();
+        let activity_lifecycle_repo = FixtureWorkflowGraphRepo::default();
         let service =
             ActivityLifecycleCatalogService::new(&workflow_repo, &activity_lifecycle_repo);
 
@@ -449,14 +449,14 @@ mod tests {
     #[tokio::test]
     async fn upsert_activity_lifecycle_preserves_id_and_bumps_version() {
         let project_id = Uuid::new_v4();
-        let workflow_repo = TestAgentProcedureRepo::default();
+        let workflow_repo = FixtureAgentProcedureRepo::default();
         workflow_repo.seed(workflow_with_ports_in_project(
             project_id,
             "wf_plan",
             &[],
             &[],
         ));
-        let activity_lifecycle_repo = TestWorkflowGraphRepo::default();
+        let activity_lifecycle_repo = FixtureWorkflowGraphRepo::default();
         let service =
             ActivityLifecycleCatalogService::new(&workflow_repo, &activity_lifecycle_repo);
 
@@ -483,8 +483,8 @@ mod tests {
         let bundle = build_builtin_workflow_bundle(project_id, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY)
             .expect("build builtin_workflow_admin bundle");
 
-        let workflow_repo = TestAgentProcedureRepo::default();
-        let lifecycle_repo = TestWorkflowGraphRepo::default();
+        let workflow_repo = FixtureAgentProcedureRepo::default();
+        let lifecycle_repo = FixtureWorkflowGraphRepo::default();
         let service = ActivityLifecycleCatalogService::new(&workflow_repo, &lifecycle_repo);
 
         let saved = service
@@ -522,8 +522,8 @@ mod tests {
         let bundle = build_builtin_workflow_bundle(project_id, TRELLIS_DAG_TASK_TEMPLATE_KEY)
             .expect("build trellis_dag_task bundle");
 
-        let workflow_repo = TestAgentProcedureRepo::default();
-        let lifecycle_repo = TestWorkflowGraphRepo::default();
+        let workflow_repo = FixtureAgentProcedureRepo::default();
+        let lifecycle_repo = FixtureWorkflowGraphRepo::default();
         let service = ActivityLifecycleCatalogService::new(&workflow_repo, &lifecycle_repo);
 
         let saved = service

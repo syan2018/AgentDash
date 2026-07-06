@@ -995,12 +995,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeUninstallRepo {
+    struct FixtureUninstallRepo {
         installations: Mutex<Vec<ProjectExtensionInstallation>>,
     }
 
     #[async_trait::async_trait]
-    impl ProjectExtensionInstallationRepository for FakeUninstallRepo {
+    impl ProjectExtensionInstallationRepository for FixtureUninstallRepo {
         async fn create(
             &self,
             installation: &ProjectExtensionInstallation,
@@ -1097,7 +1097,7 @@ mod tests {
     }
 
     fn install_into_repo(
-        repo: &FakeUninstallRepo,
+        repo: &FixtureUninstallRepo,
         project_id: Uuid,
         extension_key: &str,
     ) -> ProjectExtensionInstallation {
@@ -1124,7 +1124,7 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_extension_installation_returns_extension_key_and_removes_row() {
-        let repo_inner = Arc::new(FakeUninstallRepo::default());
+        let repo_inner = Arc::new(FixtureUninstallRepo::default());
         let repo: Arc<dyn ProjectExtensionInstallationRepository> = repo_inner.clone();
         let project_id = Uuid::new_v4();
         let installation = install_into_repo(repo_inner.as_ref(), project_id, "demo");
@@ -1151,7 +1151,7 @@ mod tests {
     #[tokio::test]
     async fn uninstall_extension_installation_returns_not_found_for_missing_id() {
         let repo: Arc<dyn ProjectExtensionInstallationRepository> =
-            Arc::new(FakeUninstallRepo::default());
+            Arc::new(FixtureUninstallRepo::default());
         let project_id = Uuid::new_v4();
         let installation_id = Uuid::new_v4();
 
@@ -1175,7 +1175,7 @@ mod tests {
 
     #[tokio::test]
     async fn uninstall_extension_installation_rejects_cross_project_access() {
-        let repo_inner = Arc::new(FakeUninstallRepo::default());
+        let repo_inner = Arc::new(FixtureUninstallRepo::default());
         let repo: Arc<dyn ProjectExtensionInstallationRepository> = repo_inner.clone();
         let project_a = Uuid::new_v4();
         let project_b = Uuid::new_v4();

@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryLeaseRepository {
+    struct FixtureLeaseRepository {
         active_counts: StdMutex<HashMap<String, i64>>,
         claims: StdMutex<Vec<BackendExecutionLease>>,
         activations: StdMutex<Vec<Uuid>>,
@@ -613,7 +613,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl BackendExecutionLeaseRepository for MemoryLeaseRepository {
+    impl BackendExecutionLeaseRepository for FixtureLeaseRepository {
         async fn claim(&self, lease: &BackendExecutionLease) -> Result<(), DomainError> {
             self.claims.lock().unwrap().push(lease.clone());
             Ok(())
@@ -689,7 +689,7 @@ mod tests {
     }
 
     fn memory_lease_repo() -> Arc<dyn BackendExecutionLeaseRepository> {
-        Arc::new(MemoryLeaseRepository::default())
+        Arc::new(FixtureLeaseRepository::default())
     }
 
     fn register_executor(transport: &CaptureTransport, backend_id: &str, executor_id: &str) {
@@ -924,7 +924,7 @@ mod tests {
                 available: true,
             },
         ];
-        let lease_repo = MemoryLeaseRepository::default();
+        let lease_repo = FixtureLeaseRepository::default();
         lease_repo
             .active_counts
             .lock()
@@ -952,7 +952,7 @@ mod tests {
                 "boom".to_string(),
             ),
         );
-        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let lease_repo = Arc::new(FixtureLeaseRepository::default());
         let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
         let root = tempfile::tempdir().expect("workspace");
         let context = relay_context(root.path(), "turn-failed-prompt");
@@ -988,7 +988,7 @@ mod tests {
     async fn terminal_completed_releases_lease_and_unregisters_route() {
         let transport = Arc::new(CaptureTransport::default());
         register_executor(&transport, "local", "REMOTE_EXECUTOR");
-        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let lease_repo = Arc::new(FixtureLeaseRepository::default());
         let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
         let root = tempfile::tempdir().expect("workspace");
 
@@ -1036,7 +1036,7 @@ mod tests {
     async fn terminal_failed_releases_lease_with_failed_kind() {
         let transport = Arc::new(CaptureTransport::default());
         register_executor(&transport, "local", "REMOTE_EXECUTOR");
-        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let lease_repo = Arc::new(FixtureLeaseRepository::default());
         let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
         let root = tempfile::tempdir().expect("workspace");
 
@@ -1089,7 +1089,7 @@ mod tests {
     async fn terminal_lost_emits_turn_lost_without_releasing_lease() {
         let transport = Arc::new(CaptureTransport::default());
         register_executor(&transport, "local", "REMOTE_EXECUTOR");
-        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let lease_repo = Arc::new(FixtureLeaseRepository::default());
         let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
         let root = tempfile::tempdir().expect("workspace");
 
@@ -1148,7 +1148,7 @@ mod tests {
     async fn cancel_uses_session_route_backend_and_releases_interrupted() {
         let transport = Arc::new(CaptureTransport::default());
         register_executor(&transport, "backend-route", "REMOTE_EXECUTOR");
-        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let lease_repo = Arc::new(FixtureLeaseRepository::default());
         let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
         let root = tempfile::tempdir().expect("workspace");
         let mut context = relay_context(root.path(), "turn-cancel");
@@ -1196,7 +1196,7 @@ mod tests {
     async fn steer_uses_session_route_without_releasing_live_sink() {
         let transport = Arc::new(CaptureTransport::default());
         register_executor(&transport, "backend-route", "REMOTE_EXECUTOR");
-        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let lease_repo = Arc::new(FixtureLeaseRepository::default());
         let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
         let root = tempfile::tempdir().expect("workspace");
         let mut context = relay_context(root.path(), "turn-steer");

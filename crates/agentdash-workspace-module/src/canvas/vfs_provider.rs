@@ -403,7 +403,7 @@ mod tests {
     };
 
     #[derive(Default)]
-    struct FakeCanvasRepo {
+    struct FixtureCanvasRepo {
         canvases: Mutex<BTreeMap<Uuid, Canvas>>,
     }
 
@@ -430,7 +430,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl CanvasRepository for FakeCanvasRepo {
+    impl CanvasRepository for FixtureCanvasRepo {
         async fn create(&self, canvas: &Canvas) -> Result<(), DomainError> {
             self.canvases
                 .lock()
@@ -497,7 +497,7 @@ mod tests {
         ];
 
         let mount = build_canvas_mount(&canvas, CanvasMountAccess::read_only());
-        let repo = Arc::new(FakeCanvasRepo::default());
+        let repo = Arc::new(FixtureCanvasRepo::default());
         repo.create(&canvas).await.expect("create canvas");
         let provider = CanvasFsMountProvider::new(repo.clone());
         let ctx = MountOperationContext::default();
@@ -587,7 +587,7 @@ mod tests {
             content: Mutex::new("name,value\nA,1".to_string()),
         });
 
-        let repo = Arc::new(FakeCanvasRepo::default());
+        let repo = Arc::new(FixtureCanvasRepo::default());
         repo.create(&canvas).await.expect("create canvas");
         let provider = CanvasFsMountProvider::new(repo);
         let ctx = MountOperationContext {
@@ -681,7 +681,7 @@ mod tests {
             content: Mutex::new("name,value\nA,1".to_string()),
         });
 
-        let repo = Arc::new(FakeCanvasRepo::default());
+        let repo = Arc::new(FixtureCanvasRepo::default());
         repo.create(&canvas).await.expect("create canvas");
         let provider = CanvasFsMountProvider::new(repo.clone());
         let ctx = MountOperationContext {

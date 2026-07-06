@@ -56,3 +56,4 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 json-patch = "2.0"
 agentdash-agent = { workspace = true }
 agentdash-infrastructure = { workspace = true }
+agentdash-test-support = { workspace = true }

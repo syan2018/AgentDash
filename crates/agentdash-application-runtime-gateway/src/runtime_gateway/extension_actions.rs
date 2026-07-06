@@ -1444,12 +1444,12 @@ mod tests {
     };
 
     #[derive(Default)]
-    struct FakeInstallationRepo {
+    struct FixtureInstallationRepo {
         installations: Vec<ProjectExtensionInstallation>,
     }
 
     #[async_trait]
-    impl ProjectExtensionInstallationRepository for FakeInstallationRepo {
+    impl ProjectExtensionInstallationRepository for FixtureInstallationRepo {
         async fn create(
             &self,
             _installation: &ProjectExtensionInstallation,
@@ -1579,7 +1579,7 @@ mod tests {
         });
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![installation(project_id, true, true)],
                 }),
                 transport.clone(),
@@ -1620,7 +1620,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![installation(project_id, true, true)],
                 }),
                 Arc::new(FakeTransport {
@@ -1678,7 +1678,7 @@ mod tests {
         });
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![
                         installation(project_id, true, true),
                         duplicate_action_installation(project_id, "shadow-hello"),
@@ -1718,7 +1718,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![installation(project_id, true, true)],
                 }),
                 Arc::new(FakeTransport {
@@ -1751,7 +1751,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![missing_package_installation(project_id)],
                 }),
                 Arc::new(FakeTransport {
@@ -1784,7 +1784,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo::default()),
+                Arc::new(FixtureInstallationRepo::default()),
                 Arc::new(FakeTransport {
                     result: Ok(response_payload(json!({}))),
                     last_payload: StdMutex::new(None),
@@ -1809,7 +1809,7 @@ mod tests {
         });
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![missing_package_installation(project_id)],
                 }),
                 transport.clone(),
@@ -1843,7 +1843,7 @@ mod tests {
         });
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![installation],
                 }),
                 transport.clone(),
@@ -1870,7 +1870,7 @@ mod tests {
         });
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![installation(project_id, false, true)],
                 }),
                 transport,
@@ -1894,7 +1894,7 @@ mod tests {
         });
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![installation(project_id, true, false)],
                 }),
                 transport.clone(),
@@ -1917,7 +1917,7 @@ mod tests {
         installation.manifest.runtime_actions[0].permissions = vec!["local.profile.admin".into()];
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![installation],
                 }),
                 Arc::new(FakeTransport {
@@ -1940,7 +1940,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
-                Arc::new(FakeInstallationRepo {
+                Arc::new(FixtureInstallationRepo {
                     installations: vec![installation(project_id, true, true)],
                 }),
                 Arc::new(FakeTransport {
@@ -1968,7 +1968,7 @@ mod tests {
             last_payload: StdMutex::new(None),
         });
         let invoker = ExtensionRuntimeChannelInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider_channel_installation(project_id),
                     consumer_channel_installation(project_id, "^1.0.0", true),
@@ -2023,7 +2023,7 @@ mod tests {
             last_payload: StdMutex::new(None),
         });
         let invoker = ExtensionRuntimeChannelInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider,
                     consumer_channel_installation(project_id, "^1.0.0", true),
@@ -2052,7 +2052,7 @@ mod tests {
             last_payload: StdMutex::new(None),
         });
         let invoker = ExtensionRuntimeChannelInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider,
                     consumer_channel_installation(project_id, "^1.0.0", true),
@@ -2074,7 +2074,7 @@ mod tests {
     async fn channel_invoker_rejects_missing_provider() {
         let project_id = Uuid::new_v4();
         let invoker = ExtensionRuntimeChannelInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![consumer_channel_installation(project_id, "^1.0.0", true)],
             }),
             Arc::new(FakeChannelTransport {
@@ -2095,7 +2095,7 @@ mod tests {
     async fn channel_invoker_rejects_missing_dependency() {
         let project_id = Uuid::new_v4();
         let invoker = ExtensionRuntimeChannelInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider_channel_installation(project_id),
                     consumer_channel_installation(project_id, "^1.0.0", false),
@@ -2119,7 +2119,7 @@ mod tests {
     async fn channel_invoker_rejects_dependency_version_mismatch() {
         let project_id = Uuid::new_v4();
         let invoker = ExtensionRuntimeChannelInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider_channel_installation(project_id),
                     consumer_channel_installation(project_id, "^2.0.0", true),
@@ -2241,7 +2241,7 @@ mod tests {
     async fn provider_supports_enabled_session_extension_action() {
         let project_id = Uuid::new_v4();
         let provider = ExtensionRuntimeActionProvider::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![installation(project_id, true, true)],
             }),
             Arc::new(FakeTransport {

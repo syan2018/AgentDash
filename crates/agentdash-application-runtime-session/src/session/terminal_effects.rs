@@ -576,7 +576,7 @@ mod tests {
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
     use crate::session::types::{ExecutionStatus, SessionMeta};
-    use crate::session::{MemoryRuntimeTraceStore, SessionMetaStore, SessionStoreSet};
+    use crate::session::{FixtureRuntimeTraceStore, SessionMetaStore, SessionStoreSet};
 
     #[test]
     fn terminal_effect_status_round_trips_wire_values() {
@@ -604,7 +604,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_hook_effects_uses_durable_handler_registry() {
-        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let persistence = Arc::new(FixtureRuntimeTraceStore::default());
         persistence
             .create_session(&SessionMeta {
                 id: "sess-hook-replay".to_string(),
@@ -669,7 +669,7 @@ mod tests {
 
     #[tokio::test]
     async fn hook_auto_resume_failure_keeps_terminal_effect_replayable() {
-        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let persistence = Arc::new(FixtureRuntimeTraceStore::default());
         persistence
             .create_session(&SessionMeta {
                 id: "sess-auto-resume-failure".to_string(),
@@ -733,7 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_callback_failure_keeps_terminal_effect_replayable() {
-        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let persistence = Arc::new(FixtureRuntimeTraceStore::default());
         persistence
             .create_session(&SessionMeta {
                 id: "sess-callback-failure".to_string(),
@@ -797,7 +797,7 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_callback_control_plane_success_does_not_create_replay_effect() {
-        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let persistence = Arc::new(FixtureRuntimeTraceStore::default());
         persistence
             .create_session(&SessionMeta {
                 id: "sess-callback-success".to_string(),
@@ -849,7 +849,7 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_callback_control_plane_failure_creates_replay_effect() {
-        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+        let persistence = Arc::new(FixtureRuntimeTraceStore::default());
         persistence
             .create_session(&SessionMeta {
                 id: "sess-callback-direct-failure".to_string(),

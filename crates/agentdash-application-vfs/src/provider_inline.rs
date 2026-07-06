@@ -375,122 +375,11 @@ fn inline_file_attributes(file: &InlineFile) -> serde_json::Map<String, serde_js
 mod tests {
     use std::sync::Arc;
 
-    use agentdash_domain::common::error::DomainError;
-    use agentdash_domain::inline_file::{InlineFileOwnerKind, InlineFileRepository};
-    use tokio::sync::Mutex;
+    use agentdash_domain::inline_file::InlineFileOwnerKind;
+    use agentdash_test_support::inline_file::MemoryInlineFileRepository;
     use uuid::Uuid;
 
     use super::*;
-
-    #[derive(Default)]
-    struct MemoryInlineFileRepo {
-        files: Mutex<Vec<InlineFile>>,
-    }
-
-    #[async_trait::async_trait]
-    impl InlineFileRepository for MemoryInlineFileRepo {
-        async fn get_file(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-            path: &str,
-        ) -> Result<Option<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .iter()
-                .find(|file| {
-                    file.owner_kind == owner_kind
-                        && file.owner_id == owner_id
-                        && file.container_id == container_id
-                        && file.path == path
-                })
-                .cloned())
-        }
-
-        async fn list_files(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-        ) -> Result<Vec<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .iter()
-                .filter(|file| {
-                    file.owner_kind == owner_kind
-                        && file.owner_id == owner_id
-                        && file.container_id == container_id
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn list_files_by_owner(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-        ) -> Result<Vec<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .iter()
-                .filter(|file| file.owner_kind == owner_kind && file.owner_id == owner_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn upsert_file(&self, file: &InlineFile) -> Result<(), DomainError> {
-            self.files.lock().await.push(file.clone());
-            Ok(())
-        }
-
-        async fn upsert_files(&self, files: &[InlineFile]) -> Result<(), DomainError> {
-            self.files.lock().await.extend(files.iter().cloned());
-            Ok(())
-        }
-
-        async fn delete_file(
-            &self,
-            _owner_kind: InlineFileOwnerKind,
-            _owner_id: Uuid,
-            _container_id: &str,
-            _path: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn delete_by_container(
-            &self,
-            _owner_kind: InlineFileOwnerKind,
-            _owner_id: Uuid,
-            _container_id: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn delete_by_owner(
-            &self,
-            _owner_kind: InlineFileOwnerKind,
-            _owner_id: Uuid,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn count_files(
-            &self,
-            _owner_kind: InlineFileOwnerKind,
-            _owner_id: Uuid,
-            _container_id: &str,
-        ) -> Result<i64, DomainError> {
-            Ok(self.files.lock().await.len() as i64)
-        }
-    }
 
     fn inline_mount(owner_id: Uuid) -> Mount {
         Mount {
@@ -512,7 +401,7 @@ mod tests {
     #[tokio::test]
     async fn list_exposes_binary_metadata() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_file(&InlineFile::new_binary(
             InlineFileOwnerKind::Project,
             owner_id,
@@ -564,7 +453,7 @@ mod tests {
     #[tokio::test]
     async fn read_text_rejects_binary_and_search_skips_it() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_files(&[
             InlineFile::new_text(
                 InlineFileOwnerKind::Project,
@@ -614,7 +503,7 @@ mod tests {
     #[tokio::test]
     async fn read_binary_returns_bytes_and_metadata() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_file(&InlineFile::new_binary(
             InlineFileOwnerKind::Project,
             owner_id,
@@ -657,7 +546,7 @@ mod tests {
     #[tokio::test]
     async fn search_truncated_when_max_results_reached() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_files(&[InlineFile::new_text(
             InlineFileOwnerKind::Project,
             owner_id,
@@ -688,7 +577,7 @@ mod tests {
     #[tokio::test]
     async fn read_text_returns_version_token_and_modified_at() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_file(&InlineFile::new_text(
             InlineFileOwnerKind::Project,
             owner_id,
@@ -725,7 +614,7 @@ mod tests {
     #[tokio::test]
     async fn read_text_range_default_impl_slices_lines() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_file(&InlineFile::new_text(
             InlineFileOwnerKind::Project,
             owner_id,
@@ -756,7 +645,7 @@ mod tests {
     #[tokio::test]
     async fn read_text_range_default_impl_limit_none_reads_to_eof() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_file(&InlineFile::new_text(
             InlineFileOwnerKind::Project,
             owner_id,
@@ -787,7 +676,7 @@ mod tests {
     #[tokio::test]
     async fn search_text_substring_does_not_treat_pattern_as_regex() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_file(&InlineFile::new_text(
             InlineFileOwnerKind::Project,
             owner_id,
@@ -819,7 +708,7 @@ mod tests {
     #[tokio::test]
     async fn grep_text_supports_regex_and_context_lines() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         repo.upsert_file(&InlineFile::new_text(
             InlineFileOwnerKind::Project,
             owner_id,

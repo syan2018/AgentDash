@@ -58,6 +58,9 @@ function parseArgs(values) {
   const result = { dryRun: false, tags: [] };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
+    if (value === '--') {
+      continue;
+    }
     if (value === '--dry-run') {
       result.dryRun = true;
       continue;

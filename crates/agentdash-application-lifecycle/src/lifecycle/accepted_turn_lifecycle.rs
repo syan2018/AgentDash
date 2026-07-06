@@ -140,12 +140,12 @@ mod tests {
     use uuid::Uuid;
 
     #[derive(Default)]
-    struct MemoryAnchorRepo {
+    struct FixtureAnchorRepo {
         anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
+    impl RuntimeSessionExecutionAnchorRepository for FixtureAnchorRepo {
         async fn create_once(
             &self,
             anchor: &RuntimeSessionExecutionAnchor,
@@ -219,12 +219,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryRunRepo {
+    struct FixtureRunRepo {
         runs: Mutex<Vec<LifecycleRun>>,
     }
 
     #[async_trait]
-    impl LifecycleRunRepository for MemoryRunRepo {
+    impl LifecycleRunRepository for FixtureRunRepo {
         async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             self.runs.lock().unwrap().push(run.clone());
             Ok(())
@@ -306,9 +306,9 @@ mod tests {
             "entry",
             1,
         );
-        let anchor_repo = Arc::new(MemoryAnchorRepo::default());
+        let anchor_repo = Arc::new(FixtureAnchorRepo::default());
         anchor_repo.create_once(&anchor).await.unwrap();
-        let run_repo = Arc::new(MemoryRunRepo::default());
+        let run_repo = Arc::new(FixtureRunRepo::default());
         run_repo.create(&run).await.unwrap();
         let service = AcceptedTurnLifecycleAdvanceService::new(anchor_repo, run_repo.clone());
 

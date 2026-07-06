@@ -472,180 +472,23 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex},
-    };
+    use std::sync::{Arc, Mutex};
 
     use agentdash_application_workflow::gate::{
         GateDeliveryIntent, GateNotificationIntent, WaitObligationConvergenceOutcome,
         WaitObligationConvergenceOutcomeKind, WaitObligationConvergenceResult,
     };
-    use agentdash_domain::{
-        DomainError,
-        workflow::{
-            AgentRunDeliveryBinding, LifecycleGate, RuntimeSessionExecutionAnchor,
-            WaitObligationDeclaration,
-        },
+    use agentdash_domain::workflow::{
+        AgentRunDeliveryBinding, LifecycleGate, RuntimeSessionExecutionAnchor,
+    };
+    use agentdash_test_support::workflow::{
+        MemoryAgentRunDeliveryBindingRepository, MemoryLifecycleGateRepository,
     };
     use chrono::Utc;
     use serde_json::json;
     use uuid::Uuid;
 
     use super::*;
-
-    #[derive(Default)]
-    struct MemoryGateRepo {
-        gates: Mutex<Vec<LifecycleGate>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LifecycleGateRepository for MemoryGateRepo {
-        async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-            self.gates.lock().unwrap().push(gate.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
-            Ok(self
-                .gates
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|gate| gate.id == id)
-                .cloned())
-        }
-
-        async fn list_open_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<LifecycleGate>, DomainError> {
-            Ok(self
-                .gates
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
-                .cloned()
-                .collect())
-        }
-
-        async fn list_open_wait_obligations(
-            &self,
-            limit: usize,
-        ) -> Result<Vec<LifecycleGate>, DomainError> {
-            Ok(self
-                .gates
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|gate| {
-                    gate.is_open()
-                        && gate
-                            .payload_json
-                            .as_ref()
-                            .and_then(WaitObligationDeclaration::from_payload)
-                            .is_some()
-                })
-                .take(limit)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_wait_producer(
-            &self,
-            producer: &WaitProducerRef,
-        ) -> Result<Vec<LifecycleGate>, DomainError> {
-            Ok(self
-                .gates
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|gate| {
-                    gate.payload_json
-                        .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
-                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn find_by_agent_and_correlation(
-            &self,
-            agent_id: Uuid,
-            correlation_id: &str,
-        ) -> Result<Option<LifecycleGate>, DomainError> {
-            Ok(self
-                .gates
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|gate| {
-                    gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id
-                })
-                .cloned())
-        }
-
-        async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-            let mut gates = self.gates.lock().unwrap();
-            if let Some(existing) = gates.iter_mut().find(|existing| existing.id == gate.id) {
-                *existing = gate.clone();
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct MemoryDeliveryBindingRepo {
-        bindings: Mutex<HashMap<(Uuid, Uuid), AgentRunDeliveryBinding>>,
-    }
-
-    #[async_trait::async_trait]
-    impl AgentRunDeliveryBindingRepository for MemoryDeliveryBindingRepo {
-        async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
-            self.bindings
-                .lock()
-                .unwrap()
-                .insert((binding.run_id, binding.agent_id), binding.clone());
-            Ok(())
-        }
-
-        async fn get_current(
-            &self,
-            run_id: Uuid,
-            agent_id: Uuid,
-        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
-            Ok(self
-                .bindings
-                .lock()
-                .unwrap()
-                .get(&(run_id, agent_id))
-                .cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
-            Ok(self
-                .bindings
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|binding| binding.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.bindings
-                .lock()
-                .unwrap()
-                .retain(|_, binding| binding.runtime_session_id != runtime_session_id);
-            Ok(())
-        }
-    }
 
     #[derive(Clone, Copy)]
     enum FakeConvergenceMode {
@@ -744,12 +587,12 @@ mod tests {
         binding: AgentRunDeliveryBinding,
         mode: FakeConvergenceMode,
     ) -> (
-        Arc<MemoryGateRepo>,
-        Arc<MemoryDeliveryBindingRepo>,
+        Arc<MemoryLifecycleGateRepository>,
+        Arc<MemoryAgentRunDeliveryBindingRepository>,
         Arc<FakeConvergence>,
     ) {
-        let gate_repo = Arc::new(MemoryGateRepo::default());
-        let delivery_repo = Arc::new(MemoryDeliveryBindingRepo::default());
+        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
+        let delivery_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
         let convergence = Arc::new(FakeConvergence {
             mode,
             events: Mutex::new(Vec::new()),
@@ -766,8 +609,8 @@ mod tests {
     }
 
     async fn run_phase_with_fakes(
-        gate_repo: Arc<MemoryGateRepo>,
-        delivery_repo: Arc<MemoryDeliveryBindingRepo>,
+        gate_repo: Arc<MemoryLifecycleGateRepository>,
+        delivery_repo: Arc<MemoryAgentRunDeliveryBindingRepository>,
         convergence: Arc<FakeConvergence>,
     ) -> PhaseReport {
         let gate_repo: Arc<dyn LifecycleGateRepository> = gate_repo;

@@ -565,13 +565,13 @@ mod tests {
     use crate::test_support::MemoryAgentRunDeliveryBindingRepository;
 
     #[derive(Default)]
-    struct MemoryFrameRepo {
+    struct FixtureFrameRepo {
         frames: Mutex<Vec<AgentFrame>>,
         fail_create: AtomicBool,
     }
 
     #[async_trait]
-    impl AgentFrameRepository for MemoryFrameRepo {
+    impl AgentFrameRepository for FixtureFrameRepo {
         async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
             if self.fail_create.load(Ordering::SeqCst) {
                 return Err(DomainError::InvalidConfig(
@@ -640,12 +640,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryAgentRepo {
+    struct FixtureAgentRepo {
         agents: Mutex<Vec<LifecycleAgent>>,
     }
 
     #[async_trait]
-    impl LifecycleAgentRepository for MemoryAgentRepo {
+    impl LifecycleAgentRepository for FixtureAgentRepo {
         async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
             self.agents.lock().unwrap().push(agent.clone());
             Ok(())
@@ -684,12 +684,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryAnchorRepo {
+    struct FixtureAnchorRepo {
         anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
+    impl RuntimeSessionExecutionAnchorRepository for FixtureAnchorRepo {
         async fn create_once(
             &self,
             anchor: &RuntimeSessionExecutionAnchor,
@@ -816,11 +816,11 @@ mod tests {
             agent.id,
         );
 
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&launch_frame).await.unwrap();
-        let agent_repo = Arc::new(MemoryAgentRepo::default());
+        let agent_repo = Arc::new(FixtureAgentRepo::default());
         agent_repo.create(&agent).await.unwrap();
-        let anchor_repo = Arc::new(MemoryAnchorRepo::default());
+        let anchor_repo = Arc::new(FixtureAnchorRepo::default());
         anchor_repo.create_once(&anchor).await.unwrap();
         let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
 
@@ -869,12 +869,12 @@ mod tests {
             agent.id,
         );
 
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&launch_frame).await.unwrap();
         frame_repo.fail_create.store(true, Ordering::SeqCst);
-        let agent_repo = Arc::new(MemoryAgentRepo::default());
+        let agent_repo = Arc::new(FixtureAgentRepo::default());
         agent_repo.create(&agent).await.unwrap();
-        let anchor_repo = Arc::new(MemoryAnchorRepo::default());
+        let anchor_repo = Arc::new(FixtureAnchorRepo::default());
         anchor_repo.create_once(&anchor).await.unwrap();
         let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
         let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
@@ -920,11 +920,11 @@ mod tests {
             agent.id,
         );
 
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&launch_frame).await.unwrap();
-        let agent_repo = Arc::new(MemoryAgentRepo::default());
+        let agent_repo = Arc::new(FixtureAgentRepo::default());
         agent_repo.create(&agent).await.unwrap();
-        let anchor_repo = Arc::new(MemoryAnchorRepo::default());
+        let anchor_repo = Arc::new(FixtureAnchorRepo::default());
         anchor_repo.create_once(&anchor).await.unwrap();
         let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
         let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
@@ -966,11 +966,11 @@ mod tests {
             agent.id,
         );
 
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&frame).await.unwrap();
-        let agent_repo = Arc::new(MemoryAgentRepo::default());
+        let agent_repo = Arc::new(FixtureAgentRepo::default());
         agent_repo.create(&agent).await.unwrap();
-        let anchor_repo = Arc::new(MemoryAnchorRepo::default());
+        let anchor_repo = Arc::new(FixtureAnchorRepo::default());
         anchor_repo.create_once(&anchor).await.unwrap();
         let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
             frame_repo: Some(frame_repo),

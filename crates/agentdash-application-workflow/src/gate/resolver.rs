@@ -529,12 +529,12 @@ mod tests {
     };
 
     #[derive(Default)]
-    struct MemoryGateRepo {
+    struct FixtureGateRepo {
         gates: Mutex<HashMap<Uuid, LifecycleGate>>,
     }
 
     #[async_trait::async_trait]
-    impl LifecycleGateRepository for MemoryGateRepo {
+    impl LifecycleGateRepository for FixtureGateRepo {
         async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
             self.gates.lock().unwrap().insert(gate.id, gate.clone());
             Ok(())
@@ -623,7 +623,7 @@ mod tests {
 
     #[tokio::test]
     async fn respond_human_resolves_gate_without_mailbox_payload_blob() {
-        let repo = Arc::new(MemoryGateRepo::default());
+        let repo = Arc::new(FixtureGateRepo::default());
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let gate = LifecycleGate::open(
@@ -671,7 +671,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_companion_gate_creates_request_fact_without_delivery_intents() {
-        let repo = Arc::new(MemoryGateRepo::default());
+        let repo = Arc::new(FixtureGateRepo::default());
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let frame_id = Uuid::new_v4();
@@ -716,7 +716,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_parent_request_creates_request_fact_without_delivery_status() {
-        let repo = Arc::new(MemoryGateRepo::default());
+        let repo = Arc::new(FixtureGateRepo::default());
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let parent_frame_id = Uuid::new_v4();

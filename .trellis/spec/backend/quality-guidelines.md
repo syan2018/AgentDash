@@ -35,6 +35,14 @@
 - AgentDash 自有业务 HTTP DTO 字段名使用 `snake_case`
 - 外部协议桥接数据保持上游协议原样，不在桥接层擅自改名
 
+### Test Support Boundary Guard
+
+`pnpm run test-support:guard` 执行 `scripts/check-test-support-boundaries.js`，并作为 `pr_quick` / `full_local` 质量门的一部分运行。该检查扫描 Rust 源码中的 stateful repository adapter 命名与 trait impl，将可复用 memory repository 的归属收敛到 `crates/agentdash-test-support`。
+
+这个质量门存在的原因是测试 repository adapter 会复制生产 repository 的可观察语义。集中维护后，像 current frame 排序、anchor create-once 幂等与冲突、delivery binding upsert、library asset stable identity 这类行为能由一处自测固定，业务测试只负责声明用例需要的依赖。
+
+新增跨 crate 可复用测试仓储时，先扩展 `agentdash-test-support` 并补 self-test，再让业务 crate 以 dev-dependency 使用它。新增 crate-local 场景 fixture 时，用角色命名表达用途，例如 `Fixture*`、`Recording*`、`Capturing*`、`Static*`、`Rejecting*` 或 `Failing*`。
+
 ### 外部协议桥接例外
 
 外部协议对象（如 codex-app-server-protocol 类型）、第三方 SDK 透传、明确标注为"桥接层"的响应对象允许保留外部字段风格。

@@ -634,15 +634,15 @@ async fn mailbox_steering_expected_turn_guard_is_consistent() {
 }
 
 struct MailboxSteeringFixture {
-    runs: Arc<MemoryLifecycleRunRepository>,
+    runs: Arc<FixtureLifecycleRunRepository>,
     agents: Arc<MemoryLifecycleAgentRepository>,
-    project_agents: Arc<MemoryProjectAgentRepository>,
+    project_agents: Arc<FixtureProjectAgentRepository>,
     frames: Arc<MemoryAgentFrameRepository>,
     anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
     delivery_bindings: Arc<MemoryAgentRunDeliveryBindingRepository>,
-    backend_access: Arc<MemoryProjectBackendAccessRepository>,
+    backend_access: Arc<FixtureProjectBackendAccessRepository>,
     receipts: Arc<MemoryAgentRunCommandReceiptRepository>,
-    mailbox: Arc<MemoryMailboxRepository>,
+    mailbox: Arc<FixtureMailboxRepository>,
     core: Arc<TestCorePort>,
     control: Arc<TestControlPort>,
     eventing: Arc<TestEventingPort>,
@@ -656,15 +656,15 @@ struct MailboxSteeringFixture {
 
 impl MailboxSteeringFixture {
     async fn new(fail_events: bool) -> Self {
-        let runs = Arc::new(MemoryLifecycleRunRepository::default());
+        let runs = Arc::new(FixtureLifecycleRunRepository::default());
         let agents = Arc::new(MemoryLifecycleAgentRepository::default());
-        let project_agents = Arc::new(MemoryProjectAgentRepository);
+        let project_agents = Arc::new(FixtureProjectAgentRepository);
         let frames = Arc::new(MemoryAgentFrameRepository::default());
         let anchors = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
         let delivery_bindings = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
-        let backend_access = Arc::new(MemoryProjectBackendAccessRepository::default());
+        let backend_access = Arc::new(FixtureProjectBackendAccessRepository::default());
         let receipts = Arc::new(MemoryAgentRunCommandReceiptRepository::default());
-        let mailbox = Arc::new(MemoryMailboxRepository::default());
+        let mailbox = Arc::new(FixtureMailboxRepository::default());
         let delivery_runtime_session_id = "runtime-steering".to_string();
         let active_turn_id = "active-turn".to_string();
 
@@ -774,10 +774,10 @@ impl MailboxSteeringFixture {
     }
 }
 
-struct MemoryProjectAgentRepository;
+struct FixtureProjectAgentRepository;
 
 #[async_trait::async_trait]
-impl ProjectAgentRepository for MemoryProjectAgentRepository {
+impl ProjectAgentRepository for FixtureProjectAgentRepository {
     async fn create(&self, _agent: &ProjectAgent) -> Result<(), DomainError> {
         Ok(())
     }
@@ -816,12 +816,12 @@ impl ProjectAgentRepository for MemoryProjectAgentRepository {
 }
 
 #[derive(Default)]
-struct MemoryLifecycleRunRepository {
+struct FixtureLifecycleRunRepository {
     runs: Mutex<Vec<LifecycleRun>>,
 }
 
 #[async_trait::async_trait]
-impl LifecycleRunRepository for MemoryLifecycleRunRepository {
+impl LifecycleRunRepository for FixtureLifecycleRunRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         self.runs.lock().await.push(run.clone());
         Ok(())
@@ -874,12 +874,12 @@ impl LifecycleRunRepository for MemoryLifecycleRunRepository {
 }
 
 #[derive(Default)]
-struct MemoryProjectBackendAccessRepository {
+struct FixtureProjectBackendAccessRepository {
     accesses: Mutex<Vec<ProjectBackendAccess>>,
 }
 
 #[async_trait::async_trait]
-impl ProjectBackendAccessRepository for MemoryProjectBackendAccessRepository {
+impl ProjectBackendAccessRepository for FixtureProjectBackendAccessRepository {
     async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
         self.accesses.lock().await.push(access.clone());
         Ok(())
@@ -994,13 +994,13 @@ impl ProjectBackendAccessRepository for MemoryProjectBackendAccessRepository {
 }
 
 #[derive(Default)]
-struct MemoryMailboxRepository {
+struct FixtureMailboxRepository {
     messages: Mutex<Vec<AgentRunMailboxMessage>>,
     states: Mutex<Vec<AgentRunMailboxState>>,
     cleaned: Mutex<Vec<Uuid>>,
 }
 
-impl MemoryMailboxRepository {
+impl FixtureMailboxRepository {
     async fn insert(&self, message: AgentRunMailboxMessage) {
         self.messages.lock().await.push(message);
     }
@@ -1033,7 +1033,7 @@ impl MemoryMailboxRepository {
 }
 
 #[async_trait::async_trait]
-impl AgentRunMailboxRepository for MemoryMailboxRepository {
+impl AgentRunMailboxRepository for FixtureMailboxRepository {
     async fn create_message(
         &self,
         message: NewAgentRunMailboxMessage,

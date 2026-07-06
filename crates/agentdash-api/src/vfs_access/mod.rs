@@ -10,13 +10,13 @@ mod tests {
     use agentdash_spi::{MountCapability, Vfs};
 
     use agentdash_agent::AgentTool;
-    use agentdash_domain::common::error::DomainError;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
     use agentdash_relay::RelayMessage;
+    use agentdash_test_support::inline_file::MemoryInlineFileRepository;
     use async_trait::async_trait;
     use base64::Engine;
     use chrono::Utc;
-    use tokio::sync::{Mutex, mpsc};
+    use tokio::sync::mpsc;
 
     use agentdash_application_vfs::tools::fs::{
         FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
@@ -86,156 +86,6 @@ mod tests {
         Arc::new(MountProviderRegistry::new())
     }
 
-    /// 内存中的 InlineFileRepository，用于测试
-    #[derive(Default, Clone)]
-    struct MemoryInlineFileRepo {
-        files: Arc<Mutex<Vec<InlineFile>>>,
-    }
-
-    impl MemoryInlineFileRepo {
-        fn new_with_files(files: Vec<InlineFile>) -> Self {
-            Self {
-                files: Arc::new(Mutex::new(files)),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl InlineFileRepository for MemoryInlineFileRepo {
-        async fn get_file(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: uuid::Uuid,
-            container_id: &str,
-            path: &str,
-        ) -> Result<Option<InlineFile>, DomainError> {
-            let files = self.files.lock().await;
-            Ok(files
-                .iter()
-                .find(|f| {
-                    f.owner_kind == owner_kind
-                        && f.owner_id == owner_id
-                        && f.container_id == container_id
-                        && f.path == path
-                })
-                .cloned())
-        }
-
-        async fn list_files(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: uuid::Uuid,
-            container_id: &str,
-        ) -> Result<Vec<InlineFile>, DomainError> {
-            let files = self.files.lock().await;
-            Ok(files
-                .iter()
-                .filter(|f| {
-                    f.owner_kind == owner_kind
-                        && f.owner_id == owner_id
-                        && f.container_id == container_id
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn list_files_by_owner(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: uuid::Uuid,
-        ) -> Result<Vec<InlineFile>, DomainError> {
-            let files = self.files.lock().await;
-            Ok(files
-                .iter()
-                .filter(|f| f.owner_kind == owner_kind && f.owner_id == owner_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn upsert_file(&self, file: &InlineFile) -> Result<(), DomainError> {
-            let mut files = self.files.lock().await;
-            if let Some(existing) = files.iter_mut().find(|f| {
-                f.owner_kind == file.owner_kind
-                    && f.owner_id == file.owner_id
-                    && f.container_id == file.container_id
-                    && f.path == file.path
-            }) {
-                existing.content = file.content.clone();
-                existing.size_bytes = file.size_bytes;
-                existing.updated_at = file.updated_at;
-            } else {
-                files.push(file.clone());
-            }
-            Ok(())
-        }
-
-        async fn upsert_files(&self, new_files: &[InlineFile]) -> Result<(), DomainError> {
-            for file in new_files {
-                self.upsert_file(file).await?;
-            }
-            Ok(())
-        }
-
-        async fn delete_file(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: uuid::Uuid,
-            container_id: &str,
-            path: &str,
-        ) -> Result<(), DomainError> {
-            let mut files = self.files.lock().await;
-            files.retain(|f| {
-                !(f.owner_kind == owner_kind
-                    && f.owner_id == owner_id
-                    && f.container_id == container_id
-                    && f.path == path)
-            });
-            Ok(())
-        }
-
-        async fn delete_by_container(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: uuid::Uuid,
-            container_id: &str,
-        ) -> Result<(), DomainError> {
-            let mut files = self.files.lock().await;
-            files.retain(|f| {
-                !(f.owner_kind == owner_kind
-                    && f.owner_id == owner_id
-                    && f.container_id == container_id)
-            });
-            Ok(())
-        }
-
-        async fn delete_by_owner(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: uuid::Uuid,
-        ) -> Result<(), DomainError> {
-            let mut files = self.files.lock().await;
-            files.retain(|f| !(f.owner_kind == owner_kind && f.owner_id == owner_id));
-            Ok(())
-        }
-
-        async fn count_files(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: uuid::Uuid,
-            container_id: &str,
-        ) -> Result<i64, DomainError> {
-            let files = self.files.lock().await;
-            Ok(files
-                .iter()
-                .filter(|f| {
-                    f.owner_kind == owner_kind
-                        && f.owner_id == owner_id
-                        && f.container_id == container_id
-                })
-                .count() as i64)
-        }
-    }
-
     fn mount_registry_with_inline_fs_repo(
         repo: Arc<dyn InlineFileRepository>,
     ) -> Arc<MountProviderRegistry> {
@@ -244,7 +94,6 @@ mod tests {
         Arc::new(registry)
     }
 
-    /// 构建带 owner 坐标的 inline mount（模拟 build_derived_vfs 的输出）
     fn make_inline_mount_with_owner(
         mount_id: &str,
         container_id: &str,
@@ -385,7 +234,7 @@ mod tests {
     async fn inline_mount_supports_read_list_and_search() {
         let owner_id = uuid::Uuid::new_v4();
         let container_id = "story-brief";
-        let repo = MemoryInlineFileRepo::new_with_files(vec![
+        let repo = MemoryInlineFileRepository::new_with_files(vec![
             InlineFile::new(
                 InlineFileOwnerKind::Project,
                 owner_id,
@@ -472,7 +321,7 @@ mod tests {
     async fn inline_mount_supports_apply_patch_via_overlay() {
         let owner_id = uuid::Uuid::new_v4();
         let container_id = "story-brief";
-        let repo = MemoryInlineFileRepo::new_with_files(vec![
+        let repo = MemoryInlineFileRepository::new_with_files(vec![
             InlineFile::new(
                 InlineFileOwnerKind::Project,
                 owner_id,

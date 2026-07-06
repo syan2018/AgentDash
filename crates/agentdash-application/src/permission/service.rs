@@ -403,12 +403,12 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[derive(Default)]
-    struct InMemoryGrantRepo {
+    struct FixtureGrantRepo {
         items: Mutex<Vec<PermissionGrant>>,
     }
 
     #[async_trait::async_trait]
-    impl PermissionGrantRepository for InMemoryGrantRepo {
+    impl PermissionGrantRepository for FixtureGrantRepo {
         async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
             self.items.lock().await.push(grant.clone());
             Ok(())
@@ -542,12 +542,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryFrameRepo {
+    struct FixtureFrameRepo {
         items: Mutex<Vec<AgentFrame>>,
     }
 
     #[async_trait::async_trait]
-    impl AgentFrameRepository for InMemoryFrameRepo {
+    impl AgentFrameRepository for FixtureFrameRepo {
         async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
             self.items.lock().await.push(frame.clone());
             Ok(())
@@ -593,13 +593,13 @@ mod tests {
     }
 
     impl TestSurfaceBoundary {
-        fn new(_frame_repo: Arc<InMemoryFrameRepo>) -> Self {
+        fn new(_frame_repo: Arc<FixtureFrameRepo>) -> Self {
             Self {
                 fail_adoption: false,
             }
         }
 
-        fn failing(_frame_repo: Arc<InMemoryFrameRepo>) -> Self {
+        fn failing(_frame_repo: Arc<FixtureFrameRepo>) -> Self {
             Self {
                 fail_adoption: true,
             }
@@ -623,8 +623,8 @@ mod tests {
     }
 
     fn permission_service(
-        grant_repo: Arc<InMemoryGrantRepo>,
-        frame_repo: Arc<InMemoryFrameRepo>,
+        grant_repo: Arc<FixtureGrantRepo>,
+        frame_repo: Arc<FixtureFrameRepo>,
     ) -> PermissionGrantService {
         PermissionGrantService::new_with_runtime_surface_updates(
             grant_repo,
@@ -635,16 +635,12 @@ mod tests {
         )
     }
 
-    async fn pending_grant(
-        repo: &InMemoryGrantRepo,
-        frame_id: Uuid,
-        path: &str,
-    ) -> PermissionGrant {
+    async fn pending_grant(repo: &FixtureGrantRepo, frame_id: Uuid, path: &str) -> PermissionGrant {
         pending_grant_with_ttl(repo, frame_id, path, None).await
     }
 
     async fn pending_grant_with_ttl(
-        repo: &InMemoryGrantRepo,
+        repo: &FixtureGrantRepo,
         frame_id: Uuid,
         path: &str,
         ttl_seconds: Option<u64>,
@@ -672,8 +668,8 @@ mod tests {
 
     #[tokio::test]
     async fn approve_writes_agent_frame_capability_revision() {
-        let grant_repo = Arc::new(InMemoryGrantRepo::default());
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let grant_repo = Arc::new(FixtureGrantRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         let agent_id = Uuid::new_v4();
         let initial_frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("runtime-session-1")
@@ -713,8 +709,8 @@ mod tests {
     /// primary query anchor, while `source_runtime_session_id` is audit-only provenance.
     #[tokio::test]
     async fn list_active_by_frame_groups_by_effect_frame_not_session() {
-        let grant_repo = Arc::new(InMemoryGrantRepo::default());
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let grant_repo = Arc::new(FixtureGrantRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         let agent_id = Uuid::new_v4();
         let initial_frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("session-a")
@@ -773,8 +769,8 @@ mod tests {
 
     #[tokio::test]
     async fn revoke_writes_agent_frame_capability_revision() {
-        let grant_repo = Arc::new(InMemoryGrantRepo::default());
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let grant_repo = Arc::new(FixtureGrantRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         let agent_id = Uuid::new_v4();
         let initial_frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("runtime-session-1")
@@ -809,8 +805,8 @@ mod tests {
 
     #[tokio::test]
     async fn approve_returns_visible_error_after_grant_state_success_when_adoption_fails() {
-        let grant_repo = Arc::new(InMemoryGrantRepo::default());
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let grant_repo = Arc::new(FixtureGrantRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         let agent_id = Uuid::new_v4();
         let initial_frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("runtime-session-1")
@@ -855,8 +851,8 @@ mod tests {
 
     #[tokio::test]
     async fn approve_tool_level_grant_uses_admission_projection_without_frame_revision() {
-        let grant_repo = Arc::new(InMemoryGrantRepo::default());
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let grant_repo = Arc::new(FixtureGrantRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         let agent_id = Uuid::new_v4();
         let initial_frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("runtime-session-1")
@@ -904,8 +900,8 @@ mod tests {
 
     #[tokio::test]
     async fn expire_tool_level_grant_revokes_admission_without_frame_revision() {
-        let grant_repo = Arc::new(InMemoryGrantRepo::default());
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let grant_repo = Arc::new(FixtureGrantRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         let agent_id = Uuid::new_v4();
         let initial_frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("runtime-session-1")
@@ -960,8 +956,8 @@ mod tests {
 
     #[tokio::test]
     async fn expire_overdue_with_agent_run_effects_applies_each_grant_classification() {
-        let grant_repo = Arc::new(InMemoryGrantRepo::default());
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let grant_repo = Arc::new(FixtureGrantRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         let agent_id = Uuid::new_v4();
         let initial_frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("runtime-session-1")
@@ -1050,8 +1046,8 @@ mod tests {
 
     #[tokio::test]
     async fn expire_overdue_with_agent_run_effects_expires_scope_escalated_grant() {
-        let grant_repo = Arc::new(InMemoryGrantRepo::default());
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let grant_repo = Arc::new(FixtureGrantRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         let agent_id = Uuid::new_v4();
         let initial_frame = AgentFrameBuilder::new(agent_id)
             .with_runtime_session("runtime-session-1")

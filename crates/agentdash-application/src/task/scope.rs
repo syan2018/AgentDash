@@ -128,12 +128,12 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[derive(Default)]
-    struct InMemoryAnchorRepo {
+    struct FixtureAnchorRepo {
         anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for InMemoryAnchorRepo {
+    impl RuntimeSessionExecutionAnchorRepository for FixtureAnchorRepo {
         async fn create_once(
             &self,
             anchor: &RuntimeSessionExecutionAnchor,
@@ -217,12 +217,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryAgentRepo {
+    struct FixtureAgentRepo {
         agents: Mutex<Vec<LifecycleAgent>>,
     }
 
     #[async_trait]
-    impl LifecycleAgentRepository for InMemoryAgentRepo {
+    impl LifecycleAgentRepository for FixtureAgentRepo {
         async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
             self.agents.lock().await.push(agent.clone());
             Ok(())
@@ -265,8 +265,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolver_maps_runtime_session_anchor_to_task_plan_scope() {
-        let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
-        let agent_repo = Arc::new(InMemoryAgentRepo::default());
+        let anchor_repo = Arc::new(FixtureAnchorRepo::default());
+        let agent_repo = Arc::new(FixtureAgentRepo::default());
         let resolver = AgentRunTaskScopeResolver::new(anchor_repo.clone(), agent_repo.clone());
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();

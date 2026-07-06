@@ -300,12 +300,12 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct MemoryBackendStore {
+    struct FixtureBackendStore {
         backends: Mutex<HashMap<String, BackendConfig>>,
     }
 
     #[async_trait::async_trait]
-    impl BackendRepository for MemoryBackendStore {
+    impl BackendRepository for FixtureBackendStore {
         async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
             self.backends
                 .lock()
@@ -364,13 +364,13 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryProjectStore {
+    struct FixtureProjectStore {
         projects: Mutex<HashMap<Uuid, Project>>,
         grants: Mutex<HashMap<(Uuid, ProjectSubjectType, String), ProjectSubjectGrant>>,
     }
 
     #[async_trait::async_trait]
-    impl ProjectRepository for MemoryProjectStore {
+    impl ProjectRepository for FixtureProjectStore {
         async fn create(&self, project: &Project) -> Result<(), DomainError> {
             self.projects
                 .lock()
@@ -455,18 +455,18 @@ mod tests {
     };
 
     #[derive(Default)]
-    struct MemoryAccessStore {
+    struct FixtureAccessStore {
         accesses: Mutex<Vec<ProjectBackendAccess>>,
     }
 
-    impl MemoryAccessStore {
+    impl FixtureAccessStore {
         fn insert(&self, access: ProjectBackendAccess) {
             self.accesses.lock().expect("lock").push(access);
         }
     }
 
     #[async_trait::async_trait]
-    impl ProjectBackendAccessRepository for MemoryAccessStore {
+    impl ProjectBackendAccessRepository for FixtureAccessStore {
         async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
             self.insert(access.clone());
             Ok(())
@@ -637,8 +637,8 @@ mod tests {
 
     #[tokio::test]
     async fn enterprise_user_only_sees_owned_or_scoped_backends() {
-        let backend_store = MemoryBackendStore::default();
-        let project_store = MemoryProjectStore::default();
+        let backend_store = FixtureBackendStore::default();
+        let project_store = FixtureProjectStore::default();
         backend_store
             .add_backend(&backend("alice-runtime", Some("alice")))
             .await
@@ -648,7 +648,7 @@ mod tests {
             .await
             .expect("insert bob");
 
-        let access_store = MemoryAccessStore::default();
+        let access_store = FixtureAccessStore::default();
         let service =
             BackendAuthorizationService::new(&backend_store, &project_store, &access_store);
         let visible = service
@@ -665,8 +665,8 @@ mod tests {
 
     #[tokio::test]
     async fn project_editor_can_manage_project_scoped_backend() {
-        let backend_store = MemoryBackendStore::default();
-        let project_store = MemoryProjectStore::default();
+        let backend_store = FixtureBackendStore::default();
+        let project_store = FixtureProjectStore::default();
         let project = project();
         project_store
             .create(&project)
@@ -691,7 +691,7 @@ mod tests {
             .await
             .expect("insert backend");
 
-        let access_store = MemoryAccessStore::default();
+        let access_store = FixtureAccessStore::default();
         let service =
             BackendAuthorizationService::new(&backend_store, &project_store, &access_store);
         service
@@ -707,9 +707,9 @@ mod tests {
     #[test]
     fn personal_mode_can_manage_global_backend_scope() {
         assert!(BackendAuthorizationService::<
-            MemoryBackendStore,
-            MemoryProjectStore,
-            MemoryAccessStore,
+            FixtureBackendStore,
+            FixtureProjectStore,
+            FixtureAccessStore,
         >::can_manage_global_scope(&identity(
             "local",
             &[],
@@ -731,9 +731,9 @@ mod tests {
     /// owner 放行 / 非 owner 无 grant 拒绝 / 非 owner 有 active grant 放行 / grant 撤销后拒绝。
     #[tokio::test]
     async fn user_scoped_backend_grant_auth_covers_four_cases() {
-        let backend_store = MemoryBackendStore::default();
-        let project_store = MemoryProjectStore::default();
-        let access_store = MemoryAccessStore::default();
+        let backend_store = FixtureBackendStore::default();
+        let project_store = FixtureProjectStore::default();
+        let access_store = FixtureAccessStore::default();
 
         // runner backend 归 owner 用户所有（User scope）。
         let runner_backend = user_scoped_shared_backend("runner-backend", "owner-user");

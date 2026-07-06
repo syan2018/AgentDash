@@ -732,8 +732,8 @@ mod workspace_placement_tests {
     async fn register_backend_inventory_detects_and_upserts_manual_inventory() {
         let project_id = Uuid::new_v4();
         let access = ProjectBackendAccess::new(project_id, "backend-a".to_string(), None);
-        let access_repo = Arc::new(InMemoryAccessRepository::with_access(access.clone()));
-        let inventory_repo = Arc::new(InMemoryInventoryRepository::default());
+        let access_repo = Arc::new(FixtureAccessRepository::with_access(access.clone()));
+        let inventory_repo = Arc::new(FixtureInventoryRepository::default());
         let runtime = Arc::new(FakePlacementRuntime::with_detection(detection(
             &access.backend_id,
             "D:/work",
@@ -775,8 +775,8 @@ mod workspace_placement_tests {
             "D:/work",
         )));
         let service = service_with_repos(
-            Arc::new(InMemoryAccessRepository::with_access(access.clone())),
-            Arc::new(InMemoryInventoryRepository::default()),
+            Arc::new(FixtureAccessRepository::with_access(access.clone())),
+            Arc::new(FixtureInventoryRepository::default()),
             runtime.clone(),
         );
 
@@ -803,8 +803,8 @@ mod workspace_placement_tests {
             "D:/work",
         )));
         let service = service_with_repos(
-            Arc::new(InMemoryAccessRepository::with_access(access.clone())),
-            Arc::new(InMemoryInventoryRepository::default()),
+            Arc::new(FixtureAccessRepository::with_access(access.clone())),
+            Arc::new(FixtureInventoryRepository::default()),
             runtime.clone(),
         );
 
@@ -831,8 +831,8 @@ mod workspace_placement_tests {
             "D:/work",
         )));
         let service = service_with_repos(
-            Arc::new(InMemoryAccessRepository::with_access(access.clone())),
-            Arc::new(InMemoryInventoryRepository::default()),
+            Arc::new(FixtureAccessRepository::with_access(access.clone())),
+            Arc::new(FixtureInventoryRepository::default()),
             runtime.clone(),
         );
 
@@ -854,19 +854,19 @@ mod workspace_placement_tests {
     async fn create_workspace_infers_identity_from_binding_and_upserts_inventory() {
         let project_id = Uuid::new_v4();
         let access = ProjectBackendAccess::new(project_id, "backend-a".to_string(), None);
-        let workspace_repo = Arc::new(InMemoryWorkspaceRepository::default());
-        let inventory_repo = Arc::new(InMemoryInventoryRepository::default());
+        let workspace_repo = Arc::new(FixtureWorkspaceRepository::default());
+        let inventory_repo = Arc::new(FixtureInventoryRepository::default());
         let runtime = Arc::new(FakePlacementRuntime::with_detection(detection(
             &access.backend_id,
             "D:/work",
         )));
         let service = WorkspacePlacementService::from_repositories(
             workspace_repo.clone(),
-            Arc::new(InMemoryBackendRepository::with_backend(backend_config(
+            Arc::new(FixtureBackendRepository::with_backend(backend_config(
                 "backend-a",
                 BackendType::Local,
             ))),
-            Arc::new(InMemoryAccessRepository::with_access(access.clone())),
+            Arc::new(FixtureAccessRepository::with_access(access.clone())),
             inventory_repo.clone(),
             runtime.clone(),
         );
@@ -911,21 +911,21 @@ mod workspace_placement_tests {
             serde_json::json!({ "match_mode": "path_key", "path_key": "d:/work" }),
             WorkspaceResolutionPolicy::PreferOnline,
         );
-        let workspace_repo = Arc::new(InMemoryWorkspaceRepository::with_workspace(
+        let workspace_repo = Arc::new(FixtureWorkspaceRepository::with_workspace(
             workspace.clone(),
         ));
-        let inventory_repo = Arc::new(InMemoryInventoryRepository::default());
+        let inventory_repo = Arc::new(FixtureInventoryRepository::default());
         let runtime = Arc::new(FakePlacementRuntime::with_detection(detection(
             &access.backend_id,
             "D:/work",
         )));
         let service = WorkspacePlacementService::from_repositories(
             workspace_repo.clone(),
-            Arc::new(InMemoryBackendRepository::with_backend(backend_config(
+            Arc::new(FixtureBackendRepository::with_backend(backend_config(
                 "backend-a",
                 BackendType::Local,
             ))),
-            Arc::new(InMemoryAccessRepository::with_access(access.clone())),
+            Arc::new(FixtureAccessRepository::with_access(access.clone())),
             inventory_repo.clone(),
             runtime.clone(),
         );
@@ -962,19 +962,19 @@ mod workspace_placement_tests {
     async fn create_workspace_rejects_identity_mismatch_without_writes() {
         let project_id = Uuid::new_v4();
         let access = ProjectBackendAccess::new(project_id, "backend-a".to_string(), None);
-        let workspace_repo = Arc::new(InMemoryWorkspaceRepository::default());
-        let inventory_repo = Arc::new(InMemoryInventoryRepository::default());
+        let workspace_repo = Arc::new(FixtureWorkspaceRepository::default());
+        let inventory_repo = Arc::new(FixtureInventoryRepository::default());
         let runtime = Arc::new(FakePlacementRuntime::with_detection(detection(
             &access.backend_id,
             "D:/work",
         )));
         let service = WorkspacePlacementService::from_repositories(
             workspace_repo.clone(),
-            Arc::new(InMemoryBackendRepository::with_backend(backend_config(
+            Arc::new(FixtureBackendRepository::with_backend(backend_config(
                 "backend-a",
                 BackendType::Local,
             ))),
-            Arc::new(InMemoryAccessRepository::with_access(access.clone())),
+            Arc::new(FixtureAccessRepository::with_access(access.clone())),
             inventory_repo.clone(),
             runtime.clone(),
         );
@@ -1019,21 +1019,21 @@ mod workspace_placement_tests {
             serde_json::json!({ "match_mode": "path_key", "path_key": "d:/work" }),
             WorkspaceResolutionPolicy::PreferOnline,
         );
-        let workspace_repo = Arc::new(InMemoryWorkspaceRepository::with_workspace(
+        let workspace_repo = Arc::new(FixtureWorkspaceRepository::with_workspace(
             workspace.clone(),
         ));
-        let inventory_repo = Arc::new(InMemoryInventoryRepository::default());
+        let inventory_repo = Arc::new(FixtureInventoryRepository::default());
         let runtime = Arc::new(FakePlacementRuntime::with_detection(detection(
             &access.backend_id,
             "D:/work",
         )));
         let service = WorkspacePlacementService::from_repositories(
             workspace_repo.clone(),
-            Arc::new(InMemoryBackendRepository::with_backend(backend_config(
+            Arc::new(FixtureBackendRepository::with_backend(backend_config(
                 "backend-a",
                 BackendType::Local,
             ))),
-            Arc::new(InMemoryAccessRepository::with_access(access.clone())),
+            Arc::new(FixtureAccessRepository::with_access(access.clone())),
             inventory_repo.clone(),
             runtime.clone(),
         );
@@ -1076,8 +1076,8 @@ mod workspace_placement_tests {
         runtime: Arc<dyn WorkspacePlacementRuntime>,
     ) -> WorkspacePlacementService {
         WorkspacePlacementService::from_repositories(
-            Arc::new(InMemoryWorkspaceRepository::default()),
-            Arc::new(InMemoryBackendRepository::with_backend(backend_config(
+            Arc::new(FixtureWorkspaceRepository::default()),
+            Arc::new(FixtureBackendRepository::with_backend(backend_config(
                 "backend-a",
                 BackendType::Local,
             ))),
@@ -1088,11 +1088,11 @@ mod workspace_placement_tests {
     }
 
     #[derive(Default)]
-    struct InMemoryAccessRepository {
+    struct FixtureAccessRepository {
         accesses: Mutex<HashMap<Uuid, ProjectBackendAccess>>,
     }
 
-    impl InMemoryAccessRepository {
+    impl FixtureAccessRepository {
         fn with_access(access: ProjectBackendAccess) -> Self {
             Self {
                 accesses: Mutex::new(HashMap::from([(access.id, access)])),
@@ -1101,7 +1101,7 @@ mod workspace_placement_tests {
     }
 
     #[async_trait]
-    impl ProjectBackendAccessRepository for InMemoryAccessRepository {
+    impl ProjectBackendAccessRepository for FixtureAccessRepository {
         async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
             self.accesses.lock().await.insert(access.id, access.clone());
             Ok(())
@@ -1195,12 +1195,12 @@ mod workspace_placement_tests {
     }
 
     #[derive(Default)]
-    struct InMemoryInventoryRepository {
+    struct FixtureInventoryRepository {
         items: Mutex<Vec<BackendWorkspaceInventory>>,
     }
 
     #[async_trait]
-    impl BackendWorkspaceInventoryRepository for InMemoryInventoryRepository {
+    impl BackendWorkspaceInventoryRepository for FixtureInventoryRepository {
         async fn upsert(&self, item: &BackendWorkspaceInventory) -> Result<(), DomainError> {
             self.items.lock().await.push(item.clone());
             Ok(())
@@ -1244,11 +1244,11 @@ mod workspace_placement_tests {
     }
 
     #[derive(Default)]
-    struct InMemoryWorkspaceRepository {
+    struct FixtureWorkspaceRepository {
         workspaces: Mutex<HashMap<Uuid, Workspace>>,
     }
 
-    impl InMemoryWorkspaceRepository {
+    impl FixtureWorkspaceRepository {
         fn with_workspace(workspace: Workspace) -> Self {
             Self {
                 workspaces: Mutex::new(HashMap::from([(workspace.id, workspace)])),
@@ -1257,7 +1257,7 @@ mod workspace_placement_tests {
     }
 
     #[async_trait]
-    impl WorkspaceRepository for InMemoryWorkspaceRepository {
+    impl WorkspaceRepository for FixtureWorkspaceRepository {
         async fn create(&self, workspace: &Workspace) -> Result<(), DomainError> {
             self.workspaces
                 .lock()
@@ -1296,11 +1296,11 @@ mod workspace_placement_tests {
     }
 
     #[derive(Default)]
-    struct InMemoryBackendRepository {
+    struct FixtureBackendRepository {
         backends: Mutex<HashMap<String, BackendConfig>>,
     }
 
-    impl InMemoryBackendRepository {
+    impl FixtureBackendRepository {
         fn with_backend(backend: BackendConfig) -> Self {
             Self {
                 backends: Mutex::new(HashMap::from([(backend.id.clone(), backend)])),
@@ -1309,7 +1309,7 @@ mod workspace_placement_tests {
     }
 
     #[async_trait]
-    impl BackendRepository for InMemoryBackendRepository {
+    impl BackendRepository for FixtureBackendRepository {
         async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
             self.backends
                 .lock()

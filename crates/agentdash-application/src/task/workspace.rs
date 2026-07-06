@@ -835,12 +835,12 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[derive(Default)]
-    struct InMemoryLifecycleRunRepo {
+    struct FixtureLifecycleRunRepo {
         runs: Mutex<Vec<LifecycleRun>>,
     }
 
     #[async_trait]
-    impl LifecycleRunRepository for InMemoryLifecycleRunRepo {
+    impl LifecycleRunRepository for FixtureLifecycleRunRepo {
         async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             self.runs.lock().await.push(run.clone());
             Ok(())
@@ -901,12 +901,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryAssociationRepo {
+    struct FixtureAssociationRepo {
         associations: Mutex<Vec<LifecycleSubjectAssociation>>,
     }
 
     #[async_trait]
-    impl LifecycleSubjectAssociationRepository for InMemoryAssociationRepo {
+    impl LifecycleSubjectAssociationRepository for FixtureAssociationRepo {
         async fn create(&self, assoc: &LifecycleSubjectAssociation) -> Result<(), DomainError> {
             self.associations.lock().await.push(assoc.clone());
             Ok(())
@@ -1018,8 +1018,8 @@ mod tests {
 
     #[tokio::test]
     async fn workspace_apply_and_read_cover_task_plan_without_tool_json() {
-        let lifecycle_repo = InMemoryLifecycleRunRepo::default();
-        let association_repo = InMemoryAssociationRepo::default();
+        let lifecycle_repo = FixtureLifecycleRunRepo::default();
+        let association_repo = FixtureAssociationRepo::default();
         let project_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let run = LifecycleRun::new_plain(project_id);

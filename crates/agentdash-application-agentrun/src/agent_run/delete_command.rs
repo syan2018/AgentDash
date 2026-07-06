@@ -162,13 +162,13 @@ mod tests {
     use crate::test_support::MemoryAgentRunDeliveryBindingRepository;
 
     #[derive(Default)]
-    struct MemoryRunRepo {
+    struct FixtureRunRepo {
         runs: Mutex<Vec<LifecycleRun>>,
         deleted: Mutex<Vec<Uuid>>,
     }
 
     #[async_trait]
-    impl LifecycleRunRepository for MemoryRunRepo {
+    impl LifecycleRunRepository for FixtureRunRepo {
         async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             self.runs.lock().await.push(run.clone());
             Ok(())
@@ -225,12 +225,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryAnchorRepo {
+    struct FixtureAnchorRepo {
         anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
+    impl RuntimeSessionExecutionAnchorRepository for FixtureAnchorRepo {
         async fn create_once(
             &self,
             anchor: &RuntimeSessionExecutionAnchor,
@@ -355,8 +355,8 @@ mod tests {
     }
 
     struct Fixture {
-        runs: MemoryRunRepo,
-        anchors: MemoryAnchorRepo,
+        runs: FixtureRunRepo,
+        anchors: FixtureAnchorRepo,
         delivery_bindings: MemoryAgentRunDeliveryBindingRepository,
         core: Arc<TestCorePort>,
     }
@@ -364,8 +364,8 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             Self {
-                runs: MemoryRunRepo::default(),
-                anchors: MemoryAnchorRepo::default(),
+                runs: FixtureRunRepo::default(),
+                anchors: FixtureAnchorRepo::default(),
                 delivery_bindings: MemoryAgentRunDeliveryBindingRepository::default(),
                 core: Arc::new(TestCorePort::default()),
             }

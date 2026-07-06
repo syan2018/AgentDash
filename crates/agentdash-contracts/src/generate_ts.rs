@@ -77,10 +77,13 @@ use agentdash_contracts::extension_package::{
     ImportExtensionPackageResponse, InstallExtensionPackageArtifactRequest,
 };
 use agentdash_contracts::extension_runtime::{
-    ExtensionBundleKindResponse, ExtensionBundleProjectionResponse,
-    ExtensionCommandHandlerResponse, ExtensionCommandProjectionResponse,
-    ExtensionDependencyDeclarationResponse, ExtensionDependencyProjectionResponse,
-    ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
+    ExtensionBackendServiceProjectionResponse, ExtensionBundleKindResponse,
+    ExtensionBundleProjectionResponse, ExtensionCommandHandlerResponse,
+    ExtensionCommandProjectionResponse, ExtensionDependencyDeclarationResponse,
+    ExtensionDependencyProjectionResponse, ExtensionFetchRouteProjectionResponse,
+    ExtensionFetchRouteTargetResponse, ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
+    ExtensionGeneratedOperationDispatchResponse, ExtensionGeneratedOperationProjectionResponse,
+    ExtensionGeneratedOperationProvenanceResponse, ExtensionGeneratedOperationVisibilityResponse,
     ExtensionInstallationProjectionResponse, ExtensionInstalledAssetSourceResponse,
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
@@ -225,9 +228,9 @@ use agentdash_contracts::workspace::{
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
-    WorkspaceModuleOperationReadinessKind, WorkspaceModulePresentRequest,
-    WorkspaceModulePresentation, WorkspaceModuleStatus, WorkspaceModuleStatusKind,
-    WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+    WorkspaceModuleOperationReadinessKind, WorkspaceModuleOperationVisibility,
+    WorkspaceModulePresentRequest, WorkspaceModulePresentation, WorkspaceModuleStatus,
+    WorkspaceModuleStatusKind, WorkspaceModuleSummary, WorkspaceModuleUiEntry,
 };
 use ts_rs::TS;
 
@@ -872,6 +875,13 @@ fn main() {
             export_all::<ExtensionPermissionAccessResponse>(dir);
             export_all::<ExtensionProcessPermissionAccessResponse>(dir);
             export_all::<ExtensionBundleKindResponse>(dir);
+            export_all::<ExtensionGeneratedOperationVisibilityResponse>(dir);
+            export_all::<ExtensionGeneratedOperationDispatchResponse>(dir);
+            export_all::<ExtensionGeneratedOperationProvenanceResponse>(dir);
+            export_all::<ExtensionGeneratedOperationProjectionResponse>(dir);
+            export_all::<ExtensionFetchRouteTargetResponse>(dir);
+            export_all::<ExtensionFetchRouteProjectionResponse>(dir);
+            export_all::<ExtensionBackendServiceProjectionResponse>(dir);
             export_all::<ExtensionCommandHandlerResponse>(dir);
             export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
             export_all::<ExtensionWorkspaceTabRendererResponse>(dir);
@@ -916,6 +926,7 @@ fn main() {
             export_all::<WorkspaceModuleSummary>(dir);
             export_all::<WorkspaceModuleUiEntry>(dir);
             export_all::<WorkspaceModuleCanvasHostAction>(dir);
+            export_all::<WorkspaceModuleOperationVisibility>(dir);
             export_all::<WorkspaceModuleOperationDispatch>(dir);
             export_all::<WorkspaceModuleOperationReadinessKind>(dir);
             export_all::<WorkspaceModuleOperationReadiness>(dir);

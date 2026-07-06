@@ -1,5 +1,8 @@
-use agentdash_application::extension_runtime::ExtensionRuntimeProjection;
-use agentdash_application::extension_runtime::ExtensionWorkspaceTabLoadabilityMode;
+use agentdash_application::extension_runtime::{
+    ExtensionFetchRouteTargetProjection, ExtensionGeneratedOperationDispatch,
+    ExtensionGeneratedOperationVisibility, ExtensionRuntimeProjection,
+    ExtensionWorkspaceTabLoadabilityMode,
+};
 use agentdash_domain::shared_library::{
     ExtensionBundleKind, ExtensionCommandHandler, ExtensionDependencyDeclaration,
     ExtensionFlagType, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
@@ -8,10 +11,13 @@ use agentdash_domain::shared_library::{
 };
 
 pub use agentdash_contracts::extension_runtime::{
-    ExtensionBundleKindResponse, ExtensionBundleProjectionResponse,
-    ExtensionCommandHandlerResponse, ExtensionCommandProjectionResponse,
-    ExtensionDependencyDeclarationResponse, ExtensionDependencyProjectionResponse,
-    ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
+    ExtensionBackendServiceProjectionResponse, ExtensionBundleKindResponse,
+    ExtensionBundleProjectionResponse, ExtensionCommandHandlerResponse,
+    ExtensionCommandProjectionResponse, ExtensionDependencyDeclarationResponse,
+    ExtensionDependencyProjectionResponse, ExtensionFetchRouteProjectionResponse,
+    ExtensionFetchRouteTargetResponse, ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
+    ExtensionGeneratedOperationDispatchResponse, ExtensionGeneratedOperationProjectionResponse,
+    ExtensionGeneratedOperationProvenanceResponse, ExtensionGeneratedOperationVisibilityResponse,
     ExtensionInstallationProjectionResponse, ExtensionInstalledAssetSourceResponse,
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
@@ -210,6 +216,107 @@ pub fn extension_runtime_projection_response(
                 digest: bundle.digest,
             })
             .collect(),
+        fetch_routes: projection
+            .fetch_routes
+            .into_iter()
+            .map(|route| ExtensionFetchRouteProjectionResponse {
+                extension_key: route.extension_key,
+                extension_id: route.extension_id,
+                route_key: route.route_key,
+                pattern: route.pattern,
+                panel_only: route.panel_only,
+                target: extension_fetch_route_target_response(route.target),
+            })
+            .collect(),
+        operation_catalog: projection
+            .operation_catalog
+            .into_iter()
+            .map(|operation| ExtensionGeneratedOperationProjectionResponse {
+                extension_key: operation.extension_key,
+                extension_id: operation.extension_id,
+                operation_key: operation.operation_key,
+                description: operation.description,
+                visibility: extension_operation_visibility_response(operation.visibility),
+                input_schema: operation.input_schema,
+                output_schema: operation.output_schema,
+                permission_summary: operation.permission_summary,
+                dispatch: extension_operation_dispatch_response(operation.dispatch),
+                provenance: ExtensionGeneratedOperationProvenanceResponse {
+                    capability_key: operation.provenance.capability_key,
+                    exposure_key: operation.provenance.exposure_key,
+                    generated_from: operation.provenance.generated_from,
+                },
+            })
+            .collect(),
+        backend_services: projection
+            .backend_services
+            .into_iter()
+            .map(|service| ExtensionBackendServiceProjectionResponse {
+                extension_key: service.extension_key,
+                extension_id: service.extension_id,
+                service_key: service.service_key,
+                runtime: service.runtime,
+                entry: service.entry,
+                routes: service.routes,
+                health_path: service.health_path,
+            })
+            .collect(),
+    }
+}
+
+fn extension_operation_visibility_response(
+    visibility: ExtensionGeneratedOperationVisibility,
+) -> ExtensionGeneratedOperationVisibilityResponse {
+    match visibility {
+        ExtensionGeneratedOperationVisibility::PanelOnly => {
+            ExtensionGeneratedOperationVisibilityResponse::PanelOnly
+        }
+        ExtensionGeneratedOperationVisibility::AgentAndPanel => {
+            ExtensionGeneratedOperationVisibilityResponse::AgentAndPanel
+        }
+    }
+}
+
+fn extension_operation_dispatch_response(
+    dispatch: ExtensionGeneratedOperationDispatch,
+) -> ExtensionGeneratedOperationDispatchResponse {
+    match dispatch {
+        ExtensionGeneratedOperationDispatch::RuntimeAction { action_key } => {
+            ExtensionGeneratedOperationDispatchResponse::RuntimeAction { action_key }
+        }
+        ExtensionGeneratedOperationDispatch::ProtocolChannel {
+            channel_key,
+            method,
+        } => ExtensionGeneratedOperationDispatchResponse::ProtocolChannel {
+            channel_key,
+            method,
+        },
+        ExtensionGeneratedOperationDispatch::BackendService { service_key, route } => {
+            ExtensionGeneratedOperationDispatchResponse::BackendService { service_key, route }
+        }
+    }
+}
+
+fn extension_fetch_route_target_response(
+    target: ExtensionFetchRouteTargetProjection,
+) -> ExtensionFetchRouteTargetResponse {
+    match target {
+        ExtensionFetchRouteTargetProjection::HttpProxy { capability_key } => {
+            ExtensionFetchRouteTargetResponse::HttpProxy { capability_key }
+        }
+        ExtensionFetchRouteTargetProjection::RuntimeAction { action_key } => {
+            ExtensionFetchRouteTargetResponse::RuntimeAction { action_key }
+        }
+        ExtensionFetchRouteTargetProjection::ProtocolChannel {
+            channel_key,
+            method,
+        } => ExtensionFetchRouteTargetResponse::ProtocolChannel {
+            channel_key,
+            method,
+        },
+        ExtensionFetchRouteTargetProjection::BackendService { service_key, route } => {
+            ExtensionFetchRouteTargetResponse::BackendService { service_key, route }
+        }
     }
 }
 

@@ -3,7 +3,9 @@
 
 import type { JsonValue } from "./common-contracts";
 
-export type ExtensionBundleKindResponse = "extension_host";
+export type ExtensionBackendServiceProjectionResponse = { extension_key: string, extension_id: string, service_key: string, runtime: string, entry: string, routes: Array<string>, health_path?: string | null, };
+
+export type ExtensionBundleKindResponse = "extension_host" | "backend_service";
 
 export type ExtensionBundleProjectionResponse = { extension_key: string, extension_id: string, kind: ExtensionBundleKindResponse, entry: string, digest: string, };
 
@@ -15,9 +17,25 @@ export type ExtensionDependencyDeclarationResponse = { alias: string, extension_
 
 export type ExtensionDependencyProjectionResponse = { extension_key: string, extension_id: string, dependency: ExtensionDependencyDeclarationResponse, };
 
+export type ExtensionFetchRouteProjectionResponse = { extension_key: string, extension_id: string, route_key: string, pattern: string,
+/**
+ * Fetch routes are panel bridge compatibility routes. Agent exposure is represented only by operation_catalog.
+ */
+panel_only: boolean, target: ExtensionFetchRouteTargetResponse, };
+
+export type ExtensionFetchRouteTargetResponse = { "kind": "http_proxy", capability_key: string, } | { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method: string, } | { "kind": "backend_service", service_key: string, route: string, };
+
 export type ExtensionFlagProjectionResponse = { extension_key: string, extension_id: string, name: string, flag_type: ExtensionFlagTypeResponse, default: JsonValue, description: string, };
 
 export type ExtensionFlagTypeResponse = "bool" | "string";
+
+export type ExtensionGeneratedOperationDispatchResponse = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method: string, } | { "kind": "backend_service", service_key: string, route: string, };
+
+export type ExtensionGeneratedOperationProjectionResponse = { extension_key: string, extension_id: string, operation_key: string, description: string, visibility: ExtensionGeneratedOperationVisibilityResponse, input_schema: JsonValue, output_schema: JsonValue, permission_summary: Array<string>, dispatch: ExtensionGeneratedOperationDispatchResponse, provenance: ExtensionGeneratedOperationProvenanceResponse, };
+
+export type ExtensionGeneratedOperationProvenanceResponse = { capability_key: string, exposure_key: string, generated_from: string, };
+
+export type ExtensionGeneratedOperationVisibilityResponse = "panel_only" | "agent_and_panel";
 
 export type ExtensionInstallationProjectionResponse = { installation_id: string, extension_key: string, extension_id: string, display_name: string, installed_source: ExtensionInstalledAssetSourceResponse | null, package_artifact: ExtensionPackageArtifactRefResponse | null, };
 
@@ -55,7 +73,7 @@ export type ExtensionRuntimeInvokeChannelRequest = { channel_key: string, method
 
 export type ExtensionRuntimeInvokeChannelResponse = { channel_key: string, method: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
 
-export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocol_channels: Array<ExtensionProtocolChannelProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, };
+export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocol_channels: Array<ExtensionProtocolChannelProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, fetch_routes?: Array<ExtensionFetchRouteProjectionResponse>, operation_catalog?: Array<ExtensionGeneratedOperationProjectionResponse>, backend_services?: Array<ExtensionBackendServiceProjectionResponse>, };
 
 export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: string, parent_trace_id?: string | null, created_at: string, };
 

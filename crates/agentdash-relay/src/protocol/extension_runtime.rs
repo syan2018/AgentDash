@@ -91,3 +91,64 @@ pub struct ResponseExtensionChannelInvokePayload {
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub metadata: Map<String, Value>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionOperationDispatchRelay {
+    RuntimeAction { action_key: String },
+    ProtocolChannel { channel_key: String, method: String },
+    BackendService { service_key: String, route: String },
+}
+
+/// Protocol shape reserved for extension-owned backendService dispatch.
+///
+/// M2 exposes this as a typed protocol position only. No RelayMessage variant or
+/// local handler is registered until the M3 backendService lifecycle manager can
+/// execute it; Workspace Module marks this dispatch as fail-closed meanwhile.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommandExtensionBackendServiceInvokePayload {
+    pub provider_extension_key: String,
+    pub provider_extension_id: String,
+    pub service_key: String,
+    pub route: String,
+    pub project_id: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub input: Value,
+    pub package_artifact: ExtensionPackageArtifactRelay,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<ExtensionInvocationWorkspaceRelay>,
+    pub trace_id: String,
+    pub invocation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResponseExtensionBackendServiceInvokePayload {
+    pub provider_extension_key: String,
+    pub provider_extension_id: String,
+    pub service_key: String,
+    pub route: String,
+    #[serde(default)]
+    pub output: Value,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub metadata: Map<String, Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_service_dispatch_has_a_protocol_shape_without_relay_message_registration() {
+        let dispatch = ExtensionOperationDispatchRelay::BackendService {
+            service_key: "profile-service".to_string(),
+            route: "/profiles/search".to_string(),
+        };
+
+        let encoded = serde_json::to_value(&dispatch).expect("serialize dispatch");
+
+        assert_eq!(encoded["kind"], "backend_service");
+        assert_eq!(encoded["service_key"], "profile-service");
+        assert_eq!(encoded["route"], "/profiles/search");
+    }
+}

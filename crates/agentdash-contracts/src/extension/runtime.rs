@@ -36,6 +36,75 @@ pub enum ExtensionProcessPermissionAccessResponse {
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionBundleKindResponse {
     ExtensionHost,
+    BackendService,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionGeneratedOperationVisibilityResponse {
+    PanelOnly,
+    AgentAndPanel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionGeneratedOperationDispatchResponse {
+    RuntimeAction { action_key: String },
+    ProtocolChannel { channel_key: String, method: String },
+    BackendService { service_key: String, route: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionGeneratedOperationProvenanceResponse {
+    pub capability_key: String,
+    pub exposure_key: String,
+    pub generated_from: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionGeneratedOperationProjectionResponse {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub operation_key: String,
+    pub description: String,
+    pub visibility: ExtensionGeneratedOperationVisibilityResponse,
+    pub input_schema: Value,
+    pub output_schema: Value,
+    pub permission_summary: Vec<String>,
+    pub dispatch: ExtensionGeneratedOperationDispatchResponse,
+    pub provenance: ExtensionGeneratedOperationProvenanceResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionFetchRouteTargetResponse {
+    HttpProxy { capability_key: String },
+    RuntimeAction { action_key: String },
+    ProtocolChannel { channel_key: String, method: String },
+    BackendService { service_key: String, route: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionFetchRouteProjectionResponse {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub route_key: String,
+    pub pattern: String,
+    /// Fetch routes are panel bridge compatibility routes. Agent exposure is represented only by operation_catalog.
+    pub panel_only: bool,
+    pub target: ExtensionFetchRouteTargetResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionBackendServiceProjectionResponse {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub service_key: String,
+    pub runtime: String,
+    pub entry: String,
+    pub routes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -245,6 +314,12 @@ pub struct ExtensionRuntimeProjectionResponse {
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjectionResponse>,
     pub permissions: Vec<ExtensionPermissionProjectionResponse>,
     pub bundles: Vec<ExtensionBundleProjectionResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fetch_routes: Vec<ExtensionFetchRouteProjectionResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operation_catalog: Vec<ExtensionGeneratedOperationProjectionResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backend_services: Vec<ExtensionBackendServiceProjectionResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

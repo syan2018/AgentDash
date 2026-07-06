@@ -1,8 +1,12 @@
 use agentdash_domain::DomainError;
 
 pub use agentdash_workspace_module::extension_runtime::{
-    ExtensionBundleProjection, ExtensionCommandProjection, ExtensionDependencyProjection,
-    ExtensionFlagProjection, ExtensionInstallationProjection, ExtensionMessageRendererProjection,
+    ExtensionBackendServiceProjection, ExtensionBundleProjection, ExtensionCommandProjection,
+    ExtensionDependencyProjection, ExtensionFetchRouteProjection,
+    ExtensionFetchRouteTargetProjection, ExtensionFlagProjection,
+    ExtensionGeneratedOperationDispatch, ExtensionGeneratedOperationProjection,
+    ExtensionGeneratedOperationProvenance, ExtensionGeneratedOperationVisibility,
+    ExtensionInstallationProjection, ExtensionMessageRendererProjection,
     ExtensionPermissionProjection, ExtensionProtocolChannelMethodProjection,
     ExtensionProtocolChannelProjection, ExtensionRuntimeActionProjection,
     ExtensionRuntimeProjection, ExtensionWorkspaceTabLoadabilityMode,

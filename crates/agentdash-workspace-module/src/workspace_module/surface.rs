@@ -17,7 +17,8 @@ use agentdash_application_runtime_gateway::{
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
-    WorkspaceModuleOperationReadinessKind, WorkspaceModulePresentation,
+    WorkspaceModuleOperationReadinessKind, WorkspaceModuleOperationVisibility,
+    WorkspaceModulePresentation,
 };
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_domain::canvas::{
@@ -454,7 +455,9 @@ impl WorkspaceModuleAgentSurface {
             context.visibility_source.current_user(),
         )
         .await?;
-        Ok(WorkspaceModuleSurface { modules })
+        Ok(WorkspaceModuleSurface {
+            modules: filter_agent_visible_operations(modules),
+        })
     }
 
     pub(crate) async fn execute(
@@ -597,6 +600,22 @@ async fn invoke(
         }
     };
 
+    if operation.visibility != WorkspaceModuleOperationVisibility::AgentAndPanel {
+        return Ok(WorkspaceModuleOperationOutcome::Diagnostic(
+            WorkspaceModuleCommandDiagnostic {
+                code: "operation_not_agent_visible",
+                message: format!(
+                    "operation `{operation_key}` on module `{module_id}` is not exposed to Agent"
+                ),
+                details: serde_json::json!({
+                    "module_id": module_id,
+                    "operation_key": operation_key,
+                    "visibility": operation.visibility,
+                }),
+            },
+        ));
+    }
+
     if !operation.readiness.is_ready() {
         return Ok(WorkspaceModuleOperationOutcome::Diagnostic(
             operation_not_ready_diagnostic(module_id, operation_key, operation),
@@ -707,6 +726,20 @@ async fn invoke(
             }
             Ok(WorkspaceModuleOperationOutcome::ProtocolChannelInvoked { result, provenance })
         }
+        WorkspaceModuleOperationDispatch::BackendService { service_key, route } => Ok(
+            WorkspaceModuleOperationOutcome::Diagnostic(WorkspaceModuleCommandDiagnostic {
+                code: "backend_service_unimplemented",
+                message: format!(
+                    "backendService operation `{service_key}` route `{route}` is not implemented in this runtime"
+                ),
+                details: serde_json::json!({
+                    "module_id": module_id,
+                    "operation_key": operation_key,
+                    "service_key": service_key,
+                    "route": route,
+                }),
+            }),
+        ),
         WorkspaceModuleOperationDispatch::HostCanvas { canvas_action } => match canvas_action {
             WorkspaceModuleCanvasHostAction::BindData => {
                 let editable_canvas = match load_canvas_for_runtime_binding(
@@ -905,6 +938,25 @@ async fn reproject_canvas_modules_for_access(
         }
     }
     Ok(visible)
+}
+
+fn filter_agent_visible_operations(
+    modules: Vec<WorkspaceModuleDescriptor>,
+) -> Vec<WorkspaceModuleDescriptor> {
+    modules
+        .into_iter()
+        .map(|mut module| {
+            module.operations.retain(|operation| {
+                operation.visibility == WorkspaceModuleOperationVisibility::AgentAndPanel
+            });
+            module.summary.operation_summary = module
+                .operations
+                .iter()
+                .map(|operation| operation.operation_key.clone())
+                .collect();
+            module
+        })
+        .collect()
 }
 
 pub(crate) async fn load_canvas_by_project_mount_id_for_tool(
@@ -1174,6 +1226,9 @@ fn readiness_error_code(readiness: &WorkspaceModuleOperationReadiness) -> &'stat
         WorkspaceModuleOperationReadinessKind::BackendUnavailable => "backend_unavailable",
         WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable => {
             "runtime_action_unavailable"
+        }
+        WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable => {
+            "backend_service_unavailable"
         }
     }
 }
@@ -1464,6 +1519,9 @@ mod tests {
     };
     use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
     use agentdash_application_vfs::tools::{RuntimeVfsState, SharedRuntimeVfs};
+    use agentdash_contracts::workspace_module::{
+        WorkspaceModuleStatus, WorkspaceModuleStatusKind, WorkspaceModuleSummary,
+    };
     use agentdash_domain::DomainError;
     use agentdash_domain::canvas::{Canvas, CanvasRepository};
     use agentdash_domain::common::Vfs;
@@ -1748,6 +1806,72 @@ mod tests {
                 "noop channel transport".to_string(),
             ))
         }
+    }
+
+    fn operation_for_visibility(
+        operation_key: &str,
+        visibility: WorkspaceModuleOperationVisibility,
+    ) -> WorkspaceModuleOperation {
+        WorkspaceModuleOperation {
+            operation_key: operation_key.to_string(),
+            origin: "runtime_action".to_string(),
+            description: operation_key.to_string(),
+            input_schema: None,
+            output_schema: None,
+            permission_summary: Vec::new(),
+            visibility,
+            provenance: serde_json::json!({
+                "generated_from": "test",
+            }),
+            dispatch: WorkspaceModuleOperationDispatch::RuntimeAction {
+                action_key: operation_key.to_string(),
+            },
+            readiness: WorkspaceModuleOperationReadiness::ready(),
+        }
+    }
+
+    #[test]
+    fn agent_surface_filters_panel_only_operations() {
+        let modules = vec![WorkspaceModuleDescriptor {
+            summary: WorkspaceModuleSummary {
+                module_id: "ext:demo".to_string(),
+                kind: WorkspaceModuleKind::Extension,
+                title: "Demo".to_string(),
+                description: "Demo extension".to_string(),
+                source: "demo".to_string(),
+                ui_summary: None,
+                operation_summary: vec![
+                    "profile.read".to_string(),
+                    "panel.fetch_profile".to_string(),
+                ],
+                permission_summary: Vec::new(),
+                status: WorkspaceModuleStatus {
+                    kind: WorkspaceModuleStatusKind::Ready,
+                    reason: None,
+                },
+            },
+            ui_entries: Vec::new(),
+            operations: vec![
+                operation_for_visibility(
+                    "profile.read",
+                    WorkspaceModuleOperationVisibility::AgentAndPanel,
+                ),
+                operation_for_visibility(
+                    "panel.fetch_profile",
+                    WorkspaceModuleOperationVisibility::PanelOnly,
+                ),
+            ],
+            runtime_backing: None,
+        }];
+
+        let modules = filter_agent_visible_operations(modules);
+
+        assert_eq!(
+            modules[0].summary.operation_summary,
+            vec!["profile.read".to_string()]
+        );
+        assert_eq!(modules[0].operations.len(), 1);
+        assert_eq!(modules[0].operations[0].operation_key, "profile.read");
     }
 
     #[tokio::test]

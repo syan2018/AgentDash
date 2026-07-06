@@ -99,6 +99,16 @@ pub enum WorkspaceModuleCanvasHostAction {
     GetInteractionState,
 }
 
+/// Operation exposure target.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceModuleOperationVisibility {
+    /// Panel/UI may use this operation, but Agent tools must not expose or invoke it.
+    PanelOnly,
+    /// Agent tools and panel/UI may both use this operation.
+    AgentAndPanel,
+}
+
 /// operation 的来源专属派发分量。
 ///
 /// `origin` 是给人/UI 看的扁平标签；`dispatch` 承载 invoke 元工具据以**直接路由**的
@@ -115,6 +125,8 @@ pub enum WorkspaceModuleOperationDispatch {
         channel_key: String,
         method_name: String,
     },
+    /// Extension-owned backend service route. M3 local lifecycle manager owns execution.
+    BackendService { service_key: String, route: String },
     /// 宿主 Canvas 资产操作：走 application use case，不进入 iframe/runtime action。
     HostCanvas {
         canvas_action: WorkspaceModuleCanvasHostAction,
@@ -134,6 +146,7 @@ pub enum WorkspaceModuleOperationReadinessKind {
     MissingRuntimeBackendAnchor,
     BackendUnavailable,
     RuntimeActionUnavailable,
+    BackendServiceUnavailable,
 }
 
 /// 当前 runtime 中 operation 调用可用性的结构化诊断。
@@ -179,6 +192,10 @@ pub struct WorkspaceModuleOperation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
     pub permission_summary: Vec<String>,
+    pub visibility: WorkspaceModuleOperationVisibility,
+    /// Generated projection provenance, e.g. capability/exposure keys and source layer.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub provenance: Value,
     /// 来源专属路由分量，invoke 据此直接派发（不拆 operation_key）。
     pub dispatch: WorkspaceModuleOperationDispatch,
     pub readiness: WorkspaceModuleOperationReadiness,

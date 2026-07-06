@@ -5,17 +5,15 @@ mod surface;
 mod tools;
 pub mod visibility;
 
-use std::collections::BTreeMap;
-
 use agentdash_application_runtime_gateway::{
-    EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA, RuntimeActionDescriptor,
-    RuntimeActionKind, validate_json_schema_subset,
+    RuntimeActionDescriptor, RuntimeActionKind, validate_json_schema_subset,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
     WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
-    WorkspaceModuleOperationReadinessKind, WorkspaceModulePresentation, WorkspaceModuleStatus,
-    WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+    WorkspaceModuleOperationReadinessKind, WorkspaceModuleOperationVisibility,
+    WorkspaceModulePresentation, WorkspaceModuleStatus, WorkspaceModuleSummary,
+    WorkspaceModuleUiEntry,
 };
 use agentdash_domain::canvas::{Canvas, CanvasAccessAction, CanvasAccessProjection, CanvasScope};
 use agentdash_domain::shared_library::{
@@ -31,6 +29,10 @@ use crate::canvas::{
     canvas_vfs_mount_id,
 };
 use crate::extension_runtime::ExtensionRuntimeProjection;
+use crate::extension_runtime::{
+    ExtensionGeneratedOperationDispatch, ExtensionGeneratedOperationProjection,
+    ExtensionGeneratedOperationVisibility,
+};
 
 pub use runtime_bridge::{
     ResolvedInvocationBackend, SharedWorkspaceModuleAgentRunBridgeHandle,
@@ -164,6 +166,13 @@ impl WorkspaceModuleRuntimeActionCatalog {
                 reason,
             ),
         }
+    }
+
+    fn session_action_descriptor(&self, action_key: &str) -> Option<&RuntimeActionDescriptor> {
+        self.descriptors.iter().find(|descriptor| {
+            descriptor.kind == RuntimeActionKind::SessionRuntime
+                && descriptor.action_key.as_str() == action_key
+        })
     }
 }
 
@@ -302,109 +311,16 @@ fn build_extension_modules(
     ext: &ExtensionRuntimeProjection,
     operation_context: &WorkspaceModuleOperationContext,
 ) -> Vec<WorkspaceModuleDescriptor> {
-    let action_owner_by_key = unique_runtime_action_owners(ext);
-    let duplicate_action_keys = duplicate_runtime_action_keys(ext);
-    let descriptor_action_keys = operation_context
-        .runtime_actions
-        .descriptors
-        .iter()
-        .filter(|descriptor| descriptor.kind == RuntimeActionKind::SessionRuntime)
-        .filter(|descriptor| !duplicate_action_keys.contains(descriptor.action_key.as_str()))
-        .map(|descriptor| descriptor.action_key.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut runtime_operations_by_extension: BTreeMap<String, Vec<WorkspaceModuleOperation>> =
-        BTreeMap::new();
-    for descriptor in &operation_context.runtime_actions.descriptors {
-        if descriptor.kind != RuntimeActionKind::SessionRuntime {
-            continue;
-        }
-        if duplicate_action_keys.contains(descriptor.action_key.as_str()) {
-            continue;
-        }
-        let Some(extension_key) = descriptor_extension_key(descriptor).or_else(|| {
-            action_owner_by_key
-                .get(descriptor.action_key.as_str())
-                .copied()
-        }) else {
-            continue;
-        };
-        if !ext
-            .installations
-            .iter()
-            .any(|installation| installation.extension_key == extension_key)
-        {
-            continue;
-        }
-        runtime_operations_by_extension
-            .entry(extension_key.to_string())
-            .or_default()
-            .push(runtime_action_operation_from_descriptor(
-                descriptor,
-                &operation_context.backend_readiness,
-            ));
-    }
-
     ext.installations
         .iter()
         .map(|installation| {
             let extension_key = installation.extension_key.as_str();
-            let mut operations: Vec<WorkspaceModuleOperation> = runtime_operations_by_extension
-                .get(extension_key)
-                .cloned()
-                .unwrap_or_default();
-
-            operations.extend(
-                ext.runtime_actions
-                    .iter()
-                    .filter(|action| action.extension_key == extension_key)
-                    .filter(|action| !descriptor_action_keys.contains(action.action_key.as_str()))
-                    .map(|action| {
-                        let readiness = if duplicate_action_keys.contains(action.action_key.as_str())
-                        {
-                            WorkspaceModuleOperationReadiness::unavailable(
-                                WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable,
-                                format!(
-                                    "runtime action `{}` is declared by multiple enabled extensions",
-                                    action.action_key
-                                ),
-                            )
-                        } else {
-                            operation_context
-                                .runtime_actions
-                                .missing_descriptor_readiness
-                                .clone()
-                        };
-                        unavailable_runtime_action_operation(
-                            &action.action_key,
-                            readiness,
-                        )
-                    }),
-            );
-
-            for channel in ext
-                .protocol_channels
+            let mut operations: Vec<WorkspaceModuleOperation> = ext
+                .operation_catalog
                 .iter()
-                .filter(|channel| channel.extension_key == extension_key)
-            {
-                for method in &channel.methods {
-                    operations.push(WorkspaceModuleOperation {
-                        operation_key: format!("{}.{}", channel.channel_key, method.name),
-                        origin: "protocol_channel".to_string(),
-                        description: method.description.clone(),
-                        input_schema: Some(method.input_schema.clone()),
-                        output_schema: Some(method.output_schema.clone()),
-                        permission_summary: method.permissions.clone(),
-                        dispatch: WorkspaceModuleOperationDispatch::ProtocolChannel {
-                            channel_key: channel.channel_key.clone(),
-                            method_name: method.name.clone(),
-                        },
-                        readiness: first_unready_or_ready([
-                            &operation_context.channel_readiness,
-                            &operation_context.backend_readiness,
-                        ]),
-                    });
-                }
-            }
+                .filter(|operation| operation.extension_key == extension_key)
+                .map(|operation| operation_from_generated_projection(operation, operation_context))
+                .collect();
 
             operations.sort_by(|left, right| left.operation_key.cmp(&right.operation_key));
 
@@ -480,78 +396,95 @@ fn build_extension_modules(
         .collect()
 }
 
-fn unique_runtime_action_owners(ext: &ExtensionRuntimeProjection) -> BTreeMap<&str, &str> {
-    let duplicate_keys = duplicate_runtime_action_keys(ext);
-    let mut owners = BTreeMap::new();
-    for action in &ext.runtime_actions {
-        if duplicate_keys.contains(action.action_key.as_str()) {
-            continue;
-        }
-        owners
-            .entry(action.action_key.as_str())
-            .or_insert(action.extension_key.as_str());
-    }
-    owners
-}
-
-fn duplicate_runtime_action_keys(
-    ext: &ExtensionRuntimeProjection,
-) -> std::collections::BTreeSet<&str> {
-    let mut seen_keys = std::collections::BTreeSet::new();
-    let mut duplicate_keys = std::collections::BTreeSet::new();
-    for action in &ext.runtime_actions {
-        if !seen_keys.insert(action.action_key.as_str()) {
-            duplicate_keys.insert(action.action_key.as_str());
-        }
-    }
-    duplicate_keys
-}
-
-fn descriptor_extension_key(descriptor: &RuntimeActionDescriptor) -> Option<&str> {
-    descriptor
-        .metadata
-        .get(EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA)?
-        .as_str()
-}
-
-fn runtime_action_operation_from_descriptor(
-    descriptor: &RuntimeActionDescriptor,
-    backend_readiness: &WorkspaceModuleOperationReadiness,
+fn operation_from_generated_projection(
+    operation: &ExtensionGeneratedOperationProjection,
+    operation_context: &WorkspaceModuleOperationContext,
 ) -> WorkspaceModuleOperation {
-    let action_key = descriptor.action_key.as_str().to_string();
-    WorkspaceModuleOperation {
-        operation_key: action_key.clone(),
-        origin: runtime_action_origin(descriptor.kind).to_string(),
-        description: descriptor
-            .description
-            .clone()
-            .unwrap_or_else(|| format!("Runtime action `{action_key}`")),
-        input_schema: descriptor.input_schema.clone(),
-        output_schema: descriptor.output_schema.clone(),
-        permission_summary: descriptor.default_policy.required_capabilities.clone(),
-        dispatch: WorkspaceModuleOperationDispatch::RuntimeAction { action_key },
-        readiness: first_unready_or_ready([backend_readiness]),
-    }
-}
-
-fn unavailable_runtime_action_operation(
-    action_key: &str,
-    readiness: WorkspaceModuleOperationReadiness,
-) -> WorkspaceModuleOperation {
-    WorkspaceModuleOperation {
-        operation_key: action_key.to_string(),
-        origin: "runtime_action".to_string(),
-        description: format!(
-            "Runtime action `{action_key}` is not available from the current RuntimeGateway catalog."
+    let (origin, dispatch, readiness) = match &operation.dispatch {
+        ExtensionGeneratedOperationDispatch::RuntimeAction { action_key } => {
+            let readiness = if operation_context
+                .runtime_actions
+                .session_action_descriptor(action_key)
+                .is_some()
+            {
+                first_unready_or_ready([&operation_context.backend_readiness])
+            } else {
+                operation_context
+                    .runtime_actions
+                    .missing_descriptor_readiness
+                    .clone()
+            };
+            (
+                "runtime_action",
+                WorkspaceModuleOperationDispatch::RuntimeAction {
+                    action_key: action_key.clone(),
+                },
+                readiness,
+            )
+        }
+        ExtensionGeneratedOperationDispatch::ProtocolChannel {
+            channel_key,
+            method,
+        } => (
+            "protocol_channel",
+            WorkspaceModuleOperationDispatch::ProtocolChannel {
+                channel_key: channel_key.clone(),
+                method_name: method.clone(),
+            },
+            first_unready_or_ready([
+                &operation_context.channel_readiness,
+                &operation_context.backend_readiness,
+            ]),
         ),
-        input_schema: None,
-        output_schema: None,
-        permission_summary: Vec::new(),
-        dispatch: WorkspaceModuleOperationDispatch::RuntimeAction {
-            action_key: action_key.to_string(),
-        },
+        ExtensionGeneratedOperationDispatch::BackendService { service_key, route } => (
+            "backend_service",
+            WorkspaceModuleOperationDispatch::BackendService {
+                service_key: service_key.clone(),
+                route: route.clone(),
+            },
+            WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
+                "backendService lifecycle manager is not implemented in this runtime",
+            ),
+        ),
+    };
+    WorkspaceModuleOperation {
+        operation_key: operation.operation_key.clone(),
+        origin: origin.to_string(),
+        description: operation.description.clone(),
+        input_schema: Some(operation.input_schema.clone()),
+        output_schema: Some(operation.output_schema.clone()),
+        permission_summary: operation.permission_summary.clone(),
+        visibility: operation_visibility(operation.visibility),
+        provenance: generated_operation_provenance(operation),
+        dispatch,
         readiness,
     }
+}
+
+fn operation_visibility(
+    visibility: ExtensionGeneratedOperationVisibility,
+) -> WorkspaceModuleOperationVisibility {
+    match visibility {
+        ExtensionGeneratedOperationVisibility::PanelOnly => {
+            WorkspaceModuleOperationVisibility::PanelOnly
+        }
+        ExtensionGeneratedOperationVisibility::AgentAndPanel => {
+            WorkspaceModuleOperationVisibility::AgentAndPanel
+        }
+    }
+}
+
+fn generated_operation_provenance(
+    operation: &ExtensionGeneratedOperationProjection,
+) -> serde_json::Value {
+    serde_json::json!({
+        "extension_key": operation.extension_key,
+        "extension_id": operation.extension_id,
+        "capability_key": operation.provenance.capability_key,
+        "exposure_key": operation.provenance.exposure_key,
+        "generated_from": operation.provenance.generated_from,
+    })
 }
 
 fn first_unready_or_ready<'a, I>(readinesses: I) -> WorkspaceModuleOperationReadiness
@@ -639,6 +572,8 @@ fn canvas_bind_data_operation() -> WorkspaceModuleOperation {
             "required": ["canvas_id", "canvas_mount_id", "vfs_mount_id", "bindings"]
         })),
         permission_summary: vec!["canvas.runtime_binding:write".to_string()],
+        visibility: WorkspaceModuleOperationVisibility::AgentAndPanel,
+        provenance: host_canvas_operation_provenance(CANVAS_BIND_DATA_OPERATION_KEY),
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
             canvas_action: WorkspaceModuleCanvasHostAction::BindData,
         },
@@ -663,6 +598,8 @@ fn canvas_inspect_operation() -> WorkspaceModuleOperation {
             "required": ["observation"]
         })),
         permission_summary: vec!["canvas.runtime:inspect".to_string()],
+        visibility: WorkspaceModuleOperationVisibility::AgentAndPanel,
+        provenance: host_canvas_operation_provenance(CANVAS_INSPECT_OPERATION_KEY),
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
             canvas_action: WorkspaceModuleCanvasHostAction::Inspect,
         },
@@ -687,6 +624,8 @@ fn canvas_get_interaction_state_operation() -> WorkspaceModuleOperation {
             "required": ["snapshot"]
         })),
         permission_summary: vec!["canvas.interaction:read".to_string()],
+        visibility: WorkspaceModuleOperationVisibility::AgentAndPanel,
+        provenance: host_canvas_operation_provenance(CANVAS_GET_INTERACTION_STATE_OPERATION_KEY),
         dispatch: WorkspaceModuleOperationDispatch::HostCanvas {
             canvas_action: WorkspaceModuleCanvasHostAction::GetInteractionState,
         },
@@ -714,11 +653,12 @@ fn default_canvas_access_for_descriptor(canvas: &Canvas) -> CanvasAccessProjecti
     }
 }
 
-fn runtime_action_origin(kind: RuntimeActionKind) -> &'static str {
-    match kind {
-        RuntimeActionKind::SessionRuntime => "runtime_action",
-        RuntimeActionKind::Setup => "setup_action",
-    }
+fn host_canvas_operation_provenance(operation_key: &str) -> serde_json::Value {
+    serde_json::json!({
+        "capability_key": "canvas",
+        "exposure_key": operation_key,
+        "generated_from": "host_canvas",
+    })
 }
 
 fn tab_renderer_kind(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &'static str {
@@ -762,11 +702,11 @@ fn describe_permission(permission: &ExtensionPermissionDeclaration) -> String {
 #[cfg(test)]
 mod tests {
     use agentdash_application_runtime_gateway::{
-        EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA, RuntimeActionDescriptor,
-        RuntimeActionKey, RuntimeActionKind, RuntimePolicy,
+        RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimePolicy,
     };
     use agentdash_contracts::workspace_module::{
-        WorkspaceModuleOperationReadinessKind, WorkspaceModuleStatusKind,
+        WorkspaceModuleOperationReadinessKind, WorkspaceModuleOperationVisibility,
+        WorkspaceModuleStatusKind,
     };
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
@@ -774,16 +714,56 @@ mod tests {
     use uuid::Uuid;
 
     use crate::extension_runtime::{
-        ExtensionBundleProjection, ExtensionInstallationProjection,
+        ExtensionBundleProjection, ExtensionGeneratedOperationDispatch,
+        ExtensionGeneratedOperationProjection, ExtensionGeneratedOperationProvenance,
+        ExtensionGeneratedOperationVisibility, ExtensionInstallationProjection,
         ExtensionRuntimeActionProjection, ExtensionRuntimeProjection,
         ExtensionWorkspaceTabLoadabilityMode, ExtensionWorkspaceTabLoadabilityProjection,
         ExtensionWorkspaceTabProjection,
     };
 
     use super::{
-        WorkspaceModuleOperationContext, build_workspace_modules,
+        WorkspaceModuleOperationContext, WorkspaceModuleOperationDispatch, build_workspace_modules,
         build_workspace_modules_with_operation_context, validate_input_against_schema,
     };
+
+    fn operation_catalog_runtime_action(
+        extension_key: &str,
+        operation_key: &str,
+        action_key: &str,
+        visibility: ExtensionGeneratedOperationVisibility,
+    ) -> ExtensionGeneratedOperationProjection {
+        ExtensionGeneratedOperationProjection {
+            extension_key: extension_key.to_string(),
+            extension_id: extension_key.to_string(),
+            operation_key: operation_key.to_string(),
+            description: "Read profile".to_string(),
+            visibility,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+            output_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "profile": { "type": "object" }
+                },
+                "additionalProperties": true
+            }),
+            permission_summary: vec!["local.profile.read".to_string()],
+            dispatch: ExtensionGeneratedOperationDispatch::RuntimeAction {
+                action_key: action_key.to_string(),
+            },
+            provenance: ExtensionGeneratedOperationProvenance {
+                capability_key: "profile".to_string(),
+                exposure_key: "read".to_string(),
+                generated_from: "capability_exposure".to_string(),
+            },
+        }
+    }
 
     #[test]
     fn workspace_module_accepts_ui_only_canvas_panel_without_extension_host_bundle() {
@@ -888,7 +868,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_runtime_actions_without_gateway_are_diagnostic_only() {
+    fn runtime_actions_without_operation_catalog_are_not_agent_operations() {
         let projection = ExtensionRuntimeProjection {
             installations: vec![ExtensionInstallationProjection {
                 installation_id: Uuid::new_v4(),
@@ -920,22 +900,13 @@ mod tests {
 
         let modules = build_workspace_modules(&projection, &[]);
 
-        let operation = modules[0]
-            .operations
-            .iter()
-            .find(|operation| operation.operation_key == "ops-demo.run")
-            .expect("diagnostic operation");
-        assert_eq!(
-            operation.readiness.kind,
-            WorkspaceModuleOperationReadinessKind::MissingRuntimeGateway
-        );
-        assert!(operation.input_schema.is_none());
-        assert!(operation.output_schema.is_none());
-        assert!(operation.permission_summary.is_empty());
+        assert_eq!(modules.len(), 1);
+        assert!(modules[0].operations.is_empty());
+        assert!(modules[0].summary.operation_summary.is_empty());
     }
 
     #[test]
-    fn non_session_gateway_descriptor_does_not_mask_runtime_action_diagnostic() {
+    fn operation_catalog_runtime_action_requires_session_gateway_descriptor() {
         let projection = ExtensionRuntimeProjection {
             installations: vec![ExtensionInstallationProjection {
                 installation_id: Uuid::new_v4(),
@@ -962,6 +933,12 @@ mod tests {
                 entry: "dist/extension.js".to_string(),
                 digest: "sha256:bundle".to_string(),
             }],
+            operation_catalog: vec![operation_catalog_runtime_action(
+                "ops-demo",
+                "profile.read",
+                "ops-demo.run",
+                ExtensionGeneratedOperationVisibility::AgentAndPanel,
+            )],
             ..Default::default()
         };
         let setup_descriptor = RuntimeActionDescriptor {
@@ -980,86 +957,63 @@ mod tests {
         let operation = modules[0]
             .operations
             .iter()
-            .find(|operation| operation.operation_key == "ops-demo.run")
+            .find(|operation| operation.operation_key == "profile.read")
             .expect("diagnostic operation");
         assert_eq!(
             operation.readiness.kind,
             WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable
         );
+        assert_eq!(operation.description, "Read profile");
         assert_eq!(
-            operation.description,
-            "Runtime action `ops-demo.run` is not available from the current RuntimeGateway catalog."
+            operation.visibility,
+            WorkspaceModuleOperationVisibility::AgentAndPanel
         );
-        assert!(operation.input_schema.is_none());
+        assert_eq!(
+            operation
+                .input_schema
+                .as_ref()
+                .and_then(|schema| schema.get("type")),
+            Some(&serde_json::json!("object"))
+        );
     }
 
     #[test]
-    fn duplicate_runtime_action_key_does_not_mark_last_owner_ready() {
-        let action_key = "shared.profile";
+    fn operation_catalog_runtime_action_uses_generated_projection_metadata() {
+        let action_key = "ops-demo.run";
         let projection = ExtensionRuntimeProjection {
-            installations: vec![
-                ExtensionInstallationProjection {
-                    installation_id: Uuid::new_v4(),
-                    extension_key: "first-demo".to_string(),
-                    extension_id: "first-demo".to_string(),
-                    display_name: "First Demo".to_string(),
-                    installed_source: None,
-                    package_artifact: None,
-                },
-                ExtensionInstallationProjection {
-                    installation_id: Uuid::new_v4(),
-                    extension_key: "last-demo".to_string(),
-                    extension_id: "last-demo".to_string(),
-                    display_name: "Last Demo".to_string(),
-                    installed_source: None,
-                    package_artifact: None,
-                },
-            ],
-            runtime_actions: vec![
-                ExtensionRuntimeActionProjection {
-                    extension_key: "first-demo".to_string(),
-                    extension_id: "first-demo".to_string(),
-                    action_key: action_key.to_string(),
-                    kind: ExtensionRuntimeActionKind::SessionRuntime,
-                    description: "First manifest action".to_string(),
-                    input_schema: serde_json::json!({"type": "object"}),
-                    output_schema: serde_json::json!({"type": "object"}),
-                    permissions: vec![],
-                },
-                ExtensionRuntimeActionProjection {
-                    extension_key: "last-demo".to_string(),
-                    extension_id: "last-demo".to_string(),
-                    action_key: action_key.to_string(),
-                    kind: ExtensionRuntimeActionKind::SessionRuntime,
-                    description: "Last manifest action".to_string(),
-                    input_schema: serde_json::json!({"type": "object"}),
-                    output_schema: serde_json::json!({"type": "object"}),
-                    permissions: vec![],
-                },
-            ],
-            bundles: vec![
-                ExtensionBundleProjection {
-                    extension_key: "first-demo".to_string(),
-                    extension_id: "first-demo".to_string(),
-                    kind: ExtensionBundleKind::ExtensionHost,
-                    entry: "dist/extension.js".to_string(),
-                    digest: "sha256:first".to_string(),
-                },
-                ExtensionBundleProjection {
-                    extension_key: "last-demo".to_string(),
-                    extension_id: "last-demo".to_string(),
-                    kind: ExtensionBundleKind::ExtensionHost,
-                    entry: "dist/extension.js".to_string(),
-                    digest: "sha256:last".to_string(),
-                },
-            ],
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: None,
+            }],
+            runtime_actions: vec![ExtensionRuntimeActionProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                action_key: action_key.to_string(),
+                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                description: "Manifest action metadata is not an operation fact".to_string(),
+                input_schema: serde_json::json!(true),
+                output_schema: serde_json::json!(true),
+                permissions: vec!["manifest.permission".to_string()],
+            }],
+            bundles: vec![ExtensionBundleProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                kind: ExtensionBundleKind::ExtensionHost,
+                entry: "dist/extension.js".to_string(),
+                digest: "sha256:bundle".to_string(),
+            }],
+            operation_catalog: vec![operation_catalog_runtime_action(
+                "ops-demo",
+                "profile.read",
+                action_key,
+                ExtensionGeneratedOperationVisibility::AgentAndPanel,
+            )],
             ..Default::default()
         };
-        let mut metadata = std::collections::BTreeMap::new();
-        metadata.insert(
-            EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA.to_string(),
-            serde_json::json!("first-demo"),
-        );
         let descriptor = RuntimeActionDescriptor {
             action_key: RuntimeActionKey::parse(action_key).expect("valid action key"),
             kind: RuntimeActionKind::SessionRuntime,
@@ -1067,33 +1021,84 @@ mod tests {
             input_schema: Some(serde_json::json!({"type": "object"})),
             output_schema: Some(serde_json::json!({"type": "object"})),
             default_policy: RuntimePolicy::default(),
-            metadata,
+            metadata: Default::default(),
         };
         let context = WorkspaceModuleOperationContext::ready(vec![descriptor]);
 
         let modules = build_workspace_modules_with_operation_context(&projection, &[], &context);
 
-        let operations = modules
+        let operation = modules[0]
+            .operations
             .iter()
-            .flat_map(|module| module.operations.iter())
-            .filter(|operation| operation.operation_key == action_key)
-            .collect::<Vec<_>>();
-        assert_eq!(operations.len(), 2);
-        assert!(operations.iter().all(|operation| {
-            operation.readiness.kind
-                == WorkspaceModuleOperationReadinessKind::RuntimeActionUnavailable
-        }));
-        assert!(operations.iter().all(|operation| {
-            operation
-                .readiness
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("declared by multiple enabled extensions"))
-        }));
-        assert!(
-            operations
-                .iter()
-                .all(|operation| operation.description != "Gateway resolved descriptor")
+            .find(|operation| operation.operation_key == "profile.read")
+            .expect("generated operation");
+        assert_eq!(
+            operation.readiness.kind,
+            WorkspaceModuleOperationReadinessKind::Ready
         );
+        assert_eq!(operation.origin, "runtime_action");
+        assert_eq!(operation.description, "Read profile");
+        assert_eq!(
+            operation.permission_summary,
+            vec!["local.profile.read".to_string()]
+        );
+        assert_eq!(
+            operation.provenance.get("generated_from"),
+            Some(&serde_json::json!("capability_exposure"))
+        );
+    }
+
+    #[test]
+    fn operation_catalog_backend_service_is_fail_closed_until_lifecycle_exists() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: None,
+            }],
+            operation_catalog: vec![ExtensionGeneratedOperationProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                operation_key: "profile.search".to_string(),
+                description: "Search profile backend".to_string(),
+                visibility: ExtensionGeneratedOperationVisibility::AgentAndPanel,
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: serde_json::json!({"type": "object"}),
+                permission_summary: vec!["local.profile.read".to_string()],
+                dispatch: ExtensionGeneratedOperationDispatch::BackendService {
+                    service_key: "profile-service".to_string(),
+                    route: "/profiles/search".to_string(),
+                },
+                provenance: ExtensionGeneratedOperationProvenance {
+                    capability_key: "profile".to_string(),
+                    exposure_key: "search".to_string(),
+                    generated_from: "capability_exposure".to_string(),
+                },
+            }],
+            ..Default::default()
+        };
+
+        let modules = build_workspace_modules_with_operation_context(
+            &projection,
+            &[],
+            &WorkspaceModuleOperationContext::ready(Vec::new()),
+        );
+
+        let operation = modules[0]
+            .operations
+            .iter()
+            .find(|operation| operation.operation_key == "profile.search")
+            .expect("backend service operation");
+        assert_eq!(
+            operation.readiness.kind,
+            WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable
+        );
+        assert!(matches!(
+            &operation.dispatch,
+            WorkspaceModuleOperationDispatch::BackendService { .. }
+        ));
     }
 }

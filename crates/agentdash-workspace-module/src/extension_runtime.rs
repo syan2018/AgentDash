@@ -24,6 +24,9 @@ pub struct ExtensionRuntimeProjection {
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjection>,
     pub permissions: Vec<ExtensionPermissionProjection>,
     pub bundles: Vec<ExtensionBundleProjection>,
+    pub fetch_routes: Vec<ExtensionFetchRouteProjection>,
+    pub operation_catalog: Vec<ExtensionGeneratedOperationProjection>,
+    pub backend_services: Vec<ExtensionBackendServiceProjection>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +142,75 @@ pub struct ExtensionBundleProjection {
     pub kind: ExtensionBundleKind,
     pub entry: String,
     pub digest: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtensionGeneratedOperationVisibility {
+    PanelOnly,
+    AgentAndPanel,
+}
+
+impl ExtensionGeneratedOperationVisibility {
+    pub fn is_agent_visible(self) -> bool {
+        self == Self::AgentAndPanel
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExtensionGeneratedOperationDispatch {
+    RuntimeAction { action_key: String },
+    ProtocolChannel { channel_key: String, method: String },
+    BackendService { service_key: String, route: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionGeneratedOperationProvenance {
+    pub capability_key: String,
+    pub exposure_key: String,
+    pub generated_from: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionGeneratedOperationProjection {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub operation_key: String,
+    pub description: String,
+    pub visibility: ExtensionGeneratedOperationVisibility,
+    pub input_schema: serde_json::Value,
+    pub output_schema: serde_json::Value,
+    pub permission_summary: Vec<String>,
+    pub dispatch: ExtensionGeneratedOperationDispatch,
+    pub provenance: ExtensionGeneratedOperationProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExtensionFetchRouteTargetProjection {
+    HttpProxy { capability_key: String },
+    RuntimeAction { action_key: String },
+    ProtocolChannel { channel_key: String, method: String },
+    BackendService { service_key: String, route: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionFetchRouteProjection {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub route_key: String,
+    pub pattern: String,
+    pub panel_only: bool,
+    pub target: ExtensionFetchRouteTargetProjection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionBackendServiceProjection {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub service_key: String,
+    pub runtime: String,
+    pub entry: String,
+    pub routes: Vec<String>,
+    pub health_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]

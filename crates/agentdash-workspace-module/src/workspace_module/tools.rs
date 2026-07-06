@@ -289,7 +289,7 @@ impl AgentTool for WorkspaceModuleDescribeTool {
     }
 
     fn description(&self) -> &str {
-        "Describe a single workspace module by module_id. Returns the module's UI entries and operations, where extension runtime actions and protocol channel methods are presented uniformly as operations (with input/output schemas)."
+        "Describe a single workspace module by module_id. Returns the module's UI entries and Agent-visible operations from the generated operation catalog, including input/output schemas and dispatch metadata."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1581,7 +1581,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn describe_returns_full_descriptor_with_operations() {
+    async fn describe_extension_without_operation_catalog_has_no_agent_operations() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let tool = WorkspaceModuleDescribeTool::new(install_repo, canvas_repo, project_id)
             .with_effective_capability_view(test_effective_capability_view(
@@ -1603,17 +1603,11 @@ mod tests {
             .get("operations")
             .and_then(serde_json::Value::as_array)
             .expect("operations");
-        assert_eq!(operations.len(), 1);
-        assert_eq!(
-            operations[0]
-                .get("origin")
-                .and_then(serde_json::Value::as_str),
-            Some("runtime_action")
-        );
+        assert!(operations.is_empty());
     }
 
     #[tokio::test]
-    async fn describe_runtime_action_uses_gateway_catalog_descriptor() {
+    async fn describe_does_not_promote_gateway_catalog_without_generated_operation() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let gateway_handle = SharedWorkspaceModuleRuntimeGatewayHandle::default();
         gateway_handle
@@ -1648,36 +1642,11 @@ mod tests {
 
         assert!(!result.is_error);
         let details = result.details.expect("details");
-        let operation = details
+        let operations = details
             .get("operations")
             .and_then(serde_json::Value::as_array)
-            .expect("operations")
-            .first()
-            .expect("runtime action operation");
-        assert_eq!(
-            operation
-                .pointer("/readiness/kind")
-                .and_then(serde_json::Value::as_str),
-            Some("ready")
-        );
-        assert_eq!(
-            operation
-                .get("description")
-                .and_then(serde_json::Value::as_str),
-            Some("gateway profile descriptor")
-        );
-        assert_eq!(
-            operation.pointer("/input_schema/type"),
-            Some(&serde_json::json!("object"))
-        );
-        assert_eq!(
-            operation
-                .get("permission_summary")
-                .and_then(serde_json::Value::as_array)
-                .and_then(|items| items.first())
-                .and_then(serde_json::Value::as_str),
-            Some("gateway.profile.read")
-        );
+            .expect("operations");
+        assert!(operations.is_empty());
     }
 
     #[tokio::test]
@@ -2250,7 +2219,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invoke_runtime_action_routes_to_gateway() {
+    async fn invoke_runtime_action_without_operation_catalog_is_not_exposed() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let (tool, invoke_count) = invoke_tool_with_backend_and_counter(
             install_repo,
@@ -2271,22 +2240,14 @@ mod tests {
             )
             .await
             .expect("invoke");
-        assert!(!result.is_error, "expected success, got {result:?}");
-        let details = result.details.expect("details");
-        // provenance 可还原 module source + operation provenance（R5）
-        let provenance = details.get("provenance").expect("provenance");
+        assert!(result.is_error);
         assert_eq!(
-            provenance.get("operation_origin").and_then(|v| v.as_str()),
-            Some("runtime_action")
+            result
+                .details
+                .and_then(|d| d.get("error").and_then(|e| e.as_str()).map(str::to_string)),
+            Some("operation_not_found".to_string())
         );
-        assert_eq!(
-            provenance.get("backend").and_then(|v| v.as_str()),
-            Some("backend-1")
-        );
-        // gateway 实际收到 input
-        let output = details.get("output").expect("output");
-        assert_eq!(output["echoed"]["name"], "alice");
-        assert_eq!(invoke_count.load(Ordering::SeqCst), 1);
+        assert_eq!(invoke_count.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -2481,15 +2442,13 @@ mod tests {
     #[tokio::test]
     async fn invoke_input_schema_mismatch_returns_structured_error() {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
-        let tool =
-            invoke_tool_with_backend(install_repo, canvas_repo, project_id, backend("backend-1"));
-        // demo.profile input_schema = {"type":"object"}; 传 array 触发类型不匹配
+        let tool = invoke_tool_with_backend(install_repo, canvas_repo, project_id, None);
         let result = tool
             .execute(
                 "t",
                 serde_json::json!({
-                    "module_id": "ext:demo",
-                    "operation_key": "demo.profile",
+                    "module_id": "canvas:cvs-dashboard-a",
+                    "operation_key": "canvas.bind_data",
                     "input": [1, 2, 3]
                 }),
                 CancellationToken::new(),
@@ -2507,7 +2466,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invoke_missing_backend_returns_structured_error() {
+    async fn invoke_runtime_action_without_operation_catalog_returns_not_found_even_without_backend()
+     {
         let (install_repo, canvas_repo, project_id) = fixtures().await;
         let tool = invoke_tool_with_backend(install_repo, canvas_repo, project_id, None);
         let result = tool
@@ -2528,7 +2488,7 @@ mod tests {
             result
                 .details
                 .and_then(|d| d.get("error").and_then(|e| e.as_str()).map(str::to_string)),
-            Some("backend_unavailable".to_string())
+            Some("operation_not_found".to_string())
         );
     }
 }

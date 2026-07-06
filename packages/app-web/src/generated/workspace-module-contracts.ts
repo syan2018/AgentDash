@@ -29,7 +29,11 @@ export type WorkspaceModuleOperation = { operation_key: string,
 /**
  * "runtime_action" | "protocol_channel" | "host_canvas" | "builtin"。
  */
-origin: string, description: string, input_schema?: JsonValue | null, output_schema?: JsonValue | null, permission_summary: Array<string>,
+origin: string, description: string, input_schema?: JsonValue | null, output_schema?: JsonValue | null, permission_summary: Array<string>, visibility: WorkspaceModuleOperationVisibility,
+/**
+ * Generated projection provenance, e.g. capability/exposure keys and source layer.
+ */
+provenance?: JsonValue,
 /**
  * 来源专属路由分量，invoke 据此直接派发（不拆 operation_key）。
  */
@@ -43,7 +47,7 @@ dispatch: WorkspaceModuleOperationDispatch, readiness: WorkspaceModuleOperationR
  * invoke 据 `dispatch` 派发，**不再字符串拆 `operation_key`**（避免 channel method
  * 名含驼峰时的反解析脆弱）。
  */
-export type WorkspaceModuleOperationDispatch = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method_name: string, } | { "kind": "host_canvas", canvas_action: WorkspaceModuleCanvasHostAction, } | { "kind": "builtin", builtin_key: string, };
+export type WorkspaceModuleOperationDispatch = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method_name: string, } | { "kind": "backend_service", service_key: string, route: string, } | { "kind": "host_canvas", canvas_action: WorkspaceModuleCanvasHostAction, } | { "kind": "builtin", builtin_key: string, };
 
 /**
  * 当前 runtime 中 operation 调用可用性的结构化诊断。
@@ -54,7 +58,12 @@ export type WorkspaceModuleOperationReadiness = { kind: WorkspaceModuleOperation
  * Operation 调用就绪状态；它只描述当前 operation 是否可调用，
  * 与 module 可见性和 renderer loadability 分层。
  */
-export type WorkspaceModuleOperationReadinessKind = "ready" | "missing_runtime_gateway" | "missing_channel_transport" | "missing_runtime_backend_anchor" | "backend_unavailable" | "runtime_action_unavailable";
+export type WorkspaceModuleOperationReadinessKind = "ready" | "missing_runtime_gateway" | "missing_channel_transport" | "missing_runtime_backend_anchor" | "backend_unavailable" | "runtime_action_unavailable" | "backend_service_unavailable";
+
+/**
+ * Operation exposure target.
+ */
+export type WorkspaceModuleOperationVisibility = "panel_only" | "agent_and_panel";
 
 /**
  * 用户或 Agent 请求展示某个 workspace module UI entry。

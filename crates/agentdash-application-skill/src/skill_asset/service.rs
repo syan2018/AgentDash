@@ -1091,194 +1091,8 @@ fn group_uploaded_skill_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::DomainError;
-    use std::sync::Mutex;
-
-    #[derive(Default)]
-    struct InMemorySkillAssetRepo {
-        assets: Mutex<Vec<SkillAsset>>,
-    }
-
-    #[async_trait::async_trait]
-    impl SkillAssetRepository for InMemorySkillAssetRepo {
-        async fn create(&self, asset: &SkillAsset) -> Result<(), DomainError> {
-            self.assets.lock().unwrap().push(asset.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| asset.id == id)
-                .cloned())
-        }
-
-        async fn get_by_project_and_key(
-            &self,
-            project_id: Uuid,
-            key: &str,
-        ) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| asset.project_id == project_id && asset.key == key)
-                .cloned())
-        }
-
-        async fn get_by_project_and_builtin_key(
-            &self,
-            project_id: Uuid,
-            builtin_key: &str,
-        ) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| {
-                    asset.project_id == project_id
-                        && asset.source.builtin_key() == Some(builtin_key)
-                })
-                .cloned())
-        }
-
-        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|asset| asset.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, asset: &SkillAsset) -> Result<(), DomainError> {
-            let mut guard = self.assets.lock().unwrap();
-            if let Some(existing) = guard.iter_mut().find(|existing| existing.id == asset.id) {
-                *existing = asset.clone();
-                Ok(())
-            } else {
-                Err(DomainError::NotFound {
-                    entity: "skill_asset",
-                    id: asset.id.to_string(),
-                })
-            }
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.assets.lock().unwrap().retain(|asset| asset.id != id);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryLibraryAssetRepo {
-        assets: Mutex<Vec<LibraryAsset>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LibraryAssetRepository for InMemoryLibraryAssetRepo {
-        async fn create(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
-            asset.typed_payload()?;
-            self.assets.lock().unwrap().push(asset.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| asset.id == id)
-                .cloned())
-        }
-
-        async fn find_by_identity(
-            &self,
-            asset_type: LibraryAssetType,
-            scope: LibraryAssetScope,
-            owner_id: Option<&str>,
-            key: &str,
-        ) -> Result<Option<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| {
-                    asset.asset_type == asset_type
-                        && asset.scope == scope
-                        && asset.owner_id.as_deref() == owner_id
-                        && asset.key == key
-                })
-                .cloned())
-        }
-
-        async fn list(
-            &self,
-            filter: agentdash_domain::shared_library::LibraryAssetListFilter,
-        ) -> Result<Vec<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|asset| {
-                    filter
-                        .asset_type
-                        .is_none_or(|asset_type| asset.asset_type == asset_type)
-                        && filter.scope.is_none_or(|scope| asset.scope == scope)
-                        && filter
-                            .owner_id
-                            .as_deref()
-                            .is_none_or(|owner_id| asset.owner_id.as_deref() == Some(owner_id))
-                        && (filter.include_deprecated || !asset.deprecated)
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
-            asset.typed_payload()?;
-            let mut guard = self.assets.lock().unwrap();
-            let existing = guard
-                .iter_mut()
-                .find(|existing| existing.id == asset.id)
-                .ok_or_else(|| DomainError::NotFound {
-                    entity: "library_asset",
-                    id: asset.id.to_string(),
-                })?;
-            *existing = asset.clone();
-            Ok(())
-        }
-
-        async fn upsert(&self, asset: &LibraryAsset) -> Result<LibraryAsset, DomainError> {
-            if let Some(existing) = self
-                .find_by_identity(
-                    asset.asset_type,
-                    asset.scope,
-                    asset.owner_id.as_deref(),
-                    &asset.key,
-                )
-                .await?
-            {
-                let mut updated = asset.clone();
-                updated.id = existing.id;
-                updated.created_at = existing.created_at;
-                self.update(&updated).await?;
-                return Ok(updated);
-            }
-            self.create(asset).await?;
-            Ok(asset.clone())
-        }
-    }
+    use agentdash_test_support::shared_library::MemoryLibraryAssetRepository;
+    use agentdash_test_support::skill::MemorySkillAssetRepository;
 
     fn skill_file(key: &str, description: &str) -> SkillAssetFileInput {
         SkillAssetFileInput::text(
@@ -1289,7 +1103,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_rejects_missing_skill_md_and_mismatched_frontmatter() {
-        let repo = InMemorySkillAssetRepo::default();
+        let repo = MemorySkillAssetRepository::default();
         let service = SkillAssetService::new(&repo);
         let project_id = Uuid::new_v4();
 
@@ -1326,7 +1140,7 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_bootstrap_syncs_embedded_template() {
-        let repo = InMemorySkillAssetRepo::default();
+        let repo = MemorySkillAssetRepository::default();
         let service = SkillAssetService::new(&repo);
         let project_id = Uuid::new_v4();
 
@@ -1368,7 +1182,7 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_bootstrap_converges_same_key_user_snapshot() {
-        let repo = InMemorySkillAssetRepo::default();
+        let repo = MemorySkillAssetRepository::default();
         let service = SkillAssetService::new(&repo);
         let project_id = Uuid::new_v4();
         let mut snapshot = SkillAsset::new_user(
@@ -1540,7 +1354,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_import_target_guard_only_allows_same_installed_source() {
-        let repo = InMemorySkillAssetRepo::default();
+        let repo = MemorySkillAssetRepository::default();
         let project_id = Uuid::new_v4();
 
         let user_skill = SkillAsset::new_user(project_id, "writer", "writer", "写作辅助", false);
@@ -1596,7 +1410,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_import_upserts_remote_imported_library_asset() {
-        let repo = InMemoryLibraryAssetRepo::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let first = materialize_remote_skill_template(RemoteSkillTemplateInput {
             source_kind: RemoteSkillKind::Github,
             normalized_url: "https://github.com/acme/skills/tree/main/writer".to_string(),

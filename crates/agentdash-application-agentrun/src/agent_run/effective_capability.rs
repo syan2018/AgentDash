@@ -769,13 +769,13 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryGrantRepository {
+    struct FixtureGrantRepository {
         grants: Mutex<Vec<PermissionGrant>>,
         active_frame_queries: Mutex<Vec<Uuid>>,
         active_run_queries: Mutex<Vec<Uuid>>,
     }
 
-    impl MemoryGrantRepository {
+    impl FixtureGrantRepository {
         async fn insert(&self, grant: PermissionGrant) {
             self.grants.lock().await.push(grant);
         }
@@ -790,7 +790,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl PermissionGrantRepository for MemoryGrantRepository {
+    impl PermissionGrantRepository for FixtureGrantRepository {
         async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
             self.insert(grant.clone()).await;
             Ok(())
@@ -938,12 +938,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryAnchorRepository {
+    struct FixtureAnchorRepository {
         anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepository {
+    impl RuntimeSessionExecutionAnchorRepository for FixtureAnchorRepository {
         async fn create_once(
             &self,
             anchor: &RuntimeSessionExecutionAnchor,
@@ -1027,7 +1027,7 @@ mod tests {
     }
 
     async fn insert_anchor(
-        anchors: &MemoryAnchorRepository,
+        anchors: &FixtureAnchorRepository,
         runtime_session_id: &str,
         run_id: Uuid,
         frame_id: Uuid,
@@ -1045,9 +1045,9 @@ mod tests {
     }
 
     fn effective_capability_adapter(
-        anchors: Arc<MemoryAnchorRepository>,
+        anchors: Arc<FixtureAnchorRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
-        grants: Arc<MemoryGrantRepository>,
+        grants: Arc<FixtureGrantRepository>,
     ) -> AgentRunEffectiveCapabilityAdapter {
         AgentRunEffectiveCapabilityAdapter::new(anchors, frames, grants)
     }
@@ -1064,9 +1064,9 @@ mod tests {
         let mut frame = frame_with_agent_state(agent_id, &state);
         frame.visible_workspace_module_refs_json = Some(serde_json::json!(["canvas:overview"]));
 
-        let anchors = Arc::new(MemoryAnchorRepository::default());
+        let anchors = Arc::new(FixtureAnchorRepository::default());
         let frames = Arc::new(MemoryAgentFrameRepository::default());
-        let grants = Arc::new(MemoryGrantRepository::default());
+        let grants = Arc::new(FixtureGrantRepository::default());
         frames.create(&frame).await.expect("frame");
         insert_anchor(&anchors, "session-a", run_id, frame.id, agent_id).await;
         grants
@@ -1126,9 +1126,9 @@ mod tests {
             },
         );
         let frame = frame_with_agent_state(agent_id, &state);
-        let anchors = Arc::new(MemoryAnchorRepository::default());
+        let anchors = Arc::new(FixtureAnchorRepository::default());
         let frames = Arc::new(MemoryAgentFrameRepository::default());
-        let grants = Arc::new(MemoryGrantRepository::default());
+        let grants = Arc::new(FixtureGrantRepository::default());
         frames.create(&frame).await.expect("frame");
         insert_anchor(&anchors, "session-a", run_id, frame.id, agent_id).await;
 
@@ -1150,9 +1150,9 @@ mod tests {
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
         let frame = frame_with_agent_state(agent_id, &CapabilityState::default());
-        let anchors = Arc::new(MemoryAnchorRepository::default());
+        let anchors = Arc::new(FixtureAnchorRepository::default());
         let frames = Arc::new(MemoryAgentFrameRepository::default());
-        let grants = Arc::new(MemoryGrantRepository::default());
+        let grants = Arc::new(FixtureGrantRepository::default());
         frames.create(&frame).await.expect("frame");
         insert_anchor(&anchors, "session-a", run_id, frame.id, agent_id).await;
 
@@ -1190,9 +1190,9 @@ mod tests {
         current_frame.revision = 2;
         let launch_frame_id = launch_frame.id;
         let current_frame_id = current_frame.id;
-        let anchors = Arc::new(MemoryAnchorRepository::default());
+        let anchors = Arc::new(FixtureAnchorRepository::default());
         let frames = Arc::new(MemoryAgentFrameRepository::default());
-        let grants = Arc::new(MemoryGrantRepository::default());
+        let grants = Arc::new(FixtureGrantRepository::default());
         frames.create(&launch_frame).await.expect("launch frame");
         frames.create(&current_frame).await.expect("current frame");
         insert_anchor(&anchors, "session-a", run_id, launch_frame_id, agent_id).await;
@@ -1280,7 +1280,7 @@ mod tests {
         current_frame.revision = 2;
         let launch_frame_id = launch_frame.id;
         let current_frame_id = current_frame.id;
-        let anchors = MemoryAnchorRepository::default();
+        let anchors = FixtureAnchorRepository::default();
         let frames = MemoryAgentFrameRepository::default();
         frames.create(&launch_frame).await.expect("launch frame");
         frames.create(&current_frame).await.expect("current frame");
@@ -1293,7 +1293,7 @@ mod tests {
             ))
             .await
             .expect("anchor");
-        let grants = MemoryGrantRepository::default();
+        let grants = FixtureGrantRepository::default();
         grants
             .insert(active_tool_grant(
                 run_id,
@@ -1340,7 +1340,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let frame = frame_with_agent_state(agent_id, &CapabilityState::default());
         let frame_id = frame.id;
-        let anchors = MemoryAnchorRepository::default();
+        let anchors = FixtureAnchorRepository::default();
         let frames = MemoryAgentFrameRepository::default();
         frames.create(&frame).await.expect("frame");
         anchors
@@ -1352,7 +1352,7 @@ mod tests {
             ))
             .await
             .expect("anchor");
-        let grants = MemoryGrantRepository::default();
+        let grants = FixtureGrantRepository::default();
         grants
             .insert(active_tool_grant(
                 run_id,

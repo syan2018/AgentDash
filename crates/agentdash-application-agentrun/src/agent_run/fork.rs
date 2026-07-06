@@ -1290,7 +1290,7 @@ mod tests {
         mailbox: Arc<MemoryAgentRunMailboxRepository>,
         lineages: Arc<MemoryAgentRunLineageRepository>,
         materialization: Arc<MemoryAgentRunForkMaterialization>,
-        session_store: Arc<TestSessionStore>,
+        session_store: Arc<FixtureSessionStore>,
         core: Arc<TestCorePort>,
         control: Arc<TestControlPort>,
         eventing: Arc<TestEventingPort>,
@@ -1321,7 +1321,7 @@ mod tests {
                 delivery_bindings.clone(),
                 lineages.clone(),
             ));
-            let session_store = Arc::new(TestSessionStore::default());
+            let session_store = Arc::new(FixtureSessionStore::default());
             let core = Arc::new(TestCorePort::default());
             let control = Arc::new(TestControlPort);
             let eventing = Arc::new(TestEventingPort);
@@ -1655,7 +1655,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestSessionStore {
+    struct FixtureSessionStore {
         metas: Mutex<HashMap<String, SessionMeta>>,
         events: Mutex<HashMap<String, Vec<PersistedSessionEvent>>>,
         compactions: Mutex<HashMap<(String, String), SessionCompactionRecord>>,
@@ -1664,7 +1664,7 @@ mod tests {
         trace_lineages: Mutex<HashMap<String, SessionLineageRecord>>,
     }
 
-    impl TestSessionStore {
+    impl FixtureSessionStore {
         fn store_set(self: &Arc<Self>) -> SessionStoreSet {
             SessionStoreSet {
                 meta: self.clone(),
@@ -1688,7 +1688,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionMetaStore for TestSessionStore {
+    impl SessionMetaStore for FixtureSessionStore {
         async fn create_session(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
             self.metas
                 .lock()
@@ -1723,7 +1723,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionEventStore for TestSessionStore {
+    impl SessionEventStore for FixtureSessionStore {
         async fn append_event(
             &self,
             session_id: &str,
@@ -1803,7 +1803,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionTerminalEffectStore for TestSessionStore {
+    impl SessionTerminalEffectStore for FixtureSessionStore {
         async fn insert_terminal_effect(
             &self,
             _effect: NewTerminalEffectRecord,
@@ -1855,7 +1855,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionRuntimeCommandStore for TestSessionStore {
+    impl SessionRuntimeCommandStore for FixtureSessionStore {
         async fn upsert_runtime_delivery_command(
             &self,
             _delivery_runtime_session_id: &str,
@@ -1899,7 +1899,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionCompactionStore for TestSessionStore {
+    impl SessionCompactionStore for FixtureSessionStore {
         async fn get_compaction(
             &self,
             session_id: &str,
@@ -1932,7 +1932,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionProjectionStore for TestSessionStore {
+    impl SessionProjectionStore for FixtureSessionStore {
         async fn list_projection_segments(
             &self,
             session_id: &str,
@@ -2007,7 +2007,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionLineageStore for TestSessionStore {
+    impl SessionLineageStore for FixtureSessionStore {
         async fn upsert_session_lineage(
             &self,
             record: SessionLineageRecord,

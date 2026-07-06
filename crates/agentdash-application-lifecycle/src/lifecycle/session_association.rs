@@ -254,208 +254,54 @@ pub async fn resolve_activity_runtime_association_from_message_stream_trace(
 mod tests {
     use super::*;
     use crate::lifecycle::build_lifecycle_mount_with_node_scope;
-    use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,
         LifecycleRunRepository,
     };
     use agentdash_spi::Vfs;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use agentdash_test_support::workflow::{
+        MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
+        MemoryRuntimeSessionExecutionAnchorRepository,
+    };
 
-    #[derive(Default)]
-    struct TestFrameRepo {
-        frames: HashMap<Uuid, AgentFrame>,
+    async fn seeded_frame_repo(
+        frames: impl IntoIterator<Item = AgentFrame>,
+    ) -> MemoryAgentFrameRepository {
+        let repo = MemoryAgentFrameRepository::default();
+        for frame in frames {
+            repo.create(&frame).await.expect("seed frame");
+        }
+        repo
     }
 
-    #[async_trait::async_trait]
-    impl AgentFrameRepository for TestFrameRepo {
-        async fn create(&self, _frame: &AgentFrame) -> Result<(), DomainError> {
-            Ok(())
+    async fn seeded_agent_repo(
+        agents: impl IntoIterator<Item = LifecycleAgent>,
+    ) -> MemoryLifecycleAgentRepository {
+        let repo = MemoryLifecycleAgentRepository::default();
+        for agent in agents {
+            repo.create(&agent).await.expect("seed agent");
         }
-
-        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self.frames.get(&frame_id).cloned())
-        }
-
-        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .frames
-                .values()
-                .filter(|frame| frame.agent_id == agent_id)
-                .max_by_key(|frame| frame.revision)
-                .cloned())
-        }
-
-        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
-            Ok(self
-                .frames
-                .values()
-                .filter(|frame| frame.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
+        repo
     }
 
-    #[derive(Default)]
-    struct TestAgentRepo {
-        agents: HashMap<Uuid, LifecycleAgent>,
+    async fn seeded_run_repo(
+        runs: impl IntoIterator<Item = LifecycleRun>,
+    ) -> MemoryLifecycleRunRepository {
+        let repo = MemoryLifecycleRunRepository::default();
+        for run in runs {
+            repo.create(&run).await.expect("seed run");
+        }
+        repo
     }
 
-    #[async_trait::async_trait]
-    impl LifecycleAgentRepository for TestAgentRepo {
-        async fn create(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
-            Ok(())
+    async fn seeded_anchor_repo(
+        anchors: impl IntoIterator<Item = RuntimeSessionExecutionAnchor>,
+    ) -> MemoryRuntimeSessionExecutionAnchorRepository {
+        let repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        for anchor in anchors {
+            repo.create_once(&anchor).await.expect("seed anchor");
         }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
-            Ok(self.agents.get(&id).cloned())
-        }
-
-        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
-            Ok(self
-                .agents
-                .values()
-                .filter(|agent| agent.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, _agent: &LifecycleAgent) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct TestRunRepo {
-        runs: HashMap<Uuid, LifecycleRun>,
-    }
-
-    #[async_trait::async_trait]
-    impl LifecycleRunRepository for TestRunRepo {
-        async fn create(&self, _run: &LifecycleRun) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-            Ok(self.runs.get(&id).cloned())
-        }
-
-        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(ids
-                .iter()
-                .filter_map(|id| self.runs.get(id).cloned())
-                .collect())
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .values()
-                .filter(|run| run.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, _run: &LifecycleRun) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct TestAnchorRepo {
-        anchors: Mutex<HashMap<String, RuntimeSessionExecutionAnchor>>,
-    }
-
-    impl TestAnchorRepo {
-        fn seeded(
-            anchors: impl IntoIterator<Item = (String, RuntimeSessionExecutionAnchor)>,
-        ) -> Self {
-            Self {
-                anchors: Mutex::new(anchors.into_iter().collect()),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for TestAnchorRepo {
-        async fn create_once(
-            &self,
-            anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
-            let mut anchors = self.anchors.lock().unwrap();
-            if let Some(existing) = anchors.get(&anchor.runtime_session_id) {
-                if existing.has_same_launch_coordinates_as(anchor) {
-                    return Ok(());
-                }
-                return Err(existing.immutable_conflict(anchor));
-            }
-            anchors.insert(anchor.runtime_session_id.clone(), anchor.clone());
-            Ok(())
-        }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.anchors.lock().unwrap().remove(runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_by_session(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .get(runtime_session_id)
-                .cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|anchor| anchor.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project_session_ids(
-            &self,
-            runtime_session_ids: &[String],
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            let anchors = self.anchors.lock().unwrap();
-            Ok(runtime_session_ids
-                .iter()
-                .filter_map(|id| anchors.get(id).cloned())
-                .collect())
-        }
+        repo
     }
 
     #[test]
@@ -502,12 +348,8 @@ mod tests {
         run.id = run_id;
         let mut launch_frame = AgentFrame::new_revision(agent_id, 1, "launch");
         launch_frame.id = launch_frame_id;
-        let frame_repo = TestFrameRepo {
-            frames: [(launch_frame_id, launch_frame)].into_iter().collect(),
-        };
-        let run_repo = TestRunRepo {
-            runs: [(run_id, run)].into_iter().collect(),
-        };
+        let frame_repo = seeded_frame_repo([launch_frame]).await;
+        let run_repo = seeded_run_repo([run]).await;
         let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             "sess-1",
             run_id,
@@ -517,7 +359,7 @@ mod tests {
             "implement",
             2,
         );
-        let anchor_repo = TestAnchorRepo::seeded([("sess-1".to_string(), anchor)]);
+        let anchor_repo = seeded_anchor_repo([anchor]).await;
         let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
         let resolver = resolver.with_anchor_repo(&anchor_repo);
 
@@ -552,13 +394,9 @@ mod tests {
         );
         let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
         frame.id = launch_frame_id;
-        let frame_repo = TestFrameRepo {
-            frames: [(launch_frame_id, frame)].into_iter().collect(),
-        };
-        let run_repo = TestRunRepo {
-            runs: [(run_id, run)].into_iter().collect(),
-        };
-        let anchor_repo = TestAnchorRepo::seeded([("sess-anchor".to_string(), anchor)]);
+        let frame_repo = seeded_frame_repo([frame]).await;
+        let run_repo = seeded_run_repo([run]).await;
+        let anchor_repo = seeded_anchor_repo([anchor]).await;
         let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo)
             .with_anchor_repo(&anchor_repo);
 
@@ -600,17 +438,8 @@ mod tests {
         let mut current_frame = AgentFrame::new_revision(agent.id, 2, "lifecycle_surface");
         current_frame.vfs_surface_json = serde_json::to_value(&lifecycle_vfs).ok();
 
-        let frame_repo = TestFrameRepo {
-            frames: [
-                (launch_frame.id, launch_frame.clone()),
-                (current_frame.id, current_frame.clone()),
-            ]
-            .into_iter()
-            .collect(),
-        };
-        let agent_repo = TestAgentRepo {
-            agents: [(agent.id, agent)].into_iter().collect(),
-        };
+        let frame_repo = seeded_frame_repo([launch_frame.clone(), current_frame.clone()]).await;
+        let agent_repo = seeded_agent_repo([agent]).await;
         let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
             "sess-vfs",
             run_id,
@@ -620,7 +449,7 @@ mod tests {
             "agent",
             1,
         );
-        let anchor_repo = TestAnchorRepo::seeded([("sess-vfs".to_string(), anchor)]);
+        let anchor_repo = seeded_anchor_repo([anchor]).await;
 
         let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
             "sess-vfs",
@@ -656,15 +485,11 @@ mod tests {
         run.id = run_id;
         let current_frame = AgentFrame::new_revision(agent_id, 2, "capability_update");
         let frame_id = current_frame.id;
-        let frame_repo = TestFrameRepo {
-            frames: [(frame_id, current_frame)].into_iter().collect(),
-        };
-        let run_repo = TestRunRepo {
-            runs: [(run_id, run)].into_iter().collect(),
-        };
+        let frame_repo = seeded_frame_repo([current_frame]).await;
+        let run_repo = seeded_run_repo([run]).await;
         let anchor =
             RuntimeSessionExecutionAnchor::new_dispatch("sess-1", run_id, frame_id, agent_id);
-        let anchor_repo = TestAnchorRepo::seeded([("sess-1".to_string(), anchor)]);
+        let anchor_repo = seeded_anchor_repo([anchor]).await;
         let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
         let resolver = resolver.with_anchor_repo(&anchor_repo);
 
@@ -683,12 +508,8 @@ mod tests {
         let mut run = LifecycleRun::new_control(project_id);
         run.id = run_id;
         let current_frame = AgentFrame::new_revision(agent_id, 1, "agent_launch");
-        let frame_repo = TestFrameRepo {
-            frames: [(current_frame.id, current_frame)].into_iter().collect(),
-        };
-        let run_repo = TestRunRepo {
-            runs: [(run_id, run)].into_iter().collect(),
-        };
+        let frame_repo = seeded_frame_repo([current_frame]).await;
+        let run_repo = seeded_run_repo([run]).await;
         let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
 
         assert!(
@@ -702,8 +523,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolver_returns_none_for_runtime_session_without_frame() {
-        let frame_repo = TestFrameRepo::default();
-        let run_repo = TestRunRepo::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let run_repo = MemoryLifecycleRunRepository::default();
         let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
 
         assert!(

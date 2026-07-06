@@ -828,9 +828,9 @@ fn projection_set(
 mod tests {
     use super::*;
     use agentdash_application_vfs::append_lifecycle_skill_asset_projection;
-    use agentdash_domain::DomainError;
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_domain::skill_asset::{SkillAsset, SkillAssetSource};
+    use agentdash_domain::skill_asset::SkillAssetSource;
+    use agentdash_test_support::skill::MemorySkillAssetRepository;
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -855,89 +855,6 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((project_id, builtin_key.to_string()));
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemorySkillAssetRepo {
-        assets: Mutex<Vec<SkillAsset>>,
-    }
-
-    #[async_trait::async_trait]
-    impl SkillAssetRepository for InMemorySkillAssetRepo {
-        async fn create(&self, asset: &SkillAsset) -> Result<(), DomainError> {
-            self.assets.lock().unwrap().push(asset.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| asset.id == id)
-                .cloned())
-        }
-
-        async fn get_by_project_and_key(
-            &self,
-            project_id: Uuid,
-            key: &str,
-        ) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| asset.project_id == project_id && asset.key == key)
-                .cloned())
-        }
-
-        async fn get_by_project_and_builtin_key(
-            &self,
-            project_id: Uuid,
-            builtin_key: &str,
-        ) -> Result<Option<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|asset| {
-                    asset.project_id == project_id
-                        && asset.source.builtin_key() == Some(builtin_key)
-                })
-                .cloned())
-        }
-
-        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|asset| asset.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, asset: &SkillAsset) -> Result<(), DomainError> {
-            let mut guard = self.assets.lock().unwrap();
-            if let Some(existing) = guard.iter_mut().find(|existing| existing.id == asset.id) {
-                *existing = asset.clone();
-                Ok(())
-            } else {
-                Err(DomainError::NotFound {
-                    entity: "skill_asset",
-                    id: asset.id.to_string(),
-                })
-            }
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.assets.lock().unwrap().retain(|asset| asset.id != id);
             Ok(())
         }
     }
@@ -1078,7 +995,7 @@ mod tests {
     #[tokio::test]
     async fn ensure_and_project_with_skill_service_creates_builtin_seed_assets() {
         let project_id = Uuid::new_v4();
-        let repo = Arc::new(InMemorySkillAssetRepo::default());
+        let repo = Arc::new(MemorySkillAssetRepository::default());
         let projector = AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(repo.clone());
 
         let surface = projector

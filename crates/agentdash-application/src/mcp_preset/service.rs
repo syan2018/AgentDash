@@ -310,18 +310,18 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct InMemoryRepo {
+    struct FixtureRepo {
         rows: Mutex<BTreeMap<Uuid, McpPreset>>,
     }
 
-    impl InMemoryRepo {
+    impl FixtureRepo {
         fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<Uuid, McpPreset>> {
             self.rows.lock().expect("preset repo lock poisoned")
         }
     }
 
     #[async_trait::async_trait]
-    impl McpPresetRepository for InMemoryRepo {
+    impl McpPresetRepository for FixtureRepo {
         async fn create(&self, preset: &McpPreset) -> Result<(), DomainError> {
             let mut guard = self.lock();
             if guard
@@ -418,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_list_works() {
-        let repo = InMemoryRepo::default();
+        let repo = FixtureRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
 
@@ -443,7 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_rejects_duplicate_key_in_project() {
-        let repo = InMemoryRepo::default();
+        let repo = FixtureRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
         let input = || CreateMcpPresetInput {
@@ -465,7 +465,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_rejects_invalid_key_and_invalid_transport() {
-        let repo = InMemoryRepo::default();
+        let repo = FixtureRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
         let err = service
@@ -504,7 +504,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_rejects_builtin() {
-        let repo = InMemoryRepo::default();
+        let repo = FixtureRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
 
@@ -529,7 +529,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_rejects_builtin() {
-        let repo = InMemoryRepo::default();
+        let repo = FixtureRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
         let builtins = service
@@ -545,7 +545,7 @@ mod tests {
 
     #[tokio::test]
     async fn clone_as_user_creates_editable_copy() {
-        let repo = InMemoryRepo::default();
+        let repo = FixtureRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
         let builtins = service
@@ -584,7 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn bootstrap_builtins_is_idempotent() {
-        let repo = InMemoryRepo::default();
+        let repo = FixtureRepo::default();
         let service = McpPresetService::new(&repo);
         let project_id = Uuid::new_v4();
         let first = service.bootstrap_builtins(project_id).await.expect("first");

@@ -422,147 +422,8 @@ fn text_result(path: String, size: u64, persisted: bool) -> TextMutationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
-    use agentdash_domain::common::error::DomainError;
-    use tokio::sync::Mutex;
-
-    type InlineKey = (String, Uuid, String, String);
-
-    #[derive(Default)]
-    struct MemoryInlineFileRepo {
-        files: Mutex<HashMap<InlineKey, InlineFile>>,
-    }
-
-    #[async_trait::async_trait]
-    impl InlineFileRepository for MemoryInlineFileRepo {
-        async fn get_file(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-            path: &str,
-        ) -> Result<Option<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .get(&(
-                    owner_kind.as_str().to_string(),
-                    owner_id,
-                    container_id.to_string(),
-                    path.to_string(),
-                ))
-                .cloned())
-        }
-
-        async fn list_files(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-        ) -> Result<Vec<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .values()
-                .filter(|file| {
-                    file.owner_kind == owner_kind
-                        && file.owner_id == owner_id
-                        && file.container_id == container_id
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn list_files_by_owner(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-        ) -> Result<Vec<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .values()
-                .filter(|file| file.owner_kind == owner_kind && file.owner_id == owner_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn upsert_file(&self, file: &InlineFile) -> Result<(), DomainError> {
-            self.files.lock().await.insert(
-                (
-                    file.owner_kind.as_str().to_string(),
-                    file.owner_id,
-                    file.container_id.clone(),
-                    file.path.clone(),
-                ),
-                file.clone(),
-            );
-            Ok(())
-        }
-
-        async fn upsert_files(&self, files: &[InlineFile]) -> Result<(), DomainError> {
-            for file in files {
-                self.upsert_file(file).await?;
-            }
-            Ok(())
-        }
-
-        async fn delete_file(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-            path: &str,
-        ) -> Result<(), DomainError> {
-            self.files.lock().await.remove(&(
-                owner_kind.as_str().to_string(),
-                owner_id,
-                container_id.to_string(),
-                path.to_string(),
-            ));
-            Ok(())
-        }
-
-        async fn delete_by_container(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-        ) -> Result<(), DomainError> {
-            self.files.lock().await.retain(|(kind, id, cid, _), _| {
-                kind != owner_kind.as_str() || *id != owner_id || cid != container_id
-            });
-            Ok(())
-        }
-
-        async fn delete_by_owner(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-        ) -> Result<(), DomainError> {
-            self.files
-                .lock()
-                .await
-                .retain(|(kind, id, _, _), _| kind != owner_kind.as_str() || *id != owner_id);
-            Ok(())
-        }
-
-        async fn count_files(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-        ) -> Result<i64, DomainError> {
-            Ok(self
-                .list_files(owner_kind, owner_id, container_id)
-                .await?
-                .len() as i64)
-        }
-    }
+    use agentdash_test_support::inline_file::MemoryInlineFileRepository;
 
     fn inline_mount(owner_kind: &str, owner_id: Uuid, container_id: &str) -> Mount {
         Mount {
@@ -586,7 +447,7 @@ mod tests {
         }
     }
 
-    fn dispatcher(repo: Arc<MemoryInlineFileRepo>) -> VfsMutationDispatcher {
+    fn dispatcher(repo: Arc<MemoryInlineFileRepository>) -> VfsMutationDispatcher {
         let registry = Arc::new(MountProviderRegistry::new());
         VfsMutationDispatcher::new(Arc::new(VfsService::new(registry.clone())), repo, registry)
     }
@@ -621,7 +482,7 @@ mod tests {
     #[tokio::test]
     async fn dispatcher_mutates_inline_files_through_one_storage_key() {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
+        let repo = Arc::new(MemoryInlineFileRepository::default());
         let dispatcher = dispatcher(repo.clone());
         let vfs = vfs_with_mount(inline_mount("project_vfs_mount", owner_id, "files"));
 

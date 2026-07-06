@@ -171,12 +171,12 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct MemoryBackendRepo {
+    struct FixtureBackendRepo {
         backends: Mutex<HashMap<String, BackendConfig>>,
     }
 
     #[async_trait::async_trait]
-    impl BackendRepository for MemoryBackendRepo {
+    impl BackendRepository for FixtureBackendRepo {
         async fn add_backend(&self, config: &BackendConfig) -> Result<(), DomainError> {
             self.backends
                 .lock()
@@ -351,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_user_local_selects_latest_claimed_desktop_backend() {
-        let backend_repo = MemoryBackendRepo::default();
+        let backend_repo = FixtureBackendRepo::default();
         let identity = identity("alice");
         backend_repo
             .add_backend(&backend(
@@ -397,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_user_local_requires_online_desktop_backend() {
-        let backend_repo = MemoryBackendRepo::default();
+        let backend_repo = FixtureBackendRepo::default();
         let identity = identity("alice");
         backend_repo
             .add_backend(&backend(
@@ -428,7 +428,7 @@ mod tests {
 
     #[tokio::test]
     async fn explicit_backend_uses_backend_authorization_and_online_state() {
-        let backend_repo = MemoryBackendRepo::default();
+        let backend_repo = FixtureBackendRepo::default();
         let identity = identity("alice");
         backend_repo
             .add_backend(&backend(

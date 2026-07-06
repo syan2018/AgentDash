@@ -341,12 +341,12 @@ mod tests {
     };
 
     #[derive(Default)]
-    struct MemoryLifecycleRunRepository {
+    struct FixtureLifecycleRunRepository {
         runs: Mutex<Vec<LifecycleRun>>,
     }
 
     #[async_trait::async_trait]
-    impl LifecycleRunRepository for MemoryLifecycleRunRepository {
+    impl LifecycleRunRepository for FixtureLifecycleRunRepository {
         async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             self.runs.lock().await.push(run.clone());
             Ok(())
@@ -402,7 +402,7 @@ mod tests {
     }
 
     struct SelectionFixture {
-        runs: Arc<MemoryLifecycleRunRepository>,
+        runs: Arc<FixtureLifecycleRunRepository>,
         agents: Arc<MemoryLifecycleAgentRepository>,
         frames: Arc<MemoryAgentFrameRepository>,
         anchors: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
@@ -412,7 +412,7 @@ mod tests {
     impl SelectionFixture {
         fn new() -> Self {
             Self {
-                runs: Arc::new(MemoryLifecycleRunRepository::default()),
+                runs: Arc::new(FixtureLifecycleRunRepository::default()),
                 agents: Arc::new(MemoryLifecycleAgentRepository::default()),
                 frames: Arc::new(MemoryAgentFrameRepository::default()),
                 anchors: Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default()),

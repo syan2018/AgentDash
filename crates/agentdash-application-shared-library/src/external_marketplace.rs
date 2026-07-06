@@ -306,122 +306,17 @@ fn normalize_optional_owner_id(owner_id: Option<String>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
+    use agentdash_test_support::shared_library::MemoryLibraryAssetRepository;
     use serde_json::json;
-    use uuid::Uuid;
 
     use agentdash_domain::shared_library::{LibraryAssetPayload, SkillTemplatePayload};
     use agentdash_spi::MarketplaceFetchedAssetPayload;
 
     use super::*;
 
-    #[derive(Default)]
-    struct InMemoryLibraryAssetRepository {
-        assets: Mutex<Vec<LibraryAsset>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LibraryAssetRepository for InMemoryLibraryAssetRepository {
-        async fn create(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
-            asset.typed_payload()?;
-            self.assets.lock().expect("lock").push(asset.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .find(|asset| asset.id == id)
-                .cloned())
-        }
-
-        async fn find_by_identity(
-            &self,
-            asset_type: LibraryAssetType,
-            scope: LibraryAssetScope,
-            owner_id: Option<&str>,
-            key: &str,
-        ) -> Result<Option<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .find(|asset| {
-                    asset.asset_type == asset_type
-                        && asset.scope == scope
-                        && asset.owner_id.as_deref() == owner_id
-                        && asset.key == key
-                })
-                .cloned())
-        }
-
-        async fn list(
-            &self,
-            filter: LibraryAssetListFilter,
-        ) -> Result<Vec<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .filter(|asset| {
-                    filter
-                        .asset_type
-                        .is_none_or(|value| value == asset.asset_type)
-                        && filter.scope.is_none_or(|value| value == asset.scope)
-                        && filter
-                            .owner_id
-                            .as_deref()
-                            .is_none_or(|value| asset.owner_id.as_deref() == Some(value))
-                        && (filter.include_deprecated || !asset.deprecated)
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
-            asset.typed_payload()?;
-            let mut assets = self.assets.lock().expect("lock");
-            let existing = assets
-                .iter_mut()
-                .find(|existing| existing.id == asset.id)
-                .ok_or_else(|| DomainError::NotFound {
-                    entity: "library_asset",
-                    id: asset.id.to_string(),
-                })?;
-            *existing = asset.clone();
-            Ok(())
-        }
-
-        async fn upsert(&self, asset: &LibraryAsset) -> Result<LibraryAsset, DomainError> {
-            if let Some(existing) = self
-                .find_by_identity(
-                    asset.asset_type,
-                    asset.scope,
-                    asset.owner_id.as_deref(),
-                    &asset.key,
-                )
-                .await?
-            {
-                let mut updated = asset.clone();
-                updated.id = existing.id;
-                updated.created_at = existing.created_at;
-                self.update(&updated).await?;
-                return Ok(updated);
-            }
-            self.create(asset).await?;
-            Ok(asset.clone())
-        }
-    }
-
     #[tokio::test]
     async fn import_external_marketplace_asset_creates_remote_imported_library_asset() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let fetched = fetched_skill(json!({
             "files": [{
                 "path": "SKILL.md",
@@ -463,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn import_external_marketplace_asset_updates_same_remote_source_ref() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let first = import_external_marketplace_asset(
             &repo,
             import_input(),
@@ -487,7 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn import_external_marketplace_asset_rejects_fetched_asset_type_mismatch() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let error = import_external_marketplace_asset(
             &repo,
             ImportExternalMarketplaceAssetInput {
@@ -515,7 +410,7 @@ mod tests {
 
     #[tokio::test]
     async fn import_external_marketplace_asset_rejects_invalid_payload() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let error = import_external_marketplace_asset(
             &repo,
             ImportExternalMarketplaceAssetInput {
@@ -539,7 +434,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_external_marketplace_asset_reports_not_imported() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let output = refresh_external_marketplace_asset(
             &repo,
             refresh_input(),
@@ -555,7 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_external_marketplace_asset_compares_remote_version_and_digest() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let asset = import_external_marketplace_asset(
             &repo,
             import_input(),
@@ -591,7 +486,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_external_marketplace_asset_reports_source_missing_without_remote_listing() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let asset = import_external_marketplace_asset(
             &repo,
             import_input(),

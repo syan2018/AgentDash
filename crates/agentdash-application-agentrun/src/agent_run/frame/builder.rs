@@ -292,7 +292,7 @@ mod tests {
     use std::{collections::BTreeSet, sync::Mutex};
 
     #[derive(Default)]
-    struct InMemoryFrameRepo {
+    struct FixtureFrameRepo {
         items: Mutex<Vec<AgentFrame>>,
     }
 
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl AgentFrameRepository for InMemoryFrameRepo {
+    impl AgentFrameRepository for FixtureFrameRepo {
         async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(frame.clone());
             Ok(())
@@ -344,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_creates_initial_revision_when_no_prior_frame() {
-        let repo = InMemoryFrameRepo::default();
+        let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
 
         let frame = AgentFrameBuilder::new(agent_id)
@@ -364,7 +364,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_launch_anchor_marks_dispatch_evidence_revision() {
-        let repo = InMemoryFrameRepo::default();
+        let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
 
         let frame = AgentFrameBuilder::new_launch_anchor(agent_id, Some("runtime-1".to_string()))
@@ -381,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_increments_revision() {
-        let repo = InMemoryFrameRepo::default();
+        let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
 
         let frame1 = AgentFrameBuilder::new(agent_id)
@@ -401,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_with_runtime_session_does_not_persist_frame_refs() {
-        let repo = InMemoryFrameRepo::default();
+        let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
         let session_id = Uuid::new_v4();
 
@@ -417,7 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_revision_carries_forward_runtime_surface() {
-        let repo = InMemoryFrameRepo::default();
+        let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
 
         let mut frame1 = AgentFrameBuilder::new(agent_id)
@@ -448,7 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_revision_carries_forward_visible_workspace_module_refs() {
-        let repo = InMemoryFrameRepo::default();
+        let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
 
         let mut frame1 = AgentFrameBuilder::new(agent_id)
@@ -473,7 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn lifecycle_activation_surface_outputs_single_coherent_frame_revision() {
-        let repo = InMemoryFrameRepo::default();
+        let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
         let activation = ActivityActivation {
             capability_state: CapabilityState::from_clusters([ToolCluster::Read]),
@@ -569,7 +569,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_revision_writes_frame_surface_draft() {
-        let repo = InMemoryFrameRepo::default();
+        let repo = FixtureFrameRepo::default();
         let agent_id = Uuid::new_v4();
         let vfs = Vfs {
             mounts: vec![mount("workspace", "relay_fs")],

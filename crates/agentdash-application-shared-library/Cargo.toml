@@ -16,5 +16,6 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+agentdash-test-support = { workspace = true }
 async-trait = "0.1"
 tokio = { workspace = true, features = ["sync"] }

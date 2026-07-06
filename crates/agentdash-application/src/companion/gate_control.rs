@@ -1505,12 +1505,12 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct MemoryGateRepo {
+    struct FixtureGateRepo {
         gates: Mutex<HashMap<Uuid, LifecycleGate>>,
     }
 
     #[async_trait]
-    impl LifecycleGateRepository for MemoryGateRepo {
+    impl LifecycleGateRepository for FixtureGateRepo {
         async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
             self.gates.lock().unwrap().insert(gate.id, gate.clone());
             Ok(())
@@ -1576,12 +1576,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryFrameRepo {
+    struct FixtureFrameRepo {
         frames: Mutex<HashMap<Uuid, AgentFrame>>,
         runtime_sessions_by_frame: Mutex<HashMap<Uuid, Vec<String>>>,
     }
 
-    impl MemoryFrameRepo {
+    impl FixtureFrameRepo {
         fn seed_runtime_sessions<I, S>(&self, frame_id: Uuid, session_ids: I)
         where
             I: IntoIterator<Item = S>,
@@ -1595,7 +1595,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl AgentFrameRepository for MemoryFrameRepo {
+    impl AgentFrameRepository for FixtureFrameRepo {
         async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
             self.frames.lock().unwrap().insert(frame.id, frame.clone());
             Ok(())
@@ -1629,12 +1629,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryLineageRepo {
+    struct FixtureLineageRepo {
         lineages: Mutex<Vec<AgentLineage>>,
     }
 
     #[async_trait]
-    impl AgentLineageRepository for MemoryLineageRepo {
+    impl AgentLineageRepository for FixtureLineageRepo {
         async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError> {
             self.lineages.lock().unwrap().push(lineage.clone());
             Ok(())
@@ -1677,12 +1677,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryAgentRepo {
+    struct FixtureAgentRepo {
         agents: Mutex<HashMap<Uuid, LifecycleAgent>>,
     }
 
-    impl MemoryAgentRepo {
-        fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid, project_id: Uuid) -> Self {
+    impl FixtureAgentRepo {
+        fn from_frame_repo(frame_repo: &FixtureFrameRepo, run_id: Uuid, project_id: Uuid) -> Self {
             let mut agents = HashMap::new();
             let frames: Vec<_> = frame_repo
                 .frames
@@ -1704,7 +1704,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl LifecycleAgentRepository for MemoryAgentRepo {
+    impl LifecycleAgentRepository for FixtureAgentRepo {
         async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
             self.agents.lock().unwrap().insert(agent.id, agent.clone());
             Ok(())
@@ -1732,12 +1732,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryAnchorRepo {
+    struct FixtureAnchorRepo {
         anchors: Mutex<HashMap<String, RuntimeSessionExecutionAnchor>>,
     }
 
-    impl MemoryAnchorRepo {
-        fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid) -> Self {
+    impl FixtureAnchorRepo {
+        fn from_frame_repo(frame_repo: &FixtureFrameRepo, run_id: Uuid) -> Self {
             let mut anchors = HashMap::new();
             let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
             for frame in frame_repo.frames.lock().unwrap().values() {
@@ -1760,7 +1760,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for MemoryAnchorRepo {
+    impl RuntimeSessionExecutionAnchorRepository for FixtureAnchorRepo {
         async fn create_once(
             &self,
             anchor: &RuntimeSessionExecutionAnchor,
@@ -1834,12 +1834,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryDeliveryBindingRepo {
+    struct FixtureDeliveryBindingRepo {
         bindings: Mutex<HashMap<(Uuid, Uuid), AgentRunDeliveryBinding>>,
     }
 
-    impl MemoryDeliveryBindingRepo {
-        fn from_frame_repo(frame_repo: &MemoryFrameRepo, run_id: Uuid) -> Self {
+    impl FixtureDeliveryBindingRepo {
+        fn from_frame_repo(frame_repo: &FixtureFrameRepo, run_id: Uuid) -> Self {
             let frames: Vec<_> = frame_repo
                 .frames
                 .lock()
@@ -1885,7 +1885,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl AgentRunDeliveryBindingRepository for MemoryDeliveryBindingRepo {
+    impl AgentRunDeliveryBindingRepository for FixtureDeliveryBindingRepo {
         async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
             self.bindings
                 .lock()
@@ -1931,11 +1931,11 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryRunRepo {
+    struct FixtureRunRepo {
         runs: Mutex<HashMap<Uuid, LifecycleRun>>,
     }
 
-    impl MemoryRunRepo {
+    impl FixtureRunRepo {
         fn with_run(run_id: Uuid, project_id: Uuid) -> Self {
             let mut run = LifecycleRun::new_plain(project_id);
             run.id = run_id;
@@ -1948,7 +1948,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl LifecycleRunRepository for MemoryRunRepo {
+    impl LifecycleRunRepository for FixtureRunRepo {
         async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             self.runs.lock().unwrap().insert(run.id, run.clone());
             Ok(())
@@ -1995,9 +1995,9 @@ mod tests {
     }
 
     fn service_for_test(
-        gate_repo: Arc<MemoryGateRepo>,
-        frame_repo: Arc<MemoryFrameRepo>,
-        lineage_repo: Arc<MemoryLineageRepo>,
+        gate_repo: Arc<FixtureGateRepo>,
+        frame_repo: Arc<FixtureFrameRepo>,
+        lineage_repo: Arc<FixtureLineageRepo>,
         delivery: Arc<CapturingDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
@@ -2012,9 +2012,9 @@ mod tests {
     }
 
     fn service_for_test_with_parent_mailbox(
-        gate_repo: Arc<MemoryGateRepo>,
-        frame_repo: Arc<MemoryFrameRepo>,
-        lineage_repo: Arc<MemoryLineageRepo>,
+        gate_repo: Arc<FixtureGateRepo>,
+        frame_repo: Arc<FixtureFrameRepo>,
+        lineage_repo: Arc<FixtureLineageRepo>,
         delivery: Arc<CapturingDelivery>,
         parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
         run_id: Uuid,
@@ -2031,32 +2031,32 @@ mod tests {
     }
 
     fn service_for_test_with_mailboxes(
-        gate_repo: Arc<MemoryGateRepo>,
-        frame_repo: Arc<MemoryFrameRepo>,
-        lineage_repo: Arc<MemoryLineageRepo>,
+        gate_repo: Arc<FixtureGateRepo>,
+        frame_repo: Arc<FixtureFrameRepo>,
+        lineage_repo: Arc<FixtureLineageRepo>,
         delivery: Arc<CapturingDelivery>,
         parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
         human_mailbox_delivery: Arc<CapturingHumanMailboxDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
         let project_id = Uuid::new_v4();
-        let agent_repo = Arc::new(MemoryAgentRepo::from_frame_repo(
+        let agent_repo = Arc::new(FixtureAgentRepo::from_frame_repo(
             frame_repo.as_ref(),
             run_id,
             project_id,
         ));
-        let anchor_repo = Arc::new(MemoryAnchorRepo::from_frame_repo(
+        let anchor_repo = Arc::new(FixtureAnchorRepo::from_frame_repo(
             frame_repo.as_ref(),
             run_id,
         ));
-        let delivery_binding_repo = Arc::new(MemoryDeliveryBindingRepo::from_frame_repo(
+        let delivery_binding_repo = Arc::new(FixtureDeliveryBindingRepo::from_frame_repo(
             frame_repo.as_ref(),
             run_id,
         ));
         CompanionGateControlService::new(CompanionGateControlDeps {
             repos: CompanionGateControlRepos {
                 gate_repo,
-                run_repo: Arc::new(MemoryRunRepo::with_run(run_id, project_id)),
+                run_repo: Arc::new(FixtureRunRepo::with_run(run_id, project_id)),
                 frame_repo,
                 agent_repo,
                 anchor_repo,
@@ -2230,12 +2230,12 @@ mod tests {
         );
         let gate_id = gate.id;
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&frame).await.expect("seed frame");
         frame_repo.seed_runtime_sessions(frame_id, ["session-old", "session-latest"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
         let human_mailbox_delivery = Arc::new(CapturingHumanMailboxDelivery::default());
@@ -2316,12 +2316,12 @@ mod tests {
         );
         gate.resolve("previous");
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&frame).await.expect("seed frame");
         frame_repo.seed_runtime_sessions(frame.id, ["session-1"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(
             gate_repo,
@@ -2362,12 +2362,12 @@ mod tests {
         );
         let gate_id = gate.id;
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo.create(&frame).await.expect("seed frame");
         frame_repo.seed_runtime_sessions(frame_id, ["session-latest"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
         let human_mailbox_delivery = Arc::new(CapturingHumanMailboxDelivery::default());
@@ -2450,9 +2450,9 @@ mod tests {
             None,
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -2463,7 +2463,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
@@ -2640,9 +2640,9 @@ mod tests {
             None,
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -2653,7 +2653,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
@@ -2778,8 +2778,8 @@ mod tests {
             None,
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -2790,7 +2790,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame_id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
@@ -2907,8 +2907,8 @@ mod tests {
             None,
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -2919,7 +2919,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
@@ -2995,9 +2995,9 @@ mod tests {
             None,
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -3008,7 +3008,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
@@ -3089,9 +3089,9 @@ mod tests {
             None,
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -3102,7 +3102,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
@@ -3161,8 +3161,8 @@ mod tests {
             None,
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_launch_frame)
             .await
@@ -3177,7 +3177,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         lineage_repo.create(&lineage).await.expect("seed lineage");
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(
@@ -3265,9 +3265,9 @@ mod tests {
         gate.correlation_id = gate.id.to_string();
         let gate_id = gate.id;
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -3278,7 +3278,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame_id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
         let service = service_for_test_with_parent_mailbox(
@@ -3429,9 +3429,9 @@ mod tests {
         gate.correlation_id = gate.id.to_string();
         let gate_id = gate.id;
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -3442,7 +3442,7 @@ mod tests {
             .await
             .expect("seed child frame");
         frame_repo.seed_runtime_sessions(child_frame.id, ["child-session"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let parent_mailbox_delivery = Arc::new(CapturingParentMailboxDelivery::default());
         parent_mailbox_delivery.fail_next("child mailbox unavailable");
@@ -3511,9 +3511,9 @@ mod tests {
         );
         gate.correlation_id = gate.id.to_string();
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
-        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        let frame_repo = Arc::new(FixtureFrameRepo::default());
         frame_repo
             .create(&parent_frame)
             .await
@@ -3524,7 +3524,7 @@ mod tests {
             .await
             .expect("seed other frame");
         frame_repo.seed_runtime_sessions(other_frame.id, ["other"]);
-        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let lineage_repo = Arc::new(FixtureLineageRepo::default());
         let delivery = Arc::new(CapturingDelivery::default());
         let service = service_for_test(
             gate_repo,

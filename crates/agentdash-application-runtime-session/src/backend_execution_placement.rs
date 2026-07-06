@@ -376,10 +376,10 @@ mod tests {
         }
     }
 
-    struct TestLeaseRepository;
+    struct FixtureLeaseRepository;
 
     #[async_trait]
-    impl BackendExecutionLeaseRepository for TestLeaseRepository {
+    impl BackendExecutionLeaseRepository for FixtureLeaseRepository {
         async fn claim(&self, _lease: &BackendExecutionLease) -> Result<(), DomainError> {
             Ok(())
         }
@@ -445,7 +445,7 @@ mod tests {
     #[tokio::test]
     async fn explicit_cloud_native_executor_does_not_require_backend_relay_executor() {
         let transport = TestTransport::default();
-        let lease_repo = TestLeaseRepository;
+        let lease_repo = FixtureLeaseRepository;
 
         let plan = resolve_backend_execution_placement(
             &transport,
@@ -470,7 +470,7 @@ mod tests {
             executors: Vec::new(),
             offline_backend_ids: BTreeSet::from(["local_offline".to_string()]),
         };
-        let lease_repo = TestLeaseRepository;
+        let lease_repo = FixtureLeaseRepository;
 
         let error = resolve_backend_execution_placement(
             &transport,
@@ -495,7 +495,7 @@ mod tests {
     #[tokio::test]
     async fn explicit_relay_executor_still_requires_backend_executor() {
         let transport = TestTransport::default();
-        let lease_repo = TestLeaseRepository;
+        let lease_repo = FixtureLeaseRepository;
 
         let error = resolve_backend_execution_placement(
             &transport,
@@ -512,7 +512,7 @@ mod tests {
     #[tokio::test]
     async fn auto_idle_reports_no_available_backend_as_connection_failure() {
         let transport = TestTransport::default();
-        let lease_repo = TestLeaseRepository;
+        let lease_repo = FixtureLeaseRepository;
 
         let error = resolve_backend_execution_placement(
             &transport,

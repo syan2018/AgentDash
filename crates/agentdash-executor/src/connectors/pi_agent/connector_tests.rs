@@ -260,12 +260,12 @@ impl agentdash_spi::AgentTool for StaticTool {
 }
 
 #[derive(Default)]
-struct TestSettingsRepository {
+struct FixtureSettingsRepository {
     entries: RwLock<HashMap<(String, String, String), serde_json::Value>>,
 }
 
 #[async_trait::async_trait]
-impl SettingsRepository for TestSettingsRepository {
+impl SettingsRepository for FixtureSettingsRepository {
     async fn list(
         &self,
         scope: &SettingScope,
@@ -361,18 +361,18 @@ impl SettingsRepository for TestSettingsRepository {
 }
 
 #[derive(Default)]
-struct TestLlmProviderRepository {
+struct FixtureLlmProviderRepository {
     providers: RwLock<Vec<agentdash_domain::llm_provider::LlmProvider>>,
 }
 
-impl TestLlmProviderRepository {
+impl FixtureLlmProviderRepository {
     fn set_providers(&self, providers: Vec<agentdash_domain::llm_provider::LlmProvider>) {
         *self.providers.write().expect("test provider lock") = providers;
     }
 }
 
 #[async_trait::async_trait]
-impl agentdash_domain::llm_provider::LlmProviderRepository for TestLlmProviderRepository {
+impl agentdash_domain::llm_provider::LlmProviderRepository for FixtureLlmProviderRepository {
     async fn create(
         &self,
         _provider: &agentdash_domain::llm_provider::LlmProvider,
@@ -417,11 +417,11 @@ impl agentdash_domain::llm_provider::LlmProviderRepository for TestLlmProviderRe
 }
 
 #[derive(Default)]
-struct TestLlmProviderCredentialRepository;
+struct FixtureLlmProviderCredentialRepository;
 
 #[async_trait::async_trait]
 impl agentdash_domain::llm_provider::LlmProviderCredentialRepository
-    for TestLlmProviderCredentialRepository
+    for FixtureLlmProviderCredentialRepository
 {
     async fn get_for_user_provider(
         &self,
@@ -2315,9 +2315,9 @@ fn provider_adapter_behavior_matrix_has_named_coverage() {
 async fn discovery_reflects_provider_added_to_db_without_restart() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut connector = build_pi_agent_connector(
@@ -2373,9 +2373,9 @@ async fn discovery_reflects_provider_added_to_db_without_restart() {
 async fn discovery_includes_global_only_platform_provider_without_user_byok() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut provider = LlmProvider::new("Platform Only", "platform-only", WireProtocol::Anthropic);
@@ -2431,9 +2431,9 @@ async fn discovery_includes_global_only_platform_provider_without_user_byok() {
 async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
@@ -2489,9 +2489,9 @@ async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
 
 #[tokio::test]
 async fn prompt_without_provider_configuration_returns_clear_error() {
-    let repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = TestLlmProviderRepository::default();
-    let credential_repo = TestLlmProviderCredentialRepository;
+    let repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = FixtureLlmProviderRepository::default();
+    let credential_repo = FixtureLlmProviderCredentialRepository;
     let secret_codec = TestLlmSecretCodec;
     let mut connector =
         build_pi_agent_connector(repo.as_ref(), &llm_repo, &credential_repo, &secret_codec)
@@ -2535,9 +2535,9 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
 async fn prompt_missing_model_selection_reports_guidance_with_dynamic_providers() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
@@ -2581,9 +2581,9 @@ async fn prompt_missing_model_selection_reports_guidance_with_dynamic_providers(
 async fn prompt_selected_unavailable_provider_reports_credential_mode() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut available = LlmProvider::new("Available", "available", WireProtocol::Anthropic);
@@ -2648,9 +2648,9 @@ async fn prompt_selected_unavailable_provider_reports_credential_mode() {
 async fn prompt_selected_user_required_provider_reports_byok_when_identity_exists() {
     use agentdash_domain::llm_provider::{LlmCredentialMode, LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut available = LlmProvider::new("Available", "available", WireProtocol::Anthropic);
@@ -2727,9 +2727,9 @@ async fn prompt_selected_user_required_provider_reports_byok_when_identity_exist
 async fn prompt_selected_provider_rejects_blocked_model() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
@@ -2778,9 +2778,9 @@ async fn prompt_selected_provider_rejects_blocked_model() {
 async fn prompt_selected_provider_rejects_unknown_model() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
@@ -2828,9 +2828,9 @@ async fn prompt_selected_provider_rejects_unknown_model() {
 async fn prompt_requires_provider_when_model_id_matches_multiple_providers() {
     use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
 
-    let settings_repo = Arc::new(TestSettingsRepository::default());
-    let llm_repo = Arc::new(TestLlmProviderRepository::default());
-    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let settings_repo = Arc::new(FixtureSettingsRepository::default());
+    let llm_repo = Arc::new(FixtureLlmProviderRepository::default());
+    let credential_repo = Arc::new(FixtureLlmProviderCredentialRepository);
     let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut provider_a = LlmProvider::new("Provider A", "provider-a", WireProtocol::Anthropic);

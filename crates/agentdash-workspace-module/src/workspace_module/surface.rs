@@ -1591,12 +1591,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakeCanvasRepo {
+    struct FixtureCanvasRepo {
         canvases: Mutex<HashMap<(Uuid, String), Canvas>>,
     }
 
     #[async_trait]
-    impl CanvasRepository for FakeCanvasRepo {
+    impl CanvasRepository for FixtureCanvasRepo {
         async fn create(&self, canvas: &Canvas) -> Result<(), DomainError> {
             self.canvases
                 .lock()
@@ -1879,7 +1879,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let installation_repo: Arc<dyn ProjectExtensionInstallationRepository> =
             Arc::new(EmptyInstallationRepo);
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let canvas = build_canvas(
             project_id,
             Some("cvs-dashboard-a".to_string()),
@@ -1924,7 +1924,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let installation_repo: Arc<dyn ProjectExtensionInstallationRepository> =
             Arc::new(EmptyInstallationRepo);
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let canvas = build_canvas(
             project_id,
             Some("cvs-dashboard-a".to_string()),
@@ -2001,7 +2001,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let installation_repo: Arc<dyn ProjectExtensionInstallationRepository> =
             Arc::new(EmptyInstallationRepo);
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let canvas = build_canvas(
             project_id,
             Some("cvs-dashboard-a".to_string()),
@@ -2070,7 +2070,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let installation_repo: Arc<dyn ProjectExtensionInstallationRepository> =
             Arc::new(EmptyInstallationRepo);
-        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let canvas_repo = Arc::new(FixtureCanvasRepo::default());
         let canvas = build_canvas(
             project_id,
             Some("cvs-dashboard-a".to_string()),

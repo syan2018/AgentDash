@@ -156,7 +156,7 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct InMemoryProjectBackendAccessRepository {
+    struct FixtureProjectBackendAccessRepository {
         accesses: Mutex<Vec<ProjectBackendAccess>>,
         create_result: Mutex<CreateResult>,
     }
@@ -169,7 +169,7 @@ mod tests {
         ConflictWithoutInsert,
     }
 
-    impl InMemoryProjectBackendAccessRepository {
+    impl FixtureProjectBackendAccessRepository {
         async fn push(&self, access: ProjectBackendAccess) {
             self.accesses.lock().await.push(access);
         }
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl ProjectBackendAccessRepository for InMemoryProjectBackendAccessRepository {
+    impl ProjectBackendAccessRepository for FixtureProjectBackendAccessRepository {
         async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
             match &*self.create_result.lock().await {
                 CreateResult::Ok => {
@@ -328,7 +328,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_grant_creates_access_with_source_defaults() {
-        let repo = InMemoryProjectBackendAccessRepository::default();
+        let repo = FixtureProjectBackendAccessRepository::default();
         let project_id = Uuid::new_v4();
 
         let result = ensure_project_backend_access_grant(
@@ -355,7 +355,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_grant_reactivates_existing_access_and_applies_options() {
-        let repo = InMemoryProjectBackendAccessRepository::default();
+        let repo = FixtureProjectBackendAccessRepository::default();
         let project_id = Uuid::new_v4();
         let mut existing =
             ProjectBackendAccess::new(project_id, "backend-a".to_string(), Some("old".into()));
@@ -382,7 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_grant_treats_conflict_with_active_row_as_idempotent() {
-        let repo = Arc::new(InMemoryProjectBackendAccessRepository::default());
+        let repo = Arc::new(FixtureProjectBackendAccessRepository::default());
         repo.set_create_result(CreateResult::ConflictAfterInsert)
             .await;
         let project_id = Uuid::new_v4();
@@ -404,7 +404,7 @@ mod tests {
 
     #[tokio::test]
     async fn ensure_grant_surfaces_conflict_without_active_row() {
-        let repo = InMemoryProjectBackendAccessRepository::default();
+        let repo = FixtureProjectBackendAccessRepository::default();
         repo.set_create_result(CreateResult::ConflictWithoutInsert)
             .await;
 

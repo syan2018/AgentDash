@@ -433,14 +433,17 @@ mod launcher_drain_tests {
         AgentFrameRepository, AgentProcedure, AgentProcedureContract, AgentProcedureExecutionSpec,
         AgentProcedureRepository, AgentReusePolicy, AgentRuntimeRefs, ApiRequestExecutorSpec,
         BashExecExecutorSpec, DefinitionSource, ExecutorSpec, FunctionActivityExecutorSpec,
-        GateStrategy, HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleGate,
-        LifecycleGateRepository, LifecycleRunRepository, OrchestrationLimits,
-        OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition, RuntimeNodeState,
-        RuntimeNodeStatus, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-        RuntimeSessionPolicy, RuntimeTraceRef, WaitObligationDeclaration, WaitProducerRef,
+        GateStrategy, HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleRunRepository,
+        OrchestrationLimits, OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition,
+        RuntimeNodeState, RuntimeNodeStatus, RuntimeSessionExecutionAnchor,
+        RuntimeSessionExecutionAnchorRepository, RuntimeSessionPolicy, RuntimeTraceRef,
         WorkflowInjectionSpec,
     };
     use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
+    use agentdash_test_support::workflow::{
+        MemoryAgentFrameRepository, MemoryAgentProcedureRepository, MemoryLifecycleGateRepository,
+        MemoryLifecycleRunRepository, MemoryRuntimeSessionExecutionAnchorRepository,
+    };
     use async_trait::async_trait;
     use chrono::Utc;
     use serde_json::json;
@@ -448,161 +451,6 @@ mod launcher_drain_tests {
     use crate::orchestration::runtime::activate_root_orchestration;
 
     use super::*;
-
-    #[derive(Default)]
-    struct InMemoryRunRepo {
-        items: Mutex<Vec<LifecycleRun>>,
-    }
-
-    impl InMemoryRunRepo {
-        fn insert(&self, run: LifecycleRun) {
-            self.items.lock().unwrap().push(run);
-        }
-    }
-
-    #[async_trait]
-    impl LifecycleRunRepository for InMemoryRunRepo {
-        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            self.insert(run.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|run| run.id == id)
-                .cloned())
-        }
-
-        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| ids.contains(&run.id))
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items.iter_mut().find(|existing| existing.id == run.id) {
-                *existing = run.clone();
-            } else {
-                items.push(run.clone());
-            }
-            Ok(())
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.items.lock().unwrap().retain(|run| run.id != id);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryProcedureRepo {
-        items: Mutex<Vec<AgentProcedure>>,
-    }
-
-    impl InMemoryProcedureRepo {
-        fn insert(&self, procedure: AgentProcedure) {
-            self.items.lock().unwrap().push(procedure);
-        }
-    }
-
-    #[async_trait]
-    impl AgentProcedureRepository for InMemoryProcedureRepo {
-        async fn create(&self, procedure: &AgentProcedure) -> Result<(), DomainError> {
-            self.insert(procedure.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<AgentProcedure>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|procedure| procedure.id == id)
-                .cloned())
-        }
-
-        async fn get_by_key(&self, key: &str) -> Result<Option<AgentProcedure>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|procedure| procedure.key == key)
-                .cloned())
-        }
-
-        async fn get_by_project_and_key(
-            &self,
-            project_id: Uuid,
-            key: &str,
-        ) -> Result<Option<AgentProcedure>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|procedure| procedure.project_id == project_id && procedure.key == key)
-                .cloned())
-        }
-
-        async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError> {
-            Ok(self.items.lock().unwrap().clone())
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<AgentProcedure>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|procedure| procedure.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, procedure: &AgentProcedure) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items
-                .iter_mut()
-                .find(|existing| existing.id == procedure.id)
-            {
-                *existing = procedure.clone();
-            }
-            Ok(())
-        }
-
-        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
-            Ok(())
-        }
-    }
 
     struct RejectingProcedureRepo;
 
@@ -652,61 +500,6 @@ mod launcher_drain_tests {
         DomainError::InvalidConfig("snapshot procedure must not query repository".to_string())
     }
 
-    #[derive(Default)]
-    struct InMemoryFrameRepo {
-        items: Mutex<Vec<AgentFrame>>,
-    }
-
-    impl InMemoryFrameRepo {
-        fn latest(&self) -> AgentFrame {
-            self.items
-                .lock()
-                .unwrap()
-                .last()
-                .cloned()
-                .expect("frame persisted")
-        }
-    }
-
-    #[async_trait]
-    impl AgentFrameRepository for InMemoryFrameRepo {
-        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(frame.clone());
-            Ok(())
-        }
-
-        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|frame| frame.id == frame_id)
-                .cloned())
-        }
-
-        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
-            let items = self.items.lock().unwrap();
-            let mut frames: Vec<_> = items
-                .iter()
-                .filter(|frame| frame.agent_id == agent_id)
-                .collect();
-            frames.sort_by_key(|frame| frame.revision);
-            Ok(frames.last().cloned().cloned())
-        }
-
-        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|frame| frame.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-    }
-
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CapturedAgentNodeComposition {
         node_path: String,
@@ -716,13 +509,16 @@ mod launcher_drain_tests {
     }
 
     struct CapturingLifecycleFrameMaterializer {
-        frame_repo: Arc<InMemoryFrameRepo>,
-        anchor_repo: Arc<InMemoryAnchorRepo>,
+        frame_repo: Arc<MemoryAgentFrameRepository>,
+        anchor_repo: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
         calls: Mutex<Vec<CapturedAgentNodeComposition>>,
     }
 
     impl CapturingLifecycleFrameMaterializer {
-        fn new(frame_repo: Arc<InMemoryFrameRepo>, anchor_repo: Arc<InMemoryAnchorRepo>) -> Self {
+        fn new(
+            frame_repo: Arc<MemoryAgentFrameRepository>,
+            anchor_repo: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
+        ) -> Self {
             Self {
                 frame_repo,
                 anchor_repo,
@@ -809,190 +605,6 @@ mod launcher_drain_tests {
         }
     }
 
-    #[derive(Default)]
-    struct InMemoryGateRepo {
-        items: Mutex<Vec<LifecycleGate>>,
-    }
-
-    #[async_trait]
-    impl LifecycleGateRepository for InMemoryGateRepo {
-        async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(gate.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|gate| gate.id == id)
-                .cloned())
-        }
-
-        async fn list_open_for_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_wait_producer(
-            &self,
-            producer: &WaitProducerRef,
-        ) -> Result<Vec<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|gate| {
-                    gate.payload_json
-                        .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
-                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn find_by_agent_and_correlation(
-            &self,
-            agent_id: Uuid,
-            correlation_id: &str,
-        ) -> Result<Option<LifecycleGate>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|gate| {
-                    gate.agent_id == Some(agent_id) && gate.correlation_id == correlation_id
-                })
-                .cloned())
-        }
-
-        async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items.iter_mut().find(|existing| existing.id == gate.id) {
-                *existing = gate.clone();
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct InMemoryAnchorRepo {
-        items: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
-    }
-
-    impl InMemoryAnchorRepo {
-        fn find(&self, runtime_session_id: &str) -> RuntimeSessionExecutionAnchor {
-            self.items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
-                .cloned()
-                .expect("runtime session execution anchor persisted")
-        }
-    }
-
-    #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for InMemoryAnchorRepo {
-        async fn create_once(
-            &self,
-            anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items
-                .iter()
-                .find(|existing| existing.runtime_session_id == anchor.runtime_session_id)
-            {
-                if existing.has_same_launch_coordinates_as(anchor) {
-                    return Ok(());
-                }
-                return Err(existing.immutable_conflict(anchor));
-            }
-            items.push(anchor.clone());
-            Ok(())
-        }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.items
-                .lock()
-                .unwrap()
-                .retain(|anchor| anchor.runtime_session_id != runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_by_session(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
-                .cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|anchor| anchor.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project_session_ids(
-            &self,
-            runtime_session_ids: &[String],
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(runtime_session_ids
-                .iter()
-                .filter_map(|id| {
-                    self.items
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .find(|anchor| anchor.runtime_session_id == *id)
-                        .cloned()
-                })
-                .collect())
-        }
-    }
-
     struct TestFunctionRunner {
         api_outcome: ApiRequestOutcome,
         contexts: Mutex<Vec<Value>>,
@@ -1025,35 +637,35 @@ mod launcher_drain_tests {
     }
 
     fn launcher(
-        run_repo: Arc<InMemoryRunRepo>,
-        gate_repo: Arc<InMemoryGateRepo>,
+        run_repo: Arc<MemoryLifecycleRunRepository>,
+        gate_repo: Arc<MemoryLifecycleGateRepository>,
     ) -> OrchestrationExecutorLauncher {
         launcher_with_procedure_repo(
             run_repo,
             gate_repo,
-            Arc::new(InMemoryProcedureRepo::default()),
+            Arc::new(MemoryAgentProcedureRepository::default()),
         )
     }
 
     fn launcher_with_procedure_repo(
-        run_repo: Arc<InMemoryRunRepo>,
-        gate_repo: Arc<InMemoryGateRepo>,
+        run_repo: Arc<MemoryLifecycleRunRepository>,
+        gate_repo: Arc<MemoryLifecycleGateRepository>,
         procedure_repo: Arc<dyn AgentProcedureRepository>,
     ) -> OrchestrationExecutorLauncher {
         launcher_with_procedure_and_frame_repo(run_repo, gate_repo, procedure_repo).0
     }
 
     fn launcher_with_procedure_and_frame_repo(
-        run_repo: Arc<InMemoryRunRepo>,
-        gate_repo: Arc<InMemoryGateRepo>,
+        run_repo: Arc<MemoryLifecycleRunRepository>,
+        gate_repo: Arc<MemoryLifecycleGateRepository>,
         procedure_repo: Arc<dyn AgentProcedureRepository>,
     ) -> (
         OrchestrationExecutorLauncher,
-        Arc<InMemoryFrameRepo>,
-        Arc<InMemoryAnchorRepo>,
+        Arc<MemoryAgentFrameRepository>,
+        Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
     ) {
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
-        let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
         let frame_materializer = Arc::new(CapturingLifecycleFrameMaterializer::new(
             frame_repo.clone(),
             anchor_repo.clone(),
@@ -1069,16 +681,16 @@ mod launcher_drain_tests {
     }
 
     fn launcher_with_procedure_frame_repo_and_materializer(
-        run_repo: Arc<InMemoryRunRepo>,
-        gate_repo: Arc<InMemoryGateRepo>,
+        run_repo: Arc<MemoryLifecycleRunRepository>,
+        gate_repo: Arc<MemoryLifecycleGateRepository>,
         procedure_repo: Arc<dyn AgentProcedureRepository>,
-        frame_repo: Arc<InMemoryFrameRepo>,
-        anchor_repo: Arc<InMemoryAnchorRepo>,
+        frame_repo: Arc<MemoryAgentFrameRepository>,
+        anchor_repo: Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
         frame_materializer: Arc<dyn WorkflowAgentNodeMaterializationPort>,
     ) -> (
         OrchestrationExecutorLauncher,
-        Arc<InMemoryFrameRepo>,
-        Arc<InMemoryAnchorRepo>,
+        Arc<MemoryAgentFrameRepository>,
+        Arc<MemoryRuntimeSessionExecutionAnchorRepository>,
     ) {
         let launcher =
             OrchestrationExecutorLauncher::from_repositories(OrchestrationExecutorRepositories {
@@ -1156,14 +768,29 @@ mod launcher_drain_tests {
         run
     }
 
-    fn latest_run(repo: &InMemoryRunRepo, run_id: Uuid) -> LifecycleRun {
-        repo.items
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|run| run.id == run_id)
-            .cloned()
+    async fn latest_run(repo: &MemoryLifecycleRunRepository, run_id: Uuid) -> LifecycleRun {
+        repo.get_by_id(run_id)
+            .await
+            .expect("read run")
             .expect("run persisted")
+    }
+
+    async fn latest_frame(repo: &MemoryAgentFrameRepository) -> AgentFrame {
+        repo.debug_list()
+            .await
+            .last()
+            .cloned()
+            .expect("frame persisted")
+    }
+
+    async fn persisted_anchor(
+        repo: &MemoryRuntimeSessionExecutionAnchorRepository,
+        runtime_session_id: &str,
+    ) -> RuntimeSessionExecutionAnchor {
+        repo.find_by_session(runtime_session_id)
+            .await
+            .expect("read anchor")
+            .expect("runtime session execution anchor persisted")
     }
 
     fn runtime_node<'a>(run: &'a LifecycleRun, node_id: &str) -> &'a RuntimeNodeState {
@@ -1245,9 +872,9 @@ mod launcher_drain_tests {
         });
         let run = run_with_node(node);
         let run_id = run.id;
-        let run_repo = Arc::new(InMemoryRunRepo::default());
-        run_repo.insert(run);
-        let gate_repo = Arc::new(InMemoryGateRepo::default());
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("seed run");
+        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let runner = function_runner();
         let launcher = launcher(run_repo.clone(), gate_repo).with_function_runner(runner.clone());
 
@@ -1257,7 +884,7 @@ mod launcher_drain_tests {
             .expect("drain ready nodes");
 
         assert_eq!(result.completed_effect_nodes, vec!["function"]);
-        let latest = latest_run(&run_repo, run_id);
+        let latest = latest_run(&run_repo, run_id).await;
         let orchestration = &latest.orchestrations[0];
         assert!(orchestration.dispatch.ready_node_ids.is_empty());
         let node = runtime_node(&latest, "function");
@@ -1294,10 +921,13 @@ mod launcher_drain_tests {
         let run = run_with_node(node);
         let run_id = run.id;
         let orchestration_id = run.orchestrations[0].orchestration_id;
-        let run_repo = Arc::new(InMemoryRunRepo::default());
-        run_repo.insert(run);
-        let launcher = launcher(run_repo.clone(), Arc::new(InMemoryGateRepo::default()))
-            .with_function_runner(function_runner());
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("seed run");
+        let launcher = launcher(
+            run_repo.clone(),
+            Arc::new(MemoryLifecycleGateRepository::default()),
+        )
+        .with_function_runner(function_runner());
 
         let result = launcher
             .drain_ready_nodes(run_id)
@@ -1305,7 +935,7 @@ mod launcher_drain_tests {
             .expect("drain ready nodes");
 
         assert_eq!(result.failed_nodes, vec!["effects.workspace_write"]);
-        let latest = latest_run(&run_repo, run_id);
+        let latest = latest_run(&run_repo, run_id).await;
         let node = runtime_node(&latest, "effect");
         assert_eq!(node.status, RuntimeNodeStatus::Failed);
         assert!(node.started_at.is_some());
@@ -1345,13 +975,17 @@ mod launcher_drain_tests {
         let run = run_with_node(node);
         let run_id = run.id;
         let project_id = run.project_id;
-        let run_repo = Arc::new(InMemoryRunRepo::default());
-        run_repo.insert(run);
-        let procedure_repo = Arc::new(InMemoryProcedureRepo::default());
-        procedure_repo.insert(procedure(project_id, procedure_key));
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("seed run");
+        let procedure_repo = Arc::new(MemoryAgentProcedureRepository::default());
+        let procedure = procedure(project_id, procedure_key);
+        procedure_repo
+            .create(&procedure)
+            .await
+            .expect("seed procedure");
         let (launcher, frame_repo, anchor_repo) = launcher_with_procedure_and_frame_repo(
             run_repo.clone(),
-            Arc::new(InMemoryGateRepo::default()),
+            Arc::new(MemoryLifecycleGateRepository::default()),
             procedure_repo,
         );
 
@@ -1362,7 +996,7 @@ mod launcher_drain_tests {
 
         assert_eq!(result.launched_agent_nodes.len(), 1);
         assert_eq!(result.launched_agent_nodes[0].node_path, "agent");
-        let latest = latest_run(&run_repo, run_id);
+        let latest = latest_run(&run_repo, run_id).await;
         let node = runtime_node(&latest, "agent");
         assert_eq!(node.status, RuntimeNodeStatus::Claiming);
         assert!(node.started_at.is_none());
@@ -1370,8 +1004,12 @@ mod launcher_drain_tests {
         assert!(node.trace_refs.is_empty());
         assert!(latest.orchestrations[0].dispatch.ready_node_ids.is_empty());
 
-        let frame = frame_repo.latest();
-        let anchor = anchor_repo.find(&result.launched_agent_nodes[0].runtime_session_id);
+        let frame = latest_frame(&frame_repo).await;
+        let anchor = persisted_anchor(
+            &anchor_repo,
+            &result.launched_agent_nodes[0].runtime_session_id,
+        )
+        .await;
         assert_eq!(anchor.launch_frame_id, frame.id);
         assert_eq!(anchor.run_id, run_id);
         assert_eq!(
@@ -1406,9 +1044,9 @@ mod launcher_drain_tests {
         let run = run_with_node(node);
         let run_id = run.id;
         let project_id = run.project_id;
-        let run_repo = Arc::new(InMemoryRunRepo::default());
-        run_repo.insert(run);
-        let procedure_repo = Arc::new(InMemoryProcedureRepo::default());
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("seed run");
+        let procedure_repo = Arc::new(MemoryAgentProcedureRepository::default());
         let contract = AgentProcedureContract {
             injection: WorkflowInjectionSpec {
                 guidance: Some("Use the review contract.".to_string()),
@@ -1417,9 +1055,13 @@ mod launcher_drain_tests {
             output_ports: vec![contract_output_port("contract_result")],
             ..AgentProcedureContract::default()
         };
-        procedure_repo.insert(procedure_with_contract(project_id, procedure_key, contract));
-        let frame_repo = Arc::new(InMemoryFrameRepo::default());
-        let anchor_repo = Arc::new(InMemoryAnchorRepo::default());
+        let procedure = procedure_with_contract(project_id, procedure_key, contract);
+        procedure_repo
+            .create(&procedure)
+            .await
+            .expect("seed procedure");
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let anchor_repo = Arc::new(MemoryRuntimeSessionExecutionAnchorRepository::default());
         let materializer = Arc::new(CapturingLifecycleFrameMaterializer::new(
             frame_repo.clone(),
             anchor_repo.clone(),
@@ -1427,7 +1069,7 @@ mod launcher_drain_tests {
         let (launcher, frame_repo, anchor_repo) =
             launcher_with_procedure_frame_repo_and_materializer(
                 run_repo.clone(),
-                Arc::new(InMemoryGateRepo::default()),
+                Arc::new(MemoryLifecycleGateRepository::default()),
                 procedure_repo,
                 frame_repo,
                 anchor_repo,
@@ -1454,14 +1096,14 @@ mod launcher_drain_tests {
             vec!["contract_result".to_string()]
         );
 
-        let latest = latest_run(&run_repo, run_id);
+        let latest = latest_run(&run_repo, run_id).await;
         let node = runtime_node(&latest, "agent");
         assert_eq!(node.status, RuntimeNodeStatus::Claiming);
         assert_eq!(node.executor_run_ref, None);
         assert!(node.trace_refs.is_empty());
 
-        let frame = frame_repo.latest();
-        let anchor = anchor_repo.find(&launched.runtime_session_id);
+        let frame = latest_frame(&frame_repo).await;
+        let anchor = persisted_anchor(&anchor_repo, &launched.runtime_session_id).await;
         assert_eq!(anchor.launch_frame_id, frame.id);
         assert_eq!(anchor.run_id, run_id);
         assert_eq!(
@@ -1481,11 +1123,11 @@ mod launcher_drain_tests {
         );
         let run = run_with_node(node);
         let run_id = run.id;
-        let run_repo = Arc::new(InMemoryRunRepo::default());
-        run_repo.insert(run);
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("seed run");
         let launcher = launcher_with_procedure_repo(
             run_repo.clone(),
-            Arc::new(InMemoryGateRepo::default()),
+            Arc::new(MemoryLifecycleGateRepository::default()),
             Arc::new(RejectingProcedureRepo),
         );
 
@@ -1495,7 +1137,7 @@ mod launcher_drain_tests {
             .expect("snapshot agent should launch without repository lookup");
 
         assert_eq!(result.launched_agent_nodes.len(), 1);
-        let latest = latest_run(&run_repo, run_id);
+        let latest = latest_run(&run_repo, run_id).await;
         let node = runtime_node(&latest, "agent");
         assert_eq!(node.status, RuntimeNodeStatus::Claiming);
         assert_eq!(node.executor_run_ref, None);
@@ -1520,9 +1162,9 @@ mod launcher_drain_tests {
         let run = run_with_node(node);
         let run_id = run.id;
         let orchestration_id = run.orchestrations[0].orchestration_id;
-        let run_repo = Arc::new(InMemoryRunRepo::default());
-        run_repo.insert(run);
-        let gate_repo = Arc::new(InMemoryGateRepo::default());
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("seed run");
+        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let launcher = launcher(run_repo.clone(), gate_repo.clone());
 
         let result = launcher
@@ -1531,7 +1173,7 @@ mod launcher_drain_tests {
             .expect("drain ready nodes");
 
         assert_eq!(result.opened_human_gates.len(), 1);
-        let latest = latest_run(&run_repo, run_id);
+        let latest = latest_run(&run_repo, run_id).await;
         let node = runtime_node(&latest, "review");
         assert_eq!(node.status, RuntimeNodeStatus::Running);
         assert!(node.started_at.is_some());
@@ -1545,7 +1187,7 @@ mod launcher_drain_tests {
         ));
         assert!(latest.orchestrations[0].dispatch.ready_node_ids.is_empty());
 
-        let gates = gate_repo.items.lock().unwrap();
+        let gates = gate_repo.debug_list().await;
         assert_eq!(gates.len(), 1);
         let payload = gates[0].payload_json.as_ref().expect("gate payload");
         assert_eq!(payload["contract"], json!("orchestration_human_gate.v1"));
@@ -1564,9 +1206,12 @@ mod launcher_drain_tests {
         });
         let run = run_with_node(node);
         let run_id = run.id;
-        let run_repo = Arc::new(InMemoryRunRepo::default());
-        run_repo.insert(run);
-        let launcher = launcher(run_repo.clone(), Arc::new(InMemoryGateRepo::default()));
+        let run_repo = Arc::new(MemoryLifecycleRunRepository::default());
+        run_repo.create(&run).await.expect("seed run");
+        let launcher = launcher(
+            run_repo.clone(),
+            Arc::new(MemoryLifecycleGateRepository::default()),
+        );
 
         let result = launcher
             .drain_ready_nodes(run_id)
@@ -1574,7 +1219,7 @@ mod launcher_drain_tests {
             .expect("drain ready nodes");
 
         assert_eq!(result.failed_nodes, vec!["retrying"]);
-        let latest = latest_run(&run_repo, run_id);
+        let latest = latest_run(&run_repo, run_id).await;
         assert_eq!(
             latest.status,
             agentdash_domain::workflow::LifecycleRunStatus::Blocked

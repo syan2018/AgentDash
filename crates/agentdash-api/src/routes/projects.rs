@@ -696,19 +696,19 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct MemoryUserDirectoryRepository {
+    struct FixtureUserDirectoryRepository {
         users: Mutex<HashMap<String, User>>,
         groups: Mutex<HashMap<String, Group>>,
     }
 
-    impl MemoryUserDirectoryRepository {
+    impl FixtureUserDirectoryRepository {
         async fn insert_user(&self, user: User) {
             self.users.lock().await.insert(user.user_id.clone(), user);
         }
     }
 
     #[async_trait]
-    impl UserDirectoryRepository for MemoryUserDirectoryRepository {
+    impl UserDirectoryRepository for FixtureUserDirectoryRepository {
         async fn upsert_user(&self, user: &User) -> Result<(), DomainError> {
             self.users
                 .lock()
@@ -937,7 +937,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_subject_existing_user_projection_skips_provider_resolve() {
-        let repo = MemoryUserDirectoryRepository::default();
+        let repo = FixtureUserDirectoryRepository::default();
         repo.insert_user(projected_user("user-1")).await;
         let provider = TestIdentityDirectoryProvider::unavailable();
 
@@ -957,7 +957,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_subject_resolves_user_and_upserts_projection() {
-        let repo = MemoryUserDirectoryRepository::default();
+        let repo = FixtureUserDirectoryRepository::default();
         let provider = TestIdentityDirectoryProvider::with_user(directory_user("user-42", "alias"));
 
         let subject_id = ensure_project_subject_exists(
@@ -983,7 +983,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_subject_resolves_group_and_upserts_projection() {
-        let repo = MemoryUserDirectoryRepository::default();
+        let repo = FixtureUserDirectoryRepository::default();
         let provider = TestIdentityDirectoryProvider::with_group(directory_group("org-7"));
 
         let subject_id = ensure_project_subject_exists(
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_subject_missing_without_provider_returns_not_found() {
-        let repo = MemoryUserDirectoryRepository::default();
+        let repo = FixtureUserDirectoryRepository::default();
 
         let err = ensure_project_subject_exists(
             &repo,
@@ -1025,7 +1025,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_subject_provider_unavailable_does_not_upsert() {
-        let repo = MemoryUserDirectoryRepository::default();
+        let repo = FixtureUserDirectoryRepository::default();
         let provider = TestIdentityDirectoryProvider::unavailable();
 
         let err = ensure_project_subject_exists(

@@ -159,120 +159,16 @@ mod fs_glob_tests {
     use crate::MountProviderRegistry;
     use crate::mount::PROVIDER_INLINE_FS;
     use crate::provider_inline::InlineFsMountProvider;
-    use agentdash_domain::common::error::DomainError;
-    use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
+    use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
     use agentdash_spi::{Mount, MountCapability, Vfs};
+    use agentdash_test_support::inline_file::MemoryInlineFileRepository;
     use chrono::{DateTime, Duration, Utc};
     use serde_json::json;
-    use tokio::sync::Mutex;
     use uuid::Uuid;
-
-    #[derive(Default)]
-    struct MemoryInlineFileRepo {
-        files: Mutex<Vec<InlineFile>>,
-    }
-
-    #[async_trait::async_trait]
-    impl InlineFileRepository for MemoryInlineFileRepo {
-        async fn get_file(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-            path: &str,
-        ) -> Result<Option<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .iter()
-                .find(|f| {
-                    f.owner_kind == owner_kind
-                        && f.owner_id == owner_id
-                        && f.container_id == container_id
-                        && f.path == path
-                })
-                .cloned())
-        }
-        async fn list_files(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-            container_id: &str,
-        ) -> Result<Vec<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .iter()
-                .filter(|f| {
-                    f.owner_kind == owner_kind
-                        && f.owner_id == owner_id
-                        && f.container_id == container_id
-                })
-                .cloned()
-                .collect())
-        }
-        async fn list_files_by_owner(
-            &self,
-            owner_kind: InlineFileOwnerKind,
-            owner_id: Uuid,
-        ) -> Result<Vec<InlineFile>, DomainError> {
-            Ok(self
-                .files
-                .lock()
-                .await
-                .iter()
-                .filter(|f| f.owner_kind == owner_kind && f.owner_id == owner_id)
-                .cloned()
-                .collect())
-        }
-        async fn upsert_file(&self, file: &InlineFile) -> Result<(), DomainError> {
-            self.files.lock().await.push(file.clone());
-            Ok(())
-        }
-        async fn upsert_files(&self, files: &[InlineFile]) -> Result<(), DomainError> {
-            self.files.lock().await.extend(files.iter().cloned());
-            Ok(())
-        }
-        async fn delete_file(
-            &self,
-            _: InlineFileOwnerKind,
-            _: Uuid,
-            _: &str,
-            _: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-        async fn delete_by_container(
-            &self,
-            _: InlineFileOwnerKind,
-            _: Uuid,
-            _: &str,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-        async fn delete_by_owner(
-            &self,
-            _: InlineFileOwnerKind,
-            _: Uuid,
-        ) -> Result<(), DomainError> {
-            Ok(())
-        }
-        async fn count_files(
-            &self,
-            _: InlineFileOwnerKind,
-            _: Uuid,
-            _: &str,
-        ) -> Result<i64, DomainError> {
-            Ok(self.files.lock().await.len() as i64)
-        }
-    }
 
     fn make_tool_with_files(files: Vec<(&str, &str, DateTime<Utc>)>) -> FsGlobTool {
         let owner_id = Uuid::new_v4();
-        let repo = Arc::new(MemoryInlineFileRepo::default());
-        let mut seeded: Vec<InlineFile> = files
+        let seeded: Vec<InlineFile> = files
             .iter()
             .map(|(path, content, ts)| {
                 let mut f = InlineFile::new_text(
@@ -286,10 +182,7 @@ mod fs_glob_tests {
                 f
             })
             .collect();
-        {
-            let mut guard = repo.files.try_lock().expect("uncontended setup");
-            guard.append(&mut seeded);
-        }
+        let repo = Arc::new(MemoryInlineFileRepository::new_with_files(seeded));
         let provider = Arc::new(InlineFsMountProvider::new(repo));
         let mut registry = MountProviderRegistry::new();
         registry.register(provider);

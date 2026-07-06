@@ -333,12 +333,12 @@ mod tests {
     use chrono::Utc;
 
     #[derive(Default)]
-    struct InMemoryRoutineExecutionRepo {
+    struct FixtureRoutineExecutionRepo {
         items: Mutex<Vec<RoutineExecution>>,
     }
 
     #[async_trait]
-    impl RoutineExecutionRepository for InMemoryRoutineExecutionRepo {
+    impl RoutineExecutionRepository for FixtureRoutineExecutionRepo {
         async fn create(&self, execution: &RoutineExecution) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(execution.clone());
             Ok(())
@@ -400,12 +400,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryRunRepo {
+    struct FixtureRunRepo {
         items: Mutex<Vec<LifecycleRun>>,
     }
 
     #[async_trait]
-    impl LifecycleRunRepository for InMemoryRunRepo {
+    impl LifecycleRunRepository for FixtureRunRepo {
         async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(run.clone());
             Ok(())
@@ -461,12 +461,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryAgentRepo {
+    struct FixtureAgentRepo {
         items: Mutex<Vec<LifecycleAgent>>,
     }
 
     #[async_trait]
-    impl LifecycleAgentRepository for InMemoryAgentRepo {
+    impl LifecycleAgentRepository for FixtureAgentRepo {
         async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(agent.clone());
             Ok(())
@@ -503,12 +503,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryFrameRepo {
+    struct FixtureFrameRepo {
         items: Mutex<Vec<AgentFrame>>,
     }
 
     #[async_trait]
-    impl AgentFrameRepository for InMemoryFrameRepo {
+    impl AgentFrameRepository for FixtureFrameRepo {
         async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(frame.clone());
             Ok(())
@@ -548,12 +548,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryAssociationRepo {
+    struct FixtureAssociationRepo {
         items: Mutex<Vec<LifecycleSubjectAssociation>>,
     }
 
     #[async_trait]
-    impl LifecycleSubjectAssociationRepository for InMemoryAssociationRepo {
+    impl LifecycleSubjectAssociationRepository for FixtureAssociationRepo {
         async fn create(&self, assoc: &LifecycleSubjectAssociation) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(assoc.clone());
             Ok(())
@@ -602,21 +602,21 @@ mod tests {
     }
 
     struct ResolverFixture {
-        routine_execution_repo: InMemoryRoutineExecutionRepo,
-        run_repo: InMemoryRunRepo,
-        agent_repo: InMemoryAgentRepo,
-        frame_repo: InMemoryFrameRepo,
-        association_repo: InMemoryAssociationRepo,
+        routine_execution_repo: FixtureRoutineExecutionRepo,
+        run_repo: FixtureRunRepo,
+        agent_repo: FixtureAgentRepo,
+        frame_repo: FixtureFrameRepo,
+        association_repo: FixtureAssociationRepo,
     }
 
     impl ResolverFixture {
         fn new() -> Self {
             Self {
-                routine_execution_repo: InMemoryRoutineExecutionRepo::default(),
-                run_repo: InMemoryRunRepo::default(),
-                agent_repo: InMemoryAgentRepo::default(),
-                frame_repo: InMemoryFrameRepo::default(),
-                association_repo: InMemoryAssociationRepo::default(),
+                routine_execution_repo: FixtureRoutineExecutionRepo::default(),
+                run_repo: FixtureRunRepo::default(),
+                agent_repo: FixtureAgentRepo::default(),
+                frame_repo: FixtureFrameRepo::default(),
+                association_repo: FixtureAssociationRepo::default(),
             }
         }
 

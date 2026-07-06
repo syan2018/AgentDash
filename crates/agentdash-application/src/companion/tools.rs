@@ -2788,12 +2788,12 @@ mod companion_tests {
 
     use crate::runtime_tools::SharedSessionToolServicesHandle;
     #[derive(Default)]
-    struct MemoryGateRepo {
+    struct FixtureGateRepo {
         gates: Mutex<HashMap<Uuid, LifecycleGate>>,
     }
 
     #[async_trait::async_trait]
-    impl LifecycleGateRepository for MemoryGateRepo {
+    impl LifecycleGateRepository for FixtureGateRepo {
         async fn create(&self, gate: &LifecycleGate) -> Result<(), agentdash_domain::DomainError> {
             self.gates.lock().unwrap().insert(gate.id, gate.clone());
             Ok(())
@@ -2935,7 +2935,7 @@ mod companion_tests {
 
     #[tokio::test]
     async fn companion_gate_wait_returns_timeout_without_resolving_gate() {
-        let repo = MemoryGateRepo::default();
+        let repo = FixtureGateRepo::default();
         let gate = LifecycleGate::open(
             Uuid::new_v4(),
             Some(Uuid::new_v4()),
@@ -2964,7 +2964,7 @@ mod companion_tests {
 
     #[tokio::test]
     async fn companion_gate_wait_returns_resolved_payload_refs_source() {
-        let repo = MemoryGateRepo::default();
+        let repo = FixtureGateRepo::default();
         let mut gate = LifecycleGate::open(
             Uuid::new_v4(),
             Some(Uuid::new_v4()),

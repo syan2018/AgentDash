@@ -18,4 +18,5 @@ tokio-util = { version = "0.7", features = ["rt"] }
 uuid = { workspace = true }
 
 [dev-dependencies]
+agentdash-test-support = { workspace = true }
 tokio = { workspace = true }

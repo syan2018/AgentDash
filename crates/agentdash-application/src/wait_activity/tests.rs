@@ -116,7 +116,7 @@ async fn wait_returns_completed_exec_with_shell_exec_next_ref() {
 #[tokio::test]
 async fn wait_returns_resolved_lifecycle_gate_activity() {
     let terminal_registry = AgentRunTerminalRegistry::new();
-    let gate_repo = Arc::new(MemoryGateRepo::default());
+    let gate_repo = Arc::new(FixtureGateRepo::default());
     let mut gate = LifecycleGate::open(
         Uuid::new_v4(),
         Some(Uuid::new_v4()),
@@ -157,7 +157,7 @@ async fn wait_returns_resolved_lifecycle_gate_activity() {
 #[tokio::test]
 async fn wait_uses_resolved_lifecycle_gate_payload_status() {
     let terminal_registry = AgentRunTerminalRegistry::new();
-    let gate_repo = Arc::new(MemoryGateRepo::default());
+    let gate_repo = Arc::new(FixtureGateRepo::default());
     let mut gate = LifecycleGate::open(
         Uuid::new_v4(),
         Some(Uuid::new_v4()),
@@ -204,7 +204,7 @@ async fn wait_uses_resolved_lifecycle_gate_payload_status() {
 #[tokio::test]
 async fn scoped_gate_wait_keeps_observed_gate_ref_after_resolution() {
     let terminal_registry = AgentRunTerminalRegistry::new();
-    let gate_repo = Arc::new(MemoryGateRepo::default());
+    let gate_repo = Arc::new(FixtureGateRepo::default());
     let run_id = Uuid::new_v4();
     let agent_id = Uuid::new_v4();
     let frame_id = Uuid::new_v4();
@@ -257,7 +257,7 @@ async fn scoped_gate_wait_keeps_observed_gate_ref_after_resolution() {
 #[tokio::test]
 async fn explicit_gate_ref_is_filtered_by_run_scope_not_current_agent_only() {
     let terminal_registry = AgentRunTerminalRegistry::new();
-    let gate_repo = Arc::new(MemoryGateRepo::default());
+    let gate_repo = Arc::new(FixtureGateRepo::default());
     let run_id = Uuid::new_v4();
     let parent_agent_id = Uuid::new_v4();
     let child_agent_id = Uuid::new_v4();
@@ -379,7 +379,7 @@ async fn runtime_tool_catalog_includes_wait() {
 }
 
 fn test_service(terminal_registry: Arc<AgentRunTerminalRegistry>) -> WaitActivityService {
-    test_service_with_gate_repo(terminal_registry, Arc::new(MemoryGateRepo::default()))
+    test_service_with_gate_repo(terminal_registry, Arc::new(FixtureGateRepo::default()))
 }
 
 fn test_service_with_gate_repo(
@@ -397,12 +397,12 @@ fn test_service_with_gate_repo(
 }
 
 #[derive(Default)]
-struct MemoryGateRepo {
+struct FixtureGateRepo {
     gates: Mutex<HashMap<Uuid, LifecycleGate>>,
 }
 
 #[async_trait]
-impl LifecycleGateRepository for MemoryGateRepo {
+impl LifecycleGateRepository for FixtureGateRepo {
     async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
         self.gates.lock().unwrap().insert(gate.id, gate.clone());
         Ok(())

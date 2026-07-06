@@ -1124,12 +1124,12 @@ mod tests {
         NotFound,
     }
 
-    struct MockBackendRepository {
+    struct FixtureBackendRepository {
         token_result: MockTokenResult,
     }
 
     #[async_trait::async_trait]
-    impl BackendRepository for MockBackendRepository {
+    impl BackendRepository for FixtureBackendRepository {
         async fn add_backend(&self, _config: &BackendConfig) -> Result<(), DomainError> {
             unreachable!("测试未使用");
         }
@@ -1221,7 +1221,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorize_backend_token_rejects_missing_token() {
-        let repo = MockBackendRepository {
+        let repo = FixtureBackendRepository {
             token_result: MockTokenResult::Ok(backend_config("local-a", true)),
         };
 
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorize_backend_token_rejects_invalid_token() {
-        let repo = MockBackendRepository {
+        let repo = FixtureBackendRepository {
             token_result: MockTokenResult::NotFound,
         };
 
@@ -1249,7 +1249,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorize_backend_token_rejects_runner_registration_token() {
-        let repo = MockBackendRepository {
+        let repo = FixtureBackendRepository {
             token_result: MockTokenResult::TokenMatches {
                 expected_token: "backend-auth-token".to_string(),
                 config: backend_config("local-a", true),

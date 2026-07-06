@@ -287,12 +287,12 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct InMemoryLifecycleRunRepo {
+    struct FixtureLifecycleRunRepo {
         runs: Mutex<Vec<LifecycleRun>>,
     }
 
     #[async_trait]
-    impl LifecycleRunRepository for InMemoryLifecycleRunRepo {
+    impl LifecycleRunRepository for FixtureLifecycleRunRepo {
         async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             self.runs.lock().expect("runs").push(run.clone());
             Ok(())
@@ -353,12 +353,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct InMemoryAssociationRepo {
+    struct FixtureAssociationRepo {
         associations: Mutex<Vec<LifecycleSubjectAssociation>>,
     }
 
     #[async_trait]
-    impl LifecycleSubjectAssociationRepository for InMemoryAssociationRepo {
+    impl LifecycleSubjectAssociationRepository for FixtureAssociationRepo {
         async fn create(&self, assoc: &LifecycleSubjectAssociation) -> Result<(), DomainError> {
             self.associations
                 .lock()
@@ -442,14 +442,14 @@ mod tests {
         }
     }
 
-    fn seed_run(repo: &InMemoryLifecycleRunRepo, run: LifecycleRun) {
+    fn seed_run(repo: &FixtureLifecycleRunRepo, run: LifecycleRun) {
         repo.runs.lock().expect("runs").push(run);
     }
 
     #[tokio::test]
     async fn root_selector_filters_plan_tasks_without_runtime_status() {
-        let lifecycle_repo = InMemoryLifecycleRunRepo::default();
-        let association_repo = InMemoryAssociationRepo::default();
+        let lifecycle_repo = FixtureLifecycleRunRepo::default();
+        let association_repo = FixtureAssociationRepo::default();
         let mut run = LifecycleRun::new_plain(Uuid::new_v4());
         let first = run
             .create_task(agentdash_domain::workflow::LifecycleTaskPlanItemDraft::new(
@@ -480,8 +480,8 @@ mod tests {
 
     #[tokio::test]
     async fn story_projection_selector_keeps_projection_sources() {
-        let lifecycle_repo = InMemoryLifecycleRunRepo::default();
-        let association_repo = InMemoryAssociationRepo::default();
+        let lifecycle_repo = FixtureLifecycleRunRepo::default();
+        let association_repo = FixtureAssociationRepo::default();
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
         let mut run = LifecycleRun::new_plain(project_id);
@@ -520,8 +520,8 @@ mod tests {
 
     #[tokio::test]
     async fn fanout_tasks_dispatches_task_subject_and_writes_assignment_only() {
-        let lifecycle_repo = InMemoryLifecycleRunRepo::default();
-        let association_repo = InMemoryAssociationRepo::default();
+        let lifecycle_repo = FixtureLifecycleRunRepo::default();
+        let association_repo = FixtureAssociationRepo::default();
         let dispatcher = RecordingDispatcher::default();
         let assigned_agent_id = Uuid::new_v4();
         dispatcher

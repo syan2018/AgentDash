@@ -615,11 +615,11 @@ mod tests {
 
     use super::*;
     use crate::session::{
-        memory_persistence::MemoryRuntimeTraceStore, persistence::SessionStoreSet,
+        memory_persistence::FixtureRuntimeTraceStore, persistence::SessionStoreSet,
     };
 
-    fn test_stores() -> (Arc<MemoryRuntimeTraceStore>, SessionStoreSet) {
-        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
+    fn test_stores() -> (Arc<FixtureRuntimeTraceStore>, SessionStoreSet) {
+        let persistence = Arc::new(FixtureRuntimeTraceStore::default());
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence.clone());
         (persistence, stores)
     }
@@ -832,7 +832,7 @@ mod tests {
 
     #[derive(Clone)]
     struct FailingProjectionStore {
-        inner: Arc<MemoryRuntimeTraceStore>,
+        inner: Arc<FixtureRuntimeTraceStore>,
     }
 
     #[async_trait]

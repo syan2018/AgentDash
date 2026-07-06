@@ -322,121 +322,16 @@ fn asset_identity(asset: &LibraryAsset) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
+    use agentdash_test_support::shared_library::MemoryLibraryAssetRepository;
     use serde_json::json;
 
     use crate::WorkflowTemplateLibrarySeed;
 
     use super::*;
 
-    #[derive(Default)]
-    struct InMemoryLibraryAssetRepository {
-        assets: Mutex<Vec<LibraryAsset>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LibraryAssetRepository for InMemoryLibraryAssetRepository {
-        async fn create(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
-            asset.typed_payload()?;
-            self.assets.lock().expect("lock").push(asset.clone());
-            Ok(())
-        }
-
-        async fn get(&self, id: Uuid) -> Result<Option<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .find(|asset| asset.id == id)
-                .cloned())
-        }
-
-        async fn find_by_identity(
-            &self,
-            asset_type: LibraryAssetType,
-            scope: LibraryAssetScope,
-            owner_id: Option<&str>,
-            key: &str,
-        ) -> Result<Option<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .find(|asset| {
-                    asset.asset_type == asset_type
-                        && asset.scope == scope
-                        && asset.owner_id.as_deref() == owner_id
-                        && asset.key == key
-                })
-                .cloned())
-        }
-
-        async fn list(
-            &self,
-            filter: LibraryAssetListFilter,
-        ) -> Result<Vec<LibraryAsset>, DomainError> {
-            Ok(self
-                .assets
-                .lock()
-                .expect("lock")
-                .iter()
-                .filter(|asset| {
-                    filter
-                        .asset_type
-                        .is_none_or(|value| value == asset.asset_type)
-                        && filter.scope.is_none_or(|value| value == asset.scope)
-                        && filter
-                            .owner_id
-                            .as_deref()
-                            .is_none_or(|value| asset.owner_id.as_deref() == Some(value))
-                        && (filter.include_deprecated || !asset.deprecated)
-                })
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, asset: &LibraryAsset) -> Result<(), DomainError> {
-            asset.typed_payload()?;
-            let mut assets = self.assets.lock().expect("lock");
-            let existing = assets
-                .iter_mut()
-                .find(|existing| existing.id == asset.id)
-                .ok_or_else(|| DomainError::NotFound {
-                    entity: "library_asset",
-                    id: asset.id.to_string(),
-                })?;
-            *existing = asset.clone();
-            Ok(())
-        }
-
-        async fn upsert(&self, asset: &LibraryAsset) -> Result<LibraryAsset, DomainError> {
-            asset.typed_payload()?;
-            let mut assets = self.assets.lock().expect("lock");
-            if let Some(existing) = assets.iter_mut().find(|existing| {
-                existing.asset_type == asset.asset_type
-                    && existing.scope == asset.scope
-                    && existing.owner_id == asset.owner_id
-                    && existing.key == asset.key
-            }) {
-                let mut merged = asset.clone();
-                merged.id = existing.id;
-                merged.created_at = existing.created_at;
-                merged.updated_at = chrono::Utc::now();
-                *existing = merged.clone();
-                return Ok(merged);
-            }
-
-            assets.push(asset.clone());
-            Ok(asset.clone())
-        }
-    }
-
     #[tokio::test]
     async fn integration_embedded_seeds_can_register_marketplace_builtin_asset_types() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
 
         let seeded = service
@@ -475,7 +370,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_embedded_seed_rejects_payload_change_without_version_bump() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
         let base_seed = IntegrationEmbeddedLibraryAssetSeed {
             integration_name: "corp.catalog".to_string(),
@@ -523,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_embedded_seed_repairs_digest_when_payload_and_version_are_unchanged() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
         let payload = json!({
             "transport_template": {
@@ -570,7 +465,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_embedded_seed_accepts_payload_change_with_version_bump() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
         let base_seed = IntegrationEmbeddedLibraryAssetSeed {
             integration_name: "corp.catalog".to_string(),
@@ -619,7 +514,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_embedded_seed_rejects_non_semver_version() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
 
         let error = service
@@ -651,7 +546,7 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_seeds_are_idempotent_and_filterable() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
 
         let first = service
@@ -697,7 +592,7 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_seed_rejects_payload_change_without_version_bump() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
         let payload = json!({
             "config": {
@@ -738,7 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn builtin_seed_marks_removed_assets_deprecated() {
-        let repo = InMemoryLibraryAssetRepository::default();
+        let repo = MemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
         let payload = json!({
             "config": {

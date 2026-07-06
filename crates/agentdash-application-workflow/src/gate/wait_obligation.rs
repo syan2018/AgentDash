@@ -310,13 +310,13 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct MemoryGateRepo {
+    struct FixtureGateRepo {
         gates: Mutex<HashMap<Uuid, LifecycleGate>>,
         resolve_on_next_get: Mutex<Option<Uuid>>,
     }
 
     #[async_trait::async_trait]
-    impl LifecycleGateRepository for MemoryGateRepo {
+    impl LifecycleGateRepository for FixtureGateRepo {
         async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
             self.gates.lock().unwrap().insert(gate.id, gate.clone());
             Ok(())
@@ -393,12 +393,12 @@ mod tests {
         }
     }
 
-    struct MemoryDeliveryBindingRepo {
+    struct FixtureDeliveryBindingRepo {
         binding: AgentRunDeliveryBinding,
     }
 
     #[async_trait::async_trait]
-    impl AgentRunDeliveryBindingRepository for MemoryDeliveryBindingRepo {
+    impl AgentRunDeliveryBindingRepository for FixtureDeliveryBindingRepo {
         async fn upsert(&self, _binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
             Ok(())
         }
@@ -460,7 +460,7 @@ mod tests {
                 .expect("declaration payload"),
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
         let parent_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "parent-session".to_string(),
@@ -468,7 +468,7 @@ mod tests {
             Uuid::new_v4(),
             parent_agent_id,
         );
-        let delivery_repo = Arc::new(MemoryDeliveryBindingRepo {
+        let delivery_repo = Arc::new(FixtureDeliveryBindingRepo {
             binding: AgentRunDeliveryBinding::from_anchor(
                 &parent_anchor,
                 DeliveryBindingStatus::Running,
@@ -557,7 +557,7 @@ mod tests {
         gate.resolve("child_agent:normal-result");
         let initial_payload = gate.payload_json.clone();
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
         let parent_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
             "parent-session".to_string(),
@@ -565,7 +565,7 @@ mod tests {
             Uuid::new_v4(),
             parent_agent_id,
         );
-        let delivery_repo = Arc::new(MemoryDeliveryBindingRepo {
+        let delivery_repo = Arc::new(FixtureDeliveryBindingRepo {
             binding: AgentRunDeliveryBinding::from_anchor(
                 &parent_anchor,
                 DeliveryBindingStatus::Running,
@@ -636,7 +636,7 @@ mod tests {
                 .expect("declaration payload"),
         );
 
-        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let gate_repo = Arc::new(FixtureGateRepo::default());
         gate_repo.create(&gate).await.expect("seed gate");
         *gate_repo.resolve_on_next_get.lock().unwrap() = Some(gate.id);
         let parent_anchor = RuntimeSessionExecutionAnchor::new_dispatch(
@@ -645,7 +645,7 @@ mod tests {
             Uuid::new_v4(),
             parent_agent_id,
         );
-        let delivery_repo = Arc::new(MemoryDeliveryBindingRepo {
+        let delivery_repo = Arc::new(FixtureDeliveryBindingRepo {
             binding: AgentRunDeliveryBinding::from_anchor(
                 &parent_anchor,
                 DeliveryBindingStatus::Running,

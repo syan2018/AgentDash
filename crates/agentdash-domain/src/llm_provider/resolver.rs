@@ -112,11 +112,11 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryCredentialRepository {
+    struct FixtureCredentialRepository {
         credentials: Mutex<HashMap<(String, Uuid), LlmProviderUserCredential>>,
     }
 
-    impl MemoryCredentialRepository {
+    impl FixtureCredentialRepository {
         fn with_credential(user_id: &str, provider_id: Uuid, api_key_ciphertext: &str) -> Self {
             let credential =
                 LlmProviderUserCredential::new(provider_id, user_id, api_key_ciphertext);
@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl LlmProviderCredentialRepository for MemoryCredentialRepository {
+    impl LlmProviderCredentialRepository for FixtureCredentialRepository {
         async fn get_for_user_provider(
             &self,
             user_id: &str,
@@ -194,7 +194,7 @@ mod tests {
     #[tokio::test]
     async fn global_or_user_prefers_user_key_over_global_key() {
         let provider = provider(LlmCredentialMode::GlobalOrUser);
-        let repo = MemoryCredentialRepository::with_credential("user-1", provider.id, "user-key");
+        let repo = FixtureCredentialRepository::with_credential("user-1", provider.id, "user-key");
         let resolved = resolve_effective_credential(
             &provider,
             Some(&repo),
@@ -212,7 +212,7 @@ mod tests {
     #[tokio::test]
     async fn global_or_user_falls_back_to_global_key_without_user_key() {
         let provider = provider(LlmCredentialMode::GlobalOrUser);
-        let repo = MemoryCredentialRepository::default();
+        let repo = FixtureCredentialRepository::default();
         let resolved = resolve_effective_credential(
             &provider,
             Some(&repo),
@@ -241,7 +241,7 @@ mod tests {
     #[tokio::test]
     async fn global_only_ignores_user_key() {
         let provider = provider(LlmCredentialMode::GlobalOnly);
-        let repo = MemoryCredentialRepository::with_credential("user-1", provider.id, "user-key");
+        let repo = FixtureCredentialRepository::with_credential("user-1", provider.id, "user-key");
         let resolved = resolve_effective_credential(
             &provider,
             Some(&repo),

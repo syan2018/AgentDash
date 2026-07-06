@@ -224,13 +224,13 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct MemoryProjectStore {
+    struct FixtureProjectStore {
         projects: Mutex<HashMap<Uuid, Project>>,
         grants: Mutex<HashMap<(Uuid, ProjectSubjectType, String), ProjectSubjectGrant>>,
     }
 
     #[async_trait]
-    impl ProjectRepository for MemoryProjectStore {
+    impl ProjectRepository for FixtureProjectStore {
         async fn create(&self, project: &Project) -> Result<(), DomainError> {
             self.projects
                 .lock()
@@ -332,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn owner_grant_can_manage_project_sharing() {
-        let store = MemoryProjectStore::default();
+        let store = FixtureProjectStore::default();
         let project = project(ProjectVisibility::Private);
         ProjectRepository::create(&store, &project)
             .await
@@ -363,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn subject_alias_owner_grant_can_manage_project_sharing() {
-        let store = MemoryProjectStore::default();
+        let store = FixtureProjectStore::default();
         let project = project(ProjectVisibility::Private);
         ProjectRepository::create(&store, &project)
             .await
@@ -402,7 +402,7 @@ mod tests {
 
     #[tokio::test]
     async fn group_editor_grant_can_edit_but_cannot_manage_sharing() {
-        let store = MemoryProjectStore::default();
+        let store = FixtureProjectStore::default();
         let project = project(ProjectVisibility::Private);
         ProjectRepository::create(&store, &project)
             .await
@@ -433,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn template_visible_project_allows_view_without_grant() {
-        let store = MemoryProjectStore::default();
+        let store = FixtureProjectStore::default();
         let project = project(ProjectVisibility::TemplateVisible);
         ProjectRepository::create(&store, &project)
             .await
@@ -452,7 +452,7 @@ mod tests {
 
     #[tokio::test]
     async fn admin_bypass_grants_full_access() {
-        let store = MemoryProjectStore::default();
+        let store = FixtureProjectStore::default();
         let project = project(ProjectVisibility::Private);
         ProjectRepository::create(&store, &project)
             .await
@@ -472,7 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn detects_last_owner_removal() {
-        let store = MemoryProjectStore::default();
+        let store = FixtureProjectStore::default();
         let project = project(ProjectVisibility::Private);
         ProjectRepository::create(&store, &project)
             .await

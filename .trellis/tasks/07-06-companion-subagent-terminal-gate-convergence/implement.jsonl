@@ -1,7 +1,7 @@
-{"file": ".trellis/spec/backend/architecture.md", "reason": "实现 terminal bridge 前读取后端应用层、领域层和 repository 边界。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "实现 wait obligation convergence 前读取后端应用层、领域层和 repository 边界。"}
 {"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "父 mailbox wake、delivery dedup 和 AgentRun mailbox 状态变更必须遵守该契约。"}
 {"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "child agent 到 parent frame/agent 的 lineage 判定依赖 execution frame 语义。"}
-{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "companion wait gate 属于 workflow lifecycle activity，需要遵守 gate resolve 与 waitable activity 契约。"}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "companion wait gate 是 durable wait obligation 的当前存储形态，需要遵守 gate resolve 与 waitable activity 契约。"}
 {"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "模型能力预检需要对齐 provider/model 配置和账号有效能力。"}
 {"file": ".trellis/spec/backend/database-guidelines.md", "reason": "若最终引入 outbox 或 schema 变更，需要按当前数据库迁移规范落地。"}
 {"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "wait/companion result status 若进入 wire DTO 或生成类型，需要按跨层 contract 检查。"}

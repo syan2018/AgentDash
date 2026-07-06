@@ -2,7 +2,7 @@
   "id": "companion-subagent-terminal-gate-convergence",
   "name": "companion-subagent-terminal-gate-convergence",
   "title": "修复 SubAgent terminal gate 收束",
-  "description": "SubAgent runtime terminal failed/interrupted 后 companion wait gate 未 resolved，导致父 Agent wait 与 workspace projection 长期 pending；补齐 terminal bridge、wait projection、boot reconcile 与模型能力预检。",
+  "description": "SubAgent runtime terminal failed/interrupted 后 durable wait obligation 未 resolved，导致父 Agent wait 与 workspace projection 长期 pending；补齐 wait obligation convergence、wait projection、boot reconcile 与模型能力预检。",
   "status": "in_progress",
   "dev_type": null,
   "scope": "backend-cross-layer",

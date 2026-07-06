@@ -2,7 +2,7 @@
 
 ## Goal
 
-当 companion/SubAgent 在启动或执行阶段进入 terminal failed/interrupted，或者 runtime completed 但没有产生 `companion_respond` 时，系统必须把子运行终态收束为一个 durable companion result。父 Agent、`wait` 工具、workspace projection 和启动 reconcile 都应看到同一个事实：子任务已经结束，并带有失败/取消原因，而不是继续停留在 pending gate。
+当 companion/SubAgent 在启动或执行阶段进入 terminal failed/interrupted，或者 runtime completed 但没有产生 `companion_respond` 时，系统必须把已经创建的 durable wait obligation 收束为 failed/cancelled/protocol_failed 结果。父 Agent、`wait` 工具、workspace projection 和启动 reconcile 都应看到同一个事实：等待的 producer 已经终止，期待的结果不可能再正常出现，而不是继续停留在 pending gate。
 
 ## User Value
 
@@ -39,19 +39,21 @@
 
 ## First Principles
 
-系统里有四类事实必须最终一致：
+系统里有五类事实必须最终一致：
 
 - Runtime fact：`RuntimeSession` 事件和 terminal state，表示执行器实际发生了什么。
 - Delivery fact：`AgentRunDeliveryBinding`，表示 AgentRun 当前 runtime delivery 的终态。
-- Waiting fact：`LifecycleGate`，表示某个 agent 正在等待什么 durable 结果。
+- Wait obligation fact：`LifecycleGate` 或后续 wait record，表示某个 agent 正在等待哪个 producer 产生什么 durable 结果，以及 producer terminal 时如何收束。
 - Wake/result fact：parent mailbox message，表示结果已经投递给父 agent，父 agent 可以继续处理。
+- Read projection fact：`wait` / workspace waiting item 只观察 wait obligation 和 wake/result，不发明写侧事实。
 
 这次问题的最小闭环是：
 
 ```text
 child RuntimeSession terminal failed/interrupted
 -> child AgentRunDeliveryBinding terminal
--> child-owned companion gate resolved with failed/cancelled result
+-> wait obligation convergence observes producer terminal
+-> pending LifecycleGate resolved with failed/cancelled/protocol_failed result
 -> parent mailbox receives companion-result wake
 -> wait/workspace no longer projects pending
 ```
@@ -60,36 +62,37 @@ child RuntimeSession terminal failed/interrupted
 
 ## Requirements
 
-- R1. 新增 AgentRun-owned terminal convergence 能力：runtime terminal signal 进入 AgentRun seam 后，先收敛为 `AgentRunDeliveryBinding` terminal fact 和 AgentRun 坐标事件；companion 收束只能消费 AgentRun run/agent/frame/delivery 语义，不能在 companion/API 层直接解析 `RuntimeSessionExecutionAnchor`。
-- R2. terminal 收束必须投递 parent mailbox wake：父 Agent 应收到稳定、幂等的 `companion-result:{gate_id}` 消息，内容包含子任务终态和可读摘要。
-- R3. companion result status contract 必须能表达 runtime failure：至少支持 `failed`，并为 interrupted/cancelled 建立一个明确状态；保留 `terminal_state` 字段承载底层 runtime state。
-- R4. `wait` 对 resolved gate 的状态投影必须读取 payload 中的真实 status；失败/取消的 companion result 应作为 ready item 返回，而不是 pending 或伪 completed。
-- R5. workspace projection 必须与 durable gate 状态一致；child delivery 已 terminal 且 gate 已 resolved 后，不应继续显示 open waiting item。
-- R6. parent mailbox delivery 必须可幂等重放；如果 gate 已 resolved 但 parent mailbox 投递失败，重试应能根据同一个 gate/request 再次确保 delivery，而不是丢失 wake。
-- R7. boot reconcile 必须能扫描 open companion wait gates，并用同一套 terminal 收束能力修复已经 terminal 的 child delivery/runtime。
-- R8. SubAgent launch 前应增加 provider/account effective model capability preflight；不可执行模型应在创建长期等待之前变成可见配置错误，或被立即收束为 dispatch failure。
-- R9. 修复应优先使用现有 repository、gate resolver、parent mailbox delivery 和 wait activity 模块，避免把 `wait` 变成写事实的 authority。
-- R10. 如选择引入新持久化结构，例如 gate delivery outbox，必须按当前迁移体系新增 migration；若只扩展 JSON payload 和应用逻辑，需确认无需 schema migration。
-- R11. 收口 `LifecycleGate` waiting projection 的状态解释：`wait` 工具和 workspace mailbox waiting_items 应对同一个 gate 产出一致的 kind/status/preview 语义；resolved gate 优先读取 payload.status，open gate 仍表示 pending/open，exec terminal registry 仍保持独立非 gate 来源。
-- R12. containment 约束：`RuntimeSessionExecutionAnchor` 只作为 AgentRun/runtime trace 绑定的不可变 launch evidence；本任务新增代码不得把 anchor repository 泄露给 companion terminal bridge、API terminal callback 业务分支或 workspace projection。既有直接依赖若被本次路径触碰，应改为调用 AgentRun runtime binding/terminal convergence interface。
-- R13. 当前修复必须建立 AgentRun-owned runtime address/convergence seam：terminal、companion gate、parent mailbox wake 和 waiting projection 使用 AgentRun 坐标或 `delivery_trace_ref` 诊断字段传递上下文；仓内其它直接 anchor 读取点作为后续收束候选记录，但本任务不再新增同类事实源。
+- R1. 新增 AgentRun-owned terminal convergence 能力：runtime terminal signal 进入 AgentRun seam 后，先收敛为 `AgentRunDeliveryBinding` terminal fact 和 AgentRun 坐标事件；wait obligation 收束只能消费 AgentRun run/agent/frame/delivery 或 runtime node 语义，不能在 companion/API/workspace 层直接解析 `RuntimeSessionExecutionAnchor`。
+- R2. 新增 wait obligation terminal convergence 能力：open `LifecycleGate` 必须能声明等待的 producer、期望 result、producer terminal 后的收束策略和 wake delivery intent。convergence 接收 producer terminal event，内部定位受影响 gate，按策略 resolve，并确保 wake delivery。
+- R3. terminal 收束必须投递 parent mailbox wake：父 Agent 应收到稳定、幂等的 `companion-result:{gate_id}` 消息，内容包含子任务终态和可读摘要。
+- R4. wait obligation result status contract 必须能表达 runtime failure：至少支持 `failed`，并为 interrupted/cancelled 建立一个明确状态；completed-without-result 必须能表达为协议失败；保留 `terminal_state` 字段承载底层 runtime state。
+- R5. `wait` 对 resolved gate 的状态投影必须读取 payload 中的真实 status；失败/取消的 wait result 应作为 ready item 返回，而不是 pending 或伪 completed。
+- R6. workspace projection 必须与 durable gate 状态一致；producer delivery 已 terminal 且 gate 已 resolved 后，不应继续显示 open waiting item。
+- R7. parent mailbox delivery 必须可幂等重放；如果 gate 已 resolved 但 parent mailbox 投递失败，重试应能根据同一个 gate/request 再次确保 delivery，而不是丢失 wake。
+- R8. boot reconcile 必须扫描带 producer terminal policy 的 open wait obligations，并用同一套 wait obligation convergence 修复已经 terminal 的 child delivery/runtime；reconcile 不应按 `companion_wait_follow_up` 这类 gate kind 复制业务规则。
+- R9. SubAgent launch 前应增加 provider/account effective model capability preflight；不可执行模型应在创建长期等待之前变成可见配置错误，或被立即收束为 dispatch failure。
+- R10. 修复应优先使用现有 repository、gate resolver、parent mailbox delivery 和 wait activity 模块，避免把 `wait` 变成写事实的 authority。
+- R11. 如选择引入新持久化结构，例如 wait obligation delivery outbox 或 typed producer policy columns，必须按当前迁移体系新增 migration；若只扩展 JSON payload 和应用逻辑，需确认无需 schema migration。
+- R12. 收口 `LifecycleGate` waiting projection 的状态解释：`wait` 工具和 workspace mailbox waiting_items 应对同一个 gate 产出一致的 kind/status/preview 语义；resolved gate 优先读取 payload.status，open gate 仍表示 pending/open，exec terminal registry 仍保持独立非 gate 来源。
+- R13. containment 约束：`RuntimeSessionExecutionAnchor` 只作为 AgentRun/runtime trace 绑定的不可变 launch evidence；本任务新增代码不得把 anchor repository 泄露给 wait obligation convergence、API terminal callback 业务分支或 workspace projection。既有直接依赖若被本次路径触碰，应改为调用 AgentRun runtime binding/terminal convergence interface。
+- R14. 当前修复必须建立 AgentRun-owned runtime address/convergence seam 和 wait obligation convergence seam：terminal、gate resolved、parent mailbox wake 和 waiting projection 使用 AgentRun 坐标、wait producer ref 或 `delivery_trace_ref` 诊断字段传递上下文；仓内其它直接 anchor 读取点作为后续收束候选记录，但本任务不再新增同类事实源。
 
 ## Acceptance Criteria
 
-- [ ] child runtime `failed` 后，AgentRun terminal convergence 先写入 child `AgentRunDeliveryBinding` terminal，再由 AgentRun 坐标驱动对应 child-owned `companion_wait_follow_up` gate resolved；payload.status 为 `failed`，payload 包含 terminal message、delivery trace ref、turn id 和 `source = "runtime_terminal"`。
-- [ ] child runtime `interrupted` 后，对应 gate 被 resolved 为取消/中断语义，parent mailbox 收到 companion result wake。
-- [ ] child runtime `completed` 但未调用 `companion_respond` 时，对应 gate 被 resolved 为协议失败，failure kind 能区分 `missing_companion_respond`。
+- [ ] child runtime `failed` 后，AgentRun terminal convergence 先写入 child `AgentRunDeliveryBinding` terminal，再由 wait obligation convergence 根据 producer ref 收束相关 open gate；payload.status 为 `failed`，payload 包含 terminal message、delivery trace ref、turn id 和 `source = "producer_terminal"`。
+- [ ] child runtime `interrupted` 后，相关 wait obligation 被 resolved 为取消/中断语义，parent mailbox 收到 companion result wake。
+- [ ] child runtime `completed` 但未调用 `companion_respond` 时，相关 wait obligation 被 resolved 为协议失败，failure kind 能区分 `missing_companion_respond`。
 - [ ] `companion_respond` 与 terminal callback 竞态时，先完成者保留 gate payload，后完成者只做幂等 no-op 或 ensure delivery，不覆盖已确定结果。
 - [ ] gate 已 resolved 但 parent mailbox delivery 初次失败时，后续调用能用 `companion-result:{gate_id}` 重新确保投递。
 - [ ] `wait(activity_refs=[gate])` 对 failed/cancelled companion result 返回 ready item，状态反映 payload.status。
 - [ ] workspace projection 中 child delivery terminal 后不再展示同一个 gate 为 open waiting item；如展示 resolved 历史项，状态语义与 `wait` 工具一致。
 - [ ] `LifecycleGate` 到 `WaitActivityItem` 与 `ConversationWaitingItemModel` 的状态解释共享同一套 helper 或同一套被测试锁定的 contract，避免 `resolved -> completed` 与 `resolved -> payload.status` 分叉。
 - [ ] API terminal callback 不再自己查询 `RuntimeSessionExecutionAnchor` 来完成业务控制面逻辑；它只把 terminal notification 交给 AgentRun terminal convergence interface。
-- [ ] companion terminal bridge 的外部 interface 不接受裸 `runtime_session_id` 作为业务定位输入；runtime session id 只允许作为 diagnostic / delivery trace ref 出现在 payload 或日志中。
-- [ ] 本任务触碰的 terminal、companion gate、workspace waiting projection 路径通过代码审查确认：业务决策从 `AgentRunDeliveryBinding` / AgentRun event / `LifecycleGate` 出发，`RuntimeSessionExecutionAnchor` 只出现在 AgentRun seam 内部校验或 trace 诊断语境。
-- [ ] boot reconcile 能修复现有形态：open companion wait gate + child delivery terminal failed/interrupted/completed-without-response。
-- [ ] 不可执行模型配置在 SubAgent launch 前返回可见错误，或被即时收束为 dispatch failed；runtime provider 400 仍能通过 terminal bridge 收束 gate。
-- [ ] 单元/集成测试覆盖 terminal bridge、wait projection、idempotent delivery、boot reconcile 和 model preflight 的关键路径。
+- [ ] wait obligation convergence 的外部 interface 不接受裸 `runtime_session_id` 或 gate kind 作为业务定位输入；runtime session id 只允许作为 diagnostic / delivery trace ref 出现在 payload 或日志中。
+- [ ] 本任务触碰的 terminal、gate resolved、workspace waiting projection 路径通过代码审查确认：业务决策从 `AgentRunDeliveryBinding` / AgentRun event / wait producer ref / `LifecycleGate` 出发，`RuntimeSessionExecutionAnchor` 只出现在 AgentRun seam 内部校验或 trace 诊断语境。
+- [ ] boot reconcile 能修复现有形态：open companion wait gate + child delivery terminal failed/interrupted/completed-without-response，并且实现入口是通用 wait obligation convergence。
+- [ ] 不可执行模型配置在 SubAgent launch 前返回可见错误，或被即时收束为 dispatch failed；runtime provider 400 仍能通过 wait obligation convergence 收束 gate。
+- [ ] 单元/集成测试覆盖 AgentRun terminal convergence、wait obligation convergence、wait projection、idempotent delivery、boot reconcile 和 model preflight 的关键路径。
 - [ ] 如涉及 Rust/TS DTO 或 contract 生成，`pnpm run contracts:check` 通过；如涉及 migration，`pnpm run migration:guard` 通过。
 
 ## Out of Scope

@@ -1,6 +1,6 @@
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查新增 application service、repository 调用和测试是否符合后端质量约定。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 terminal bridge、preflight 和 reconcile 的错误传播、日志与 HTTP/工具可见错误语义。"}
-{"file": ".trellis/spec/backend/diagnostics-guidelines.md", "reason": "检查 terminal bridge 和 boot reconcile 是否记录足够的结构化诊断字段。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 wait obligation convergence、preflight 和 reconcile 的错误传播、日志与 HTTP/工具可见错误语义。"}
+{"file": ".trellis/spec/backend/diagnostics-guidelines.md", "reason": "检查 wait obligation convergence 和 boot reconcile 是否记录足够的结构化诊断字段。"}
 {"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "复核 parent mailbox wake、pause、delivery dedup 和 terminal 状态投影是否一致。"}
 {"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "复核 LifecycleGate resolved/open 状态、wait projection 与 boot reconcile 是否符合 workflow 契约。"}
 {"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "复核新增或扩展 status 是否需要生成 TS contract，并确认 drift check 通过。"}

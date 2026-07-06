@@ -174,9 +174,17 @@ describe("dispatchSessionPlatformEvent", () => {
 
   it("does not consume unknown platform events", () => {
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
-      kind: "mailbox_state_changed",
+      kind: "control_plane_projection_changed",
       data: {
-        reason: "refresh",
+        projection: "mailbox",
+        reason: "mailbox_state_changed",
+        run_id: "run-1",
+        agent_id: "agent-1",
+        frame_id: null,
+        gate_id: null,
+        mailbox_message_id: null,
+        delivery_runtime_session_id: null,
+        workspace_module_presentation: null,
       },
     }));
 

@@ -77,14 +77,6 @@ export function planAgentRunMessageSent(): AgentRunControlPlaneEffectPlan {
   };
 }
 
-export function planAgentRunTurnEnd(): AgentRunControlPlaneEffectPlan {
-  return {
-    refreshWorkspaceState: true,
-    hookRuntimeRefresh: { reason: "turn_end", immediate: true },
-    refreshAgentRunListReason: "turn_end",
-  };
-}
-
 export function planAgentRunWorkspaceModuleOpened(): AgentRunControlPlaneEffectPlan {
   return {
     refreshWorkspaceState: true,

@@ -97,13 +97,14 @@ If context is compacted, restore the working state in this order:
   - Main session removed `GateNotificationIntent`, `CompanionEventNotificationIntent`, `CompanionGateNotificationDelivery`, `CompanionGateProjectionDelivery`, and the workflow/application `notification_intents` output channel.
   - Main session replaced `with_companion_delivery` with `with_mailbox_wake_delivery`; `GateProducerTerminalConvergenceServiceAdapter` now depends on a generic `GateMailboxWakeDelivery` port, with companion mailbox formatting isolated in `CompanionGateMailboxWakeDelivery`.
 - Remaining blocking frontend/protocol cleanup:
-  - Singer found `SessionMetaUpdate { key = "turn_terminal" }` still flows through session chat view `onTurnEnd` into AgentRun workspace/list refresh. This must move to a typed projection event or a non-session-meta local command boundary before task completion.
-  - Singer found `PlatformEvent::MailboxStateChanged { reason }` remains in the Backbone protocol/generated TS branch. No production emitter or workspace refresh consumer was found, but WP5 requires deleting the legacy protocol branch before completion.
+  - Singer found `SessionMetaUpdate { key = "turn_terminal" }` still flowed through session chat view `onTurnEnd` into AgentRun workspace/list refresh. Main session removed the `planAgentRunTurnEnd` workspace/list refresh plan; `onTurnEnd` now only refreshes task status-bar data while workspace refresh remains projection-driven.
+  - Singer found `PlatformEvent::MailboxStateChanged { reason }` remained in the Backbone protocol/generated TS branch. Main session removed the legacy protocol variant and regenerated `backbone-protocol.ts`.
 - Post-fix verification:
   - Main session passed `cargo check -p agentdash-api`, `cargo test -p agentdash-application-runtime-session`, `cargo test -p agentdash-application-agentrun`, `cargo test -p agentdash-application-workflow`, `cargo test -p agentdash-api --no-run`, `cargo test -p agentdash-workspace-module --no-run`, `node scripts/check-migration-history.js`, and `pnpm run contracts:check`.
   - Schrodinger additionally passed focused runtime-session/workspace-module checks, `cargo check -p agentdash-application-agentrun`, `cargo check -p agentdash-api`, `pnpm --filter app-web test -- controlPlaneModel`, and `pnpm run frontend:check`.
   - Companion cleanup slice passed `cargo check -p agentdash-application -p agentdash-api`, `cargo check -p agentdash-api`, `cargo test -p agentdash-application companion`, `pnpm --filter app-web test -- SessionSystemEventCard systemEventPolicy`, `pnpm run frontend:check`, `pnpm run contracts:check`, and `git diff --check`.
   - Gate notification intent cleanup passed `cargo check -p agentdash-application -p agentdash-application-workflow -p agentdash-api`, `cargo test -p agentdash-application-workflow gate`, and `cargo test -p agentdash-application companion`.
+  - Frontend/protocol cleanup passed `cargo check -p agentdash-agent-protocol -p agentdash-contracts`, `pnpm run contracts:check`, `pnpm --filter app-web test -- controlPlaneModel sessionPlatformEventDispatcher SessionChatView`, `pnpm run frontend:check`, and static grep for legacy `MailboxStateChanged` / `planAgentRunTurnEnd` refresh paths.
 
 ## Commit Slicing
 

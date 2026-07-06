@@ -48,9 +48,6 @@ pub enum PlatformEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
-
-    /// Mailbox 消息状态变更（消费/删除/promote 等），前端据此刷新 mailbox 视图。
-    MailboxStateChanged { reason: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]

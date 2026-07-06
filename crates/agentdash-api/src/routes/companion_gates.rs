@@ -49,8 +49,8 @@ pub async fn respond_companion_gate(
     )
     .await?;
 
-    let service = CompanionGateControlService::with_session_eventing(
-        CompanionGateControlRepos {
+    let service =
+        CompanionGateControlService::with_agent_run_projection(CompanionGateControlRepos {
             gate_repo: state.repos.lifecycle_gate_repo.clone(),
             run_repo: state.repos.lifecycle_run_repo.clone(),
             frame_repo: state.repos.agent_frame_repo.clone(),
@@ -58,18 +58,16 @@ pub async fn respond_companion_gate(
             anchor_repo: state.repos.execution_anchor_repo.clone(),
             delivery_binding_repo: state.repos.agent_run_delivery_binding_repo.clone(),
             lineage_repo: state.repos.agent_lineage_repo.clone(),
-        },
-        state.services.session_eventing.clone(),
-    )
-    .with_human_response_mailbox_delivery(Arc::new(
-        AgentRunCompanionMailboxDelivery::from_runtime_services(
-            state.repos.clone(),
-            agent_run_session_core(state.services.session_core.clone()),
-            agent_run_session_control(state.services.session_control.clone()),
-            agent_run_session_eventing(state.services.session_eventing.clone()),
-            agent_run_session_launch(state.services.session_launch.clone()),
-        ),
-    ));
+        })
+        .with_human_response_mailbox_delivery(Arc::new(
+            AgentRunCompanionMailboxDelivery::from_runtime_services(
+                state.repos.clone(),
+                agent_run_session_core(state.services.session_core.clone()),
+                agent_run_session_control(state.services.session_control.clone()),
+                agent_run_session_eventing(state.services.session_eventing.clone()),
+                agent_run_session_launch(state.services.session_launch.clone()),
+            ),
+        ));
     let result = service
         .respond(RespondCompanionGateCommand {
             gate_id: gate_uuid,

@@ -453,7 +453,6 @@ pub(crate) async fn build_session_runtime(
         agent_run_session_core(session_core.clone()),
         agent_run_session_control(session_control.clone()),
         agent_run_session_eventing(session_eventing.clone()),
-        session_eventing.clone(),
         agent_run_session_launch(session_launch.clone()),
     ));
     let lifecycle_terminal_port = Arc::new(ApiLifecycleTerminalConvergenceAdapter::new(

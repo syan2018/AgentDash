@@ -68,6 +68,9 @@ If context is compacted, restore the working state in this order:
   - This implement agent timed out twice and was closed without usable output; main session owns the remaining repair.
   - `019f38c3-5a8e-73e2-b315-02c0faa90cec` (`trellis-check`, nickname `Poincare`) ran a read-only check after commit `9d62140b` and reported three blocking findings.
   - `019f38df-dead-75a3-8f94-08cc2bebf7f5` (`trellis-check`, nickname `Schrodinger`) completed read-only post-fix review for commit `4e8bf9ac`; no blocking findings remained for the migration quote fix, AgentRun-owned terminal hook trigger, or typed workspace module presentation projection.
+  - `019f38e6-c556-7743-9ee7-11d2c3ccf9d7` (`trellis-check`, nickname `Nietzsche`) completed read-only backend/session residue audit for WP2/WP3/WP4/R1/R2/R4 with no blocking findings.
+  - `019f38e7-04d1-75d1-8593-13660b3bf41a` (`trellis-check`, nickname `Averroes`) completed read-only frontend/protocol projection audit and found blocking companion legacy UI protocol residue.
+  - `019f38f6-fe6e-7eb2-b32a-65766bfcd53d` (`trellis-check`, nickname `Zeno`) completed read-only review for the companion legacy UI protocol cleanup with no blocking findings.
 - Current remaining WP3/WP4 boundary:
   - AgentRun control-effect executor/intake implementation exists in `crates/agentdash-application-agentrun/src/agent_run/control_effects.rs` and must be committed with this cleanup slice.
   - RuntimeSession terminal path now uses `RuntimeTerminalBoundaryService` / `RuntimeTerminalBoundaryEvidence` and hands evidence to `AgentRunControlEffectPort`; `terminal_effects.rs` and `effects_service.rs` have been deleted.
@@ -81,9 +84,16 @@ If context is compacted, restore the working state in this order:
 - Remaining non-blocking audit items:
   - `MailboxWakeDelivery` and `HookRuntimeProjectionChanged` executor branches are currently no-op when replayed, but no production producer was found in this slice.
   - `MailboxStateChanged` and `SessionMetaUpdate` remain protocol/trace/feed concepts; they must not become AgentRun workspace refresh authority again.
+- Companion legacy UI protocol cleanup:
+  - Averroes found `SessionCompanionRequestCard` kept local responded state and `SessionSystemEventCard` rendered `companion_human_request` from legacy `SessionMetaUpdate`.
+  - Main session removed companion-specific `SessionMetaUpdate` notification helpers and stopped `CompanionRequestTool` / concrete companion gate delivery from injecting companion UI events into RuntimeSession feed.
+  - Main session removed `SessionCompanionRequestCard` and the frontend `companion_*` renderable system-event allowlist; companion request status is now expected from AgentRun workspace `conversation.mailbox.waiting_items`.
+  - Main session renamed the concrete companion gate notification delivery to `CompanionGateProjectionDelivery` and removed the remaining API/app-state construction dependency on companion `SessionEventingService`; AgentRun mailbox delivery still uses runtime services only as the execution bridge for actual mailbox delivery.
+  - Zeno verified that remaining companion strings are test assertions or LifecycleGate kind values, not RuntimeSession `SessionMetaUpdate` or frontend session-system-event product paths.
 - Post-fix verification:
   - Main session passed `cargo check -p agentdash-api`, `cargo test -p agentdash-application-runtime-session`, `cargo test -p agentdash-application-agentrun`, `cargo test -p agentdash-application-workflow`, `cargo test -p agentdash-api --no-run`, `cargo test -p agentdash-workspace-module --no-run`, `node scripts/check-migration-history.js`, and `pnpm run contracts:check`.
   - Schrodinger additionally passed focused runtime-session/workspace-module checks, `cargo check -p agentdash-application-agentrun`, `cargo check -p agentdash-api`, `pnpm --filter app-web test -- controlPlaneModel`, and `pnpm run frontend:check`.
+  - Companion cleanup slice passed `cargo check -p agentdash-application -p agentdash-api`, `cargo check -p agentdash-api`, `cargo test -p agentdash-application companion`, `pnpm --filter app-web test -- SessionSystemEventCard systemEventPolicy`, `pnpm run frontend:check`, `pnpm run contracts:check`, and `git diff --check`.
 
 ## Commit Slicing
 

@@ -3,10 +3,9 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use agentdash_application::companion::{
-    AgentRunCompanionMailboxDelivery, SessionEventingCompanionGateDelivery,
+    AgentRunCompanionMailboxDelivery, CompanionGateProjectionDelivery,
 };
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::session::SessionEventingService as ApplicationSessionEventingService;
 use agentdash_application::wait_obligation::GateProducerTerminalConvergencePort;
 use agentdash_application_agentrun::agent_run::{
     SessionControlService, SessionCoreService,
@@ -25,7 +24,6 @@ pub(crate) struct ApiWaitProducerTerminalConvergenceAdapter {
     session_core: SessionCoreService,
     session_control: SessionControlService,
     agent_run_eventing: AgentRunSessionEventingService,
-    companion_eventing: ApplicationSessionEventingService,
     session_launch: SessionLaunchService,
 }
 
@@ -35,7 +33,6 @@ impl ApiWaitProducerTerminalConvergenceAdapter {
         session_core: SessionCoreService,
         session_control: SessionControlService,
         agent_run_eventing: AgentRunSessionEventingService,
-        companion_eventing: ApplicationSessionEventingService,
         session_launch: SessionLaunchService,
     ) -> Self {
         Self {
@@ -43,7 +40,6 @@ impl ApiWaitProducerTerminalConvergenceAdapter {
             session_core,
             session_control,
             agent_run_eventing,
-            companion_eventing,
             session_launch,
         }
     }
@@ -67,9 +63,7 @@ impl AgentRunWaitProducerTerminalConvergencePort for ApiWaitProducerTerminalConv
             agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_companion_delivery(
                 self.repos.lifecycle_gate_repo.clone(),
                 self.repos.agent_run_delivery_binding_repo.clone(),
-                Arc::new(SessionEventingCompanionGateDelivery::new(
-                    self.companion_eventing.clone(),
-                )),
+                Arc::new(CompanionGateProjectionDelivery::new()),
                 parent_mailbox_delivery,
             );
 

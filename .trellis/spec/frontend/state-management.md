@@ -100,8 +100,10 @@ user attention 与 resume command。队列是否暂停、message 是否 blocked/
 独立 waiting 分区或状态栏摘要，而不是合成为 `MailboxMessageView`，原因是 wait item 表达
 LifecycleGate / lifecycle wait record 的 open state，mailbox row 表达 wake/result envelope 的投递
 state。waiting item 使用 generated `ConversationWaitingItemView`，显示 `kind`、`source_label`、
-`preview`、`status` 和时间；`mailbox_state_changed` 与 companion wait-related platform events 触发
-workspace snapshot refresh，从后端重新读取 waiting projection。
+`preview`、`status` 和时间；`ControlPlaneProjectionChanged` 的 mailbox / waiting projection change 触发
+workspace snapshot refresh，从后端重新读取 waiting projection。companion request / response 不在
+RuntimeSession feed 中维护交互终态，原因是请求是否仍待回应、是否已结束必须由后端 gate / waiting
+projection 表达，避免 session meta event 成为第二条 UI 协议。
 
 `AgentRunWorkspaceControlPlaneView.status` 使用 AgentRun workspace 语义：
 `ready | running | terminal | frame_missing | delivery_missing`。RuntimeSession detail 只使用

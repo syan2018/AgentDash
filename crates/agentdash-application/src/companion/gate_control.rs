@@ -18,10 +18,8 @@ use agentdash_domain::workflow::{
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use super::{
-    PayloadTypeRegistry, build_companion_event_notification,
-    build_companion_human_response_notification, payload_types,
-};
+use super::{PayloadTypeRegistry, payload_types};
+use crate::ApplicationError;
 use crate::agent_run::{
     DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
     DeliveryRuntimeSelectionService,
@@ -29,7 +27,6 @@ use crate::agent_run::{
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 #[cfg(test)]
 use crate::wait_obligation::GateProducerTerminalConvergencePort;
-use crate::{ApplicationError, session::SessionEventingService};
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
 const COMPANION_CHILD_WAIT_GATE_KIND: &str = "companion_wait_follow_up";
@@ -265,10 +262,8 @@ pub trait CompanionHumanResponseMailboxDelivery: Send + Sync {
     ) -> Result<CompanionParentMailboxDeliveryResult, ApplicationError>;
 }
 
-#[derive(Clone)]
-pub struct SessionEventingCompanionGateDelivery {
-    eventing: SessionEventingService,
-}
+#[derive(Clone, Default)]
+pub struct CompanionGateProjectionDelivery;
 
 #[cfg(test)]
 #[derive(Clone, Default)]
@@ -280,9 +275,9 @@ pub struct NoopCompanionParentMailboxDelivery;
 #[derive(Clone, Default)]
 pub struct NoopCompanionHumanResponseMailboxDelivery;
 
-impl SessionEventingCompanionGateDelivery {
-    pub fn new(eventing: SessionEventingService) -> Self {
-        Self { eventing }
+impl CompanionGateProjectionDelivery {
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -347,40 +342,19 @@ impl CompanionHumanResponseMailboxDelivery for NoopCompanionHumanResponseMailbox
 }
 
 #[async_trait]
-impl CompanionGateNotificationDelivery for SessionEventingCompanionGateDelivery {
+impl CompanionGateNotificationDelivery for CompanionGateProjectionDelivery {
     async fn deliver_human_response(
         &self,
-        notification: CompanionGateResponseNotification,
+        _notification: CompanionGateResponseNotification,
     ) -> Result<(), ApplicationError> {
-        let envelope = build_companion_human_response_notification(
-            &notification.delivery_runtime_session_id,
-            notification.turn_id.as_deref(),
-            &notification.request_id,
-            &notification.payload,
-            notification.request_type.as_deref(),
-            notification.gate_resolved,
-        );
-        self.eventing
-            .inject_notification(&notification.delivery_runtime_session_id, envelope)
-            .await
-            .map_err(ApplicationError::from)
+        Ok(())
     }
 
     async fn deliver_companion_event(
         &self,
-        notification: CompanionGateEventNotification,
+        _notification: CompanionGateEventNotification,
     ) -> Result<(), ApplicationError> {
-        let envelope = build_companion_event_notification(
-            &notification.delivery_runtime_session_id,
-            &notification.turn_id,
-            &notification.event_type,
-            notification.message,
-            notification.payload,
-        );
-        self.eventing
-            .inject_notification(&notification.delivery_runtime_session_id, envelope)
-            .await
-            .map_err(ApplicationError::from)
+        Ok(())
     }
 }
 
@@ -448,13 +422,10 @@ impl CompanionGateControlService {
         self
     }
 
-    pub fn with_session_eventing(
-        repos: CompanionGateControlRepos,
-        eventing: SessionEventingService,
-    ) -> Self {
+    pub fn with_agent_run_projection(repos: CompanionGateControlRepos) -> Self {
         Self::new(CompanionGateControlDeps {
             repos,
-            delivery: Arc::new(SessionEventingCompanionGateDelivery::new(eventing)),
+            delivery: Arc::new(CompanionGateProjectionDelivery::new()),
         })
     }
 

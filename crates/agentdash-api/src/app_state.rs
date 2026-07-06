@@ -358,9 +358,7 @@ impl AppState {
                 repos.lifecycle_gate_repo.clone(),
                 repos.agent_run_delivery_binding_repo.clone(),
                 Arc::new(
-                    agentdash_application::companion::SessionEventingCompanionGateDelivery::new(
-                        session_eventing.clone(),
-                    ),
+                    agentdash_application::companion::CompanionGateProjectionDelivery::new(),
                 ),
                 Arc::new(
                     agentdash_application::companion::AgentRunCompanionMailboxDelivery::from_runtime_services(

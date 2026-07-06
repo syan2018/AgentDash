@@ -27,21 +27,41 @@ If context is compacted, restore the working state in this order:
 - Scope: WP2 Wait/Gate Typed Payload.
 - Owns: typed `LifecycleGate.payload_json` wait policy envelope, generic producer terminal convergence naming, repository lookup path semantics.
 - Avoids: AgentRun control-effect outbox, RuntimeSession effect migration, frontend refresh/protocol work.
-- Latest observed progress: reading workflow convergence, payload write, SQL JSON path, and related domain/application files.
+- Status: completed at channel seq `7734`.
+- Final report: implemented typed `GateWaitPolicyEnvelope`, generic gate producer terminal convergence, envelope-owned repository lookup paths, and companion adapter formatting boundary.
+- Reported verification: `cargo fmt`, `cargo test -p agentdash-domain gate_wait_policy`, `cargo test -p agentdash-application-workflow`, `cargo check -p agentdash-application`, `agentdash-infrastructure`, `agentdash-api`, and no-run compilation for `agentdash-application`, `agentdash-application-agentrun`, `agentdash-infrastructure`.
 
 ### `impl-control-effects`
 
 - Scope: WP3 Session Residue Excision and WP4 AgentRun Control-Plane Effects.
 - Owns: moving `hook_effects`, `hook_auto_resume`, and `session_terminal_callback` replay away from RuntimeSession naming/ownership into AgentRun control-effect boundaries.
 - Avoids: wait/gate typed envelope and frontend refresh mapping unless required for compile.
-- Latest observed progress: found old outbox spans SPI, runtime-session, infrastructure, and API bootstrap; prioritizing SPI/infrastructure naming and record model migration toward `AgentRunControlEffect*`.
+- Status: killed after two waits and one directed status request produced no `message`, `done`, or `turn_finished`.
+- Last usable state: partial final-answer stream indicated SPI/infrastructure/runtime naming moved toward `AgentRunControlEffect*`; static review found business replay still owned by `agentdash-application-runtime-session/src/session/terminal_effects.rs`.
+- Follow-up worker: `repair-control-effects`, spawned by `codex-main`, owns the remaining WP3/WP4 cleanup.
+- Follow-up status: spawn returned process metadata, but the targeted brief was recorded as `undeliverable` with `worker-unknown`; main session must own the remaining cleanup unless a later agent is spawned successfully.
 
 ### `impl-protocol-frontend`
 
 - Scope: WP5 Projection Invalidation Event and WP6 Frontend Boundary.
 - Owns: `ControlPlaneProjectionChanged`, generated TS protocol path, `controlPlaneModel` refresh planning, terminal store stream-scoped dedup.
 - Avoids: AgentRun control-effect outbox and wait/gate envelope changes.
-- Latest observed progress: reading Backbone platform protocol, generated protocol, `controlPlaneModel`, terminal dispatcher, and terminal store.
+- Status: killed after two waits and one directed status request produced no `message`, `done`, or `turn_finished`.
+- Last usable state: partial final-answer stream indicated protocol/generated TS/controlPlaneModel/terminal-store edits; static review found API route waiting-row injection still present.
+- Follow-up worker: `repair-projection-frontend`, spawned by `codex-main`, owns remaining WP5/WP6 and API waiting-row cleanup.
+- Follow-up status: spawn returned process metadata, but the targeted brief was recorded as `undeliverable` with `worker-unknown`; main session must own the remaining cleanup unless a later agent is spawned successfully.
+
+## Main Session Recovery Notes
+
+- A 20 minute wait followed by a 10 minute wait completed with only `impl-wait-gate` reporting `done`.
+- Main session sent a directed status request to `impl-control-effects` and `impl-protocol-frontend`; both remained silent for an additional 5 minute window.
+- Main session killed the two silent workers before spawning repair workers to prevent concurrent writes.
+- Repair worker spawn attempts for `repair-control-effects` and `repair-projection-frontend` did not become deliverable workers; do not wait on them during recovery.
+- Current non-committable static findings:
+  - `RuntimeSession` still owns AgentRun/Hook control-effect replay in `crates/agentdash-application-runtime-session/src/session/terminal_effects.rs`.
+  - `SessionTerminalCallback` fanout still exists in API/bootstrap/runtime callback wiring.
+  - `crates/agentdash-api/src/routes/lifecycle_agents.rs::append_exec_terminal_waiting_items` still fabricates exec waiting rows.
+  - Frontend/protocol typed projection work exists but needs verification that workspace refresh no longer depends on legacy free keys.
 
 ## Commit Slicing
 

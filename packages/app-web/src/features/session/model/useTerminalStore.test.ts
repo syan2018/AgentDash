@@ -99,20 +99,23 @@ describe("useTerminalStore", () => {
     expect(terminal?.exitCode).toBe(0);
   });
 
-  it("idempotently projects terminal output by event_seq", () => {
+  it("idempotently projects terminal output by stream identity and event_seq", () => {
     const store = useTerminalStore.getState();
 
-    expect(store.projectOutputEvent(10, "term-1", "hello")).toBe(true);
-    expect(useTerminalStore.getState().projectOutputEvent(10, "term-1", "hello")).toBe(false);
+    expect(store.projectOutputEvent("stream-1", 10, "term-1", "hello")).toBe(true);
+    expect(useTerminalStore.getState().projectOutputEvent("stream-1", 10, "term-1", "hello")).toBe(false);
 
     expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello");
+
+    expect(useTerminalStore.getState().projectOutputEvent("stream-2", 10, "term-1", " world")).toBe(true);
+    expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello world");
   });
 
-  it("idempotently projects terminal state by event_seq", () => {
+  it("idempotently projects terminal state by stream identity and event_seq", () => {
     const store = useTerminalStore.getState();
 
-    expect(store.projectStateEvent(10, "term-1", "running")).toBe(true);
-    expect(useTerminalStore.getState().projectStateEvent(10, "term-1", "exited", 0)).toBe(false);
+    expect(store.projectStateEvent("stream-1", 10, "term-1", "running")).toBe(true);
+    expect(useTerminalStore.getState().projectStateEvent("stream-1", 10, "term-1", "exited", 0)).toBe(false);
 
     const terminal = useTerminalStore.getState().terminals.get("term-1");
     expect(terminal?.id).toBe("term-1");

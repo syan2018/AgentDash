@@ -20,6 +20,9 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
   if (platform.kind === "hook_trace") return "hook_event";
   if (platform.kind === "provider_attempt_status") return "provider_attempt_status";
   if (platform.kind === "session_rewound") return "session_rewound";
+  if (platform.kind === "control_plane_projection_changed") {
+    return "control_plane_projection_changed";
+  }
 
   if (platform.kind === "session_meta_update") {
     return platform.data.key;
@@ -58,6 +61,10 @@ export function extractPlatformEventData(event: BackboneEvent): Record<string, u
   }
 
   if (platform.kind === "session_rewound" && isRecord(platform.data)) {
+    return platform.data;
+  }
+
+  if (platform.kind === "control_plane_projection_changed" && isRecord(platform.data)) {
     return platform.data;
   }
 

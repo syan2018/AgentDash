@@ -21,9 +21,9 @@ function resetTerminalStore(): void {
   });
 }
 
-function envelope(event: BackboneEvent): BackboneEnvelope {
+function envelope(event: BackboneEvent, sessionId = "session-1"): BackboneEnvelope {
   return {
-    sessionId: "session-1",
+    sessionId,
     source: {
       connectorId: "connector",
       connectorType: "test",
@@ -38,9 +38,13 @@ function envelope(event: BackboneEvent): BackboneEnvelope {
   };
 }
 
-function platformEvent(seq: number, platform: PlatformEvent): SessionEventEnvelope {
+function platformEvent(
+  seq: number,
+  platform: PlatformEvent,
+  sessionId = "session-1",
+): SessionEventEnvelope {
   return {
-    session_id: "session-1",
+    session_id: sessionId,
     event_seq: seq,
     occurred_at_ms: seq,
     committed_at_ms: seq,
@@ -50,7 +54,7 @@ function platformEvent(seq: number, platform: PlatformEvent): SessionEventEnvelo
     notification: envelope({
       type: "platform",
       payload: platform,
-    }),
+    }, sessionId),
   };
 }
 
@@ -99,7 +103,7 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(terminal?.exitCode).toBe(0);
   });
 
-  it("does not duplicate output on repeated terminal_output event projection", () => {
+  it("deduplicates terminal_output by stream identity and event sequence", () => {
     const event = platformEvent(1, {
       kind: "terminal_output",
       data: {
@@ -112,6 +116,16 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(dispatchSessionPlatformEvent(event)).toBe(true);
 
     expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello");
+
+    expect(dispatchSessionPlatformEvent(platformEvent(1, {
+      kind: "terminal_output",
+      data: {
+        terminal_id: "term-1",
+        data: " world",
+      },
+    }, "agent-run-journal-1"))).toBe(true);
+
+    expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello world");
   });
 
   it("creates state-only projection for unregistered terminal on terminal_state_changed", () => {

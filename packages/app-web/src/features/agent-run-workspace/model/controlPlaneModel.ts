@@ -1,5 +1,7 @@
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventData } from "../../session/model/platformEvent";
+import type {
+  BackboneEvent,
+  ControlPlaneProjectionChanged,
+} from "../../../generated/backbone-protocol";
 import {
   workspaceModulePresentationFromPlatformEventData,
   workspaceModulePresentedTabTarget,
@@ -91,11 +93,23 @@ export function planAgentRunWorkspaceModuleOpened(): AgentRunControlPlaneEffectP
   };
 }
 
-function planWorkspaceModulePresented(
+function projectionRefreshReason(change: ControlPlaneProjectionChanged): string {
+  return "control_plane:" + change.projection + ":" + change.reason;
+}
+
+function extractControlPlaneProjectionChanged(
   event: BackboneEvent,
+): ControlPlaneProjectionChanged | null {
+  if (event.type !== "platform") return null;
+  if (event.payload.kind !== "control_plane_projection_changed") return null;
+  return event.payload.data;
+}
+
+function planWorkspaceModulePresented(
+  change: ControlPlaneProjectionChanged,
 ): AgentRunControlPlaneEffectPlan {
   const data = workspaceModulePresentationFromPlatformEventData(
-    extractPlatformEventData(event),
+    change.workspace_module_presentation,
   );
   const target = workspaceModulePresentedTabTarget(data);
   if (!target) return {};
@@ -114,52 +128,81 @@ function planWorkspaceModulePresented(
   };
 }
 
+function planControlPlaneProjectionChanged(
+  change: ControlPlaneProjectionChanged,
+): AgentRunControlPlaneEffectPlan {
+  const reason = projectionRefreshReason(change);
+  const plan: AgentRunControlPlaneEffectPlan = {};
+
+  switch (change.projection) {
+    case "workspace":
+    case "mailbox":
+    case "waiting":
+    case "delivery":
+    case "title":
+      plan.refreshWorkspaceState = true;
+      plan.refreshAgentRunListReason = reason;
+      break;
+    case "agent_run_list":
+      plan.refreshAgentRunListReason = reason;
+      break;
+    case "resource_surface":
+      plan.refreshWorkspaceState = true;
+      plan.refreshWorkspaceModuleCatalog = true;
+      break;
+    case "hook_runtime":
+      plan.hookRuntimeRefresh = { reason };
+      break;
+  }
+
+  if (
+    change.reason === "capability_state_changed" ||
+    change.reason === "context_frame_changed"
+  ) {
+    plan.refreshWorkspaceState = true;
+    plan.refreshWorkspaceModuleCatalog = true;
+    plan.hookRuntimeRefresh = { reason };
+  }
+
+  if (
+    change.reason === "hook_effect_applied" ||
+    change.reason === "hook_auto_resume_queued"
+  ) {
+    plan.hookRuntimeRefresh = { reason };
+  }
+
+  if (change.workspace_module_presentation) {
+    const presentationPlan = planWorkspaceModulePresented(change);
+    return {
+      ...plan,
+      ...presentationPlan,
+      refreshWorkspaceState:
+        plan.refreshWorkspaceState || presentationPlan.refreshWorkspaceState || undefined,
+      refreshWorkspaceModuleCatalog:
+        plan.refreshWorkspaceModuleCatalog ||
+        presentationPlan.refreshWorkspaceModuleCatalog ||
+        undefined,
+    };
+  }
+
+  return plan;
+}
+
 export function planAgentRunSystemEvent(
   eventType: string,
   event: BackboneEvent,
 ): AgentRunControlPlaneEffectPlan {
+  const controlPlaneChange = extractControlPlaneProjectionChanged(event);
+  if (controlPlaneChange) {
+    return planControlPlaneProjectionChanged(controlPlaneChange);
+  }
+
   switch (eventType) {
     case "hook_event":
     case "hook_action_resolved":
       return {
         hookRuntimeRefresh: { reason: eventType },
       };
-    case "companion_dispatch_registered":
-    case "companion_result_available":
-    case "companion_result_returned":
-    case "companion_human_request":
-    case "companion_human_response":
-    case "companion_review_request":
-      return {
-        refreshWorkspaceState: true,
-        hookRuntimeRefresh: { reason: eventType },
-      };
-    case "context_frame": {
-      const frameData = extractPlatformEventData(event);
-      if (
-        frameData?.kind === "capability_state_snapshot" ||
-        frameData?.kind === "capability_state_delta"
-      ) {
-        return {
-          refreshWorkspaceState: true,
-          refreshWorkspaceModuleCatalog: true,
-          hookRuntimeRefresh: { reason: eventType },
-        };
-      }
-      return {};
-    }
-    case "session_meta_updated":
-      return {
-        refreshWorkspaceState: true,
-        refreshAgentRunListReason: "session_meta_updated",
-      };
-    case "mailbox_state_changed":
-      return {
-        refreshWorkspaceState: true,
-        refreshAgentRunListReason: "mailbox_state_changed",
-      };
-    case "workspace_module_presented":
-      return planWorkspaceModulePresented(event);
     default:
       return {};
   }

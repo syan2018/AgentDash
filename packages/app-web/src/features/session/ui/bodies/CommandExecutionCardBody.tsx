@@ -82,8 +82,8 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
       exitedAt: isRunning ? undefined : Date.now(),
     });
 
-    // 写入 renderedOutput（真实终端输出）而非 rawAggregated（协议元数据）
-    const contentToWrite = renderedOutput;
+    // replay buffer 写入优先级：真实终端输出 → 原始 aggregatedOutput（至少有元数据可看）
+    const contentToWrite = renderedOutput ?? rawAggregated;
     if (contentToWrite == null) return;
     const currentOutput = store.getOutput(replayTerminalId);
     if (contentToWrite === currentOutput) return;
@@ -97,6 +97,7 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
     item.exitCode,
     item.id,
     isRunning,
+    rawAggregated,
     renderedOutput,
     replayTerminalId,
     sessionId,

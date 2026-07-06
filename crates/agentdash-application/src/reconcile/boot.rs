@@ -475,7 +475,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use agentdash_application_workflow::gate::{
-        GateDeliveryIntent, GateNotificationIntent, GateProducerTerminalConvergenceOutcome,
+        GateDeliveryIntent, GateProducerTerminalConvergenceOutcome,
         GateProducerTerminalConvergenceOutcomeKind, GateProducerTerminalConvergenceResult,
     };
     use agentdash_domain::workflow::{
@@ -519,7 +519,6 @@ mod tests {
                             kind: GateProducerTerminalConvergenceOutcomeKind::Resolved,
                             result_status: Some("failed".to_string()),
                             delivery_intents: Vec::<GateDeliveryIntent>::new(),
-                            notification_intents: Vec::<GateNotificationIntent>::new(),
                         }],
                     })
                 }

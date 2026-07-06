@@ -13,7 +13,6 @@ pub struct GateTransitionOutcome {
     pub gate: LifecycleGate,
     pub transition: GateTransitionKind,
     pub delivery_intents: Vec<GateDeliveryIntent>,
-    pub notification_intents: Vec<GateNotificationIntent>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,22 +87,5 @@ pub struct CompanionChildResultDeliveryIntent {
     pub child_agent_id: Uuid,
     pub child_delivery_runtime_session_id: Option<String>,
     pub resolved_turn_id: String,
-    pub payload: Value,
-}
-
-#[derive(Debug, Clone)]
-pub enum GateNotificationIntent {
-    CompanionReviewRequest(CompanionEventNotificationIntent),
-    CompanionParentRequestResolved(CompanionEventNotificationIntent),
-    CompanionResultAvailable(CompanionEventNotificationIntent),
-    CompanionResultReturned(CompanionEventNotificationIntent),
-}
-
-#[derive(Debug, Clone)]
-pub struct CompanionEventNotificationIntent {
-    pub delivery_runtime_session_id: String,
-    pub turn_id: String,
-    pub event_type: String,
-    pub message: String,
     pub payload: Value,
 }

@@ -354,19 +354,20 @@ impl AppState {
         {
             let gate_producer_terminal_convergence: Arc<
                 dyn agentdash_application::wait_obligation::GateProducerTerminalConvergencePort,
-            > = Arc::new(agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_companion_delivery(
+            > = Arc::new(agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
                 repos.lifecycle_gate_repo.clone(),
                 repos.agent_run_delivery_binding_repo.clone(),
                 Arc::new(
-                    agentdash_application::companion::CompanionGateProjectionDelivery::new(),
-                ),
-                Arc::new(
-                    agentdash_application::companion::AgentRunCompanionMailboxDelivery::from_runtime_services(
+                    agentdash_application::wait_obligation::CompanionGateMailboxWakeDelivery::new(
+                        Arc::new(
+                            agentdash_application::companion::AgentRunCompanionMailboxDelivery::from_runtime_services(
                         repos.clone(),
                         agent_run_session_core(session_core.clone()),
                         agent_run_session_control(session_control.clone()),
                         agent_run_session_eventing(session_eventing.clone()),
                         agent_run_session_launch(session_launch.clone()),
+                            ),
+                        ),
                     ),
                 ),
             ));

@@ -2,11 +2,11 @@ use agentdash_diagnostics::{Subsystem, diag};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use agentdash_application::companion::{
-    AgentRunCompanionMailboxDelivery, CompanionGateProjectionDelivery,
-};
+use agentdash_application::companion::AgentRunCompanionMailboxDelivery;
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::wait_obligation::GateProducerTerminalConvergencePort;
+use agentdash_application::wait_obligation::{
+    CompanionGateMailboxWakeDelivery, GateProducerTerminalConvergencePort,
+};
 use agentdash_application_agentrun::agent_run::{
     SessionControlService, SessionCoreService,
     SessionEventingService as AgentRunSessionEventingService, SessionLaunchService,
@@ -60,11 +60,10 @@ impl AgentRunWaitProducerTerminalConvergencePort for ApiWaitProducerTerminalConv
                 self.session_launch.clone(),
             ));
         let service =
-            agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_companion_delivery(
+            agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
                 self.repos.lifecycle_gate_repo.clone(),
                 self.repos.agent_run_delivery_binding_repo.clone(),
-                Arc::new(CompanionGateProjectionDelivery::new()),
-                parent_mailbox_delivery,
+                Arc::new(CompanionGateMailboxWakeDelivery::new(parent_mailbox_delivery)),
             );
 
         service

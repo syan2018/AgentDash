@@ -1,10 +1,8 @@
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use agentdash_application_workflow::gate::{
-    CompleteChildResultGateCommand, GateDeliveryIntent, GateNotificationIntent,
-    LifecycleGateResolver, OpenParentRequestGateCommand, ResolveParentRequestGateCommand,
-    RespondHumanGateCommand,
+    CompleteChildResultGateCommand, GateDeliveryIntent, LifecycleGateResolver,
+    OpenParentRequestGateCommand, ResolveParentRequestGateCommand, RespondHumanGateCommand,
 };
 #[cfg(test)]
 use agentdash_application_workflow::gate::{
@@ -204,38 +202,6 @@ pub struct CompanionParentMailboxDeliveryResult {
     pub accepted_protocol_turn_id: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct CompanionGateResponseNotification {
-    pub delivery_runtime_session_id: String,
-    pub turn_id: Option<String>,
-    pub request_id: String,
-    pub payload: serde_json::Value,
-    pub request_type: Option<String>,
-    pub gate_resolved: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct CompanionGateEventNotification {
-    pub delivery_runtime_session_id: String,
-    pub turn_id: String,
-    pub event_type: String,
-    pub message: String,
-    pub payload: serde_json::Value,
-}
-
-#[async_trait]
-pub trait CompanionGateNotificationDelivery: Send + Sync {
-    async fn deliver_human_response(
-        &self,
-        notification: CompanionGateResponseNotification,
-    ) -> Result<(), ApplicationError>;
-
-    async fn deliver_companion_event(
-        &self,
-        notification: CompanionGateEventNotification,
-    ) -> Result<(), ApplicationError>;
-}
-
 #[async_trait]
 pub trait CompanionParentMailboxDelivery: Send + Sync {
     async fn deliver_child_result_to_parent(
@@ -263,41 +229,10 @@ pub trait CompanionHumanResponseMailboxDelivery: Send + Sync {
 }
 
 #[derive(Clone, Default)]
-pub struct CompanionGateProjectionDelivery;
-
-#[cfg(test)]
-#[derive(Clone, Default)]
-pub struct NoopCompanionGateDelivery;
-
-#[derive(Clone, Default)]
 pub struct NoopCompanionParentMailboxDelivery;
 
 #[derive(Clone, Default)]
 pub struct NoopCompanionHumanResponseMailboxDelivery;
-
-impl CompanionGateProjectionDelivery {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[cfg(test)]
-#[async_trait]
-impl CompanionGateNotificationDelivery for NoopCompanionGateDelivery {
-    async fn deliver_human_response(
-        &self,
-        _notification: CompanionGateResponseNotification,
-    ) -> Result<(), ApplicationError> {
-        Ok(())
-    }
-
-    async fn deliver_companion_event(
-        &self,
-        _notification: CompanionGateEventNotification,
-    ) -> Result<(), ApplicationError> {
-        Ok(())
-    }
-}
 
 #[async_trait]
 impl CompanionParentMailboxDelivery for NoopCompanionParentMailboxDelivery {
@@ -341,23 +276,6 @@ impl CompanionHumanResponseMailboxDelivery for NoopCompanionHumanResponseMailbox
     }
 }
 
-#[async_trait]
-impl CompanionGateNotificationDelivery for CompanionGateProjectionDelivery {
-    async fn deliver_human_response(
-        &self,
-        _notification: CompanionGateResponseNotification,
-    ) -> Result<(), ApplicationError> {
-        Ok(())
-    }
-
-    async fn deliver_companion_event(
-        &self,
-        _notification: CompanionGateEventNotification,
-    ) -> Result<(), ApplicationError> {
-        Ok(())
-    }
-}
-
 pub struct CompanionGateControlService {
     gate_repo: Arc<dyn LifecycleGateRepository>,
     gate_resolver: LifecycleGateResolver,
@@ -367,7 +285,6 @@ pub struct CompanionGateControlService {
     anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     lineage_repo: Arc<dyn AgentLineageRepository>,
-    delivery: Arc<dyn CompanionGateNotificationDelivery>,
     parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
     human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
 }
@@ -385,12 +302,11 @@ pub struct CompanionGateControlRepos {
 
 pub struct CompanionGateControlDeps {
     pub repos: CompanionGateControlRepos,
-    pub delivery: Arc<dyn CompanionGateNotificationDelivery>,
 }
 
 impl CompanionGateControlService {
     pub fn new(deps: CompanionGateControlDeps) -> Self {
-        let CompanionGateControlDeps { repos, delivery } = deps;
+        let CompanionGateControlDeps { repos } = deps;
         Self {
             gate_resolver: LifecycleGateResolver::new(repos.gate_repo.clone()),
             gate_repo: repos.gate_repo,
@@ -400,7 +316,6 @@ impl CompanionGateControlService {
             anchor_repo: repos.anchor_repo,
             delivery_binding_repo: repos.delivery_binding_repo,
             lineage_repo: repos.lineage_repo,
-            delivery,
             parent_mailbox_delivery: Arc::new(NoopCompanionParentMailboxDelivery),
             human_response_mailbox_delivery: Arc::new(NoopCompanionHumanResponseMailboxDelivery),
         }
@@ -423,10 +338,7 @@ impl CompanionGateControlService {
     }
 
     pub fn with_agent_run_projection(repos: CompanionGateControlRepos) -> Self {
-        Self::new(CompanionGateControlDeps {
-            repos,
-            delivery: Arc::new(CompanionGateProjectionDelivery::new()),
-        })
+        Self::new(CompanionGateControlDeps { repos })
     }
 
     pub async fn respond(
@@ -774,9 +686,6 @@ impl CompanionGateControlService {
             })
             .await?;
 
-        self.deliver_notification_intents(&outcome.notification_intents, gate.id, None)
-            .await;
-
         Ok(Some(result))
     }
 
@@ -785,11 +694,12 @@ impl CompanionGateControlService {
         &self,
         event: GateProducerTerminalEvent,
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
-        crate::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_companion_delivery(
+        crate::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
             self.gate_repo.clone(),
             self.delivery_binding_repo.clone(),
-            self.delivery.clone(),
-            self.parent_mailbox_delivery.clone(),
+            Arc::new(crate::wait_obligation::CompanionGateMailboxWakeDelivery::new(
+                self.parent_mailbox_delivery.clone(),
+            )),
         )
         .observe_gate_producer_terminal(event)
         .await
@@ -923,9 +833,6 @@ impl CompanionGateControlService {
                 input_text,
             })
             .await?;
-
-        self.deliver_notification_intents(&outcome.notification_intents, gate.id, None)
-            .await;
 
         Ok(CompanionParentRequestOpenResult {
             gate_id: gate.id,
@@ -1091,9 +998,6 @@ impl CompanionGateControlService {
             })
             .await?;
 
-        self.deliver_notification_intents(&outcome.notification_intents, gate.id, None)
-            .await;
-
         Ok(Some(CompanionParentRequestResolveResult {
             gate_id: gate.id,
             parent_agent_id: parent_frame.agent_id,
@@ -1189,48 +1093,6 @@ impl CompanionGateControlService {
             Ok(selection) => Ok(Some(selection)),
             Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
             Err(error) => Err(application_error_from_selection_error(error)),
-        }
-    }
-
-    async fn deliver_notification_intents(
-        &self,
-        intents: &[GateNotificationIntent],
-        gate_id: Uuid,
-        diagnostic_agent_id: Option<Uuid>,
-    ) {
-        for intent in intents {
-            let event = match intent {
-                GateNotificationIntent::CompanionReviewRequest(event)
-                | GateNotificationIntent::CompanionParentRequestResolved(event)
-                | GateNotificationIntent::CompanionResultAvailable(event)
-                | GateNotificationIntent::CompanionResultReturned(event) => event,
-            };
-            let notification = CompanionGateEventNotification {
-                delivery_runtime_session_id: event.delivery_runtime_session_id.clone(),
-                turn_id: event.turn_id.clone(),
-                event_type: event.event_type.clone(),
-                message: event.message.clone(),
-                payload: event.payload.clone(),
-            };
-            if let Err(error) = self.delivery.deliver_companion_event(notification).await {
-                let mut context = DiagnosticErrorContext::new(
-                    "companion.gate_notification",
-                    "deliver_companion_event",
-                )
-                .with_field("gate_id", gate_id);
-                if let Some(agent_id) = diagnostic_agent_id {
-                    context = context.with_field("agent_id", agent_id);
-                }
-                diag_error!(
-                    Warn,
-                    Subsystem::AgentRun,
-                    context = &context,
-                    error = &error,
-                    gate_id = %gate_id,
-                    agent_id = ?diagnostic_agent_id,
-                    "companion gate transition notification delivery failed"
-                );
-            }
         }
     }
 }
@@ -1947,14 +1809,14 @@ mod tests {
         gate_repo: Arc<FixtureGateRepo>,
         frame_repo: Arc<FixtureFrameRepo>,
         lineage_repo: Arc<FixtureLineageRepo>,
-        delivery: Arc<CapturingDelivery>,
+        _delivery: Arc<CapturingDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
         service_for_test_with_parent_mailbox(
             gate_repo,
             frame_repo,
             lineage_repo,
-            delivery,
+            Arc::new(CapturingDelivery::default()),
             Arc::new(CapturingParentMailboxDelivery::default()),
             run_id,
         )
@@ -1964,7 +1826,7 @@ mod tests {
         gate_repo: Arc<FixtureGateRepo>,
         frame_repo: Arc<FixtureFrameRepo>,
         lineage_repo: Arc<FixtureLineageRepo>,
-        delivery: Arc<CapturingDelivery>,
+        _delivery: Arc<CapturingDelivery>,
         parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
         run_id: Uuid,
     ) -> CompanionGateControlService {
@@ -1972,7 +1834,7 @@ mod tests {
             gate_repo,
             frame_repo,
             lineage_repo,
-            delivery,
+            Arc::new(CapturingDelivery::default()),
             parent_mailbox_delivery,
             Arc::new(CapturingHumanMailboxDelivery::default()),
             run_id,
@@ -1983,7 +1845,7 @@ mod tests {
         gate_repo: Arc<FixtureGateRepo>,
         frame_repo: Arc<FixtureFrameRepo>,
         lineage_repo: Arc<FixtureLineageRepo>,
-        delivery: Arc<CapturingDelivery>,
+        _delivery: Arc<CapturingDelivery>,
         parent_mailbox_delivery: Arc<CapturingParentMailboxDelivery>,
         human_mailbox_delivery: Arc<CapturingHumanMailboxDelivery>,
         run_id: Uuid,
@@ -2012,7 +1874,6 @@ mod tests {
                 delivery_binding_repo,
                 lineage_repo,
             },
-            delivery,
         })
         .with_parent_mailbox_delivery(parent_mailbox_delivery)
         .with_human_response_mailbox_delivery(human_mailbox_delivery)
@@ -2020,30 +1881,8 @@ mod tests {
 
     #[derive(Default)]
     struct CapturingDelivery {
-        response_notifications: Mutex<Vec<CompanionGateResponseNotification>>,
-        event_notifications: Mutex<Vec<CompanionGateEventNotification>>,
-    }
-
-    #[async_trait]
-    impl CompanionGateNotificationDelivery for CapturingDelivery {
-        async fn deliver_human_response(
-            &self,
-            notification: CompanionGateResponseNotification,
-        ) -> Result<(), ApplicationError> {
-            self.response_notifications
-                .lock()
-                .unwrap()
-                .push(notification);
-            Ok(())
-        }
-
-        async fn deliver_companion_event(
-            &self,
-            notification: CompanionGateEventNotification,
-        ) -> Result<(), ApplicationError> {
-            self.event_notifications.lock().unwrap().push(notification);
-            Ok(())
-        }
+        response_notifications: Mutex<Vec<()>>,
+        event_notifications: Mutex<Vec<()>>,
     }
 
     #[derive(Default)]
@@ -2370,7 +2209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_child_result_resolves_child_owned_gate_and_delivers_events() {
+    async fn complete_child_result_resolves_child_owned_gate_and_delivers_parent_mailbox_wake() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2502,27 +2341,6 @@ mod tests {
             );
         }
 
-        {
-            let event_notifications = delivery.event_notifications.lock().unwrap();
-            assert_eq!(event_notifications.len(), 2);
-            assert_eq!(
-                event_notifications[0].event_type,
-                "companion_result_available"
-            );
-            assert_eq!(
-                event_notifications[0].delivery_runtime_session_id,
-                "parent-session"
-            );
-            assert_eq!(
-                event_notifications[1].event_type,
-                "companion_result_returned"
-            );
-            assert_eq!(
-                event_notifications[1].delivery_runtime_session_id,
-                "child-session"
-            );
-        }
-
         let duplicate = service
             .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
                 request_id: "dispatch-1".to_string(),
@@ -2541,7 +2359,7 @@ mod tests {
             .expect("resolved gate should return delivery result");
         assert!(duplicate.parent_mailbox_delivery.command_receipt_duplicate);
         assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
-        assert_eq!(delivery.event_notifications.lock().unwrap().len(), 2);
+        assert!(delivery.event_notifications.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2845,23 +2663,7 @@ mod tests {
             "child-session"
         );
 
-        let event_notifications = delivery.event_notifications.lock().unwrap();
-        assert_eq!(event_notifications.len(), 1);
-        assert_eq!(
-            event_notifications[0].delivery_runtime_session_id,
-            "parent-session"
-        );
-        assert_eq!(
-            event_notifications[0].event_type,
-            "companion_review_request"
-        );
-        assert_eq!(
-            event_notifications[0]
-                .payload
-                .get("parent_frame_id")
-                .and_then(serde_json::Value::as_str),
-            Some(parent_frame_id.to_string().as_str())
-        );
+        assert!(delivery.event_notifications.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -3197,19 +2999,7 @@ mod tests {
             Some(parent_current_frame.id.to_string().as_str())
         );
 
-        let event_notifications = delivery.event_notifications.lock().unwrap();
-        assert_eq!(event_notifications.len(), 1);
-        assert_eq!(
-            event_notifications[0].delivery_runtime_session_id,
-            "parent-current-session"
-        );
-        assert_eq!(
-            event_notifications[0]
-                .payload
-                .get("parent_frame_id")
-                .and_then(serde_json::Value::as_str),
-            Some(parent_current_frame.id.to_string().as_str())
-        );
+        assert!(delivery.event_notifications.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -3342,18 +3132,7 @@ mod tests {
             );
         }
 
-        {
-            let event_notifications = delivery.event_notifications.lock().unwrap();
-            assert_eq!(event_notifications.len(), 1);
-            assert_eq!(
-                event_notifications[0].event_type,
-                "companion_parent_request_resolved"
-            );
-            assert_eq!(
-                event_notifications[0].delivery_runtime_session_id,
-                "parent-session"
-            );
-        }
+        assert!(delivery.event_notifications.lock().unwrap().is_empty());
 
         let duplicate_error = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {

@@ -39,7 +39,6 @@ pub struct GateProducerTerminalConvergenceOutcome {
     pub kind: GateProducerTerminalConvergenceOutcomeKind,
     pub result_status: Option<String>,
     pub delivery_intents: Vec<GateDeliveryIntent>,
-    pub notification_intents: Vec<super::GateNotificationIntent>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +107,7 @@ impl GateProducerTerminalConvergenceService {
         let intent = self
             .mailbox_wake_intent(&gate, &envelope, event, result_payload.clone())
             .await?;
-        let outcome = match LifecycleGateResolver::new(self.gate_repo.clone())
+        match LifecycleGateResolver::new(self.gate_repo.clone())
             .resolve_gate_payload(ResolveGatePayloadCommand {
                 gate_id: gate.id,
                 payload: result_payload,
@@ -144,7 +143,6 @@ impl GateProducerTerminalConvergenceService {
             kind: GateProducerTerminalConvergenceOutcomeKind::Resolved,
             result_status,
             delivery_intents: vec![GateDeliveryIntent::MailboxWake(intent)],
-            notification_intents: outcome.notification_intents,
         })
     }
 
@@ -167,7 +165,6 @@ impl GateProducerTerminalConvergenceService {
             kind: GateProducerTerminalConvergenceOutcomeKind::AlreadyResolvedEnsuredDelivery,
             result_status,
             delivery_intents: vec![GateDeliveryIntent::MailboxWake(intent)],
-            notification_intents: Vec::new(),
         })
     }
 

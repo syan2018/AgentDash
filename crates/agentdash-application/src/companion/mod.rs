@@ -9,13 +9,12 @@ pub mod tools;
 
 pub use gate_control::{
     CompanionGateControlDeps, CompanionGateControlRepos, CompanionGateControlService,
-    CompanionGateProjectionDelivery, CompanionGateRespondResult,
-    CompanionHumanResponseMailboxDelivery, CompanionHumanResponseMailboxDeliveryCommand,
-    CompanionParentMailboxDelivery, CompanionParentMailboxDeliveryCommand,
-    CompanionParentMailboxDeliveryResult, CompanionParentRequestMailboxDeliveryCommand,
-    CompanionParentResponseMailboxDeliveryCommand, CompleteCompanionChildResultCommand,
-    OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
-    RespondCompanionGateCommand,
+    CompanionGateRespondResult, CompanionHumanResponseMailboxDelivery,
+    CompanionHumanResponseMailboxDeliveryCommand, CompanionParentMailboxDelivery,
+    CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
+    CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
+    CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
+    ResolveCompanionParentRequestCommand, RespondCompanionGateCommand,
 };
 pub use model_preflight::{
     CompanionModelPreflightError, CompanionModelPreflightPort, CompanionModelPreflightRequest,

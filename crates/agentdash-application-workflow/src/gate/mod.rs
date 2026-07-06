@@ -9,10 +9,9 @@ pub use commands::{
     ResolveParentRequestGateCommand, ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
 };
 pub use outcome::{
-    CompanionChildResultDeliveryIntent, CompanionEventNotificationIntent,
-    CompanionHumanResponseDeliveryIntent, CompanionParentRequestDeliveryIntent,
-    CompanionParentResponseDeliveryIntent, GateDeliveryIntent, GateMailboxWakeIntent,
-    GateNotificationIntent, GateTransitionKind, GateTransitionOutcome,
+    CompanionChildResultDeliveryIntent, CompanionHumanResponseDeliveryIntent,
+    CompanionParentRequestDeliveryIntent, CompanionParentResponseDeliveryIntent,
+    GateDeliveryIntent, GateMailboxWakeIntent, GateTransitionKind, GateTransitionOutcome,
 };
 pub use resolver::LifecycleGateResolver;
 pub use wait_obligation::{

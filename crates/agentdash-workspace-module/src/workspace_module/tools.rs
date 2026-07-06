@@ -995,7 +995,9 @@ mod tests {
         ProjectSubjectType,
     };
     use agentdash_domain::shared_library::{
-        ExtensionBundleKind, ExtensionBundleRef, ExtensionRuntimeActionDefinition,
+        ExtensionBundleKind, ExtensionBundleRef, ExtensionGeneratedOperationDefinition,
+        ExtensionGeneratedOperationDispatch, ExtensionGeneratedOperationProvenance,
+        ExtensionGeneratedOperationVisibility, ExtensionRuntimeActionDefinition,
         ExtensionRuntimeActionKind, ExtensionTemplatePayload, ProjectExtensionInstallation,
         ProjectExtensionInstallationRepository,
     };
@@ -2243,6 +2245,63 @@ mod tests {
             )
             .await
             .expect("invoke");
+        assert!(result.is_error);
+        assert_eq!(
+            result
+                .details
+                .and_then(|d| d.get("error").and_then(|e| e.as_str()).map(str::to_string)),
+            Some("operation_not_found".to_string())
+        );
+        assert_eq!(invoke_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn invoke_panel_only_generated_operation_is_not_exposed_to_agent() {
+        let project_id = Uuid::new_v4();
+        let install_repo = Arc::new(FakeInstallationRepo::default());
+        let mut installed = installation(project_id, "demo");
+        installed
+            .manifest
+            .operation_catalog
+            .push(ExtensionGeneratedOperationDefinition {
+                operation_key: "demo.profile".to_string(),
+                description: "Panel-only profile helper".to_string(),
+                visibility: ExtensionGeneratedOperationVisibility::PanelOnly,
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: serde_json::json!({"type": "object"}),
+                permission_summary: vec!["local.profile.read".to_string()],
+                dispatch: ExtensionGeneratedOperationDispatch::RuntimeAction {
+                    action_key: "demo.profile".to_string(),
+                },
+                provenance: ExtensionGeneratedOperationProvenance {
+                    capability_key: "profile".to_string(),
+                    exposure_key: "profile".to_string(),
+                    generated_from: "capability_exposure".to_string(),
+                },
+            });
+        install_repo.installations.lock().unwrap().push(installed);
+        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let (tool, invoke_count) = invoke_tool_with_backend_and_counter(
+            install_repo,
+            canvas_repo,
+            project_id,
+            backend("backend-1"),
+        );
+
+        let result = tool
+            .execute(
+                "t",
+                serde_json::json!({
+                    "module_id": "ext:demo",
+                    "operation_key": "demo.profile",
+                    "input": {"name": "alice"}
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("invoke");
+
         assert!(result.is_error);
         assert_eq!(
             result

@@ -135,7 +135,7 @@ export function createRoutedFetch(routes, bridge, options = {}) {
       headers: headersToRecord(init?.headers ?? fetchInputHeaders(input)),
       body: typeof init?.body === "string" ? init.body : undefined,
     });
-    return new Response(output.body ?? "", {
+    return new Response(responseBodyForStatus(output.status, output.body), {
       status: output.status,
       headers: output.headers,
     });
@@ -351,6 +351,16 @@ function headersToRecord(headers) {
 }
 
 /**
+ * @param {number} status
+ * @param {string | undefined} body
+ * @returns {string | null}
+ */
+function responseBodyForStatus(status, body) {
+  if (status === 204 || status === 205 || status === 304) return null;
+  return body ?? "";
+}
+
+/**
  * @param {string} value
  * @param {string} label
  * @returns {void}
@@ -378,8 +388,8 @@ function validateMethodName(value, label) {
  * @returns {void}
  */
 function validateServiceKey(value, label) {
-  if (!/^[a-z][a-z0-9_-]*$/.test(value)) {
-    throw new Error(`${label} 必须以小写字母开头，并只包含小写字母、数字、下划线和短横线`);
+  if (!value.split(".").every((segment) => /^[a-z0-9_-]+$/.test(segment))) {
+    throw new Error(`${label} 必须由小写字母、数字、下划线、短横线和点分段组成`);
   }
 }
 

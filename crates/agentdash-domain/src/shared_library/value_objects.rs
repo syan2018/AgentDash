@@ -183,6 +183,7 @@ impl SharedLibrarySourceStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "asset_type", content = "payload", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum LibraryAssetPayload {
     AgentTemplate(AgentTemplatePayload),
     McpServerTemplate(McpServerTemplatePayload),

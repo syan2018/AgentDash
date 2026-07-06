@@ -456,9 +456,10 @@ fn fetch_route_projection(
         .route_key
         .clone()
         .unwrap_or_else(|| generated_fetch_route_key(extension_key, &route.route));
-    let panel_only = route
-        .panel_only
-        .unwrap_or_else(|| !matches!(route.scope, Some(ExtensionFetchRouteScope::AgentAndPanel)));
+    let panel_only = route.panel_only.unwrap_or(!matches!(
+        route.scope,
+        Some(ExtensionFetchRouteScope::AgentAndPanel)
+    ));
     let target = fetch_route_target_projection(&route);
     ExtensionFetchRouteProjection {
         extension_key: extension_key.to_string(),

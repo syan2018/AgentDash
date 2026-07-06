@@ -30,6 +30,27 @@ test("matchFetchRoute matches explicit relative and absolute patterns", () => {
   assert.equal(matchFetchRoute("http://localhost:4511/api/users", [local]), null);
 });
 
+test("backendService fetch routes accept generated namespaced service keys", async () => {
+  const route = parseFetchRouteBinding("/api/**=backendService:repo-tools.api");
+  assert.equal(describeFetchRouteTarget(route.target), "backendService:repo-tools.api");
+  const routedFetch = createRoutedFetch(
+    [route],
+    {
+      async invokeFetchRoute(request) {
+        assert.equal(request.route.target.kind, "backend_service");
+        assert.equal(request.route.target.service_key, "repo-tools.api");
+        assert.equal(request.url, "https://panel.local/api/search");
+        return { status: 204 };
+      },
+    },
+    { baseUrl: "https://panel.local/" },
+  );
+
+  const response = await routedFetch("/api/search");
+
+  assert.equal(response.status, 204);
+});
+
 test("createRoutedFetch is opt-in and does not replace global fetch", async () => {
   const originalFetch = globalThis.fetch;
   const route = parseFetchRouteBinding("/api/**=customChannel:demo.api#fetch");

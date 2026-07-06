@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 56
-- **Last Active**: 2026-07-06
+- **Total Sessions**: 57
+- **Last Active**: 2026-07-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~78 | Active |
+| `journal-2.md` | ~122 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 57 | 2026-07-07 | Agent 生命周期边界收口 | `430582dd`, `50b597b9`, `346c1573`, `0956e219`, `9d62140b`, `4e8bf9ac`, `b1376ccc`, `ebacd4b0`, `232fb3c9`, `6dc3b52f`, `f35668b1`, `e3128ee4` | `codex/agent-lifecycle-fact-source-review` |
 | 56 | 2026-07-06 | 收束 SubAgent terminal gate | `9f795b800`, `d4dc52cf7`, `2b2689823`, `9acc63e7a`, `d28c94093` | `main` |
 | 55 | 2026-07-06 | Extension backendService 本机运行闭环 | `f60153e36`, `b3fbe0c3d` | `main` |
 | 54 | 2026-07-05 | AgentRun执行事实源收束 | `fe685508`, `9901613a` | `codex/agentrun-lifecycle-repository-convergence` |

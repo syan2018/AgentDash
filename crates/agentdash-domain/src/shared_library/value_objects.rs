@@ -1138,6 +1138,12 @@ pub struct ExtensionTemplatePayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permissions: Vec<ExtensionPermissionDeclaration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fetch_routes: Vec<ExtensionFetchRouteDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operation_catalog: Vec<ExtensionGeneratedOperationDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backend_services: Vec<ExtensionBackendServiceDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bundles: Vec<ExtensionBundleRef>,
 }
 
@@ -1177,6 +1183,15 @@ impl ExtensionTemplatePayload {
         for permission in &self.permissions {
             permission.validate()?;
         }
+        for route in &self.fetch_routes {
+            route.validate()?;
+        }
+        for operation in &self.operation_catalog {
+            operation.validate()?;
+        }
+        for service in &self.backend_services {
+            service.validate()?;
+        }
         for bundle in &self.bundles {
             bundle.validate()?;
         }
@@ -1187,6 +1202,7 @@ impl ExtensionTemplatePayload {
         !self.runtime_actions.is_empty()
             || !self.protocol_channels.is_empty()
             || !self.workspace_tabs.is_empty()
+            || !self.backend_services.is_empty()
             || !self.bundles.is_empty()
     }
 
@@ -1312,6 +1328,8 @@ fn classify_extension_permission_key(permission: &str) -> &'static str {
         "runtime_action"
     } else if permission.starts_with("extension.channel.invoke") {
         "extension_channel"
+    } else if permission.starts_with("backend_service") {
+        "backend_service"
     } else {
         "unknown"
     }
@@ -1676,6 +1694,10 @@ pub enum ExtensionPermissionDeclaration {
         channel_key: String,
         methods: Vec<String>,
     },
+    BackendService {
+        service_key: String,
+        routes: Vec<String>,
+    },
 }
 
 impl ExtensionPermissionDeclaration {
@@ -1713,7 +1735,297 @@ impl ExtensionPermissionDeclaration {
                 }
                 Ok(())
             }
+            Self::BackendService {
+                service_key,
+                routes,
+            } => {
+                validate_runtime_action_key(
+                    "extension_template.permissions[].service_key",
+                    service_key,
+                )?;
+                validate_route_pattern_list("extension_template.permissions[].routes", routes)
+            }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionGeneratedOperationVisibility {
+    PanelOnly,
+    AgentAndPanel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionGeneratedOperationDispatch {
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolChannel {
+        channel_key: String,
+        #[serde(alias = "method_name")]
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
+}
+
+impl ExtensionGeneratedOperationDispatch {
+    fn validate(&self) -> Result<(), DomainError> {
+        match self {
+            Self::RuntimeAction { action_key } => validate_runtime_action_key(
+                "extension_template.operation_catalog[].dispatch.action_key",
+                action_key,
+            ),
+            Self::ProtocolChannel {
+                channel_key,
+                method,
+            } => {
+                validate_namespaced_extension_key(
+                    "extension_template.operation_catalog[].dispatch.channel_key",
+                    channel_key,
+                )?;
+                validate_protocol_method_name(
+                    "extension_template.operation_catalog[].dispatch.method",
+                    method,
+                )
+            }
+            Self::BackendService { service_key, route } => {
+                validate_runtime_action_key(
+                    "extension_template.operation_catalog[].dispatch.service_key",
+                    service_key,
+                )?;
+                validate_route_pattern(
+                    "extension_template.operation_catalog[].dispatch.route",
+                    route,
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionGeneratedOperationProvenance {
+    pub capability_key: String,
+    pub exposure_key: String,
+    pub generated_from: String,
+}
+
+impl ExtensionGeneratedOperationProvenance {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_non_empty(
+            "extension_template.operation_catalog[].provenance.capability_key",
+            &self.capability_key,
+        )?;
+        require_non_empty(
+            "extension_template.operation_catalog[].provenance.exposure_key",
+            &self.exposure_key,
+        )?;
+        require_non_empty(
+            "extension_template.operation_catalog[].provenance.generated_from",
+            &self.generated_from,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExtensionGeneratedOperationDefinition {
+    pub operation_key: String,
+    pub description: String,
+    pub visibility: ExtensionGeneratedOperationVisibility,
+    pub input_schema: Value,
+    pub output_schema: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permission_summary: Vec<String>,
+    pub dispatch: ExtensionGeneratedOperationDispatch,
+    pub provenance: ExtensionGeneratedOperationProvenance,
+}
+
+impl ExtensionGeneratedOperationDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        validate_runtime_action_key(
+            "extension_template.operation_catalog[].operation_key",
+            &self.operation_key,
+        )?;
+        require_non_empty(
+            "extension_template.operation_catalog[].description",
+            &self.description,
+        )?;
+        validate_json_schema(
+            "extension_template.operation_catalog[].input_schema",
+            &self.input_schema,
+        )?;
+        validate_json_schema(
+            "extension_template.operation_catalog[].output_schema",
+            &self.output_schema,
+        )?;
+        for permission in &self.permission_summary {
+            validate_permission_key(
+                "extension_template.operation_catalog[].permission_summary[]",
+                permission,
+            )?;
+        }
+        self.dispatch.validate()?;
+        self.provenance.validate()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionFetchRouteScope {
+    PanelOnly,
+    AgentAndPanel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionFetchRouteTargetDefinition {
+    HttpProxy {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capability_key: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base_url: Option<String>,
+    },
+    RuntimeAction {
+        action_key: String,
+    },
+    CustomChannel {
+        channel_key: String,
+        method: String,
+    },
+    ProtocolChannel {
+        channel_key: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        route: Option<String>,
+    },
+}
+
+impl ExtensionFetchRouteTargetDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        match self {
+            Self::HttpProxy {
+                capability_key,
+                base_url,
+            } => {
+                if capability_key.is_none() && base_url.is_none() {
+                    return Err(DomainError::InvalidConfig(
+                        "extension_template.fetch_routes[].target http_proxy 必须包含 capability_key 或 base_url"
+                            .to_string(),
+                    ));
+                }
+                if let Some(capability_key) = capability_key {
+                    validate_runtime_action_key(
+                        "extension_template.fetch_routes[].target.capability_key",
+                        capability_key,
+                    )?;
+                }
+                if let Some(base_url) = base_url {
+                    validate_http_url(
+                        "extension_template.fetch_routes[].target.base_url",
+                        base_url,
+                    )?;
+                }
+                Ok(())
+            }
+            Self::RuntimeAction { action_key } => validate_runtime_action_key(
+                "extension_template.fetch_routes[].target.action_key",
+                action_key,
+            ),
+            Self::CustomChannel {
+                channel_key,
+                method,
+            }
+            | Self::ProtocolChannel {
+                channel_key,
+                method,
+            } => {
+                validate_namespaced_extension_key(
+                    "extension_template.fetch_routes[].target.channel_key",
+                    channel_key,
+                )?;
+                validate_protocol_method_name(
+                    "extension_template.fetch_routes[].target.method",
+                    method,
+                )
+            }
+            Self::BackendService { service_key, route } => {
+                validate_runtime_action_key(
+                    "extension_template.fetch_routes[].target.service_key",
+                    service_key,
+                )?;
+                if let Some(route) = route {
+                    validate_route_pattern(
+                        "extension_template.fetch_routes[].target.route",
+                        route,
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionFetchRouteDefinition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_key: Option<String>,
+    #[serde(alias = "pattern")]
+    pub route: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ExtensionFetchRouteScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_only: Option<bool>,
+    pub target: ExtensionFetchRouteTargetDefinition,
+}
+
+impl ExtensionFetchRouteDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        if let Some(route_key) = &self.route_key {
+            validate_runtime_action_key("extension_template.fetch_routes[].route_key", route_key)?;
+        }
+        validate_route_pattern("extension_template.fetch_routes[].route", &self.route)?;
+        self.target.validate()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionBackendServiceDefinition {
+    pub service_key: String,
+    pub runtime: String,
+    pub entry: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_path: Option<String>,
+}
+
+impl ExtensionBackendServiceDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        validate_runtime_action_key(
+            "extension_template.backend_services[].service_key",
+            &self.service_key,
+        )?;
+        if self.runtime != "node" {
+            return Err(DomainError::InvalidConfig(
+                "extension_template.backend_services[].runtime 当前必须是 node".to_string(),
+            ));
+        }
+        require_non_empty("extension_template.backend_services[].entry", &self.entry)?;
+        validate_route_pattern_list("extension_template.backend_services[].routes", &self.routes)?;
+        if let Some(health_path) = &self.health_path {
+            validate_route_pattern(
+                "extension_template.backend_services[].health_path",
+                health_path,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -1721,6 +2033,7 @@ impl ExtensionPermissionDeclaration {
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionBundleKind {
     ExtensionHost,
+    BackendService,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1828,6 +2141,38 @@ fn validate_protocol_method_name(field: &str, value: &str) -> Result<(), DomainE
     } else {
         Err(DomainError::InvalidConfig(format!(
             "{field} 必须是合法 method 名称: {value}"
+        )))
+    }
+}
+
+fn validate_route_pattern(field: &str, value: &str) -> Result<(), DomainError> {
+    require_non_empty(field, value)?;
+    if value.starts_with('/') || value.starts_with("http://") || value.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "{field} 必须以 / 或 http(s):// 开头: {value}"
+        )))
+    }
+}
+
+fn validate_route_pattern_list(field: &str, routes: &[String]) -> Result<(), DomainError> {
+    if routes.is_empty() {
+        return Err(DomainError::InvalidConfig(format!("{field} 不能为空")));
+    }
+    for route in routes {
+        validate_route_pattern(field, route)?;
+    }
+    Ok(())
+}
+
+fn validate_http_url(field: &str, value: &str) -> Result<(), DomainError> {
+    require_non_empty(field, value)?;
+    if value.starts_with("http://") || value.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "{field} 必须是 http(s) URL: {value}"
         )))
     }
 }
@@ -2595,6 +2940,9 @@ mod tests {
             extension_dependencies: vec![],
             workspace_tabs: vec![],
             permissions,
+            fetch_routes: vec![],
+            operation_catalog: vec![],
+            backend_services: vec![],
             bundles: vec![],
         }
     }

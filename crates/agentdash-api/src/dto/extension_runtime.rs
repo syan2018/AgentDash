@@ -211,6 +211,9 @@ pub fn extension_runtime_projection_response(
                     ExtensionBundleKind::ExtensionHost => {
                         ExtensionBundleKindResponse::ExtensionHost
                     }
+                    ExtensionBundleKind::BackendService => {
+                        ExtensionBundleKindResponse::BackendService
+                    }
                 },
                 entry: bundle.entry,
                 digest: bundle.digest,
@@ -360,6 +363,13 @@ fn extension_permission_response(
         } => ExtensionPermissionDeclarationResponse::ExtensionChannel {
             channel_key,
             methods,
+        },
+        ExtensionPermissionDeclaration::BackendService {
+            service_key,
+            routes,
+        } => ExtensionPermissionDeclarationResponse::BackendService {
+            service_key,
+            routes,
         },
     }
 }

@@ -76,6 +76,9 @@ pub fn build_canvas_extension_package(
             },
         }],
         permissions: Vec::new(),
+        fetch_routes: Vec::new(),
+        operation_catalog: Vec::new(),
+        backend_services: Vec::new(),
         bundles: Vec::new(),
     };
 

@@ -89,6 +89,9 @@ export function validateManifest(manifest, errors) {
   validateWorkspaceTabs(arrayField(manifest, "workspace_tabs", errors), errors);
   validatePermissions(arrayField(manifest, "permissions", errors), errors);
   validateBundleDefs(arrayField(manifest, "bundles", errors), errors);
+  validateFetchRoutes(arrayField(manifest, "fetch_routes", errors), errors);
+  validateOperationCatalog(arrayField(manifest, "operation_catalog", errors), errors);
+  validateBackendServices(arrayField(manifest, "backend_services", errors), errors);
 }
 
 /**
@@ -435,6 +438,9 @@ function validatePermissions(permissions, errors) {
           validateMethodNameValue(method, "permissions[].methods[]", errors);
         }
       }
+    } else if (kind === "backend_service") {
+      validateQualifiedKey(record, "service_key", "permissions[].service_key", errors);
+      validateStringList(record, "routes", "permissions[].routes", errors);
     } else {
       errors.push("permissions[].kind 非法");
     }
@@ -452,13 +458,148 @@ function validateBundleDefs(bundles, errors) {
       errors.push("bundles[] 必须是对象");
       continue;
     }
-    if (record.kind !== "extension_host") {
-      errors.push("bundles[].kind 必须是 extension_host");
+    if (record.kind !== "extension_host" && record.kind !== "backend_service") {
+      errors.push("bundles[].kind 必须是 extension_host 或 backend_service");
     }
     requireString(record, "entry", errors, "bundles[].entry");
     const digest = stringField(record, "digest");
     if (!digest || !/^sha256:[0-9a-fA-F]{64}$/.test(digest)) {
       errors.push("bundles[].digest 必须是 sha256:<64 hex>");
+    }
+  }
+}
+
+/**
+ * @param {unknown[]} routes
+ * @param {string[]} errors
+ */
+function validateFetchRoutes(routes, errors) {
+  for (const route of routes) {
+    const record = asRecord(route);
+    if (!record) {
+      errors.push("fetch_routes[] 必须是对象");
+      continue;
+    }
+    const pattern = stringField(record, "route") ?? stringField(record, "pattern");
+    if (!pattern || !isRoutePattern(pattern)) {
+      errors.push("fetch_routes[].route 必须是 / 或 http(s):// 开头的 route pattern");
+    }
+    const scope = stringField(record, "scope");
+    if (scope && scope !== "panel_only" && scope !== "agent_and_panel") {
+      errors.push("fetch_routes[].scope 必须是 panel_only 或 agent_and_panel");
+    }
+    const target = asRecord(record.target);
+    if (!target) {
+      errors.push("fetch_routes[].target 必须是对象");
+      continue;
+    }
+    validateFetchRouteTarget(target, errors);
+  }
+}
+
+/**
+ * @param {UnknownRecord} target
+ * @param {string[]} errors
+ */
+function validateFetchRouteTarget(target, errors) {
+  const kind = stringField(target, "kind");
+  if (kind === "http_proxy") {
+    const capabilityKey = stringField(target, "capability_key");
+    const baseUrl = stringField(target, "base_url");
+    if (!capabilityKey && !baseUrl) {
+      errors.push("fetch_routes[].target http_proxy 必须包含 capability_key 或 base_url");
+    }
+    if (capabilityKey) validateQualifiedKey(target, "capability_key", "fetch_routes[].target.capability_key", errors);
+    if (baseUrl && !isHttpUrl(baseUrl)) errors.push("fetch_routes[].target.base_url 必须是 http(s) URL");
+  } else if (kind === "runtime_action") {
+    validateQualifiedKey(target, "action_key", "fetch_routes[].target.action_key", errors);
+  } else if (kind === "custom_channel" || kind === "protocol_channel") {
+    validateNamespacedKey(target, "channel_key", "fetch_routes[].target.channel_key", errors);
+    validateMethodName(target, "method", "fetch_routes[].target.method", errors);
+  } else if (kind === "backend_service") {
+    validateQualifiedKey(target, "service_key", "fetch_routes[].target.service_key", errors);
+  } else {
+    errors.push("fetch_routes[].target.kind 必须是 http_proxy、runtime_action、custom_channel、protocol_channel 或 backend_service");
+  }
+}
+
+/**
+ * @param {unknown[]} operations
+ * @param {string[]} errors
+ */
+function validateOperationCatalog(operations, errors) {
+  for (const operation of operations) {
+    const record = asRecord(operation);
+    if (!record) {
+      errors.push("operation_catalog[] 必须是对象");
+      continue;
+    }
+    validateQualifiedKey(record, "operation_key", "operation_catalog[].operation_key", errors);
+    requireString(record, "description", errors, "operation_catalog[].description");
+    const visibility = stringField(record, "visibility");
+    if (visibility !== "panel_only" && visibility !== "agent_and_panel") {
+      errors.push("operation_catalog[].visibility 必须是 panel_only 或 agent_and_panel");
+    }
+    validateJsonSchemaField(record, "input_schema", "operation_catalog[].input_schema", errors);
+    validateJsonSchemaField(record, "output_schema", "operation_catalog[].output_schema", errors);
+    validateStableStringList(arrayField(record, "permission_summary"), "operation_catalog[].permission_summary[]", errors);
+    const dispatch = asRecord(record.dispatch);
+    if (!dispatch) {
+      errors.push("operation_catalog[].dispatch 必须是对象");
+    } else {
+      validateOperationDispatch(dispatch, errors);
+    }
+    const provenance = asRecord(record.provenance);
+    if (!provenance) {
+      errors.push("operation_catalog[].provenance 必须是对象");
+    } else {
+      requireString(provenance, "capability_key", errors, "operation_catalog[].provenance.capability_key");
+      requireString(provenance, "exposure_key", errors, "operation_catalog[].provenance.exposure_key");
+      requireString(provenance, "generated_from", errors, "operation_catalog[].provenance.generated_from");
+    }
+  }
+}
+
+/**
+ * @param {UnknownRecord} dispatch
+ * @param {string[]} errors
+ */
+function validateOperationDispatch(dispatch, errors) {
+  const kind = stringField(dispatch, "kind");
+  if (kind === "runtime_action") {
+    validateQualifiedKey(dispatch, "action_key", "operation_catalog[].dispatch.action_key", errors);
+  } else if (kind === "protocol_channel") {
+    validateNamespacedKey(dispatch, "channel_key", "operation_catalog[].dispatch.channel_key", errors);
+    const method = stringField(dispatch, "method") ?? stringField(dispatch, "method_name");
+    validateMethodNameValue(method, "operation_catalog[].dispatch.method", errors);
+  } else if (kind === "backend_service") {
+    validateQualifiedKey(dispatch, "service_key", "operation_catalog[].dispatch.service_key", errors);
+    requireString(dispatch, "route", errors, "operation_catalog[].dispatch.route");
+  } else {
+    errors.push("operation_catalog[].dispatch.kind 必须是 runtime_action、protocol_channel 或 backend_service");
+  }
+}
+
+/**
+ * @param {unknown[]} services
+ * @param {string[]} errors
+ */
+function validateBackendServices(services, errors) {
+  for (const service of services) {
+    const record = asRecord(service);
+    if (!record) {
+      errors.push("backend_services[] 必须是对象");
+      continue;
+    }
+    validateQualifiedKey(record, "service_key", "backend_services[].service_key", errors);
+    if (stringField(record, "runtime") !== "node") {
+      errors.push("backend_services[].runtime 当前必须是 node");
+    }
+    requireString(record, "entry", errors, "backend_services[].entry");
+    validateStringList(record, "routes", "backend_services[].routes", errors);
+    const healthPath = stringField(record, "health_path");
+    if (healthPath && !healthPath.startsWith("/")) {
+      errors.push("backend_services[].health_path 必须以 / 开头");
     }
   }
 }
@@ -582,6 +723,19 @@ function validatePermissionStrings(permissions, label, errors) {
 }
 
 /**
+ * @param {unknown[]} values
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateStableStringList(values, label, errors) {
+  for (const value of values) {
+    if (typeof value !== "string" || !/^[A-Za-z0-9._:*=/ -]+$/.test(value)) {
+      errors.push(`${label} 必须是稳定字符串`);
+    }
+  }
+}
+
+/**
  * @param {string} permission
  * @returns {boolean}
  */
@@ -604,6 +758,27 @@ function isKnownRuntimePermissionString(permission) {
  */
 function hasPermissionScope(permission, base) {
   return permission === base || permission.startsWith(`${base}:`);
+}
+
+/**
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isRoutePattern(value) {
+  return value.startsWith("/") || isHttpUrl(value);
+}
+
+/**
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isHttpUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 /**

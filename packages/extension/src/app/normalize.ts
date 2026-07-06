@@ -173,6 +173,11 @@ function normalizeHttpProxy(
     kind: "runtime_action",
     action_key: actionKey,
     host_api: "http.fetch",
+    http: {
+      base_url: normalizeHttpBaseUrl(baseUrl),
+      access,
+      headers: options.headers,
+    },
   };
   return {
     capability: capabilitySummary(capabilityKey, wireKey, "http_proxy", options, permissionItems),
@@ -214,6 +219,14 @@ function normalizeLocalCommand(
     kind: "runtime_action",
     action_key: actionKey,
     host_api: runtimePermission,
+    command: {
+      command: requireTrimmed(options.command, `${capabilityKey}.command`),
+      args: [...(options.args ?? [])],
+      shell: options.shell === true,
+      cwd: options.cwd,
+      env: options.env,
+      timeout_ms: options.timeout_ms,
+    },
   };
   return {
     capability: capabilitySummary(capabilityKey, wireKey, "local_command", options, permissionItems),
@@ -254,6 +267,10 @@ function normalizeWorkspaceFiles(
     kind: "runtime_action",
     action_key: actionKey,
     host_api: "workspace.vfs",
+    workspace: {
+      access,
+      roots: [...(options.roots ?? [])],
+    },
   };
   return {
     capability: capabilitySummary(capabilityKey, wireKey, "workspace_files", options, permissionItems),
@@ -330,7 +347,18 @@ function normalizeCustomChannel(
   const dispatch: AgentDashCapabilityDispatch = {
     kind: "protocol_channel",
     channel_key: channelKey,
-    methods: methodNames,
+    version: options.version?.trim() || "1.0.0",
+    description: options.description?.trim() || titleFromKey(capabilityKey),
+    methods: methods.map(([methodName, method]) => ({
+      name: methodName,
+      description: requireTrimmed(method.description, `${capabilityKey}.methods.${methodName}.description`),
+      input_schema: method.input_schema ?? DEFAULT_SCHEMA,
+      output_schema: method.output_schema ?? DEFAULT_SCHEMA,
+      permissions: normalizeRuntimePermissionList(
+        method.permissions ?? [],
+        `${capabilityKey}.methods.${methodName}.permissions`,
+      ),
+    })),
   };
   return {
     capability: capabilitySummary(capabilityKey, wireKey, "custom_channel", options, permissionItems),
@@ -365,7 +393,10 @@ function normalizeBackendService(
   const dispatch: AgentDashCapabilityDispatch = {
     kind: "backend_service",
     service_key: serviceKey,
+    runtime: options.runtime ?? "node",
+    entry,
     routes,
+    health_path: options.healthPath,
   };
   return {
     capability: capabilitySummary(capabilityKey, wireKey, "backend_service", options, permissionItems),
@@ -385,7 +416,7 @@ function normalizeBackendService(
       recipe: "backend_service",
       expose: options.expose,
       default_operation_key: serviceKey,
-      default_dispatch: { kind: "backend_service", service_key: serviceKey },
+      default_dispatch: { kind: "backend_service", service_key: serviceKey, route: routes[0] },
       permission_summary: permissionItems.map((item) => item.label),
     }),
     declarations: [declaration],
@@ -451,6 +482,7 @@ function normalizeExposures(input: {
       provenance: {
         source: "capability_exposure",
         capability_key: input.capability_key,
+        exposure_key: exposureKey,
         capability_kind: input.capability_kind,
         recipe: input.recipe,
       },
@@ -487,6 +519,7 @@ function normalizeChannelMethodExposures(input: {
       provenance: {
         source: "capability_exposure",
         capability_key: input.capability_key,
+        exposure_key: exposureKey,
         capability_kind: "custom_channel",
         recipe: "custom_channel",
       },
@@ -628,6 +661,12 @@ function requireUrl(value: string, label: string): URL {
   } catch (error) {
     throw new Error(`${label} must be an http or https URL`);
   }
+}
+
+function normalizeHttpBaseUrl(value: URL): string {
+  value.hash = "";
+  value.search = "";
+  return value.href.replace(/\/$/, "");
 }
 
 function requireRoutePattern(value: string, label: string): string {

@@ -169,6 +169,10 @@ pub enum ExtensionPermissionDeclarationResponse {
         channel_key: String,
         methods: Vec<String>,
     },
+    BackendService {
+        service_key: String,
+        routes: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -26,6 +26,12 @@ test("validateProject accepts protocol channels, dependencies, and trusted host 
   assert.deepEqual(result.errors, []);
 });
 
+test("validateProject accepts generated operation catalog, backend services, and fetch routes", async () => {
+  const root = await fixtureProject({ withProjectionFields: true });
+  const result = await validateProject(root);
+  assert.deepEqual(result.errors, []);
+});
+
 test("validateProject rejects unknown runtime process permission key", async () => {
   const root = await fixtureProject({ withProtocol: true, unknownRuntimePermission: "process.execute" });
   const result = await validateProject(root);
@@ -72,7 +78,7 @@ test("validateProject rejects non self-contained dependencies and native constra
 });
 
 /**
- * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean }} [options]
+ * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withProjectionFields?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
@@ -161,7 +167,54 @@ async function fixtureProject(options = {}) {
             { kind: "process", access: "execute" },
             { kind: "extension_channel", channel_key: "local-hello.api", methods: ["readProfile"] },
           ]
-        : [{ kind: "local_profile", access: "read" }],
+        : options.withProjectionFields
+          ? [
+              { kind: "local_profile", access: "read" },
+              { kind: "backend_service", service_key: "local-hello.api", routes: ["/api/**"] },
+            ]
+          : [{ kind: "local_profile", access: "read" }],
+      fetch_routes: options.withProjectionFields
+        ? [
+            {
+              route: "/api/**",
+              scope: "panel_only",
+              target: { kind: "backend_service", service_key: "local-hello.api" },
+            },
+          ]
+        : undefined,
+      operation_catalog: options.withProjectionFields
+        ? [
+            {
+              operation_key: "local-hello.search",
+              visibility: "agent_and_panel",
+              description: "Search local hello backend service",
+              input_schema: true,
+              output_schema: true,
+              permission_summary: ["backend_service:local-hello.api"],
+              dispatch: {
+                kind: "backend_service",
+                service_key: "local-hello.api",
+                route: "/api/search",
+              },
+              provenance: {
+                capability_key: "api",
+                exposure_key: "search",
+                generated_from: "capability_exposure",
+              },
+            },
+          ]
+        : undefined,
+      backend_services: options.withProjectionFields
+        ? [
+            {
+              service_key: "local-hello.api",
+              runtime: "node",
+              entry: "src/server/index.ts",
+              routes: ["/api/**"],
+              health_path: "/health",
+            },
+          ]
+        : undefined,
       bundles: [
         {
           kind: "extension_host",

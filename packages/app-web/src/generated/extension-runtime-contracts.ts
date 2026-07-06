@@ -49,7 +49,7 @@ export type ExtensionPackageArtifactRefResponse = { artifact_id: string, package
 
 export type ExtensionPermissionAccessResponse = "read" | "write" | "read_write";
 
-export type ExtensionPermissionDeclarationResponse = { "kind": "local_profile", access: ExtensionPermissionAccessResponse, } | { "kind": "http", hosts: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "workspace", access: ExtensionPermissionAccessResponse, } | { "kind": "env", names: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "process", access: ExtensionProcessPermissionAccessResponse, } | { "kind": "runtime_action", action_key: string, } | { "kind": "extension_channel", channel_key: string, methods: Array<string>, };
+export type ExtensionPermissionDeclarationResponse = { "kind": "local_profile", access: ExtensionPermissionAccessResponse, } | { "kind": "http", hosts: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "workspace", access: ExtensionPermissionAccessResponse, } | { "kind": "env", names: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "process", access: ExtensionProcessPermissionAccessResponse, } | { "kind": "runtime_action", action_key: string, } | { "kind": "extension_channel", channel_key: string, methods: Array<string>, } | { "kind": "backend_service", service_key: string, routes: Array<string>, };
 
 export type ExtensionPermissionProjectionResponse = { extension_key: string, extension_id: string, permission: ExtensionPermissionDeclarationResponse, };
 

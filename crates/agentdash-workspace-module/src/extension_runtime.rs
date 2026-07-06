@@ -5,7 +5,11 @@ use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::ExtensionPackageArtifactRef;
 use agentdash_domain::shared_library::{
     ExtensionBundleKind, ExtensionCommandHandler, ExtensionDependencyDeclaration,
-    ExtensionFlagType, ExtensionPermissionDeclaration, ExtensionProtocolChannelDefinition,
+    ExtensionFetchRouteDefinition, ExtensionFetchRouteScope, ExtensionFetchRouteTargetDefinition,
+    ExtensionFlagType, ExtensionGeneratedOperationDefinition,
+    ExtensionGeneratedOperationDispatch as DomainGeneratedOperationDispatch,
+    ExtensionGeneratedOperationVisibility as DomainGeneratedOperationVisibility,
+    ExtensionPermissionDeclaration, ExtensionProtocolChannelDefinition,
     ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
     ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource,
     ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
@@ -415,8 +419,158 @@ pub fn extension_runtime_projection_from_installations(
                         digest: bundle.digest,
                     }),
             );
+        projection.fetch_routes.extend(
+            manifest
+                .fetch_routes
+                .into_iter()
+                .map(|route| fetch_route_projection(&extension_key, &extension_id, route)),
+        );
+        projection
+            .operation_catalog
+            .extend(manifest.operation_catalog.into_iter().map(|operation| {
+                generated_operation_projection(&extension_key, &extension_id, operation)
+            }));
+        projection
+            .backend_services
+            .extend(manifest.backend_services.into_iter().map(|service| {
+                ExtensionBackendServiceProjection {
+                    extension_key: extension_key.clone(),
+                    extension_id: extension_id.clone(),
+                    service_key: service.service_key,
+                    runtime: service.runtime,
+                    entry: service.entry,
+                    routes: service.routes,
+                    health_path: service.health_path,
+                }
+            }));
     }
     Ok(projection)
+}
+
+fn fetch_route_projection(
+    extension_key: &str,
+    extension_id: &str,
+    route: ExtensionFetchRouteDefinition,
+) -> ExtensionFetchRouteProjection {
+    let route_key = route
+        .route_key
+        .clone()
+        .unwrap_or_else(|| generated_fetch_route_key(extension_key, &route.route));
+    let panel_only = route
+        .panel_only
+        .unwrap_or_else(|| !matches!(route.scope, Some(ExtensionFetchRouteScope::AgentAndPanel)));
+    let target = fetch_route_target_projection(&route);
+    ExtensionFetchRouteProjection {
+        extension_key: extension_key.to_string(),
+        extension_id: extension_id.to_string(),
+        route_key,
+        pattern: route.route,
+        panel_only,
+        target,
+    }
+}
+
+fn fetch_route_target_projection(
+    route: &ExtensionFetchRouteDefinition,
+) -> ExtensionFetchRouteTargetProjection {
+    match &route.target {
+        ExtensionFetchRouteTargetDefinition::HttpProxy {
+            capability_key,
+            base_url,
+        } => ExtensionFetchRouteTargetProjection::HttpProxy {
+            capability_key: capability_key
+                .clone()
+                .or_else(|| base_url.clone())
+                .unwrap_or_else(|| "http_proxy".to_string()),
+        },
+        ExtensionFetchRouteTargetDefinition::RuntimeAction { action_key } => {
+            ExtensionFetchRouteTargetProjection::RuntimeAction {
+                action_key: action_key.clone(),
+            }
+        }
+        ExtensionFetchRouteTargetDefinition::CustomChannel {
+            channel_key,
+            method,
+        }
+        | ExtensionFetchRouteTargetDefinition::ProtocolChannel {
+            channel_key,
+            method,
+        } => ExtensionFetchRouteTargetProjection::ProtocolChannel {
+            channel_key: channel_key.clone(),
+            method: method.clone(),
+        },
+        ExtensionFetchRouteTargetDefinition::BackendService {
+            service_key,
+            route: target_route,
+        } => ExtensionFetchRouteTargetProjection::BackendService {
+            service_key: service_key.clone(),
+            route: target_route.clone().unwrap_or_else(|| route.route.clone()),
+        },
+    }
+}
+
+fn generated_operation_projection(
+    extension_key: &str,
+    extension_id: &str,
+    operation: ExtensionGeneratedOperationDefinition,
+) -> ExtensionGeneratedOperationProjection {
+    ExtensionGeneratedOperationProjection {
+        extension_key: extension_key.to_string(),
+        extension_id: extension_id.to_string(),
+        operation_key: operation.operation_key,
+        description: operation.description,
+        visibility: match operation.visibility {
+            DomainGeneratedOperationVisibility::PanelOnly => {
+                ExtensionGeneratedOperationVisibility::PanelOnly
+            }
+            DomainGeneratedOperationVisibility::AgentAndPanel => {
+                ExtensionGeneratedOperationVisibility::AgentAndPanel
+            }
+        },
+        input_schema: operation.input_schema,
+        output_schema: operation.output_schema,
+        permission_summary: operation.permission_summary,
+        dispatch: match operation.dispatch {
+            DomainGeneratedOperationDispatch::RuntimeAction { action_key } => {
+                ExtensionGeneratedOperationDispatch::RuntimeAction { action_key }
+            }
+            DomainGeneratedOperationDispatch::ProtocolChannel {
+                channel_key,
+                method,
+            } => ExtensionGeneratedOperationDispatch::ProtocolChannel {
+                channel_key,
+                method,
+            },
+            DomainGeneratedOperationDispatch::BackendService { service_key, route } => {
+                ExtensionGeneratedOperationDispatch::BackendService { service_key, route }
+            }
+        },
+        provenance: ExtensionGeneratedOperationProvenance {
+            capability_key: operation.provenance.capability_key,
+            exposure_key: operation.provenance.exposure_key,
+            generated_from: operation.provenance.generated_from,
+        },
+    }
+}
+
+fn generated_fetch_route_key(extension_key: &str, route: &str) -> String {
+    let suffix: String = route
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if suffix.is_empty() {
+        format!("{extension_key}.route")
+    } else {
+        format!("{extension_key}.{suffix}")
+    }
 }
 
 fn workspace_tab_loadability(
@@ -537,6 +691,14 @@ mod tests {
     use agentdash_domain::extension_package::ExtensionPackageArtifactRef;
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
+        ExtensionBackendServiceDefinition, ExtensionFetchRouteDefinition, ExtensionFetchRouteScope,
+        ExtensionFetchRouteTargetDefinition,
+        ExtensionGeneratedOperationDefinition as DomainGeneratedOperationDefinition,
+        ExtensionGeneratedOperationDispatch as DomainGeneratedOperationDispatch,
+        ExtensionGeneratedOperationProvenance as DomainGeneratedOperationProvenance,
+        ExtensionGeneratedOperationVisibility as DomainGeneratedOperationVisibility,
+    };
+    use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
         ExtensionCommandHandler, ExtensionDependencyDeclaration, ExtensionFlagDefinition,
         ExtensionFlagType, ExtensionMessageRendererDefinition, ExtensionPermissionAccess,
@@ -628,6 +790,9 @@ mod tests {
             permissions: vec![ExtensionPermissionDeclaration::LocalProfile {
                 access: ExtensionPermissionAccess::Read,
             }],
+            fetch_routes: vec![],
+            operation_catalog: vec![],
+            backend_services: vec![],
             bundles: vec![ExtensionBundleRef {
                 kind: ExtensionBundleKind::ExtensionHost,
                 entry: "dist/extension.js".to_string(),
@@ -696,6 +861,9 @@ mod tests {
                 },
             }],
             permissions: vec![],
+            fetch_routes: vec![],
+            operation_catalog: vec![],
+            backend_services: vec![],
             bundles: vec![],
         }
     }
@@ -732,6 +900,73 @@ mod tests {
         );
         assert_eq!(projection.permissions.len(), 1);
         assert_eq!(projection.bundles[0].entry, "dist/extension.js");
+    }
+
+    #[test]
+    fn projects_generated_operation_catalog_backend_services_and_fetch_routes() {
+        let project_id = uuid::Uuid::new_v4();
+        let mut manifest = manifest("demo", "demo.profile", "demo.panel", "demo");
+        manifest.fetch_routes = vec![ExtensionFetchRouteDefinition {
+            route_key: Some("demo.api-route".to_string()),
+            route: "/api/**".to_string(),
+            scope: Some(ExtensionFetchRouteScope::PanelOnly),
+            panel_only: None,
+            target: ExtensionFetchRouteTargetDefinition::BackendService {
+                service_key: "demo.api".to_string(),
+                route: Some("/api/**".to_string()),
+            },
+        }];
+        manifest.backend_services = vec![ExtensionBackendServiceDefinition {
+            service_key: "demo.api".to_string(),
+            runtime: "node".to_string(),
+            entry: "src/server/index.ts".to_string(),
+            routes: vec!["/api/**".to_string()],
+            health_path: Some("/health".to_string()),
+        }];
+        manifest.operation_catalog = vec![DomainGeneratedOperationDefinition {
+            operation_key: "demo.search".to_string(),
+            description: "Search through the generated backend service".to_string(),
+            visibility: DomainGeneratedOperationVisibility::AgentAndPanel,
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: serde_json::json!({"type": "object"}),
+            permission_summary: vec!["backend_service:demo.api".to_string()],
+            dispatch: DomainGeneratedOperationDispatch::BackendService {
+                service_key: "demo.api".to_string(),
+                route: "/api/search".to_string(),
+            },
+            provenance: DomainGeneratedOperationProvenance {
+                capability_key: "api".to_string(),
+                exposure_key: "search".to_string(),
+                generated_from: "capability_exposure".to_string(),
+            },
+        }];
+        let installation =
+            ProjectExtensionInstallation::new(project_id, "demo", "Demo", manifest, source())
+                .expect("valid generated manifest installation");
+
+        let projection = extension_runtime_projection_from_installations(vec![installation])
+            .expect("projection");
+
+        assert_eq!(projection.fetch_routes.len(), 1);
+        assert_eq!(projection.fetch_routes[0].pattern, "/api/**");
+        assert!(projection.fetch_routes[0].panel_only);
+        assert!(matches!(
+            &projection.fetch_routes[0].target,
+            ExtensionFetchRouteTargetProjection::BackendService { service_key, route }
+                if service_key == "demo.api" && route == "/api/**"
+        ));
+        assert_eq!(projection.backend_services.len(), 1);
+        assert_eq!(projection.backend_services[0].service_key, "demo.api");
+        assert_eq!(
+            projection.backend_services[0].health_path.as_deref(),
+            Some("/health")
+        );
+        assert_eq!(projection.operation_catalog.len(), 1);
+        assert!(matches!(
+            &projection.operation_catalog[0].dispatch,
+            ExtensionGeneratedOperationDispatch::BackendService { service_key, route }
+                if service_key == "demo.api" && route == "/api/search"
+        ));
     }
 
     #[test]

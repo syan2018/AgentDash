@@ -70,6 +70,7 @@ export interface AgentDashNormalizedAgentExposure {
 export interface AgentDashOperationProvenance {
   source: "capability_exposure";
   capability_key: string;
+  exposure_key: string;
   capability_kind: AgentDashCapabilityKind;
   recipe: AgentDashCapabilityKind;
 }
@@ -92,21 +93,67 @@ export interface AgentDashOperationCatalogEntry {
   provenance: AgentDashOperationProvenance;
 }
 
+export interface AgentDashHttpProxyDispatchConfig {
+  base_url: string;
+  access: AgentDashCapabilityAccess;
+  headers?: Record<string, string>;
+}
+
+export interface AgentDashLocalCommandDispatchConfig {
+  command: string;
+  args: readonly string[];
+  shell: boolean;
+  cwd?: string;
+  env?: Record<string, string>;
+  timeout_ms?: number;
+}
+
+export interface AgentDashWorkspaceFilesDispatchConfig {
+  access: AgentDashCapabilityAccess;
+  roots: readonly string[];
+}
+
+export interface AgentDashProtocolChannelMethodDispatch {
+  name: string;
+  description: string;
+  input_schema: JsonSchema;
+  output_schema: JsonSchema;
+  permissions: readonly AgentDashRuntimePermissionKey[];
+}
+
 export type AgentDashCapabilityDispatch =
   | {
       kind: "runtime_action";
       action_key: string;
-      host_api: "http.fetch" | "process.exec" | "process.shell" | "workspace.vfs";
+      host_api: "http.fetch";
+      http: AgentDashHttpProxyDispatchConfig;
+    }
+  | {
+      kind: "runtime_action";
+      action_key: string;
+      host_api: "process.exec" | "process.shell";
+      command: AgentDashLocalCommandDispatchConfig;
+    }
+  | {
+      kind: "runtime_action";
+      action_key: string;
+      host_api: "workspace.vfs";
+      workspace: AgentDashWorkspaceFilesDispatchConfig;
     }
   | {
       kind: "protocol_channel";
       channel_key: string;
-      methods: readonly string[];
+      version: string;
+      description: string;
+      methods: readonly AgentDashProtocolChannelMethodDispatch[];
     }
   | {
       kind: "backend_service";
       service_key: string;
+      runtime: AgentDashBackendServiceRuntime;
+      entry: string;
       routes: readonly string[];
+      health_path?: string;
     };
 
 export interface AgentDashDispatchProjection {

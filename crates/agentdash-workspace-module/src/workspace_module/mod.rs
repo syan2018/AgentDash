@@ -696,6 +696,10 @@ fn describe_permission(permission: &ExtensionPermissionDeclaration) -> String {
             channel_key,
             methods,
         } => format!("channel:{channel_key}[{}]", methods.join(",")),
+        ExtensionPermissionDeclaration::BackendService {
+            service_key,
+            routes,
+        } => format!("backend_service:{service_key}[{}]", routes.join(",")),
     }
 }
 

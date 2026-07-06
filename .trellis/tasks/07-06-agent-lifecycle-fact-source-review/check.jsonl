@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"Check RuntimeSession remains terminal evidence owner only, while AgentRun/control-plane owns convergence outbox and user-visible terminal facts."}
+{"file":".trellis/spec/backend/architecture.md","reason":"Check terminal convergence side effects are owned by cloud backend AgentRun/control-plane modules, not runtime trace infrastructure."}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"Check mailbox remains durable wake/continuation owner and wait facts stay with LifecycleGate or typed wait records."}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"Check producer terminal convergence follows WaitProducerRef and gate owner semantics without companion-specific generic ownership."}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"Check new projection invalidation event remains a typed observable event and not a second business fact source."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Check frontend consumes generated contracts and does not duplicate backend event/status unions as runtime allowlists."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check frontend command availability, waiting state, and running status still come from AgentRun workspace snapshot."}

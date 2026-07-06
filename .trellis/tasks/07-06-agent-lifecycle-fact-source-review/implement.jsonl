@@ -1,0 +1,8 @@
+{"file":".trellis/spec/project-overview.md","reason":"Defines LifecycleRun, LifecycleAgent, AgentFrame, RuntimeSession ownership boundaries for implementation."}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"Authoritative contract for RuntimeSession terminal evidence, AgentRunDeliveryBinding, terminal callback ordering, and workspace execution state."}
+{"file":".trellis/spec/backend/architecture.md","reason":"Defines cloud backend business fact ownership and keeps RuntimeSession from owning AgentRun control-plane side effects."}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"Defines mailbox durable envelope, wake/result delivery, waiting_items ownership, and AgentRun turn boundary scheduling."}
+{"file":".trellis/spec/backend/workflow/activity-lifecycle.md","reason":"Defines LifecycleGate wait obligation convergence, WaitProducerRef semantics, and terminal-to-gate convergence flow."}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"Defines BackboneEnvelope, PlatformEvent, AgentRun journal stream, and frontend event consumption boundaries."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Defines frontend snapshot/state ownership, isReceiving limits, and AgentRun workspace status source rules."}
+{"file":".trellis/tasks/07-06-agent-lifecycle-fact-source-review/review.md","reason":"Research evidence and prioritization for wait/gate, terminal convergence, projection event, and frontend boundary issues."}

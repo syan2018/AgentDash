@@ -39,3 +39,40 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 56: 收束 SubAgent terminal gate
+
+**Date**: 2026-07-06
+**Task**: 收束 SubAgent terminal gate
+**Branch**: `main`
+
+### Summary
+
+完成 SubAgent runtime terminal 到 AgentRun delivery producer fact 的 wait obligation 收束；补齐 boot reconcile、provider/account model preflight、API callback 映射测试，并清理悬空旧路径：上提 wait obligation terminal facade、统一 LifecycleGate waiting projection。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9f795b800` | (see git log) |
+| `d4dc52cf7` | (see git log) |
+| `2b2689823` | (see git log) |
+| `9acc63e7a` | (see git log) |
+| `d28c94093` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

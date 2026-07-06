@@ -67,6 +67,11 @@ use agentdash_contracts::contract_generation::{
     GeneratedTsFile, NDJSON_STREAM_VALIDATORS_FILENAME, render_common_json_value,
     render_domain_file, render_ndjson_stream_validators,
 };
+use agentdash_contracts::desktop_release::{
+    DesktopManualInstallerArtifact, DesktopUpdateArtifact, DesktopUpdateCheckQuery,
+    DesktopUpdateCheckResponse, DesktopUpdateDiagnostics, DesktopUpdatePolicy,
+    DesktopUpdateRecommendedVersionSource, DesktopUpdateRelease, DesktopUpdateStatus,
+};
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
     ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
@@ -379,6 +384,25 @@ fn main() {
             export_all::<UpdatedIdResponse>(dir);
             export_all::<RevokedIdResponse>(dir);
             export_all::<PendingExecutionResponse>(dir);
+        },
+    );
+
+    // --- desktop-release-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "desktop-release-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<DesktopUpdateCheckQuery>(dir);
+            export_all::<DesktopUpdateStatus>(dir);
+            export_all::<DesktopUpdateRecommendedVersionSource>(dir);
+            export_all::<DesktopUpdateArtifact>(dir);
+            export_all::<DesktopManualInstallerArtifact>(dir);
+            export_all::<DesktopUpdateRelease>(dir);
+            export_all::<DesktopUpdatePolicy>(dir);
+            export_all::<DesktopUpdateDiagnostics>(dir);
+            export_all::<DesktopUpdateCheckResponse>(dir);
         },
     );
 

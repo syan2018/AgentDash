@@ -13,6 +13,112 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面壳能力
 - **Tauri commands**：profile / runtime / logs / MCP / open_external_url（定义在 `agentdash-local-tauri`）
 - **TS port**：`LocalRuntimeClient`（`@agentdash/core`），Tauri 适配层实现 `invoke()` 绑定
 
+## Scenario: Desktop Auto Update And Force Update Gate
+
+### 1. Scope / Trigger
+
+- Trigger: Tauri 桌面端需要固定 stable channel 自动更新，并在云端显式配置最低桌面版本时阻止旧客户端继续启动本机 runtime、claim 或 Relay。
+- Scope: `agentdash-local-tauri` updater/process 插件与 commands、`packages/app-tauri` DashboardHost、`packages/app-web/src/desktop/localRuntimeBridge.ts`、`packages/views/src/local-runtime/LocalRuntimeView.tsx`、云端 `/api/desktop/update*` endpoints。
+
+### 2. Signatures
+
+Tauri commands:
+
+```text
+desktop_update_policy_snapshot() -> DesktopUpdatePolicySnapshot
+desktop_update_policy_refresh() -> DesktopUpdatePolicySnapshot
+desktop_update_install() -> DesktopUpdateInstallResult
+runtime_start(request: RuntimeStartRequest) -> LocalRuntimeSnapshot
+runtime_restart() -> LocalRuntimeSnapshot
+```
+
+Bridge types:
+
+```ts
+export type DesktopUpdateGateStatus =
+  | "unchecked"
+  | "ready"
+  | "force_update_required"
+  | "unavailable";
+
+export interface DesktopUpdatePolicySnapshot {
+  current_version: string;
+  status: DesktopUpdateGateStatus;
+  force_update_required: boolean;
+  checked_at: string | null;
+  latest_version: string | null;
+  min_desktop_version: string | null;
+  recommended_desktop_version: string | null;
+  update_available: boolean | null;
+  manifest_url_configured: boolean | null;
+  diagnostics_code: string | null;
+  diagnostics_message: string | null;
+  last_error: string | null;
+}
+```
+
+Runtime env/build facts:
+
+```text
+AGENTDASH_DESKTOP_UPDATER_PUBKEY=<base64 minisign public key>
+```
+
+### 3. Contracts
+
+- Desktop updater checks use the current Desktop Dashboard API origin and call AgentDash cloud endpoints, not object storage URLs. The Rust updater command dynamically builds `/api/desktop/update/tauri`, because Tauri's JS updater API does not accept runtime endpoints while desktop releases can point at different cloud origins.
+- `desktop_update_policy_refresh` reads `/api/desktop/update` and stores a process-local gate snapshot. Fetch errors, invalid manifests and unconfigured manifest URLs produce diagnostic snapshots with `force_update_required=false`, because local development and unconfigured deployments must stay usable unless the server explicitly sets a minimum desktop version.
+- `force_update_required=true` only when `policy.min_desktop_version_configured=true` and the current desktop app version is lower than `policy.min_desktop_version`.
+- DashboardHost checks `/api/health` first, then refreshes update policy before rendering `WebDashboardApp`. A forced update renders an app-level block screen with install, retry, restart-after-install and quit actions.
+- `runtime_start` and `runtime_restart` call the Rust update gate before runtime ensure/restart. This keeps tray actions, Web bridge auto-connect and settings-page manual starts behind the same process-local policy.
+- Desktop settings/profile writes, MCP config/probe commands and log clearing also call the Rust update gate, because the forced-update state only exposes read-only diagnostics plus update/quit actions while the old client is below the cloud protocol minimum.
+- `ensureDesktopLocalRuntimeStarted` also reads the gate snapshot before auto-connect, so the Web bridge does not enqueue runtime start attempts while the app is already blocked.
+- `desktop_update_install` downloads and installs through `tauri-plugin-updater` using `AGENTDASH_DESKTOP_UPDATER_PUBKEY`; after install, UI asks the user to restart through `tauri-plugin-process` instead of restarting silently.
+- Local Runtime settings UI may display update diagnostics and manual check/install controls through optional `DesktopRuntimeSettingsClient` methods; non-desktop hosts can omit these methods.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `/api/desktop/update` unavailable | Gate snapshot status `unavailable`, `force_update_required=false`, runtime development path remains available |
+| stable manifest URL unconfigured | Gate snapshot carries diagnostic, `force_update_required=false` |
+| `min_desktop_version_configured=false` | Runtime start/restart allowed regardless of latest/recommended version |
+| current version below explicit min | DashboardHost blocks WebDashboard render; Rust runtime start/restart and mutation commands return an error before claim or local side effects |
+| current version equal or above explicit min | Runtime start/restart allowed |
+| updater pubkey missing during install | Install command returns a diagnostic error before download |
+| updater install succeeds | UI enters restart-ready state and waits for explicit user restart |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Old desktop opens, cloud reports `min_desktop_version=0.2.0`, DashboardHost shows the forced update screen and `runtime_start` refuses to claim.
+- Good: Developer runs local server without update env vars; update policy says unconfigured and Dashboard/runtime remain usable.
+- Base: Cloud reports only `recommended_desktop_version` or a newer manifest version; settings page can show an available update while core runtime remains usable.
+- Bad: A UI-only modal blocks the page while tray menu or Tauri command can still start runtime.
+
+### 6. Tests Required
+
+- `cargo test -p agentdash-local-tauri desktop_update` covers explicit minimum version and non-configured minimum behavior.
+- `cargo check -p agentdash-local-tauri` covers plugin registration and Tauri command signatures.
+- `pnpm --filter app-tauri typecheck` covers DashboardHost forced update flow.
+- `pnpm --filter @agentdash/views typecheck` covers optional settings-page update controls.
+- `pnpm run desktop:check` covers desktop icons, shared packages, app-tauri TS and Tauri shell check together.
+- `deploy/runbooks/desktop-update-e2e.md` covers real signed updater artifact installation, explicit relaunch, forced-update command gating and negative signature/download paths in a Windows release-like environment.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+WebDashboard renders -> localRuntimeBridge starts runtime -> later UI notices forced update
+```
+
+#### Correct
+
+```text
+DashboardHost health ready -> desktop_update_policy_refresh
+  -> forced update: render block screen and keep runtime gate closed
+  -> allowed: render WebDashboardApp and let runtime bridge proceed
+```
+
 ## Scenario: AgentDash 后台进程启动 Substrate
 
 ### 1. Scope / Trigger
@@ -435,6 +541,7 @@ Desktop defaults JSON:
 - Sidecar Desktop API uses `agentdash-server` at `127.0.0.1:17301`; its process boundary keeps Dashboard API hosting separate from local runtime/runner WebSocket relay communication.
 - Tauri registers the single-instance lifecycle plugin before `.manage(...)` and `.setup(...)`, so a second desktop launch forwards to the first process to restore/focus the main window while the first process remains the only Desktop API and embedded runner owner.
 - `DesktopState` holds `agentdash-local::DesktopRunnerHost` as the embedded runner host. Tauri commands only adapt command payloads, shell-selected Dashboard API origin, retry status updates and `Result<_, String>` errors; `agentdash-local` owns desktop profile/request normalization, profile/settings file IO, desktop access-token ensure, response validation, `LocalRuntimeConfig` projection, runtime reuse, serialized start, stop, restart, snapshot and logs because packaged desktop and standalone local runner share the same execution surface.
+- `agentdash-local-tauri/src/main.rs` is the desktop shell composition root: it registers Tauri plugins, managed state and command handlers, while desktop behavior lives in focused crate-private modules (`desktop_update`, `desktop_api`, `runtime_host`, `desktop_tray`, `autostart`, `state`, `settings`). This keeps command registration auditable while concentrating update policy, sidecar process control, tray/window lifecycle and OS login-item behavior next to their tests and platform-specific dependencies.
 - `DesktopRunnerHost::ensure_started_with` serializes config construction and runtime start in one critical section. Existing `starting` or `running` snapshots are returned as-is; stopped or failed handles are cleaned before a new config is built, so repeated tray, settings, and web auto-connect requests converge to one claim/start path.
 - Desktop runner snapshot state is `idle | disabled | waiting_for_auth | waiting_for_api | claiming | starting | running | retrying | error | stopping | stopped`. The host uses `idle/disabled/waiting_*` before a runtime handle exists, `claiming` while calling `/api/local-runtime/ensure`, and projects relay reconnects as `retrying`, so settings UI can explain both supervisor and relay phases without parsing logs.
 - `LocalRuntimeStatus.owner = "desktop_embedded_runner"` and `registration_source = "desktop_access_token"` for the desktop embedded host. Standalone service runner rows remain identified by backend projection `registration_source = "runner_registration_token"`, so UI can keep lifecycle owner and enrollment source separate.

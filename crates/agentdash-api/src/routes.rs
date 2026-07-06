@@ -117,6 +117,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
     let api = Router::new()
         .route("/version", get(release_info::version_info))
+        .merge(release_info::router())
         .merge(health::router())
         .merge(auth_routes::public_router())
         .merge(routines::public_router())

@@ -58,12 +58,14 @@ test("deployment_contract keeps deployment command membership in one manifest", 
       "deploy_managed_postgres_update_dry_run",
       "deploy_managed_postgres_backup_boundary",
       "release_metadata",
+      "release_metadata_test",
       "cloud_image_dry_run",
     ],
   );
 
   assert.match(gateCommand("deployment_contract"), /deploy\/compose\/docker-compose\.yml/);
   assert.match(gateCommand("deployment_contract"), /quality-gates\.js expect-failure/);
+  assert.match(gateCommand("deployment_contract"), /release-metadata\.test\.js/);
   assert.match(gateCommand("deployment_contract"), /pnpm run docker:cloud:build -- --dry-run/);
 });
 

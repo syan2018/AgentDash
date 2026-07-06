@@ -101,6 +101,7 @@ AGENTDASH_DESKTOP_UPDATER_PUBKEY=<base64 minisign public key>
 - `pnpm --filter app-tauri typecheck` covers DashboardHost forced update flow.
 - `pnpm --filter @agentdash/views typecheck` covers optional settings-page update controls.
 - `pnpm run desktop:check` covers desktop icons, shared packages, app-tauri TS and Tauri shell check together.
+- `deploy/runbooks/desktop-update-e2e.md` covers real signed updater artifact installation, explicit relaunch, forced-update command gating and negative signature/download paths in a Windows release-like environment.
 
 ### 7. Wrong vs Correct
 

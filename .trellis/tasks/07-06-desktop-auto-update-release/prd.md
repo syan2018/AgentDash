@@ -86,6 +86,7 @@
 - [ ] 当云端仅 `recommended_desktop_version` 高于当前版本时，桌面端显示非阻断更新提示。
 - [ ] 更新流程不会静默重启正在使用的桌面端。
 - [ ] 发布 Runbook 覆盖自动更新发布、对象存储上传、签名密钥、验证和排查流程。
+- [ ] 桌面自动更新端到端 Runbook 覆盖真实签名 updater 包安装、显式重启、强制更新阻断和坏签名/坏 artifact 负向验证。
 - [ ] 主仓生成的发布目录可以被 AWS CLI / s3cmd / 私有子仓脚本直接同步到 S3-compatible 对象存储。
 - [ ] 主仓文档只描述对象存储通用契约和所需环境变量占位，不包含企业 endpoint、bucket、AK/SK 或私有域名。
 - [ ] 相关检查通过：`pnpm run desktop:check`、更新相关 Rust 测试、更新相关 TypeScript 类型检查、release metadata 脚本测试。

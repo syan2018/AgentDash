@@ -37,8 +37,10 @@
 - `pnpm run desktop:check`
 - 桌面 bridge / UI 类型检查。
 - 可用 fixture 或 mock endpoint 验证更新状态机。
+- 按 `deploy/runbooks/desktop-update-e2e.md` 使用真实签名 updater 包验证下载、安装、显式重启与坏签名拒绝。
 
 ## Check Result
 
 - 已通过 `pnpm --filter app-tauri typecheck`、`pnpm --filter @agentdash/views typecheck` 和 `pnpm run desktop:check`。
-- 实际下载/签名校验由 Tauri updater Rust command 承接；发布环境需用真实签名包做一次端到端安装验证。
+- 实际下载/签名校验由 Tauri updater Rust command 承接；真实签名包端到端安装验证流程已记录到 `deploy/runbooks/desktop-update-e2e.md`，后续在企业发布环境执行。
+- `packages/app-tauri` 只保留 `@tauri-apps/plugin-process` 用于显式 relaunch；JS `@tauri-apps/plugin-updater` 不参与实际安装路径。

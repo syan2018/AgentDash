@@ -36,8 +36,10 @@
 - 本机 runtime bridge 相关测试。
 - `pnpm run desktop:check`
 - 必要时用 mock 云端响应做端到端验证。
+- 按 `deploy/runbooks/desktop-update-e2e.md` 验证旧客户端在显式 `min_desktop_version` 下阻断 runtime start/restart 和 mutation commands，同时保留 update/status/quit/只读诊断。
 
 ## Check Result
 
 - 已通过 `cargo test -p agentdash-local-tauri desktop_update`、`cargo check -p agentdash-local-tauri` 和 `pnpm run desktop:check`。
 - Rust command 层阻断 runtime start/restart；Web bridge 自动连接在前端也读取 gate snapshot 后放行。
+- 强制更新阻断的真实旧版本安装验证流程已记录到 `deploy/runbooks/desktop-update-e2e.md`，后续在企业发布环境执行。

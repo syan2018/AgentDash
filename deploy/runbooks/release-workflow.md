@@ -154,6 +154,8 @@ Windows stable 发布顺序：
 9. 验证云端 update endpoint 返回新版本，桌面端可下载并通过签名校验
 ```
 
+真实签名 updater 包的端到端安装、强制更新阻断、显式重启和负向错误路径验证见 [桌面自动更新端到端验证 Runbook](./desktop-update-e2e.md)。迁移到企业仓库时，私有发布流程应把该 Runbook 中的本地 HTTP 承载替换为企业 S3-compatible 上传与 stable latest 指针发布。
+
 排查入口：
 
 - `release-metadata` 如果无法唯一定位 updater artifact，会明确报出期望的 `*.nsis.zip` 或 `*.msi.zip` fixture/产物模式。

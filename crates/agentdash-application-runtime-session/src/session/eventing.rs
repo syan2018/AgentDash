@@ -31,7 +31,6 @@ use super::persistence::{
 };
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::transcript_restore::build_raw_projected_transcript_from_events;
-use super::types::TitleSource;
 
 const SESSION_EVENT_APPEND_GUARD_MAX_BYTES: usize = 256 * 1024;
 const SESSION_EVENT_APPEND_GUARD_FIELD_REPLACEMENT_MAX_BYTES: usize = 16 * 1024;
@@ -57,6 +56,8 @@ pub struct SessionEventingService {
     stores: SessionEventingStores,
     runtime_registry: SessionRuntimeRegistry,
     connector: Arc<dyn agentdash_spi::AgentConnector>,
+    workspace_title_port:
+        Option<Arc<dyn agentdash_application_ports::workspace_title::WorkspaceTitlePort>>,
 }
 
 impl SessionEventingService {
@@ -69,7 +70,40 @@ impl SessionEventingService {
             stores,
             runtime_registry,
             connector,
+            workspace_title_port: None,
         }
+    }
+
+    pub(super) fn with_workspace_title_port(
+        mut self,
+        port: Option<Arc<dyn agentdash_application_ports::workspace_title::WorkspaceTitlePort>>,
+    ) -> Self {
+        self.workspace_title_port = port;
+        self
+    }
+
+    async fn update_workspace_title(
+        &self,
+        session_id: &str,
+        title: &str,
+        title_source: &str,
+    ) -> bool {
+        let Some(port) = self.workspace_title_port.as_ref() else {
+            return false;
+        };
+        port.update_workspace_title(session_id, title.to_string(), title_source)
+            .await
+            .unwrap_or_default()
+    }
+
+    pub(crate) async fn update_workspace_title_public(
+        &self,
+        session_id: &str,
+        title: &str,
+        title_source: &str,
+    ) -> bool {
+        self.update_workspace_title(session_id, title, title_source)
+            .await
     }
 
     pub async fn ensure_session(
@@ -310,16 +344,14 @@ impl SessionEventingService {
             return Ok(());
         }
 
-        let Some(mut meta) = self.stores.meta.get_session_meta(session_id).await? else {
-            return Ok(());
-        };
-        if meta.title_source == TitleSource::User {
-            return Ok(());
-        }
-        if let (Some(expected), Some(actual)) = (
-            meta.executor_session_id.as_deref(),
-            executor_session_id.as_deref(),
-        ) && expected != actual
+        // Executor session guard: verify the title comes from the correct executor.
+        let meta = self.stores.meta.get_session_meta(session_id).await?;
+        if let Some(ref meta) = meta
+            && let (Some(expected), Some(actual)) = (
+                meta.executor_session_id.as_deref(),
+                executor_session_id.as_deref(),
+            )
+            && expected != actual
         {
             diag!(Warn, Subsystem::AgentRun,
 
@@ -334,21 +366,22 @@ impl SessionEventingService {
             );
             return Ok(());
         }
-        if meta.title_source == TitleSource::Source && meta.title == title {
+
+        // Write title to workspace (LifecycleAgent) via port.
+        let updated = self
+            .update_workspace_title(session_id, title, "source")
+            .await;
+        if !updated {
             return Ok(());
         }
 
-        meta.title = title.to_string();
-        meta.title_source = TitleSource::Source;
-        meta.updated_at = chrono::Utc::now().timestamp_millis();
-        self.stores.meta.save_session_meta(&meta).await?;
-
+        // Emit event for frontend refresh.
         let envelope = BackboneEnvelope::new(
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
                 key: "session_meta_updated".to_string(),
                 value: serde_json::json!({
-                    "title": meta.title,
-                    "title_source": meta.title_source,
+                    "title": title,
+                    "title_source": "source",
                 }),
             }),
             session_id,
@@ -1719,7 +1752,7 @@ mod tests {
     use crate::session::{
         MemoryRuntimeTraceStore,
         persistence::SessionStoreSet,
-        types::{ExecutionStatus, SessionMeta},
+        types::{ExecutionStatus, SessionMeta, TitleSource},
     };
 
     fn test_eventing_service(stores: SessionStoreSet) -> SessionEventingService {

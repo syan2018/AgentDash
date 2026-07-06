@@ -127,7 +127,12 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub visible_workspace_module_refs: Option<Vec<String>>,
     pub active_workflow: Option<ports_lifecycle_surface::ActiveWorkflowProjection>,
     pub launch_path: OwnerPromptLaunchPath,
+    /// Runtime session ID — used for execution anchor lookup (non-audit).
     pub audit_session_key: Option<String>,
+    /// AgentRun run_id for audit bus keying.
+    pub audit_run_id: Option<String>,
+    /// AgentRun agent_id for audit bus keying.
+    pub audit_agent_id: Option<String>,
     pub caller_agent_id: Option<Uuid>,
 }
 
@@ -262,7 +267,12 @@ impl<'a> OwnerBootstrapComposer<'a> {
             effective_bundle.as_ref(),
             resolve_owner_audit_trigger(audit_launch_path, effective_bundle.is_some()),
         ) {
-            self.audit_bundle(bundle, spec.audit_session_key.as_deref(), trigger);
+            self.audit_bundle(
+                bundle,
+                spec.audit_run_id.as_deref(),
+                spec.audit_agent_id.as_deref(),
+                trigger,
+            );
         }
 
         let workspace_defaults = match &spec.owner {
@@ -575,13 +585,16 @@ impl<'a> OwnerBootstrapComposer<'a> {
     fn audit_bundle(
         &self,
         bundle: &SessionContextBundle,
-        session_key: Option<&str>,
+        run_id: Option<&str>,
+        agent_id: Option<&str>,
         trigger: AuditTrigger,
     ) {
-        let (Some(bus), Some(session_key)) = (self.audit_bus.as_deref(), session_key) else {
+        let (Some(bus), Some(run_id), Some(agent_id)) =
+            (self.audit_bus.as_deref(), run_id, agent_id)
+        else {
             return;
         };
-        emit_bundle_fragments(bus, bundle, session_key, trigger);
+        emit_bundle_fragments(bus, bundle, run_id, agent_id, trigger);
     }
 }
 

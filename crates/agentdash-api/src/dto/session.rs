@@ -29,7 +29,8 @@ pub struct ContextAuditQuery {
 pub struct ContextAuditEventDto {
     pub event_id: uuid::Uuid,
     pub bundle_id: uuid::Uuid,
-    pub session_id: String,
+    pub run_id: String,
+    pub agent_id: String,
     pub bundle_session_uuid: uuid::Uuid,
     pub at_ms: u64,
     pub trigger: String,

@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "crate 分层与服务注册模式"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "session 内部架构，terminal_cache/eventing 位置"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store 分层契约，useTerminalStore 改造依据"}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "terminal_output 平台事件协议"}
+{"file": ".trellis/spec/backend/hooks/hook-script-engine.md", "reason": "hook script context 字段契约"}
+{"file": ".trellis/tasks/07-06-terminal-agentrun-scope/prd.md", "reason": "需求与审计发现"}
+{"file": ".trellis/tasks/07-06-terminal-agentrun-scope/design.md", "reason": "技术设计方案"}
+{"file": ".trellis/tasks/07-06-terminal-agentrun-scope/implement.md", "reason": "执行清单"}

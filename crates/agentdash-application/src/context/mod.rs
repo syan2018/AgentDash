@@ -8,8 +8,9 @@ mod workflow_bindings;
 pub mod workspace_sources;
 
 pub use agentdash_application_runtime_session::context::{
-    AuditFilter, AuditTrigger, ContextAuditBus, ContextAuditEvent, InMemoryContextAuditBus,
-    NoopContextAuditBus, SharedContextAuditBus, emit_bundle_fragments, emit_fragment,
+    AuditAgentRunKey, AuditFilter, AuditTrigger, ContextAuditBus, ContextAuditEvent,
+    InMemoryContextAuditBus, NoopContextAuditBus, SharedContextAuditBus, emit_bundle_fragments,
+    emit_fragment,
 };
 pub use builder::{
     ContextBuildPhase, Contribution, SessionContextConfig, TaskExecutionPhase,

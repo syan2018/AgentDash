@@ -19,7 +19,7 @@ describe("useTerminalStore", () => {
     resetTerminalStore();
   });
 
-  it("保留未超过容量的终端输出", () => {
+  it("preserves terminal output under capacity", () => {
     const store = useTerminalStore.getState();
 
     store.appendOutput("term-1", "hello");
@@ -29,7 +29,7 @@ describe("useTerminalStore", () => {
     expect(useTerminalStore.getState().getOutputBaseOffset("term-1")).toBe(0);
   });
 
-  it("超过容量后只保留最新输出并记录裁掉的前缀长度", () => {
+  it("retains only recent output and tracks dropped prefix length when over capacity", () => {
     const store = useTerminalStore.getState();
     const initial = "a".repeat(TERMINAL_OUTPUT_BUFFER_MAX_CHARS - 2);
 
@@ -43,7 +43,7 @@ describe("useTerminalStore", () => {
     expect(nextStore.getOutputBaseOffset("term-1")).toBe(3);
   });
 
-  it("单次大 chunk 超过容量时丢弃 chunk 头部", () => {
+  it("drops chunk head when single chunk exceeds capacity", () => {
     const store = useTerminalStore.getState();
     const chunk = `${"x".repeat(10)}${"y".repeat(TERMINAL_OUTPUT_BUFFER_MAX_CHARS)}`;
 
@@ -54,11 +54,10 @@ describe("useTerminalStore", () => {
     expect(nextStore.getOutputBaseOffset("term-1")).toBe(10);
   });
 
-  it("删除终端时同步清理输出和 base offset", () => {
+  it("cleans output and base offset when terminal is removed", () => {
     const store = useTerminalStore.getState();
     store.registerTerminal({
       id: "term-1",
-      sessionId: "session-1",
       capability: "interactive",
       cwd: ".",
       state: "running",
@@ -71,10 +70,10 @@ describe("useTerminalStore", () => {
     const nextStore = useTerminalStore.getState();
     expect(nextStore.getOutput("term-1")).toBe("");
     expect(nextStore.getOutputBaseOffset("term-1")).toBe(0);
-    expect(nextStore.getTerminalsForSession("session-1")).toEqual([]);
+    expect(nextStore.terminals.get("term-1")).toBeUndefined();
   });
 
-  it("用 replaceOutput 重写只读回放输出并推进 revision", () => {
+  it("replaces read-only replay output and bumps revision", () => {
     const store = useTerminalStore.getState();
 
     store.replaceOutput("term-1", "first");
@@ -88,34 +87,34 @@ describe("useTerminalStore", () => {
     expect(afterSecond.getOutputRevision("term-1")).toBe(2);
   });
 
-  it("对未注册 terminal 的状态事件创建 state-only projection", () => {
+  it("creates state-only projection for unknown terminal state event", () => {
     const store = useTerminalStore.getState();
 
-    store.updateTerminalState("term-1", "exited", 0, "session-1");
+    store.updateTerminalState("term-1", "exited", 0);
 
-    const terminal = useTerminalStore.getState().getTerminalsForSession("session-1")[0];
+    const terminal = useTerminalStore.getState().terminals.get("term-1");
     expect(terminal?.id).toBe("term-1");
     expect(terminal?.capability).toBe("state_only");
     expect(terminal?.state).toBe("exited");
     expect(terminal?.exitCode).toBe(0);
   });
 
-  it("按 session event seq 幂等投影 terminal output", () => {
+  it("idempotently projects terminal output by event_seq", () => {
     const store = useTerminalStore.getState();
 
-    expect(store.projectOutputEvent("session-1", 10, "term-1", "hello")).toBe(true);
-    expect(useTerminalStore.getState().projectOutputEvent("session-1", 10, "term-1", "hello")).toBe(false);
+    expect(store.projectOutputEvent(10, "term-1", "hello")).toBe(true);
+    expect(useTerminalStore.getState().projectOutputEvent(10, "term-1", "hello")).toBe(false);
 
     expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello");
   });
 
-  it("按 session event seq 幂等投影 terminal state", () => {
+  it("idempotently projects terminal state by event_seq", () => {
     const store = useTerminalStore.getState();
 
-    expect(store.projectStateEvent("session-1", 10, "term-1", "running")).toBe(true);
-    expect(useTerminalStore.getState().projectStateEvent("session-1", 10, "term-1", "exited", 0)).toBe(false);
+    expect(store.projectStateEvent(10, "term-1", "running")).toBe(true);
+    expect(useTerminalStore.getState().projectStateEvent(10, "term-1", "exited", 0)).toBe(false);
 
-    const terminal = useTerminalStore.getState().getTerminalsForSession("session-1")[0];
+    const terminal = useTerminalStore.getState().terminals.get("term-1");
     expect(terminal?.id).toBe("term-1");
     expect(terminal?.state).toBe("running");
     expect(terminal?.exitCode).toBeUndefined();

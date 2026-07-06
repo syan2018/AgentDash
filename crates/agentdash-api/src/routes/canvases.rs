@@ -43,7 +43,7 @@ use agentdash_contracts::canvas::{
     CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest, CanvasRuntimeBridgeSnapshotDto,
     CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
     CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
-    CanvasRuntimeObservationUpsertRequest, CanvasRuntimeSnapshotDto, CanvasRuntimeViewportDto,
+    CanvasRuntimeObservationUpsertRequest, CanvasRuntimeViewportDto,
     CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest,
     DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
     RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
@@ -57,17 +57,12 @@ use agentdash_domain::canvas::{
     CanvasRuntimeObservationStatus, CanvasRuntimeViewport, CanvasSandboxConfig, CanvasScope,
 };
 
-use crate::agent_run_runtime_surface::{
-    ApiCurrentRuntimeSurface, resolve_current_runtime_surface_for_project_for_api,
-};
+use crate::agent_run_runtime_surface::resolve_current_runtime_surface_for_project_for_api;
 use crate::app_state::AppState;
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission, project_authorization_context,
 };
-use crate::dto::{
-    CanvasRuntimeInvokeRequest as LegacyCanvasRuntimeInvokeRequest, CanvasRuntimeSnapshotQuery,
-    ListProjectCanvasesPath, PromoteCanvasToExtensionRequest,
-};
+use crate::dto::{ListProjectCanvasesPath, PromoteCanvasToExtensionRequest};
 use crate::rpc::ApiError;
 
 use super::agent_run_mailbox_contracts::agent_run_message_command_response;
@@ -112,14 +107,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
                 .put(update_canvas)
                 .delete(delete_canvas),
         )
-        .route(
-            "/canvases/{id}/runtime-snapshot",
-            axum::routing::get(get_canvas_runtime_snapshot),
-        )
-        .route(
-            "/canvases/{id}/runtime-invoke",
-            axum::routing::post(invoke_canvas_runtime_action),
-        )
+        // Legacy session-scoped runtime-snapshot and runtime-invoke removed.
+        // Use AgentRun-scoped endpoints:
+        //   GET /agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-snapshot
+        //   POST /agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-invoke
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/canvases/{canvas_mount_id}/runtime-observation",
             axum::routing::get(get_agent_run_canvas_runtime_observation)
@@ -500,78 +491,6 @@ pub async fn unpublish_canvas_route(
     }))
 }
 
-pub async fn get_canvas_runtime_snapshot(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-    Query(query): Query<CanvasRuntimeSnapshotQuery>,
-) -> Result<Json<CanvasRuntimeSnapshotDto>, ApiError> {
-    let CanvasWithAccess { canvas, .. } =
-        load_canvas_for_action(state.as_ref(), &current_user, &id, CanvasAccessAction::View)
-            .await?;
-
-    let runtime_surface =
-        resolve_canvas_runtime_surface(&state, &current_user, &canvas, query.session_id.as_deref())
-            .await?;
-    let mut snapshot = build_runtime_snapshot_with_bindings(
-        &canvas,
-        query.session_id.clone(),
-        runtime_surface.as_ref().map(|surface| &surface.vfs),
-        state.services.vfs_service.as_ref(),
-    )
-    .await;
-    if let Some(session_id) = query.session_id.as_deref() {
-        snapshot.runtime_bridge =
-            build_canvas_runtime_bridge_surface(state.as_ref(), &canvas, session_id).await?;
-    }
-
-    Ok(Json(canvas_runtime_snapshot_to_contract(snapshot)))
-}
-
-pub async fn invoke_canvas_runtime_action(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(id): Path<String>,
-    Json(req): Json<LegacyCanvasRuntimeInvokeRequest>,
-) -> Result<Json<RuntimeInvocationResultDto>, ApiError> {
-    let CanvasWithAccess { canvas, .. } =
-        load_canvas_for_action(state.as_ref(), &current_user, &id, CanvasAccessAction::View)
-            .await?;
-    let session_id = req.session_id.trim();
-    if session_id.is_empty() {
-        return Err(ApiError::BadRequest(
-            "Canvas runtime invoke 缺少 session_id".to_string(),
-        ));
-    }
-    resolve_current_runtime_surface_for_project_for_api(
-        &state,
-        &current_user,
-        session_id,
-        canvas.project_id,
-        RuntimeSurfaceQueryPurpose::new("canvas_runtime_invoke"),
-        "Canvas runtime invoke",
-    )
-    .await?;
-
-    let action_key = RuntimeActionKey::parse(req.action_key)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let request = RuntimeInvocationRequest::new(
-        action_key,
-        RuntimeActor::UserCanvas {
-            session_id: session_id.to_string(),
-            canvas_id: Some(canvas.id),
-        },
-        RuntimeContext::Session {
-            session_id: session_id.to_string(),
-            project_id: Some(canvas.project_id),
-            workspace_id: None,
-        },
-        req.input,
-    );
-
-    let result = state.services.runtime_gateway.invoke(request).await?;
-    Ok(Json(runtime_invocation_result_to_contract(result)))
-}
 
 pub async fn get_agent_run_canvas_runtime_observation(
     State(state): State<Arc<AppState>>,
@@ -1114,43 +1033,6 @@ fn parse_datetime(value: String, field: &str) -> Result<DateTime<Utc>, ApiError>
         .map_err(|error| ApiError::BadRequest(format!("{field} 不是合法 RFC3339 时间: {error}")))
 }
 
-fn canvas_runtime_snapshot_to_contract(
-    snapshot: CanvasRuntimeSnapshot,
-) -> CanvasRuntimeSnapshotDto {
-    CanvasRuntimeSnapshotDto {
-        canvas_id: snapshot.canvas_id.to_string(),
-        canvas_mount_id: snapshot.canvas_mount_id,
-        vfs_mount_id: snapshot.vfs_mount_id,
-        session_id: snapshot.session_id,
-        resource_surface_ref: snapshot.resource_surface_ref,
-        entry: snapshot.entry,
-        files: snapshot
-            .files
-            .into_iter()
-            .map(|file| CanvasRuntimeFileDto {
-                path: file.path,
-                content: file.content,
-                file_type: file.file_type,
-            })
-            .collect(),
-        bindings: snapshot
-            .bindings
-            .into_iter()
-            .map(|binding| CanvasRuntimeBindingDto {
-                alias: binding.alias,
-                source_uri: binding.source_uri,
-                data_path: binding.data_path,
-                content_type: binding.content_type,
-                resolved: binding.resolved,
-            })
-            .collect(),
-        import_map: CanvasImportMapDto {
-            imports: snapshot.import_map.imports,
-        },
-        libraries: snapshot.libraries,
-        runtime_bridge: canvas_runtime_bridge_to_contract(snapshot.runtime_bridge),
-    }
-}
 
 fn canvas_runtime_bridge_to_contract(
     bridge: CanvasRuntimeBridgeSnapshot,
@@ -1348,28 +1230,6 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
     }
 }
 
-async fn resolve_canvas_runtime_surface(
-    state: &Arc<AppState>,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    canvas: &agentdash_domain::canvas::Canvas,
-    session_id: Option<&str>,
-) -> Result<Option<ApiCurrentRuntimeSurface>, ApiError> {
-    let Some(session_id) = session_id else {
-        return Ok(None);
-    };
-
-    Ok(Some(
-        resolve_current_runtime_surface_for_project_for_api(
-            state,
-            current_user,
-            session_id,
-            canvas.project_id,
-            RuntimeSurfaceQueryPurpose::new("canvas_runtime_snapshot"),
-            "Canvas runtime bridge manifest",
-        )
-        .await?,
-    ))
-}
 
 #[cfg(test)]
 mod tests {

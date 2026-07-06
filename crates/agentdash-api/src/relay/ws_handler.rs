@@ -501,10 +501,16 @@ async fn handle_backend_connection(
     // 标记该后端名下的所有终端为 Lost 并推送 platform event
     let lost_terminal_ids = state
         .services
-        .terminal_cache
+        .terminal_registry
         .handle_backend_disconnect(&bid);
     for terminal_id in &lost_terminal_ids {
-        if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
+        if let Some(term_state) = state.services.terminal_registry.get_terminal(terminal_id) {
+            let Some(session_id) = state.services.terminal_registry.resolve_active_session(
+                &term_state.run_id,
+                &term_state.agent_id,
+            ) else {
+                continue;
+            };
             let source = agentdash_agent_protocol::SourceInfo {
                 connector_id: "platform".to_string(),
                 connector_type: "terminal".to_string(),
@@ -519,20 +525,20 @@ async fn handle_backend_connection(
                         message: Some("backend disconnected".to_string()),
                     },
                 ),
-                &term_state.session_id,
+                &session_id,
                 source,
             );
             if let Err(error) = state
                 .services
                 .session_eventing
-                .inject_notification(&term_state.session_id, envelope)
+                .inject_notification(&session_id, envelope)
                 .await
             {
                 let context =
                     DiagnosticErrorContext::new("relay.ws.disconnect", "inject_lost_terminal")
                         .with_field("backend_id", &bid)
                         .with_field("terminal_id", terminal_id)
-                        .with_field("session_id", &term_state.session_id);
+                        .with_field("session_id", &session_id);
                 diag_error!(
                     Warn,
                     Subsystem::Relay,
@@ -540,7 +546,7 @@ async fn handle_backend_connection(
                     error = &error,
                     backend_id = %bid,
                     terminal_id = %terminal_id,
-                    session_id = %term_state.session_id,
+                    session_id = %session_id,
                     "后端断连终端 lost 事件注入 session 失败"
                 );
             }
@@ -737,7 +743,22 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 data_len = payload.data.len(),
                 "收到终端输出事件"
             );
-            if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
+            if let Some(term_state) = state.services.terminal_registry.get_terminal(terminal_id) {
+                let Some(session_id) = state.services.terminal_registry.resolve_active_session(
+                    &term_state.run_id,
+                    &term_state.agent_id,
+                ) else {
+                    diag!(Warn, Subsystem::Relay,
+                        operation = "relay.ws.handle_message",
+                        stage = "resolve_active_session",
+                        backend_id = %backend_id,
+                        terminal_id = %terminal_id,
+                        run_id = %term_state.run_id,
+                        agent_id = %term_state.agent_id,
+                        "终端输出事件到达但无法解析活跃 session"
+                    );
+                    return;
+                };
                 let source = agentdash_agent_protocol::SourceInfo {
                     connector_id: "platform".to_string(),
                     connector_type: "terminal".to_string(),
@@ -750,13 +771,13 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                             data: terminal_output_event_data(&payload),
                         },
                     ),
-                    &term_state.session_id,
+                    &session_id,
                     source,
                 );
                 if let Err(e) = state
                     .services
                     .session_eventing
-                    .inject_notification(&term_state.session_id, envelope)
+                    .inject_notification(&session_id, envelope)
                     .await
                 {
                     let context = DiagnosticErrorContext::new(
@@ -765,7 +786,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     )
                     .with_field("backend_id", backend_id)
                     .with_field("terminal_id", terminal_id)
-                    .with_field("session_id", &term_state.session_id)
+                    .with_field("session_id", &session_id)
                     .with_field("request_id", msg.id())
                     .with_field("message_kind", relay_message_kind(&msg));
                     diag_error!(
@@ -775,7 +796,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                         error = &e,
                         backend_id = %backend_id,
                         terminal_id = %terminal_id,
-                        session_id = %term_state.session_id,
+                        session_id = %session_id,
                         request_id = %msg.id(),
                         message_kind = %relay_message_kind(&msg),
                         "终端输出事件注入 session 失败"
@@ -785,10 +806,10 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 diag!(Warn, Subsystem::Relay,
 
                     operation = "relay.ws.handle_message",
-                    stage = "terminal_cache_lookup",
+                    stage = "terminal_registry_lookup",
                     backend_id = %backend_id,
                     terminal_id = %terminal_id,
-                    "终端输出事件到达但 terminal_cache 中未找到"
+                    "终端输出事件到达但 terminal_registry 中未找到"
                 );
             }
         }
@@ -806,7 +827,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 agentdash_relay::TerminalProcessState::Lost => "lost",
                 agentdash_relay::TerminalProcessState::Killed => "killed",
             };
-            state.services.terminal_cache.update_state(
+            state.services.terminal_registry.update_state(
                 &payload.terminal_id,
                 state_str,
                 payload.exit_code,
@@ -814,56 +835,60 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
 
             if let Some(term_state) = state
                 .services
-                .terminal_cache
+                .terminal_registry
                 .get_terminal(&payload.terminal_id)
+                && let Some(session_id) = state.services.terminal_registry.resolve_active_session(
+                    &term_state.run_id,
+                    &term_state.agent_id,
+                )
             {
-                let source = agentdash_agent_protocol::SourceInfo {
-                    connector_id: "platform".to_string(),
-                    connector_type: "terminal".to_string(),
-                    executor_id: None,
-                };
-                let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
-                    agentdash_agent_protocol::BackboneEvent::Platform(
-                        agentdash_agent_protocol::PlatformEvent::TerminalStateChanged {
-                            terminal_id: payload.terminal_id.clone(),
-                            state: state_str.to_string(),
-                            exit_code: payload.exit_code,
-                            message: payload.message.clone(),
-                        },
-                    ),
-                    &term_state.session_id,
-                    source,
-                );
-                if let Err(e) = state
-                    .services
-                    .session_eventing
-                    .inject_notification(&term_state.session_id, envelope)
-                    .await
-                {
-                    let context = DiagnosticErrorContext::new(
-                        "relay.ws.handle_message",
-                        "inject_terminal_state",
-                    )
-                    .with_field("backend_id", backend_id)
-                    .with_field("terminal_id", &payload.terminal_id)
-                    .with_field("session_id", &term_state.session_id)
-                    .with_field("request_id", msg.id())
-                    .with_field("message_kind", relay_message_kind(&msg));
-                    diag_error!(
-                        Warn,
-                        Subsystem::Relay,
-                        context = &context,
-                        error = &e,
-                        backend_id = %backend_id,
-                        terminal_id = %payload.terminal_id,
-                        session_id = %term_state.session_id,
-                        request_id = %msg.id(),
-                        message_kind = %relay_message_kind(&msg),
-                        "终端状态变更注入 session 失败"
+                    let source = agentdash_agent_protocol::SourceInfo {
+                        connector_id: "platform".to_string(),
+                        connector_type: "terminal".to_string(),
+                        executor_id: None,
+                    };
+                    let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
+                        agentdash_agent_protocol::BackboneEvent::Platform(
+                            agentdash_agent_protocol::PlatformEvent::TerminalStateChanged {
+                                terminal_id: payload.terminal_id.clone(),
+                                state: state_str.to_string(),
+                                exit_code: payload.exit_code,
+                                message: payload.message.clone(),
+                            },
+                        ),
+                        &session_id,
+                        source,
                     );
+                    if let Err(e) = state
+                        .services
+                        .session_eventing
+                        .inject_notification(&session_id, envelope)
+                        .await
+                    {
+                        let context = DiagnosticErrorContext::new(
+                            "relay.ws.handle_message",
+                            "inject_terminal_state",
+                        )
+                        .with_field("backend_id", backend_id)
+                        .with_field("terminal_id", &payload.terminal_id)
+                        .with_field("session_id", &session_id)
+                        .with_field("request_id", msg.id())
+                        .with_field("message_kind", relay_message_kind(&msg));
+                        diag_error!(
+                            Warn,
+                            Subsystem::Relay,
+                            context = &context,
+                            error = &e,
+                            backend_id = %backend_id,
+                            terminal_id = %payload.terminal_id,
+                            session_id = %session_id,
+                            request_id = %msg.id(),
+                            message_kind = %relay_message_kind(&msg),
+                            "终端状态变更注入 session 失败"
+                        );
+                    }
                 }
             }
-        }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {
             diag!(Debug, Subsystem::Relay,
         backend_id = %backend_id, "收到选项发现 patch");

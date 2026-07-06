@@ -518,15 +518,22 @@ fn project_agent_display_label(project_agent: &ProjectAgent) -> String {
 }
 
 fn shell_model(
-    meta: Option<&crate::agent_run::runtime_session_boundary::SessionMeta>,
+    _meta: Option<&crate::agent_run::runtime_session_boundary::SessionMeta>,
     project_agent: Option<&ProjectAgent>,
     agent: &LifecycleAgent,
     workspace_state: &super::types::AgentRunWorkspaceStateModel,
     last_turn_id: Option<String>,
 ) -> AgentRunWorkspaceShellModel {
-    let (display_title, title_source) = match meta {
-        Some(meta) => (meta.title.clone(), serialized_string(&meta.title_source)),
-        None => (
+    // Title is now a first-class workspace field on LifecycleAgent.
+    // No longer read-through from SessionMeta.
+    let (display_title, title_source) = match (
+        agent.workspace_title.as_deref(),
+        agent.workspace_title_source.as_deref(),
+    ) {
+        (Some(title), Some(source)) if !title.is_empty() => {
+            (title.to_string(), source.to_string())
+        }
+        _ => (
             project_agent
                 .map(|project_agent| project_agent.name.clone())
                 .unwrap_or_else(|| format!("AgentRun {}", agent.id)),
@@ -688,13 +695,6 @@ fn empty_vfs() -> Vfs {
         source_story_id: None,
         links: Vec::new(),
     }
-}
-
-fn serialized_string<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[cfg(test)]

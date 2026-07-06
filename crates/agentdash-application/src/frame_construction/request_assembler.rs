@@ -412,6 +412,7 @@ impl<'a> FrameRequestAssembler<'a> {
 }
 
 /// lifecycle_node 的 frame builder 路径（free-standing 版本）。
+#[allow(clippy::too_many_arguments)]
 pub async fn compose_lifecycle_node_to_frame_with_audit(
     frame_builder: crate::agent_run::frame::AgentFrameBuilder,
     repos: &RepositorySet,
@@ -420,6 +421,8 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
+    audit_run_id: Option<&str>,
+    audit_agent_id: Option<&str>,
 ) -> Result<
     (
         crate::agent_run::frame::AgentFrameBuilder,
@@ -434,11 +437,14 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
         spec,
         audit_bus,
         audit_session_key,
+        audit_run_id,
+        audit_agent_id,
     )
     .await?;
     Ok(project_frame_assembly_to_frame(frame_builder, prepared))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn compose_lifecycle_node_with_audit(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
@@ -446,6 +452,8 @@ async fn compose_lifecycle_node_with_audit(
     spec: LifecycleNodeSpec<'_>,
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
+    audit_run_id: Option<&str>,
+    audit_agent_id: Option<&str>,
 ) -> Result<FrameAssemblyBuilder, String> {
     let owner_ctx = CapabilityScopeCtx::Project {
         project_id: spec.run.project_id,
@@ -566,11 +574,14 @@ async fn compose_lifecycle_node_with_audit(
             Contribution::fragments_only(lifecycle_plan.fragments),
         ],
     );
-    if let (Some(bus), Some(session_key)) = (audit_bus.as_ref(), audit_session_key) {
+    if let (Some(bus), Some(run_id), Some(agent_id)) =
+        (audit_bus.as_ref(), audit_run_id, audit_agent_id)
+    {
         emit_bundle_fragments(
             bus.as_ref(),
             &context_bundle,
-            session_key,
+            run_id,
+            agent_id,
             AuditTrigger::ComposerRebuild,
         );
     }

@@ -102,22 +102,6 @@ impl SessionCoreService {
         Ok(map)
     }
 
-    pub(in crate::session) async fn update_session_meta<F>(
-        &self,
-        session_id: &str,
-        updater: F,
-    ) -> SessionStoreResult<Option<SessionMeta>>
-    where
-        F: FnOnce(&mut SessionMeta),
-    {
-        let Some(mut meta) = self.stores.meta.get_session_meta(session_id).await? else {
-            return Ok(None);
-        };
-        updater(&mut meta);
-        meta.updated_at = chrono::Utc::now().timestamp_millis();
-        self.stores.meta.save_session_meta(&meta).await?;
-        Ok(Some(meta))
-    }
 
     pub async fn delete_session(&self, session_id: &str) -> SessionStoreResult<()> {
         self.runtime_registry.remove(session_id).await;

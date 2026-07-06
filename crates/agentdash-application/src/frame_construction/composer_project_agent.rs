@@ -128,6 +128,8 @@ pub(super) async fn compose(
                 active_workflow,
                 launch_path,
                 audit_session_key: Some(input.session_id.clone()),
+                audit_run_id: Some(run.id.to_string()),
+                audit_agent_id: Some(agent.id.to_string()),
                 caller_agent_id: Some(project_agent.id),
             },
         )

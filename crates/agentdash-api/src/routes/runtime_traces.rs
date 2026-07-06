@@ -232,10 +232,10 @@ fn scope_set_to_tags(scope: agentdash_spi::FragmentScopeSet) -> Vec<String> {
 
 pub(crate) async fn load_runtime_trace_context_audit(
     state: &AppState,
-    session_id: &str,
+    run_id: &str,
+    agent_id: &str,
     query: ContextAuditQuery,
 ) -> Result<Vec<ContextAuditEventDto>, ApiError> {
-    ensure_runtime_trace_exists(state, session_id).await?;
     let scope = match query.scope.as_deref() {
         Some(raw) => match parse_scope_tag(raw) {
             Some(s) => Some(s),
@@ -251,7 +251,7 @@ pub(crate) async fn load_runtime_trace_context_audit(
         source_prefix: query.source_prefix.clone(),
     };
 
-    let events = state.services.audit_bus.query(session_id, &filter);
+    let events = state.services.audit_bus.query(run_id, agent_id, &filter);
     let dtos: Vec<ContextAuditEventDto> = events
         .into_iter()
         .map(|event| {
@@ -270,7 +270,8 @@ pub(crate) async fn load_runtime_trace_context_audit(
             ContextAuditEventDto {
                 event_id: event.event_id,
                 bundle_id: event.bundle_id,
-                session_id: event.session_id,
+                run_id: event.run_id,
+                agent_id: event.agent_id,
                 bundle_session_uuid: event.bundle_session_uuid,
                 at_ms: event.at_ms,
                 trigger: event.trigger.as_tag(),

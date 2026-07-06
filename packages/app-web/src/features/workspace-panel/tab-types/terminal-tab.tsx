@@ -185,11 +185,7 @@ function TerminalView({ terminalId: initialTerminalId, tabId }: TerminalViewProp
   // ---------- 终端状态同步 ----------
   const terminalState = useTerminalStore((s) => {
     if (activeId === "new") return null;
-    for (const sessionMap of s.terminals.values()) {
-      const t = sessionMap.get(activeId);
-      if (t) return t;
-    }
-    return null;
+    return s.terminals.get(activeId) ?? null;
   });
   const terminalCapability: TerminalCapability = terminalState?.capability ?? (
     activeId === "new" ? "interactive" : "state_only"
@@ -265,9 +261,7 @@ function TerminalView({ terminalId: initialTerminalId, tabId }: TerminalViewProp
   );
 }
 
-type AgentRunTerminalSpawnResult = TerminalSpawnResult & {
-  runtime_session_id: string;
-};
+type AgentRunTerminalSpawnResult = TerminalSpawnResult;
 
 async function spawnTerminal(
   agentRunTarget: AgentRunRuntimeTarget,
@@ -304,7 +298,8 @@ async function spawnTerminal(
 
     useTerminalStore.getState().registerTerminal({
       id: realId,
-      sessionId: data.runtime_session_id,
+      runId: agentRunTarget.runId,
+      agentId: agentRunTarget.agentId,
       capability: "interactive",
       cwd: ".",
       state: "running",
@@ -371,7 +366,6 @@ function mapTerminalSpawnResult(raw: Record<string, unknown>): AgentRunTerminalS
   const processId = raw.process_id;
   return {
     terminal_id: requireStringField(raw, "terminal_id"),
-    runtime_session_id: requireStringField(raw, "runtime_session_id"),
     process_id: typeof processId === "number" && Number.isFinite(processId) ? processId : undefined,
   };
 }

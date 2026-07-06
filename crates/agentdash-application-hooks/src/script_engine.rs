@@ -126,7 +126,8 @@ impl HookScriptEngine {
             "tool_call_id": ctx.query.tool_call_id,
             "subagent_type": ctx.query.subagent_type,
             "turn_id": ctx.query.turn_id(),
-            "session_id": ctx.query.runtime_session_id(),
+            "run_id": ctx.query.target.as_ref().map(|t| t.run_id.to_string()),
+            "agent_id": ctx.query.target.as_ref().map(|t| t.agent_id.to_string()),
             "hook_target": ctx.query.target.as_ref(),
             "provenance": ctx.query.provenance,
             "payload": ctx.query.payload,
@@ -401,7 +402,14 @@ mod tests {
             ctx_value["hook_target"]["frame_id"],
             "33333333-3333-3333-3333-333333333333"
         );
-        assert_eq!(ctx_value["session_id"], "sess-frame");
+        assert_eq!(
+            ctx_value["run_id"],
+            "11111111-1111-1111-1111-111111111111"
+        );
+        assert_eq!(
+            ctx_value["agent_id"],
+            "22222222-2222-2222-2222-222222222222"
+        );
         assert_eq!(ctx_value["turn_id"], "turn-frame");
         assert_eq!(ctx_value["provenance"]["source"], "frame_evaluation_test");
     }

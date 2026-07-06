@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentdash_agent_types::AgentToolError;
-use agentdash_application_runtime_session::session::terminal_cache::SessionTerminalCache;
+use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleGateRepository,
@@ -36,7 +36,7 @@ pub struct WaitActivityRepositories {
 #[derive(Clone)]
 pub struct WaitActivityDeps {
     pub repositories: WaitActivityRepositories,
-    pub terminal_cache: Arc<SessionTerminalCache>,
+    pub terminal_registry: Arc<AgentRunTerminalRegistry>,
 }
 
 #[derive(Clone)]
@@ -46,12 +46,12 @@ pub struct WaitActivityService {
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
-    terminal_cache: Arc<SessionTerminalCache>,
+    terminal_registry: Arc<AgentRunTerminalRegistry>,
 }
 
 impl WaitActivityService {
     pub fn new(deps: WaitActivityDeps) -> Self {
-        Self::from_repository_ports(deps.repositories, deps.terminal_cache)
+        Self::from_repository_ports(deps.repositories, deps.terminal_registry)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -61,7 +61,7 @@ impl WaitActivityService {
         execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
         mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
-        terminal_cache: Arc<SessionTerminalCache>,
+        terminal_registry: Arc<AgentRunTerminalRegistry>,
     ) -> Self {
         Self {
             lifecycle_agent_repo,
@@ -69,13 +69,13 @@ impl WaitActivityService {
             execution_anchor_repo,
             lifecycle_gate_repo,
             mailbox_repo,
-            terminal_cache,
+            terminal_registry,
         }
     }
 
     pub fn from_repository_ports(
         repositories: WaitActivityRepositories,
-        terminal_cache: Arc<SessionTerminalCache>,
+        terminal_registry: Arc<AgentRunTerminalRegistry>,
     ) -> Self {
         Self {
             lifecycle_agent_repo: repositories.lifecycle_agent_repo,
@@ -83,7 +83,7 @@ impl WaitActivityService {
             execution_anchor_repo: repositories.execution_anchor_repo,
             lifecycle_gate_repo: repositories.lifecycle_gate_repo,
             mailbox_repo: repositories.mailbox_repo,
-            terminal_cache,
+            terminal_registry,
         }
     }
 
@@ -211,7 +211,7 @@ impl WaitActivityService {
         items: &mut Vec<WaitActivityItem>,
     ) -> Result<(), AgentToolError> {
         if accepts_kind(filters, "exec")
-            && let Some(terminal) = self.terminal_cache.get_terminal(activity_ref)
+            && let Some(terminal) = self.terminal_registry.get_terminal(activity_ref)
         {
             if !terminal_belongs_to_scope(&terminal, scope) {
                 return Ok(());
@@ -261,12 +261,12 @@ impl WaitActivityService {
         if !accepts_kind(filters, "exec") {
             return;
         }
-        let Some(session_id) = scope.delivery_runtime_session_id.as_deref() else {
+        let (Some(run_id), Some(agent_id)) = (scope.run_id, scope.agent_id) else {
             return;
         };
         items.extend(
-            self.terminal_cache
-                .list_terminals(session_id)
+            self.terminal_registry
+                .list_terminals(&run_id.to_string(), &agent_id.to_string())
                 .into_iter()
                 .map(|terminal| exec_item_from_terminal(&terminal)),
         );

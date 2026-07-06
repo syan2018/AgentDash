@@ -24,7 +24,9 @@ mod runtime_session_boundary;
 pub mod runtime_surface;
 mod runtime_surface_update;
 mod runtime_target;
+pub mod terminal_registry;
 pub mod workspace;
+pub mod workspace_title;
 
 pub use admission::AgentRunAdmissionService;
 pub use cancel_command::{
@@ -171,3 +173,5 @@ pub use runtime_surface_update::{
     AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
 };
 pub use runtime_target::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};
+pub use terminal_registry::{AgentRunKey, AgentRunTerminalRegistry, TerminalState};
+pub use workspace_title::AgentRunWorkspaceTitleAdapter;

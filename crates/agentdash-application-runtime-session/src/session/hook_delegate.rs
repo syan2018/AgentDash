@@ -147,19 +147,30 @@ impl HookRuntimeDelegate {
         trigger: HookTrigger,
         injections: &[HookInjection],
     ) {
+        let target = self.hook_runtime.control_target();
+        let run_id = target.run_id.to_string();
+        let agent_id = target.agent_id.to_string();
         if let Some(sink) = self.injection_sink.as_ref() {
             sink.emit_injections(
+                &run_id,
+                &agent_id,
                 self.hook_runtime.session_id(),
                 RuntimeInjectionSource::Hook(trigger),
                 injections,
             )
             .await;
         } else {
-            self.emit_hook_injection_fragments(trigger, injections);
+            self.emit_hook_injection_fragments(&run_id, &agent_id, trigger, injections);
         }
     }
 
-    fn emit_hook_injection_fragments(&self, trigger: HookTrigger, injections: &[HookInjection]) {
+    fn emit_hook_injection_fragments(
+        &self,
+        run_id: &str,
+        agent_id: &str,
+        trigger: HookTrigger,
+        injections: &[HookInjection],
+    ) {
         let Some(bus) = self.audit_bus.as_ref() else {
             return;
         };
@@ -175,7 +186,8 @@ impl HookRuntimeDelegate {
             emit_fragment(
                 bus.as_ref(),
                 bundle_id,
-                self.hook_runtime.session_id(),
+                run_id,
+                agent_id,
                 bundle_session_uuid,
                 AuditTrigger::HookInjection {
                     trigger: trigger_label.clone(),
@@ -1345,6 +1357,8 @@ mod tests {
     impl RuntimeHookInjectionSink for RecordingInjectionSink {
         async fn emit_injections(
             &self,
+            _run_id: &str,
+            _agent_id: &str,
             session_id: &str,
             source: RuntimeInjectionSource,
             injections: &[HookInjection],
@@ -2239,6 +2253,7 @@ mod tests {
                 ..AgentFrameHookSnapshot::default()
             },
         ));
+        let target = hook_runtime.control_target();
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(100));
         let delegate = HookRuntimeDelegate::new_with_mount_root_and_audit(
             hook_runtime,
@@ -2261,7 +2276,11 @@ mod tests {
             .await
             .expect("transform_context should succeed");
 
-        let events = audit_bus.query("sess-hook", &AuditFilter::default());
+        let events = audit_bus.query(
+            &target.run_id.to_string(),
+            &target.agent_id.to_string(),
+            &AuditFilter::default(),
+        );
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].trigger.as_tag(), "hook:UserPromptSubmit");
         assert_eq!(events[0].fragment.slot, "workflow");

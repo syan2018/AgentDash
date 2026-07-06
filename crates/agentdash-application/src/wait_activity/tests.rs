@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
-use agentdash_application_runtime_session::session::terminal_cache::SessionTerminalCache;
+use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxMessage, AgentRunMailboxRepository, ConsumptionBarrier, MailboxDelivery,
@@ -24,9 +24,10 @@ use super::*;
 
 #[tokio::test]
 async fn wait_timeout_keeps_running_exec_activity_alive() {
-    let terminal_cache = SessionTerminalCache::new();
-    terminal_cache.register_terminal_with_metadata(
-        "runtime-1",
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    terminal_registry.register_terminal_with_metadata(
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
         "term-1",
         "backend-1",
         None,
@@ -34,9 +35,9 @@ async fn wait_timeout_keeps_running_exec_activity_alive() {
         Some("D:/repo"),
         Some("interactive"),
     );
-    terminal_cache.update_state("term-1", "running", None);
+    terminal_registry.update_state("term-1", "running", None);
 
-    let service = test_service(terminal_cache.clone());
+    let service = test_service(terminal_registry.clone());
     let result = service
         .wait(
             WaitToolContext {
@@ -58,7 +59,7 @@ async fn wait_timeout_keeps_running_exec_activity_alive() {
     assert!(result.timed_out);
     assert_eq!(result.items[0].status, "running");
     assert_eq!(
-        terminal_cache
+        terminal_registry
             .get_terminal("term-1")
             .expect("terminal")
             .state,
@@ -68,9 +69,10 @@ async fn wait_timeout_keeps_running_exec_activity_alive() {
 
 #[tokio::test]
 async fn wait_returns_completed_exec_with_shell_exec_next_ref() {
-    let terminal_cache = SessionTerminalCache::new();
-    terminal_cache.register_terminal_with_metadata(
-        "runtime-1",
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    terminal_registry.register_terminal_with_metadata(
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
         "term-1",
         "backend-1",
         None,
@@ -78,9 +80,9 @@ async fn wait_returns_completed_exec_with_shell_exec_next_ref() {
         Some("D:/repo"),
         Some("interactive"),
     );
-    terminal_cache.update_state("term-1", "exited", Some(0));
+    terminal_registry.update_state("term-1", "exited", Some(0));
 
-    let service = test_service(terminal_cache);
+    let service = test_service(terminal_registry);
     let result = service
         .wait(
             WaitToolContext {
@@ -112,7 +114,7 @@ async fn wait_returns_completed_exec_with_shell_exec_next_ref() {
 
 #[tokio::test]
 async fn wait_returns_resolved_lifecycle_gate_activity() {
-    let terminal_cache = SessionTerminalCache::new();
+    let terminal_registry = AgentRunTerminalRegistry::new();
     let gate_repo = Arc::new(MemoryGateRepo::default());
     let mut gate = LifecycleGate::open(
         Uuid::new_v4(),
@@ -126,7 +128,7 @@ async fn wait_returns_resolved_lifecycle_gate_activity() {
     gate.resolve("test");
     gate_repo.create(&gate).await.expect("create gate");
 
-    let service = test_service_with_gate_repo(terminal_cache, gate_repo);
+    let service = test_service_with_gate_repo(terminal_registry, gate_repo);
     let result = service
         .wait(
             WaitToolContext {
@@ -153,7 +155,7 @@ async fn wait_returns_resolved_lifecycle_gate_activity() {
 
 #[tokio::test]
 async fn scoped_gate_wait_keeps_observed_gate_ref_after_resolution() {
-    let terminal_cache = SessionTerminalCache::new();
+    let terminal_registry = AgentRunTerminalRegistry::new();
     let gate_repo = Arc::new(MemoryGateRepo::default());
     let run_id = Uuid::new_v4();
     let agent_id = Uuid::new_v4();
@@ -169,7 +171,7 @@ async fn scoped_gate_wait_keeps_observed_gate_ref_after_resolution() {
     let gate_id = gate.id;
     gate_repo.create(&gate).await.expect("create gate");
 
-    let service = test_service_with_gate_repo(terminal_cache, gate_repo.clone());
+    let service = test_service_with_gate_repo(terminal_registry, gate_repo.clone());
     let scope = ResolvedWaitScope {
         delivery_runtime_session_id: None,
         run_id: Some(run_id),
@@ -206,7 +208,7 @@ async fn scoped_gate_wait_keeps_observed_gate_ref_after_resolution() {
 
 #[tokio::test]
 async fn explicit_gate_ref_is_filtered_by_run_scope_not_current_agent_only() {
-    let terminal_cache = SessionTerminalCache::new();
+    let terminal_registry = AgentRunTerminalRegistry::new();
     let gate_repo = Arc::new(MemoryGateRepo::default());
     let run_id = Uuid::new_v4();
     let parent_agent_id = Uuid::new_v4();
@@ -236,7 +238,7 @@ async fn explicit_gate_ref_is_filtered_by_run_scope_not_current_agent_only() {
         .await
         .expect("create other run gate");
 
-    let service = test_service_with_gate_repo(terminal_cache, gate_repo);
+    let service = test_service_with_gate_repo(terminal_registry, gate_repo);
     let parent_scope = ResolvedWaitScope {
         delivery_runtime_session_id: None,
         run_id: Some(run_id),
@@ -262,9 +264,10 @@ async fn explicit_gate_ref_is_filtered_by_run_scope_not_current_agent_only() {
 
 #[tokio::test]
 async fn wait_after_cursor_filters_older_items() {
-    let terminal_cache = SessionTerminalCache::new();
-    terminal_cache.register_terminal_with_metadata(
-        "runtime-1",
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    terminal_registry.register_terminal_with_metadata(
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
         "term-1",
         "backend-1",
         None,
@@ -272,12 +275,12 @@ async fn wait_after_cursor_filters_older_items() {
         Some("D:/repo"),
         Some("interactive"),
     );
-    let created_at = terminal_cache
+    let created_at = terminal_registry
         .get_terminal("term-1")
         .expect("terminal")
         .created_at;
 
-    let service = test_service(terminal_cache);
+    let service = test_service(terminal_registry);
     let result = service
         .wait(
             WaitToolContext {
@@ -302,7 +305,7 @@ async fn wait_after_cursor_filters_older_items() {
 
 #[tokio::test]
 async fn runtime_tool_catalog_includes_wait() {
-    let provider = WaitRuntimeToolProvider::from_service(test_service(SessionTerminalCache::new()));
+    let provider = WaitRuntimeToolProvider::from_service(test_service(AgentRunTerminalRegistry::new()));
     let composer =
         crate::runtime_tools::provider::SessionRuntimeToolComposer::new(vec![Arc::new(provider)]);
     let context = ExecutionContext {
@@ -326,12 +329,12 @@ async fn runtime_tool_catalog_includes_wait() {
     assert!(tools.iter().any(|tool| tool.name() == "wait"));
 }
 
-fn test_service(terminal_cache: Arc<SessionTerminalCache>) -> WaitActivityService {
-    test_service_with_gate_repo(terminal_cache, Arc::new(MemoryGateRepo::default()))
+fn test_service(terminal_registry: Arc<AgentRunTerminalRegistry>) -> WaitActivityService {
+    test_service_with_gate_repo(terminal_registry, Arc::new(MemoryGateRepo::default()))
 }
 
 fn test_service_with_gate_repo(
-    terminal_cache: Arc<SessionTerminalCache>,
+    terminal_registry: Arc<AgentRunTerminalRegistry>,
     gate_repo: Arc<dyn LifecycleGateRepository>,
 ) -> WaitActivityService {
     WaitActivityService::from_repositories(
@@ -340,7 +343,7 @@ fn test_service_with_gate_repo(
         Arc::new(NoopExecutionAnchorRepo),
         gate_repo,
         Arc::new(NoopMailboxRepo),
-        terminal_cache,
+        terminal_registry,
     )
 }
 

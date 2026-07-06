@@ -21,7 +21,7 @@ use super::{
 pub(super) async fn compose(
     svc: &FrameConstructionService,
     frame: &AgentFrame,
-    _agent: LifecycleAgent,
+    agent: LifecycleAgent,
     run: LifecycleRun,
     input: &FrameLaunchEnvelopeConstructionInput,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
@@ -112,6 +112,8 @@ pub(super) async fn compose(
         },
         Some(svc.audit_bus.clone()),
         Some(input.session_id.as_str()),
+        Some(&run.id.to_string()),
+        Some(&agent.id.to_string()),
     )
     .await
     .map_err(ConnectorError::InvalidConfig)?;

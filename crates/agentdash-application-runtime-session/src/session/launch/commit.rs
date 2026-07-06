@@ -14,7 +14,7 @@ use crate::session::persistence::SessionRuntimeCommandStore;
 use crate::session::turn_processor::{
     SessionTurnProcessorDeps, TurnTerminalDispatch, process_turn_terminal,
 };
-use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource};
+use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta};
 
 /// Accepted-after-commit boundary: connector accepted 后的 user/start/context/runtime
 /// facts 与 AgentRun accepted 控制面提交均已成功。
@@ -139,10 +139,7 @@ impl TurnCommitter {
         }
 
         let is_first_turn = session_meta.last_event_seq <= 1;
-        if is_first_turn
-            && session_meta.title_source == TitleSource::Auto
-            && !self.deps.eventing.supports_source_session_title()
-        {
+        if is_first_turn && !self.deps.eventing.supports_source_session_title() {
             self.deps
                 .apply_auto_title(session_id, &prepared.resolved_payload.text_prompt)
                 .await;
@@ -295,15 +292,13 @@ fn apply_turn_start_meta(
     now: i64,
     turn_id: &str,
     _is_owner_bootstrap: bool,
-    title_hint: &str,
+    _title_hint: &str,
 ) {
     meta.updated_at = now;
     meta.last_delivery_status = ExecutionStatus::Running;
     meta.last_turn_id = Some(turn_id.to_string());
     meta.last_terminal_message = None;
-    if meta.title.trim().is_empty() {
-        meta.title = title_hint.to_string();
-    }
+    // Title no longer written to SessionMeta — owned by LifecycleAgent workspace.
 }
 
 async fn commit_runtime_commands_applied(

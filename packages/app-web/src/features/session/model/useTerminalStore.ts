@@ -7,8 +7,8 @@ function isTerminalClosed(state: TerminalProcessState): boolean {
   return state === "exited" || state === "killed" || state === "lost";
 }
 
-function projectionKey(sessionId: string, eventSeq: number): string {
-  return `${sessionId}:${eventSeq}`;
+function projectionKey(eventSeq: number): string {
+  return `${eventSeq}`;
 }
 
 function retainOutput(data: string): { output: string; baseOffset: number } {
@@ -23,15 +23,15 @@ function retainOutput(data: string): { output: string; baseOffset: number } {
 }
 
 interface TerminalStoreState {
-  /** session_id → { terminal_id → TerminalInfo } */
-  terminals: Map<string, Map<string, TerminalInfo>>;
-  /** terminal_id → 有界最近输出 buffer */
+  /** terminal_id -> TerminalInfo (flat, terminal_id is globally unique) */
+  terminals: Map<string, TerminalInfo>;
+  /** terminal_id -> bounded output buffer */
   outputBuffers: Map<string, string>;
-  /** terminal_id → 当前 buffer 前方已裁掉的字符数 */
+  /** terminal_id -> characters dropped from the front of the buffer */
   outputBufferBaseOffsets: Map<string, number>;
-  /** terminal_id → replaceOutput revision；xterm replay 用于识别重写型输出 */
+  /** terminal_id -> replaceOutput revision; xterm replay uses this to detect rewrites */
   outputBufferRevisions: Map<string, number>;
-  /** 已投影到 terminal store 的 durable session event key */
+  /** projected durable session event keys */
   projectedEventKeys: Set<string>;
 
   registerTerminal: (info: TerminalInfo) => void;
@@ -39,25 +39,22 @@ interface TerminalStoreState {
     terminalId: string,
     state: TerminalProcessState,
     exitCode?: number,
-    sessionId?: string,
   ) => void;
   appendOutput: (terminalId: string, data: string) => void;
   replaceOutput: (terminalId: string, data: string) => void;
   projectOutputEvent: (
-    sessionId: string,
     eventSeq: number,
     terminalId: string,
     data: string,
   ) => boolean;
   projectStateEvent: (
-    sessionId: string,
     eventSeq: number,
     terminalId: string,
     state: TerminalProcessState,
     exitCode?: number,
   ) => boolean;
   removeTerminal: (terminalId: string) => void;
-  getTerminalsForSession: (sessionId: string) => TerminalInfo[];
+  getTerminalsForAgentRun: (runId: string, agentId: string) => TerminalInfo[];
   getOutput: (terminalId: string) => string;
   getOutputBaseOffset: (terminalId: string) => number;
   getOutputRevision: (terminalId: string) => number;
@@ -73,43 +70,33 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
   registerTerminal: (info) =>
     set((state) => {
       const newTerminals = new Map(state.terminals);
-      const sessionMap = new Map(newTerminals.get(info.sessionId) ?? []);
-      const existing = sessionMap.get(info.id);
-      sessionMap.set(info.id, {
+      const existing = newTerminals.get(info.id);
+      newTerminals.set(info.id, {
         ...existing,
         ...info,
         exitedAt: info.exitedAt ?? (isTerminalClosed(info.state) ? existing?.exitedAt : undefined),
       });
-      newTerminals.set(info.sessionId, sessionMap);
       return { terminals: newTerminals };
     }),
 
-  updateTerminalState: (terminalId, newState, exitCode, sessionId) =>
+  updateTerminalState: (terminalId, newState, exitCode) =>
     set((state) => {
       const newTerminals = new Map(state.terminals);
-      for (const [sid, sessionMap] of newTerminals) {
-        if (sessionMap.has(terminalId)) {
-          const updated = new Map(sessionMap);
-          const existing = updated.get(terminalId);
-          if (!existing) break;
-          updated.set(terminalId, {
-            ...existing,
-            state: newState,
-            exitCode,
-            exitedAt:
-              isTerminalClosed(newState)
-                ? Date.now()
-                : existing.exitedAt,
-          });
-          newTerminals.set(sid, updated);
-          return { terminals: newTerminals };
-        }
-      }
-      if (sessionId) {
-        const sessionMap = new Map(newTerminals.get(sessionId) ?? []);
-        sessionMap.set(terminalId, {
+      const existing = newTerminals.get(terminalId);
+      if (existing) {
+        newTerminals.set(terminalId, {
+          ...existing,
+          state: newState,
+          exitCode,
+          exitedAt:
+            isTerminalClosed(newState)
+              ? Date.now()
+              : existing.exitedAt,
+        });
+      } else {
+        // Create state-only projection for unknown terminals
+        newTerminals.set(terminalId, {
           id: terminalId,
-          sessionId,
           capability: "state_only",
           cwd: "",
           state: newState,
@@ -117,7 +104,6 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
           createdAt: Date.now(),
           exitedAt: isTerminalClosed(newState) ? Date.now() : undefined,
         });
-        newTerminals.set(sessionId, sessionMap);
       }
       return { terminals: newTerminals };
     }),
@@ -160,8 +146,8 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
       };
     }),
 
-  projectOutputEvent: (sessionId, eventSeq, terminalId, data) => {
-    const key = projectionKey(sessionId, eventSeq);
+  projectOutputEvent: (eventSeq, terminalId, data) => {
+    const key = projectionKey(eventSeq);
     if (get().projectedEventKeys.has(key)) return false;
     set((state) => ({
       projectedEventKeys: new Set(state.projectedEventKeys).add(key),
@@ -170,27 +156,20 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
     return true;
   },
 
-  projectStateEvent: (sessionId, eventSeq, terminalId, newState, exitCode) => {
-    const key = projectionKey(sessionId, eventSeq);
+  projectStateEvent: (eventSeq, terminalId, newState, exitCode) => {
+    const key = projectionKey(eventSeq);
     if (get().projectedEventKeys.has(key)) return false;
     set((state) => ({
       projectedEventKeys: new Set(state.projectedEventKeys).add(key),
     }));
-    get().updateTerminalState(terminalId, newState, exitCode, sessionId);
+    get().updateTerminalState(terminalId, newState, exitCode);
     return true;
   },
 
   removeTerminal: (terminalId) =>
     set((state) => {
       const newTerminals = new Map(state.terminals);
-      for (const [sid, sessionMap] of newTerminals) {
-        if (sessionMap.has(terminalId)) {
-          const updated = new Map(sessionMap);
-          updated.delete(terminalId);
-          newTerminals.set(sid, updated);
-          break;
-        }
-      }
+      newTerminals.delete(terminalId);
       const newBuffers = new Map(state.outputBuffers);
       newBuffers.delete(terminalId);
       const newBaseOffsets = new Map(state.outputBufferBaseOffsets);
@@ -205,9 +184,11 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
       };
     }),
 
-  getTerminalsForSession: (sessionId) => {
-    const sessionMap = get().terminals.get(sessionId);
-    return sessionMap ? Array.from(sessionMap.values()) : [];
+  getTerminalsForAgentRun: (runId, agentId) => {
+    const terminals = get().terminals;
+    return Array.from(terminals.values()).filter(
+      (t) => t.runId === runId && t.agentId === agentId,
+    );
   },
 
   getOutput: (terminalId) => {

@@ -36,6 +36,10 @@ pub struct ShellTerminalRegistration {
     pub backend_id: String,
     pub cwd: String,
     pub capability: String,
+    /// AgentRun scope identity — provided when the tool executes within an AgentRun context.
+    pub run_id: Option<String>,
+    /// AgentRun scope identity — provided when the tool executes within an AgentRun context.
+    pub agent_id: Option<String>,
 }
 
 pub trait ShellTerminalRegistry: Send + Sync {
@@ -514,6 +518,8 @@ impl AgentTool for ShellExecTool {
                 } else {
                     "read_only_output".to_string()
                 },
+                run_id: None,
+                agent_id: None,
             });
         }
 

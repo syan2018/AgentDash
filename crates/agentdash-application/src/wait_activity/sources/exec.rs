@@ -1,4 +1,4 @@
-use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
+use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use serde_json::json;
 
 use crate::wait_activity::types::{ResolvedWaitScope, WaitActivityItem};
@@ -7,10 +7,13 @@ pub(crate) fn terminal_belongs_to_scope(
     terminal: &TerminalState,
     scope: &ResolvedWaitScope,
 ) -> bool {
-    scope
-        .delivery_runtime_session_id
-        .as_deref()
-        .is_none_or(|session_id| terminal.session_id == session_id)
+    // Scope check: if scope has run_id/agent_id, terminal must match
+    match (scope.run_id, scope.agent_id) {
+        (Some(run_id), Some(agent_id)) => {
+            terminal.run_id == run_id.to_string() && terminal.agent_id == agent_id.to_string()
+        }
+        _ => true,
+    }
 }
 
 pub(crate) fn exec_item_from_terminal(terminal: &TerminalState) -> WaitActivityItem {

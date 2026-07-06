@@ -91,6 +91,12 @@ pub struct LifecycleAgent {
     /// "pending" = 等待首次 bootstrap；"bootstrapped" = 已完成；"not_applicable" = 不需要。
     #[serde(default = "default_bootstrap_status")]
     pub bootstrap_status: String,
+    /// Workspace-level title — survives runtime session changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_title: Option<String>,
+    /// Workspace-level title source (auto / source / user).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_title_source: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -122,6 +128,8 @@ impl LifecycleAgent {
             project_agent_id: None,
             status: "active".to_string(),
             bootstrap_status: bootstrap_status::PENDING.to_string(),
+            workspace_title: None,
+            workspace_title_source: None,
             created_at: now,
             updated_at: now,
         }
@@ -144,6 +152,29 @@ impl LifecycleAgent {
 
     pub fn needs_bootstrap(&self) -> bool {
         self.bootstrap_status == bootstrap_status::PENDING
+    }
+
+    /// Update workspace title if the new source has equal or higher priority.
+    /// Priority: user > source > auto.
+    pub fn update_workspace_title(&mut self, title: String, title_source: &str) -> bool {
+        let current_priority = title_source_priority(self.workspace_title_source.as_deref());
+        let new_priority = title_source_priority(Some(title_source));
+        if new_priority < current_priority {
+            return false;
+        }
+        self.workspace_title = Some(title);
+        self.workspace_title_source = Some(title_source.to_string());
+        self.updated_at = Utc::now();
+        true
+    }
+}
+
+fn title_source_priority(source: Option<&str>) -> u8 {
+    match source {
+        Some("user") => 2,
+        Some("source") => 1,
+        Some("auto") | None => 0,
+        _ => 0,
     }
 }
 

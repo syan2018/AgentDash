@@ -72,7 +72,6 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
     const store = useTerminalStore.getState();
     store.registerTerminal({
       id: replayTerminalId,
-      sessionId,
       capability: "read_only_output",
       cwd: item.cwd ?? "",
       state: isRunning ? "running" : "exited",

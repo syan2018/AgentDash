@@ -45,6 +45,7 @@ impl SessionRuntimeInner {
             self.runtime_registry.clone(),
             self.connector.clone(),
         )
+        .with_workspace_title_port(self.workspace_title_port.clone())
     }
 
     pub fn runtime_service(&self) -> super::super::runtime_control::SessionRuntimeService {
@@ -83,8 +84,8 @@ impl SessionRuntimeInner {
 
     pub fn title_service(&self) -> super::super::title_service::SessionTitleService {
         super::super::title_service::SessionTitleService::new(
-            self.core_service(),
             self.eventing_service(),
+            self.workspace_title_port.clone(),
         )
     }
 
@@ -132,6 +133,7 @@ impl SessionRuntimeInner {
             hook_target_port: None,
             mailbox_runtime_port: Arc::new(tokio::sync::RwLock::new(None)),
             lifecycle_gate_repo: None,
+            workspace_title_port: None,
         }
     }
 
@@ -243,6 +245,14 @@ impl SessionRuntimeInner {
 
     pub fn with_hook_target_port(mut self, port: Arc<dyn RuntimeSessionHookTargetPort>) -> Self {
         self.hook_target_port = Some(port);
+        self
+    }
+
+    pub fn with_workspace_title_port(
+        mut self,
+        port: Arc<dyn agentdash_application_ports::workspace_title::WorkspaceTitlePort>,
+    ) -> Self {
+        self.workspace_title_port = Some(port);
         self
     }
 

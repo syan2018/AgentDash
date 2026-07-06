@@ -104,9 +104,9 @@ pub struct ServiceSet {
     pub backend_runtime_events: broadcast::Sender<String>,
     /// 串行 Shell 流式输出路由 — ShellExecTool 注册，ws_handler 投递
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
-    /// 交互式终端运行时状态缓存
-    pub terminal_cache:
-        Arc<agentdash_application_runtime_session::session::terminal_cache::SessionTerminalCache>,
+    /// AgentRun scope 终端运行时状态注册表
+    pub terminal_registry:
+        Arc<agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry>,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）
@@ -213,7 +213,7 @@ impl AppState {
         let mcp_probe_relay = relay_bootstrap.mcp_probe_relay;
         let setup_action_transport = relay_bootstrap.setup_action_transport;
         let shell_output_registry = relay_bootstrap.shell_output_registry;
-        let terminal_cache = relay_bootstrap.terminal_cache;
+        let terminal_registry = relay_bootstrap.terminal_registry;
         let function_runner: Arc<dyn agentdash_spi::FunctionRunner> =
             Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new());
 
@@ -243,7 +243,7 @@ impl AppState {
                 vfs_service: vfs_service.clone(),
                 vfs_materialization_service,
                 shell_output_registry: shell_output_registry.clone(),
-                terminal_cache: terminal_cache.clone(),
+                terminal_registry: terminal_registry.clone(),
                 mcp_tool_discovery: mcp_tool_discovery.clone(),
                 function_runner: function_runner.clone(),
                 platform_config: platform_config.clone(),
@@ -438,7 +438,7 @@ impl AppState {
                 backend_registry,
                 backend_runtime_events,
                 shell_output_registry,
-                terminal_cache,
+                terminal_registry,
                 vfs_registry,
                 mount_provider_registry,
                 hook_provider,

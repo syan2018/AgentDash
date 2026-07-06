@@ -20,7 +20,6 @@ export function dispatchSessionPlatformEvent(event: SessionEventEnvelope, onErro
     useTerminalStore
       .getState()
       .projectOutputEvent(
-        event.session_id,
         event.event_seq,
         platform.data.terminal_id,
         platform.data.data,
@@ -36,7 +35,6 @@ export function dispatchSessionPlatformEvent(event: SessionEventEnvelope, onErro
     useTerminalStore
       .getState()
       .projectStateEvent(
-        event.session_id,
         event.event_seq,
         platform.data.terminal_id,
         platform.data.state,

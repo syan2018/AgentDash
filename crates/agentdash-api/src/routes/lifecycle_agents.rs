@@ -23,7 +23,7 @@ use agentdash_application_agentrun::agent_run::{
     DeliveryRuntimeSelectionService,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
-use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
+use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
     AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
@@ -1091,13 +1091,13 @@ async fn list_agent_run_runtime_terminals(
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
 ) -> Result<Json<Vec<TerminalState>>, ApiError> {
-    let (runtime_session_id, _) =
+    let _ =
         resolve_agent_run_terminal_launch_target(&state, &current_user, &run_id, &agent_id).await?;
     Ok(Json(
         state
             .services
-            .terminal_cache
-            .list_terminals(&runtime_session_id),
+            .terminal_registry
+            .list_terminals(&run_id, &agent_id),
     ))
 }
 
@@ -1109,8 +1109,15 @@ async fn spawn_agent_run_runtime_terminal(
 ) -> Result<impl IntoResponse, ApiError> {
     let (runtime_session_id, launch_target) =
         resolve_agent_run_terminal_launch_target(&state, &current_user, &run_id, &agent_id).await?;
-    terminals::spawn_terminal_for_runtime_session(&state, &runtime_session_id, launch_target, body)
-        .await
+    terminals::spawn_terminal_for_runtime_session(
+        &state,
+        &runtime_session_id,
+        &run_id,
+        &agent_id,
+        launch_target,
+        body,
+    )
+    .await
 }
 
 async fn resolve_agent_run_terminal_launch_target(
@@ -1128,6 +1135,12 @@ async fn resolve_agent_run_terminal_launch_target(
     )
     .await?;
     let runtime_session_id = delivery_runtime_session_from_agent_run_context(&context)?;
+    // Ensure terminal registry knows this session -> AgentRun binding
+    state.services.terminal_registry.bind_session(
+        &runtime_session_id,
+        run_id,
+        agent_id,
+    );
     let launch_target =
         resolve_terminal_launch_target_for_runtime_session(state, &runtime_session_id).await?;
     if launch_target.project_id != context.run.project_id {
@@ -1158,12 +1171,14 @@ async fn get_agent_run_runtime_context_audit(
     Path((run_id, agent_id)): Path<(String, String)>,
     Query(query): Query<ContextAuditQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let runtime_session_id =
+    // Validate the AgentRun exists and user has access
+    let _runtime_session_id =
         resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
     Ok(Json(
         runtime_traces::load_runtime_trace_context_audit(
             state.as_ref(),
-            &runtime_session_id,
+            &run_id,
+            &agent_id,
             query,
         )
         .await?,
@@ -1194,6 +1209,14 @@ async fn agent_run_journal_stream_ndjson(
     headers: HeaderMap,
     query: AgentRunJournalStreamQuery,
 ) -> Result<Response, ApiError> {
+    // Ensure terminal registry knows this session -> AgentRun binding
+    if let Some(ref session_id) = context.delivery_runtime_session_id {
+        state.services.terminal_registry.bind_session(
+            session_id,
+            &context.run.id.to_string(),
+            &context.agent.id.to_string(),
+        );
+    }
     let resume_from = parse_agent_run_journal_resume_from_header(&headers)?
         .or(query.since_id)
         .unwrap_or(0);
@@ -1624,9 +1647,8 @@ fn append_exec_terminal_waiting_items(
     snapshot: &mut app_workspace::AgentRunWorkspaceSnapshot,
     state: &AppState,
 ) {
-    let Some(runtime_session_id) = snapshot.delivery_runtime_session_id.as_deref() else {
-        return;
-    };
+    let run_id = snapshot.run.id.to_string();
+    let agent_id = snapshot.agent.id.to_string();
     let existing_exec_refs = snapshot
         .conversation
         .mailbox
@@ -1642,8 +1664,8 @@ fn append_exec_terminal_waiting_items(
 
     let terminal_items = state
         .services
-        .terminal_cache
-        .list_terminals(runtime_session_id)
+        .terminal_registry
+        .list_terminals(&run_id, &agent_id)
         .into_iter()
         .filter(|terminal| exec_terminal_is_waiting(&terminal.state))
         .filter(|terminal| !existing_exec_refs.contains(&terminal.terminal_id))
@@ -1660,7 +1682,7 @@ fn exec_terminal_is_waiting(state: &str) -> bool {
 }
 
 fn exec_terminal_waiting_item(
-    terminal: agentdash_application_runtime_session::session::terminal_cache::TerminalState,
+    terminal: agentdash_application_agentrun::agent_run::terminal_registry::TerminalState,
 ) -> app_agent_run::ConversationWaitingItemModel {
     app_agent_run::ConversationWaitingItemModel {
         wait_id: terminal.terminal_id.clone(),
@@ -2668,9 +2690,10 @@ mod tests {
     #[test]
     fn exec_terminal_waiting_item_uses_terminal_id_as_exec_ref() {
         let terminal =
-            agentdash_application_runtime_session::session::terminal_cache::TerminalState {
+            agentdash_application_agentrun::agent_run::terminal_registry::TerminalState {
                 terminal_id: "term-1".to_string(),
-                session_id: "runtime-1".to_string(),
+                run_id: "run-1".to_string(),
+                agent_id: "agent-1".to_string(),
                 backend_id: "backend-1".to_string(),
                 mount_id: Some("main".to_string()),
                 cwd: Some("D:/repo".to_string()),

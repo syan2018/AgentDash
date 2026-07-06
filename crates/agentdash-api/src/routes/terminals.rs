@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
 use agentdash_application_agentrun::agent_run::AgentRunTerminalLaunchTarget;
-use agentdash_application_runtime_session::session::terminal_cache::TerminalState;
+use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_relay::*;
 
 use crate::auth::{CurrentUser, ProjectPermission};
@@ -29,6 +29,8 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
 pub(crate) async fn spawn_terminal_for_runtime_session(
     state: &Arc<AppState>,
     session_id: &str,
+    run_id: &str,
+    agent_id: &str,
     target: AgentRunTerminalLaunchTarget,
     body: SpawnTerminalBody,
 ) -> Result<Response, ApiError> {
@@ -55,9 +57,10 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
         rows: body.rows.unwrap_or(24),
     };
 
-    // 预注册到 cache，避免 event_tx 事件到达时 cache 尚未就绪的 race condition
-    state.services.terminal_cache.register_terminal(
-        session_id,
+    // 预注册到 registry，避免 event_tx 事件到达时 registry 尚未就绪的 race condition
+    state.services.terminal_registry.register_terminal(
+        run_id,
+        agent_id,
         &terminal_id,
         &target.backend_id,
         None,
@@ -82,7 +85,7 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
             if resp.process_id.is_some() {
                 state
                     .services
-                    .terminal_cache
+                    .terminal_registry
                     .update_process_id(&resp.terminal_id, resp.process_id);
             }
             Ok(Json(serde_json::json!({
@@ -95,7 +98,7 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
         Ok(RelayMessage::ResponseTerminalSpawn {
             error: Some(err), ..
         }) => {
-            state.services.terminal_cache.remove_terminal(&terminal_id);
+            state.services.terminal_registry.remove_terminal(&terminal_id);
             Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": err.message })),
@@ -103,7 +106,7 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
                 .into_response())
         }
         _ => {
-            state.services.terminal_cache.remove_terminal(&terminal_id);
+            state.services.terminal_registry.remove_terminal(&terminal_id);
             Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": "unexpected response" })),
@@ -218,16 +221,23 @@ async fn load_terminal_for_user(
 ) -> Result<TerminalState, ApiError> {
     let term_state = state
         .services
-        .terminal_cache
+        .terminal_registry
         .get_terminal(terminal_id)
         .ok_or_else(|| ApiError::NotFound("terminal not found".to_string()))?;
-    ensure_runtime_trace_permission(
-        state.as_ref(),
-        current_user,
-        &term_state.session_id,
-        ProjectPermission::Use,
-    )
-    .await?;
+    // Permission check: resolve active session from AgentRun scope
+    if let Some(session_id) = state
+        .services
+        .terminal_registry
+        .resolve_active_session(&term_state.run_id, &term_state.agent_id)
+    {
+        ensure_runtime_trace_permission(
+            state.as_ref(),
+            current_user,
+            &session_id,
+            ProjectPermission::Use,
+        )
+        .await?;
+    }
     Ok(term_state)
 }
 

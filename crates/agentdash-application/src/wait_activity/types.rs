@@ -21,6 +21,7 @@ pub struct WaitToolContext {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedWaitScope {
+    #[allow(dead_code)]
     pub(crate) delivery_runtime_session_id: Option<String>,
     pub(crate) run_id: Option<Uuid>,
     pub(crate) agent_id: Option<Uuid>,

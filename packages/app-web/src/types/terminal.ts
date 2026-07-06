@@ -1,7 +1,7 @@
 /**
- * 终端实例类型定义
+ * Terminal instance type definitions.
  *
- * 对应后端 SessionTerminalCache 中的运行时终端状态。
+ * Corresponds to the runtime terminal state in AgentRunTerminalRegistry.
  */
 
 export type TerminalProcessState =
@@ -18,7 +18,10 @@ export type TerminalCapability =
 
 export interface TerminalInfo {
   id: string;
-  sessionId: string;
+  /** AgentRun scope run_id (optional, may not be available for output-replay terminals) */
+  runId?: string;
+  /** AgentRun scope agent_id (optional, may not be available for output-replay terminals) */
+  agentId?: string;
   capability: TerminalCapability;
   backendId?: string;
   mountRootRef?: string;
@@ -27,7 +30,7 @@ export interface TerminalInfo {
   processId?: number;
   state: TerminalProcessState;
   exitCode?: number;
-  /** 关联的工具调用 item ID（串行命令 promote 时设置） */
+  /** Associated tool call item ID (set on serial command promote) */
   linkedItemId?: string;
   createdAt: number;
   exitedAt?: number;

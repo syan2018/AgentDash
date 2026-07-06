@@ -48,7 +48,7 @@ pub(crate) mod runtime_control;
 mod runtime_registry;
 pub(crate) mod runtime_services;
 pub mod stall_detector;
-pub mod terminal_cache;
+// terminal_cache removed: replaced by AgentRunTerminalRegistry in agentdash-application-agentrun
 pub(crate) mod terminal_effects;
 pub(crate) mod title_generator;
 pub(crate) mod title_service;

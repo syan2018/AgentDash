@@ -3,7 +3,7 @@
   "name": "terminal-agentrun-scope",
   "title": "Terminal 归属模型收束：从 Session 迁移到 AgentRun",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

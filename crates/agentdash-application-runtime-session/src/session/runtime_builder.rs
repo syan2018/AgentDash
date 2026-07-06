@@ -213,6 +213,14 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_workspace_title_port(
+        mut self,
+        port: Arc<dyn agentdash_application_ports::workspace_title::WorkspaceTitlePort>,
+    ) -> Self {
+        self.inner = self.inner.with_workspace_title_port(port);
+        self
+    }
+
     pub async fn set_mailbox_runtime_port(&self, port: Arc<dyn RuntimeSessionMailboxRuntimePort>) {
         self.inner.set_mailbox_runtime_port(port).await;
     }

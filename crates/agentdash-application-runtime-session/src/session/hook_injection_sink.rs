@@ -29,6 +29,8 @@ impl RuntimeInjectionSource {
 pub trait RuntimeHookInjectionSink: Send + Sync {
     async fn emit_injections(
         &self,
+        run_id: &str,
+        agent_id: &str,
         session_id: &str,
         source: RuntimeInjectionSource,
         injections: &[HookInjection],
@@ -56,6 +58,8 @@ impl SessionRuntimeHookInjectionSink {
 impl RuntimeHookInjectionSink for SessionRuntimeHookInjectionSink {
     async fn emit_injections(
         &self,
+        run_id: &str,
+        agent_id: &str,
         session_id: &str,
         source: RuntimeInjectionSource,
         injections: &[HookInjection],
@@ -92,7 +96,8 @@ impl RuntimeHookInjectionSink for SessionRuntimeHookInjectionSink {
             emit_fragment(
                 bus.as_ref(),
                 bundle_id,
-                session_id,
+                run_id,
+                agent_id,
                 bundle_session_uuid,
                 AuditTrigger::HookInjection {
                     trigger: trigger_label.clone(),

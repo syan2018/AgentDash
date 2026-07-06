@@ -26,7 +26,8 @@ export const FRAGMENT_SCOPE_TAGS: FragmentScopeTag[] = [
 export interface ContextAuditEvent {
   event_id: string;
   bundle_id: string;
-  session_id: string;
+  run_id: string;
+  agent_id: string;
   /** Bundle 内部追踪 UUID（可能是占位值）。 */
   bundle_session_uuid: string;
   at_ms: number;

@@ -53,12 +53,22 @@ fn scope_tag(scope: FragmentScope) -> &'static str {
 pub struct ContextAuditEvent {
     pub event_id: Uuid,
     pub bundle_id: Uuid,
-    pub session_id: String,
+    /// AgentRun scope key — run_id.
+    pub run_id: String,
+    /// AgentRun scope key — agent_id.
+    pub agent_id: String,
     pub bundle_session_uuid: Uuid,
     pub at_ms: u64,
     pub trigger: AuditTrigger,
     pub fragment: ContextFragment,
     pub content_hash: u64,
+}
+
+/// Composite key for AgentRun-scoped audit bus indexing.
+#[derive(Clone, Hash, Eq, PartialEq, Debug)]
+pub struct AuditAgentRunKey {
+    pub run_id: String,
+    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,18 +81,18 @@ pub struct AuditFilter {
 
 pub trait ContextAuditBus: Send + Sync {
     fn emit(&self, event: ContextAuditEvent);
-    fn query(&self, session_id: &str, filter: &AuditFilter) -> Vec<ContextAuditEvent>;
+    fn query(&self, run_id: &str, agent_id: &str, filter: &AuditFilter) -> Vec<ContextAuditEvent>;
 }
 
 pub struct InMemoryContextAuditBus {
-    capacity_per_session: usize,
-    store: Arc<RwLock<HashMap<String, VecDeque<ContextAuditEvent>>>>,
+    capacity_per_scope: usize,
+    store: Arc<RwLock<HashMap<AuditAgentRunKey, VecDeque<ContextAuditEvent>>>>,
 }
 
 impl InMemoryContextAuditBus {
-    pub fn new(capacity_per_session: usize) -> Self {
+    pub fn new(capacity_per_scope: usize) -> Self {
         Self {
-            capacity_per_session: capacity_per_session.max(1),
+            capacity_per_scope: capacity_per_scope.max(1),
             store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -107,21 +117,27 @@ impl ContextAuditBus for InMemoryContextAuditBus {
                 poisoned.into_inner()
             }
         };
-        let buf = guard
-            .entry(event.session_id.clone())
-            .or_insert_with(VecDeque::new);
-        if buf.len() >= self.capacity_per_session {
+        let key = AuditAgentRunKey {
+            run_id: event.run_id.clone(),
+            agent_id: event.agent_id.clone(),
+        };
+        let buf = guard.entry(key).or_insert_with(VecDeque::new);
+        if buf.len() >= self.capacity_per_scope {
             buf.pop_front();
         }
         buf.push_back(event);
     }
 
-    fn query(&self, session_id: &str, filter: &AuditFilter) -> Vec<ContextAuditEvent> {
+    fn query(&self, run_id: &str, agent_id: &str, filter: &AuditFilter) -> Vec<ContextAuditEvent> {
         let guard = match self.store.read() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        let Some(buf) = guard.get(session_id) else {
+        let key = AuditAgentRunKey {
+            run_id: run_id.to_string(),
+            agent_id: agent_id.to_string(),
+        };
+        let Some(buf) = guard.get(&key) else {
             return Vec::new();
         };
         buf.iter()
@@ -163,7 +179,8 @@ fn hash_content(content: &str) -> u64 {
 pub fn emit_fragment(
     bus: &dyn ContextAuditBus,
     bundle_id: Uuid,
-    session_key: &str,
+    run_id: &str,
+    agent_id: &str,
     bundle_session_uuid: Uuid,
     trigger: AuditTrigger,
     fragment: &ContextFragment,
@@ -172,7 +189,8 @@ pub fn emit_fragment(
     bus.emit(ContextAuditEvent {
         event_id: Uuid::new_v4(),
         bundle_id,
-        session_id: session_key.to_string(),
+        run_id: run_id.to_string(),
+        agent_id: agent_id.to_string(),
         bundle_session_uuid,
         at_ms: now_millis_u64(),
         trigger,
@@ -186,7 +204,8 @@ pub type SharedContextAuditBus = Arc<dyn ContextAuditBus>;
 pub fn emit_bundle_fragments(
     bus: &dyn ContextAuditBus,
     bundle: &SessionContextBundle,
-    session_key: &str,
+    run_id: &str,
+    agent_id: &str,
     trigger: AuditTrigger,
 ) {
     let at_ms = now_millis_u64();
@@ -195,7 +214,8 @@ pub fn emit_bundle_fragments(
         bus.emit(ContextAuditEvent {
             event_id: Uuid::new_v4(),
             bundle_id: bundle.bundle_id,
-            session_id: session_key.to_string(),
+            run_id: run_id.to_string(),
+            agent_id: agent_id.to_string(),
             bundle_session_uuid: bundle.session_id,
             at_ms,
             trigger: trigger.clone(),
@@ -210,7 +230,7 @@ pub struct NoopContextAuditBus;
 impl ContextAuditBus for NoopContextAuditBus {
     fn emit(&self, _event: ContextAuditEvent) {}
 
-    fn query(&self, _session_id: &str, _filter: &AuditFilter) -> Vec<ContextAuditEvent> {
+    fn query(&self, _run_id: &str, _agent_id: &str, _filter: &AuditFilter) -> Vec<ContextAuditEvent> {
         Vec::new()
     }
 }

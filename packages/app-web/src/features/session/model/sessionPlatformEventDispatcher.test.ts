@@ -59,7 +59,7 @@ describe("dispatchSessionPlatformEvent", () => {
     resetTerminalStore();
   });
 
-  it("把 terminal_output 写入 capped terminal store", () => {
+  it("writes terminal_output to capped terminal store", () => {
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
       kind: "terminal_output",
       data: {
@@ -74,10 +74,9 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(store.getOutputBaseOffset("term-1")).toBe(8);
   });
 
-  it("更新 terminal_state_changed 并校验状态值", () => {
+  it("updates terminal_state_changed and validates state value", () => {
     useTerminalStore.getState().registerTerminal({
       id: "term-1",
-      sessionId: "session-1",
       capability: "interactive",
       cwd: ".",
       state: "running",
@@ -94,15 +93,13 @@ describe("dispatchSessionPlatformEvent", () => {
       },
     }));
 
-    const terminal = useTerminalStore
-      .getState()
-      .getTerminalsForSession("session-1")[0];
+    const terminal = useTerminalStore.getState().terminals.get("term-1");
     expect(handled).toBe(true);
     expect(terminal?.state).toBe("exited");
     expect(terminal?.exitCode).toBe(0);
   });
 
-  it("重复投影同一个 terminal_output event 不重复追加", () => {
+  it("does not duplicate output on repeated terminal_output event projection", () => {
     const event = platformEvent(1, {
       kind: "terminal_output",
       data: {
@@ -117,7 +114,7 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello");
   });
 
-  it("terminal_state_changed 可为未注册 terminal 建立 state-only projection", () => {
+  it("creates state-only projection for unregistered terminal on terminal_state_changed", () => {
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
       kind: "terminal_state_changed",
       data: {
@@ -128,9 +125,7 @@ describe("dispatchSessionPlatformEvent", () => {
       },
     }));
 
-    const terminal = useTerminalStore
-      .getState()
-      .getTerminalsForSession("session-1")[0];
+    const terminal = useTerminalStore.getState().terminals.get("term-1");
     expect(handled).toBe(true);
     expect(terminal?.capability).toBe("state_only");
     expect(terminal?.state).toBe("lost");
@@ -156,14 +151,14 @@ describe("dispatchSessionPlatformEvent", () => {
     }))).toBe(true);
 
     const store = useTerminalStore.getState();
-    const terminal = store.getTerminalsForSession("session-1")[0];
+    const terminal = store.terminals.get("term-running-1");
     expect(store.getOutput("term-running-1")).toBe("ready\n");
     expect(terminal?.id).toBe("term-running-1");
     expect(terminal?.capability).toBe("state_only");
     expect(terminal?.state).toBe("running");
   });
 
-  it("未知 platform event 不消费", () => {
+  it("does not consume unknown platform events", () => {
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
       kind: "mailbox_state_changed",
       data: {

@@ -1,4 +1,3 @@
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -14,7 +13,6 @@ use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{AgentConnector, ConnectorError};
 
 use crate::context::SharedContextAuditBus;
-use crate::session::core::SessionCoreService;
 use crate::session::effects_service::SessionEffectsService;
 use crate::session::eventing::SessionEventingService;
 use crate::session::hooks_service::SessionHookService;
@@ -28,7 +26,6 @@ use crate::session::tool_assembly::{
     AssembledToolSurface, assemble_tool_surface_for_execution_context,
 };
 use crate::session::turn_supervisor::TurnSupervisor;
-use crate::session::types::TitleSource;
 use agentdash_application_ports::backend_transport::RelayPromptTransport;
 
 #[derive(Clone)]
@@ -54,7 +51,6 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) mailbox_runtime_port:
         Arc<tokio::sync::RwLock<Option<Arc<dyn RuntimeSessionMailboxRuntimePort>>>>,
     eventing: SessionEventingService,
-    core: SessionCoreService,
     hooks: SessionHookService,
     runtime_transition: SessionRuntimeTransitionService,
     effects: SessionEffectsService,
@@ -80,7 +76,6 @@ impl SessionLaunchDeps {
             backend_execution_lease_repo: inner.backend_execution_lease_repo.clone(),
             mailbox_runtime_port: inner.mailbox_runtime_port.clone(),
             eventing: inner.eventing_service(),
-            core: inner.core_service(),
             hooks: inner.hook_service(),
             runtime_transition: inner.runtime_transition_service(),
             effects: inner.effects_service(),
@@ -137,7 +132,6 @@ impl SessionLaunchDeps {
         TurnCommitDeps {
             stores: self.stores.clone(),
             eventing: self.eventing.clone(),
-            core: self.core.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
             effects: self.effects.clone(),
             accepted_launch_commit,
@@ -240,7 +234,6 @@ pub(super) struct TurnCommitDeps {
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) effects: SessionEffectsService,
     pub(super) accepted_launch_commit: Arc<dyn AcceptedLaunchCommitPort>,
-    core: SessionCoreService,
 }
 
 impl TurnCommitDeps {
@@ -249,54 +242,35 @@ impl TurnCommitDeps {
             return;
         };
 
+        // Write title to workspace (LifecycleAgent) via eventing service port.
         let updated = self
-            .core
-            .update_session_meta(session_id, |meta| {
-                if meta.title_source != TitleSource::Auto {
-                    return;
-                }
-                meta.title = title;
-                meta.title_source = TitleSource::Auto;
-            })
+            .eventing
+            .update_workspace_title_public(session_id, &title, "auto")
             .await;
-        match updated {
-            Ok(Some(meta)) => {
-                let source = SourceInfo {
-                    connector_id: "agentdash-server".to_string(),
-                    connector_type: "system".to_string(),
-                    executor_id: None,
-                };
-                let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
-                    agentdash_agent_protocol::BackboneEvent::Platform(
-                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
-                            key: "session_meta_updated".to_string(),
-                            value: serde_json::json!({
-                                "title": meta.title,
-                                "title_source": meta.title_source,
-                            }),
-                        },
-                    ),
-                    session_id,
-                    source,
-                );
-                let _ = self
-                    .eventing
-                    .persist_notification(session_id, envelope)
-                    .await;
-            }
-            Ok(None) => {}
-            Err(error) => {
-                let context =
-                    DiagnosticErrorContext::new("session.launch.commit", "apply_auto_title");
-                diag_error!(
-                    Warn,
-                    Subsystem::SessionLaunch,
-                    context = &context,
-                    error = &error,
-                    session_id = %session_id,
-                    "自动标题写入失败"
-                );
-            }
+
+        if updated {
+            let source = SourceInfo {
+                connector_id: "agentdash-server".to_string(),
+                connector_type: "system".to_string(),
+                executor_id: None,
+            };
+            let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                        key: "session_meta_updated".to_string(),
+                        value: serde_json::json!({
+                            "title": title,
+                            "title_source": "auto",
+                        }),
+                    },
+                ),
+                session_id,
+                source,
+            );
+            let _ = self
+                .eventing
+                .persist_notification(session_id, envelope)
+                .await;
         }
     }
 }

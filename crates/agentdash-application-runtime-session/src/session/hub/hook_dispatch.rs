@@ -162,7 +162,10 @@ impl SessionRuntimeInner {
                         self.runtime_registry.clone(),
                         self.current_context_audit_bus().await,
                     );
+                    let target = hook_runtime.control_target();
                     sink.emit_injections(
+                        &target.run_id.to_string(),
+                        &target.agent_id.to_string(),
                         session_id,
                         RuntimeInjectionSource::Hook(*trigger),
                         &trace_injections,
@@ -207,7 +210,10 @@ impl SessionRuntimeInner {
             self.runtime_registry.clone(),
             self.current_context_audit_bus().await,
         );
+        let target = hook_runtime.control_target();
         sink.emit_injections(
+            &target.run_id.to_string(),
+            &target.agent_id.to_string(),
             session_id,
             RuntimeInjectionSource::RuntimeContextUpdate,
             &injections,

@@ -5,6 +5,7 @@ use agentdash_spi::platform::tool_capability::CAP_COLLABORATION;
 use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext, ToolCluster};
 use async_trait::async_trait;
 
+use crate::companion::model_preflight::CompanionModelPreflightPort;
 use crate::companion::tool_context::CompanionToolContext;
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::runtime_tools::provider::SharedSessionToolServicesHandle;
@@ -15,6 +16,7 @@ pub struct CollaborationRuntimeToolProvider {
     repos: crate::repository_set::RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
     wait_service: Option<WaitActivityService>,
+    model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
 }
 
 impl CollaborationRuntimeToolProvider {
@@ -26,11 +28,20 @@ impl CollaborationRuntimeToolProvider {
             repos,
             session_services_handle,
             wait_service: None,
+            model_preflight: None,
         }
     }
 
     pub fn with_wait_service(mut self, wait_service: WaitActivityService) -> Self {
         self.wait_service = Some(wait_service);
+        self
+    }
+
+    pub fn with_model_preflight(
+        mut self,
+        model_preflight: Arc<dyn CompanionModelPreflightPort>,
+    ) -> Self {
+        self.model_preflight = Some(model_preflight);
         self
     }
 }
@@ -69,6 +80,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
                 companion_tool_context.clone(),
                 flow.companion.agents.clone(),
                 wait_service,
+                self.model_preflight.clone(),
             )));
         }
         if flow.is_capability_tool_enabled(

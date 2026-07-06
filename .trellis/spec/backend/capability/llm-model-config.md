@@ -130,6 +130,104 @@ AgentRunWorkspacePage / Agent 入口 → LifecycleAgent message command { prompt
   → AgentLoop → LLM API
 ```
 
+## Scenario: Companion SubAgent Model Preflight
+
+### 1. Scope / Trigger
+
+- Trigger: Companion `target=sub` dispatch 会创建 child AgentRun、mailbox intake 和可选 durable wait obligation。
+- Scope: `CompanionRequestTool`、`CollaborationRuntimeToolProvider`、API session bootstrap、PiAgent provider registry effective profile catalog、LLM Provider credential resolver。
+
+### 2. Signatures
+
+Application preflight port:
+
+```rust
+pub struct CompanionModelPreflightRequest {
+    pub project_id: Uuid,
+    pub parent_run_id: Uuid,
+    pub parent_agent_id: Uuid,
+    pub selected_project_agent_id: Uuid,
+    pub selected_agent_key: String,
+    pub companion_label: String,
+    pub executor_config: AgentConfig,
+    pub identity: Option<AuthIdentity>,
+}
+
+#[async_trait]
+pub trait CompanionModelPreflightPort: Send + Sync {
+    async fn preflight_companion_model(
+        &self,
+        request: CompanionModelPreflightRequest,
+    ) -> Result<(), CompanionModelPreflightError>;
+}
+```
+
+Effective catalog helper:
+
+```rust
+build_effective_profile_catalog_from_db(
+    llm_provider_repo,
+    llm_provider_credential_repo,
+    llm_secret_codec,
+    identity,
+)
+```
+
+### 3. Contracts
+
+- SubAgent dispatch runs model preflight after resolving the selected ProjectAgent and before hook dispatch planning, `LifecycleDispatchService::open_interaction_gate`, `launch_agent`, child mailbox intake, or wait obligation declaration.
+- The preflight fact source is the provider/account effective profile catalog: provider enabled state, credential mode, global/user credential resolution, dynamic model discovery when supported, configured models, default model and blocked models.
+- The preflight request carries the current `AuthIdentity` so `global_or_user` and `user_required` providers resolve with the same account context as runtime execution.
+- API bootstrap owns the concrete preflight adapter because it has both `RepositorySet` and `LlmSecretCodec`; application companion code only consumes `CompanionModelPreflightPort`.
+- `openai_codex` credentials are account-scoped ChatGPT OAuth credentials. When no stable account model discovery exists, preflight validates the effective provider and configured/blocked model contract; runtime provider 400 remains a terminal fact that wait obligation convergence must resolve.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| `provider_id` and `model_id` are both missing | Return visible config error before dispatch side effects. |
+| `provider_id` does not match an effective provider | Return visible provider config error. |
+| Provider is disabled or lacks effective credential for current identity | Return visible provider/account credential error. |
+| Explicit provider is executable but selected/default model is missing | Return visible model config error. |
+| Selected model is blocked | Return visible blocked-model error. |
+| Only `model_id` is supplied and multiple executable providers expose it | Return visible ambiguity error requiring `provider_id`. |
+| Effective provider/model passes preflight | Continue normal companion dispatch. |
+| Runtime provider later returns terminal 400 despite preflight | Runtime terminal convergence remains responsible for resolving any existing wait obligation. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: A parent Agent dispatches a SubAgent whose selected ProjectAgent uses `provider_id=openai` and `model_id=gpt-5`; the effective profile confirms the current account can execute the model, then dispatch opens any required gate.
+- Base: A configured `openai_codex` model passes configured/blocked model preflight because no stable model discovery endpoint exists; execution still carries the ChatGPT account credential and terminal convergence handles runtime-only account limits.
+- Bad: Dispatch creates a durable wait gate before checking provider executable state, because the caller may then observe a long-lived pending wait for a configuration error that was knowable before dispatch.
+
+### 6. Tests Required
+
+- Unit: effective model preflight accepts explicit provider/model.
+- Unit: effective model preflight rejects blocked model.
+- Unit: effective model preflight rejects unavailable provider for the current credential mode/identity.
+- Unit: effective model preflight rejects ambiguous model selection when provider is omitted.
+- Application/API check: companion runtime tool provider compiles with injected preflight port and `CompanionRequestTool` calls it before dispatch.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+companion_request(target=sub)
+  -> open wait gate
+  -> create child AgentRun/mailbox
+  -> runtime discovers provider/model is not executable
+```
+
+#### Correct
+
+```text
+companion_request(target=sub)
+  -> resolve selected ProjectAgent executor_config
+  -> provider/account effective model preflight
+  -> open wait gate / launch child only when executable
+```
+
 ## PiAgent Live Runtime 模型切换
 
 PiAgent 的 `LlmBridge` 在 `Agent::new(bridge, config)` 时绑定具体 provider/model。

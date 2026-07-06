@@ -996,6 +996,146 @@ fn format_model_name(model_id: &str) -> String {
         .join(" ")
 }
 
+pub fn preflight_effective_model_selection(
+    profiles: &[EffectiveLlmProviderProfile],
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+) -> Result<(), String> {
+    if provider_id.is_none() && model_id.is_none() {
+        return Err("缺少模型选择：本次调用需要选定可执行的 provider_id 和 model_id".to_string());
+    }
+
+    if let Some(provider_id) = provider_id {
+        let Some(profile) = profiles
+            .iter()
+            .find(|profile| profile.provider.slug == provider_id)
+        else {
+            return Err(format!("LLM Provider `{provider_id}` 不存在"));
+        };
+        return preflight_effective_profile_model(profile, model_id);
+    }
+
+    let model_id = model_id.expect("model_id is present when provider_id is missing");
+    let mut matches = Vec::new();
+    let mut blocked_providers = Vec::new();
+    for profile in profiles.iter().filter(|profile| profile.executable) {
+        let Some(model) = profile.models.iter().find(|model| model.id == model_id) else {
+            continue;
+        };
+        if model.blocked {
+            blocked_providers.push(profile.provider.slug.clone());
+        } else {
+            matches.push(profile.provider.slug.clone());
+        }
+    }
+
+    if matches.len() == 1 {
+        return Ok(());
+    }
+    if matches.len() > 1 {
+        return Err(format!(
+            "模型 `{model_id}` 同时存在于多个可执行 LLM Provider（{}），请明确指定 provider_id",
+            matches.join(", ")
+        ));
+    }
+    if !blocked_providers.is_empty() {
+        return Err(format!(
+            "模型 `{model_id}` 已被 LLM Provider（{}）屏蔽，不能用于本次调用",
+            blocked_providers.join(", ")
+        ));
+    }
+    Err(format!(
+        "模型 `{model_id}` 不存在于任何当前可执行的 LLM Provider"
+    ))
+}
+
+fn preflight_effective_profile_model(
+    profile: &EffectiveLlmProviderProfile,
+    model_id: Option<&str>,
+) -> Result<(), String> {
+    let provider_id = profile.provider.slug.as_str();
+    if !profile.executable {
+        return Err(describe_provider_unavailable_reason(
+            provider_id,
+            profile.unavailable_reason.as_ref(),
+        ));
+    }
+
+    let requested_model = model_id
+        .or(profile.default_model.as_deref())
+        .or_else(|| {
+            let default_model = profile.provider.default_model.trim();
+            (!default_model.is_empty()).then_some(default_model)
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("LLM Provider `{provider_id}` 没有配置可用于调用的默认模型"))?;
+
+    let Some(model) = profile
+        .models
+        .iter()
+        .find(|model| model.id == requested_model)
+    else {
+        return Err(format!(
+            "LLM Provider `{provider_id}` 不包含模型 `{requested_model}`，请从当前可用模型列表中选择"
+        ));
+    };
+
+    if model.blocked {
+        return Err(format!(
+            "LLM Provider `{provider_id}` 的模型 `{requested_model}` 已被屏蔽，不能用于本次调用"
+        ));
+    }
+
+    Ok(())
+}
+
+pub fn describe_provider_unavailable_reason(
+    provider_id: &str,
+    reason: Option<&ProviderUnavailableReason>,
+) -> String {
+    match reason {
+        Some(ProviderUnavailableReason::MissingCredential {
+            credential_mode,
+            has_identity,
+        }) => match credential_mode {
+            LlmCredentialMode::GlobalOnly => format!(
+                "LLM Provider `{provider_id}` 当前是仅平台全局 Key 模式，但尚未配置可用的平台凭据"
+            ),
+            LlmCredentialMode::GlobalOrUser => format!(
+                "LLM Provider `{provider_id}` 当前是平台全局 Key 或用户 BYOK 模式，但当前没有可用的平台凭据，也没有可用的个人 BYOK 凭据"
+            ),
+            LlmCredentialMode::UserRequired => {
+                if *has_identity {
+                    format!(
+                        "当前身份没有可用的 LLM Provider `{provider_id}` 个人 BYOK 凭据，请在个人 BYOK 设置中补齐"
+                    )
+                } else {
+                    format!(
+                        "LLM Provider `{provider_id}` 当前必须使用用户 BYOK，但本次执行没有用户身份，无法读取个人凭据"
+                    )
+                }
+            }
+        },
+        Some(ProviderUnavailableReason::Disabled) => {
+            format!("LLM Provider `{provider_id}` 已禁用，不能用于本次调用")
+        }
+        Some(ProviderUnavailableReason::CredentialResolutionFailed(error)) => {
+            format!("LLM Provider `{provider_id}` 凭据解析失败: {error}")
+        }
+        Some(ProviderUnavailableReason::InvalidWireApi(error)) => {
+            format!("LLM Provider `{provider_id}` wire_api 配置错误: {error}")
+        }
+        Some(ProviderUnavailableReason::InvalidModels) => {
+            format!("LLM Provider `{provider_id}` models 配置无法解析")
+        }
+        Some(ProviderUnavailableReason::InvalidBlockedModels) => {
+            format!("LLM Provider `{provider_id}` blocked_models 配置无法解析")
+        }
+        None => format!("LLM Provider `{provider_id}` 当前不可执行"),
+    }
+}
+
 // ─── Public probe API ───
 
 /// 探测结果：简化的模型条目，只包含 id 和 name
@@ -1045,6 +1185,60 @@ pub async fn probe_models_for_protocol(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
+
+    fn model(id: &str) -> ModelMeta {
+        ModelMeta {
+            id: id.to_string(),
+            name: id.to_string(),
+            reasoning: true,
+            supports_image: true,
+            context_window: CONTEXT_WINDOW_STANDARD,
+            blocked: false,
+            discovered: true,
+            source: ModelProfileSource::Configured,
+        }
+    }
+
+    fn blocked_model(id: &str) -> ModelMeta {
+        let mut model = model(id);
+        model.blocked = true;
+        model
+    }
+
+    fn profile(
+        slug: &str,
+        executable: bool,
+        models: Vec<ModelMeta>,
+    ) -> EffectiveLlmProviderProfile {
+        let mut provider = LlmProvider::new(slug, slug, WireProtocol::OpenaiCompatible);
+        provider.id = Uuid::new_v4();
+        provider.default_model = models
+            .first()
+            .map(|model| model.id.clone())
+            .unwrap_or_default();
+        EffectiveLlmProviderProfile {
+            provider,
+            executable,
+            credential_source: LlmCredentialSource::None,
+            unavailable_reason: None,
+            call_profile: None,
+            default_model: models.first().map(|model| model.id.clone()),
+            models,
+            discovery_status: ModelDiscoveryStatus::Ok,
+            built_entry: None,
+        }
+    }
+
+    fn unavailable_profile(
+        slug: &str,
+        reason: ProviderUnavailableReason,
+    ) -> EffectiveLlmProviderProfile {
+        let mut profile = profile(slug, false, Vec::new());
+        profile.unavailable_reason = Some(reason);
+        profile.discovery_status = ModelDiscoveryStatus::SkippedUnavailable;
+        profile
+    }
 
     #[test]
     fn official_openai_base_url_defaults_to_responses() {
@@ -1085,5 +1279,53 @@ mod tests {
         let result = resolve_openai_wire_api(Some("invalid_value"), None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("合法值"));
+    }
+
+    #[test]
+    fn preflight_effective_model_selection_accepts_explicit_provider_model() {
+        let profiles = vec![profile("openai", true, vec![model("gpt-5")])];
+
+        preflight_effective_model_selection(&profiles, Some("openai"), Some("gpt-5"))
+            .expect("configured effective model should pass");
+    }
+
+    #[test]
+    fn preflight_effective_model_selection_rejects_blocked_model() {
+        let profiles = vec![profile("openai", true, vec![blocked_model("gpt-5")])];
+
+        let error = preflight_effective_model_selection(&profiles, Some("openai"), Some("gpt-5"))
+            .expect_err("blocked model should fail");
+
+        assert!(error.contains("已被屏蔽"));
+    }
+
+    #[test]
+    fn preflight_effective_model_selection_rejects_unavailable_provider() {
+        let profiles = vec![unavailable_profile(
+            "openai-codex",
+            ProviderUnavailableReason::MissingCredential {
+                credential_mode: LlmCredentialMode::UserRequired,
+                has_identity: true,
+            },
+        )];
+
+        let error =
+            preflight_effective_model_selection(&profiles, Some("openai-codex"), Some("gpt-5"))
+                .expect_err("missing user credential should fail");
+
+        assert!(error.contains("个人 BYOK 凭据"));
+    }
+
+    #[test]
+    fn preflight_effective_model_selection_rejects_ambiguous_model_without_provider() {
+        let profiles = vec![
+            profile("openai", true, vec![model("gpt-5")]),
+            profile("proxy", true, vec![model("gpt-5")]),
+        ];
+
+        let error = preflight_effective_model_selection(&profiles, None, Some("gpt-5"))
+            .expect_err("ambiguous model should fail");
+
+        assert!(error.contains("同时存在于多个可执行 LLM Provider"));
     }
 }

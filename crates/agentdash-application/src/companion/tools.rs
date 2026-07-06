@@ -26,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::dispatch::{CompanionChildDispatchRequest, CompanionChildDispatchService};
+use super::model_preflight::{CompanionModelPreflightPort, CompanionModelPreflightRequest};
 use super::tool_context::{
     CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
 };
@@ -708,6 +709,7 @@ pub struct CompanionRequestTool {
     tool_context: CompanionToolContext,
     companion_agents: Vec<CompanionAgentEntry>,
     wait_service: WaitActivityService,
+    model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
 }
 
 impl CompanionRequestTool {
@@ -718,6 +720,7 @@ impl CompanionRequestTool {
         tool_context: CompanionToolContext,
         companion_agents: Vec<CompanionAgentEntry>,
         wait_service: WaitActivityService,
+        model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
     ) -> Self {
         Self {
             project_agent_repo,
@@ -726,6 +729,7 @@ impl CompanionRequestTool {
             tool_context,
             companion_agents,
             wait_service,
+            model_preflight,
         }
     }
 }
@@ -878,6 +882,15 @@ impl CompanionRequestTool {
 
         let selected_companion = self.resolve_companion_agent(project_id, agent_key).await?;
         let companion_executor_config = selected_companion.executor_config.clone();
+        self.preflight_selected_companion_model(
+            project_id,
+            parent_run_id,
+            parent_agent_id,
+            &companion_label,
+            &selected_companion,
+            &companion_executor_config,
+        )
+        .await?;
 
         // ─── Hook: before_subagent_dispatch ─────────────────────────────
         let before_resolution = evaluate_subagent_hook(
@@ -1580,6 +1593,33 @@ impl CompanionRequestTool {
                 "target=platform 要求 payload.type".to_string(),
             )),
         }
+    }
+
+    async fn preflight_selected_companion_model(
+        &self,
+        project_id: Uuid,
+        parent_run_id: Uuid,
+        parent_agent_id: Uuid,
+        companion_label: &str,
+        selected_companion: &SelectedCompanionAgent,
+        executor_config: &AgentConfig,
+    ) -> Result<(), AgentToolError> {
+        let Some(preflight) = &self.model_preflight else {
+            return Ok(());
+        };
+        preflight
+            .preflight_companion_model(CompanionModelPreflightRequest {
+                project_id,
+                parent_run_id,
+                parent_agent_id,
+                selected_project_agent_id: selected_companion.project_agent.id,
+                selected_agent_key: selected_companion.agent_key.clone(),
+                companion_label: companion_label.to_string(),
+                executor_config: executor_config.clone(),
+                identity: self.tool_context.identity().cloned(),
+            })
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.message))
     }
 
     async fn resolve_companion_agent(

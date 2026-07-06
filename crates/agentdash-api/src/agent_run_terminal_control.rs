@@ -113,19 +113,25 @@ impl AgentRunTerminalControlCallback {
         ));
 
         service
-            .observe_wait_producer_terminal(WaitProducerTerminalEvent {
-                producer: WaitProducerRef::AgentRunDelivery {
-                    run_id: event.run_id,
-                    agent_id: event.agent_id,
-                    frame_id: event.frame_id,
-                },
-                terminal_state: event.terminal_state,
-                terminal_message: event.terminal_message,
-                source_turn_id: event.turn_id,
-                trace_ref: event.delivery_trace_ref,
-            })
+            .observe_wait_producer_terminal(wait_producer_terminal_event_from_agent_run(event))
             .await?;
         Ok(())
+    }
+}
+
+fn wait_producer_terminal_event_from_agent_run(
+    event: AgentRunDeliveryTerminalEvent,
+) -> WaitProducerTerminalEvent {
+    WaitProducerTerminalEvent {
+        producer: WaitProducerRef::AgentRunDelivery {
+            run_id: event.run_id,
+            agent_id: event.agent_id,
+            frame_id: event.frame_id,
+        },
+        terminal_state: event.terminal_state,
+        terminal_message: event.terminal_message,
+        source_turn_id: event.turn_id,
+        trace_ref: event.delivery_trace_ref,
     }
 }
 
@@ -154,5 +160,44 @@ impl SessionTerminalCallback for AgentRunTerminalControlCallback {
             return Err(error.to_string());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn maps_agent_run_delivery_terminal_to_wait_producer_terminal_event() {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
+
+        let event = wait_producer_terminal_event_from_agent_run(AgentRunDeliveryTerminalEvent {
+            run_id,
+            agent_id,
+            frame_id: Some(frame_id),
+            terminal_state: "failed".to_string(),
+            terminal_message: Some("provider rejected model".to_string()),
+            turn_id: Some("turn-42".to_string()),
+            delivery_trace_ref: Some("delivery:trace".to_string()),
+        });
+
+        assert_eq!(
+            event.producer,
+            WaitProducerRef::AgentRunDelivery {
+                run_id,
+                agent_id,
+                frame_id: Some(frame_id),
+            }
+        );
+        assert_eq!(event.terminal_state, "failed");
+        assert_eq!(
+            event.terminal_message.as_deref(),
+            Some("provider rejected model")
+        );
+        assert_eq!(event.source_turn_id.as_deref(), Some("turn-42"));
+        assert_eq!(event.trace_ref.as_deref(), Some("delivery:trace"));
     }
 }

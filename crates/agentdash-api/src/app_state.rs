@@ -352,9 +352,9 @@ impl AppState {
         //
         // M2-c：Task 对账改为从 LifecycleRun/step state 反投影，不再需要 session 状态读取器。
         {
-            let wait_obligation_terminal_convergence: Arc<
-                dyn agentdash_application::wait_obligation::WaitObligationTerminalConvergencePort,
-            > = Arc::new(agentdash_application::wait_obligation::WaitObligationTerminalConvergenceService::with_companion_delivery(
+            let gate_producer_terminal_convergence: Arc<
+                dyn agentdash_application::wait_obligation::GateProducerTerminalConvergencePort,
+            > = Arc::new(agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_companion_delivery(
                 repos.lifecycle_gate_repo.clone(),
                 repos.agent_run_delivery_binding_repo.clone(),
                 Arc::new(
@@ -385,7 +385,7 @@ impl AppState {
                 execution_anchor_repo: repos.execution_anchor_repo.clone(),
                 lifecycle_gate_repo: repos.lifecycle_gate_repo.clone(),
                 agent_run_delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
-                wait_obligation_terminal_convergence,
+                gate_producer_terminal_convergence,
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
             if report.has_errors() {

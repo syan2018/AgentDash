@@ -7,7 +7,7 @@ use agentdash_application::companion::{
 };
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionEventingService as ApplicationSessionEventingService;
-use agentdash_application::wait_obligation::WaitObligationTerminalConvergencePort;
+use agentdash_application::wait_obligation::GateProducerTerminalConvergencePort;
 use agentdash_application_agentrun::agent_run::{
     AgentRunDeliveryTerminalEvent, AgentRunRuntimeTerminalCommand, AgentRunTerminalConvergenceDeps,
     AgentRunTerminalConvergenceService, SessionControlService, SessionCoreService,
@@ -16,7 +16,7 @@ use agentdash_application_agentrun::agent_run::{
 use agentdash_application_runtime_session::session::{
     SessionTerminalCallback, SessionTerminalNotification,
 };
-use agentdash_application_workflow::gate::WaitProducerTerminalEvent;
+use agentdash_application_workflow::gate::GateProducerTerminalEvent;
 use agentdash_domain::workflow::WaitProducerRef;
 
 #[derive(Clone)]
@@ -87,7 +87,7 @@ impl AgentRunTerminalControlCallback {
         .await
     }
 
-    async fn converge_wait_obligation_terminal(
+    async fn converge_gate_producer_terminal(
         &self,
         event: AgentRunDeliveryTerminalEvent,
     ) -> Result<(), agentdash_application::ApplicationError> {
@@ -100,7 +100,7 @@ impl AgentRunTerminalControlCallback {
                 self.session_launch.clone(),
             ));
         let service =
-            agentdash_application::wait_obligation::WaitObligationTerminalConvergenceService::with_companion_delivery(
+            agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_companion_delivery(
                 self.deps.repos.lifecycle_gate_repo.clone(),
                 self.deps.repos.agent_run_delivery_binding_repo.clone(),
                 Arc::new(SessionEventingCompanionGateDelivery::new(
@@ -110,7 +110,7 @@ impl AgentRunTerminalControlCallback {
             );
 
         service
-            .observe_wait_producer_terminal(wait_producer_terminal_event_from_agent_run(event))
+            .observe_gate_producer_terminal(wait_producer_terminal_event_from_agent_run(event))
             .await?;
         Ok(())
     }
@@ -118,8 +118,8 @@ impl AgentRunTerminalControlCallback {
 
 fn wait_producer_terminal_event_from_agent_run(
     event: AgentRunDeliveryTerminalEvent,
-) -> WaitProducerTerminalEvent {
-    WaitProducerTerminalEvent {
+) -> GateProducerTerminalEvent {
+    GateProducerTerminalEvent {
         producer: WaitProducerRef::AgentRunDelivery {
             run_id: event.run_id,
             agent_id: event.agent_id,
@@ -144,7 +144,7 @@ impl SessionTerminalCallback for AgentRunTerminalControlCallback {
             .map_err(|error| error.to_string())?;
 
         if let Some(event) = event
-            && let Err(error) = self.converge_wait_obligation_terminal(event).await
+            && let Err(error) = self.converge_gate_producer_terminal(event).await
         {
             diag!(
                 Warn,

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use uuid::Uuid;
 
 const WAITING_PREVIEW_CHARS: usize = 280;
@@ -155,7 +155,25 @@ fn waiting_preview(payload: Option<&Value>) -> Option<String> {
 }
 
 fn payload_string(payload: &Value, key: &str) -> Option<String> {
+    payload_direct_string(payload, key).or_else(|| {
+        payload
+            .get("display")
+            .and_then(Value::as_object)
+            .and_then(|display| object_string(display, key))
+    })
+}
+
+fn payload_direct_string(payload: &Value, key: &str) -> Option<String> {
     payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn object_string(object: &Map<String, Value>, key: &str) -> Option<String> {
+    object
         .get(key)
         .and_then(Value::as_str)
         .map(str::trim)

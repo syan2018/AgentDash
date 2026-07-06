@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use agentdash_application_workflow::gate::{
-    GateDeliveryIntent, GateNotificationIntent, WaitObligationConvergenceResult,
-    WaitObligationConvergenceService, WaitProducerTerminalEvent,
+    GateDeliveryIntent, GateMailboxWakeIntent, GateNotificationIntent,
+    GateProducerTerminalConvergenceResult, GateProducerTerminalConvergenceService,
+    GateProducerTerminalEvent,
 };
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_domain::workflow::{AgentRunDeliveryBindingRepository, LifecycleGateRepository};
@@ -17,15 +18,15 @@ use crate::companion::gate_control::{
 };
 
 #[async_trait]
-pub trait WaitObligationTerminalConvergencePort: Send + Sync {
-    async fn observe_wait_producer_terminal(
+pub trait GateProducerTerminalConvergencePort: Send + Sync {
+    async fn observe_gate_producer_terminal(
         &self,
-        event: WaitProducerTerminalEvent,
-    ) -> Result<WaitObligationConvergenceResult, ApplicationError>;
+        event: GateProducerTerminalEvent,
+    ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError>;
 }
 
 #[derive(Clone)]
-pub struct WaitObligationTerminalConvergenceDeps {
+pub struct GateProducerTerminalConvergenceDeps {
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
     pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub companion_event_delivery: Arc<dyn CompanionGateNotificationDelivery>,
@@ -33,12 +34,12 @@ pub struct WaitObligationTerminalConvergenceDeps {
 }
 
 #[derive(Clone)]
-pub struct WaitObligationTerminalConvergenceService {
-    deps: WaitObligationTerminalConvergenceDeps,
+pub struct GateProducerTerminalConvergenceServiceAdapter {
+    deps: GateProducerTerminalConvergenceDeps,
 }
 
-impl WaitObligationTerminalConvergenceService {
-    pub fn new(deps: WaitObligationTerminalConvergenceDeps) -> Self {
+impl GateProducerTerminalConvergenceServiceAdapter {
+    pub fn new(deps: GateProducerTerminalConvergenceDeps) -> Self {
         Self { deps }
     }
 
@@ -48,7 +49,7 @@ impl WaitObligationTerminalConvergenceService {
         companion_event_delivery: Arc<dyn CompanionGateNotificationDelivery>,
         companion_parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
     ) -> Self {
-        Self::new(WaitObligationTerminalConvergenceDeps {
+        Self::new(GateProducerTerminalConvergenceDeps {
             gate_repo,
             delivery_binding_repo,
             companion_event_delivery,
@@ -71,9 +72,9 @@ impl WaitObligationTerminalConvergenceService {
 
     async fn observe(
         &self,
-        event: WaitProducerTerminalEvent,
-    ) -> Result<WaitObligationConvergenceResult, ApplicationError> {
-        let result = WaitObligationConvergenceService::new(
+        event: GateProducerTerminalEvent,
+    ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
+        let result = GateProducerTerminalConvergenceService::new(
             self.deps.gate_repo.clone(),
             self.deps.delivery_binding_repo.clone(),
         )
@@ -88,32 +89,33 @@ impl WaitObligationTerminalConvergenceService {
                 producer = ?event.producer,
                 terminal_state = %event.terminal_state,
                 delivery_trace_ref = ?event.trace_ref,
-                "wait obligation terminal convergence found no matching obligation"
+                "gate producer terminal convergence found no matching obligation"
             );
         }
 
         for outcome in &result.outcomes {
             for intent in &outcome.delivery_intents {
-                if let GateDeliveryIntent::CompanionChildResultToParent(intent) = intent {
-                    let companion_label = intent
-                        .payload
-                        .get("companion_label")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("companion")
-                        .to_string();
+                if let GateDeliveryIntent::MailboxWake(intent) = intent {
+                    if intent.namespace != "companion" {
+                        return Err(ApplicationError::Conflict(format!(
+                            "unsupported gate mailbox wake namespace `{}` for gate {}",
+                            intent.namespace, intent.gate_id
+                        )));
+                    }
+                    let companion_label = companion_label_from_wake(intent);
                     deliver_companion_child_result_to_parent(
                         self.deps.companion_parent_mailbox_delivery.as_ref(),
                         CompanionChildResultDeliveryInput {
                             gate_id: intent.gate_id,
                             request_id: intent.request_id.clone(),
-                            run_id: intent.run_id,
-                            parent_agent_id: intent.parent_agent_id,
+                            run_id: intent.target_run_id,
+                            parent_agent_id: intent.target_agent_id,
                             parent_delivery_runtime_session_id: intent
-                                .parent_delivery_runtime_session_id
+                                .target_delivery_runtime_session_id
                                 .clone(),
-                            child_agent_id: intent.child_agent_id,
+                            child_agent_id: intent.producer_agent_id,
                             child_delivery_runtime_session_id: intent
-                                .child_delivery_runtime_session_id
+                                .producer_delivery_runtime_session_id
                                 .clone(),
                             resolved_turn_id: intent.resolved_turn_id.clone(),
                             companion_label,
@@ -138,7 +140,7 @@ impl WaitObligationTerminalConvergenceService {
                 result_status = ?outcome.result_status,
                 delivery_intent_count = outcome.delivery_intents.len(),
                 notification_intent_count = outcome.notification_intents.len(),
-                "wait obligation terminal convergence outcome delivered"
+                "gate producer terminal convergence outcome delivered"
             );
         }
         Ok(result)
@@ -146,13 +148,30 @@ impl WaitObligationTerminalConvergenceService {
 }
 
 #[async_trait]
-impl WaitObligationTerminalConvergencePort for WaitObligationTerminalConvergenceService {
-    async fn observe_wait_producer_terminal(
+impl GateProducerTerminalConvergencePort for GateProducerTerminalConvergenceServiceAdapter {
+    async fn observe_gate_producer_terminal(
         &self,
-        event: WaitProducerTerminalEvent,
-    ) -> Result<WaitObligationConvergenceResult, ApplicationError> {
+        event: GateProducerTerminalEvent,
+    ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
         self.observe(event).await
     }
+}
+
+fn companion_label_from_wake(intent: &GateMailboxWakeIntent) -> String {
+    intent
+        .payload
+        .get("display")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|display| display.get("companion_label"))
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            intent
+                .payload
+                .get("companion_label")
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("companion")
+        .to_string()
 }
 
 struct CompanionChildResultDeliveryInput {
@@ -230,7 +249,7 @@ async fn deliver_notification_intents(
         };
         if let Err(error) = delivery.deliver_companion_event(notification).await {
             let mut context = DiagnosticErrorContext::new(
-                "wait_obligation.gate_notification",
+                "gate_producer_terminal.gate_notification",
                 "deliver_companion_event",
             )
             .with_field("gate_id", gate_id);
@@ -244,7 +263,7 @@ async fn deliver_notification_intents(
                 error = &error,
                 gate_id = %gate_id,
                 agent_id = ?diagnostic_agent_id,
-                "wait obligation notification delivery failed"
+                "gate producer terminal notification delivery failed"
             );
         }
     }

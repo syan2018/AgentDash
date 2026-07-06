@@ -1442,7 +1442,7 @@ mod tests {
             Ok(Vec::new())
         }
 
-        async fn list_open_wait_obligations(
+        async fn list_open_gate_wait_policies(
             &self,
             _limit: usize,
         ) -> Result<Vec<LifecycleGate>, DomainError> {

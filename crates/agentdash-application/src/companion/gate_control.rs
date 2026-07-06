@@ -8,7 +8,7 @@ use agentdash_application_workflow::gate::{
 };
 #[cfg(test)]
 use agentdash_application_workflow::gate::{
-    WaitObligationConvergenceResult, WaitProducerTerminalEvent,
+    GateProducerTerminalConvergenceResult, GateProducerTerminalEvent,
 };
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryBindingRepository,
@@ -28,7 +28,7 @@ use crate::agent_run::{
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 #[cfg(test)]
-use crate::wait_obligation::WaitObligationTerminalConvergencePort;
+use crate::wait_obligation::GateProducerTerminalConvergencePort;
 use crate::{ApplicationError, session::SessionEventingService};
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
@@ -810,17 +810,17 @@ impl CompanionGateControlService {
     }
 
     #[cfg(test)]
-    pub(crate) async fn observe_wait_producer_terminal(
+    pub(crate) async fn observe_gate_producer_terminal(
         &self,
-        event: WaitProducerTerminalEvent,
-    ) -> Result<WaitObligationConvergenceResult, ApplicationError> {
-        crate::wait_obligation::WaitObligationTerminalConvergenceService::with_companion_delivery(
+        event: GateProducerTerminalEvent,
+    ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
+        crate::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_companion_delivery(
             self.gate_repo.clone(),
             self.delivery_binding_repo.clone(),
             self.delivery.clone(),
             self.parent_mailbox_delivery.clone(),
         )
-        .observe_wait_producer_terminal(event)
+        .observe_gate_producer_terminal(event)
         .await
     }
 
@@ -1451,9 +1451,10 @@ mod tests {
         DomainError,
         workflow::{
             AgentFrame, AgentLineage, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
-            AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleGate, LifecycleRun,
-            LifecycleRunRepository, RuntimeSessionExecutionAnchor, WaitObligationDeclaration,
-            WaitProducerRef,
+            AgentSource, DeliveryBindingStatus, GateWaitPolicy, GateWaitPolicyEnvelope,
+            LifecycleAgent, LifecycleGate, LifecycleRun, LifecycleRunRepository,
+            RuntimeSessionExecutionAnchor, WaitExpectedResult, WaitProducerRef,
+            WaitTerminalOutcome, WaitTerminalPolicy, WaitWakeTarget,
         },
     };
 
@@ -1489,7 +1490,7 @@ mod tests {
                 .collect())
         }
 
-        async fn list_open_wait_obligations(
+        async fn list_open_gate_wait_policies(
             &self,
             limit: usize,
         ) -> Result<Vec<LifecycleGate>, DomainError> {
@@ -1503,7 +1504,7 @@ mod tests {
                         && gate
                             .payload_json
                             .as_ref()
-                            .and_then(WaitObligationDeclaration::from_payload)
+                            .and_then(GateWaitPolicyEnvelope::from_payload_opt)
                             .is_some()
                 })
                 .take(limit)
@@ -1523,8 +1524,8 @@ mod tests {
                 .filter(|gate| {
                     gate.payload_json
                         .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
-                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                        .and_then(GateWaitPolicyEnvelope::from_payload_opt)
+                        .is_some_and(|declaration| declaration.wait_policy.source == *producer)
                 })
                 .cloned()
                 .collect())
@@ -2573,7 +2574,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn observe_wait_producer_terminal_failed_resolves_gate_and_delivers_parent_wake() {
+    async fn observe_gate_producer_terminal_failed_resolves_gate_and_delivers_parent_wake() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2594,15 +2595,38 @@ mod tests {
             })),
         );
         let gate_id = gate.id;
-        let declaration = WaitObligationDeclaration::companion_agent_run_delivery(
-            run_id,
-            child_agent_id,
-            Some(child_frame.id),
-            "dispatch-terminal",
-            run_id,
-            parent_agent_id,
-            gate_id,
-        );
+        let declaration = GateWaitPolicyEnvelope::new(GateWaitPolicy {
+            source: WaitProducerRef::AgentRunDelivery {
+                run_id,
+                agent_id: child_agent_id,
+                frame_id: Some(child_frame.id),
+            },
+            expected_result: WaitExpectedResult {
+                kind: "companion_result".to_string(),
+                correlation_ref: Some("dispatch-terminal".to_string()),
+            },
+            terminal_policy: WaitTerminalPolicy {
+                failed: WaitTerminalOutcome {
+                    status: "failed".to_string(),
+                    failure_kind: "runtime_terminal_failed".to_string(),
+                },
+                interrupted: WaitTerminalOutcome {
+                    status: "cancelled".to_string(),
+                    failure_kind: "runtime_terminal_cancelled".to_string(),
+                },
+                completed: WaitTerminalOutcome {
+                    status: "failed".to_string(),
+                    failure_kind: "missing_companion_respond".to_string(),
+                },
+            },
+            wake_target: WaitWakeTarget {
+                namespace: "companion".to_string(),
+                target_run_id: run_id,
+                target_agent_id: parent_agent_id,
+                client_command_id: format!("companion-result:{gate_id}"),
+            },
+        })
+        .with_display_value("companion_label", serde_json::json!("project-survey"));
         gate.payload_json = Some(
             declaration
                 .write_into_payload(gate.payload_json.take())
@@ -2643,7 +2667,7 @@ mod tests {
             run_id,
         );
 
-        let event = WaitProducerTerminalEvent {
+        let event = GateProducerTerminalEvent {
             producer: WaitProducerRef::AgentRunDelivery {
                 run_id,
                 agent_id: child_agent_id,
@@ -2655,7 +2679,7 @@ mod tests {
             trace_ref: Some("child-session".to_string()),
         };
         let result = service
-            .observe_wait_producer_terminal(event.clone())
+            .observe_gate_producer_terminal(event.clone())
             .await
             .expect("terminal convergence");
 
@@ -2663,7 +2687,7 @@ mod tests {
         assert_eq!(result.outcomes[0].gate_id, gate_id);
         assert_eq!(
             result.outcomes[0].kind,
-            agentdash_application_workflow::gate::WaitObligationConvergenceOutcomeKind::Resolved
+            agentdash_application_workflow::gate::GateProducerTerminalConvergenceOutcomeKind::Resolved
         );
         assert_eq!(result.outcomes[0].result_status.as_deref(), Some("failed"));
 
@@ -2708,7 +2732,8 @@ mod tests {
         );
         assert_eq!(
             payload
-                .get("wait_source")
+                .get("wait_policy")
+                .and_then(|value| value.get("source"))
                 .and_then(|value| value.get("kind"))
                 .and_then(serde_json::Value::as_str),
             Some("agent_run_delivery")
@@ -2725,13 +2750,13 @@ mod tests {
         }
 
         let replay = service
-            .observe_wait_producer_terminal(event)
+            .observe_gate_producer_terminal(event)
             .await
             .expect("terminal convergence replay");
         assert_eq!(replay.outcomes.len(), 1);
         assert_eq!(
             replay.outcomes[0].kind,
-            agentdash_application_workflow::gate::WaitObligationConvergenceOutcomeKind::AlreadyResolvedEnsuredDelivery
+            agentdash_application_workflow::gate::GateProducerTerminalConvergenceOutcomeKind::AlreadyResolvedEnsuredDelivery
         );
         assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
     }

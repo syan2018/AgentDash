@@ -2816,7 +2816,7 @@ mod companion_tests {
         wait_for_lifecycle_gate_resolution,
     };
     use agentdash_domain::workflow::{
-        LifecycleGate, LifecycleGateRepository, WaitObligationDeclaration, WaitProducerRef,
+        GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
     };
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
@@ -2860,7 +2860,7 @@ mod companion_tests {
                 .collect())
         }
 
-        async fn list_open_wait_obligations(
+        async fn list_open_gate_wait_policies(
             &self,
             limit: usize,
         ) -> Result<Vec<LifecycleGate>, agentdash_domain::DomainError> {
@@ -2874,7 +2874,7 @@ mod companion_tests {
                         && gate
                             .payload_json
                             .as_ref()
-                            .and_then(WaitObligationDeclaration::from_payload)
+                            .and_then(GateWaitPolicyEnvelope::from_payload_opt)
                             .is_some()
                 })
                 .take(limit)
@@ -2894,8 +2894,8 @@ mod companion_tests {
                 .filter(|gate| {
                     gate.payload_json
                         .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
-                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                        .and_then(GateWaitPolicyEnvelope::from_payload_opt)
+                        .is_some_and(|declaration| declaration.wait_policy.source == *producer)
                 })
                 .cloned()
                 .collect())

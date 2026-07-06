@@ -8,8 +8,8 @@ use crate::WorkflowApplicationError;
 
 use super::commands::{
     CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
-    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveParentRequestGateCommand,
-    ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
+    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveGatePayloadCommand,
+    ResolveParentRequestGateCommand, ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
 };
 use super::outcome::{
     CompanionChildResultDeliveryIntent, CompanionEventNotificationIntent,
@@ -54,6 +54,9 @@ impl LifecycleGateResolver {
             }
             LifecycleGateCommand::CompleteChildResult(command) => {
                 self.complete_child_result(command).await
+            }
+            LifecycleGateCommand::ResolveGatePayload(command) => {
+                self.resolve_gate_payload(command).await
             }
         }
     }
@@ -363,6 +366,26 @@ impl LifecycleGateResolver {
         })
     }
 
+    pub async fn resolve_gate_payload(
+        &self,
+        command: ResolveGatePayloadCommand,
+    ) -> Result<GateTransitionOutcome, WorkflowApplicationError> {
+        let mut gate = self.load_open_gate(command.gate_id).await?;
+        let existing_payload = gate.payload_json.clone();
+        let mut payload = command.payload;
+        preserve_wait_policy_metadata(&mut payload, existing_payload.as_ref());
+        gate.payload_json = Some(payload.clone());
+        gate.resolve(command.resolved_by);
+        self.gate_repo.update(&gate).await?;
+
+        Ok(GateTransitionOutcome {
+            gate,
+            transition: GateTransitionKind::Resolved,
+            delivery_intents: Vec::new(),
+            notification_intents: Vec::new(),
+        })
+    }
+
     pub async fn complete_child_result(
         &self,
         command: CompleteChildResultGateCommand,
@@ -396,7 +419,7 @@ impl LifecycleGateResolver {
             "parent_agent_id": command.parent_agent_id.to_string(),
             "resolved_turn_id": command.resolved_turn_id,
         });
-        preserve_wait_obligation_metadata(&mut payload, existing_payload.as_ref());
+        preserve_wait_policy_metadata(&mut payload, existing_payload.as_ref());
 
         gate.payload_json = Some(payload.clone());
         gate.resolve(command.resolved_by);
@@ -488,23 +511,14 @@ fn normalize_companion_result_status(
     }
 }
 
-fn preserve_wait_obligation_metadata(payload: &mut Value, existing: Option<&Value>) {
+fn preserve_wait_policy_metadata(payload: &mut Value, existing: Option<&Value>) {
     let Some(target) = payload.as_object_mut() else {
         return;
     };
     let Some(existing) = existing.and_then(Value::as_object) else {
         return;
     };
-    for key in [
-        "wait_source",
-        "expected_result",
-        "on_producer_terminal_without_result",
-        "wake",
-        "companion_label",
-        "adoption_mode",
-        "dispatch_id",
-        "task_id",
-    ] {
+    for key in ["schema_version", "wait_policy", "display"] {
         if let Some(value) = existing.get(key) {
             target.insert(key.to_string(), value.clone());
         }
@@ -520,7 +534,7 @@ mod tests {
 
     use agentdash_domain::{
         DomainError,
-        workflow::{LifecycleGateRepository, WaitObligationDeclaration, WaitProducerRef},
+        workflow::{GateWaitPolicyEnvelope, LifecycleGateRepository, WaitProducerRef},
     };
 
     use super::*;
@@ -558,7 +572,7 @@ mod tests {
                 .collect())
         }
 
-        async fn list_open_wait_obligations(
+        async fn list_open_gate_wait_policies(
             &self,
             limit: usize,
         ) -> Result<Vec<LifecycleGate>, DomainError> {
@@ -572,7 +586,7 @@ mod tests {
                         && gate
                             .payload_json
                             .as_ref()
-                            .and_then(WaitObligationDeclaration::from_payload)
+                            .and_then(GateWaitPolicyEnvelope::from_payload_opt)
                             .is_some()
                 })
                 .take(limit)
@@ -592,8 +606,8 @@ mod tests {
                 .filter(|gate| {
                     gate.payload_json
                         .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
-                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                        .and_then(GateWaitPolicyEnvelope::from_payload_opt)
+                        .is_some_and(|declaration| declaration.wait_policy.source == *producer)
                 })
                 .cloned()
                 .collect())

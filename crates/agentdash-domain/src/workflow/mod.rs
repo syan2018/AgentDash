@@ -74,6 +74,7 @@ pub use value_objects::{
     reduce_tool_capability_directives, workflow_script_source_digest,
 };
 pub use wait_obligation::{
-    WaitExpectedResultDeclaration, WaitObligationDeclaration, WaitProducerRef,
-    WaitProducerTerminalPolicy, WaitSourceDeclaration, WaitWakeDeclaration,
+    GATE_WAIT_POLICY_SCHEMA_VERSION, GateWaitPolicy, GateWaitPolicyEnvelope,
+    GateWaitPolicyJsonPaths, GateWaitPolicyPathNames, GateWaitPolicyPayloadError,
+    WaitExpectedResult, WaitProducerRef, WaitTerminalOutcome, WaitTerminalPolicy, WaitWakeTarget,
 };

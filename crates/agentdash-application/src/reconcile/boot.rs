@@ -7,24 +7,24 @@
 //! 运行期反向（业务终态 → session cancel）的 command 通道见
 //! [`crate::reconcile::terminal_cancel`]。
 
-use agentdash_application_workflow::gate::WaitProducerTerminalEvent;
+use agentdash_application_workflow::gate::GateProducerTerminalEvent;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
 use crate::ApplicationError;
 use crate::session::SessionRuntimeService;
 use crate::task::view_projector::project_task_views_on_boot;
-use crate::wait_obligation::WaitObligationTerminalConvergencePort;
+use crate::wait_obligation::GateProducerTerminalConvergencePort;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    AgentRunDeliveryBindingRepository, DeliveryBindingStatus, LifecycleAgentRepository,
-    LifecycleGate, LifecycleGateRepository, LifecycleRunRepository,
+    AgentRunDeliveryBindingRepository, DeliveryBindingStatus, GateWaitPolicyEnvelope,
+    LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRunRepository,
     LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
-    WaitObligationDeclaration, WaitProducerRef,
+    WaitProducerRef,
 };
 
-const WAIT_OBLIGATION_RECONCILE_LIMIT: usize = 500;
+const GATE_WAIT_POLICY_RECONCILE_LIMIT: usize = 500;
 
 /// 启动对账管线的依赖集合
 ///
@@ -41,7 +41,7 @@ pub struct BootReconcileDeps {
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
-    pub wait_obligation_terminal_convergence: Arc<dyn WaitObligationTerminalConvergencePort>,
+    pub gate_producer_terminal_convergence: Arc<dyn GateProducerTerminalConvergencePort>,
 }
 
 /// 单阶段对账结果
@@ -160,7 +160,7 @@ async fn run_wait_obligation_reconcile(deps: &BootReconcileDeps) -> PhaseReport 
     run_wait_obligation_reconcile_phase(
         &deps.lifecycle_gate_repo,
         &deps.agent_run_delivery_binding_repo,
-        &deps.wait_obligation_terminal_convergence,
+        &deps.gate_producer_terminal_convergence,
     )
     .await
 }
@@ -168,11 +168,11 @@ async fn run_wait_obligation_reconcile(deps: &BootReconcileDeps) -> PhaseReport 
 async fn run_wait_obligation_reconcile_phase(
     gate_repo: &Arc<dyn LifecycleGateRepository>,
     delivery_binding_repo: &Arc<dyn AgentRunDeliveryBindingRepository>,
-    convergence: &Arc<dyn WaitObligationTerminalConvergencePort>,
+    convergence: &Arc<dyn GateProducerTerminalConvergencePort>,
 ) -> PhaseReport {
     let phase = "wait_obligation_convergence";
     let gates = match gate_repo
-        .list_open_wait_obligations(WAIT_OBLIGATION_RECONCILE_LIMIT)
+        .list_open_gate_wait_policies(GATE_WAIT_POLICY_RECONCILE_LIMIT)
         .await
     {
         Ok(gates) => gates,
@@ -206,7 +206,7 @@ async fn run_wait_obligation_reconcile_phase(
         let Some(declaration) = gate
             .payload_json
             .as_ref()
-            .and_then(WaitObligationDeclaration::from_payload)
+            .and_then(GateWaitPolicyEnvelope::from_payload_opt)
         else {
             skipped += 1;
             diag!(
@@ -254,7 +254,7 @@ async fn run_wait_obligation_reconcile_phase(
         };
 
         match convergence
-            .observe_wait_producer_terminal(event.clone())
+            .observe_gate_producer_terminal(event.clone())
             .await
         {
             Ok(result) if result.no_matching_obligation() => {
@@ -331,9 +331,9 @@ async fn run_wait_obligation_reconcile_phase(
 async fn producer_terminal_event_for_obligation(
     delivery_binding_repo: &Arc<dyn AgentRunDeliveryBindingRepository>,
     gate: &LifecycleGate,
-    declaration: &WaitObligationDeclaration,
-) -> Result<Option<WaitProducerTerminalEvent>, ApplicationError> {
-    match &declaration.wait_source.producer {
+    declaration: &GateWaitPolicyEnvelope,
+) -> Result<Option<GateProducerTerminalEvent>, ApplicationError> {
+    match &declaration.wait_policy.source {
         WaitProducerRef::AgentRunDelivery {
             run_id,
             agent_id,
@@ -411,8 +411,8 @@ async fn producer_terminal_event_for_obligation(
                 return Ok(None);
             };
 
-            Ok(Some(WaitProducerTerminalEvent {
-                producer: declaration.wait_source.producer.clone(),
+            Ok(Some(GateProducerTerminalEvent {
+                producer: declaration.wait_policy.source.clone(),
                 terminal_state,
                 terminal_message: binding.terminal_message.clone(),
                 source_turn_id: binding.last_turn_id.clone(),
@@ -475,11 +475,13 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use agentdash_application_workflow::gate::{
-        GateDeliveryIntent, GateNotificationIntent, WaitObligationConvergenceOutcome,
-        WaitObligationConvergenceOutcomeKind, WaitObligationConvergenceResult,
+        GateDeliveryIntent, GateNotificationIntent, GateProducerTerminalConvergenceOutcome,
+        GateProducerTerminalConvergenceOutcomeKind, GateProducerTerminalConvergenceResult,
     };
     use agentdash_domain::workflow::{
-        AgentRunDeliveryBinding, LifecycleGate, RuntimeSessionExecutionAnchor,
+        AgentRunDeliveryBinding, GateWaitPolicy, GateWaitPolicyEnvelope, LifecycleGate,
+        RuntimeSessionExecutionAnchor, WaitExpectedResult, WaitProducerRef, WaitTerminalOutcome,
+        WaitTerminalPolicy, WaitWakeTarget,
     };
     use agentdash_test_support::workflow::{
         MemoryAgentRunDeliveryBindingRepository, MemoryLifecycleGateRepository,
@@ -499,27 +501,29 @@ mod tests {
 
     struct FakeConvergence {
         mode: FakeConvergenceMode,
-        events: Mutex<Vec<WaitProducerTerminalEvent>>,
+        events: Mutex<Vec<GateProducerTerminalEvent>>,
     }
 
     #[async_trait::async_trait]
-    impl WaitObligationTerminalConvergencePort for FakeConvergence {
-        async fn observe_wait_producer_terminal(
+    impl GateProducerTerminalConvergencePort for FakeConvergence {
+        async fn observe_gate_producer_terminal(
             &self,
-            event: WaitProducerTerminalEvent,
-        ) -> Result<WaitObligationConvergenceResult, ApplicationError> {
+            event: GateProducerTerminalEvent,
+        ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
             self.events.lock().unwrap().push(event);
             match self.mode {
-                FakeConvergenceMode::Outcome { gate_id } => Ok(WaitObligationConvergenceResult {
-                    outcomes: vec![WaitObligationConvergenceOutcome {
-                        gate_id,
-                        kind: WaitObligationConvergenceOutcomeKind::Resolved,
-                        result_status: Some("failed".to_string()),
-                        delivery_intents: Vec::<GateDeliveryIntent>::new(),
-                        notification_intents: Vec::<GateNotificationIntent>::new(),
-                    }],
-                }),
-                FakeConvergenceMode::NoMatch => Ok(WaitObligationConvergenceResult {
+                FakeConvergenceMode::Outcome { gate_id } => {
+                    Ok(GateProducerTerminalConvergenceResult {
+                        outcomes: vec![GateProducerTerminalConvergenceOutcome {
+                            gate_id,
+                            kind: GateProducerTerminalConvergenceOutcomeKind::Resolved,
+                            result_status: Some("failed".to_string()),
+                            delivery_intents: Vec::<GateDeliveryIntent>::new(),
+                            notification_intents: Vec::<GateNotificationIntent>::new(),
+                        }],
+                    })
+                }
+                FakeConvergenceMode::NoMatch => Ok(GateProducerTerminalConvergenceResult {
                     outcomes: Vec::new(),
                 }),
                 FakeConvergenceMode::Error => Err(ApplicationError::Conflict(
@@ -543,15 +547,38 @@ mod tests {
             "dispatch-1",
             Some(json!({ "companion_label": "reviewer" })),
         );
-        let declaration = WaitObligationDeclaration::companion_agent_run_delivery(
-            run_id,
-            child_agent_id,
-            Some(child_frame_id),
-            "dispatch-1",
-            run_id,
-            parent_agent_id,
-            gate.id,
-        );
+        let declaration = GateWaitPolicyEnvelope::new(GateWaitPolicy {
+            source: WaitProducerRef::AgentRunDelivery {
+                run_id,
+                agent_id: child_agent_id,
+                frame_id: Some(child_frame_id),
+            },
+            expected_result: WaitExpectedResult {
+                kind: "companion_result".to_string(),
+                correlation_ref: Some("dispatch-1".to_string()),
+            },
+            terminal_policy: WaitTerminalPolicy {
+                failed: WaitTerminalOutcome {
+                    status: "failed".to_string(),
+                    failure_kind: "runtime_terminal_failed".to_string(),
+                },
+                interrupted: WaitTerminalOutcome {
+                    status: "cancelled".to_string(),
+                    failure_kind: "runtime_terminal_cancelled".to_string(),
+                },
+                completed: WaitTerminalOutcome {
+                    status: "failed".to_string(),
+                    failure_kind: "missing_companion_respond".to_string(),
+                },
+            },
+            wake_target: WaitWakeTarget {
+                namespace: "companion".to_string(),
+                target_run_id: run_id,
+                target_agent_id: parent_agent_id,
+                client_command_id: format!("companion-result:{}", gate.id),
+            },
+        })
+        .with_display_value("companion_label", json!("reviewer"));
         gate.payload_json = Some(
             declaration
                 .write_into_payload(gate.payload_json.take())
@@ -615,7 +642,7 @@ mod tests {
     ) -> PhaseReport {
         let gate_repo: Arc<dyn LifecycleGateRepository> = gate_repo;
         let delivery_repo: Arc<dyn AgentRunDeliveryBindingRepository> = delivery_repo;
-        let convergence: Arc<dyn WaitObligationTerminalConvergencePort> = convergence;
+        let convergence: Arc<dyn GateProducerTerminalConvergencePort> = convergence;
         run_wait_obligation_reconcile_phase(&gate_repo, &delivery_repo, &convergence).await
     }
 

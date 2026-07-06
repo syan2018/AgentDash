@@ -5,17 +5,18 @@ mod wait_obligation;
 
 pub use commands::{
     CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
-    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveParentRequestGateCommand,
-    ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
+    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveGatePayloadCommand,
+    ResolveParentRequestGateCommand, ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
 };
 pub use outcome::{
     CompanionChildResultDeliveryIntent, CompanionEventNotificationIntent,
     CompanionHumanResponseDeliveryIntent, CompanionParentRequestDeliveryIntent,
-    CompanionParentResponseDeliveryIntent, GateDeliveryIntent, GateNotificationIntent,
-    GateTransitionKind, GateTransitionOutcome,
+    CompanionParentResponseDeliveryIntent, GateDeliveryIntent, GateMailboxWakeIntent,
+    GateNotificationIntent, GateTransitionKind, GateTransitionOutcome,
 };
 pub use resolver::LifecycleGateResolver;
 pub use wait_obligation::{
-    WaitObligationConvergenceOutcome, WaitObligationConvergenceOutcomeKind,
-    WaitObligationConvergenceResult, WaitObligationConvergenceService, WaitProducerTerminalEvent,
+    GateProducerTerminalConvergenceOutcome, GateProducerTerminalConvergenceOutcomeKind,
+    GateProducerTerminalConvergenceResult, GateProducerTerminalConvergenceService,
+    GateProducerTerminalEvent,
 };

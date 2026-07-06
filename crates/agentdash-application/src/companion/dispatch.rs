@@ -2,8 +2,9 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, LifecycleTaskPlanItemPatch, RunPolicy, RuntimePolicy,
-    WaitObligationDeclaration,
+    GateWaitPolicy, GateWaitPolicyEnvelope, InteractionDispatchIntent, LifecycleTaskPlanItemPatch,
+    RunPolicy, RuntimePolicy, WaitExpectedResult, WaitProducerRef, WaitTerminalOutcome,
+    WaitTerminalPolicy, WaitWakeTarget,
 };
 use agentdash_spi::AgentConfig;
 use agentdash_spi::action_type as at;
@@ -227,7 +228,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                     "companion wait gate {gate_id} 不存在，无法声明 wait obligation"
                 ))
             })?;
-        let declaration = WaitObligationDeclaration::companion_agent_run_delivery(
+        let declaration = companion_agent_run_delivery_wait_policy(
             child_run_id,
             child_agent_id,
             Some(child_frame_id),
@@ -235,6 +236,7 @@ impl<'a> CompanionChildDispatchService<'a> {
             request.parent_run_id,
             request.parent_agent_id,
             gate_id,
+            &request.companion_label,
         );
         gate.payload_json = Some(
             declaration
@@ -251,6 +253,50 @@ impl<'a> CompanionChildDispatchService<'a> {
             .await
             .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))
     }
+}
+
+fn companion_agent_run_delivery_wait_policy(
+    child_run_id: Uuid,
+    child_agent_id: Uuid,
+    child_frame_id: Option<Uuid>,
+    correlation_ref: String,
+    target_run_id: Uuid,
+    target_agent_id: Uuid,
+    gate_id: Uuid,
+    companion_label: &str,
+) -> GateWaitPolicyEnvelope {
+    GateWaitPolicyEnvelope::new(GateWaitPolicy {
+        source: WaitProducerRef::AgentRunDelivery {
+            run_id: child_run_id,
+            agent_id: child_agent_id,
+            frame_id: child_frame_id,
+        },
+        expected_result: WaitExpectedResult {
+            kind: "companion_result".to_string(),
+            correlation_ref: Some(correlation_ref),
+        },
+        terminal_policy: WaitTerminalPolicy {
+            failed: WaitTerminalOutcome {
+                status: "failed".to_string(),
+                failure_kind: "runtime_terminal_failed".to_string(),
+            },
+            interrupted: WaitTerminalOutcome {
+                status: "cancelled".to_string(),
+                failure_kind: "runtime_terminal_cancelled".to_string(),
+            },
+            completed: WaitTerminalOutcome {
+                status: "failed".to_string(),
+                failure_kind: "missing_companion_respond".to_string(),
+            },
+        },
+        wake_target: WaitWakeTarget {
+            namespace: "companion".to_string(),
+            target_run_id,
+            target_agent_id,
+            client_command_id: format!("companion-result:{gate_id}"),
+        },
+    })
+    .with_display_value("companion_label", serde_json::json!(companion_label))
 }
 
 fn require_delivery_runtime_session(

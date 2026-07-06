@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对后端质量门、Rust 检查和新增静态 guard 应归入的质量规范。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "复核测试 repository adapter 是否对齐生产 Repository 可观察语义。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复核迁移后是否仍有高风险重复实现或遗漏批次。"}

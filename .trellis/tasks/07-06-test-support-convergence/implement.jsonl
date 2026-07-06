@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "定义后端 Repository trait、生产 adapter 和测试 adapter 收束所依附的 repository 边界。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "确认新增 Rust crate 和跨层依赖方向，避免 test-support 进入生产组合根。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "提供重复实现收束和 shared abstraction 提取的项目级判断标准。"}

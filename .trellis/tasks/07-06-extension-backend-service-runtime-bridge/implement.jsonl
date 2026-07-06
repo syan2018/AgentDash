@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "ExtensionTemplate manifest contract, operation_catalog, fetch_routes, backend_services, and defineApp projection rules."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Extension runtime action/channel admission, relay invocation boundaries, permission/schema expectations."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Local runtime archive download, extension host process, relay routing and Windows/background process constraints."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Generated contract ownership and API/bridge boundaries for extension runtime surfaces."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend crate ownership for workspace-module, local runtime, application and infrastructure adapters."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend testing and quality expectations for cross-layer runtime work."}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Extension panel bridge ownership and frontend composition boundaries."}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Project/backend routing facts and local backend selection constraints."}

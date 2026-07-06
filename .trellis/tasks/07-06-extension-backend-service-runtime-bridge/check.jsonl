@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "Check manifest/domain/projection contract compliance for backend_services and operation_catalog."}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "Check runtime invocation boundaries and permission/schema validation."}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "Check local runtime lifecycle, archive cache and process handling constraints."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Check generated contract sync and browser/API bridge boundary."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Check Rust tests, diagnostics and quality gates."}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Check extension panel bridge behavior and frontend fact ownership."}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Check backend selection and local bridge routing facts."}

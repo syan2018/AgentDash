@@ -537,6 +537,10 @@ function printDesktopArtifactBoundary(root) {
   const releaseDir = path.join(root, 'target', 'release');
   const nsisDir = path.join(releaseDir, 'bundle', 'nsis');
   const setupExeFiles = listFiles(nsisDir, (file) => file.toLowerCase().endsWith('.exe'));
+  const updaterFiles = listFiles(nsisDir, (file) => {
+    const lower = file.toLowerCase();
+    return lower.endsWith('.nsis.zip') || lower.endsWith('.msi.zip');
+  });
   const appExeCandidates = [
     path.join(releaseDir, 'AgentDash.exe'),
     path.join(releaseDir, 'agentdash-local-tauri.exe'),
@@ -549,6 +553,20 @@ function printDesktopArtifactBoundary(root) {
     }
   } else {
     console.log(`[desktop-build]   setup exe: 未在 ${nsisDir} 发现 NSIS exe`);
+  }
+
+  if (updaterFiles.length > 0) {
+    for (const file of updaterFiles) {
+      const signature = `${file}.sig`;
+      console.log(`[desktop-build]   updater artifact: ${file}`);
+      if (fs.existsSync(signature)) {
+        console.log(`[desktop-build]   updater signature: ${signature}`);
+      } else {
+        console.log(`[desktop-build]   updater signature: 未发现 ${signature}`);
+      }
+    }
+  } else {
+    console.log(`[desktop-build]   updater artifact: 未在 ${nsisDir} 发现 *.nsis.zip 或 *.msi.zip`);
   }
 
   if (appExeCandidates.length > 0) {

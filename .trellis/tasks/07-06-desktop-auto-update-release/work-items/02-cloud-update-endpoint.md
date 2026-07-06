@@ -22,15 +22,20 @@
 
 ## Checkpoints
 
-- [ ] 发布新桌面 latest manifest 后，不需要重构服务端即可返回新版本。
-- [ ] 未配置 stable manifest URL 时，更新 endpoint 返回可诊断状态，不阻断本地调试。
-- [ ] stable manifest 拉取失败或 schema 错误时，错误可诊断。
-- [ ] 未显式配置最低桌面版本时，不会用服务端版本或 latest version 推导强制更新。
-- [ ] 服务端不需要对象存储凭据。
-- [ ] endpoint 能按 platform、arch、current_version 返回桌面端可消费信息。
+- [x] 发布新桌面 latest manifest 后，不需要重构服务端即可返回新版本。
+- [x] 未配置 stable manifest URL 时，更新 endpoint 返回可诊断状态，不阻断本地调试。
+- [x] stable manifest 拉取失败或 schema 错误时，错误可诊断。
+- [x] 未显式配置最低桌面版本时，不会用服务端版本或 latest version 推导强制更新。
+- [x] 服务端不需要对象存储凭据。
+- [x] endpoint 能按 platform、arch、current_version 返回桌面端可消费信息。
 
 ## Suggested Validation
 
 - 相关 Rust 单元测试。
 - `pnpm run backend:check`
 - 针对 release info / update endpoint 的 contract 测试。
+
+## Check Result
+
+- 已通过 `cargo test -p agentdash-api release_info --lib`、`cargo check -p agentdash-api` 和 `pnpm run contracts:check`。
+- 已补 `/api/desktop/update/tauri`，供 Tauri updater 消费同一份云端 manifest 事实。

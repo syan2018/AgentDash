@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import type {
   DesktopApiSnapshot,
   DesktopAutostartStatus,
+  DesktopUpdateInstallResult,
+  DesktopUpdatePolicySnapshot,
   DesktopRuntimeSettings,
 } from '@agentdash/core/local-runtime'
 import type {
@@ -18,6 +20,9 @@ export interface DesktopAppBridge {
   getAutostartStatus(): Promise<DesktopAutostartStatus>
   setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>
   getDesktopApiSnapshot(): Promise<DesktopApiSnapshot | null>
+  getUpdatePolicySnapshot(): Promise<DesktopUpdatePolicySnapshot>
+  refreshUpdatePolicy(): Promise<DesktopUpdatePolicySnapshot>
+  installUpdate(): Promise<DesktopUpdateInstallResult>
   startCodexOAuth(request: DesktopCodexOAuthStartRequest): Promise<StartCodexOAuthResponse>
   cancelCodexOAuth(flowId: string): Promise<CodexOAuthStatusResponse>
   quit(): Promise<void>
@@ -37,6 +42,9 @@ export function createTauriDesktopAppBridge(): DesktopAppBridge {
     getAutostartStatus: desktopAutostartIsEnabled,
     setAutostartEnabled: desktopAutostartSetEnabled,
     getDesktopApiSnapshot: desktopApiSnapshot,
+    getUpdatePolicySnapshot: desktopUpdatePolicySnapshot,
+    refreshUpdatePolicy: desktopUpdatePolicyRefresh,
+    installUpdate: desktopUpdateInstall,
     startCodexOAuth: codexOAuthStart,
     cancelCodexOAuth: codexOAuthCancel,
     quit: desktopQuitRequest,
@@ -71,6 +79,21 @@ export async function desktopQuitRequest(): Promise<void> {
 export async function desktopApiSnapshot(): Promise<DesktopApiSnapshot | null> {
   if (!isTauriHost()) return null
   return invoke('desktop_api_snapshot')
+}
+
+export async function desktopUpdatePolicySnapshot(): Promise<DesktopUpdatePolicySnapshot> {
+  ensureTauriHost()
+  return invoke('desktop_update_policy_snapshot')
+}
+
+export async function desktopUpdatePolicyRefresh(): Promise<DesktopUpdatePolicySnapshot> {
+  ensureTauriHost()
+  return invoke('desktop_update_policy_refresh')
+}
+
+export async function desktopUpdateInstall(): Promise<DesktopUpdateInstallResult> {
+  ensureTauriHost()
+  return invoke('desktop_update_install')
 }
 
 export async function codexOAuthStart(

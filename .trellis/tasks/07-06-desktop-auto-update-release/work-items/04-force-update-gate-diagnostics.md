@@ -22,13 +22,13 @@
 
 ## Checkpoints
 
-- [ ] 低于 `min_desktop_version` 时不自动连接本机 runtime。
-- [ ] 低于 `min_desktop_version` 时不发起 runtime claim。
-- [ ] 低于 `min_desktop_version` 时不建立 Relay 连接。
-- [ ] 低于 `min_desktop_version` 时不能进入需要协议兼容的会话工作流。
-- [ ] 阻断态能检查更新、下载更新、安装更新、重试和退出。
-- [ ] 阻断态能查看只读诊断/日志，且不会触发运行侧副作用。
-- [ ] 未配置最低版本时本地调试不被阻断。
+- [x] 低于 `min_desktop_version` 时不自动连接本机 runtime。
+- [x] 低于 `min_desktop_version` 时不发起 runtime claim。
+- [x] 低于 `min_desktop_version` 时不建立 Relay 连接。
+- [x] 低于 `min_desktop_version` 时不能进入需要协议兼容的会话工作流。
+- [x] 阻断态能检查更新、下载更新、安装更新、重试和退出。
+- [x] 阻断态能查看只读诊断/日志，且不会触发运行侧副作用。
+- [x] 未配置最低版本时本地调试不被阻断。
 
 ## Suggested Validation
 
@@ -36,3 +36,8 @@
 - 本机 runtime bridge 相关测试。
 - `pnpm run desktop:check`
 - 必要时用 mock 云端响应做端到端验证。
+
+## Check Result
+
+- 已通过 `cargo test -p agentdash-local-tauri desktop_update`、`cargo check -p agentdash-local-tauri` 和 `pnpm run desktop:check`。
+- Rust command 层阻断 runtime start/restart；Web bridge 自动连接在前端也读取 gate snapshot 后放行。

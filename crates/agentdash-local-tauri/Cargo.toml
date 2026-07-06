@@ -28,6 +28,8 @@ open = "5.3.3"
 
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2.4.2"
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.0"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

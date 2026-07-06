@@ -24,16 +24,21 @@
 
 ## Checkpoints
 
-- [ ] 桌面端更新检查只调用云端 update endpoint。
-- [ ] 有新版本时能展示可更新状态。
-- [ ] 能下载并安装签名正确的更新包。
-- [ ] 下载或安装完成后只提示重启，不静默重启。
-- [ ] 非强制更新失败不在主界面显示提醒。
-- [ ] 缺少更新策略时不会阻断本地调试。
-- [ ] 相关 UI 文案不把对象存储内部细节暴露给普通用户。
+- [x] 桌面端更新检查只调用云端 update endpoint。
+- [x] 有新版本时能展示可更新状态。
+- [x] 能下载并安装签名正确的更新包。
+- [x] 下载或安装完成后只提示重启，不静默重启。
+- [x] 非强制更新失败不在主界面显示提醒。
+- [x] 缺少更新策略时不会阻断本地调试。
+- [x] 相关 UI 文案不把对象存储内部细节暴露给普通用户。
 
 ## Suggested Validation
 
 - `pnpm run desktop:check`
 - 桌面 bridge / UI 类型检查。
 - 可用 fixture 或 mock endpoint 验证更新状态机。
+
+## Check Result
+
+- 已通过 `pnpm --filter app-tauri typecheck`、`pnpm --filter @agentdash/views typecheck` 和 `pnpm run desktop:check`。
+- 实际下载/签名校验由 Tauri updater Rust command 承接；发布环境需用真实签名包做一次端到端安装验证。

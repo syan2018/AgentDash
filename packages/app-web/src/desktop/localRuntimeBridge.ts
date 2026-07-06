@@ -6,6 +6,8 @@ import type {
   DesktopApiSnapshot,
   DesktopAutostartStatus,
   DesktopRuntimeSettings,
+  DesktopUpdateInstallResult,
+  DesktopUpdatePolicySnapshot,
   LocalRuntimeClient,
   LocalRuntimeProfile,
 } from '@agentdash/core/local-runtime';
@@ -30,6 +32,9 @@ export interface DesktopAppBridge {
   getAutostartStatus(): Promise<DesktopAutostartStatus>;
   setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>;
   getDesktopApiSnapshot(): Promise<DesktopApiSnapshot | null>;
+  getUpdatePolicySnapshot(): Promise<DesktopUpdatePolicySnapshot>;
+  refreshUpdatePolicy(): Promise<DesktopUpdatePolicySnapshot>;
+  installUpdate(): Promise<DesktopUpdateInstallResult>;
   startCodexOAuth(request: DesktopCodexOAuthStartRequest): Promise<StartCodexOAuthResponse>;
   cancelCodexOAuth(flowId: string): Promise<CodexOAuthStatusResponse>;
   quit(): Promise<void>;
@@ -123,6 +128,9 @@ async function runDesktopLocalRuntimeAutoConnect(accessToken: string): Promise<b
   const token = accessToken.trim();
   if (!client || !desktopApp) return false;
   desktopRuntimeAutoConnectAttempts += 1;
+
+  const updatePolicy = await desktopApp.getUpdatePolicySnapshot().catch(() => null);
+  if (updatePolicy?.force_update_required) return false;
 
   const settings = await desktopApp.loadSettings();
   if (!settings.auto_connect_local_runtime) return false;

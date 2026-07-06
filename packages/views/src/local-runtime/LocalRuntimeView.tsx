@@ -12,6 +12,7 @@ import type {
   DesktopAutostartStatus,
   DesktopRuntimeSettings,
   DesktopRuntimeSettingsClient,
+  DesktopUpdatePolicySnapshot,
   LayerState,
   LocalCapabilityHealthItem,
   LocalLogEvent,
@@ -97,6 +98,9 @@ export function LocalRuntimeView({
   const [autostartStatus, setAutostartStatus] = useState<DesktopAutostartStatus | null>(null)
   const [desktopSettingsMessage, setDesktopSettingsMessage] = useState<string | null>(null)
   const [desktopSettingsBusy, setDesktopSettingsBusy] = useState(false)
+  const [desktopUpdatePolicy, setDesktopUpdatePolicy] = useState<DesktopUpdatePolicySnapshot | null>(null)
+  const [desktopUpdateMessage, setDesktopUpdateMessage] = useState<string | null>(null)
+  const [desktopUpdateBusy, setDesktopUpdateBusy] = useState(false)
   const [browseDialogOpen, setBrowseDialogOpen] = useState(false)
   const [browseTargetIndex, setBrowseTargetIndex] = useState<number | null>(null)
 
@@ -147,15 +151,17 @@ export function LocalRuntimeView({
     let alive = true
     const loadDesktopSettings = async () => {
       try {
-        const [settings, autostart] = await Promise.all([
+        const [settings, autostart, updatePolicy] = await Promise.all([
           desktopApp.loadSettings(),
           desktopApp.getAutostartStatus(),
+          desktopApp.refreshUpdatePolicy?.() ?? Promise.resolve(null),
         ])
         if (!alive) return
         const normalized = { ...settings, launch_at_login: autostart.enabled }
         setDesktopSettings(normalized)
         setDesktopSettingsDraft(normalized)
         setAutostartStatus(autostart)
+        setDesktopUpdatePolicy(updatePolicy)
       } catch (err) {
         if (alive) setDesktopSettingsMessage(formatError(err))
       }
@@ -332,6 +338,38 @@ export function LocalRuntimeView({
     }
   }
 
+  async function handleRefreshDesktopUpdatePolicy() {
+    if (!desktopApp?.refreshUpdatePolicy) return
+    setDesktopUpdateBusy(true)
+    setDesktopUpdateMessage(null)
+    try {
+      const policy = await desktopApp.refreshUpdatePolicy()
+      setDesktopUpdatePolicy(policy)
+      setDesktopUpdateMessage(desktopUpdatePolicyText(policy))
+    } catch (err) {
+      setDesktopUpdateMessage(formatError(err))
+    } finally {
+      setDesktopUpdateBusy(false)
+    }
+  }
+
+  async function handleInstallDesktopUpdate() {
+    if (!desktopApp?.installUpdate) return
+    setDesktopUpdateBusy(true)
+    setDesktopUpdateMessage(null)
+    try {
+      const result = await desktopApp.installUpdate()
+      setDesktopUpdateMessage(result.message)
+      if (desktopApp.refreshUpdatePolicy) {
+        setDesktopUpdatePolicy(await desktopApp.refreshUpdatePolicy())
+      }
+    } catch (err) {
+      setDesktopUpdateMessage(formatError(err))
+    } finally {
+      setDesktopUpdateBusy(false)
+    }
+  }
+
   async function handleSaveMcpServers() {
     setMcpMessage(null)
     try {
@@ -434,53 +472,106 @@ export function LocalRuntimeView({
       <CapabilityHealthSection items={snapshot?.capability_health ?? []} />
 
       {desktopApp && (
-        <Card>
-          <CardHeader
-            actions={
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => void handleSaveDesktopSettings()}
-                disabled={desktopSettingsBusy || !desktopSettingsDraft}
+        <>
+          <Card>
+            <CardHeader
+              actions={
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => void handleSaveDesktopSettings()}
+                  disabled={desktopSettingsBusy || !desktopSettingsDraft}
+                >
+                  {desktopSettingsBusy ? '保存中…' : '保存设置'}
+                </Button>
+              }
+            >
+              <h2 className="text-base font-semibold text-foreground">桌面设置</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                当前桌面壳的启动偏好与本机 runtime 自动连接行为。
+              </p>
+            </CardHeader>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <CheckboxField
+                label="开机自启动"
+                checked={desktopSettingsDraft?.launch_at_login ?? false}
+                onChange={(event) => updateDesktopSettingsDraft({ launch_at_login: event.currentTarget.checked })}
+                disabled={desktopSettingsBusy || autostartStatus?.supported === false}
+              />
+              <CheckboxField
+                label="启动到托盘"
+                checked={desktopSettingsDraft?.start_minimized_to_tray ?? false}
+                onChange={(event) => updateDesktopSettingsDraft({ start_minimized_to_tray: event.currentTarget.checked })}
+                disabled={desktopSettingsBusy}
+              />
+              <CheckboxField
+                label="启动后自动连接 runtime"
+                checked={desktopSettingsDraft?.auto_connect_local_runtime ?? true}
+                onChange={(event) => updateDesktopSettingsDraft({ auto_connect_local_runtime: event.currentTarget.checked })}
+                disabled={desktopSettingsBusy}
+              />
+            </div>
+
+            {autostartStatus?.supported === false ? (
+              <Notice className="mt-3" tone="warning">
+                {autostartStatus.message ?? '当前平台暂不支持开机自启动设置'}
+              </Notice>
+            ) : null}
+            {desktopSettingsMessage ? <Notice className="mt-3">{desktopSettingsMessage}</Notice> : null}
+          </Card>
+
+          {desktopApp.refreshUpdatePolicy ? (
+            <Card>
+              <CardHeader
+                actions={
+                  <div className="flex flex-wrap gap-2">
+                    {desktopApp.installUpdate && desktopUpdatePolicy?.update_available ? (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => void handleInstallDesktopUpdate()}
+                        disabled={desktopUpdateBusy}
+                      >
+                        {desktopUpdateBusy ? '处理中…' : '安装更新'}
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      onClick={() => void handleRefreshDesktopUpdatePolicy()}
+                      disabled={desktopUpdateBusy}
+                    >
+                      检查更新
+                    </Button>
+                  </div>
+                }
               >
-                {desktopSettingsBusy ? '保存中…' : '保存设置'}
-              </Button>
-            }
-          >
-            <h2 className="text-base font-semibold text-foreground">桌面设置</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              当前桌面壳的启动偏好与本机 runtime 自动连接行为。
-            </p>
-          </CardHeader>
+                <h2 className="text-base font-semibold text-foreground">桌面更新</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  stable channel 更新状态与云端最低版本策略。
+                </p>
+              </CardHeader>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <CheckboxField
-              label="开机自启动"
-              checked={desktopSettingsDraft?.launch_at_login ?? false}
-              onChange={(event) => updateDesktopSettingsDraft({ launch_at_login: event.currentTarget.checked })}
-              disabled={desktopSettingsBusy || autostartStatus?.supported === false}
-            />
-            <CheckboxField
-              label="启动到托盘"
-              checked={desktopSettingsDraft?.start_minimized_to_tray ?? false}
-              onChange={(event) => updateDesktopSettingsDraft({ start_minimized_to_tray: event.currentTarget.checked })}
-              disabled={desktopSettingsBusy}
-            />
-            <CheckboxField
-              label="启动后自动连接 runtime"
-              checked={desktopSettingsDraft?.auto_connect_local_runtime ?? true}
-              onChange={(event) => updateDesktopSettingsDraft({ auto_connect_local_runtime: event.currentTarget.checked })}
-              disabled={desktopSettingsBusy}
-            />
-          </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <RuntimeStat label="当前版本" value={desktopUpdatePolicy?.current_version ?? '-'} />
+                <RuntimeStat label="最新版本" value={desktopUpdatePolicy?.latest_version ?? '-'} />
+                <RuntimeStat label="最低要求" value={desktopUpdatePolicy?.min_desktop_version ?? '-'} />
+                <RuntimeStat label="状态" value={desktopUpdatePolicy ? desktopUpdatePolicyStatusText(desktopUpdatePolicy) : '未检查'} />
+              </div>
 
-          {autostartStatus?.supported === false ? (
-            <Notice className="mt-3" tone="warning">
-              {autostartStatus.message ?? '当前平台暂不支持开机自启动设置'}
-            </Notice>
+              {desktopUpdateMessage ? (
+                <Notice className="mt-3" tone={desktopUpdatePolicy?.force_update_required ? 'warning' : 'info'}>
+                  {desktopUpdateMessage}
+                </Notice>
+              ) : null}
+              {desktopUpdatePolicy?.last_error || desktopUpdatePolicy?.diagnostics_message ? (
+                <Notice className="mt-3" tone="warning">
+                  {desktopUpdatePolicy.last_error ?? desktopUpdatePolicy.diagnostics_message}
+                </Notice>
+              ) : null}
+            </Card>
           ) : null}
-          {desktopSettingsMessage ? <Notice className="mt-3">{desktopSettingsMessage}</Notice> : null}
-        </Card>
+        </>
       )}
 
       {/* ── 连接配置 (Profile) ── */}
@@ -1067,6 +1158,27 @@ function stateBadgeVariant(state?: LocalRuntimeStatus['state']): 'success' | 'pr
 
 function runtimeStateText(state: LocalRuntimeStatus['state'] | null): string {
   return state ? stateText(state) : '-'
+}
+
+function desktopUpdatePolicyStatusText(policy: DesktopUpdatePolicySnapshot): string {
+  if (policy.force_update_required) return '需要强制更新'
+  if (policy.update_available) return '有可用更新'
+  if (policy.status === 'unavailable') return '检查不可用'
+  if (policy.status === 'unchecked') return '未检查'
+  if (policy.diagnostics_code === 'desktop_manifest_url_unconfigured') return '未配置发布策略'
+  return '已是可用版本'
+}
+
+function desktopUpdatePolicyText(policy: DesktopUpdatePolicySnapshot): string {
+  if (policy.force_update_required) {
+    return `当前版本 ${policy.current_version} 低于最低要求 ${policy.min_desktop_version ?? '-'}`
+  }
+  if (policy.update_available) {
+    return `发现桌面端 ${policy.latest_version ?? '新版本'}`
+  }
+  if (policy.last_error) return policy.last_error
+  if (policy.diagnostics_message) return policy.diagnostics_message
+  return desktopUpdatePolicyStatusText(policy)
 }
 
 function retryText(retryCount: number | null, nextRetryAt: string | null): string {

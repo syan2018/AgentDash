@@ -1,6 +1,7 @@
 import type {
   DesktopAutostartStatus,
   DesktopRuntimeSettings,
+  DesktopUpdatePolicySnapshot,
   LocalRuntimeClient,
   LocalRuntimeProfile,
   LocalRuntimeStatus,
@@ -61,6 +62,20 @@ function installDesktopBridge(client: LocalRuntimeClient): void {
     enabled: false,
     message: null,
   };
+  const updatePolicy: DesktopUpdatePolicySnapshot = {
+    current_version: "0.1.0",
+    status: "ready",
+    force_update_required: false,
+    checked_at: null,
+    latest_version: null,
+    min_desktop_version: null,
+    recommended_desktop_version: null,
+    update_available: null,
+    manifest_url_configured: false,
+    diagnostics_code: "desktop_manifest_url_unconfigured",
+    diagnostics_message: null,
+    last_error: null,
+  };
   const windowMock = {
     __AGENTDASH_DESKTOP_LOCAL_RUNTIME__: client,
     __AGENTDASH_DESKTOP_APP__: {
@@ -69,6 +84,13 @@ function installDesktopBridge(client: LocalRuntimeClient): void {
       getAutostartStatus: vi.fn(async () => autostart),
       setAutostartEnabled: vi.fn(async () => autostart),
       getDesktopApiSnapshot: vi.fn(async () => null),
+      getUpdatePolicySnapshot: vi.fn(async () => updatePolicy),
+      refreshUpdatePolicy: vi.fn(async () => updatePolicy),
+      installUpdate: vi.fn(async () => ({
+        installed: false,
+        version: null,
+        message: "当前没有可安装的桌面更新",
+      })),
       quit: vi.fn(async () => undefined),
     },
     setTimeout: globalThis.setTimeout,
@@ -168,5 +190,30 @@ describe("desktop local runtime bridge", () => {
     expect(runtimeStart).toHaveBeenCalledWith(expect.objectContaining({
       server_url: "http://10.22.71.7:8080",
     }));
+  });
+
+  it("强制更新状态下不会通过 Web bridge 自动启动 native runtime", async () => {
+    const runtimeStart = vi.fn(async () => createStatus("running"));
+    const client = createClient(runtimeStart);
+    installDesktopBridge(client);
+    vi.mocked(window.__AGENTDASH_DESKTOP_APP__.getUpdatePolicySnapshot).mockResolvedValue({
+      current_version: "0.1.0",
+      status: "force_update_required",
+      force_update_required: true,
+      checked_at: "2026-07-06T00:00:00Z",
+      latest_version: "0.2.0",
+      min_desktop_version: "0.2.0",
+      recommended_desktop_version: "0.2.0",
+      update_available: true,
+      manifest_url_configured: true,
+      diagnostics_code: "update_available",
+      diagnostics_message: null,
+      last_error: null,
+    });
+
+    const { ensureDesktopLocalRuntimeStarted } = await import("./localRuntimeBridge");
+    await ensureDesktopLocalRuntimeStarted("token-current", { currentUserAvailable: true });
+
+    expect(runtimeStart).not.toHaveBeenCalled();
   });
 });

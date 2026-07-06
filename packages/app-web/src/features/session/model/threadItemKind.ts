@@ -9,6 +9,7 @@
  * 增补 KIND_REGISTRY + resolveKind/resolveDynamicKind 两处映射，渲染器无需变更。
  */
 import type { AgentDashThreadItem } from "../../../generated/backbone-protocol";
+import { isTerminalReadOperation } from "./terminalItemMeta";
 
 export type ThreadItemKind =
   | "execute"
@@ -80,8 +81,16 @@ export const KIND_REGISTRY: Record<ThreadItemKind, KindMeta> = {
  */
 export function resolveKind(item: AgentDashThreadItem): KindMeta {
   switch (item.type) {
-    case "commandExecution":    return KIND_REGISTRY.execute;
-    case "shellExec":           return KIND_REGISTRY.execute;
+    case "commandExecution": {
+      const agg = item.aggregatedOutput;
+      if (isTerminalReadOperation(agg)) return KIND_REGISTRY.read;
+      return KIND_REGISTRY.execute;
+    }
+    case "shellExec": {
+      const agg = item.aggregatedOutput;
+      if (isTerminalReadOperation(agg)) return KIND_REGISTRY.read;
+      return KIND_REGISTRY.execute;
+    }
     case "fileChange":          return KIND_REGISTRY.edit;
     case "mcpToolCall":         return KIND_REGISTRY.mcp;
     case "webSearch":           return KIND_REGISTRY.search;

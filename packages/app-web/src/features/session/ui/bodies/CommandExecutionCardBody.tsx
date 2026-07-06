@@ -14,6 +14,7 @@ import {
 } from "../../../workspace-panel/tab-types/terminal-uri";
 import { useSessionWorkspacePanelAction } from "../SessionWorkspacePanelActionContext";
 import { CB } from "./cardBodyTokens";
+import { extractTerminalIdFromItem, parseTerminalItemMeta } from "../../model/terminalItemMeta";
 
 type CommandItem =
   | Extract<ThreadItem, { type: "commandExecution" }>
@@ -36,8 +37,29 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
   const openWorkspacePanel = useSessionWorkspacePanelAction();
   const status = item.status;
   const isRunning = status === "inProgress";
-  const renderedOutput = outputText ?? ("aggregatedOutput" in item ? item.aggregatedOutput ?? undefined : undefined);
+
+  const rawAggregated = outputText ?? ("aggregatedOutput" in item ? item.aggregatedOutput ?? undefined : undefined);
+
+  // 新协议：从 aggregatedOutput 元数据中提取真实 terminal_id
+  const realTerminalId = extractTerminalIdFromItem(item as { aggregatedOutput?: string | null; processId?: string | null });
+  const terminalMeta = parseTerminalItemMeta(rawAggregated);
+  const hasNewProtocol = realTerminalId != null;
+
+  // 从 terminal store 订阅真实终端输出（live session 或 durable 事件回放时有效）
+  const storeOutput = useTerminalStore((s) =>
+    realTerminalId ? s.getOutput(realTerminalId) : "",
+  );
+
+  // 决定渲染内容：
+  // 新协议：store 实时输出 → read 操作内联输出 → 无
+  // 旧协议：直接用 rawAggregated
+  const renderedOutput = hasNewProtocol
+    ? (storeOutput || terminalMeta.outputContent || undefined)
+    : rawAggregated;
+
   const boundedOutput = parseBoundedOutputText(renderedOutput);
+
+  // --- replay terminal：始终注册，供 "查看输出" 使用 ---
   const replayTerminalId = buildCommandOutputReplayTerminalId(item.id);
   const replayTerminalUri = buildCommandOutputReplayTerminalUri(item.id);
   const canOpenOutputReplay = Boolean(sessionId && openWorkspacePanel);
@@ -60,14 +82,16 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
       exitedAt: isRunning ? undefined : Date.now(),
     });
 
-    if (renderedOutput == null) return;
+    // 写入 renderedOutput（真实终端输出）而非 rawAggregated（协议元数据）
+    const contentToWrite = renderedOutput;
+    if (contentToWrite == null) return;
     const currentOutput = store.getOutput(replayTerminalId);
-    if (renderedOutput === currentOutput) return;
-    if (renderedOutput.startsWith(currentOutput)) {
-      store.appendOutput(replayTerminalId, renderedOutput.slice(currentOutput.length));
+    if (contentToWrite === currentOutput) return;
+    if (contentToWrite.startsWith(currentOutput)) {
+      store.appendOutput(replayTerminalId, contentToWrite.slice(currentOutput.length));
       return;
     }
-    store.replaceOutput(replayTerminalId, renderedOutput);
+    store.replaceOutput(replayTerminalId, contentToWrite);
   }, [
     item.cwd,
     item.exitCode,
@@ -85,7 +109,7 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
       uri: replayTerminalUri,
       options: { refreshContent: true },
     });
-  }, [openWorkspacePanel, replayTerminalUri, sessionId]);
+  }, [openWorkspacePanel, sessionId, replayTerminalUri]);
 
   useEffect(() => {
     if (outputRef.current && isRunning) {
@@ -147,7 +171,7 @@ export const CommandExecutionCardBody = memo(function CommandExecutionCardBody({
           type="button"
           onClick={handlePromote}
           disabled={!canOpenOutputReplay}
-          title={canOpenOutputReplay ? "查看只读命令输出" : "当前页面没有工作区面板"}
+          title={canOpenOutputReplay ? "在终端面板中查看完整输出" : "当前页面没有工作区面板"}
           className={`ml-auto ${CB.actionButton}`}
         >
           查看输出

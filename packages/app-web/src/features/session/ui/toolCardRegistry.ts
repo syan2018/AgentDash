@@ -29,6 +29,7 @@ import { ContextCompactionCardBody } from "./bodies/ContextCompactionCardBody";
 import { DynamicToolCallCardBody } from "./bodies/DynamicToolCallCardBody";
 import { GenericJsonBody } from "./bodies/GenericJsonBody";
 import { ReadCardBody } from "./bodies/ReadCardBody";
+import { parseTerminalItemMeta } from "../model/terminalItemMeta";
 
 export interface CardContext {
   sessionId?: string;
@@ -55,10 +56,7 @@ export function renderToolCallCard(
     case "shellExec":
       return {
         kind,
-        header: {
-          primary: createElement("code", { className: "font-mono" }, item.command),
-          secondary: item.cwd ? `cwd: ${item.cwd}` : undefined,
-        },
+        header: resolveCommandHeader(item),
         body: createElement(CommandExecutionCardBody, {
           item,
           outputText: ctx.outputText,
@@ -192,6 +190,46 @@ export function renderToolCallCard(
     default:
       return { kind, header: { primary: "未知" }, body: null, status };
   }
+}
+
+// ── commandExecution / shellExec header ──
+
+type CommandOrShellItem =
+  | Extract<ThreadItem, { type: "commandExecution" }>
+  | Extract<AgentDashThreadItem, { type: "shellExec" }>;
+
+function resolveCommandHeader(item: CommandOrShellItem): ToolCardHeaderModel {
+  const command = item.command;
+  const hasValidCommand = command && command !== "(unknown)" && command.trim().length > 0;
+
+  if (hasValidCommand) {
+    return {
+      primary: createElement("code", { className: "font-mono" }, command),
+      secondary: item.cwd ? `cwd: ${item.cwd}` : undefined,
+    };
+  }
+
+  const aggregated = "aggregatedOutput" in item ? item.aggregatedOutput : null;
+  const meta = parseTerminalItemMeta(aggregated);
+
+  if (meta.operation === "read" && meta.terminalId) {
+    return {
+      primary: createElement("code", { className: "font-mono" }, `read ${meta.terminalId.slice(0, 16)}`),
+      secondary: item.cwd ? `cwd: ${item.cwd}` : undefined,
+    };
+  }
+
+  if (meta.terminalId) {
+    return {
+      primary: createElement("code", { className: "font-mono" }, `terminal ${meta.terminalId.slice(0, 16)}`),
+      secondary: item.cwd ? `cwd: ${item.cwd}` : undefined,
+    };
+  }
+
+  return {
+    primary: createElement("code", { className: "font-mono" }, command || "terminal"),
+    secondary: item.cwd ? `cwd: ${item.cwd}` : undefined,
+  };
 }
 
 // ── dynamicToolCall 二级 header ──

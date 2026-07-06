@@ -610,7 +610,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_turn_terminal_dispatches_session_terminal_callback() {
+    async fn process_turn_terminal_dispatches_control_plane_intake() {
         let session_id = "sess-terminal-callback";
         let turn_id = "turn-1";
         let registry = SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new())));

@@ -9,13 +9,14 @@ use agentdash_spi::hooks::{
 use tokio::sync::RwLock;
 
 use super::hub_support::TurnTerminalKind;
-use super::persistence::SessionTerminalEffectStore;
+use super::persistence::AgentRunControlEffectStore;
 use super::post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
     SessionTerminalNotification,
 };
 pub use agentdash_spi::session_persistence::{
-    NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
+    AgentRunControlEffectKind, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
+    NewAgentRunControlEffectRecord,
 };
 
 #[derive(Clone)]
@@ -36,7 +37,7 @@ enum TerminalEffectExecutor {
 
 #[derive(Clone)]
 struct EnqueuedTerminalEffect {
-    record: TerminalEffectRecord,
+    record: AgentRunControlEffectRecord,
     executor: TerminalEffectExecutor,
 }
 
@@ -70,7 +71,7 @@ pub(crate) struct SessionTerminalEffectDispatcher {
 
 #[derive(Clone)]
 pub(crate) struct TerminalEffectDeps {
-    pub terminal_effects: Arc<dyn SessionTerminalEffectStore>,
+    pub terminal_effects: Arc<dyn AgentRunControlEffectStore>,
     pub hook_trigger: Arc<dyn TerminalHookTriggerPort>,
     pub terminal_callback: Arc<RwLock<Option<DynSessionTerminalCallback>>>,
     pub hook_effect_handler_registry: Arc<RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
@@ -158,6 +159,10 @@ impl SessionTerminalEffectDispatcher {
     ) -> EnqueuedTerminalEffects {
         let mut batch = EnqueuedTerminalEffects::default();
         let terminal_state = input.terminal_kind.state_tag().to_string();
+        let hook_control_target = input
+            .hook_runtime
+            .as_ref()
+            .map(|hook_runtime| hook_runtime.control_target());
 
         if let Some(hook_runtime) = input.hook_runtime.as_ref() {
             let effects = self
@@ -196,11 +201,14 @@ impl SessionTerminalEffectDispatcher {
                 });
                 self.enqueue(
                     &mut batch,
-                    NewTerminalEffectRecord {
-                        session_id: input.session_id.clone(),
+                    NewAgentRunControlEffectRecord {
+                        run_id: hook_control_target.as_ref().map(|target| target.run_id),
+                        agent_id: hook_control_target.as_ref().map(|target| target.agent_id),
+                        frame_id: hook_control_target.as_ref().map(|target| target.frame_id),
+                        delivery_runtime_session_id: Some(input.session_id.clone()),
                         turn_id: input.turn_id.clone(),
                         terminal_event_seq: input.terminal_event_seq,
-                        effect_type: TerminalEffectType::HookEffects,
+                        effect_kind: AgentRunControlEffectKind::HookEffects,
                         payload,
                     },
                     TerminalEffectExecutor::HookEffects {
@@ -215,11 +223,14 @@ impl SessionTerminalEffectDispatcher {
         if should_auto_resume(input.terminal_kind, input.hook_runtime.as_ref()) {
             self.enqueue(
                 &mut batch,
-                NewTerminalEffectRecord {
-                    session_id: input.session_id,
+                NewAgentRunControlEffectRecord {
+                    run_id: hook_control_target.as_ref().map(|target| target.run_id),
+                    agent_id: hook_control_target.as_ref().map(|target| target.agent_id),
+                    frame_id: hook_control_target.as_ref().map(|target| target.frame_id),
+                    delivery_runtime_session_id: Some(input.session_id),
                     turn_id: input.turn_id,
                     terminal_event_seq: input.terminal_event_seq,
-                    effect_type: TerminalEffectType::HookAutoResume,
+                    effect_kind: AgentRunControlEffectKind::HookAutoResumeDelivery,
                     payload: serde_json::json!({
                         "reason": "before_stop_continue",
                     }),
@@ -237,11 +248,14 @@ impl SessionTerminalEffectDispatcher {
         input: &TerminalCallbackDispatchInput,
         terminal_state: String,
     ) {
-        let effect = NewTerminalEffectRecord {
-            session_id: input.session_id.clone(),
+        let effect = NewAgentRunControlEffectRecord {
+            run_id: None,
+            agent_id: None,
+            frame_id: None,
+            delivery_runtime_session_id: Some(input.session_id.clone()),
             turn_id: input.turn_id.clone(),
             terminal_event_seq: input.terminal_event_seq,
-            effect_type: TerminalEffectType::SessionTerminalCallback,
+            effect_kind: AgentRunControlEffectKind::AgentRunDeliveryConvergence,
             payload: serde_json::json!({
                 "terminal_state": terminal_state,
                 "terminal_message": input.terminal_message.clone(),
@@ -250,7 +264,7 @@ impl SessionTerminalEffectDispatcher {
         if let Err(error) = self
             .deps
             .terminal_effects
-            .insert_terminal_effect(effect)
+            .insert_control_effect(effect)
             .await
         {
             let context =
@@ -271,17 +285,20 @@ impl SessionTerminalEffectDispatcher {
     async fn enqueue(
         &self,
         batch: &mut EnqueuedTerminalEffects,
-        effect: NewTerminalEffectRecord,
+        effect: NewAgentRunControlEffectRecord,
         executor: TerminalEffectExecutor,
     ) {
-        let session_id = effect.session_id.clone();
+        let delivery_runtime_session_id = effect
+            .delivery_runtime_session_id
+            .clone()
+            .unwrap_or_default();
         let turn_id = effect.turn_id.clone();
         let terminal_event_seq = effect.terminal_event_seq;
-        let effect_type = effect.effect_type.as_str().to_string();
+        let effect_kind = effect.effect_kind.as_str().to_string();
         match self
             .deps
             .terminal_effects
-            .insert_terminal_effect(effect)
+            .insert_control_effect(effect)
             .await
         {
             Ok(record) => batch
@@ -295,11 +312,11 @@ impl SessionTerminalEffectDispatcher {
                     Subsystem::AgentRun,
                     context = &context,
                     error = &error,
-                    session_id = %session_id,
+                    delivery_runtime_session_id = %delivery_runtime_session_id,
                     turn_id = %turn_id,
                     terminal_event_seq,
-                    effect_type = %effect_type,
-                    "Terminal effect outbox 写入失败，终态事实已保留"
+                    effect_kind = %effect_kind,
+                    "AgentRun control effect outbox 写入失败，终态事实已保留"
                 );
             }
         }
@@ -315,14 +332,14 @@ impl SessionTerminalEffectDispatcher {
                     Subsystem::AgentRun,
                     context = &context,
                     error = &error,
-                    session_id = %item.record.session_id,
+                    session_id = %item.record.delivery_runtime_session_id.clone().unwrap_or_default(),
                     turn_id = %item.record.turn_id,
                     effect_id = %item.record.id,
-                    effect_type = item.record.effect_type.as_str(),
+                    effect_kind = item.record.effect_kind.as_str(),
                     terminal_event_seq = item.record.terminal_event_seq,
                     attempt = item.record.attempt_count.saturating_add(1),
                     retry_count = item.record.attempt_count,
-                    "Terminal effect 执行失败"
+                    "AgentRun control effect 执行失败"
                 );
             }
         }
@@ -332,11 +349,11 @@ impl SessionTerminalEffectDispatcher {
         let records = self
             .deps
             .terminal_effects
-            .list_terminal_effects_by_status(
+            .list_control_effects_by_status(
                 &[
-                    TerminalEffectStatus::Pending,
-                    TerminalEffectStatus::Running,
-                    TerminalEffectStatus::Failed,
+                    AgentRunControlEffectStatus::Pending,
+                    AgentRunControlEffectStatus::Running,
+                    AgentRunControlEffectStatus::Failed,
                 ],
                 limit,
             )
@@ -344,10 +361,13 @@ impl SessionTerminalEffectDispatcher {
         let mut attempted = 0;
         for record in records {
             let executor = self.replay_executor_for(&record).await;
-            let session_id = record.session_id.clone();
+            let delivery_runtime_session_id = record
+                .delivery_runtime_session_id
+                .clone()
+                .unwrap_or_default();
             let turn_id = record.turn_id.clone();
             let effect_id = record.id;
-            let effect_type = record.effect_type.as_str().to_string();
+            let effect_kind = record.effect_kind.as_str().to_string();
             let terminal_event_seq = record.terminal_event_seq;
             let attempt = record.attempt_count.saturating_add(1);
             let retry_count = record.attempt_count;
@@ -365,29 +385,38 @@ impl SessionTerminalEffectDispatcher {
                     Subsystem::AgentRun,
                     context = &context,
                     error = &error,
-                    session_id = %session_id,
+                    delivery_runtime_session_id = %delivery_runtime_session_id,
                     turn_id = %turn_id,
                     effect_id = %effect_id,
-                    effect_type = %effect_type,
+                    effect_kind = %effect_kind,
                     terminal_event_seq,
                     attempt,
                     retry_count,
-                    "Terminal effect durable replay 失败"
+                    "AgentRun control effect durable replay 失败"
                 );
             }
         }
         Ok(attempted)
     }
 
-    async fn replay_executor_for(&self, record: &TerminalEffectRecord) -> TerminalEffectExecutor {
-        match record.effect_type {
-            TerminalEffectType::HookAutoResume => TerminalEffectExecutor::HookAutoResume,
-            TerminalEffectType::SessionTerminalCallback => {
+    async fn replay_executor_for(
+        &self,
+        record: &AgentRunControlEffectRecord,
+    ) -> TerminalEffectExecutor {
+        match record.effect_kind {
+            AgentRunControlEffectKind::HookAutoResumeDelivery => {
+                TerminalEffectExecutor::HookAutoResume
+            }
+            AgentRunControlEffectKind::AgentRunDeliveryConvergence => {
                 match self.deps.terminal_callback.read().await.clone() {
                     Some(callback) => TerminalEffectExecutor::SessionTerminalCallback {
                         callback,
                         notification: SessionTerminalNotification {
-                            session_id: record.session_id.clone(),
+                            session_id: record
+                                .delivery_runtime_session_id
+                                .clone()
+                                .unwrap_or_default()
+                                .clone(),
                             turn_id: record.turn_id.clone(),
                             terminal_event_seq: record.terminal_event_seq,
                             terminal_state: record
@@ -404,18 +433,27 @@ impl SessionTerminalEffectDispatcher {
                         },
                     },
                     None => TerminalEffectExecutor::Unavailable {
-                        reason: "terminal callback 未注入，无法 replay session_terminal_callback"
-                            .to_string(),
+                        reason:
+                            "terminal callback 未注入，无法 replay agent_run_delivery_convergence"
+                                .to_string(),
                     },
                 }
             }
-            TerminalEffectType::HookEffects => self.replay_hook_effect_executor(record).await,
+            AgentRunControlEffectKind::HookEffects => {
+                self.replay_hook_effect_executor(record).await
+            }
+            other => TerminalEffectExecutor::Unavailable {
+                reason: format!(
+                    "control effect kind {} 尚未接入 runtime-session replay executor",
+                    other.as_str()
+                ),
+            },
         }
     }
 
     async fn replay_hook_effect_executor(
         &self,
-        record: &TerminalEffectRecord,
+        record: &AgentRunControlEffectRecord,
     ) -> TerminalEffectExecutor {
         let effects = match record.payload.get("effects").cloned() {
             Some(value) => match serde_json::from_value::<Vec<HookEffect>>(value) {
@@ -438,7 +476,13 @@ impl SessionTerminalEffectDispatcher {
             };
         };
         match registry
-            .handler_for(&record.session_id, &record.payload)
+            .handler_for(
+                &record
+                    .delivery_runtime_session_id
+                    .clone()
+                    .unwrap_or_default(),
+                &record.payload,
+            )
             .await
         {
             Ok(Some(handler)) => TerminalEffectExecutor::HookEffects {
@@ -456,7 +500,7 @@ impl SessionTerminalEffectDispatcher {
         let next_attempt_count = item.record.attempt_count.saturating_add(1);
         self.deps
             .terminal_effects
-            .mark_terminal_effect_running(item.record.id)
+            .mark_control_effect_running(item.record.id)
             .await?;
         let result = match &item.executor {
             TerminalEffectExecutor::HookEffects { handler, effects } => {
@@ -472,7 +516,12 @@ impl SessionTerminalEffectDispatcher {
                 .auto_resume
                 .request_hook_auto_resume(TerminalAutoResumeRequest {
                     effect_id: item.record.id,
-                    session_id: item.record.session_id.clone(),
+                    session_id: item
+                        .record
+                        .delivery_runtime_session_id
+                        .clone()
+                        .unwrap_or_default()
+                        .clone(),
                     turn_id: item.record.turn_id.clone(),
                     terminal_event_seq: item.record.terminal_event_seq,
                     payload: item.record.payload.clone(),
@@ -486,19 +535,19 @@ impl SessionTerminalEffectDispatcher {
             Ok(()) => self
                 .deps
                 .terminal_effects
-                .mark_terminal_effect_succeeded(item.record.id)
+                .mark_control_effect_succeeded(item.record.id)
                 .await
                 .map_err(Into::into),
             Err(error) => {
-                if next_attempt_count >= MAX_TERMINAL_EFFECT_ATTEMPTS {
+                if next_attempt_count >= MAX_AGENT_RUN_CONTROL_EFFECT_ATTEMPTS {
                     self.deps
                         .terminal_effects
-                        .mark_terminal_effect_dead_letter(item.record.id, error.clone())
+                        .mark_control_effect_dead_letter(item.record.id, error.clone())
                         .await?;
                 } else {
                     self.deps
                         .terminal_effects
-                        .mark_terminal_effect_failed(item.record.id, error.clone())
+                        .mark_control_effect_failed(item.record.id, error.clone())
                         .await?;
                 }
                 Err(io::Error::other(error))
@@ -508,7 +557,7 @@ impl SessionTerminalEffectDispatcher {
 
     async fn execute_hook_effects(
         &self,
-        record: &TerminalEffectRecord,
+        record: &AgentRunControlEffectRecord,
         handler: Option<&Arc<dyn super::post_turn_handler::PostTurnHandler>>,
         effects: &[HookEffect],
     ) -> Result<(), String> {
@@ -524,7 +573,7 @@ impl SessionTerminalEffectDispatcher {
 
                         operation = "session.terminal_effects",
                         stage = "validate_hook_effect_kind",
-                        session_id = %record.session_id,
+                        session_id = %record.delivery_runtime_session_id.clone().unwrap_or_default(),
                         turn_id = %record.turn_id,
                         effect_id = %record.id,
                         effect_kind = %effect.kind,
@@ -536,13 +585,20 @@ impl SessionTerminalEffectDispatcher {
             }
         }
         handler
-            .execute_effects(&record.session_id, &record.turn_id, effects)
+            .execute_effects(
+                &record
+                    .delivery_runtime_session_id
+                    .clone()
+                    .unwrap_or_default(),
+                &record.turn_id,
+                effects,
+            )
             .await;
         Ok(())
     }
 }
 
-const MAX_TERMINAL_EFFECT_ATTEMPTS: u32 = 3;
+const MAX_AGENT_RUN_CONTROL_EFFECT_ATTEMPTS: u32 = 3;
 
 fn should_auto_resume(
     terminal_kind: TurnTerminalKind,
@@ -581,25 +637,28 @@ mod tests {
     #[test]
     fn terminal_effect_status_round_trips_wire_values() {
         assert_eq!(
-            TerminalEffectStatus::try_from("pending"),
-            Ok(TerminalEffectStatus::Pending)
+            AgentRunControlEffectStatus::try_from("pending"),
+            Ok(AgentRunControlEffectStatus::Pending)
         );
-        assert_eq!(TerminalEffectStatus::Failed.as_str(), "failed");
-        assert_eq!(TerminalEffectStatus::DeadLetter.as_str(), "dead_letter");
-        assert!(TerminalEffectStatus::try_from("unknown").is_err());
+        assert_eq!(AgentRunControlEffectStatus::Failed.as_str(), "failed");
+        assert_eq!(
+            AgentRunControlEffectStatus::DeadLetter.as_str(),
+            "dead_letter"
+        );
+        assert!(AgentRunControlEffectStatus::try_from("unknown").is_err());
     }
 
     #[test]
-    fn terminal_effect_type_round_trips_wire_values() {
+    fn terminal_effect_kind_round_trips_wire_values() {
         assert_eq!(
-            TerminalEffectType::try_from("hook_auto_resume"),
-            Ok(TerminalEffectType::HookAutoResume)
+            AgentRunControlEffectKind::try_from("hook_auto_resume_delivery"),
+            Ok(AgentRunControlEffectKind::HookAutoResumeDelivery)
         );
         assert_eq!(
-            TerminalEffectType::SessionTerminalCallback.as_str(),
-            "session_terminal_callback"
+            AgentRunControlEffectKind::AgentRunDeliveryConvergence.as_str(),
+            "agent_run_delivery_convergence"
         );
-        assert!(TerminalEffectType::try_from("unknown").is_err());
+        assert!(AgentRunControlEffectKind::try_from("unknown").is_err());
     }
 
     #[tokio::test]
@@ -631,11 +690,14 @@ mod tests {
         .await;
         hub.stores
             .terminal_effects
-            .insert_terminal_effect(NewTerminalEffectRecord {
-                session_id: "sess-hook-replay".to_string(),
+            .insert_control_effect(NewAgentRunControlEffectRecord {
+                run_id: None,
+                agent_id: None,
+                frame_id: None,
+                delivery_runtime_session_id: Some("sess-hook-replay".to_string()),
                 turn_id: "turn-1".to_string(),
                 terminal_event_seq: 1,
-                effect_type: TerminalEffectType::HookEffects,
+                effect_kind: AgentRunControlEffectKind::HookEffects,
                 payload: serde_json::json!({
                     "effects": [
                         {
@@ -650,7 +712,7 @@ mod tests {
                 }),
             })
             .await
-            .expect("terminal effect should be inserted");
+            .expect("AgentRun control effect should be inserted");
 
         let attempted = hub
             .effects_service()
@@ -661,7 +723,7 @@ mod tests {
         assert_eq!(attempted, 1);
         assert_eq!(executed.lock().await.as_slice(), ["record:note"]);
         let succeeded = persistence
-            .list_terminal_effects_by_status(&[TerminalEffectStatus::Succeeded], 10)
+            .list_control_effects_by_status(&[AgentRunControlEffectStatus::Succeeded], 10)
             .await
             .expect("succeeded effects should be queryable");
         assert_eq!(succeeded.len(), 1);
@@ -694,17 +756,20 @@ mod tests {
             }),
         });
         let record = persistence
-            .insert_terminal_effect(NewTerminalEffectRecord {
-                session_id: "sess-auto-resume-failure".to_string(),
+            .insert_control_effect(NewAgentRunControlEffectRecord {
+                run_id: None,
+                agent_id: None,
+                frame_id: None,
+                delivery_runtime_session_id: Some("sess-auto-resume-failure".to_string()),
                 turn_id: "turn-1".to_string(),
                 terminal_event_seq: 7,
-                effect_type: TerminalEffectType::HookAutoResume,
+                effect_kind: AgentRunControlEffectKind::HookAutoResumeDelivery,
                 payload: serde_json::json!({
                     "reason": "before_stop_continue",
                 }),
             })
             .await
-            .expect("terminal effect should be inserted");
+            .expect("AgentRun control effect should be inserted");
 
         assert!(
             dispatcher
@@ -717,7 +782,7 @@ mod tests {
         );
 
         let failed = persistence
-            .list_terminal_effects_by_status(&[TerminalEffectStatus::Failed], 10)
+            .list_control_effects_by_status(&[AgentRunControlEffectStatus::Failed], 10)
             .await
             .expect("failed effects should be queryable");
         assert_eq!(failed.len(), 1);
@@ -759,18 +824,21 @@ mod tests {
             auto_resume: Arc::new(NoopAutoResume),
         });
         let record = persistence
-            .insert_terminal_effect(NewTerminalEffectRecord {
-                session_id: "sess-callback-failure".to_string(),
+            .insert_control_effect(NewAgentRunControlEffectRecord {
+                run_id: None,
+                agent_id: None,
+                frame_id: None,
+                delivery_runtime_session_id: Some("sess-callback-failure".to_string()),
                 turn_id: "turn-1".to_string(),
                 terminal_event_seq: 8,
-                effect_type: TerminalEffectType::SessionTerminalCallback,
+                effect_kind: AgentRunControlEffectKind::AgentRunDeliveryConvergence,
                 payload: serde_json::json!({
                     "terminal_state": "failed",
                     "terminal_message": "provider failed",
                 }),
             })
             .await
-            .expect("terminal effect should be inserted");
+            .expect("AgentRun control effect should be inserted");
 
         let executor = dispatcher.replay_executor_for(&record).await;
         assert!(
@@ -781,7 +849,7 @@ mod tests {
         );
 
         let failed = persistence
-            .list_terminal_effects_by_status(&[TerminalEffectStatus::Failed], 10)
+            .list_control_effects_by_status(&[AgentRunControlEffectStatus::Failed], 10)
             .await
             .expect("failed effects should be queryable");
         assert_eq!(failed.len(), 1);
@@ -834,11 +902,11 @@ mod tests {
 
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         let pending = persistence
-            .list_terminal_effects_by_status(
+            .list_control_effects_by_status(
                 &[
-                    TerminalEffectStatus::Pending,
-                    TerminalEffectStatus::Failed,
-                    TerminalEffectStatus::Succeeded,
+                    AgentRunControlEffectStatus::Pending,
+                    AgentRunControlEffectStatus::Failed,
+                    AgentRunControlEffectStatus::Succeeded,
                 ],
                 10,
             )
@@ -887,13 +955,13 @@ mod tests {
 
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         let pending = persistence
-            .list_terminal_effects_by_status(&[TerminalEffectStatus::Pending], 10)
+            .list_control_effects_by_status(&[AgentRunControlEffectStatus::Pending], 10)
             .await
             .expect("pending effects should be queryable");
         assert_eq!(pending.len(), 1);
         assert_eq!(
-            pending[0].effect_type,
-            TerminalEffectType::SessionTerminalCallback
+            pending[0].effect_kind,
+            AgentRunControlEffectKind::AgentRunDeliveryConvergence
         );
 
         let replayed = dispatcher

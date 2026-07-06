@@ -1,21 +1,21 @@
 use std::sync::Arc;
 
 pub use agentdash_spi::session_persistence::{
-    AgentFrameTransitionRecord, CompactionProjectionCommitResult, NewCompactionProjectionCommit,
-    NewTerminalEffectRecord, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
-    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus,
+    AgentFrameTransitionRecord, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
+    AgentRunControlEffectStore, CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
+    NewCompactionProjectionCommit, PersistedSessionEvent, RuntimeCommandRecord,
+    RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus,
     SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore,
     SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore,
     SessionMeta, SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
     SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
-    SessionTerminalEffectStore, TerminalEffectRecord, TerminalEffectStatus,
 };
 
 #[derive(Clone)]
 pub struct SessionStoreSet {
     pub meta: Arc<dyn SessionMetaStore>,
     pub events: Arc<dyn SessionEventStore>,
-    pub terminal_effects: Arc<dyn SessionTerminalEffectStore>,
+    pub terminal_effects: Arc<dyn AgentRunControlEffectStore>,
     pub runtime_commands: Arc<dyn SessionRuntimeCommandStore>,
     pub compactions: Arc<dyn SessionCompactionStore>,
     pub projections: Arc<dyn SessionProjectionStore>,
@@ -67,7 +67,7 @@ impl SessionStoreSet {
     pub fn new(
         meta: Arc<dyn SessionMetaStore>,
         events: Arc<dyn SessionEventStore>,
-        terminal_effects: Arc<dyn SessionTerminalEffectStore>,
+        terminal_effects: Arc<dyn AgentRunControlEffectStore>,
         runtime_commands: Arc<dyn SessionRuntimeCommandStore>,
         compactions: Arc<dyn SessionCompactionStore>,
         projections: Arc<dyn SessionProjectionStore>,
@@ -137,7 +137,7 @@ impl SessionStoreSet {
     where
         T: SessionMetaStore
             + SessionEventStore
-            + SessionTerminalEffectStore
+            + AgentRunControlEffectStore
             + SessionRuntimeCommandStore
             + SessionCompactionStore
             + SessionProjectionStore

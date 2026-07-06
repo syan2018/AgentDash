@@ -57,11 +57,12 @@ If context is compacted, restore the working state in this order:
 - Main session sent a directed status request to `impl-control-effects` and `impl-protocol-frontend`; both remained silent for an additional 5 minute window.
 - Main session killed the two silent workers before spawning repair workers to prevent concurrent writes.
 - Repair worker spawn attempts for `repair-control-effects` and `repair-projection-frontend` did not become deliverable workers; do not wait on them during recovery.
-- Current non-committable static findings:
-  - `RuntimeSession` still owns AgentRun/Hook control-effect replay in `crates/agentdash-application-runtime-session/src/session/terminal_effects.rs`.
-  - `SessionTerminalCallback` fanout still exists in API/bootstrap/runtime callback wiring.
-  - `crates/agentdash-api/src/routes/lifecycle_agents.rs::append_exec_terminal_waiting_items` still fabricates exec waiting rows.
-  - Frontend/protocol typed projection work exists but needs verification that workspace refresh no longer depends on legacy free keys.
+- Main session committed WP2 wait/gate envelope as `430582dd`.
+- Main session committed WP5/WP6 projection/frontend/API waiting-row cleanup as `50b597b9`.
+- Current remaining WP3/WP4 boundary:
+  - AgentRun control-effect store/model/migration changes are verified and ready as an incremental data-model slice.
+  - `RuntimeSession` still owns AgentRun/Hook control-effect replay in `crates/agentdash-application-runtime-session/src/session/terminal_effects.rs`; this is not considered fully clean.
+  - `SessionTerminalCallback` fanout still exists in API/bootstrap/runtime callback wiring and must be replaced by an AgentRun control-effect intake in the next cleanup slice.
 
 ## Commit Slicing
 

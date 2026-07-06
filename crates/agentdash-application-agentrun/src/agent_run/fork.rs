@@ -796,15 +796,15 @@ mod tests {
     use agentdash_application_runtime_session::session::{
         SessionRuntimeBuilder,
         persistence::{
-            AgentFrameTransitionRecord, CompactionProjectionCommitResult,
-            NewCompactionProjectionCommit, NewTerminalEffectRecord, PersistedSessionEvent,
+            AgentFrameTransitionRecord, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
+            AgentRunControlEffectStore, CompactionProjectionCommitResult,
+            NewAgentRunControlEffectRecord, NewCompactionProjectionCommit, PersistedSessionEvent,
             RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
             SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
             SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
             SessionLineageStatus, SessionLineageStore, SessionMeta, SessionMetaStore,
             SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
             SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult, SessionStoreSet,
-            SessionTerminalEffectStore, TerminalEffectRecord, TerminalEffectStatus,
         },
     };
     use agentdash_domain::agent_run_mailbox::MailboxMessageStatus;
@@ -1803,39 +1803,29 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionTerminalEffectStore for FixtureSessionStore {
-        async fn insert_terminal_effect(
+    impl AgentRunControlEffectStore for FixtureSessionStore {
+        async fn insert_control_effect(
             &self,
-            _effect: NewTerminalEffectRecord,
-        ) -> SessionStoreResult<TerminalEffectRecord> {
+            _effect: NewAgentRunControlEffectRecord,
+        ) -> SessionStoreResult<AgentRunControlEffectRecord> {
             Err(SessionStoreError::Internal(
                 "unused in fork tests".to_string(),
             ))
         }
 
-        async fn mark_terminal_effect_running(&self, _effect_id: Uuid) -> SessionStoreResult<()> {
+        async fn mark_control_effect_running(&self, _effect_id: Uuid) -> SessionStoreResult<()> {
             Err(SessionStoreError::Internal(
                 "unused in fork tests".to_string(),
             ))
         }
 
-        async fn mark_terminal_effect_succeeded(&self, _effect_id: Uuid) -> SessionStoreResult<()> {
+        async fn mark_control_effect_succeeded(&self, _effect_id: Uuid) -> SessionStoreResult<()> {
             Err(SessionStoreError::Internal(
                 "unused in fork tests".to_string(),
             ))
         }
 
-        async fn mark_terminal_effect_failed(
-            &self,
-            _effect_id: Uuid,
-            _error: String,
-        ) -> SessionStoreResult<()> {
-            Err(SessionStoreError::Internal(
-                "unused in fork tests".to_string(),
-            ))
-        }
-
-        async fn mark_terminal_effect_dead_letter(
+        async fn mark_control_effect_failed(
             &self,
             _effect_id: Uuid,
             _error: String,
@@ -1845,11 +1835,21 @@ mod tests {
             ))
         }
 
-        async fn list_terminal_effects_by_status(
+        async fn mark_control_effect_dead_letter(
             &self,
-            _statuses: &[TerminalEffectStatus],
+            _effect_id: Uuid,
+            _error: String,
+        ) -> SessionStoreResult<()> {
+            Err(SessionStoreError::Internal(
+                "unused in fork tests".to_string(),
+            ))
+        }
+
+        async fn list_control_effects_by_status(
+            &self,
+            _statuses: &[AgentRunControlEffectStatus],
             _limit: u32,
-        ) -> SessionStoreResult<Vec<TerminalEffectRecord>> {
+        ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
             Ok(Vec::new())
         }
     }

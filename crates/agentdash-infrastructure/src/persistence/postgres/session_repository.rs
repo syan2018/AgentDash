@@ -1,22 +1,22 @@
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::session_persistence::{
-    AgentFrameTransitionRecord, CompactionProjectionCommitResult, NewCompactionProjectionCommit,
-    NewTerminalEffectRecord, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
-    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog,
-    SessionEventPage, SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
-    SessionLineageStatus, SessionLineageStore, SessionMeta, SessionMetaStore,
-    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
-    SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult, SessionTerminalEffectStore,
-    TerminalEffectRecord, TerminalEffectStatus,
+    AgentFrameTransitionRecord, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
+    AgentRunControlEffectStore, CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
+    NewCompactionProjectionCommit, PersistedSessionEvent, RuntimeCommandRecord,
+    RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStore,
+    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionLineageRecord,
+    SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore, SessionMeta,
+    SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
 };
 use sqlx::{PgPool, Row};
 
 use crate::persistence::session_core::{
-    compaction_from_row, encode_optional_u64_as_i64, encode_u64_as_i64, json_string,
-    lineage_from_row, map_meta_row, parse_non_negative_u64, persisted_event_from_envelope,
-    persisted_event_from_row, projection_from_envelope, projection_head_from_row,
-    projection_segment_from_row, runtime_command_from_row, sqlx_to_session_store_error,
-    terminal_effect_from_row, validate_commit_session,
+    compaction_from_row, control_effect_from_row, encode_optional_u64_as_i64, encode_u64_as_i64,
+    json_string, lineage_from_row, map_meta_row, parse_non_negative_u64,
+    persisted_event_from_envelope, persisted_event_from_row, projection_from_envelope,
+    projection_head_from_row, projection_segment_from_row, runtime_command_from_row,
+    sqlx_to_session_store_error, validate_commit_session,
 };
 
 pub struct PostgresSessionRepository {
@@ -38,7 +38,7 @@ impl PostgresSessionRepository {
                 "runtime_session_lineage",
                 "runtime_session_projection_heads",
                 "runtime_session_projection_segments",
-                "runtime_session_terminal_effects",
+                "agent_run_control_effects",
                 "agent_frame_transitions",
                 "runtime_session_delivery_commands",
             ],
@@ -47,17 +47,17 @@ impl PostgresSessionRepository {
         .map_err(|err| SessionStoreError::Database(err.to_string()))
     }
 
-    async fn update_terminal_effect_status(
+    async fn update_control_effect_status(
         &self,
         effect_id: uuid::Uuid,
-        status: TerminalEffectStatus,
+        status: AgentRunControlEffectStatus,
         updated_at_ms: i64,
         increment_attempt: bool,
         last_error: Option<String>,
     ) -> SessionStoreResult<()> {
         let result = sqlx::query(
             r#"
-            UPDATE runtime_session_terminal_effects
+            UPDATE agent_run_control_effects
             SET status = $1,
                 attempt_count = attempt_count + $2,
                 updated_at_ms = $3,
@@ -75,7 +75,7 @@ impl PostgresSessionRepository {
         .map_err(sqlx_to_session_store_error)?;
         if result.rows_affected() == 0 {
             return Err(SessionStoreError::NotFound(format!(
-                "terminal effect {effect_id} 不存在"
+                "AgentRun control effect {effect_id} 不存在"
             )));
         }
         Ok(())
@@ -268,7 +268,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             .execute(&mut *tx)
             .await
             .map_err(sqlx_to_session_store_error)?;
-        sqlx::query("DELETE FROM runtime_session_terminal_effects WHERE session_id = $1")
+        sqlx::query("DELETE FROM agent_run_control_effects WHERE delivery_runtime_session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
@@ -534,20 +534,23 @@ impl SessionEventStore for PostgresSessionRepository {
 }
 
 #[async_trait::async_trait]
-impl SessionTerminalEffectStore for PostgresSessionRepository {
-    async fn insert_terminal_effect(
+impl AgentRunControlEffectStore for PostgresSessionRepository {
+    async fn insert_control_effect(
         &self,
-        effect: NewTerminalEffectRecord,
-    ) -> SessionStoreResult<TerminalEffectRecord> {
+        effect: NewAgentRunControlEffectRecord,
+    ) -> SessionStoreResult<AgentRunControlEffectRecord> {
         let now = chrono::Utc::now().timestamp_millis();
-        let record = TerminalEffectRecord {
+        let record = AgentRunControlEffectRecord {
             id: uuid::Uuid::new_v4(),
-            session_id: effect.session_id,
+            run_id: effect.run_id,
+            agent_id: effect.agent_id,
+            frame_id: effect.frame_id,
+            delivery_runtime_session_id: effect.delivery_runtime_session_id,
             turn_id: effect.turn_id,
             terminal_event_seq: effect.terminal_event_seq,
-            effect_type: effect.effect_type,
+            effect_kind: effect.effect_kind,
             payload: effect.payload,
-            status: TerminalEffectStatus::Pending,
+            status: AgentRunControlEffectStatus::Pending,
             attempt_count: 0,
             created_at_ms: now,
             updated_at_ms: now,
@@ -555,25 +558,26 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         };
         let terminal_event_seq = encode_u64_as_i64(
             record.terminal_event_seq,
-            "runtime_session_terminal_effects.terminal_event_seq",
+            "agent_run_control_effects.terminal_event_seq",
         )?;
-        let payload_json = json_string(
-            &record.payload,
-            "runtime_session_terminal_effects.payload_json",
-        )?;
+        let payload_json = json_string(&record.payload, "agent_run_control_effects.payload_json")?;
         sqlx::query(
             r#"
-            INSERT INTO runtime_session_terminal_effects (
-                id, session_id, turn_id, terminal_event_seq, effect_type, payload_json,
-                status, attempt_count, created_at_ms, updated_at_ms, last_error
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO agent_run_control_effects (
+                id, run_id, agent_id, frame_id, delivery_runtime_session_id, turn_id,
+                terminal_event_seq, effect_kind, payload_json, status, attempt_count,
+                created_at_ms, updated_at_ms, last_error
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(record.id.to_string())
-        .bind(&record.session_id)
+        .bind(record.run_id)
+        .bind(record.agent_id)
+        .bind(record.frame_id)
+        .bind(&record.delivery_runtime_session_id)
         .bind(&record.turn_id)
         .bind(terminal_event_seq)
-        .bind(record.effect_type.as_str())
+        .bind(record.effect_kind.as_str())
         .bind(payload_json)
         .bind(record.status.as_str())
         .bind(i64::from(record.attempt_count))
@@ -586,11 +590,11 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         Ok(record)
     }
 
-    async fn mark_terminal_effect_running(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
+    async fn mark_control_effect_running(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
-        self.update_terminal_effect_status(
+        self.update_control_effect_status(
             effect_id,
-            TerminalEffectStatus::Running,
+            AgentRunControlEffectStatus::Running,
             now,
             true,
             None,
@@ -598,14 +602,11 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         .await
     }
 
-    async fn mark_terminal_effect_succeeded(
-        &self,
-        effect_id: uuid::Uuid,
-    ) -> SessionStoreResult<()> {
+    async fn mark_control_effect_succeeded(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
-        self.update_terminal_effect_status(
+        self.update_control_effect_status(
             effect_id,
-            TerminalEffectStatus::Succeeded,
+            AgentRunControlEffectStatus::Succeeded,
             now,
             false,
             None,
@@ -613,15 +614,15 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         .await
     }
 
-    async fn mark_terminal_effect_failed(
+    async fn mark_control_effect_failed(
         &self,
         effect_id: uuid::Uuid,
         error: String,
     ) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
-        self.update_terminal_effect_status(
+        self.update_control_effect_status(
             effect_id,
-            TerminalEffectStatus::Failed,
+            AgentRunControlEffectStatus::Failed,
             now,
             false,
             Some(error),
@@ -629,15 +630,15 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         .await
     }
 
-    async fn mark_terminal_effect_dead_letter(
+    async fn mark_control_effect_dead_letter(
         &self,
         effect_id: uuid::Uuid,
         error: String,
     ) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
-        self.update_terminal_effect_status(
+        self.update_control_effect_status(
             effect_id,
-            TerminalEffectStatus::DeadLetter,
+            AgentRunControlEffectStatus::DeadLetter,
             now,
             false,
             Some(error),
@@ -645,11 +646,11 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         .await
     }
 
-    async fn list_terminal_effects_by_status(
+    async fn list_control_effects_by_status(
         &self,
-        statuses: &[TerminalEffectStatus],
+        statuses: &[AgentRunControlEffectStatus],
         limit: u32,
-    ) -> SessionStoreResult<Vec<TerminalEffectRecord>> {
+    ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
         if statuses.is_empty() {
             return Ok(Vec::new());
         }
@@ -657,9 +658,10 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         let limit = i64::from(limit.max(1));
         let rows = sqlx::query(
             r#"
-            SELECT id, session_id, turn_id, terminal_event_seq, effect_type, payload_json,
-                   status, attempt_count, created_at_ms, updated_at_ms, last_error
-            FROM runtime_session_terminal_effects
+            SELECT id, run_id, agent_id, frame_id, delivery_runtime_session_id, turn_id,
+                   terminal_event_seq, effect_kind, payload_json, status, attempt_count,
+                   created_at_ms, updated_at_ms, last_error
+            FROM agent_run_control_effects
             WHERE status = ANY($1)
             ORDER BY updated_at_ms ASC, created_at_ms ASC
             LIMIT $2
@@ -670,7 +672,7 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
-        rows.iter().map(terminal_effect_from_row).collect()
+        rows.iter().map(control_effect_from_row).collect()
     }
 }
 

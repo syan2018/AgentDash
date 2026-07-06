@@ -425,38 +425,50 @@ impl RuntimeDeliveryCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TerminalEffectType {
+pub enum AgentRunControlEffectKind {
+    AgentRunDeliveryConvergence,
+    WaitProducerTerminalConvergence,
+    LifecycleTerminalConvergence,
+    MailboxWakeDelivery,
     HookEffects,
-    SessionTerminalCallback,
-    HookAutoResume,
+    HookAutoResumeDelivery,
+    HookRuntimeProjectionChanged,
 }
 
-impl TerminalEffectType {
+impl AgentRunControlEffectKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::AgentRunDeliveryConvergence => "agent_run_delivery_convergence",
+            Self::WaitProducerTerminalConvergence => "wait_producer_terminal_convergence",
+            Self::LifecycleTerminalConvergence => "lifecycle_terminal_convergence",
+            Self::MailboxWakeDelivery => "mailbox_wake_delivery",
             Self::HookEffects => "hook_effects",
-            Self::SessionTerminalCallback => "session_terminal_callback",
-            Self::HookAutoResume => "hook_auto_resume",
+            Self::HookAutoResumeDelivery => "hook_auto_resume_delivery",
+            Self::HookRuntimeProjectionChanged => "hook_runtime_projection_changed",
         }
     }
 }
 
-impl TryFrom<&str> for TerminalEffectType {
+impl TryFrom<&str> for AgentRunControlEffectKind {
     type Error = String;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
+            "agent_run_delivery_convergence" => Ok(Self::AgentRunDeliveryConvergence),
+            "wait_producer_terminal_convergence" => Ok(Self::WaitProducerTerminalConvergence),
+            "lifecycle_terminal_convergence" => Ok(Self::LifecycleTerminalConvergence),
+            "mailbox_wake_delivery" => Ok(Self::MailboxWakeDelivery),
             "hook_effects" => Ok(Self::HookEffects),
-            "session_terminal_callback" => Ok(Self::SessionTerminalCallback),
-            "hook_auto_resume" => Ok(Self::HookAutoResume),
-            other => Err(format!("unknown terminal effect type: {other}")),
+            "hook_auto_resume_delivery" => Ok(Self::HookAutoResumeDelivery),
+            "hook_runtime_projection_changed" => Ok(Self::HookRuntimeProjectionChanged),
+            other => Err(format!("unknown AgentRun control effect kind: {other}")),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TerminalEffectStatus {
+pub enum AgentRunControlEffectStatus {
     Pending,
     Running,
     Succeeded,
@@ -464,7 +476,7 @@ pub enum TerminalEffectStatus {
     DeadLetter,
 }
 
-impl TerminalEffectStatus {
+impl AgentRunControlEffectStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -476,7 +488,7 @@ impl TerminalEffectStatus {
     }
 }
 
-impl TryFrom<&str> for TerminalEffectStatus {
+impl TryFrom<&str> for AgentRunControlEffectStatus {
     type Error = String;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -486,21 +498,24 @@ impl TryFrom<&str> for TerminalEffectStatus {
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "dead_letter" => Ok(Self::DeadLetter),
-            other => Err(format!("unknown terminal effect status: {other}")),
+            other => Err(format!("unknown AgentRun control effect status: {other}")),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct TerminalEffectRecord {
+pub struct AgentRunControlEffectRecord {
     pub id: Uuid,
-    pub session_id: String,
+    pub run_id: Option<Uuid>,
+    pub agent_id: Option<Uuid>,
+    pub frame_id: Option<Uuid>,
+    pub delivery_runtime_session_id: Option<String>,
     pub turn_id: String,
     pub terminal_event_seq: u64,
-    pub effect_type: TerminalEffectType,
+    pub effect_kind: AgentRunControlEffectKind,
     pub payload: serde_json::Value,
-    pub status: TerminalEffectStatus,
+    pub status: AgentRunControlEffectStatus,
     pub attempt_count: u32,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
@@ -508,11 +523,14 @@ pub struct TerminalEffectRecord {
 }
 
 #[derive(Debug, Clone)]
-pub struct NewTerminalEffectRecord {
-    pub session_id: String,
+pub struct NewAgentRunControlEffectRecord {
+    pub run_id: Option<Uuid>,
+    pub agent_id: Option<Uuid>,
+    pub frame_id: Option<Uuid>,
+    pub delivery_runtime_session_id: Option<String>,
     pub turn_id: String,
     pub terminal_event_seq: u64,
-    pub effect_type: TerminalEffectType,
+    pub effect_kind: AgentRunControlEffectKind,
     pub payload: serde_json::Value,
 }
 
@@ -818,28 +836,28 @@ pub trait SessionEventStore: Send + Sync {
 }
 
 #[async_trait]
-pub trait SessionTerminalEffectStore: Send + Sync {
-    async fn insert_terminal_effect(
+pub trait AgentRunControlEffectStore: Send + Sync {
+    async fn insert_control_effect(
         &self,
-        effect: NewTerminalEffectRecord,
-    ) -> SessionStoreResult<TerminalEffectRecord>;
-    async fn mark_terminal_effect_running(&self, effect_id: Uuid) -> SessionStoreResult<()>;
-    async fn mark_terminal_effect_succeeded(&self, effect_id: Uuid) -> SessionStoreResult<()>;
-    async fn mark_terminal_effect_failed(
-        &self,
-        effect_id: Uuid,
-        error: String,
-    ) -> SessionStoreResult<()>;
-    async fn mark_terminal_effect_dead_letter(
+        effect: NewAgentRunControlEffectRecord,
+    ) -> SessionStoreResult<AgentRunControlEffectRecord>;
+    async fn mark_control_effect_running(&self, effect_id: Uuid) -> SessionStoreResult<()>;
+    async fn mark_control_effect_succeeded(&self, effect_id: Uuid) -> SessionStoreResult<()>;
+    async fn mark_control_effect_failed(
         &self,
         effect_id: Uuid,
         error: String,
     ) -> SessionStoreResult<()>;
-    async fn list_terminal_effects_by_status(
+    async fn mark_control_effect_dead_letter(
         &self,
-        statuses: &[TerminalEffectStatus],
+        effect_id: Uuid,
+        error: String,
+    ) -> SessionStoreResult<()>;
+    async fn list_control_effects_by_status(
+        &self,
+        statuses: &[AgentRunControlEffectStatus],
         limit: u32,
-    ) -> SessionStoreResult<Vec<TerminalEffectRecord>>;
+    ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>>;
 }
 
 #[async_trait]

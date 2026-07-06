@@ -83,10 +83,10 @@ pub use launch::{LaunchCommandOutcome, SessionLaunchService};
 #[cfg(test)]
 pub use memory_persistence::FixtureRuntimeTraceStore;
 pub use persistence::{
-    PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
-    SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
-    SessionLineageStore, SessionMetaStore, SessionProjectionStore, SessionRuntimeCommandStore,
-    SessionStoreSet, SessionTerminalEffectStore,
+    AgentRunControlEffectStore, PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog,
+    SessionEventPage, SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
+    SessionLineageStatus, SessionLineageStore, SessionMetaStore, SessionProjectionStore,
+    SessionRuntimeCommandStore, SessionStoreSet,
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
@@ -103,7 +103,8 @@ pub use runtime_control::SessionRuntimeService;
 pub use runtime_services::SessionRuntimeServices;
 pub use runtime_transition_service::SessionRuntimeTransitionService;
 pub use terminal_effects::{
-    NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
+    AgentRunControlEffectKind, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
+    NewAgentRunControlEffectRecord,
 };
 pub use title_service::SessionTitleService;
 pub use tool_result_cache::{

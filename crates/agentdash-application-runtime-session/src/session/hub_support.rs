@@ -187,7 +187,6 @@ pub(super) fn build_session_runtime(
         hook_runtime_target_cache: None,
         turn_state: TurnState::Idle,
         session_profile: None,
-        hook_auto_resume_count: 0,
         last_activity_at: chrono::Utc::now().timestamp_millis(),
         ephemeral_buffer: std::collections::VecDeque::new(),
         ephemeral_seq: 0,
@@ -275,9 +274,6 @@ pub(super) struct SessionRuntime {
     pub turn_state: TurnState,
     /// Session 的内禀运行时配置；Init 时写入，Continue 时复用。
     pub session_profile: Option<SessionProfile>,
-    /// Hook 驱动的 auto-resume 计数器（session 级：跨 auto-resume 链累积，
-    /// 新 turn 起始不清零），用于限流防止 hook 指令死循环。
-    pub hook_auto_resume_count: u32,
     /// 最近一次事件活动的时间戳（毫秒），用于 stall 检测。
     pub last_activity_at: i64,
     /// Per-turn in-flight ephemeral 事件缓冲（仅内存）。承载 delta / item_updated 等

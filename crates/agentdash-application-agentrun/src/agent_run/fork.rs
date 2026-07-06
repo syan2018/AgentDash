@@ -1669,7 +1669,7 @@ mod tests {
             SessionStoreSet {
                 meta: self.clone(),
                 events: self.clone(),
-                terminal_effects: self.clone(),
+                control_effects: self.clone(),
                 runtime_commands: self.clone(),
                 compactions: self.clone(),
                 projections: self.clone(),

@@ -1180,7 +1180,7 @@ mod tests {
         let failing_stores = SessionStoreSet {
             meta: persistence.clone(),
             events: persistence.clone(),
-            terminal_effects: persistence.clone(),
+            control_effects: persistence.clone(),
             runtime_commands: persistence.clone(),
             compactions: persistence.clone(),
             projections: Arc::new(FailingProjectionStore {

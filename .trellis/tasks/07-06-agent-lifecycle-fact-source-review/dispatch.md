@@ -15,10 +15,11 @@ If context is compacted, restore the working state in this order:
 
 1. Run `python ./.trellis/scripts/task.py current --source` and confirm the active task above.
 2. Re-read `prd.md`, `design.md`, `implement.md`, `implement.jsonl`, `check.jsonl`, and this file.
-3. Inspect the channel with `trellis channel messages agent-lifecycle-boundary --raw --last 80`.
-4. Check worker completion with `trellis channel wait agent-lifecycle-boundary --as codex-main --from "impl-wait-gate,impl-control-effects,impl-protocol-frontend" --kind "done,error" --all --timeout 1m`.
-5. Review `git status --short` before touching files. Do not overwrite worker changes.
-6. Commit each completed work package independently.
+3. Prefer platform-native `spawn_agent` / `wait_agent` for new sub-agent work. Trellis channel history remains useful for old worker reports only.
+4. Inspect the old channel only when reconstructing earlier worker status: `trellis channel messages agent-lifecycle-boundary --raw --last 80`.
+5. Check native sub-agent `019f38a9-03cf-7352-a021-eac294a178bd` if it is still open.
+6. Review `git status --short` before touching files. Do not overwrite worker changes.
+7. Commit each completed work package independently.
 
 ## Active Workers
 
@@ -59,10 +60,17 @@ If context is compacted, restore the working state in this order:
 - Repair worker spawn attempts for `repair-control-effects` and `repair-projection-frontend` did not become deliverable workers; do not wait on them during recovery.
 - Main session committed WP2 wait/gate envelope as `430582dd`.
 - Main session committed WP5/WP6 projection/frontend/API waiting-row cleanup as `50b597b9`.
+- Main session committed WP3/WP4 AgentRun control-effect persistence model as `346c1573`.
+- Main session committed mailbox projection naming cleanup as `0956e219`.
+- Native sub-agent dispatch:
+  - `019f38a9-03cf-7352-a021-eac294a178bd` (`trellis-implement`, nickname `Chandrasekhar`) owns final WP3/WP4 RuntimeSession business replay externalization.
+  - Dispatch prompt required reading task artifacts/spec manifests, preserving the existing `AgentRunControlEffectStore` / `0053_agent_run_control_effects` model, and not committing.
 - Current remaining WP3/WP4 boundary:
-  - AgentRun control-effect store/model/migration changes are verified and ready as an incremental data-model slice.
-  - `RuntimeSession` still owns AgentRun/Hook control-effect replay in `crates/agentdash-application-runtime-session/src/session/terminal_effects.rs`; this is not considered fully clean.
-  - `SessionTerminalCallback` fanout still exists in API/bootstrap/runtime callback wiring and must be replaced by an AgentRun control-effect intake in the next cleanup slice.
+  - AgentRun control-effect executor/intake implementation exists in `crates/agentdash-application-agentrun/src/agent_run/control_effects.rs` and must be committed with this cleanup slice.
+  - RuntimeSession terminal path now uses `RuntimeTerminalBoundaryService` / `RuntimeTerminalBoundaryEvidence` and hands evidence to `AgentRunControlEffectPort`; `terminal_effects.rs` and `effects_service.rs` have been deleted.
+  - API/bootstrap now wires `AgentRunControlEffectService` plus `ApiWaitProducerTerminalConvergenceAdapter` and `ApiLifecycleTerminalConvergenceAdapter`; the `SessionTerminalCallback` composite fanout is gone.
+  - `SessionStoreSet` exposes the outbox store as `control_effects`, not `terminal_effects`, so the composition root no longer presents the AgentRun outbox as Session-owned.
+  - Static grep after this slice should only find historical migration names and task planning text for `runtime_session_terminal_effects` / `SessionTerminalEffectStore`; product code should not contain `SessionEffectsService`, `terminal_effects`, `SessionTerminalCallback`, or `TerminalEffectType`.
 
 ## Commit Slicing
 

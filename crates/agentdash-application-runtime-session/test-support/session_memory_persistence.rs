@@ -6,18 +6,16 @@ use tokio::sync::Mutex;
 
 use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
-    AgentRunControlEffectStore, CompactionProjectionCommitResult, NewCompactionProjectionCommit,
-    PersistedSessionEvent, SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog,
-    SessionEventPage, SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
-    SessionLineageStatus, SessionLineageStore, SessionMetaStore, SessionProjectionHeadRecord,
-    SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
-    SessionStoreError, SessionStoreResult,
+    AgentRunControlEffectRecord, AgentRunControlEffectStatus, AgentRunControlEffectStore,
+    CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
+    NewCompactionProjectionCommit, PersistedSessionEvent, SessionCompactionRecord,
+    SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore,
+    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore,
+    SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
 };
 use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
-};
-use super::terminal_effects::{
-    AgentRunControlEffectRecord, AgentRunControlEffectStatus, NewAgentRunControlEffectRecord,
 };
 use super::types::{ExecutionStatus, PendingCapabilityStateTransition, SessionMeta};
 
@@ -1034,7 +1032,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 
 #[cfg(test)]
 mod tests {
-    use super::super::AgentRunControlEffectKind;
+    use super::super::persistence::AgentRunControlEffectKind;
     use super::super::types::RuntimeCapabilityTransition;
     use super::*;
     use agentdash_agent_protocol::{
@@ -1154,7 +1152,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn terminal_effect_outbox_tracks_attempt_status_and_delete() {
+    async fn control_effect_outbox_tracks_attempt_status_and_delete() {
         let persistence = FixtureRuntimeTraceStore::default();
         let meta = SessionMeta {
             id: "sess-effects".to_string(),

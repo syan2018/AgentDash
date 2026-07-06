@@ -1,6 +1,7 @@
 mod admission;
 mod cancel_command;
 pub(crate) mod command_receipt;
+mod control_effects;
 mod conversation_snapshot;
 mod delete_command;
 mod delivery_runtime_selection;
@@ -34,6 +35,7 @@ pub use cancel_command::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCancelRuntimePort,
 };
 pub use command_receipt::AgentRunCommandReceiptView;
+pub use control_effects::{AgentRunControlEffectDeps, AgentRunControlEffectService};
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,
     AgentConversationLifecycleContextModel, AgentConversationSnapshotInput,

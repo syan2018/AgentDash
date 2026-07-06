@@ -8,12 +8,13 @@ use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
     agent_run_session_launch,
 };
+use agentdash_application_ports::agent_run_control_effect::AgentRunControlEffectReplayPort;
 
 pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
     match state
         .services
-        .session_effects
-        .replay_terminal_effect_outbox(100)
+        .agent_run_control_effects
+        .replay_control_effect_outbox(100)
         .await
     {
         Ok(count) if count > 0 => {
@@ -21,20 +22,22 @@ pub(crate) async fn start_post_app_state_workers(state: &mut Arc<AppState>) {
                 Info,
                 Subsystem::Api,
                 count,
-                "已调度 terminal effect outbox 恢复执行"
+                "已调度 AgentRun control effect outbox 恢复执行"
             );
         }
         Ok(_) => {}
         Err(error) => {
-            let context =
-                DiagnosticErrorContext::new("background_workers.start", "replay_terminal_effects");
+            let context = DiagnosticErrorContext::new(
+                "background_workers.start",
+                "replay_agent_run_control_effects",
+            );
             diag_error!(
                 Warn,
                 Subsystem::Api,
                 context = &context,
                 error = &error,
                 batch_limit = 100,
-                "terminal effect outbox 恢复执行失败"
+                "AgentRun control effect outbox 恢复执行失败"
             );
         }
     }

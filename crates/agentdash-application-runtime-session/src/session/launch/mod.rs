@@ -19,7 +19,7 @@ pub use plan::{
     ConnectorInputPlan, HookLaunchPlan, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput,
     LaunchPlanTrace, LaunchPlanTraceEntry, LaunchRestoreMode, LaunchSummary, PromptLaunchPathPlan,
     RestoreLaunchPlan, RuntimeCommandLaunchPlan, RuntimeDelegateCompositionPlan,
-    RuntimeDelegateFacetPlan, TerminalEffectPlan,
+    RuntimeDelegateFacetPlan, TerminalBoundaryPlan,
 };
 pub(in crate::session) use planner::{LaunchPlanner, LaunchPlannerInput};
 pub(in crate::session) use preparation::{TurnPreparationInput, TurnPreparer};

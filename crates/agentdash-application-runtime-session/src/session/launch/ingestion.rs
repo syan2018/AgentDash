@@ -28,7 +28,7 @@ impl StreamIngestionAttacher {
             crate::session::turn_processor::SessionTurnProcessorDeps {
                 turn_supervisor: self.deps.turn_supervisor.clone(),
                 eventing: self.deps.eventing.clone(),
-                effects: self.deps.effects.clone(),
+                terminal_boundary: self.deps.terminal_boundary.clone(),
             },
             crate::session::turn_processor::SessionTurnProcessorConfig {
                 session_id: session_id.clone(),

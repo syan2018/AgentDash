@@ -5,7 +5,7 @@
 //! - [`factory`]：构造与注入（`new_with_hooks_and_stores` + `with_*` / `set_*`）。
 //! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + 已持久化 AgentFrame adoption。
 //! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_runtime` /
-//!   `collect_runtime_context_update_injections` / `schedule_unanchored_hook_auto_resume`。
+//!   `collect_runtime_context_update_injections`。
 //! - [`runtime_context_transition`]：AgentFrame adoption 通知、pending 入队与 next-turn 应用。
 //!
 //! 本模块最终只保留装配与 ready gate，tool / hook / transition / launch /
@@ -17,6 +17,7 @@ use super::persistence::SessionStoreSet;
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
+use agentdash_application_ports::agent_run_control_effect::AgentRunControlEffectPort;
 use agentdash_application_ports::agent_run_surface::{
     AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurfaceQueryPort,
 };
@@ -55,8 +56,8 @@ pub struct SessionRuntimeInner {
     pub(crate) vfs_service: Option<Arc<dyn Send + Sync>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub(super) skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
-    pub(super) terminal_callback:
-        Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
+    pub(super) agent_run_control_effect_port:
+        Arc<tokio::sync::RwLock<Option<Arc<dyn AgentRunControlEffectPort>>>>,
     pub(super) hook_effect_handler_registry: Arc<
         tokio::sync::RwLock<Option<super::post_turn_handler::DynTerminalHookEffectHandlerRegistry>>,
     >,

@@ -9,24 +9,19 @@ use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionEventingService as ApplicationSessionEventingService;
 use agentdash_application::wait_obligation::GateProducerTerminalConvergencePort;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunDeliveryTerminalEvent, AgentRunRuntimeTerminalCommand, AgentRunTerminalConvergenceDeps,
-    AgentRunTerminalConvergenceService, SessionControlService, SessionCoreService,
+    SessionControlService, SessionCoreService,
     SessionEventingService as AgentRunSessionEventingService, SessionLaunchService,
 };
-use agentdash_application_runtime_session::session::{
-    SessionTerminalCallback, SessionTerminalNotification,
+use agentdash_application_ports::agent_run_control_effect::{
+    AgentRunLifecycleTerminalConvergencePort, AgentRunWaitProducerTerminalConvergencePort,
+    AgentRunWaitProducerTerminalEvent,
 };
 use agentdash_application_workflow::gate::GateProducerTerminalEvent;
 use agentdash_domain::workflow::WaitProducerRef;
 
 #[derive(Clone)]
-pub(crate) struct AgentRunTerminalControlCallbackDeps {
-    pub(crate) repos: RepositorySet,
-}
-
-#[derive(Clone)]
-pub(crate) struct AgentRunTerminalControlCallback {
-    deps: AgentRunTerminalControlCallbackDeps,
+pub(crate) struct ApiWaitProducerTerminalConvergenceAdapter {
+    repos: RepositorySet,
     session_core: SessionCoreService,
     session_control: SessionControlService,
     agent_run_eventing: AgentRunSessionEventingService,
@@ -34,9 +29,9 @@ pub(crate) struct AgentRunTerminalControlCallback {
     session_launch: SessionLaunchService,
 }
 
-impl AgentRunTerminalControlCallback {
+impl ApiWaitProducerTerminalConvergenceAdapter {
     pub(crate) fn new(
-        deps: AgentRunTerminalControlCallbackDeps,
+        repos: RepositorySet,
         session_core: SessionCoreService,
         session_control: SessionControlService,
         agent_run_eventing: AgentRunSessionEventingService,
@@ -44,7 +39,7 @@ impl AgentRunTerminalControlCallback {
         session_launch: SessionLaunchService,
     ) -> Self {
         Self {
-            deps,
+            repos,
             session_core,
             session_control,
             agent_run_eventing,
@@ -52,48 +47,17 @@ impl AgentRunTerminalControlCallback {
             session_launch,
         }
     }
+}
 
-    async fn converge_terminal(
+#[async_trait]
+impl AgentRunWaitProducerTerminalConvergencePort for ApiWaitProducerTerminalConvergenceAdapter {
+    async fn observe_agent_run_wait_producer_terminal(
         &self,
-        notification: &SessionTerminalNotification,
-    ) -> Result<
-        Option<AgentRunDeliveryTerminalEvent>,
-        agentdash_application_agentrun::WorkflowApplicationError,
-    > {
-        AgentRunTerminalConvergenceService::new(
-            AgentRunTerminalConvergenceDeps {
-                lifecycle_run_repo: self.deps.repos.lifecycle_run_repo.clone(),
-                lifecycle_agent_repo: self.deps.repos.lifecycle_agent_repo.clone(),
-                project_agent_repo: self.deps.repos.project_agent_repo.clone(),
-                agent_frame_repo: self.deps.repos.agent_frame_repo.clone(),
-                execution_anchor_repo: self.deps.repos.execution_anchor_repo.clone(),
-                delivery_binding_repo: self.deps.repos.agent_run_delivery_binding_repo.clone(),
-                project_backend_access_repo: self.deps.repos.project_backend_access_repo.clone(),
-                command_receipt_repo: self.deps.repos.agent_run_command_receipt_repo.clone(),
-                mailbox_repo: self.deps.repos.agent_run_mailbox_repo.clone(),
-            },
-            self.session_core.clone(),
-            self.session_control.clone(),
-            self.agent_run_eventing.clone(),
-            self.session_launch.clone(),
-        )
-        .converge_runtime_terminal(AgentRunRuntimeTerminalCommand {
-            runtime_session_id: notification.session_id.clone(),
-            turn_id: notification.turn_id.clone(),
-            terminal_state: notification.terminal_state.clone(),
-            terminal_message: notification.terminal_message.clone(),
-            observed_at: chrono::Utc::now(),
-        })
-        .await
-    }
-
-    async fn converge_gate_producer_terminal(
-        &self,
-        event: AgentRunDeliveryTerminalEvent,
-    ) -> Result<(), agentdash_application::ApplicationError> {
+        event: AgentRunWaitProducerTerminalEvent,
+    ) -> Result<(), String> {
         let parent_mailbox_delivery =
             Arc::new(AgentRunCompanionMailboxDelivery::from_runtime_services(
-                self.deps.repos.clone(),
+                self.repos.clone(),
                 self.session_core.clone(),
                 self.session_control.clone(),
                 self.agent_run_eventing.clone(),
@@ -101,8 +65,8 @@ impl AgentRunTerminalControlCallback {
             ));
         let service =
             agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_companion_delivery(
-                self.deps.repos.lifecycle_gate_repo.clone(),
-                self.deps.repos.agent_run_delivery_binding_repo.clone(),
+                self.repos.lifecycle_gate_repo.clone(),
+                self.repos.agent_run_delivery_binding_repo.clone(),
                 Arc::new(SessionEventingCompanionGateDelivery::new(
                     self.companion_eventing.clone(),
                 )),
@@ -111,13 +75,47 @@ impl AgentRunTerminalControlCallback {
 
         service
             .observe_gate_producer_terminal(wait_producer_terminal_event_from_agent_run(event))
-            .await?;
+            .await
+            .map_err(|error| {
+                diag!(
+                    Warn,
+                    Subsystem::Api,
+                    error = %error,
+                    "AgentRun wait producer terminal convergence 失败"
+                );
+                error.to_string()
+            })?;
         Ok(())
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct ApiLifecycleTerminalConvergenceAdapter {
+    inner: Arc<agentdash_application_lifecycle::LifecycleOrchestrator>,
+}
+
+impl ApiLifecycleTerminalConvergenceAdapter {
+    pub(crate) fn new(inner: Arc<agentdash_application_lifecycle::LifecycleOrchestrator>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl AgentRunLifecycleTerminalConvergencePort for ApiLifecycleTerminalConvergenceAdapter {
+    async fn observe_lifecycle_terminal(
+        &self,
+        delivery_runtime_session_id: &str,
+        terminal_state: &str,
+    ) -> Result<(), String> {
+        self.inner
+            .on_session_terminal(delivery_runtime_session_id, terminal_state)
+            .await
+            .map(|_| ())
+    }
+}
+
 fn wait_producer_terminal_event_from_agent_run(
-    event: AgentRunDeliveryTerminalEvent,
+    event: AgentRunWaitProducerTerminalEvent,
 ) -> GateProducerTerminalEvent {
     GateProducerTerminalEvent {
         producer: WaitProducerRef::AgentRunDelivery {
@@ -127,36 +125,8 @@ fn wait_producer_terminal_event_from_agent_run(
         },
         terminal_state: event.terminal_state,
         terminal_message: event.terminal_message,
-        source_turn_id: event.turn_id,
+        source_turn_id: event.source_turn_id,
         trace_ref: event.delivery_trace_ref,
-    }
-}
-
-#[async_trait]
-impl SessionTerminalCallback for AgentRunTerminalControlCallback {
-    async fn on_session_terminal(
-        &self,
-        notification: SessionTerminalNotification,
-    ) -> Result<(), String> {
-        let event = self
-            .converge_terminal(&notification)
-            .await
-            .map_err(|error| error.to_string())?;
-
-        if let Some(event) = event
-            && let Err(error) = self.converge_gate_producer_terminal(event).await
-        {
-            diag!(
-                Warn,
-                Subsystem::Api,
-                runtime_session_id = %notification.session_id,
-                terminal_state = %notification.terminal_state,
-                error = %error,
-                "AgentRun wait obligation terminal convergence 失败"
-            );
-            return Err(error.to_string());
-        }
-        Ok(())
     }
 }
 
@@ -171,15 +141,16 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let frame_id = Uuid::new_v4();
 
-        let event = wait_producer_terminal_event_from_agent_run(AgentRunDeliveryTerminalEvent {
-            run_id,
-            agent_id,
-            frame_id: Some(frame_id),
-            terminal_state: "failed".to_string(),
-            terminal_message: Some("provider rejected model".to_string()),
-            turn_id: Some("turn-42".to_string()),
-            delivery_trace_ref: Some("delivery:trace".to_string()),
-        });
+        let event =
+            wait_producer_terminal_event_from_agent_run(AgentRunWaitProducerTerminalEvent {
+                run_id,
+                agent_id,
+                frame_id: Some(frame_id),
+                terminal_state: "failed".to_string(),
+                terminal_message: Some("provider rejected model".to_string()),
+                source_turn_id: Some("turn-42".to_string()),
+                delivery_trace_ref: Some("delivery:trace".to_string()),
+            });
 
         assert_eq!(
             event.producer,

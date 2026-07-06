@@ -98,7 +98,7 @@ pub struct RuntimeCommandLaunchPlan {
     pub apply_after_connector_accept: bool,
 }
 
-pub struct TerminalEffectPlan {
+pub struct TerminalBoundaryPlan {
     pub terminal_event_first: bool,
     pub durable_outbox_required: bool,
     pub post_turn_handler: Option<DynPostTurnHandler>,
@@ -136,7 +136,7 @@ pub struct LaunchPlan {
     pub hooks: HookLaunchPlan,
     pub runtime_delegate_facets: RuntimeDelegateFacetPlan,
     pub runtime_commands: RuntimeCommandLaunchPlan,
-    pub terminal_effects: TerminalEffectPlan,
+    pub terminal_boundary: TerminalBoundaryPlan,
     pub connector_input: ConnectorInputPlan,
     pub backend_execution: Option<ExecutionPlacementPlan>,
     pub trace: LaunchPlanTrace,
@@ -267,7 +267,7 @@ impl LaunchPlan {
             base_capability_state: input.base_capability_state,
             apply_after_connector_accept: true,
         };
-        let terminal_effects = TerminalEffectPlan {
+        let terminal_boundary = TerminalBoundaryPlan {
             terminal_event_first: true,
             durable_outbox_required: true,
             post_turn_handler: input.post_turn_handler,
@@ -294,7 +294,7 @@ impl LaunchPlan {
                     .to_string(),
                 },
                 LaunchPlanTraceEntry {
-                    stage: "terminal_effect",
+                    stage: "terminal_boundary",
                     source: "durable_outbox".to_string(),
                 },
             ],
@@ -339,7 +339,7 @@ impl LaunchPlan {
             hooks,
             runtime_delegate_facets,
             runtime_commands,
-            terminal_effects,
+            terminal_boundary,
             connector_input,
             backend_execution: input.backend_execution,
             trace,
@@ -609,7 +609,7 @@ mod tests {
             2
         );
         assert!(execution.runtime_commands.apply_after_connector_accept);
-        assert!(execution.terminal_effects.durable_outbox_required);
+        assert!(execution.terminal_boundary.durable_outbox_required);
     }
 
     /// 全链路一环：envelope `context` projection 里的 discovered guidelines/memory

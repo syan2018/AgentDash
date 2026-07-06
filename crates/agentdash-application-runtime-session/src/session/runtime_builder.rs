@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::agent_run_control_effect::AgentRunControlEffectPort;
 use agentdash_application_ports::agent_run_surface::{
     AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurfaceQueryPort,
 };
@@ -19,7 +20,6 @@ use agentdash_spi::hooks::ExecutionHookProvider;
 use super::branching::SessionBranchingService;
 use super::control::SessionControlService;
 use super::core::SessionCoreService;
-use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
 use super::hooks_service::SessionHookService;
 use super::hub::SessionRuntimeInner;
@@ -27,6 +27,7 @@ use super::launch::SessionLaunchService;
 use super::persistence::SessionStoreSet;
 use super::runtime_control::SessionRuntimeService;
 use super::runtime_transition_service::SessionRuntimeTransitionService;
+use super::terminal_boundary_service::RuntimeTerminalBoundaryService;
 use super::title_service::SessionTitleService;
 use crate::context::SharedContextAuditBus;
 
@@ -168,8 +169,8 @@ impl SessionRuntimeBuilder {
         Arc::new(self.inner.clone())
     }
 
-    pub fn effects_service(&self) -> SessionEffectsService {
-        self.inner.effects_service()
+    pub fn terminal_boundary_service(&self) -> RuntimeTerminalBoundaryService {
+        self.inner.terminal_boundary_service()
     }
 
     pub fn title_service(&self) -> SessionTitleService {
@@ -225,11 +226,11 @@ impl SessionRuntimeBuilder {
         self.inner.set_mailbox_runtime_port(port).await;
     }
 
-    pub async fn set_terminal_callback(
+    pub async fn set_agent_run_control_effect_port(
         &self,
-        callback: super::post_turn_handler::DynSessionTerminalCallback,
+        port: Arc<dyn AgentRunControlEffectPort>,
     ) {
-        self.inner.set_terminal_callback(callback).await;
+        self.inner.set_agent_run_control_effect_port(port).await;
     }
 
     pub async fn set_hook_effect_handler_registry(

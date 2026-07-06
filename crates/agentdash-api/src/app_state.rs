@@ -24,9 +24,9 @@ use agentdash_application_agentrun::agent_run::runtime_surface::{
     AgentRunResourceSurfaceQuery, AgentRunResourceSurfaceQueryDeps,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
-    AgentRunPresentationReadModelQueryRepos, AgentRunRuntimeSurfaceQuery,
-    AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
+    AgentRunControlEffectService, AgentRunPresentationReadModelQuery,
+    AgentRunPresentationReadModelQueryDeps, AgentRunPresentationReadModelQueryRepos,
+    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateService,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
@@ -38,8 +38,8 @@ use agentdash_application_runtime_gateway::{
     CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,
 };
 use agentdash_application_runtime_session::session::{
-    SessionBranchingService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
+    SessionBranchingService, SessionControlService, SessionCoreService, SessionEventingService,
+    SessionHookService, SessionLaunchService, SessionRuntimeService,
     SessionRuntimeTransitionService, SessionTitleService,
 };
 use agentdash_application_vfs::MountProviderRegistry;
@@ -85,7 +85,7 @@ pub struct ServiceSet {
     pub presentation_read_model_query: AgentRunPresentationReadModelQuery,
     pub resource_surface_query: AgentRunResourceSurfaceQuery,
     pub vfs_surface_resolver: VfsSurfaceResolver,
-    pub session_effects: SessionEffectsService,
+    pub agent_run_control_effects: AgentRunControlEffectService,
     pub session_title: SessionTitleService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
@@ -267,7 +267,7 @@ impl AppState {
         let session_hooks = session_bootstrap.session_hooks;
         let session_runtime_transition = session_bootstrap.session_runtime_transition;
         let runtime_surface_update = session_bootstrap.runtime_surface_update;
-        let session_effects = session_bootstrap.session_effects;
+        let agent_run_control_effects = session_bootstrap.agent_run_control_effects;
         let session_title = session_bootstrap.session_title;
         let connector = session_bootstrap.connector;
         let hook_provider = session_bootstrap.hook_provider;
@@ -451,7 +451,7 @@ impl AppState {
                 presentation_read_model_query,
                 resource_surface_query,
                 vfs_surface_resolver,
-                session_effects,
+                agent_run_control_effects,
                 session_title,
                 connector,
                 vfs_service,

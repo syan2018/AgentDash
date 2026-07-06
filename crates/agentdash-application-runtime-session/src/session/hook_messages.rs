@@ -55,12 +55,3 @@ pub(super) fn pending_action_instruction(action_type: &str) -> &'static str {
 
 pub(super) const PENDING_ACTION_FOOTER: &str = "以上事项来自 Hook Runtime 的待处理回流，优先级高于普通自然对话推进。\
      处理时尽量避免重复总结，聚焦完成剩余动作。";
-
-// ── Auto-resume prompt ──────────────────────────────────────────────────
-
-// 刻意设计为不诱导 Agent 复述/总结上一轮：
-// - 不提"上一轮执行结束"（这是 LLM 被动触发 recap 的关键词）
-// - 不要求 Agent 做任何"汇报"，只要求继续推进 workflow step
-// - 语气贴近人类说"继续"，给 LLM 的信号是"直接动手"而不是"先回顾再动手"
-pub(super) const AUTO_RESUME_PROMPT: &str =
-    "继续推进当前 workflow step，直接执行未完成的动作或补齐证据。不要重复总结已发生的内容。";

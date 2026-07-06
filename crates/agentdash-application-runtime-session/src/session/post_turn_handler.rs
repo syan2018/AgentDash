@@ -1,118 +1,11 @@
-use std::sync::Arc;
-
-use agentdash_agent_protocol::BackboneEnvelope;
-use agentdash_spi::hooks::HookEffect;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalHookEffectBinding {
-    pub handler: serde_json::Value,
-    pub supported_effect_kinds: Vec<String>,
-}
-
-impl TerminalHookEffectBinding {
-    pub fn to_outbox_payload(&self, effects: Vec<HookEffect>) -> serde_json::Value {
-        serde_json::json!({
-            "effects": effects,
-            "handler": self.handler,
-            "supported_effect_kinds": self.supported_effect_kinds,
-        })
-    }
-}
-
-/// Session 事件回调 —— 替代 TurnMonitor 的核心抽象。
-///
-/// 在 `start_prompt` 时由调用方（如 task 执行层）传入，
-/// session pipeline 在事件处理中调用：
-///
-/// - `on_event`：每个 notification 持久化后触发，用于 artifact 跟踪等平台级簿记
-/// - `execute_effects`：SessionTerminal hook 评估后触发，
-///   将 hook 规则产出的 `HookEffect` 传递给调用方执行领域级副作用
-///
-/// 与 TurnMonitor 的区别：
-/// - 不独立订阅 session 事件流（消除重复消费）
-/// - 决策逻辑由 Hook 规则（Workflow）定义，不硬编码在 Rust 中
-/// - pipeline 只负责事件传递，不参与领域决策
-#[async_trait::async_trait]
-pub trait PostTurnHandler: Send + Sync + 'static {
-    /// 每个 session envelope 持久化后调用。
-    /// 用于 artifact 跟踪、session binding 同步等平台级簿记。
-    async fn on_event(&self, session_id: &str, envelope: &BackboneEnvelope);
-
-    /// 执行 Hook 评估产出的通用副作用。
-    ///
-    /// `effects` 来自 `HookResolution.effects`，由 Hook 规则（Rhai 脚本）声明，
-    /// 实现方按 `effect.kind` 分派到具体的领域逻辑（如 task 状态变更、retry 触发等）。
-    async fn execute_effects(&self, session_id: &str, turn_id: &str, effects: &[HookEffect]);
-
-    /// 返回本 handler 能处理的 effect kind 列表。
-    /// 用于运行时校验：不在列表中的 effect 会被 pipeline warn 日志记录。
-    fn supported_effect_kinds(&self) -> &[&str];
-
-    /// 返回可持久化的 handler identity。durable outbox replay 用它重建 handler。
-    ///
-    /// 没有 identity 的 handler 仍可在同进程即时执行，但进程重启后不能 replay。
-    fn durable_effect_handler(&self) -> Option<serde_json::Value> {
-        None
-    }
-}
-
-pub type DynPostTurnHandler = Arc<dyn PostTurnHandler>;
-
-#[async_trait::async_trait]
-pub trait TerminalHookEffectHandlerRegistry: Send + Sync + 'static {
-    async fn handler_for(
-        &self,
-        session_id: &str,
-        payload: &serde_json::Value,
-    ) -> Result<Option<DynPostTurnHandler>, String>;
-}
-
-pub type DynTerminalHookEffectHandlerRegistry = Arc<dyn TerminalHookEffectHandlerRegistry>;
-
-#[derive(Debug, Default)]
-pub struct EmptyTerminalHookEffectHandlerRegistry;
-
-#[async_trait::async_trait]
-impl TerminalHookEffectHandlerRegistry for EmptyTerminalHookEffectHandlerRegistry {
-    async fn handler_for(
-        &self,
-        _session_id: &str,
-        payload: &serde_json::Value,
-    ) -> Result<Option<DynPostTurnHandler>, String> {
-        match payload.get("handler") {
-            None | Some(serde_json::Value::Null) => Ok(None),
-            Some(handler) => Err(format!(
-                "未注册 durable terminal hook effect handler: {handler}"
-            )),
-        }
-    }
-}
-
-/// Session 进入终态后的全局回调。
-///
-/// 与 `PostTurnHandler`（per-session、由调用方传入）不同，
-/// `SessionTerminalCallback` 是平台级基础设施，由 `SessionRuntimeInner` 持有。
-/// 典型用途：LifecycleOrchestrator 在 session 终止后评估后继 node 并启动新 session。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionTerminalNotification {
-    pub session_id: String,
-    pub turn_id: String,
-    pub terminal_event_seq: u64,
-    pub terminal_state: String,
-    pub terminal_message: Option<String>,
-}
-
-#[async_trait::async_trait]
-pub trait SessionTerminalCallback: Send + Sync + 'static {
-    /// session 完全终止后（hook 评估、effect 执行、running 状态清理之后）调用。
-    /// 实现方可安全地创建新 session、修改 lifecycle run 等。
-    async fn on_session_terminal(
-        &self,
-        notification: SessionTerminalNotification,
-    ) -> Result<(), String>;
-}
-
-pub type DynSessionTerminalCallback = Arc<dyn SessionTerminalCallback>;
+pub use agentdash_application_ports::agent_run_control_effect::{
+    AgentRunHookEffectHandlerRegistry as TerminalHookEffectHandlerRegistry,
+    AgentRunPostTurnHandler as PostTurnHandler,
+    DynAgentRunHookEffectHandlerRegistry as DynTerminalHookEffectHandlerRegistry,
+    DynAgentRunPostTurnHandler as DynPostTurnHandler,
+    EmptyAgentRunHookEffectHandlerRegistry as EmptyTerminalHookEffectHandlerRegistry,
+};
+pub use agentdash_application_ports::frame_launch_envelope::TerminalHookEffectBinding;
 
 #[cfg(test)]
 mod tests {
@@ -145,6 +38,6 @@ mod tests {
             Err(error) => error,
         };
 
-        assert!(error.contains("未注册 durable terminal hook effect handler"));
+        assert!(error.contains("未注册 durable AgentRun hook effect handler"));
     }
 }

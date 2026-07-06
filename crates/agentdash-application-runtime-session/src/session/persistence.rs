@@ -1,21 +1,22 @@
 use std::sync::Arc;
 
 pub use agentdash_spi::session_persistence::{
-    AgentFrameTransitionRecord, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
-    AgentRunControlEffectStore, CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
-    NewCompactionProjectionCommit, PersistedSessionEvent, RuntimeCommandRecord,
-    RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus,
-    SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore,
-    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore,
-    SessionMeta, SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
+    AgentFrameTransitionRecord, AgentRunControlEffectKind, AgentRunControlEffectRecord,
+    AgentRunControlEffectStatus, AgentRunControlEffectStore, CompactionProjectionCommitResult,
+    NewAgentRunControlEffectRecord, NewCompactionProjectionCommit, PersistedSessionEvent,
+    RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord,
+    SessionCompactionStatus, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
+    SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
+    SessionLineageStore, SessionMeta, SessionMetaStore, SessionProjectionHeadRecord,
+    SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
+    SessionStoreError, SessionStoreResult,
 };
 
 #[derive(Clone)]
 pub struct SessionStoreSet {
     pub meta: Arc<dyn SessionMetaStore>,
     pub events: Arc<dyn SessionEventStore>,
-    pub terminal_effects: Arc<dyn AgentRunControlEffectStore>,
+    pub control_effects: Arc<dyn AgentRunControlEffectStore>,
     pub runtime_commands: Arc<dyn SessionRuntimeCommandStore>,
     pub compactions: Arc<dyn SessionCompactionStore>,
     pub projections: Arc<dyn SessionProjectionStore>,
@@ -67,7 +68,7 @@ impl SessionStoreSet {
     pub fn new(
         meta: Arc<dyn SessionMetaStore>,
         events: Arc<dyn SessionEventStore>,
-        terminal_effects: Arc<dyn AgentRunControlEffectStore>,
+        control_effects: Arc<dyn AgentRunControlEffectStore>,
         runtime_commands: Arc<dyn SessionRuntimeCommandStore>,
         compactions: Arc<dyn SessionCompactionStore>,
         projections: Arc<dyn SessionProjectionStore>,
@@ -76,7 +77,7 @@ impl SessionStoreSet {
         Self {
             meta,
             events,
-            terminal_effects,
+            control_effects,
             runtime_commands,
             compactions,
             projections,

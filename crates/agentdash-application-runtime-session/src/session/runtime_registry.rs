@@ -116,27 +116,6 @@ impl SessionRuntimeRegistry {
         hook_runtime
     }
 
-    pub async fn increment_auto_resume_if_allowed(&self, session_id: &str, max: u32) -> bool {
-        let mut runtimes = self.runtimes.lock().await;
-        let Some(runtime) = runtimes.get_mut(session_id) else {
-            return false;
-        };
-        if runtime.hook_auto_resume_count >= max {
-            false
-        } else {
-            runtime.hook_auto_resume_count += 1;
-            true
-        }
-    }
-
-    pub async fn release_auto_resume_reservation(&self, session_id: &str) {
-        let mut runtimes = self.runtimes.lock().await;
-        let Some(runtime) = runtimes.get_mut(session_id) else {
-            return;
-        };
-        runtime.hook_auto_resume_count = runtime.hook_auto_resume_count.saturating_sub(1);
-    }
-
     pub async fn touch_and_sender(
         &self,
         session_id: &str,

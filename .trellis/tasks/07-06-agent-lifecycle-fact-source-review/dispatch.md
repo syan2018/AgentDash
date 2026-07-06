@@ -67,6 +67,7 @@ If context is compacted, restore the working state in this order:
   - Dispatch prompt required reading task artifacts/spec manifests, preserving the existing `AgentRunControlEffectStore` / `0053_agent_run_control_effects` model, and not committing.
   - This implement agent timed out twice and was closed without usable output; main session owns the remaining repair.
   - `019f38c3-5a8e-73e2-b315-02c0faa90cec` (`trellis-check`, nickname `Poincare`) ran a read-only check after commit `9d62140b` and reported three blocking findings.
+  - `019f38df-dead-75a3-8f94-08cc2bebf7f5` (`trellis-check`, nickname `Schrodinger`) completed read-only post-fix review for commit `4e8bf9ac`; no blocking findings remained for the migration quote fix, AgentRun-owned terminal hook trigger, or typed workspace module presentation projection.
 - Current remaining WP3/WP4 boundary:
   - AgentRun control-effect executor/intake implementation exists in `crates/agentdash-application-agentrun/src/agent_run/control_effects.rs` and must be committed with this cleanup slice.
   - RuntimeSession terminal path now uses `RuntimeTerminalBoundaryService` / `RuntimeTerminalBoundaryEvidence` and hands evidence to `AgentRunControlEffectPort`; `terminal_effects.rs` and `effects_service.rs` have been deleted.
@@ -80,6 +81,9 @@ If context is compacted, restore the working state in this order:
 - Remaining non-blocking audit items:
   - `MailboxWakeDelivery` and `HookRuntimeProjectionChanged` executor branches are currently no-op when replayed, but no production producer was found in this slice.
   - `MailboxStateChanged` and `SessionMetaUpdate` remain protocol/trace/feed concepts; they must not become AgentRun workspace refresh authority again.
+- Post-fix verification:
+  - Main session passed `cargo check -p agentdash-api`, `cargo test -p agentdash-application-runtime-session`, `cargo test -p agentdash-application-agentrun`, `cargo test -p agentdash-application-workflow`, `cargo test -p agentdash-api --no-run`, `cargo test -p agentdash-workspace-module --no-run`, `node scripts/check-migration-history.js`, and `pnpm run contracts:check`.
+  - Schrodinger additionally passed focused runtime-session/workspace-module checks, `cargo check -p agentdash-application-agentrun`, `cargo check -p agentdash-api`, `pnpm --filter app-web test -- controlPlaneModel`, and `pnpm run frontend:check`.
 
 ## Commit Slicing
 

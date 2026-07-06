@@ -213,19 +213,18 @@ pub struct ConversationWaitingItemModel {
 
 impl ConversationWaitingItemModel {
     pub fn from_lifecycle_gate(gate: &LifecycleGate) -> Self {
-        let payload = gate.payload_json.as_ref();
-        let kind = waiting_kind_from_gate(&gate.gate_kind, payload);
+        let projection = gate.waiting_projection();
         Self {
             wait_id: gate.id.to_string(),
             gate_id: gate.id.to_string(),
-            kind: kind.to_string(),
+            kind: projection.kind,
             source_ref: Some(gate.id.to_string()),
             correlation_ref: non_empty_string(Some(&gate.correlation_id)),
             status: gate
                 .resolved_payload_status()
                 .unwrap_or_else(|| gate.status.clone()),
-            source_label: waiting_source_label(kind, payload),
-            preview: waiting_preview(payload),
+            source_label: projection.source_label,
+            preview: projection.preview,
             created_at: gate.created_at.to_rfc3339(),
             resolved_at: gate.resolved_at.map(|at| at.to_rfc3339()),
         }
@@ -945,68 +944,6 @@ fn active_turn_id(execution_state: &AgentRunExecutionState) -> Option<String> {
     }
 }
 
-fn waiting_kind_from_gate_kind(gate_kind: &str) -> &'static str {
-    match gate_kind {
-        "companion_human_request" | "orchestration_human_gate" => "human",
-        "companion_wait" | "companion_wait_blocking" | "companion_wait_follow_up" => "subagent",
-        "companion_parent_request" => "companion",
-        kind if kind.starts_with("companion_") => "companion",
-        kind if kind.starts_with("exec_") => "exec",
-        _ => "workflow",
-    }
-}
-
-fn waiting_kind_from_gate(gate_kind: &str, payload: Option<&serde_json::Value>) -> &'static str {
-    if gate_kind == "companion_wait"
-        && payload
-            .and_then(|payload| payload_string(payload, "request_type"))
-            .is_some()
-    {
-        return "human";
-    }
-    waiting_kind_from_gate_kind(gate_kind)
-}
-
-fn waiting_source_label(kind: &str, payload: Option<&serde_json::Value>) -> Option<String> {
-    payload
-        .and_then(|payload| {
-            [
-                "source_label",
-                "companion_label",
-                "label",
-                "request_type",
-                "plan_node_id",
-            ]
-            .iter()
-            .find_map(|key| payload_string(payload, key))
-        })
-        .or_else(|| Some(kind.to_string()))
-}
-
-fn waiting_preview(payload: Option<&serde_json::Value>) -> Option<String> {
-    payload.and_then(|payload| {
-        ["preview", "summary", "message", "title", "label"]
-            .iter()
-            .find_map(|key| payload_string(payload, key))
-            .or_else(|| {
-                payload.get("payload").and_then(|nested| {
-                    ["preview", "summary", "message", "title"]
-                        .iter()
-                        .find_map(|key| payload_string(nested, key))
-                })
-            })
-    })
-}
-
-fn payload_string(payload: &serde_json::Value, key: &str) -> Option<String> {
-    payload
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
 fn non_empty_string(value: Option<&String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -1565,11 +1502,18 @@ mod tests {
         gate.resolve("runtime_terminal");
 
         let item = ConversationWaitingItemModel::from_lifecycle_gate(&gate);
+        let projection = gate.waiting_projection();
 
-        assert_eq!(item.kind, "subagent");
+        assert_eq!(item.kind, projection.kind);
         assert_eq!(item.status, "failed");
-        assert_eq!(item.source_label.as_deref(), Some("reviewer"));
-        assert_eq!(item.preview.as_deref(), Some("provider model unsupported"));
+        assert_eq!(item.source_label, projection.source_label);
+        assert_eq!(item.preview, projection.preview);
+        assert_eq!(projection.kind, "subagent");
+        assert_eq!(projection.source_label.as_deref(), Some("reviewer"));
+        assert_eq!(
+            projection.preview.as_deref(),
+            Some("provider model unsupported")
+        );
         assert!(item.resolved_at.is_some());
     }
 }

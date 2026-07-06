@@ -3,10 +3,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use agentdash_application::companion::{
-    AgentRunCompanionMailboxDelivery, CompanionGateControlRepos, CompanionGateControlService,
+    AgentRunCompanionMailboxDelivery, SessionEventingCompanionGateDelivery,
 };
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionEventingService as ApplicationSessionEventingService;
+use agentdash_application::wait_obligation::WaitObligationTerminalConvergencePort;
 use agentdash_application_agentrun::agent_run::{
     AgentRunDeliveryTerminalEvent, AgentRunRuntimeTerminalCommand, AgentRunTerminalConvergenceDeps,
     AgentRunTerminalConvergenceService, SessionControlService, SessionCoreService,
@@ -90,27 +91,23 @@ impl AgentRunTerminalControlCallback {
         &self,
         event: AgentRunDeliveryTerminalEvent,
     ) -> Result<(), agentdash_application::ApplicationError> {
-        let service = CompanionGateControlService::with_session_eventing(
-            CompanionGateControlRepos {
-                gate_repo: self.deps.repos.lifecycle_gate_repo.clone(),
-                run_repo: self.deps.repos.lifecycle_run_repo.clone(),
-                agent_repo: self.deps.repos.lifecycle_agent_repo.clone(),
-                frame_repo: self.deps.repos.agent_frame_repo.clone(),
-                anchor_repo: self.deps.repos.execution_anchor_repo.clone(),
-                delivery_binding_repo: self.deps.repos.agent_run_delivery_binding_repo.clone(),
-                lineage_repo: self.deps.repos.agent_lineage_repo.clone(),
-            },
-            self.companion_eventing.clone(),
-        )
-        .with_parent_mailbox_delivery(Arc::new(
-            AgentRunCompanionMailboxDelivery::from_runtime_services(
+        let parent_mailbox_delivery =
+            Arc::new(AgentRunCompanionMailboxDelivery::from_runtime_services(
                 self.deps.repos.clone(),
                 self.session_core.clone(),
                 self.session_control.clone(),
                 self.agent_run_eventing.clone(),
                 self.session_launch.clone(),
-            ),
-        ));
+            ));
+        let service =
+            agentdash_application::wait_obligation::WaitObligationTerminalConvergenceService::with_companion_delivery(
+                self.deps.repos.lifecycle_gate_repo.clone(),
+                self.deps.repos.agent_run_delivery_binding_repo.clone(),
+                Arc::new(SessionEventingCompanionGateDelivery::new(
+                    self.companion_eventing.clone(),
+                )),
+                parent_mailbox_delivery,
+            );
 
         service
             .observe_wait_producer_terminal(wait_producer_terminal_event_from_agent_run(event))

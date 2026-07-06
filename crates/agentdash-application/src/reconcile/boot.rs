@@ -7,17 +7,14 @@
 //! 运行期反向（业务终态 → session cancel）的 command 通道见
 //! [`crate::reconcile::terminal_cancel`]。
 
-use agentdash_application_workflow::gate::{
-    WaitObligationConvergenceResult, WaitProducerTerminalEvent,
-};
+use agentdash_application_workflow::gate::WaitProducerTerminalEvent;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
-use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::ApplicationError;
-use crate::companion::CompanionGateControlService;
 use crate::session::SessionRuntimeService;
 use crate::task::view_projector::project_task_views_on_boot;
+use crate::wait_obligation::WaitObligationTerminalConvergencePort;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
@@ -28,24 +25,6 @@ use agentdash_domain::workflow::{
 };
 
 const WAIT_OBLIGATION_RECONCILE_LIMIT: usize = 500;
-
-#[async_trait]
-pub trait WaitObligationTerminalConvergencePort: Send + Sync {
-    async fn observe_wait_producer_terminal(
-        &self,
-        event: WaitProducerTerminalEvent,
-    ) -> Result<WaitObligationConvergenceResult, ApplicationError>;
-}
-
-#[async_trait]
-impl WaitObligationTerminalConvergencePort for CompanionGateControlService {
-    async fn observe_wait_producer_terminal(
-        &self,
-        event: WaitProducerTerminalEvent,
-    ) -> Result<WaitObligationConvergenceResult, ApplicationError> {
-        CompanionGateControlService::observe_wait_producer_terminal(self, event).await
-    }
-}
 
 /// 启动对账管线的依赖集合
 ///
@@ -500,7 +479,7 @@ mod tests {
 
     use agentdash_application_workflow::gate::{
         GateDeliveryIntent, GateNotificationIntent, WaitObligationConvergenceOutcome,
-        WaitObligationConvergenceOutcomeKind,
+        WaitObligationConvergenceOutcomeKind, WaitObligationConvergenceResult,
     };
     use agentdash_domain::{
         DomainError,

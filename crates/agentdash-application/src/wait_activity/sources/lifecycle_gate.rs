@@ -1,7 +1,6 @@
 use agentdash_domain::workflow::LifecycleGate;
-use serde_json::{Value, json};
+use serde_json::json;
 
-use super::{payload_preview, payload_string};
 use crate::wait_activity::types::{ResolvedWaitScope, WaitActivityItem};
 
 pub(crate) fn gate_belongs_to_scope(gate: &LifecycleGate, scope: &ResolvedWaitScope) -> bool {
@@ -9,14 +8,14 @@ pub(crate) fn gate_belongs_to_scope(gate: &LifecycleGate, scope: &ResolvedWaitSc
 }
 
 pub(crate) fn gate_item_from_gate(gate: &LifecycleGate) -> WaitActivityItem {
-    let kind = waiting_kind_from_gate(&gate.gate_kind, gate.payload_json.as_ref());
+    let projection = gate.waiting_projection();
     WaitActivityItem {
         activity_ref: gate.id.to_string(),
-        kind: kind.to_string(),
+        kind: projection.kind,
         status: gate_status(gate).to_string(),
         source_ref: Some(gate.id.to_string()),
         correlation_ref: Some(gate.correlation_id.clone()),
-        preview: payload_preview(gate.payload_json.as_ref()),
+        preview: projection.preview,
         result_refs: json!({
             "gate_id": gate.id.to_string(),
             "run_id": gate.run_id.to_string(),
@@ -45,22 +44,4 @@ fn gate_status(gate: &LifecycleGate) -> String {
         other => other,
     }
     .to_string()
-}
-
-fn waiting_kind_from_gate(gate_kind: &str, payload: Option<&Value>) -> &'static str {
-    if gate_kind == "companion_wait"
-        && payload
-            .and_then(|payload| payload_string(payload, "request_type"))
-            .is_some()
-    {
-        return "human";
-    }
-    match gate_kind {
-        "companion_human_request" | "orchestration_human_gate" => "human",
-        "companion_wait" | "companion_wait_blocking" | "companion_wait_follow_up" => "subagent",
-        "companion_parent_request" => "companion",
-        kind if kind.starts_with("companion_") => "companion",
-        kind if kind.starts_with("exec_") => "exec",
-        _ => "workflow",
-    }
 }

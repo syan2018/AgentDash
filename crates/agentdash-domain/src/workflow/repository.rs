@@ -129,6 +129,10 @@ pub trait LifecycleGateRepository: Send + Sync {
         &self,
         producer: &WaitProducerRef,
     ) -> Result<Vec<LifecycleGate>, DomainError>;
+    /// Precise normal companion result writer lookup.
+    ///
+    /// Terminal/reconcile convergence must use wait producer declarations instead of
+    /// agent/correlation lookup so producer terminal facts stay independent from gate kind.
     async fn find_by_agent_and_correlation(
         &self,
         agent_id: Uuid,

@@ -103,6 +103,19 @@ LifecycleGateRepository::list_by_wait_producer(
 WaitObligationConvergenceService::observe_producer_terminal(
     event: WaitProducerTerminalEvent,
 ) -> Result<WaitObligationConvergenceResult, WorkflowApplicationError>
+
+pub trait WaitObligationTerminalConvergencePort: Send + Sync {
+    async fn observe_wait_producer_terminal(
+        &self,
+        event: WaitProducerTerminalEvent,
+    ) -> Result<WaitObligationConvergenceResult, ApplicationError>;
+}
+
+pub struct LifecycleGateWaitingProjection {
+    pub kind: String,
+    pub source_label: Option<String>,
+    pub preview: Option<String>,
+}
 ```
 
 Companion child wait gates currently persist the declaration in `LifecycleGate.payload_json`:
@@ -144,6 +157,10 @@ Companion child wait gates currently persist the declaration in `LifecycleGate.p
 - If the gate is already resolved, convergence preserves the existing payload and returns delivery intents to ensure the wake is observable.
 - Normal result writers and producer terminal convergence are first-writer-wins. A race that discovers the gate was resolved after an open read must reload the gate and switch to delivery ensure rather than overwrite.
 - Parent wake delivery uses the declaration's stable command id, for companion child results `companion-result:{gate_id}`, so replay and terminal callback recovery are idempotent.
+- Production callers enter terminal wait convergence through `agentdash_application::wait_obligation::WaitObligationTerminalConvergencePort`. The application service owns workflow convergence plus delivery intent execution; companion gate control owns normal companion result writers and delivery adapters.
+- Runtime terminal callbacks and boot reconcile inject the application wait-obligation service. They must not construct companion gate control to resolve producer terminal facts.
+- `LifecycleGate::waiting_projection()` owns gate waiting item `kind`、`source_label` and `preview` derivation. Wait activity and AgentRun workspace waiting projection both consume this helper so gate kind mapping and preview fallback cannot drift between surfaces.
+- `LifecycleGateRepository::find_by_agent_and_correlation` is reserved for precise normal companion result writer lookup. Terminal callback and boot reconcile use wait producer declarations instead.
 
 ### 4. Validation & Error Matrix
 
@@ -158,13 +175,16 @@ Companion child wait gates currently persist the declaration in `LifecycleGate.p
 | terminal state is `failed` | result status follows policy `failed`, with `failure_kind=runtime_terminal_failed` |
 | terminal state is `interrupted` / `cancelled` | result status follows policy `cancelled` |
 | terminal state is `completed` without expected result | result is protocol failure, represented as `failed` plus `failure_kind=missing_companion_respond` when wire status does not expose `protocol_failed` |
+| a new gate kind is projected into wait/workspace views | implement `LifecycleGate::waiting_projection()` semantics and cover wait/workspace consistency tests |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: SubAgent runtime fails, AgentRun terminal convergence emits `WaitProducerRef::AgentRunDelivery`, matching companion wait gate resolves to `failed`, and parent mailbox receives one `companion-result:{gate_id}` wake.
 - Good: Child calls `companion_respond` before the terminal callback arrives; terminal convergence reloads the resolved gate and only ensures the same parent wake delivery.
+- Good: A new LifecycleGate source appears in both wait tool and workspace waiting items through the shared `LifecycleGateWaitingProjection`.
 - Base: Producer terminal event has no wait declaration because it is an ordinary AgentRun; convergence returns no matching obligation without mutating gates.
 - Bad: A caller derives parent/child ownership from `runtime_session_id` outside the AgentRun seam, because runtime session ids are connector trace evidence rather than wait producer identity.
+- Bad: API terminal callback or boot reconcile calls companion gate control directly to resolve producer terminal facts, because that makes companion request handling the owner of a generic wait obligation contract.
 
 ### 6. Tests Required
 
@@ -175,6 +195,8 @@ Companion child wait gates currently persist the declaration in `LifecycleGate.p
 - Repository: Postgres `list_by_wait_producer` matches `payload_json.wait_source.kind/run_id/agent_id/frame_id` and does not depend on `gate_kind`.
 - Integration: AgentRun terminal callback feeds `WaitProducerTerminalEvent` after `AgentRunDeliveryBinding` terminal convergence.
 - Reconcile: boot recovery scans declared open wait obligations and feeds producer terminal facts through the same convergence surface.
+- Unit: wait activity and workspace waiting projection assert the same `LifecycleGateWaitingProjection.kind` and `preview` for the same gate.
+- Unit: production terminal callback and boot reconcile are wired to `WaitObligationTerminalConvergencePort`; companion gate terminal convergence entry points are test-only or absent from production callers.
 
 ### 7. Wrong vs Correct
 

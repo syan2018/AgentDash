@@ -353,21 +353,16 @@ impl AppState {
         // M2-c：Task 对账改为从 LifecycleRun/step state 反投影，不再需要 session 状态读取器。
         {
             let wait_obligation_terminal_convergence: Arc<
-                dyn agentdash_application::reconcile::boot::WaitObligationTerminalConvergencePort,
-            > = Arc::new(
-                agentdash_application::companion::CompanionGateControlService::with_session_eventing(
-                    agentdash_application::companion::CompanionGateControlRepos {
-                        gate_repo: repos.lifecycle_gate_repo.clone(),
-                        run_repo: repos.lifecycle_run_repo.clone(),
-                        frame_repo: repos.agent_frame_repo.clone(),
-                        agent_repo: repos.lifecycle_agent_repo.clone(),
-                        anchor_repo: repos.execution_anchor_repo.clone(),
-                        delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
-                        lineage_repo: repos.agent_lineage_repo.clone(),
-                    },
-                    session_eventing.clone(),
-                )
-                .with_parent_mailbox_delivery(Arc::new(
+                dyn agentdash_application::wait_obligation::WaitObligationTerminalConvergencePort,
+            > = Arc::new(agentdash_application::wait_obligation::WaitObligationTerminalConvergenceService::with_companion_delivery(
+                repos.lifecycle_gate_repo.clone(),
+                repos.agent_run_delivery_binding_repo.clone(),
+                Arc::new(
+                    agentdash_application::companion::SessionEventingCompanionGateDelivery::new(
+                        session_eventing.clone(),
+                    ),
+                ),
+                Arc::new(
                     agentdash_application::companion::AgentRunCompanionMailboxDelivery::from_runtime_services(
                         repos.clone(),
                         agent_run_session_core(session_core.clone()),
@@ -375,8 +370,8 @@ impl AppState {
                         agent_run_session_eventing(session_eventing.clone()),
                         agent_run_session_launch(session_launch.clone()),
                     ),
-                )),
-            );
+                ),
+            ));
             let deps = agentdash_application::reconcile::boot::BootReconcileDeps {
                 session_runtime: session_runtime.clone(),
                 project_repo: project_repo_port.clone(),

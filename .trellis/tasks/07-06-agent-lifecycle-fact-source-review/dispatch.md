@@ -73,6 +73,7 @@ If context is compacted, restore the working state in this order:
   - `019f38f6-fe6e-7eb2-b32a-65766bfcd53d` (`trellis-check`, nickname `Zeno`) completed read-only review for the companion legacy UI protocol cleanup with no blocking findings.
   - `019f38fd-03a5-7420-a215-e5527d4895af` (`trellis-check`, nickname `Mencius`) completed backend/session residue audit and found blocking companion notification intent plus `with_companion_delivery` production naming residue.
   - `019f38fd-395b-7e71-b739-a34e2c096353` (`trellis-check`, nickname `Singer`) completed frontend/protocol residue audit and found blocking `turn_terminal` SessionMetaUpdate refresh coupling plus legacy `MailboxStateChanged` protocol branch.
+  - `019f390c-844d-7082-bf1b-a736938b97d6` (`trellis-check`, nickname `Erdos`) completed final read-only review after commits `ebacd4b0`, `232fb3c9`, `6dc3b52f`, and `f35668b1`; no blocking findings remained.
 - Current remaining WP3/WP4 boundary:
   - AgentRun control-effect executor/intake implementation exists in `crates/agentdash-application-agentrun/src/agent_run/control_effects.rs` and must be committed with this cleanup slice.
   - RuntimeSession terminal path now uses `RuntimeTerminalBoundaryService` / `RuntimeTerminalBoundaryEvidence` and hands evidence to `AgentRunControlEffectPort`; `terminal_effects.rs` and `effects_service.rs` have been deleted.
@@ -107,6 +108,7 @@ If context is compacted, restore the working state in this order:
   - Gate notification intent cleanup passed `cargo check -p agentdash-application -p agentdash-application-workflow -p agentdash-api`, `cargo test -p agentdash-application-workflow gate`, and `cargo test -p agentdash-application companion`.
   - Frontend/protocol cleanup passed `cargo check -p agentdash-agent-protocol -p agentdash-contracts`, `pnpm run contracts:check`, `pnpm --filter app-web test -- controlPlaneModel sessionPlatformEventDispatcher SessionChatView`, `pnpm run frontend:check`, and static grep for legacy `MailboxStateChanged` / `planAgentRunTurnEnd` refresh paths.
   - Workspace module display cleanup passed `pnpm --filter app-web test -- SessionSystemEventCard systemEventPolicy controlPlaneModel sessionPlatformEventDispatcher`, `pnpm run frontend:check`, and `pnpm run contracts:check`.
+  - Erdos final static review found no blocking residue for RuntimeSession control-effect ownership, AgentRun workspace refresh authority, companion notification intents, API exec waiting-row injection, or legacy `MailboxStateChanged` protocol branch.
 
 ## Commit Slicing
 

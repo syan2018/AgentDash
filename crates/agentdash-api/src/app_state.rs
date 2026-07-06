@@ -105,8 +105,7 @@ pub struct ServiceSet {
     /// 串行 Shell 流式输出路由 — ShellExecTool 注册，ws_handler 投递
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     /// AgentRun scope 终端运行时状态注册表
-    pub terminal_registry:
-        Arc<agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry>,
+    pub terminal_registry: Arc<agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry>,
     /// 寻址空间注册表 — 持有可用的资源引用能力提供者
     pub vfs_registry: VfsDiscoveryRegistry,
     /// Mount 级 I/O 提供者注册表（`inline_fs` / `relay_fs` 等）

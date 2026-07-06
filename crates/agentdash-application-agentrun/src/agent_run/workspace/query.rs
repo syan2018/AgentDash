@@ -530,9 +530,7 @@ fn shell_model(
         agent.workspace_title.as_deref(),
         agent.workspace_title_source.as_deref(),
     ) {
-        (Some(title), Some(source)) if !title.is_empty() => {
-            (title.to_string(), source.to_string())
-        }
+        (Some(title), Some(source)) if !title.is_empty() => (title.to_string(), source.to_string()),
         _ => (
             project_agent
                 .map(|project_agent| project_agent.name.clone())

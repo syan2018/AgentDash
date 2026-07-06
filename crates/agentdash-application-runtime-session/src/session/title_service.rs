@@ -22,11 +22,7 @@ impl SessionTitleService {
         }
     }
 
-    pub async fn set_user_title(
-        &self,
-        session_id: &str,
-        title: &str,
-    ) -> std::io::Result<bool> {
+    pub async fn set_user_title(&self, session_id: &str, title: &str) -> std::io::Result<bool> {
         let updated = self.update_workspace_title(session_id, title, "user").await;
 
         if updated {

@@ -434,7 +434,6 @@ pub(crate) fn json_string<T: serde::Serialize>(
         .map_err(|error| SessionStoreError::InvalidData(format!("序列化 {column} 失败: {error}")))
 }
 
-
 pub(crate) fn parse_execution_status(
     value: String,
     field: &str,
@@ -499,7 +498,6 @@ pub(crate) fn parse_lineage_status(
     SessionLineageStatus::try_from(value.as_str())
         .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
-
 
 pub(crate) fn encode_u64_as_i64(value: u64, field: &str) -> SessionStoreResult<i64> {
     i64::try_from(value).map_err(|_| {

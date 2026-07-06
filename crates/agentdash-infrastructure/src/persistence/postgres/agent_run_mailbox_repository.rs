@@ -879,13 +879,11 @@ mod tests {
         .execute(pool)
         .await
         .expect("insert agent");
-        sqlx::query(
-            "INSERT INTO runtime_sessions (id,created_at,updated_at) VALUES ($1,0,0)",
-        )
-        .bind(session_id)
-        .execute(pool)
-        .await
-        .expect("insert session");
+        sqlx::query("INSERT INTO runtime_sessions (id,created_at,updated_at) VALUES ($1,0,0)")
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .expect("insert session");
     }
 
     fn new_message(

@@ -402,10 +402,7 @@ mod tests {
             ctx_value["hook_target"]["frame_id"],
             "33333333-3333-3333-3333-333333333333"
         );
-        assert_eq!(
-            ctx_value["run_id"],
-            "11111111-1111-1111-1111-111111111111"
-        );
+        assert_eq!(ctx_value["run_id"], "11111111-1111-1111-1111-111111111111");
         assert_eq!(
             ctx_value["agent_id"],
             "22222222-2222-2222-2222-222222222222"

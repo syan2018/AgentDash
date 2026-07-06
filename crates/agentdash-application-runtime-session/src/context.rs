@@ -230,7 +230,12 @@ pub struct NoopContextAuditBus;
 impl ContextAuditBus for NoopContextAuditBus {
     fn emit(&self, _event: ContextAuditEvent) {}
 
-    fn query(&self, _run_id: &str, _agent_id: &str, _filter: &AuditFilter) -> Vec<ContextAuditEvent> {
+    fn query(
+        &self,
+        _run_id: &str,
+        _agent_id: &str,
+        _filter: &AuditFilter,
+    ) -> Vec<ContextAuditEvent> {
         Vec::new()
     }
 }

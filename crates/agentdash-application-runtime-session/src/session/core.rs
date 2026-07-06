@@ -91,7 +91,6 @@ impl SessionCoreService {
         Ok(map)
     }
 
-
     pub async fn delete_session(&self, session_id: &str) -> SessionStoreResult<()> {
         self.runtime_registry.remove(session_id).await;
         self.stores.meta.delete_session(session_id).await

@@ -98,7 +98,10 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
         Ok(RelayMessage::ResponseTerminalSpawn {
             error: Some(err), ..
         }) => {
-            state.services.terminal_registry.remove_terminal(&terminal_id);
+            state
+                .services
+                .terminal_registry
+                .remove_terminal(&terminal_id);
             Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": err.message })),
@@ -106,7 +109,10 @@ pub(crate) async fn spawn_terminal_for_runtime_session(
                 .into_response())
         }
         _ => {
-            state.services.terminal_registry.remove_terminal(&terminal_id);
+            state
+                .services
+                .terminal_registry
+                .remove_terminal(&terminal_id);
             Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": "unexpected response" })),

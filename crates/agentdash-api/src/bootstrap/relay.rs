@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
 use crate::relay::registry::BackendRegistry;
+use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
 
 pub(crate) struct RelayBootstrapOutput {
     pub backend_registry: Arc<BackendRegistry>,

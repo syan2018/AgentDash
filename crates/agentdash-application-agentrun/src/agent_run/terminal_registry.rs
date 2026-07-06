@@ -222,10 +222,6 @@ impl AgentRunTerminalRegistry {
             run_id: run_id.to_string(),
             agent_id: agent_id.to_string(),
         };
-        self.active_sessions
-            .read()
-            .unwrap()
-            .get(&key)
-            .cloned()
+        self.active_sessions.read().unwrap().get(&key).cloned()
     }
 }

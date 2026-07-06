@@ -123,6 +123,6 @@ pub use types::{
     PendingCapabilityStateTransition, PromptLaunchPath, ResolvedPromptPayload,
     RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, RuntimeTraceLaunchState,
     SessionExecutionState, SessionMeta, SessionRepositoryRehydrateMode,
-    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect,
-    UserPromptInput, resolve_launch_prompt_payload, resolve_prompt_launch_path,
+    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, UserPromptInput,
+    resolve_launch_prompt_payload, resolve_prompt_launch_path,
 };

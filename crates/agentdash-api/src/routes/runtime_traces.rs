@@ -299,8 +299,7 @@ mod tests {
         SessionContextUsageReadModel, SessionMessageContextBreakdown, SessionMeta,
         SessionProjectionMessageRefReadModel, SessionProjectionSegmentProvenanceReadModel,
         SessionProjectionSegmentReadModel, SessionProjectionSourceRangeReadModel,
-        SessionRepositoryRehydrateMode, SessionToolContextContribution,
-        resolve_prompt_launch_path,
+        SessionRepositoryRehydrateMode, SessionToolContextContribution, resolve_prompt_launch_path,
     };
 
     fn test_meta(id: &str, event_seq: u64, executor_session_id: Option<&str>) -> SessionMeta {

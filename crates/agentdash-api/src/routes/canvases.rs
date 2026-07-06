@@ -43,12 +43,12 @@ use agentdash_contracts::canvas::{
     CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest, CanvasRuntimeBridgeSnapshotDto,
     CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
     CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
-    CanvasRuntimeObservationUpsertRequest, CanvasRuntimeViewportDto,
-    CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest,
-    DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
-    RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
-    RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto,
-    RuntimeTraceDto, UnpublishCanvasResponse, UpdateCanvasRequest,
+    CanvasRuntimeObservationUpsertRequest, CanvasRuntimeViewportDto, CanvasSandboxConfigDto,
+    CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest, DeleteCanvasResponse,
+    ListCanvasesQuery, PublishCanvasToProjectRequest, RuntimeActionDescriptorDto,
+    RuntimeActionKindDto, RuntimeContextDto, RuntimeInvocationOutputDto,
+    RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto, RuntimeTraceDto,
+    UnpublishCanvasResponse, UpdateCanvasRequest,
 };
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
 use agentdash_domain::canvas::{
@@ -490,7 +490,6 @@ pub async fn unpublish_canvas_route(
         source_canvas_id: result.source_canvas_id.map(|id| id.to_string()),
     }))
 }
-
 
 pub async fn get_agent_run_canvas_runtime_observation(
     State(state): State<Arc<AppState>>,
@@ -1033,7 +1032,6 @@ fn parse_datetime(value: String, field: &str) -> Result<DateTime<Utc>, ApiError>
         .map_err(|error| ApiError::BadRequest(format!("{field} 不是合法 RFC3339 时间: {error}")))
 }
 
-
 fn canvas_runtime_bridge_to_contract(
     bridge: CanvasRuntimeBridgeSnapshot,
 ) -> CanvasRuntimeBridgeSnapshotDto {
@@ -1229,7 +1227,6 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
         ExtensionPackageArtifactUseCaseError::Integrity(error) => ApiError::Internal(error),
     }
 }
-
 
 #[cfg(test)]
 mod tests {

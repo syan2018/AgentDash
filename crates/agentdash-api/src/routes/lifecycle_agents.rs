@@ -10,6 +10,7 @@ use agentdash_application::runtime_session_agent_run_bridge::{
     agent_run_session_cancel_runtime, agent_run_session_control, agent_run_session_core,
     agent_run_session_eventing, agent_run_session_launch,
 };
+use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_application_agentrun::agent_run::{
     self as app_agent_run, workspace as app_workspace,
 };
@@ -23,7 +24,6 @@ use agentdash_application_agentrun::agent_run::{
     DeliveryRuntimeSelectionService,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
-use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
     AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
@@ -1136,11 +1136,10 @@ async fn resolve_agent_run_terminal_launch_target(
     .await?;
     let runtime_session_id = delivery_runtime_session_from_agent_run_context(&context)?;
     // Ensure terminal registry knows this session -> AgentRun binding
-    state.services.terminal_registry.bind_session(
-        &runtime_session_id,
-        run_id,
-        agent_id,
-    );
+    state
+        .services
+        .terminal_registry
+        .bind_session(&runtime_session_id, run_id, agent_id);
     let launch_target =
         resolve_terminal_launch_target_for_runtime_session(state, &runtime_session_id).await?;
     if launch_target.project_id != context.run.project_id {
@@ -1175,13 +1174,8 @@ async fn get_agent_run_runtime_context_audit(
     let _runtime_session_id =
         resolve_agent_run_delivery_runtime(&state, &current_user, &run_id, &agent_id).await?;
     Ok(Json(
-        runtime_traces::load_runtime_trace_context_audit(
-            state.as_ref(),
-            &run_id,
-            &agent_id,
-            query,
-        )
-        .await?,
+        runtime_traces::load_runtime_trace_context_audit(state.as_ref(), &run_id, &agent_id, query)
+            .await?,
     ))
 }
 

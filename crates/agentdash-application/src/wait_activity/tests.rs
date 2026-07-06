@@ -9,7 +9,8 @@ use agentdash_domain::agent_run_mailbox::{
 };
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, RuntimeSessionExecutionAnchorRepository,
+    LifecycleGateRepository, RuntimeSessionExecutionAnchorRepository, WaitObligationDeclaration,
+    WaitProducerRef,
 };
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::connector::RuntimeToolProvider;
@@ -418,6 +419,25 @@ impl LifecycleGateRepository for MemoryGateRepo {
             .unwrap()
             .values()
             .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+            .cloned()
+            .collect())
+    }
+
+    async fn list_by_wait_producer(
+        &self,
+        producer: &WaitProducerRef,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|gate| {
+                gate.payload_json
+                    .as_ref()
+                    .and_then(WaitObligationDeclaration::from_payload)
+                    .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+            })
             .cloned()
             .collect())
     }

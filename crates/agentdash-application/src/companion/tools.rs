@@ -2775,7 +2775,9 @@ mod companion_tests {
         companion_wake_source_dedup_key, platform_capability_grant_missing_broker_error,
         wait_for_lifecycle_gate_resolution,
     };
-    use agentdash_domain::workflow::{LifecycleGate, LifecycleGateRepository};
+    use agentdash_domain::workflow::{
+        LifecycleGate, LifecycleGateRepository, WaitObligationDeclaration, WaitProducerRef,
+    };
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
     use agentdash_spi::{McpTransportConfig, MountCapability, RuntimeMcpServer, Vfs};
@@ -2814,6 +2816,25 @@ mod companion_tests {
                 .unwrap()
                 .values()
                 .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_wait_producer(
+            &self,
+            producer: &WaitProducerRef,
+        ) -> Result<Vec<LifecycleGate>, agentdash_domain::DomainError> {
+            Ok(self
+                .gates
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|gate| {
+                    gate.payload_json
+                        .as_ref()
+                        .and_then(WaitObligationDeclaration::from_payload)
+                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                })
                 .cloned()
                 .collect())
         }

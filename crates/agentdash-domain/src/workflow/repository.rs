@@ -9,6 +9,7 @@ use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
 use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 use super::runtime_session_anchor::RuntimeSessionExecutionAnchor;
+use super::wait_obligation::WaitProducerRef;
 use crate::common::error::DomainError;
 
 #[async_trait::async_trait]
@@ -120,6 +121,10 @@ pub trait LifecycleGateRepository: Send + Sync {
     async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError>;
     async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError>;
     async fn list_open_for_agent(&self, agent_id: Uuid) -> Result<Vec<LifecycleGate>, DomainError>;
+    async fn list_by_wait_producer(
+        &self,
+        producer: &WaitProducerRef,
+    ) -> Result<Vec<LifecycleGate>, DomainError>;
     async fn find_by_agent_and_correlation(
         &self,
         agent_id: Uuid,

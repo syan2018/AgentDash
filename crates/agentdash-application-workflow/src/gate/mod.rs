@@ -1,6 +1,7 @@
 mod commands;
 mod outcome;
 mod resolver;
+mod wait_obligation;
 
 pub use commands::{
     CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
@@ -14,3 +15,7 @@ pub use outcome::{
     GateTransitionKind, GateTransitionOutcome,
 };
 pub use resolver::LifecycleGateResolver;
+pub use wait_obligation::{
+    WaitObligationConvergenceOutcome, WaitObligationConvergenceOutcomeKind,
+    WaitObligationConvergenceResult, WaitObligationConvergenceService, WaitProducerTerminalEvent,
+};

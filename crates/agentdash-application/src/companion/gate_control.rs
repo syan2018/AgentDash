@@ -1,10 +1,11 @@
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
 use agentdash_application_workflow::gate::{
     CompleteChildResultGateCommand, GateDeliveryIntent, GateNotificationIntent,
     LifecycleGateResolver, OpenParentRequestGateCommand, ResolveParentRequestGateCommand,
-    RespondHumanGateCommand,
+    RespondHumanGateCommand, WaitObligationConvergenceResult, WaitObligationConvergenceService,
+    WaitProducerTerminalEvent,
 };
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryBindingRepository,
@@ -52,17 +53,6 @@ pub struct CompleteCompanionChildResultCommand {
     pub child_runtime_session_id: String,
     pub resolved_turn_id: String,
     pub payload: serde_json::Value,
-}
-
-#[derive(Debug, Clone)]
-pub struct CompleteCompanionChildTerminalCommand {
-    pub run_id: Uuid,
-    pub child_agent_id: Uuid,
-    pub child_frame_id: Option<Uuid>,
-    pub delivery_trace_ref: Option<String>,
-    pub resolved_turn_id: Option<String>,
-    pub terminal_state: String,
-    pub terminal_message: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -648,20 +638,6 @@ impl CompanionGateControlService {
         })
     }
 
-    async fn find_terminal_child_gate(
-        &self,
-        command: &CompleteCompanionChildTerminalCommand,
-    ) -> Result<Option<LifecycleGate>, ApplicationError> {
-        let gates = self
-            .gate_repo
-            .list_open_for_agent(command.child_agent_id)
-            .await?;
-        Ok(gates
-            .into_iter()
-            .filter(|gate| gate.run_id == command.run_id)
-            .find(|gate| is_companion_child_wait_gate(&gate.gate_kind)))
-    }
-
     pub async fn complete_child_result_to_parent(
         &self,
         command: CompleteCompanionChildResultCommand,
@@ -746,22 +722,50 @@ impl CompanionGateControlService {
                 .await;
         }
 
-        let outcome = self
+        let complete_command = CompleteChildResultGateCommand {
+            gate_id: gate.id,
+            request_id: command.request_id.clone(),
+            run_id: lineage.run_id,
+            parent_agent_id,
+            parent_delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
+            child_agent_id: child_frame.agent_id,
+            child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
+            resolved_turn_id: resolved_turn_id.clone(),
+            companion_label: companion_label.to_string(),
+            payload: command.payload.clone(),
+            resolved_by: format!("child_agent:{}", child_frame.agent_id),
+        };
+        let outcome = match self
             .gate_resolver
-            .complete_child_result(CompleteChildResultGateCommand {
-                gate_id: gate.id,
-                request_id: command.request_id.clone(),
-                run_id: lineage.run_id,
-                parent_agent_id,
-                parent_delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
-                child_agent_id: child_frame.agent_id,
-                child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
-                resolved_turn_id: resolved_turn_id.clone(),
-                companion_label: companion_label.to_string(),
-                payload: command.payload.clone(),
-                resolved_by: format!("child_agent:{}", child_frame.agent_id),
-            })
-            .await?;
+            .complete_child_result(complete_command)
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(agentdash_application_workflow::WorkflowApplicationError::Conflict(message)) => {
+                let latest_gate = self.gate_repo.get(gate.id).await?.ok_or_else(|| {
+                    ApplicationError::NotFound(format!(
+                        "child result gate {} disappeared after resolve conflict",
+                        gate.id
+                    ))
+                })?;
+                if latest_gate.is_open() {
+                    return Err(ApplicationError::Conflict(message));
+                }
+                return self
+                    .ensure_resolved_child_result_delivery(ResolvedChildResultDeliveryInput {
+                        gate: latest_gate,
+                        expected_request_id: Some(command.request_id.clone()),
+                        parent_agent_id,
+                        parent_delivery_runtime_session_id,
+                        child_agent_id: child_frame.agent_id,
+                        child_delivery_runtime_session_id,
+                        fallback_resolved_turn_id: resolved_turn_id,
+                        companion_label: companion_label.to_string(),
+                    })
+                    .await;
+            }
+            Err(error) => return Err(application_error_from_workflow_gate_error(error)),
+        };
         let result_intent = outcome
             .delivery_intents
             .iter()
@@ -800,114 +804,69 @@ impl CompanionGateControlService {
         Ok(Some(result))
     }
 
-    pub async fn complete_child_terminal_to_parent(
+    pub async fn observe_wait_producer_terminal(
         &self,
-        command: CompleteCompanionChildTerminalCommand,
-    ) -> Result<Option<CompanionChildResultCompleteResult>, ApplicationError> {
-        let lineage = match self
-            .lineage_repo
-            .find_parent(command.child_agent_id)
-            .await?
-        {
-            Some(lineage) if lineage.run_id == command.run_id => lineage,
-            _ => return Ok(None),
-        };
-        let parent_agent_id = match lineage.parent_agent_id {
-            Some(agent_id) => agent_id,
-            None => return Ok(None),
-        };
-        let gate = match self.find_terminal_child_gate(&command).await? {
-            Some(gate) => gate,
-            None => return Ok(None),
-        };
-
-        let gate_meta = gate.payload_json.clone();
-        let companion_label = gate_meta
-            .as_ref()
-            .and_then(|metadata| metadata.get("companion_label"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("companion");
-        let parent_delivery_runtime_session_id = self
-            .select_bound_delivery_runtime_session_id(command.run_id, parent_agent_id)
-            .await?;
-        let Some(parent_delivery_runtime_session_id) = parent_delivery_runtime_session_id else {
-            return Err(ApplicationError::Conflict(
-                "parent agent 缺少 current delivery runtime session，无法投递 companion terminal result"
-                    .to_string(),
-            ));
-        };
-
-        let child_delivery_runtime_session_id =
-            if let Some(delivery_trace_ref) = command.delivery_trace_ref.as_deref() {
-                self.validate_bound_delivery_runtime_session_id(
-                    command.run_id,
-                    command.child_agent_id,
-                    delivery_trace_ref,
-                )
-                .await?
-            } else {
-                None
-            };
-
-        let resolved_turn_id = command
-            .resolved_turn_id
-            .clone()
-            .unwrap_or_else(|| "terminal".to_string());
-
-        let terminal_payload = terminal_child_result_payload(&command);
-        let outcome = self
-            .gate_resolver
-            .complete_child_result(CompleteChildResultGateCommand {
-                gate_id: gate.id,
-                request_id: gate.correlation_id.clone(),
-                run_id: command.run_id,
-                parent_agent_id,
-                parent_delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
-                child_agent_id: command.child_agent_id,
-                child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
-                resolved_turn_id: resolved_turn_id.clone(),
-                companion_label: companion_label.to_string(),
-                payload: terminal_payload,
-                resolved_by: format!("child_agent_terminal:{}", command.child_agent_id),
-            })
-            .await?;
-
-        let result_intent = outcome
-            .delivery_intents
-            .iter()
-            .find_map(|intent| match intent {
-                GateDeliveryIntent::CompanionChildResultToParent(intent) => Some(intent),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                ApplicationError::Internal(format!(
-                    "child terminal gate {} 缺少 delivery intent",
-                    gate.id
-                ))
-            })?;
-        let result = self
-            .deliver_child_result_payload_to_parent(ChildResultPayloadDeliveryInput {
-                gate_id: result_intent.gate_id,
-                request_id: result_intent.request_id.clone(),
-                run_id: result_intent.run_id,
-                parent_agent_id: result_intent.parent_agent_id,
-                parent_delivery_runtime_session_id: result_intent
-                    .parent_delivery_runtime_session_id
-                    .clone(),
-                child_agent_id: result_intent.child_agent_id,
-                child_delivery_runtime_session_id: result_intent
-                    .child_delivery_runtime_session_id
-                    .clone(),
-                resolved_turn_id,
-                companion_label: companion_label.to_string(),
-                payload: result_intent.payload.clone(),
-            })
-            .await?;
-
-        self.deliver_notification_intents(&outcome.notification_intents, gate.id, None)
-            .await;
-
-        Ok(Some(result))
+        event: WaitProducerTerminalEvent,
+    ) -> Result<WaitObligationConvergenceResult, ApplicationError> {
+        let result = WaitObligationConvergenceService::new(
+            self.gate_repo.clone(),
+            self.delivery_binding_repo.clone(),
+        )
+        .observe_producer_terminal(event.clone())
+        .await
+        .map_err(application_error_from_workflow_gate_error)?;
+        if result.no_matching_obligation() {
+            diag!(
+                Debug,
+                Subsystem::AgentRun,
+                producer = ?event.producer,
+                terminal_state = %event.terminal_state,
+                delivery_trace_ref = ?event.trace_ref,
+                "wait obligation terminal convergence found no matching obligation"
+            );
+        }
+        for outcome in &result.outcomes {
+            for intent in &outcome.delivery_intents {
+                if let GateDeliveryIntent::CompanionChildResultToParent(intent) = intent {
+                    let companion_label = intent
+                        .payload
+                        .get("companion_label")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("companion")
+                        .to_string();
+                    self.deliver_child_result_payload_to_parent(ChildResultPayloadDeliveryInput {
+                        gate_id: intent.gate_id,
+                        request_id: intent.request_id.clone(),
+                        run_id: intent.run_id,
+                        parent_agent_id: intent.parent_agent_id,
+                        parent_delivery_runtime_session_id: intent
+                            .parent_delivery_runtime_session_id
+                            .clone(),
+                        child_agent_id: intent.child_agent_id,
+                        child_delivery_runtime_session_id: intent
+                            .child_delivery_runtime_session_id
+                            .clone(),
+                        resolved_turn_id: intent.resolved_turn_id.clone(),
+                        companion_label,
+                        payload: intent.payload.clone(),
+                    })
+                    .await?;
+                }
+            }
+            self.deliver_notification_intents(&outcome.notification_intents, outcome.gate_id, None)
+                .await;
+            diag!(
+                Debug,
+                Subsystem::AgentRun,
+                gate_id = %outcome.gate_id,
+                outcome_kind = ?outcome.kind,
+                result_status = ?outcome.result_status,
+                delivery_intent_count = outcome.delivery_intents.len(),
+                notification_intent_count = outcome.notification_intents.len(),
+                "wait obligation terminal convergence outcome delivered"
+            );
+        }
+        Ok(result)
     }
 
     pub async fn open_parent_request(
@@ -1366,39 +1325,24 @@ fn application_error_from_selection_error(
     }
 }
 
-fn terminal_child_result_payload(
-    command: &CompleteCompanionChildTerminalCommand,
-) -> serde_json::Value {
-    let (status, failure_kind, summary) = match command.terminal_state.as_str() {
-        "interrupted" | "cancelled" => (
-            "cancelled",
-            "runtime_terminal_cancelled",
-            "SubAgent runtime was interrupted before companion_respond.",
-        ),
-        "completed" => (
-            "failed",
-            "missing_companion_respond",
-            "SubAgent runtime completed without companion_respond.",
-        ),
-        _ => (
-            "failed",
-            "runtime_terminal_failed",
-            "SubAgent runtime failed before companion_respond.",
-        ),
-    };
-    serde_json::json!({
-        "status": status,
-        "summary": summary,
-        "terminal_state": command.terminal_state,
-        "terminal_message": command.terminal_message,
-        "delivery_trace_ref": command.delivery_trace_ref,
-        "resolved_turn_id": command.resolved_turn_id,
-        "failure_kind": failure_kind,
-        "source": "runtime_terminal",
-        "findings": [],
-        "follow_ups": [],
-        "artifact_refs": [],
-    })
+fn application_error_from_workflow_gate_error(
+    error: agentdash_application_workflow::WorkflowApplicationError,
+) -> ApplicationError {
+    match error {
+        agentdash_application_workflow::WorkflowApplicationError::BadRequest(message)
+        | agentdash_application_workflow::WorkflowApplicationError::ModelRequired(message) => {
+            ApplicationError::BadRequest(message)
+        }
+        agentdash_application_workflow::WorkflowApplicationError::NotFound(message) => {
+            ApplicationError::NotFound(message)
+        }
+        agentdash_application_workflow::WorkflowApplicationError::Conflict(message) => {
+            ApplicationError::Conflict(message)
+        }
+        agentdash_application_workflow::WorkflowApplicationError::Internal(message) => {
+            ApplicationError::Internal(message)
+        }
+    }
 }
 
 fn build_parent_result_mailbox_input_text(
@@ -1553,7 +1497,8 @@ mod tests {
         workflow::{
             AgentFrame, AgentLineage, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
             AgentSource, DeliveryBindingStatus, LifecycleAgent, LifecycleGate, LifecycleRun,
-            LifecycleRunRepository, RuntimeSessionExecutionAnchor,
+            LifecycleRunRepository, RuntimeSessionExecutionAnchor, WaitObligationDeclaration,
+            WaitProducerRef,
         },
     };
 
@@ -1585,6 +1530,25 @@ mod tests {
                 .unwrap()
                 .values()
                 .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_wait_producer(
+            &self,
+            producer: &WaitProducerRef,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|gate| {
+                    gate.payload_json
+                        .as_ref()
+                        .and_then(WaitObligationDeclaration::from_payload)
+                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                })
                 .cloned()
                 .collect())
         }
@@ -2632,7 +2596,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_child_terminal_failed_resolves_gate_and_delivers_parent_wake() {
+    async fn observe_wait_producer_terminal_failed_resolves_gate_and_delivers_parent_wake() {
         let run_id = Uuid::new_v4();
         let parent_agent_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
@@ -2640,7 +2604,7 @@ mod tests {
         let parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
         let child_frame = AgentFrame::new_revision(child_agent_id, 1, "child");
 
-        let gate = LifecycleGate::open(
+        let mut gate = LifecycleGate::open(
             run_id,
             Some(child_agent_id),
             Some(child_frame.id),
@@ -2653,6 +2617,20 @@ mod tests {
             })),
         );
         let gate_id = gate.id;
+        let declaration = WaitObligationDeclaration::companion_agent_run_delivery(
+            run_id,
+            child_agent_id,
+            Some(child_frame.id),
+            "dispatch-terminal",
+            run_id,
+            parent_agent_id,
+            gate_id,
+        );
+        gate.payload_json = Some(
+            declaration
+                .write_into_payload(gate.payload_json.take())
+                .expect("write wait obligation"),
+        );
         let lineage = AgentLineage::new(
             run_id,
             Some(parent_agent_id),
@@ -2688,24 +2666,29 @@ mod tests {
             run_id,
         );
 
-        let command = CompleteCompanionChildTerminalCommand {
-            run_id,
-            child_agent_id,
-            child_frame_id: Some(child_frame.id),
-            delivery_trace_ref: Some("child-session".to_string()),
-            resolved_turn_id: Some("turn-child-1".to_string()),
+        let event = WaitProducerTerminalEvent {
+            producer: WaitProducerRef::AgentRunDelivery {
+                run_id,
+                agent_id: child_agent_id,
+                frame_id: Some(child_frame.id),
+            },
             terminal_state: "failed".to_string(),
             terminal_message: Some("provider model unsupported".to_string()),
+            source_turn_id: Some("turn-child-1".to_string()),
+            trace_ref: Some("child-session".to_string()),
         };
         let result = service
-            .complete_child_terminal_to_parent(command.clone())
+            .observe_wait_producer_terminal(event.clone())
             .await
-            .expect("terminal convergence")
-            .expect("matched terminal gate");
+            .expect("terminal convergence");
 
-        assert_eq!(result.gate_id, gate_id);
-        assert_eq!(result.parent_agent_id, parent_agent_id);
-        assert_eq!(result.parent_mailbox_delivery.outcome, "queued");
+        assert_eq!(result.outcomes.len(), 1);
+        assert_eq!(result.outcomes[0].gate_id, gate_id);
+        assert_eq!(
+            result.outcomes[0].kind,
+            agentdash_application_workflow::gate::WaitObligationConvergenceOutcomeKind::Resolved
+        );
+        assert_eq!(result.outcomes[0].result_status.as_deref(), Some("failed"));
 
         let stored = gate_repo
             .get(gate_id)
@@ -2732,7 +2715,7 @@ mod tests {
         );
         assert_eq!(
             payload.get("source").and_then(serde_json::Value::as_str),
-            Some("runtime_terminal")
+            Some("producer_terminal")
         );
         assert_eq!(
             payload
@@ -2746,6 +2729,13 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("runtime_terminal_failed")
         );
+        assert_eq!(
+            payload
+                .get("wait_source")
+                .and_then(|value| value.get("kind"))
+                .and_then(serde_json::Value::as_str),
+            Some("agent_run_delivery")
+        );
 
         {
             let mailbox_commands = parent_mailbox_delivery.commands.lock().unwrap();
@@ -2758,10 +2748,14 @@ mod tests {
         }
 
         let replay = service
-            .complete_child_terminal_to_parent(command)
+            .observe_wait_producer_terminal(event)
             .await
             .expect("terminal convergence replay");
-        assert!(replay.is_none());
+        assert_eq!(replay.outcomes.len(), 1);
+        assert_eq!(
+            replay.outcomes[0].kind,
+            agentdash_application_workflow::gate::WaitObligationConvergenceOutcomeKind::AlreadyResolvedEnsuredDelivery
+        );
         assert_eq!(parent_mailbox_delivery.commands.lock().unwrap().len(), 1);
     }
 

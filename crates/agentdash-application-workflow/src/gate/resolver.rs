@@ -377,7 +377,8 @@ impl LifecycleGateResolver {
         let status = normalize_companion_result_status(
             command.payload.get("status").and_then(Value::as_str),
         )?;
-        let payload = json!({
+        let existing_payload = gate.payload_json.clone();
+        let mut payload = json!({
             "gate_id": gate.id.to_string(),
             "request_id": command.request_id,
             "status": status,
@@ -389,11 +390,13 @@ impl LifecycleGateResolver {
             "terminal_message": command.payload.get("terminal_message"),
             "delivery_trace_ref": command.payload.get("delivery_trace_ref"),
             "failure_kind": command.payload.get("failure_kind"),
+            "declared_status": command.payload.get("declared_status"),
             "source": command.payload.get("source"),
             "child_agent_id": command.child_agent_id.to_string(),
             "parent_agent_id": command.parent_agent_id.to_string(),
             "resolved_turn_id": command.resolved_turn_id,
         });
+        preserve_wait_obligation_metadata(&mut payload, existing_payload.as_ref());
 
         gate.payload_json = Some(payload.clone());
         gate.resolve(command.resolved_by);
@@ -485,6 +488,29 @@ fn normalize_companion_result_status(
     }
 }
 
+fn preserve_wait_obligation_metadata(payload: &mut Value, existing: Option<&Value>) {
+    let Some(target) = payload.as_object_mut() else {
+        return;
+    };
+    let Some(existing) = existing.and_then(Value::as_object) else {
+        return;
+    };
+    for key in [
+        "wait_source",
+        "expected_result",
+        "on_producer_terminal_without_result",
+        "wake",
+        "companion_label",
+        "adoption_mode",
+        "dispatch_id",
+        "task_id",
+    ] {
+        if let Some(value) = existing.get(key) {
+            target.insert(key.to_string(), value.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -492,7 +518,10 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
-    use agentdash_domain::{DomainError, workflow::LifecycleGateRepository};
+    use agentdash_domain::{
+        DomainError,
+        workflow::{LifecycleGateRepository, WaitObligationDeclaration, WaitProducerRef},
+    };
 
     use super::*;
     use crate::gate::{
@@ -525,6 +554,25 @@ mod tests {
                 .unwrap()
                 .values()
                 .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_wait_producer(
+            &self,
+            producer: &WaitProducerRef,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|gate| {
+                    gate.payload_json
+                        .as_ref()
+                        .and_then(WaitObligationDeclaration::from_payload)
+                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                })
                 .cloned()
                 .collect())
         }

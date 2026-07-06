@@ -770,6 +770,27 @@ mod tests {
                 .collect())
         }
 
+        async fn list_by_wait_producer(
+            &self,
+            producer: &agentdash_domain::workflow::WaitProducerRef,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|gate| {
+                    gate.payload_json
+                        .as_ref()
+                        .and_then(
+                            agentdash_domain::workflow::WaitObligationDeclaration::from_payload,
+                        )
+                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                })
+                .cloned()
+                .collect())
+        }
+
         async fn find_by_agent_and_correlation(
             &self,
             agent_id: Uuid,

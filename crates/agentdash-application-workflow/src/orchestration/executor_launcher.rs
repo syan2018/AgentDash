@@ -437,7 +437,8 @@ mod launcher_drain_tests {
         LifecycleGateRepository, LifecycleRunRepository, OrchestrationLimits,
         OrchestrationSourceRef, OrchestrationStatus, OutputPortDefinition, RuntimeNodeState,
         RuntimeNodeStatus, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-        RuntimeSessionPolicy, RuntimeTraceRef, WorkflowInjectionSpec,
+        RuntimeSessionPolicy, RuntimeTraceRef, WaitObligationDeclaration, WaitProducerRef,
+        WorkflowInjectionSpec,
     };
     use agentdash_spi::{ApiRequestOutcome, BashExecOutcome};
     use async_trait::async_trait;
@@ -840,6 +841,25 @@ mod launcher_drain_tests {
                 .unwrap()
                 .iter()
                 .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn list_by_wait_producer(
+            &self,
+            producer: &WaitProducerRef,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|gate| {
+                    gate.payload_json
+                        .as_ref()
+                        .and_then(WaitObligationDeclaration::from_payload)
+                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                })
                 .cloned()
                 .collect())
         }

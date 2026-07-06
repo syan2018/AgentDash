@@ -12,6 +12,7 @@ mod repository;
 mod runtime_session_anchor;
 mod validation;
 mod value_objects;
+mod wait_obligation;
 
 pub use agent_frame::{AgentFrame, AgentFrameSurfaceDocument};
 pub use agent_lineage::AgentLineage;
@@ -71,4 +72,8 @@ pub use value_objects::{
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     WorkflowSessionTerminalState, mcp_capability_key, mcp_tool_capability_path,
     reduce_tool_capability_directives, workflow_script_source_digest,
+};
+pub use wait_obligation::{
+    WaitExpectedResultDeclaration, WaitObligationDeclaration, WaitProducerRef,
+    WaitProducerTerminalPolicy, WaitSourceDeclaration, WaitWakeDeclaration,
 };

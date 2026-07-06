@@ -3,6 +3,7 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
     InteractionDispatchIntent, LifecycleTaskPlanItemPatch, RunPolicy, RuntimePolicy,
+    WaitObligationDeclaration,
 };
 use agentdash_spi::AgentConfig;
 use agentdash_spi::action_type as at;
@@ -90,14 +91,22 @@ impl<'a> CompanionChildDispatchService<'a> {
                         "dispatch 失败: {error}"
                     ))
                 })?;
+            self.declare_child_wait_obligation(
+                &request,
+                result.gate_ref,
+                result.runtime_refs.run_ref,
+                result.runtime_refs.agent_ref,
+                result.runtime_refs.frame_ref,
+            )
+            .await?;
+            let delivery_runtime_session_id =
+                require_delivery_runtime_session(result.delivery_runtime_ref)?;
             CompanionChildDispatchOutcome {
                 run_ref: result.runtime_refs.run_ref,
                 agent_ref: result.runtime_refs.agent_ref,
                 frame_ref: result.runtime_refs.frame_ref,
                 gate_ref: Some(result.gate_ref),
-                delivery_runtime_session_id: require_delivery_runtime_session(
-                    result.delivery_runtime_ref,
-                )?,
+                delivery_runtime_session_id,
                 launch_source: build_launch_source(&request),
             }
         } else {
@@ -197,6 +206,50 @@ impl<'a> CompanionChildDispatchService<'a> {
             .await
             .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))?;
         Ok(())
+    }
+
+    async fn declare_child_wait_obligation(
+        &self,
+        request: &CompanionChildDispatchRequest,
+        gate_id: Uuid,
+        child_run_id: Uuid,
+        child_agent_id: Uuid,
+        child_frame_id: Uuid,
+    ) -> Result<(), agentdash_spi::AgentToolError> {
+        let mut gate = self
+            .repos
+            .lifecycle_gate_repo
+            .get(gate_id)
+            .await
+            .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))?
+            .ok_or_else(|| {
+                agentdash_spi::AgentToolError::ExecutionFailed(format!(
+                    "companion wait gate {gate_id} 不存在，无法声明 wait obligation"
+                ))
+            })?;
+        let declaration = WaitObligationDeclaration::companion_agent_run_delivery(
+            child_run_id,
+            child_agent_id,
+            Some(child_frame_id),
+            request.dispatch_id.clone(),
+            request.parent_run_id,
+            request.parent_agent_id,
+            gate_id,
+        );
+        gate.payload_json = Some(
+            declaration
+                .write_into_payload(gate.payload_json.take())
+                .map_err(|error| {
+                    agentdash_spi::AgentToolError::ExecutionFailed(format!(
+                        "companion wait obligation payload 序列化失败: {error}"
+                    ))
+                })?,
+        );
+        self.repos
+            .lifecycle_gate_repo
+            .update(&gate)
+            .await
+            .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))
     }
 }
 

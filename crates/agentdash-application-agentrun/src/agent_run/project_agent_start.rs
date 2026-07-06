@@ -1442,6 +1442,13 @@ mod tests {
             Ok(Vec::new())
         }
 
+        async fn list_by_wait_producer(
+            &self,
+            _producer: &agentdash_domain::workflow::WaitProducerRef,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(Vec::new())
+        }
+
         async fn find_by_agent_and_correlation(
             &self,
             _agent_id: Uuid,

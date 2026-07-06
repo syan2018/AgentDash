@@ -4,6 +4,7 @@ use agentdash_domain::workflow::{
     AgentRunCommandReceiptRepository, AgentRunCommandStatus, LifecycleAgent,
     LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, NewAgentRunCommandReceipt,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    WaitObligationDeclaration, WaitProducerRef,
 };
 use chrono::Utc;
 use tokio::sync::Mutex;
@@ -310,6 +311,25 @@ impl LifecycleGateRepository for MemoryLifecycleGateRepository {
             .await
             .iter()
             .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+            .cloned()
+            .collect())
+    }
+
+    async fn list_by_wait_producer(
+        &self,
+        producer: &WaitProducerRef,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .filter(|gate| {
+                gate.payload_json
+                    .as_ref()
+                    .and_then(WaitObligationDeclaration::from_payload)
+                    .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+            })
             .cloned()
             .collect())
     }

@@ -4,6 +4,7 @@ use agentdash_domain::workflow::{
     AgentLineageRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
     LifecycleGateRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
+    WaitProducerRef,
 };
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -603,6 +604,40 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         .into_iter()
         .map(TryInto::try_into)
         .collect()
+    }
+
+    async fn list_by_wait_producer(
+        &self,
+        producer: &WaitProducerRef,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        match producer {
+            WaitProducerRef::AgentRunDelivery {
+                run_id,
+                agent_id,
+                frame_id,
+            } => {
+                let rows = sqlx::query_as::<_, GateRow>(
+                    r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
+                       FROM lifecycle_gates
+                       WHERE payload_json IS NOT NULL
+                         AND payload_json::jsonb -> 'wait_source' ->> 'kind' = 'agent_run_delivery'
+                         AND payload_json::jsonb -> 'wait_source' ->> 'run_id' = $1
+                         AND payload_json::jsonb -> 'wait_source' ->> 'agent_id' = $2
+                         AND (
+                            $3::text IS NULL
+                            OR payload_json::jsonb -> 'wait_source' ->> 'frame_id' = $3
+                         )
+                       ORDER BY created_at"#,
+                )
+                .bind(run_id.to_string())
+                .bind(agent_id.to_string())
+                .bind(frame_id.map(|id| id.to_string()))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_err)?;
+                rows.into_iter().map(TryInto::try_into).collect()
+            }
+        }
     }
 
     async fn find_by_agent_and_correlation(

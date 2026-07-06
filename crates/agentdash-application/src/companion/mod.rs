@@ -13,9 +13,9 @@ pub use gate_control::{
     CompanionHumanResponseMailboxDeliveryCommand, CompanionParentMailboxDelivery,
     CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
     CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
-    CompleteCompanionChildResultCommand, CompleteCompanionChildTerminalCommand,
-    OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
-    RespondCompanionGateCommand, SessionEventingCompanionGateDelivery,
+    CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
+    ResolveCompanionParentRequestCommand, RespondCompanionGateCommand,
+    SessionEventingCompanionGateDelivery,
 };
 pub use notifications::{
     build_companion_event_notification, build_companion_human_response_notification,

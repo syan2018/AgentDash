@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use agentdash_application::companion::{
     AgentRunCompanionMailboxDelivery, CompanionGateControlRepos, CompanionGateControlService,
-    CompleteCompanionChildTerminalCommand,
 };
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionEventingService as ApplicationSessionEventingService;
@@ -16,6 +15,8 @@ use agentdash_application_agentrun::agent_run::{
 use agentdash_application_runtime_session::session::{
     SessionTerminalCallback, SessionTerminalNotification,
 };
+use agentdash_application_workflow::gate::WaitProducerTerminalEvent;
+use agentdash_domain::workflow::WaitProducerRef;
 
 #[derive(Clone)]
 pub(crate) struct AgentRunTerminalControlCallbackDeps {
@@ -85,7 +86,7 @@ impl AgentRunTerminalControlCallback {
         .await
     }
 
-    async fn converge_companion_terminal(
+    async fn converge_wait_obligation_terminal(
         &self,
         event: AgentRunDeliveryTerminalEvent,
     ) -> Result<(), agentdash_application::ApplicationError> {
@@ -112,14 +113,16 @@ impl AgentRunTerminalControlCallback {
         ));
 
         service
-            .complete_child_terminal_to_parent(CompleteCompanionChildTerminalCommand {
-                run_id: event.run_id,
-                child_agent_id: event.agent_id,
-                child_frame_id: event.frame_id,
-                delivery_trace_ref: event.delivery_trace_ref,
-                resolved_turn_id: event.turn_id,
+            .observe_wait_producer_terminal(WaitProducerTerminalEvent {
+                producer: WaitProducerRef::AgentRunDelivery {
+                    run_id: event.run_id,
+                    agent_id: event.agent_id,
+                    frame_id: event.frame_id,
+                },
                 terminal_state: event.terminal_state,
                 terminal_message: event.terminal_message,
+                source_turn_id: event.turn_id,
+                trace_ref: event.delivery_trace_ref,
             })
             .await?;
         Ok(())
@@ -138,7 +141,7 @@ impl SessionTerminalCallback for AgentRunTerminalControlCallback {
             .map_err(|error| error.to_string())?;
 
         if let Some(event) = event
-            && let Err(error) = self.converge_companion_terminal(event).await
+            && let Err(error) = self.converge_wait_obligation_terminal(event).await
         {
             diag!(
                 Warn,
@@ -146,7 +149,7 @@ impl SessionTerminalCallback for AgentRunTerminalControlCallback {
                 runtime_session_id = %notification.session_id,
                 terminal_state = %notification.terminal_state,
                 error = %error,
-                "AgentRun companion terminal gate 收束失败"
+                "AgentRun wait obligation terminal convergence 失败"
             );
             return Err(error.to_string());
         }

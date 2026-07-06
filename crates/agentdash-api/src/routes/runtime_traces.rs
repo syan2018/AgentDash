@@ -299,15 +299,13 @@ mod tests {
         SessionContextUsageReadModel, SessionMessageContextBreakdown, SessionMeta,
         SessionProjectionMessageRefReadModel, SessionProjectionSegmentProvenanceReadModel,
         SessionProjectionSegmentReadModel, SessionProjectionSourceRangeReadModel,
-        SessionRepositoryRehydrateMode, SessionToolContextContribution, TitleSource,
+        SessionRepositoryRehydrateMode, SessionToolContextContribution,
         resolve_prompt_launch_path,
     };
 
     fn test_meta(id: &str, event_seq: u64, executor_session_id: Option<&str>) -> SessionMeta {
         SessionMeta {
             id: id.to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: event_seq,

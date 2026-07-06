@@ -159,7 +159,7 @@ pub use runtime_session_boundary::{
     RuntimeSessionEventSubscription, RuntimeSessionEventingPort, RuntimeSessionLaunchPort,
     RuntimeTraceLaunchState, SessionControlService, SessionCoreService, SessionEventPage,
     SessionEventingService, SessionExecutionState, SessionLaunchService, SessionMeta,
-    SessionRepositoryRehydrateMode, SessionTurnSteerCommand, TitleSource,
+    SessionRepositoryRehydrateMode, SessionTurnSteerCommand,
     resolve_prompt_launch_path,
 };
 pub use runtime_surface::{

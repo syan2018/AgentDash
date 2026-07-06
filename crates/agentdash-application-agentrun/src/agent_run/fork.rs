@@ -794,7 +794,7 @@ mod tests {
     };
     use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
     use agentdash_application_runtime_session::session::{
-        SessionRuntimeBuilder, TitleSource,
+        SessionRuntimeBuilder,
         persistence::{
             AgentFrameTransitionRecord, CompactionProjectionCommitResult,
             NewCompactionProjectionCommit, NewTerminalEffectRecord, PersistedSessionEvent,
@@ -2091,8 +2091,6 @@ mod tests {
     fn session_meta(id: &str) -> SessionMeta {
         SessionMeta {
             id: id.to_string(),
-            title: id.to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

@@ -383,7 +383,7 @@ mod tests {
         TerminalHookTriggerPort, TerminalHookTriggerRequest,
     };
     use super::super::turn_supervisor::TurnSupervisor;
-    use super::super::types::{ExecutionStatus, SessionMeta, TitleSource};
+    use super::super::types::{ExecutionStatus, SessionMeta};
     use super::*;
     use crate::session::persistence::{SessionStoreError, SessionStoreResult};
 
@@ -515,8 +515,6 @@ mod tests {
             .meta
             .create_session(&SessionMeta {
                 id: session_id.to_string(),
-                title: "Test".to_string(),
-                title_source: TitleSource::Auto,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,
@@ -654,8 +652,6 @@ mod tests {
             .meta
             .create_session(&SessionMeta {
                 id: session_id.to_string(),
-                title: "Test".to_string(),
-                title_source: TitleSource::Auto,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,

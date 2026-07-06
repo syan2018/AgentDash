@@ -166,5 +166,5 @@ pub use session_persistence::{
     SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
     SessionRuntimeCommandStore, SessionTerminalEffectStore, SetCompanionAgentRosterEffect,
     SetMcpServerSetEffect, SetToolAccessEffect, TerminalEffectRecord, TerminalEffectStatus,
-    TerminalEffectType, TitleSource,
+    TerminalEffectType,
 };

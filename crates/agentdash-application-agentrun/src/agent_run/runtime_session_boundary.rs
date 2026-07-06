@@ -12,7 +12,6 @@ use crate::error::WorkflowApplicationError;
 
 pub use agentdash_spi::session_persistence::{
     PersistedSessionEvent, RuntimeCommandRecord, SessionEventPage, SessionMeta, SessionStoreError,
-    TitleSource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

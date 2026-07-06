@@ -35,16 +35,7 @@ impl SessionCoreService {
             .collect())
     }
 
-    pub async fn create_session(&self, title: &str) -> SessionStoreResult<SessionMeta> {
-        self.create_session_with_title_source(title, super::types::TitleSource::Auto)
-            .await
-    }
-
-    pub async fn create_session_with_title_source(
-        &self,
-        title: &str,
-        title_source: super::types::TitleSource,
-    ) -> SessionStoreResult<SessionMeta> {
+    pub async fn create_session(&self) -> SessionStoreResult<SessionMeta> {
         let id = format!(
             "sess-{}-{}",
             chrono::Utc::now().timestamp_millis(),
@@ -53,8 +44,6 @@ impl SessionCoreService {
         let now = chrono::Utc::now().timestamp_millis();
         let meta = SessionMeta {
             id: id.clone(),
-            title: title.to_string(),
-            title_source,
             created_at: now,
             updated_at: now,
             last_event_seq: 0,

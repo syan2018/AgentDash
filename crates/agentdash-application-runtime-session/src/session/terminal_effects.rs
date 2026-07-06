@@ -575,7 +575,7 @@ mod tests {
 
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
-    use crate::session::types::{ExecutionStatus, SessionMeta, TitleSource};
+    use crate::session::types::{ExecutionStatus, SessionMeta};
     use crate::session::{MemoryRuntimeTraceStore, SessionMetaStore, SessionStoreSet};
 
     #[test]
@@ -608,8 +608,6 @@ mod tests {
         persistence
             .create_session(&SessionMeta {
                 id: "sess-hook-replay".to_string(),
-                title: "hook replay".to_string(),
-                title_source: TitleSource::Auto,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,
@@ -675,8 +673,6 @@ mod tests {
         persistence
             .create_session(&SessionMeta {
                 id: "sess-auto-resume-failure".to_string(),
-                title: "auto resume failure".to_string(),
-                title_source: TitleSource::Auto,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,
@@ -741,8 +737,6 @@ mod tests {
         persistence
             .create_session(&SessionMeta {
                 id: "sess-callback-failure".to_string(),
-                title: "callback failure".to_string(),
-                title_source: TitleSource::Auto,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,
@@ -807,8 +801,6 @@ mod tests {
         persistence
             .create_session(&SessionMeta {
                 id: "sess-callback-success".to_string(),
-                title: "callback success".to_string(),
-                title_source: TitleSource::Auto,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,
@@ -861,8 +853,6 @@ mod tests {
         persistence
             .create_session(&SessionMeta {
                 id: "sess-callback-direct-failure".to_string(),
-                title: "callback direct failure".to_string(),
-                title_source: TitleSource::Auto,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,

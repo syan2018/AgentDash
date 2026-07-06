@@ -18,7 +18,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_domain::workflow::{
     AgentLaunchDispatchResult, AgentLaunchIntent, ExecutionDispatchResult, ExecutionIntent,
-    ExecutionSource, InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
+    InteractionDispatchIntent, InteractionGateOpenedDispatchResult,
     LifecycleRunStartDispatchResult, LifecycleRunStartIntent, SubjectExecutionDispatchResult,
     SubjectExecutionIntent,
 };
@@ -29,7 +29,7 @@ use super::dispatch::{
     OrchestrationReducerBridge, RunOrchestrationStarter, SubjectAssociationWriter,
 };
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_spi::{ExecutionStatus, SessionMeta, SessionMetaStore, TitleSource};
+use agentdash_spi::{ExecutionStatus, SessionMeta, SessionMetaStore};
 
 #[derive(Clone)]
 pub struct SessionMetaStoreRuntimeSessionCreator {
@@ -48,7 +48,7 @@ impl runtime_session_delivery_port::RuntimeSessionCreationPort
 {
     async fn create_runtime_session(
         &self,
-        request: runtime_session_delivery_port::RuntimeSessionCreationRequest,
+        _request: runtime_session_delivery_port::RuntimeSessionCreationRequest,
     ) -> Result<
         runtime_session_delivery_port::RuntimeSessionCreationResult,
         runtime_session_delivery_port::RuntimeSessionDeliveryError,
@@ -57,8 +57,6 @@ impl runtime_session_delivery_port::RuntimeSessionCreationPort
         let now = chrono::Utc::now().timestamp_millis();
         let meta = SessionMeta {
             id: session_id.to_string(),
-            title: runtime_session_title(&request),
-            title_source: TitleSource::Auto,
             created_at: now,
             updated_at: now,
             last_event_seq: 0,
@@ -447,18 +445,6 @@ impl<'a> LifecycleDispatchService<'a> {
             subject_execution_ref: subject_result.subject_execution_ref,
         })
     }
-}
-
-fn runtime_session_title(
-    request: &runtime_session_delivery_port::RuntimeSessionCreationRequest,
-) -> String {
-    let kind_label = match &request.source {
-        ExecutionSource::User | ExecutionSource::ProjectAgent | ExecutionSource::Api => "新会话",
-        ExecutionSource::Routine => "定时任务",
-        ExecutionSource::ParentAgent => "子任务",
-    };
-    let now = chrono::Local::now().format("%m/%d %H:%M");
-    format!("{kind_label} · {now}")
 }
 
 #[cfg(test)]

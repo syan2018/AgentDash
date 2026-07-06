@@ -260,12 +260,11 @@ mod tests {
         .expect("insert agent frame");
 
         sqlx::query(
-            r#"INSERT INTO runtime_sessions (id, title, created_at, updated_at, last_delivery_status)
-               VALUES ($1,$2,$3,$4,$5)
+            r#"INSERT INTO runtime_sessions (id, created_at, updated_at, last_delivery_status)
+               VALUES ($1,$2,$3,$4)
                ON CONFLICT (id) DO NOTHING"#,
         )
         .bind(runtime_session_id)
-        .bind("Binding repo test")
         .bind(Utc::now().timestamp_millis())
         .bind(Utc::now().timestamp_millis())
         .bind("running")
@@ -340,11 +339,10 @@ mod tests {
         .await
         .expect("insert replacement frame");
         sqlx::query(
-            r#"INSERT INTO runtime_sessions (id, title, created_at, updated_at, last_delivery_status)
-               VALUES ($1,$2,$3,$4,$5)"#,
+            r#"INSERT INTO runtime_sessions (id, created_at, updated_at, last_delivery_status)
+               VALUES ($1,$2,$3,$4)"#,
         )
         .bind(&replacement_session_id)
-        .bind("Replacement")
         .bind(Utc::now().timestamp_millis())
         .bind(Utc::now().timestamp_millis())
         .bind("idle")

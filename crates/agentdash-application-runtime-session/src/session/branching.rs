@@ -12,7 +12,7 @@ use super::persistence::{
     SessionLineageRelationKind, SessionLineageStatus, SessionProjectionHeadRecord,
     SessionProjectionSegmentRecord,
 };
-use super::types::{ExecutionStatus, SessionMeta, TitleSource};
+use super::types::{ExecutionStatus, SessionMeta};
 
 #[derive(Debug, Clone)]
 pub struct SessionForkRequest {
@@ -274,16 +274,10 @@ struct ResolvedForkPoint {
     parent_active_compaction_id: Option<String>,
 }
 
-fn child_session_meta(parent: &SessionMeta, title: Option<&str>, now: i64) -> SessionMeta {
+fn child_session_meta(_parent: &SessionMeta, _title: Option<&str>, now: i64) -> SessionMeta {
     let id = format!("sess-{}-{}", now, &uuid::Uuid::new_v4().to_string()[..8]);
     SessionMeta {
         id,
-        title: title
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| format!("{} 分支", parent.title)),
-        title_source: TitleSource::Auto,
         created_at: now,
         updated_at: now,
         last_event_seq: 0,
@@ -633,8 +627,6 @@ mod tests {
     fn session_meta(id: &str) -> SessionMeta {
         SessionMeta {
             id: id.to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

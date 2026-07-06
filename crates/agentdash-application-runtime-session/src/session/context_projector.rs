@@ -367,7 +367,7 @@ mod tests {
         NewCompactionProjectionCommit, SessionCompactionRecord, SessionCompactionStore,
         SessionMetaStore, SessionProjectionSegmentRecord, SessionProjectionStore, SessionStoreSet,
     };
-    use super::super::types::{ExecutionStatus, SessionMeta, TitleSource};
+    use super::super::types::{ExecutionStatus, SessionMeta};
     use super::*;
 
     /// 包裹真实事件存储，记录每次读取请求的起始 seq，用于断言 suffix-only 读取。
@@ -445,8 +445,6 @@ mod tests {
     fn test_meta(session_id: &str) -> SessionMeta {
         SessionMeta {
             id: session_id.to_string(),
-            title: "ctx-projector".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

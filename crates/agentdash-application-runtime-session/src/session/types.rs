@@ -15,7 +15,7 @@ pub use agentdash_spi::session_persistence::{
     EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
     EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, PendingCapabilityStateTransition,
     RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionMeta,
-    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
+    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect,
 };
 
 /// 纯用户输入 — HTTP 反序列化的目标。

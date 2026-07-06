@@ -16,7 +16,7 @@ use crate::persistence::session_core::{
     lineage_from_row, map_meta_row, parse_non_negative_u64, persisted_event_from_envelope,
     persisted_event_from_row, projection_from_envelope, projection_head_from_row,
     projection_segment_from_row, runtime_command_from_row, sqlx_to_session_store_error,
-    terminal_effect_from_row, title_source_to_str, validate_commit_session,
+    terminal_effect_from_row, validate_commit_session,
 };
 
 pub struct PostgresSessionRepository {
@@ -162,14 +162,12 @@ impl SessionMetaStore for PostgresSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO runtime_sessions (
-                id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                id, created_at, updated_at, last_event_seq, last_delivery_status,
                 last_turn_id, last_terminal_message, executor_session_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
         )
         .bind(&meta.id)
-        .bind(&meta.title)
-        .bind(title_source_to_str(meta.title_source))
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
@@ -186,7 +184,7 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn get_session_meta(&self, session_id: &str) -> SessionStoreResult<Option<SessionMeta>> {
         let row = sqlx::query(
             r#"
-            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+            SELECT id, created_at, updated_at, last_event_seq, last_delivery_status,
                    last_turn_id, last_terminal_message, executor_session_id
             FROM runtime_sessions
             WHERE id = $1
@@ -202,7 +200,7 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+            SELECT id, created_at, updated_at, last_event_seq, last_delivery_status,
                    last_turn_id, last_terminal_message, executor_session_id
             FROM runtime_sessions
             ORDER BY updated_at DESC
@@ -220,12 +218,10 @@ impl SessionMetaStore for PostgresSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO runtime_sessions (
-                id, title, title_source, created_at, updated_at, last_event_seq, last_delivery_status,
+                id, created_at, updated_at, last_event_seq, last_delivery_status,
                 last_turn_id, last_terminal_message, executor_session_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT(id) DO UPDATE SET
-                title = excluded.title,
-                title_source = excluded.title_source,
                 created_at = excluded.created_at,
                 updated_at = GREATEST(runtime_sessions.updated_at, excluded.updated_at),
                 last_event_seq = GREATEST(runtime_sessions.last_event_seq, excluded.last_event_seq),
@@ -248,8 +244,6 @@ impl SessionMetaStore for PostgresSessionRepository {
             "#,
         )
         .bind(&meta.id)
-        .bind(&meta.title)
-        .bind(title_source_to_str(meta.title_source))
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
@@ -1598,7 +1592,7 @@ mod tests {
     };
     use agentdash_spi::session_persistence::{
         ExecutionStatus, SessionCompactionRecord, SessionCompactionStatus,
-        SessionProjectionHeadRecord, SessionProjectionSegmentRecord, TitleSource,
+        SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
     };
     use chrono::Utc;
 
@@ -1654,8 +1648,6 @@ mod tests {
     fn session_meta(id: &str) -> SessionMeta {
         SessionMeta {
             id: id.to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -1832,8 +1824,6 @@ mod tests {
 
         let meta = SessionMeta {
             id: "sess-1".to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -1893,8 +1883,6 @@ mod tests {
 
         let meta = SessionMeta {
             id: session_id.clone(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

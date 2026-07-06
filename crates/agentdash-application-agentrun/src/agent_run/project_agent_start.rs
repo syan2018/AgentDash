@@ -1047,7 +1047,6 @@ fn validate_project_agent_subject_ref(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_run::runtime_session_boundary::TitleSource;
     use crate::test_support::{
         MemoryAgentRunCommandReceiptRepository, MemoryAgentRunDeliveryBindingRepository,
     };
@@ -2058,8 +2057,6 @@ mod tests {
                 id.to_string(),
                 SessionMeta {
                     id: id.to_string(),
-                    title: "test".to_string(),
-                    title_source: TitleSource::Auto,
                     created_at: 1,
                     updated_at: 1,
                     last_event_seq: 0,

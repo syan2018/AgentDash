@@ -1752,7 +1752,7 @@ mod tests {
     use crate::session::{
         MemoryRuntimeTraceStore,
         persistence::SessionStoreSet,
-        types::{ExecutionStatus, SessionMeta, TitleSource},
+        types::{ExecutionStatus, SessionMeta},
     };
 
     fn test_eventing_service(stores: SessionStoreSet) -> SessionEventingService {
@@ -1763,11 +1763,9 @@ mod tests {
         )
     }
 
-    fn test_meta(session_id: &str, title_source: TitleSource) -> SessionMeta {
+    fn test_meta(session_id: &str) -> SessionMeta {
         SessionMeta {
             id: session_id.to_string(),
-            title: "New session".to_string(),
-            title_source,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -2000,13 +1998,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_session_title_projects_to_session_meta() {
+    async fn source_session_title_persists_event() {
         let session_id = "sess-source-title";
         let persistence = Arc::new(MemoryRuntimeTraceStore::default());
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores.clone());
@@ -2019,66 +2017,14 @@ mod tests {
             .await
             .expect("persist source title");
 
-        let meta = stores
-            .meta
-            .get_session_meta(session_id)
-            .await
-            .expect("read session meta")
-            .expect("session meta exists");
-        assert_eq!(meta.title, "Codex Title");
-        assert_eq!(meta.title_source, TitleSource::Source);
-
+        // The SourceSessionTitleUpdated event is persisted to the journal.
+        // Workspace title update goes through WorkspaceTitlePort (not wired in unit test).
         let events = stores
             .events
             .list_all_events(session_id)
             .await
             .expect("read events");
-        assert_eq!(events.len(), 2);
-        match &events[1].notification.event {
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
-                assert_eq!(key, "session_meta_updated");
-                assert_eq!(
-                    value.get("title").and_then(serde_json::Value::as_str),
-                    Some("Codex Title")
-                );
-                assert_eq!(
-                    value
-                        .get("title_source")
-                        .and_then(serde_json::Value::as_str),
-                    Some("source")
-                );
-            }
-            event => panic!("expected session_meta_updated event, got {event:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn source_session_title_does_not_overwrite_user_title() {
-        let session_id = "sess-user-title";
-        let persistence = Arc::new(MemoryRuntimeTraceStore::default());
-        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
-        let mut meta = test_meta(session_id, TitleSource::User);
-        meta.title = "Pinned title".to_string();
-        stores
-            .meta
-            .create_session(&meta)
-            .await
-            .expect("create session");
-        let service = test_eventing_service(stores.clone());
-
-        service
-            .persist_notification(session_id, source_title_envelope(session_id, "Codex Title"))
-            .await
-            .expect("persist source title");
-
-        let meta = stores
-            .meta
-            .get_session_meta(session_id)
-            .await
-            .expect("read session meta")
-            .expect("session meta exists");
-        assert_eq!(meta.title, "Pinned title");
-        assert_eq!(meta.title_source, TitleSource::User);
+        assert!(!events.is_empty());
     }
 
     #[tokio::test]
@@ -2088,7 +2034,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores.clone());
@@ -2101,14 +2047,14 @@ mod tests {
             .await
             .expect("persist source title");
 
-        let meta = stores
-            .meta
-            .get_session_meta(session_id)
+        // Preview title (matches source_title_preview_envelope pattern) should not trigger extra events.
+        let events = stores
+            .events
+            .list_all_events(session_id)
             .await
-            .expect("read session meta")
-            .expect("session meta exists");
-        assert_eq!(meta.title, "New session");
-        assert_eq!(meta.title_source, TitleSource::Auto);
+            .expect("read events");
+        // Only the original event is persisted; no workspace update event without port.
+        assert_eq!(events.len(), 1);
     }
 
     #[tokio::test]
@@ -2118,7 +2064,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores.clone());
@@ -2180,7 +2126,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         stores
@@ -2221,7 +2167,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores.clone());
@@ -2364,7 +2310,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores.clone());
@@ -2500,7 +2446,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores.clone());
@@ -2556,7 +2502,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores);
@@ -2600,7 +2546,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores);
@@ -2636,7 +2582,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores);
@@ -2686,7 +2632,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores);
@@ -2750,7 +2696,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores);
@@ -2797,7 +2743,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores);
@@ -2830,7 +2776,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores);
@@ -2903,7 +2849,7 @@ mod tests {
         let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
         stores
             .meta
-            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .create_session(&test_meta(session_id))
             .await
             .expect("create session");
         let service = test_eventing_service(stores);

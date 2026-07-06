@@ -880,7 +880,7 @@ mod tests {
         .await
         .expect("insert agent");
         sqlx::query(
-            "INSERT INTO runtime_sessions (id,title,created_at,updated_at) VALUES ($1,'mailbox test',0,0)",
+            "INSERT INTO runtime_sessions (id,created_at,updated_at) VALUES ($1,0,0)",
         )
         .bind(session_id)
         .execute(pool)

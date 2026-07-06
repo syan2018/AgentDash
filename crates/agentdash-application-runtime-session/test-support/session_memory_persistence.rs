@@ -977,8 +977,6 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     let current_event_seq = current.last_event_seq;
     let incoming_event_seq = incoming.last_event_seq;
 
-    current.title = incoming.title.clone();
-    current.title_source = incoming.title_source;
     current.created_at = incoming.created_at;
     current.updated_at = current.updated_at.max(incoming.updated_at);
     current.last_event_seq = current.last_event_seq.max(incoming.last_event_seq);
@@ -1036,7 +1034,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 #[cfg(test)]
 mod tests {
     use super::super::TerminalEffectType;
-    use super::super::types::{RuntimeCapabilityTransition, TitleSource};
+    use super::super::types::RuntimeCapabilityTransition;
     use super::*;
     use agentdash_agent_protocol::{
         BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -1074,8 +1072,6 @@ mod tests {
     fn memory_session_meta(id: &str) -> SessionMeta {
         SessionMeta {
             id: id.to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -1112,8 +1108,6 @@ mod tests {
         let persistence = MemoryRuntimeTraceStore::default();
         let meta = SessionMeta {
             id: "sess-memory".to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -1163,8 +1157,6 @@ mod tests {
         let persistence = MemoryRuntimeTraceStore::default();
         let meta = SessionMeta {
             id: "sess-effects".to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -1228,8 +1220,6 @@ mod tests {
         let persistence = MemoryRuntimeTraceStore::default();
         let meta = SessionMeta {
             id: "sess-runtime-command".to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

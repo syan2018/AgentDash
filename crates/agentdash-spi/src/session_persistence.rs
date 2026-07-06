@@ -290,23 +290,13 @@ impl RuntimeCapabilityEffectRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TitleSource {
-    #[default]
-    Auto,
-    Source,
-    User,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
     pub id: String,
-    pub title: String,
     #[serde(default)]
-    pub title_source: TitleSource,
     pub created_at: i64,
+    #[serde(default)]
     pub updated_at: i64,
     #[serde(default)]
     pub last_event_seq: u64,

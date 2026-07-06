@@ -12,7 +12,7 @@ use agentdash_spi::session_persistence::{
     RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
     SessionLineageRelationKind, SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord,
     SessionProjectionSegmentRecord, SessionStoreError, SessionStoreResult, TerminalEffectRecord,
-    TerminalEffectStatus, TerminalEffectType, TitleSource,
+    TerminalEffectStatus, TerminalEffectType,
 };
 use sqlx::Row;
 
@@ -38,11 +38,6 @@ where
 {
     Ok(SessionMeta {
         id: row.get::<String, _>("id"),
-        title: row.get::<String, _>("title"),
-        title_source: parse_title_source(
-            row.get::<String, _>("title_source"),
-            "runtime_sessions.title_source",
-        )?,
         created_at: row.get::<i64, _>("created_at"),
         updated_at: row.get::<i64, _>("updated_at"),
         last_event_seq: parse_non_negative_u64(
@@ -439,13 +434,6 @@ pub(crate) fn json_string<T: serde::Serialize>(
         .map_err(|error| SessionStoreError::InvalidData(format!("序列化 {column} 失败: {error}")))
 }
 
-pub(crate) fn title_source_to_str(source: TitleSource) -> &'static str {
-    match source {
-        TitleSource::Auto => "auto",
-        TitleSource::Source => "source",
-        TitleSource::User => "user",
-    }
-}
 
 pub(crate) fn parse_execution_status(
     value: String,
@@ -512,16 +500,6 @@ pub(crate) fn parse_lineage_status(
         .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 
-pub(crate) fn parse_title_source(value: String, field: &str) -> SessionStoreResult<TitleSource> {
-    match value.as_str() {
-        "auto" => Ok(TitleSource::Auto),
-        "source" => Ok(TitleSource::Source),
-        "user" => Ok(TitleSource::User),
-        other => Err(SessionStoreError::InvalidData(format!(
-            "{field} 非法: {other}"
-        ))),
-    }
-}
 
 pub(crate) fn encode_u64_as_i64(value: u64, field: &str) -> SessionStoreResult<i64> {
     i64::try_from(value).map_err(|_| {

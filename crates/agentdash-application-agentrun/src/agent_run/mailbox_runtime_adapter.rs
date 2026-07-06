@@ -199,7 +199,7 @@ impl MailboxBoundaryStage<'_> {
             .await;
         match result {
             Ok(outcomes) if !outcomes.is_empty() => {
-                self.emit_mailbox_state_changed("steer_consumed").await;
+                self.emit_mailbox_projection_changed("steer_consumed").await;
             }
             Err(error) if !matches!(error, WorkflowApplicationError::NotFound(_)) => {
                 let diagnostic_context = DiagnosticErrorContext::new(
@@ -218,7 +218,7 @@ impl MailboxBoundaryStage<'_> {
         }
     }
 
-    async fn emit_mailbox_state_changed(&self, reason: &str) {
+    async fn emit_mailbox_projection_changed(&self, reason: &str) {
         let Ok(Some(anchor)) = self
             .deps
             .execution_anchor_repo

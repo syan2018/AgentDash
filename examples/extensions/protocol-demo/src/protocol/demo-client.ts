@@ -1,4 +1,4 @@
-import type { ExtensionApi, JsonObject, JsonValue } from "@agentdash/extension-sdk";
+import type { ExtensionApi, JsonObject, JsonValue } from "@agentdash/extension/host";
 
 import { readText } from "../shared/schema";
 

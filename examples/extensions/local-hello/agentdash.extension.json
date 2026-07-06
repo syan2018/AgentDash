@@ -39,7 +39,7 @@
     {
       "kind": "extension_host",
       "entry": "dist/extension.js",
-      "digest": "sha256:e8e49cea884fe72e5c151519c5e737ff6d64238a3cd746f84ecfec2c7f3c3793"
+      "digest": "sha256:df5d8a3199a83c340b0e736102a5ce0c8bd654b5c88e3401d5f98060684af379"
     }
   ]
 }

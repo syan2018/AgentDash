@@ -18,7 +18,7 @@ test("manifest declares protocol channel provider and consumer dependency surfac
   );
   assert.deepEqual(
     manifest.protocol_channels[0].methods.find((method) => method.name === "runShell").permissions,
-    ["process.execute", "env.read:PATH"],
+    ["process.shell", "env.read:PATH"],
   );
   assert.deepEqual(manifest.extension_dependencies[0], {
     alias: "demo",
@@ -46,8 +46,8 @@ test("source demonstrates author-owned protocol adapter and channel authoring su
   assert.match(clientSource, /api\.http\.fetch/);
 });
 
-test("panel uses extension-ui bridge to exercise the runtime actions", () => {
-  assert.match(panelSource, /@agentdash\/extension-ui/);
+test("panel uses extension browser bridge to exercise the runtime actions", () => {
+  assert.match(panelSource, /@agentdash\/extension\/browser/);
   assert.match(panelSource, /bridge\.invokeChannel/);
   assert.match(panelSource, /PROTOCOL_DEMO_ACTIONS\.consumeDemoChannel/);
   assert.match(panelSource, /Self Channel/);

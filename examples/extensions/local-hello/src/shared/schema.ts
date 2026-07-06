@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from "@agentdash/extension-sdk";
+import type { JsonObject, JsonValue } from "@agentdash/extension/host";
 
 export const LOCAL_HELLO_ACTION_KEY = "local-hello.profile";
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { createExtensionBridge, type JsonObject, type JsonValue } from "@agentdash/extension-ui";
+import { createExtensionBridge, type JsonObject, type JsonValue } from "@agentdash/extension/browser";
 
 import { PROTOCOL_DEMO_ACTIONS, displayJson } from "../shared/schema";
 

@@ -18,8 +18,8 @@ test("manifest declares the Local Hello packaged runtime surface", () => {
 });
 
 test("source uses public SDK and bridge contracts only", () => {
-  assert.match(extensionSource, /@agentdash\/extension-sdk/);
-  assert.match(panelSource, /@agentdash\/extension-ui/);
+  assert.match(extensionSource, /@agentdash\/extension\/host/);
+  assert.match(panelSource, /@agentdash\/extension\/browser/);
   assert.match(panelSource, /local-hello-username/);
 });
 

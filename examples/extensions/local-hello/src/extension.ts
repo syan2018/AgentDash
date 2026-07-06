@@ -1,4 +1,4 @@
-import { defineExtension, type JsonObject } from "@agentdash/extension-sdk";
+import { defineExtension, type JsonObject } from "@agentdash/extension/host";
 import { LOCAL_HELLO_ACTION_KEY, normalizeProfile } from "./shared/schema";
 
 export default defineExtension({

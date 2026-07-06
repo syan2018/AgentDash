@@ -1,0 +1,29 @@
+{
+  "name": "@agentdash/extension",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "agentdash-ext": "./src/cli/agentdash-ext.js"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test src/browser/fetch-route.test.js src/toolchain/app-pipeline.test.js src/toolchain/dev-runtime.test.js src/toolchain/dev-server.test.js src/toolchain/install.test.js src/toolchain/manifest.test.js src/toolchain/pack.test.js src/toolchain/wrap-webapp.test.js && pnpm run typecheck"
+  },
+  "exports": {
+    ".": "./src/app/index.ts",
+    "./react": "./src/react/index.ts",
+    "./browser": "./src/browser/index.ts",
+    "./host": "./src/host/index.ts",
+    "./toolchain": "./src/toolchain/index.js"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "esbuild": "^0.27.3",
+    "vite": "^7.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "~5.9.3"
+  }
+}

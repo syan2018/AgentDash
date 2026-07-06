@@ -13,7 +13,7 @@ pnpm --dir examples/extensions/local-hello run pack
 pnpm --dir examples/extensions/local-hello run test
 ```
 
-`dev` 会启动本地 Extension Preview，panel 继续使用 `@agentdash/extension-ui` bridge，请求由本地 extension host dispatcher 路由到 `src/extension.ts` 注册的 handler。这个开发态用于快速查看接近 WorkspacePanel 的渲染效果，并验证 TS panel 到 TS host 的自通信。
+`dev` 会启动本地 Extension Preview，panel 使用 `@agentdash/extension/browser` bridge，请求由本地 extension host dispatcher 路由到 `src/extension.ts` 注册的 handler。这个开发态用于快速查看接近 WorkspacePanel 的渲染效果，并验证 TS panel 到 TS host 的自通信。
 
 安装到本地 AgentDash Project 时，传入平台 API、Project ID 和 token：
 
@@ -27,4 +27,4 @@ pnpm --dir examples/extensions/local-hello run agentdash:install -- --api-url ht
 
 - `local-hello.profile` action 通过 `ctx.api.local.getProfile()` 读取本机 runtime profile。
 - `local-hello.panel` workspace tab 加载 `dist/panel/index.html`。
-- panel 通过 `@agentdash/extension-ui` bridge 调用 action，并展示 username、platform、backend 和 session 摘要。
+- panel 通过 `@agentdash/extension/browser` bridge 调用 action，并展示 username、platform、backend 和 session 摘要。

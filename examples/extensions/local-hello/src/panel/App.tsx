@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { createExtensionBridge, type JsonObject } from "@agentdash/extension-ui";
+import { createExtensionBridge, type JsonObject } from "@agentdash/extension/browser";
 import {
   LOCAL_HELLO_ACTION_KEY,
   normalizeProfile,

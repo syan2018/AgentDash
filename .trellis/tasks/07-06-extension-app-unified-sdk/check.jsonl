@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端 SDK/toolchain 示例迁移的测试、类型和质量要求。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查 defineApp、generated client、recipes 的 TypeScript 类型边界。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 manifest/contract/runtime projection 变更是否跨层一致。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查 local bridge、selected local backend、localhost/backendService 边界是否正确。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "检查 RuntimeGateway、channel invoker、Workspace Module describe/invoke 复用是否符合约定。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "检查权限词表、permission summary 和 Agent exposure 的权限裁决是否一致。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端 contract/runtime/lifecycle 相关实现质量。"}

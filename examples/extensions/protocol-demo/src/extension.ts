@@ -1,4 +1,4 @@
-import { defineExtension, type JsonObject, type JsonValue } from "@agentdash/extension-sdk";
+import { defineExtension, type JsonObject, type JsonValue } from "@agentdash/extension/host";
 
 import { DemoProtocolClient, asRecord } from "./protocol/demo-client";
 import {
@@ -55,7 +55,7 @@ export default defineExtension({
           description: "Run a trusted local shell command through the provider channel",
           input_schema: true,
           output_schema: true,
-          permissions: ["process.execute", "env.read:PATH"],
+          permissions: ["process.shell", "env.read:PATH"],
           invoke(input: JsonValue) {
             return client.runShell(asRecord(input));
           },
@@ -104,7 +104,7 @@ export default defineExtension({
       description: "Run a local shell command through the trusted tool facade",
       input_schema: true,
       output_schema: true,
-      permissions: ["process.execute", "env.read:PATH"],
+      permissions: ["process.shell", "env.read:PATH"],
       invoke(input) {
         return client.runShell(input);
       },

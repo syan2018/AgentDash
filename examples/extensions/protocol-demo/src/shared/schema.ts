@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from "@agentdash/extension-sdk";
+import type { JsonObject, JsonValue } from "@agentdash/extension/host";
 
 export const PROTOCOL_DEMO_ACTIONS = {
   greet: "protocol-demo.greet",

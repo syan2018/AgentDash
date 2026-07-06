@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "Extension SDK、React hook、toolchain 示例迁移会触及前端包结构和前端实现约定。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "defineApp、capability recipes、generated client 需要保持 TypeScript 类型收束和边界清晰。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 SDK、dev preview、示例迁移需要遵守现有质量和测试约定。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "manifest、runtime projection、Workspace Module operation 投影属于前后端共享 contract。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "httpProxy、fetch_routes、backendService 都依赖 selected local backend 和本机执行面边界。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "capability exposure 最终复用 RuntimeGateway / channel invoker / Workspace Module 调用链路。"}
+{"file": ".trellis/spec/backend/permission/architecture.md", "reason": "capability recipes 与 Agent exposure 需要生成正确 permission summary 并复用现有权限模型。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端 contract、runtime projection、backendService lifecycle manager 实现需要遵守后端质量约定。"}

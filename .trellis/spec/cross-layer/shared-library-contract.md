@@ -209,15 +209,125 @@ Inline payload 额外携带 `files[]`；external service payload 额外携带 `s
     "channel_key": "string?",
     "methods": ["string?"]
   }],
+  "fetch_routes": [{
+    "route_key": "string?",
+    "route": "string",
+    "scope": "panel_only | agent_and_panel?",
+    "panel_only": "bool?",
+    "target": { "kind": "http_proxy | runtime_action | protocol_channel | backend_service" }
+  }],
+  "operation_catalog": [{
+    "operation_key": "string",
+    "description": "string",
+    "visibility": "panel_only | agent_and_panel",
+    "input_schema": "JSONSchema",
+    "output_schema": "JSONSchema",
+    "permission_summary": ["string"],
+    "dispatch": { "kind": "runtime_action | protocol_channel | backend_service" },
+    "provenance": { "capability_key": "string", "exposure_key": "string", "generated_from": "string" }
+  }],
+  "backend_services": [{ "service_key": "string", "runtime": "string", "entry": "string", "routes": ["string"], "health_path": "string?" }],
   "bundles": [{ "kind": "extension_host", "entry": "string", "digest": "sha256:<hex>" }]
 }
 ```
 
 Extension package 中 `protocol_channels` 表达 provider 插件导出的 Project/session scoped API surface，`extension_dependencies` 表达 consumer 插件按 alias 依赖的 provider extension/channel。Projection、Gateway admission、local runner trace 都以 canonical `extension_key.channel` / method 作为事实；SDK/bridge 可以提供 self shortcut、dependency alias 或 Canvas binding alias，但不改变 manifest 中 provider/channel/dependency 的权威关系。
 
+Extension package 中 `operation_catalog` 是 Agent Workspace Module operation 的唯一生成事实源。`runtime_actions` 和 `protocol_channels` 是运行时 dispatch backing，不会自动提升为 Agent operation；只有 App authoring capability 上显式 `expose` 产生的 operation catalog entry 才可被 Workspace Module describe/invoke 读取。`visibility = panel_only` 的 operation 可服务 panel bridge 或 UI 辅助，但 Workspace Module Agent surface 必须在 describe 与 invoke 两侧过滤。
+
+`fetch_routes` 只表达 panel bridge compatibility route，不能自动解析 localhost 或把任意 `/api/**` 推断成 backend service。目标如果是 `backend_service`，`service_key` 使用 extension 生成的点分段 key。`backend_services` 当前是 manifest/projection/protocol 位置；在 lifecycle manager 完成前，Workspace Module 对 backend-service dispatch 必须 fail-closed。
+
 Extension `permissions` 的职责是安装摘要、依赖解析、可用性诊断和审计。运行时真正需要裁决的本机 Host API 使用 action-level 或 channel-method-level `permissions` string，例如 `local.profile.read`、`workspace.vfs.read`、`process.exec`、`process.shell`、`process.env.set[:KEY]`、`runtime.invoke:<action_key>`、`extension.channel.invoke:<channel_key>.<method>`。
 
-ExtensionTemplate 的 package requirement 由后端统一计算：`runtime_actions`、`protocol_channels`、`workspace_tabs`、`bundles` 任一非空时需要 package artifact；仅声明 `commands`、`flags`、`message_renderers`、`capability_directives` 或 `asset_refs` 时可作为 declaration-only template 安装。
+ExtensionTemplate 的 package requirement 由后端统一计算：`runtime_actions`、`protocol_channels`、`workspace_tabs`、`backend_services`、`bundles` 任一非空时需要 package artifact；仅声明 `commands`、`flags`、`message_renderers`、`capability_directives`、`asset_refs`、`fetch_routes` 或 `operation_catalog` 时不单独构成可执行 package requirement。
+
+## Scenario: Extension App Operation Projection
+
+### 1. Scope / Trigger
+
+- Trigger: `agentdash.app.ts` / `defineApp()` 同时生成 manifest、host entry、permission summary、runtime projection 和 Workspace Module Agent operation，属于跨 SDK、toolchain、domain、contracts 与 backend projection 的可执行合同。
+
+### 2. Signatures
+
+```ts
+defineApp({
+  id,
+  name,
+  version,
+  panel,
+  capabilities: {
+    key: httpProxy(...) | localCommand(...) | workspaceFiles(...) | customChannel(...) | backendService(...)
+  }
+})
+```
+
+```rust
+pub struct ExtensionTemplatePayload {
+    pub runtime_actions: Vec<ExtensionRuntimeActionDefinition>,
+    pub protocol_channels: Vec<ExtensionProtocolChannelDefinition>,
+    pub fetch_routes: Vec<ExtensionFetchRouteDefinition>,
+    pub operation_catalog: Vec<ExtensionGeneratedOperationDefinition>,
+    pub backend_services: Vec<ExtensionBackendServiceDefinition>,
+}
+```
+
+### 3. Contracts
+
+- `@agentdash/extension` 默认入口导出 App authoring；`./host`、`./browser`、`./react`、`./toolchain` 是同一包的子入口。
+- `httpProxy`、`localCommand`、`workspaceFiles` 生成 `runtime_actions`，generated host entry 必须注册同名 action 以通过 runtime surface parity。
+- `customChannel` 生成 `protocol_channels`，generated host entry 必须注册同名 channel/method。
+- `backendService` 生成 `backend_services` 与可选 `operation_catalog` dispatch，但不启动服务、不注册 RuntimeGateway provider。
+- `operation_catalog` 只从显式 `expose` 生成，`panel_only` 不进入 Agent describe/invoke。
+- generated TS contract 由 `pnpm run contracts:generate` 同步，`contracts:check` 必须通过。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| manifest runtime action 缺少 schema | toolchain validate 失败 |
+| unknown runtime permission key | toolchain/domain validation 失败 |
+| backendService route target 使用点分段 service key | panel fetch route helper 接受 |
+| backendService operation 被 Agent invoke | Workspace Module 返回 backend service unavailable / fail-closed |
+| operation visibility 为 `panel_only` | Agent describe/invoke 不暴露 |
+| 204/205/304 fetch route response | panel helper 使用 null body |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `localCommand({ expose: ... })` 生成 runtime action 与 operation catalog entry，Agent 只能经 operation catalog 看到它。
+- Base: `localCommand()` 未设置 expose 时仍可作为 panel/runtime backing，但不成为 Agent operation。
+- Bad: 把所有 `runtime_actions` 自动投影为 Agent operations，会绕开作者显式暴露和 visibility 约束。
+
+### 6. Tests Required
+
+- `@agentdash/extension` app-pipeline test 覆盖 generate/validate/pack、runtime actions、protocol channels、backend services、operation catalog、panel-only。
+- `@agentdash/extension` fetch-route test 覆盖 backendService 点分段 key 与 no-body response。
+- `agentdash-workspace-module` tests 覆盖 operation catalog projection、panel-only describe/invoke filtering、backendService fail-closed。
+- `contracts:check` 覆盖 generated TS DTO 同步。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```json
+{ "runtime_actions": [{ "action_key": "repo.status" }] }
+```
+
+并假设 Agent 可以直接调用 `repo.status`。
+
+#### Correct
+
+```json
+{
+  "runtime_actions": [{ "action_key": "repo.status", "input_schema": true, "output_schema": true }],
+  "operation_catalog": [{
+    "operation_key": "repo.status",
+    "visibility": "agent_and_panel",
+    "dispatch": { "kind": "runtime_action", "action_key": "repo.status" }
+  }]
+}
+```
+
+Agent operation 只从 `operation_catalog` 投影，runtime action 只作为 dispatch backing。
 
 ## Install Summary
 

@@ -231,8 +231,8 @@ pub struct ExtensionChannelInvokeRequest {
 - `runtime_gateway::extension_actions` 测试 action input schema 与 channel input schema 在 transport 前失败。
 - `runtime_gateway::extension_actions` 测试未知 runtime permission key 返回 capability denied。
 - `agentdash-local extensions::host` 测试 Host API 权限按 action/channel method 声明裁决，并验证 action/channel output schema。
-- `@agentdash/extension-dev` manifest 测试要求 action/channel schema 必填且拒绝未知 runtime permission key。
-- `@agentdash/extension-sdk` typecheck 覆盖 runtime permission key union。
+- `@agentdash/extension` manifest 测试要求 action/channel schema 必填且拒绝未知 runtime permission key。
+- `@agentdash/extension` typecheck 覆盖 runtime permission key union，并验证 `defineApp()` 生成的 operation catalog 不会自动把 runtime action 暴露给 Agent。
 
 ### 7. Boundary Mismatch / Canonical
 

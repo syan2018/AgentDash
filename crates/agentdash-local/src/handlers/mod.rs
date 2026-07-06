@@ -35,12 +35,15 @@ use terminal::TerminalCommandHandler;
 use tool_calls::ToolCommandHandler;
 use workspace::WorkspaceCommandHandler;
 
-use crate::LocalExtensionHostManager;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::materialization::MaterializationStore;
 use crate::mcp_client_manager::McpClientManager;
 use crate::shell_session_manager::ShellSessionManager;
 use crate::tool_executor::ToolExecutor;
+use crate::{
+    LocalExtensionBackendServiceManager, LocalExtensionBackendServiceManagerConfig,
+    LocalExtensionHostManager,
+};
 use agentdash_application_runtime_session::session::SessionRuntimeServices;
 use agentdash_spi::AgentConnector;
 
@@ -124,7 +127,13 @@ impl LocalCommandRouter {
                 extension_host: config.extension_host,
                 artifact_api_base_url: config.extension_artifact_api_base_url,
                 artifact_access_token: config.extension_artifact_access_token,
-                artifact_cache_root: config.extension_artifact_cache_root,
+                artifact_cache_root: config.extension_artifact_cache_root.clone(),
+                backend_services: LocalExtensionBackendServiceManager::new(
+                    LocalExtensionBackendServiceManagerConfig {
+                        service_cache_root: config.extension_artifact_cache_root,
+                        ..LocalExtensionBackendServiceManagerConfig::default()
+                    },
+                ),
             }),
             terminal: TerminalCommandHandler::new(config.tool_executor, shell_session_manager),
         }
@@ -261,6 +270,13 @@ impl LocalCommandRouter {
                 vec![
                     self.extension
                         .handle_extension_channel_invoke(id, payload)
+                        .await,
+                ]
+            }
+            RelayMessage::CommandExtensionBackendServiceInvoke { id, payload } => {
+                vec![
+                    self.extension
+                        .handle_extension_backend_service_invoke(id, payload)
                         .await,
                 ]
             }

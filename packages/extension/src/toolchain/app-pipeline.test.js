@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 
 import {
   GENERATED_HOST_ENTRY_FILE,
@@ -112,12 +113,38 @@ test("packAppProject stages generated app artifacts through existing archive val
     stringField(generatedBundles[0], "digest"),
     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   );
+  assert.equal(stringField(generatedBundles[1], "kind"), "backend_service");
   assert.equal(stringField(recordArray(generatedManifest, "backend_services")[0], "service_key"), "repo-tools.api");
+  assert.equal(
+    stringField(recordArray(generatedManifest, "backend_services")[0], "entry"),
+    "dist/backend-services/repo-tools.api/index.js",
+  );
   assert.equal(
     recordArray(generatedManifest, "operation_catalog").some((operation) => {
       return stringField(recordField(operation, "dispatch"), "kind") === "backend_service";
     }),
     true,
+  );
+});
+
+test("packAppProject includes backend service entry and bundled dependency in archive", async () => {
+  const root = await fixtureBackendServiceAppProject();
+  const outDir = await mkdtemp(path.join(os.tmpdir(), "agentdash-app-backend-pack-out-"));
+
+  const packed = await packAppProject(root, { outDir });
+  const files = await readTgzFiles(packed.archive_path);
+  const backendEntry = "dist/backend-services/backend-smoke.api/index.js";
+
+  assert.equal(files.has(backendEntry), true);
+  assert.match(files.get(backendEntry)?.toString("utf8") ?? "", /backend dependency reached/);
+
+  const archivedManifestBytes = files.get("agentdash.extension.json");
+  assert.ok(archivedManifestBytes);
+  const archivedManifest = JSON.parse(archivedManifestBytes.toString("utf8"));
+  assert.equal(stringField(recordArray(archivedManifest, "backend_services")[0], "entry"), backendEntry);
+  assert.deepEqual(
+    recordArray(archivedManifest, "bundles").map((bundle) => stringField(bundle, "kind")),
+    ["extension_host", "backend_service"],
   );
 });
 
@@ -193,11 +220,44 @@ function recordValue(value) {
 }
 
 /**
+ * @param {string} archivePath
+ * @returns {Promise<Map<string, Buffer>>}
+ */
+async function readTgzFiles(archivePath) {
+  const archive = gunzipSync(await readFile(archivePath));
+  /** @type {Map<string, Buffer>} */
+  const files = new Map();
+  let offset = 0;
+  while (offset + 512 <= archive.length) {
+    const header = archive.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const filePath = readTarString(header, 0, 100);
+    if (!filePath) break;
+    const size = Number.parseInt(readTarString(header, 124, 12).replace(/\0/g, "").trim(), 8) || 0;
+    offset += 512;
+    files.set(filePath, Buffer.from(archive.subarray(offset, offset + size)));
+    offset += Math.ceil(size / 512) * 512;
+  }
+  return files;
+}
+
+/**
+ * @param {Buffer} buffer
+ * @param {number} offset
+ * @param {number} length
+ * @returns {string}
+ */
+function readTarString(buffer, offset, length) {
+  return buffer.subarray(offset, offset + length).toString("utf8").replace(/\0.*$/u, "");
+}
+
+/**
  * @returns {Promise<string>}
  */
 async function fixtureAppProject() {
   const root = await mkdtemp(path.join(os.tmpdir(), "agentdash-app-project-"));
   await mkdir(path.join(root, "src"), { recursive: true });
+  await mkdir(path.join(root, "src", "server"), { recursive: true });
   await writeFile(path.join(root, "package.json"), JSON.stringify({
     name: "@agentdash/repo-tools",
     version: "0.1.0",
@@ -274,6 +334,67 @@ async function fixtureAppProject() {
   await writeFile(path.join(root, "src", "main.ts"), [
     'const target = document.querySelector("#root") ?? document.body;',
     'target.textContent = "Repo Tools";',
+    "",
+  ].join("\n"));
+  await writeFile(path.join(root, "src", "server", "message.ts"), [
+    "export function backendMessage() {",
+    '  return "repo tools backend dependency";',
+    "}",
+    "",
+  ].join("\n"));
+  await writeFile(path.join(root, "src", "server", "index.ts"), [
+    'import { backendMessage } from "./message";',
+    "",
+    "export const repoToolsBackendMessage = backendMessage();",
+    "",
+  ].join("\n"));
+  return root;
+}
+
+/**
+ * @returns {Promise<string>}
+ */
+async function fixtureBackendServiceAppProject() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentdash-backend-smoke-app-"));
+  await mkdir(path.join(root, "src", "server"), { recursive: true });
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    name: "@agentdash/backend-smoke",
+    version: "0.1.0",
+    type: "module",
+  }));
+  await writeFile(path.join(root, "agentdash.app.ts"), [
+    'import { backendService, defineApp } from "@agentdash/extension";',
+    "",
+    "export default defineApp({",
+    '  id: "backend-smoke",',
+    '  name: "Backend Smoke",',
+    '  version: "0.1.0",',
+    '  panel: { entry: "src/main.ts" },',
+    "  capabilities: {",
+    "    api: backendService({",
+    '      entry: "src/server/index.ts",',
+    '      runtime: "node",',
+    '      routes: ["/api/**"],',
+    '      healthPath: "/health",',
+    "    }),",
+    "  },",
+    "});",
+    "",
+  ].join("\n"));
+  await writeFile(path.join(root, "src", "main.ts"), [
+    'document.body.textContent = "Backend Smoke";',
+    "",
+  ].join("\n"));
+  await writeFile(path.join(root, "src", "server", "message.ts"), [
+    "export function backendSmokeMessage() {",
+    '  return "backend dependency reached";',
+    "}",
+    "",
+  ].join("\n"));
+  await writeFile(path.join(root, "src", "server", "index.ts"), [
+    'import { backendSmokeMessage } from "./message";',
+    "",
+    "export const backendSmoke = backendSmokeMessage();",
     "",
   ].join("\n"));
   return root;

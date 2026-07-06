@@ -82,6 +82,11 @@
   - Check provider account capability rather than only static catalog presence.
   - Return visible error or immediate dispatch failure before leaving a long-lived open obligation.
   - Preserve runtime provider 400 as a fallback consistency path through wait obligation convergence.
+- [ ] Prune dangling legacy convergence paths after the new chain is complete.
+  - Re-inventory old terminal/gate/companion wait paths that are no longer producer-fact owners.
+  - Remove duplicate open-gate scans or helper APIs that keep gate kind as the convergence boundary.
+  - Keep compatibility only where an active caller still has a first-principles reason to exist.
+  - Update focused tests so deleted paths cannot silently reappear as parallel fact sources.
 - [ ] Update contracts and migrations only if touched.
   - Run contract generation/check if Rust DTOs or TS generated types change.
   - Add migration only if typed wait source/policy needs indexed columns or outbox persistence.

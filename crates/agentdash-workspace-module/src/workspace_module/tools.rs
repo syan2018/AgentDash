@@ -9,6 +9,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_application_runtime_gateway::{
+    ExtensionRuntimeBackendServiceInvokeResult, ExtensionRuntimeBackendServiceInvoker,
     ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker, RuntimeGateway,
     RuntimeInvocationResult,
 };
@@ -121,6 +122,7 @@ impl WorkspaceModuleListTool {
         delivery_runtime_session_id: String,
         channel_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
+        backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.operation_runtime_source = self.operation_runtime_source.with_gateway_handle(
             runtime_gateway_handle,
@@ -128,6 +130,7 @@ impl WorkspaceModuleListTool {
             None,
             channel_transport_available,
             backend_readiness,
+            backend_service_readiness,
         );
         self
     }
@@ -264,6 +267,7 @@ impl WorkspaceModuleDescribeTool {
         delivery_runtime_session_id: String,
         channel_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
+        backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.operation_runtime_source = self.operation_runtime_source.with_gateway_handle(
             runtime_gateway_handle,
@@ -271,6 +275,7 @@ impl WorkspaceModuleDescribeTool {
             None,
             channel_transport_available,
             backend_readiness,
+            backend_service_readiness,
         );
         self
     }
@@ -499,6 +504,9 @@ fn project_operation_outcome(
         WorkspaceModuleOperationOutcome::ProtocolChannelInvoked { result, provenance } => Ok(
             protocol_channel_invocation_to_tool_result(result, provenance),
         ),
+        WorkspaceModuleOperationOutcome::BackendServiceInvoked { result, provenance } => Ok(
+            backend_service_invocation_to_tool_result(result, provenance),
+        ),
         WorkspaceModuleOperationOutcome::CanvasBindingApplied { result, provenance } => {
             Ok(canvas_binding_to_tool_result(result, provenance))
         }
@@ -597,6 +605,31 @@ fn protocol_channel_invocation_to_tool_result(
     }
 }
 
+fn backend_service_invocation_to_tool_result(
+    result: ExtensionRuntimeBackendServiceInvokeResult,
+    provenance: serde_json::Value,
+) -> AgentToolResult {
+    let trace = serde_json::to_value(&result.trace).unwrap_or(serde_json::Value::Null);
+    let service_key = result.metadata.service_key.clone();
+    let route = result.metadata.route.clone();
+    let status = result.response.as_ref().map(|response| response.status);
+    let is_error = result.diagnostic.is_some();
+    let rendered = serde_json::to_string_pretty(&result.output.output)
+        .unwrap_or_else(|_| result.output.output.to_string());
+    AgentToolResult {
+        content: vec![ContentPart::text(rendered)],
+        is_error,
+        details: Some(serde_json::json!({
+            "provenance": provenance,
+            "runtime_trace": trace,
+            "service_key": service_key,
+            "route": route,
+            "status": status,
+            "output": result.output.output,
+        })),
+    }
+}
+
 fn canvas_binding_to_tool_result(
     result: WorkspaceModuleCanvasBindingResult,
     provenance: serde_json::Value,
@@ -658,6 +691,23 @@ fn backend_readiness_for_optional_backend(
     }
 }
 
+fn backend_service_readiness_for_invoker(
+    invoker: Option<&Arc<ExtensionRuntimeBackendServiceInvoker>>,
+    backend_readiness: &WorkspaceModuleOperationReadiness,
+) -> WorkspaceModuleOperationReadiness {
+    if !backend_readiness.is_ready() {
+        return backend_readiness.clone();
+    }
+    if invoker.is_some() {
+        WorkspaceModuleOperationReadiness::ready()
+    } else {
+        WorkspaceModuleOperationReadiness::unavailable(
+            WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
+            "backendService bridge transport is not attached to this runtime",
+        )
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WorkspaceModuleInvokeParams {
     /// Stable module id from workspace_module_list, e.g. `ext:<extension_key>`.
@@ -687,6 +737,7 @@ pub struct WorkspaceModuleInvokeTool {
     backend: Option<ResolvedInvocationBackend>,
     gateway: Arc<RuntimeGateway>,
     channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
+    backend_service_invoker: Option<Arc<ExtensionRuntimeBackendServiceInvoker>>,
     visibility_source: WorkspaceModuleVisibilitySource,
     operation_runtime_source: WorkspaceModuleOperationRuntimeSource,
     agent_run_bridge_handle: Option<SharedWorkspaceModuleAgentRunBridgeHandle>,
@@ -706,8 +757,13 @@ impl WorkspaceModuleInvokeTool {
         backend: Option<ResolvedInvocationBackend>,
         gateway: Arc<RuntimeGateway>,
         channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
+        backend_service_invoker: Option<Arc<ExtensionRuntimeBackendServiceInvoker>>,
     ) -> Self {
         let backend_readiness = backend_readiness_for_optional_backend(&backend);
+        let backend_service_readiness = backend_service_readiness_for_invoker(
+            backend_service_invoker.as_ref(),
+            &backend_readiness,
+        );
         let operation_runtime_source = WorkspaceModuleOperationRuntimeSource::default()
             .with_gateway(
                 gateway.clone(),
@@ -715,6 +771,7 @@ impl WorkspaceModuleInvokeTool {
                 agent_id.clone(),
                 true,
                 backend_readiness,
+                backend_service_readiness,
             );
         Self {
             installation_repo,
@@ -727,6 +784,7 @@ impl WorkspaceModuleInvokeTool {
             backend,
             gateway,
             channel_invoker,
+            backend_service_invoker,
             visibility_source: WorkspaceModuleVisibilitySource::default(),
             operation_runtime_source,
             agent_run_bridge_handle: None,
@@ -810,6 +868,7 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                     project_id: self.project_id,
                     gateway: &self.gateway,
                     channel_invoker: &self.channel_invoker,
+                    backend_service_invoker: self.backend_service_invoker.as_deref(),
                     visibility_source: &self.visibility_source,
                     operation_runtime_source: &self.operation_runtime_source,
                     runtime_context: &runtime_context,
@@ -892,6 +951,7 @@ impl WorkspaceModulePresentTool {
         runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
         channel_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
+        backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.operation_runtime_source = self.operation_runtime_source.with_gateway_handle(
             runtime_gateway_handle,
@@ -899,6 +959,7 @@ impl WorkspaceModulePresentTool {
             None,
             channel_transport_available,
             backend_readiness,
+            backend_service_readiness,
         );
         self
     }
@@ -974,7 +1035,7 @@ fn json_object_payload_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sc
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -989,17 +1050,19 @@ mod tests {
     use agentdash_application_vfs::tools::SharedRuntimeVfs;
     use agentdash_domain::DomainError;
     use agentdash_domain::canvas::{Canvas, CanvasFile};
-    use agentdash_domain::extension_package::ExtensionPackageMetadata;
+    use agentdash_domain::extension_package::{
+        ExtensionPackageArtifactRef, ExtensionPackageMetadata,
+    };
     use agentdash_domain::project::{
         Project, ProjectAuthorizationContext, ProjectRepository, ProjectRole, ProjectSubjectGrant,
         ProjectSubjectType,
     };
     use agentdash_domain::shared_library::{
-        ExtensionBundleKind, ExtensionBundleRef, ExtensionGeneratedOperationDefinition,
-        ExtensionGeneratedOperationDispatch, ExtensionGeneratedOperationProvenance,
-        ExtensionGeneratedOperationVisibility, ExtensionRuntimeActionDefinition,
-        ExtensionRuntimeActionKind, ExtensionTemplatePayload, ProjectExtensionInstallation,
-        ProjectExtensionInstallationRepository,
+        ExtensionBackendServiceDefinition, ExtensionBundleKind, ExtensionBundleRef,
+        ExtensionGeneratedOperationDefinition, ExtensionGeneratedOperationDispatch,
+        ExtensionGeneratedOperationProvenance, ExtensionGeneratedOperationVisibility,
+        ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
+        ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
     };
     use agentdash_domain::workflow::{
         RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
@@ -1183,6 +1246,66 @@ mod tests {
             ),
         )
         .expect("valid installation")
+    }
+
+    fn packaged_backend_service_installation(
+        project_id: Uuid,
+        visibility: ExtensionGeneratedOperationVisibility,
+    ) -> ProjectExtensionInstallation {
+        let mut manifest = manifest("demo");
+        manifest
+            .backend_services
+            .push(ExtensionBackendServiceDefinition {
+                service_key: "demo.api".to_string(),
+                runtime: "node".to_string(),
+                entry: "dist/backend/server.mjs".to_string(),
+                routes: vec!["/api/**".to_string()],
+                health_path: Some("/health".to_string()),
+            });
+        manifest
+            .operation_catalog
+            .push(ExtensionGeneratedOperationDefinition {
+                operation_key: "demo.search".to_string(),
+                description: "Search through the demo backend service".to_string(),
+                visibility,
+                input_schema: serde_json::json!({"type": "object"}),
+                output_schema: serde_json::json!({"type": "object"}),
+                permission_summary: vec!["backend_service:demo.api".to_string()],
+                dispatch: ExtensionGeneratedOperationDispatch::BackendService {
+                    service_key: "demo.api".to_string(),
+                    route: "/api/search".to_string(),
+                },
+                provenance: ExtensionGeneratedOperationProvenance {
+                    capability_key: "search".to_string(),
+                    exposure_key: "search".to_string(),
+                    generated_from: "backend_service".to_string(),
+                },
+            });
+        ProjectExtensionInstallation::new_packaged(
+            project_id,
+            "demo",
+            "Demo Extension",
+            manifest,
+            artifact_ref("demo"),
+        )
+        .expect("valid packaged backend service installation")
+    }
+
+    fn artifact_ref(extension_key: &str) -> ExtensionPackageArtifactRef {
+        ExtensionPackageArtifactRef {
+            artifact_id: Uuid::new_v4(),
+            package_name: format!("@agentdash/{extension_key}"),
+            package_version: "1.0.0".to_string(),
+            asset_version: "1.0.0".to_string(),
+            source_version: "1.0.0".to_string(),
+            storage_ref: format!("extensions/{extension_key}.agentdash-extension.tgz"),
+            archive_digest:
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+            manifest_digest:
+                "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .to_string(),
+        }
     }
 
     #[derive(Default)]
@@ -1633,6 +1756,7 @@ mod tests {
                 "session-1".to_string(),
                 true,
                 WorkspaceModuleOperationReadiness::ready(),
+                WorkspaceModuleOperationReadiness::ready(),
             );
 
         let result = tool
@@ -1906,8 +2030,11 @@ mod tests {
     // ---- invoke tool tests ----
 
     use agentdash_application_ports::extension_runtime::{
-        ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
-        ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
+        ExtensionBackendServiceHttpResponsePayload, ExtensionBackendServiceInvokeMetadataPayload,
+        ExtensionBackendServiceInvokeRequest, ExtensionBackendServiceInvokeResponse,
+        ExtensionBackendServiceTransport, ExtensionChannelInvokeRequest,
+        ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError,
+        ExtensionRuntimeChannelTransport,
     };
     use agentdash_application_runtime_gateway::{
         RuntimeActionDescriptor, RuntimeActionKind, RuntimeInvocationOutput, RuntimePolicy,
@@ -1969,6 +2096,48 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct CapturingBackendServiceTransport {
+        last_payload: Mutex<Option<ExtensionBackendServiceInvokeRequest>>,
+    }
+
+    #[async_trait]
+    impl ExtensionBackendServiceTransport for CapturingBackendServiceTransport {
+        async fn invoke_extension_backend_service(
+            &self,
+            backend_id: &str,
+            payload: ExtensionBackendServiceInvokeRequest,
+        ) -> Result<ExtensionBackendServiceInvokeResponse, ExtensionRuntimeActionTransportError>
+        {
+            assert_eq!(backend_id, "backend-1");
+            *self
+                .last_payload
+                .lock()
+                .expect("backend service payload lock") = Some(payload.clone());
+            Ok(ExtensionBackendServiceInvokeResponse {
+                metadata: ExtensionBackendServiceInvokeMetadataPayload {
+                    project_id: payload.project_id.clone(),
+                    backend_id: backend_id.to_string(),
+                    extension_key: payload.extension_key.clone(),
+                    extension_id: payload.extension_id.clone(),
+                    service_key: payload.service_key.clone(),
+                    route: payload.route.clone(),
+                    trace_id: payload.trace_id.clone(),
+                    invocation_id: payload.invocation_id.clone(),
+                },
+                response: Some(ExtensionBackendServiceHttpResponsePayload {
+                    status: 200,
+                    headers: BTreeMap::from([(
+                        "content-type".to_string(),
+                        "application/json".to_string(),
+                    )]),
+                    body: Some(br#"{"ok":true}"#.to_vec()),
+                }),
+                diagnostic: None,
+            })
+        }
+    }
+
     fn invoke_tool_with_backend(
         install_repo: Arc<dyn ProjectExtensionInstallationRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
@@ -2008,6 +2177,7 @@ mod tests {
             backend,
             gateway,
             channel_invoker,
+            None,
         )
         .with_current_user(Some(test_current_user()))
         .with_effective_capability_view(test_effective_capability_view(
@@ -2015,6 +2185,42 @@ mod tests {
             Vec::new(),
         ));
         (tool, invoke_count)
+    }
+
+    fn invoke_tool_with_backend_service_transport(
+        install_repo: Arc<dyn ProjectExtensionInstallationRepository>,
+        canvas_repo: Arc<dyn CanvasRepository>,
+        project_id: Uuid,
+        backend: Option<ResolvedInvocationBackend>,
+        transport: Arc<CapturingBackendServiceTransport>,
+    ) -> WorkspaceModuleInvokeTool {
+        let gateway = Arc::new(RuntimeGateway::new());
+        let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+            install_repo.clone(),
+            Arc::new(NoopChannelTransport),
+        ));
+        let backend_service_invoker = Arc::new(ExtensionRuntimeBackendServiceInvoker::new(
+            install_repo.clone(),
+            transport,
+        ));
+        WorkspaceModuleInvokeTool::new(
+            install_repo,
+            canvas_repo,
+            fake_canvas_runtime_state_repo(),
+            Arc::new(FakeRuntimeSessionExecutionAnchorRepository::default()),
+            project_id,
+            "session-1".to_string(),
+            None,
+            backend,
+            gateway,
+            channel_invoker,
+            Some(backend_service_invoker),
+        )
+        .with_current_user(Some(test_current_user()))
+        .with_effective_capability_view(test_effective_capability_view(
+            WorkspaceModuleDimension::all(),
+            Vec::new(),
+        ))
     }
 
     fn backend(id: &str) -> Option<ResolvedInvocationBackend> {
@@ -2310,6 +2516,147 @@ mod tests {
             Some("operation_not_found".to_string())
         );
         assert_eq!(invoke_count.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn invoke_backend_service_generated_operation_dispatches_to_bridge() {
+        let project_id = Uuid::new_v4();
+        let install_repo = Arc::new(FakeInstallationRepo::default());
+        install_repo
+            .installations
+            .lock()
+            .expect("installations lock")
+            .push(packaged_backend_service_installation(
+                project_id,
+                ExtensionGeneratedOperationVisibility::AgentAndPanel,
+            ));
+        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let transport = Arc::new(CapturingBackendServiceTransport::default());
+        let tool = invoke_tool_with_backend_service_transport(
+            install_repo,
+            canvas_repo,
+            project_id,
+            backend("backend-1"),
+            transport.clone(),
+        );
+
+        let result = tool
+            .execute(
+                "t",
+                serde_json::json!({
+                    "module_id": "ext:demo",
+                    "operation_key": "demo.search",
+                    "input": {"query": "abc"}
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("invoke backend service");
+
+        assert!(
+            !result.is_error,
+            "expected backendService success: {result:?}"
+        );
+        let details = result.details.expect("details");
+        assert_eq!(
+            details
+                .pointer("/provenance/operation_origin")
+                .and_then(serde_json::Value::as_str),
+            Some("backend_service")
+        );
+        assert_eq!(
+            details
+                .get("service_key")
+                .and_then(serde_json::Value::as_str),
+            Some("demo.api")
+        );
+        assert_eq!(
+            details.get("route").and_then(serde_json::Value::as_str),
+            Some("/api/search")
+        );
+        assert_eq!(
+            details.get("status").and_then(serde_json::Value::as_u64),
+            Some(200)
+        );
+        assert_eq!(
+            details
+                .pointer("/output/response/status")
+                .and_then(serde_json::Value::as_u64),
+            Some(200)
+        );
+
+        let payload = transport
+            .last_payload
+            .lock()
+            .expect("backend service payload lock")
+            .clone()
+            .expect("payload");
+        assert_eq!(payload.extension_key, "demo");
+        assert_eq!(payload.extension_id, "demo");
+        assert_eq!(payload.service_key, "demo.api");
+        assert_eq!(payload.route, "/api/search");
+        assert_eq!(payload.method, "POST");
+        assert_eq!(
+            payload.headers.get("content-type").map(String::as_str),
+            Some("application/json; charset=utf-8")
+        );
+        assert_eq!(
+            payload.body.as_deref(),
+            Some(br#"{"query":"abc"}"#.as_slice())
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_panel_only_backend_service_operation_is_not_exposed_to_agent() {
+        let project_id = Uuid::new_v4();
+        let install_repo = Arc::new(FakeInstallationRepo::default());
+        install_repo
+            .installations
+            .lock()
+            .expect("installations lock")
+            .push(packaged_backend_service_installation(
+                project_id,
+                ExtensionGeneratedOperationVisibility::PanelOnly,
+            ));
+        let canvas_repo = Arc::new(FakeCanvasRepo::default());
+        let transport = Arc::new(CapturingBackendServiceTransport::default());
+        let tool = invoke_tool_with_backend_service_transport(
+            install_repo,
+            canvas_repo,
+            project_id,
+            backend("backend-1"),
+            transport.clone(),
+        );
+
+        let result = tool
+            .execute(
+                "t",
+                serde_json::json!({
+                    "module_id": "ext:demo",
+                    "operation_key": "demo.search",
+                    "input": {"query": "abc"}
+                }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("invoke panel-only backend service");
+
+        assert!(result.is_error);
+        assert_eq!(
+            result
+                .details
+                .and_then(|d| d.get("error").and_then(|e| e.as_str()).map(str::to_string)),
+            Some("operation_not_found".to_string())
+        );
+        assert!(
+            transport
+                .last_payload
+                .lock()
+                .expect("backend service payload lock")
+                .is_none()
+        );
     }
 
     #[tokio::test]

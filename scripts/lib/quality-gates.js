@@ -89,6 +89,10 @@ export const QUALITY_GATE_STEPS = Object.freeze({
     label: "Release metadata",
     run: "pnpm run release:metadata",
   }),
+  release_metadata_test: Object.freeze({
+    label: "Release metadata script tests",
+    run: "node --test scripts/lib/release-metadata.test.js",
+  }),
   cloud_image_dry_run: Object.freeze({
     label: "Cloud image build dry run",
     run: "pnpm run docker:cloud:build -- --dry-run",
@@ -128,6 +132,7 @@ export const QUALITY_GATES = Object.freeze({
       { step: "deploy_managed_postgres_update_dry_run" },
       { step: "deploy_managed_postgres_backup_boundary" },
       { step: "release_metadata" },
+      { step: "release_metadata_test" },
       { step: "cloud_image_dry_run" },
     ]),
   }),

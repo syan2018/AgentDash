@@ -1,11 +1,14 @@
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use agentdash_application_workflow::gate::{
     CompleteChildResultGateCommand, GateDeliveryIntent, GateNotificationIntent,
     LifecycleGateResolver, OpenParentRequestGateCommand, ResolveParentRequestGateCommand,
-    RespondHumanGateCommand, WaitObligationConvergenceResult, WaitObligationConvergenceService,
-    WaitProducerTerminalEvent,
+    RespondHumanGateCommand,
+};
+#[cfg(test)]
+use agentdash_application_workflow::gate::{
+    WaitObligationConvergenceResult, WaitProducerTerminalEvent,
 };
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryBindingRepository,
@@ -24,6 +27,8 @@ use crate::agent_run::{
     DeliveryRuntimeSelectionService,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
+#[cfg(test)]
+use crate::wait_obligation::WaitObligationTerminalConvergencePort;
 use crate::{ApplicationError, session::SessionEventingService};
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
@@ -804,69 +809,19 @@ impl CompanionGateControlService {
         Ok(Some(result))
     }
 
-    pub async fn observe_wait_producer_terminal(
+    #[cfg(test)]
+    pub(crate) async fn observe_wait_producer_terminal(
         &self,
         event: WaitProducerTerminalEvent,
     ) -> Result<WaitObligationConvergenceResult, ApplicationError> {
-        let result = WaitObligationConvergenceService::new(
+        crate::wait_obligation::WaitObligationTerminalConvergenceService::with_companion_delivery(
             self.gate_repo.clone(),
             self.delivery_binding_repo.clone(),
+            self.delivery.clone(),
+            self.parent_mailbox_delivery.clone(),
         )
-        .observe_producer_terminal(event.clone())
+        .observe_wait_producer_terminal(event)
         .await
-        .map_err(application_error_from_workflow_gate_error)?;
-        if result.no_matching_obligation() {
-            diag!(
-                Debug,
-                Subsystem::AgentRun,
-                producer = ?event.producer,
-                terminal_state = %event.terminal_state,
-                delivery_trace_ref = ?event.trace_ref,
-                "wait obligation terminal convergence found no matching obligation"
-            );
-        }
-        for outcome in &result.outcomes {
-            for intent in &outcome.delivery_intents {
-                if let GateDeliveryIntent::CompanionChildResultToParent(intent) = intent {
-                    let companion_label = intent
-                        .payload
-                        .get("companion_label")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("companion")
-                        .to_string();
-                    self.deliver_child_result_payload_to_parent(ChildResultPayloadDeliveryInput {
-                        gate_id: intent.gate_id,
-                        request_id: intent.request_id.clone(),
-                        run_id: intent.run_id,
-                        parent_agent_id: intent.parent_agent_id,
-                        parent_delivery_runtime_session_id: intent
-                            .parent_delivery_runtime_session_id
-                            .clone(),
-                        child_agent_id: intent.child_agent_id,
-                        child_delivery_runtime_session_id: intent
-                            .child_delivery_runtime_session_id
-                            .clone(),
-                        resolved_turn_id: intent.resolved_turn_id.clone(),
-                        companion_label,
-                        payload: intent.payload.clone(),
-                    })
-                    .await?;
-                }
-            }
-            self.deliver_notification_intents(&outcome.notification_intents, outcome.gate_id, None)
-                .await;
-            diag!(
-                Debug,
-                Subsystem::AgentRun,
-                gate_id = %outcome.gate_id,
-                outcome_kind = ?outcome.kind,
-                result_status = ?outcome.result_status,
-                delivery_intent_count = outcome.delivery_intents.len(),
-                notification_intent_count = outcome.notification_intents.len(),
-                "wait obligation terminal convergence outcome delivered"
-            );
-        }
-        Ok(result)
     }
 
     pub async fn open_parent_request(
@@ -1345,7 +1300,7 @@ fn application_error_from_workflow_gate_error(
     }
 }
 
-fn build_parent_result_mailbox_input_text(
+pub(crate) fn build_parent_result_mailbox_input_text(
     gate_id: Uuid,
     request_id: &str,
     companion_label: &str,
@@ -1530,6 +1485,28 @@ mod tests {
                 .unwrap()
                 .values()
                 .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn list_open_wait_obligations(
+            &self,
+            limit: usize,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|gate| {
+                    gate.is_open()
+                        && gate
+                            .payload_json
+                            .as_ref()
+                            .and_then(WaitObligationDeclaration::from_payload)
+                            .is_some()
+                })
+                .take(limit)
                 .cloned()
                 .collect())
         }

@@ -1,6 +1,16 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
+
+const WAITING_PREVIEW_CHARS: usize = 280;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleGateWaitingProjection {
+    pub kind: String,
+    pub source_label: Option<String>,
+    pub preview: Option<String>,
+}
 
 /// Durable wait/review/resume 点。
 ///
@@ -73,5 +83,96 @@ impl LifecycleGate {
             .filter(|value| !value.is_empty())
             .unwrap_or("completed");
         Some(status.to_string())
+    }
+
+    pub fn waiting_projection(&self) -> LifecycleGateWaitingProjection {
+        waiting_projection_from_gate_parts(&self.gate_kind, self.payload_json.as_ref())
+    }
+}
+
+fn waiting_projection_from_gate_parts(
+    gate_kind: &str,
+    payload: Option<&Value>,
+) -> LifecycleGateWaitingProjection {
+    let kind = waiting_kind_from_gate(gate_kind, payload).to_string();
+    let source_label = waiting_source_label(&kind, payload);
+    let preview = waiting_preview(payload);
+    LifecycleGateWaitingProjection {
+        kind,
+        source_label,
+        preview,
+    }
+}
+
+fn waiting_kind_from_gate(gate_kind: &str, payload: Option<&Value>) -> &'static str {
+    if gate_kind == "companion_wait"
+        && payload
+            .and_then(|payload| payload_string(payload, "request_type"))
+            .is_some()
+    {
+        return "human";
+    }
+    match gate_kind {
+        "companion_human_request" | "orchestration_human_gate" => "human",
+        "companion_wait" | "companion_wait_blocking" | "companion_wait_follow_up" => "subagent",
+        "companion_parent_request" => "companion",
+        kind if kind.starts_with("companion_") => "companion",
+        kind if kind.starts_with("exec_") => "exec",
+        _ => "workflow",
+    }
+}
+
+fn waiting_source_label(kind: &str, payload: Option<&Value>) -> Option<String> {
+    payload
+        .and_then(|payload| {
+            [
+                "source_label",
+                "companion_label",
+                "label",
+                "request_type",
+                "plan_node_id",
+            ]
+            .iter()
+            .find_map(|key| payload_string(payload, key))
+        })
+        .or_else(|| Some(kind.to_string()))
+}
+
+fn waiting_preview(payload: Option<&Value>) -> Option<String> {
+    payload.and_then(|payload| {
+        ["preview", "summary", "message", "title", "label"]
+            .iter()
+            .find_map(|key| bounded_payload_string(payload, key))
+            .or_else(|| {
+                payload.get("payload").and_then(|nested| {
+                    ["preview", "summary", "message", "title"]
+                        .iter()
+                        .find_map(|key| bounded_payload_string(nested, key))
+                })
+            })
+            .or_else(|| Some(bound_string(&payload.to_string(), WAITING_PREVIEW_CHARS)))
+    })
+}
+
+fn payload_string(payload: &Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn bounded_payload_string(payload: &Value, key: &str) -> Option<String> {
+    payload_string(payload, key).map(|value| bound_string(&value, WAITING_PREVIEW_CHARS))
+}
+
+fn bound_string(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let bounded = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{bounded}...")
+    } else {
+        bounded
     }
 }

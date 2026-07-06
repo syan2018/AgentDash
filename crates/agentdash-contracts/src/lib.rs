@@ -10,6 +10,7 @@ pub mod common_response;
 pub mod companion;
 pub mod context;
 pub mod contract_generation;
+pub mod desktop_release;
 #[path = "extension/management.rs"]
 pub mod extension_management;
 #[path = "extension/package.rs"]

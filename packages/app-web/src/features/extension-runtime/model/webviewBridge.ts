@@ -1,7 +1,10 @@
 import type { JsonValue } from "../../../generated/common-contracts";
 import type {
+  ExtensionFetchRouteProjectionResponse,
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,
+  ExtensionRuntimeInvokeBackendServiceRequest,
+  ExtensionRuntimeInvokeBackendServiceResponse,
   ExtensionRuntimeInvokeChannelRequest,
   ExtensionRuntimeInvokeChannelResponse,
   ExtensionWorkspaceTabProjectionResponse,
@@ -36,6 +39,10 @@ export interface ExtensionWebviewBridgeServices {
     target: AgentRunRuntimeTarget,
     request: ExtensionRuntimeInvokeChannelRequest,
   ): Promise<ExtensionRuntimeInvokeChannelResponse>;
+  invokeBackendService(
+    target: AgentRunRuntimeTarget,
+    request: ExtensionRuntimeInvokeBackendServiceRequest,
+  ): Promise<ExtensionRuntimeInvokeBackendServiceResponse>;
   readFile(request: { surfaceRef: string; mountId: string; path: string }): Promise<{ content: string }>;
   writeFile(
     request: { surfaceRef: string; mountId: string; path: string; content: string },
@@ -111,6 +118,14 @@ export async function handleExtensionWebviewBridgeRequest({
       });
       return result.output.output;
     }
+    case "fetch.request":
+      return invokeBackendServiceFetchRoute({
+        params: message.params,
+        workspaceData,
+        tab,
+        target: agentRunTarget,
+        services,
+      });
     case "vfs.read": {
       const path = bridgeParamString(message.params, "path");
       if (!path) {
@@ -213,6 +228,152 @@ function bridgeParamRawString(
 ): string {
   const value = params[key];
   return typeof value === "string" ? value : "";
+}
+
+async function invokeBackendServiceFetchRoute({
+  params,
+  workspaceData,
+  tab,
+  target,
+  services,
+}: {
+  params: Record<string, unknown>;
+  workspaceData: WorkspaceData;
+  tab: ExtensionWorkspaceTabProjectionResponse;
+  target: AgentRunRuntimeTarget;
+  services: ExtensionWebviewBridgeServices;
+}): Promise<JsonValue> {
+  const url = bridgeParamString(params, "url");
+  if (!url) {
+    throw new Error("fetch.request 缺少 url");
+  }
+  const routePath = pathWithSearchFromUrl(url);
+  const matchedRoute = matchBackendServiceFetchRoute(
+    workspaceData.extensionRuntime.projection.fetch_routes ?? [],
+    tab.extension_key,
+    routePath,
+    url,
+  );
+  if (!matchedRoute || matchedRoute.target.kind !== "backend_service") {
+    throw new Error(`Extension fetch route 未匹配: ${routePath}`);
+  }
+  const requestedServiceKey = backendServiceKeyFromBridgeRoute(params.route);
+  if (requestedServiceKey && requestedServiceKey !== matchedRoute.target.service_key) {
+    throw new Error(`Extension fetch route target mismatch: ${routePath}`);
+  }
+
+  const body = params.body;
+  const result = await services.invokeBackendService(target, {
+    extension_key: tab.extension_key,
+    service_key: matchedRoute.target.service_key,
+    route: routePath,
+    method: bridgeParamString(params, "method") || "GET",
+    headers: stringRecord(params.headers),
+    body: typeof body === "string" ? Array.from(new TextEncoder().encode(body)) : null,
+  });
+  if (result.diagnostic) {
+    throw new Error(`Extension backendService 不可用: ${result.diagnostic.message}`);
+  }
+  if (!result.response) {
+    throw new Error("Extension backendService 缺少 HTTP response");
+  }
+  return {
+    status: result.response.status,
+    headers: stringRecord(result.response.headers),
+    body: noBodyStatus(result.response.status)
+      ? null
+      : bytesToString(result.response.body ?? null),
+  };
+}
+
+function matchBackendServiceFetchRoute(
+  routes: ExtensionFetchRouteProjectionResponse[],
+  extensionKey: string,
+  routePath: string,
+  requestUrl: string,
+): ExtensionFetchRouteProjectionResponse | null {
+  for (const route of routes) {
+    if (route.extension_key !== extensionKey) continue;
+    if (route.target.kind !== "backend_service") continue;
+    if (!routePatternMatches(route.pattern, routePath, requestUrl)) continue;
+    if (!routePatternMatches(route.target.route, routePath, requestUrl)) continue;
+    return route;
+  }
+  return null;
+}
+
+function pathWithSearchFromUrl(value: string): string {
+  const parsed = new URL(value, "https://agentdash.local/");
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+function routePatternMatches(pattern: string, candidatePath: string, requestUrl: string): boolean {
+  const normalizedPattern = comparableRoutePattern(pattern);
+  const normalizedCandidate = comparableRouteCandidate(normalizedPattern, candidatePath, requestUrl);
+  if (normalizedPattern === normalizedCandidate) return true;
+  if (normalizedPattern.endsWith("/**")) {
+    const prefix = normalizedPattern.slice(0, -3);
+    return normalizedCandidate === prefix || normalizedCandidate.startsWith(`${prefix}/`);
+  }
+  if (normalizedPattern.endsWith("*")) {
+    return normalizedCandidate.startsWith(normalizedPattern.slice(0, -1));
+  }
+  return false;
+}
+
+function comparableRoutePattern(pattern: string): string {
+  const normalized = stripQuery(pattern.trim());
+  if (!isAbsoluteHttpUrl(normalized)) return normalized;
+  const parsed = new URL(normalized);
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
+function comparableRouteCandidate(pattern: string, candidatePath: string, requestUrl: string): string {
+  if (!isAbsoluteHttpUrl(pattern)) return stripQuery(candidatePath.trim());
+  const parsed = new URL(requestUrl, "https://agentdash.local/");
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
+function isAbsoluteHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function stripQuery(value: string): string {
+  const index = value.indexOf("?");
+  return index < 0 ? value : value.slice(0, index);
+}
+
+function backendServiceKeyFromBridgeRoute(value: unknown): string | null {
+  const route = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  const target = route?.target && typeof route.target === "object" && !Array.isArray(route.target)
+    ? route.target as Record<string, unknown>
+    : null;
+  if (target?.kind !== "backend_service") return null;
+  return typeof target.service_key === "string" && target.service_key.trim() !== ""
+    ? target.service_key.trim()
+    : null;
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string") {
+      result[key] = item;
+    }
+  }
+  return result;
+}
+
+function bytesToString(value: number[] | null): string {
+  if (!value || value.length === 0) return "";
+  return new TextDecoder().decode(new Uint8Array(value));
+}
+
+function noBodyStatus(status: number): boolean {
+  return status === 204 || status === 205 || status === 304;
 }
 
 function resolvePanelVfsTarget(

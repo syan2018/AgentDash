@@ -30,8 +30,8 @@ use crate::canvas::{
 };
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::extension_runtime::{
-    ExtensionGeneratedOperationDispatch, ExtensionGeneratedOperationProjection,
-    ExtensionGeneratedOperationVisibility,
+    ExtensionBackendServiceProjection, ExtensionGeneratedOperationDispatch,
+    ExtensionGeneratedOperationProjection, ExtensionGeneratedOperationVisibility,
 };
 
 pub use runtime_bridge::{
@@ -189,6 +189,7 @@ pub struct WorkspaceModuleOperationContext {
     pub runtime_actions: WorkspaceModuleRuntimeActionCatalog,
     pub channel_readiness: WorkspaceModuleOperationReadiness,
     pub backend_readiness: WorkspaceModuleOperationReadiness,
+    pub backend_service_readiness: WorkspaceModuleOperationReadiness,
 }
 
 impl WorkspaceModuleOperationContext {
@@ -197,6 +198,7 @@ impl WorkspaceModuleOperationContext {
             runtime_actions: WorkspaceModuleRuntimeActionCatalog::from_descriptors(runtime_actions),
             channel_readiness: WorkspaceModuleOperationReadiness::ready(),
             backend_readiness: WorkspaceModuleOperationReadiness::ready(),
+            backend_service_readiness: WorkspaceModuleOperationReadiness::ready(),
         }
     }
 }
@@ -212,6 +214,10 @@ impl Default for WorkspaceModuleOperationContext {
             backend_readiness: WorkspaceModuleOperationReadiness::unavailable(
                 WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor,
                 "runtime backend anchor is not attached to this workspace module projection",
+            ),
+            backend_service_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
+                "backendService bridge transport is not attached to this workspace module projection",
             ),
         }
     }
@@ -319,7 +325,13 @@ fn build_extension_modules(
                 .operation_catalog
                 .iter()
                 .filter(|operation| operation.extension_key == extension_key)
-                .map(|operation| operation_from_generated_projection(operation, operation_context))
+                .map(|operation| {
+                    operation_from_generated_projection(
+                        operation,
+                        operation_context,
+                        &ext.backend_services,
+                    )
+                })
                 .collect();
 
             operations.sort_by(|left, right| left.operation_key.cmp(&right.operation_key));
@@ -351,6 +363,12 @@ fn build_extension_modules(
                         && bundle.kind == ExtensionBundleKind::ExtensionHost
                         && !bundle.entry.trim().is_empty()
                 });
+            let has_backend_service_runtime = installation.package_artifact.is_some()
+                && ext.backend_services.iter().any(|service| {
+                    service.extension_key == extension_key
+                        && !service.service_key.trim().is_empty()
+                        && !service.entry.trim().is_empty()
+                });
             let has_available_ui_only_tab = ext.workspace_tabs.iter().any(|tab| {
                 tab.extension_key == extension_key
                     && tab.loadability.available
@@ -360,6 +378,7 @@ fn build_extension_modules(
                     )
             });
             let status = if has_extension_host_runtime
+                || has_backend_service_runtime
                 || (operations.is_empty() && has_available_ui_only_tab)
             {
                 WorkspaceModuleStatus::ready()
@@ -399,6 +418,7 @@ fn build_extension_modules(
 fn operation_from_generated_projection(
     operation: &ExtensionGeneratedOperationProjection,
     operation_context: &WorkspaceModuleOperationContext,
+    backend_services: &[ExtensionBackendServiceProjection],
 ) -> WorkspaceModuleOperation {
     let (origin, dispatch, readiness) = match &operation.dispatch {
         ExtensionGeneratedOperationDispatch::RuntimeAction { action_key } => {
@@ -436,17 +456,23 @@ fn operation_from_generated_projection(
                 &operation_context.backend_readiness,
             ]),
         ),
-        ExtensionGeneratedOperationDispatch::BackendService { service_key, route } => (
-            "backend_service",
-            WorkspaceModuleOperationDispatch::BackendService {
-                service_key: service_key.clone(),
-                route: route.clone(),
-            },
-            WorkspaceModuleOperationReadiness::unavailable(
-                WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
-                "backendService lifecycle manager is not implemented in this runtime",
-            ),
-        ),
+        ExtensionGeneratedOperationDispatch::BackendService { service_key, route } => {
+            let readiness = backend_service_operation_readiness(
+                operation,
+                service_key,
+                route,
+                backend_services,
+                operation_context,
+            );
+            (
+                "backend_service",
+                WorkspaceModuleOperationDispatch::BackendService {
+                    service_key: service_key.clone(),
+                    route: route.clone(),
+                },
+                readiness,
+            )
+        }
     };
     WorkspaceModuleOperation {
         operation_key: operation.operation_key.clone(),
@@ -460,6 +486,73 @@ fn operation_from_generated_projection(
         dispatch,
         readiness,
     }
+}
+
+fn backend_service_operation_readiness(
+    operation: &ExtensionGeneratedOperationProjection,
+    service_key: &str,
+    route: &str,
+    backend_services: &[ExtensionBackendServiceProjection],
+    operation_context: &WorkspaceModuleOperationContext,
+) -> WorkspaceModuleOperationReadiness {
+    let Some(service) = backend_services.iter().find(|service| {
+        service.extension_key == operation.extension_key && service.service_key == service_key
+    }) else {
+        return WorkspaceModuleOperationReadiness::unavailable(
+            WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
+            format!(
+                "backendService `{service_key}` is not declared by extension `{}`",
+                operation.extension_key
+            ),
+        );
+    };
+    if !service
+        .routes
+        .iter()
+        .any(|pattern| route_matches(pattern, route))
+    {
+        return WorkspaceModuleOperationReadiness::unavailable(
+            WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
+            format!(
+                "backendService `{service_key}` route `{route}` is not declared by extension `{}`",
+                operation.extension_key
+            ),
+        );
+    }
+    first_unready_or_ready([
+        &operation_context.backend_readiness,
+        &operation_context.backend_service_readiness,
+    ])
+}
+
+fn route_matches(pattern: &str, route: &str) -> bool {
+    let pattern = route_pattern_path(pattern);
+    let route = strip_query(route.trim());
+    if pattern == route {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix("/**") {
+        return route == prefix || route.starts_with(&format!("{prefix}/"));
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return route.starts_with(prefix);
+    }
+    false
+}
+
+fn route_pattern_path(pattern: &str) -> &str {
+    let pattern = strip_query(pattern.trim());
+    let Some(rest) = pattern
+        .strip_prefix("http://")
+        .or_else(|| pattern.strip_prefix("https://"))
+    else {
+        return pattern;
+    };
+    rest.find('/').map_or("/", |index| &rest[index..])
+}
+
+fn strip_query(value: &str) -> &str {
+    value.split_once('?').map_or(value, |(path, _)| path)
 }
 
 fn operation_visibility(
@@ -709,21 +802,22 @@ mod tests {
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimePolicy,
     };
     use agentdash_contracts::workspace_module::{
-        WorkspaceModuleOperationReadinessKind, WorkspaceModuleOperationVisibility,
-        WorkspaceModuleStatusKind,
+        WorkspaceModuleOperationReadiness, WorkspaceModuleOperationReadinessKind,
+        WorkspaceModuleOperationVisibility, WorkspaceModuleStatusKind,
     };
+    use agentdash_domain::extension_package::ExtensionPackageArtifactRef;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration,
     };
     use uuid::Uuid;
 
     use crate::extension_runtime::{
-        ExtensionBundleProjection, ExtensionGeneratedOperationDispatch,
-        ExtensionGeneratedOperationProjection, ExtensionGeneratedOperationProvenance,
-        ExtensionGeneratedOperationVisibility, ExtensionInstallationProjection,
-        ExtensionRuntimeActionProjection, ExtensionRuntimeProjection,
-        ExtensionWorkspaceTabLoadabilityMode, ExtensionWorkspaceTabLoadabilityProjection,
-        ExtensionWorkspaceTabProjection,
+        ExtensionBackendServiceProjection, ExtensionBundleProjection,
+        ExtensionGeneratedOperationDispatch, ExtensionGeneratedOperationProjection,
+        ExtensionGeneratedOperationProvenance, ExtensionGeneratedOperationVisibility,
+        ExtensionInstallationProjection, ExtensionRuntimeActionProjection,
+        ExtensionRuntimeProjection, ExtensionWorkspaceTabLoadabilityMode,
+        ExtensionWorkspaceTabLoadabilityProjection, ExtensionWorkspaceTabProjection,
     };
 
     use super::{
@@ -766,6 +860,47 @@ mod tests {
                 exposure_key: "read".to_string(),
                 generated_from: "capability_exposure".to_string(),
             },
+        }
+    }
+
+    fn operation_catalog_backend_service(
+        extension_key: &str,
+        operation_key: &str,
+        service_key: &str,
+        route: &str,
+        visibility: ExtensionGeneratedOperationVisibility,
+    ) -> ExtensionGeneratedOperationProjection {
+        ExtensionGeneratedOperationProjection {
+            extension_key: extension_key.to_string(),
+            extension_id: extension_key.to_string(),
+            operation_key: operation_key.to_string(),
+            description: "Search profile backend".to_string(),
+            visibility,
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: serde_json::json!({"type": "object"}),
+            permission_summary: vec![format!("backend_service:{service_key}")],
+            dispatch: ExtensionGeneratedOperationDispatch::BackendService {
+                service_key: service_key.to_string(),
+                route: route.to_string(),
+            },
+            provenance: ExtensionGeneratedOperationProvenance {
+                capability_key: "profile".to_string(),
+                exposure_key: "search".to_string(),
+                generated_from: "capability_exposure".to_string(),
+            },
+        }
+    }
+
+    fn artifact_ref(extension_key: &str) -> ExtensionPackageArtifactRef {
+        ExtensionPackageArtifactRef {
+            artifact_id: Uuid::new_v4(),
+            package_name: format!("@agentdash/{extension_key}"),
+            package_version: "0.1.0".to_string(),
+            asset_version: "0.1.0".to_string(),
+            source_version: "0.1.0".to_string(),
+            storage_ref: format!("extensions/{extension_key}.agentdash-extension.tgz"),
+            archive_digest: "sha256:archive".to_string(),
+            manifest_digest: "sha256:manifest".to_string(),
         }
     }
 
@@ -1053,7 +1188,7 @@ mod tests {
     }
 
     #[test]
-    fn operation_catalog_backend_service_is_fail_closed_until_lifecycle_exists() {
+    fn operation_catalog_backend_service_is_unavailable_without_bridge_transport() {
         let projection = ExtensionRuntimeProjection {
             installations: vec![ExtensionInstallationProjection {
                 installation_id: Uuid::new_v4(),
@@ -1061,27 +1196,172 @@ mod tests {
                 extension_id: "ops-demo".to_string(),
                 display_name: "Ops Demo".to_string(),
                 installed_source: None,
-                package_artifact: None,
+                package_artifact: Some(artifact_ref("ops-demo")),
             }],
-            operation_catalog: vec![ExtensionGeneratedOperationProjection {
+            backend_services: vec![ExtensionBackendServiceProjection {
                 extension_key: "ops-demo".to_string(),
                 extension_id: "ops-demo".to_string(),
-                operation_key: "profile.search".to_string(),
-                description: "Search profile backend".to_string(),
-                visibility: ExtensionGeneratedOperationVisibility::AgentAndPanel,
-                input_schema: serde_json::json!({"type": "object"}),
-                output_schema: serde_json::json!({"type": "object"}),
-                permission_summary: vec!["local.profile.read".to_string()],
-                dispatch: ExtensionGeneratedOperationDispatch::BackendService {
-                    service_key: "profile-service".to_string(),
-                    route: "/profiles/search".to_string(),
-                },
-                provenance: ExtensionGeneratedOperationProvenance {
-                    capability_key: "profile".to_string(),
-                    exposure_key: "search".to_string(),
-                    generated_from: "capability_exposure".to_string(),
-                },
+                service_key: "profile-service".to_string(),
+                runtime: "node".to_string(),
+                entry: "dist/backend/server.mjs".to_string(),
+                routes: vec!["/profiles/**".to_string()],
+                health_path: Some("/health".to_string()),
             }],
+            operation_catalog: vec![operation_catalog_backend_service(
+                "ops-demo",
+                "profile.search",
+                "profile-service",
+                "/profiles/search",
+                ExtensionGeneratedOperationVisibility::AgentAndPanel,
+            )],
+            ..Default::default()
+        };
+
+        let operation_context = WorkspaceModuleOperationContext {
+            backend_readiness: WorkspaceModuleOperationReadiness::ready(),
+            backend_service_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable,
+                "backendService bridge transport is not attached to this runtime",
+            ),
+            ..WorkspaceModuleOperationContext::default()
+        };
+        let modules =
+            build_workspace_modules_with_operation_context(&projection, &[], &operation_context);
+
+        let operation = modules[0]
+            .operations
+            .iter()
+            .find(|operation| operation.operation_key == "profile.search")
+            .expect("backend service operation");
+        assert_eq!(
+            operation.readiness.kind,
+            WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable
+        );
+        assert!(matches!(
+            &operation.dispatch,
+            WorkspaceModuleOperationDispatch::BackendService { .. }
+        ));
+    }
+
+    #[test]
+    fn operation_catalog_backend_service_is_ready_with_backend_and_bridge() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: Some(artifact_ref("ops-demo")),
+            }],
+            backend_services: vec![ExtensionBackendServiceProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                service_key: "profile-service".to_string(),
+                runtime: "node".to_string(),
+                entry: "dist/backend/server.mjs".to_string(),
+                routes: vec!["/profiles/**".to_string()],
+                health_path: Some("/health".to_string()),
+            }],
+            operation_catalog: vec![operation_catalog_backend_service(
+                "ops-demo",
+                "profile.search",
+                "profile-service",
+                "/profiles/search",
+                ExtensionGeneratedOperationVisibility::AgentAndPanel,
+            )],
+            ..Default::default()
+        };
+        let context = WorkspaceModuleOperationContext::ready(Vec::new());
+
+        let modules = build_workspace_modules_with_operation_context(&projection, &[], &context);
+
+        assert_eq!(
+            modules[0].summary.status.kind,
+            WorkspaceModuleStatusKind::Ready
+        );
+        let operation = modules[0]
+            .operations
+            .iter()
+            .find(|operation| operation.operation_key == "profile.search")
+            .expect("backend service operation");
+        assert_eq!(
+            operation.readiness.kind,
+            WorkspaceModuleOperationReadinessKind::Ready
+        );
+    }
+
+    #[test]
+    fn operation_catalog_backend_service_matches_absolute_route_pattern_by_path() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: Some(artifact_ref("ops-demo")),
+            }],
+            backend_services: vec![ExtensionBackendServiceProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                service_key: "profile-service".to_string(),
+                runtime: "node".to_string(),
+                entry: "dist/backend/server.mjs".to_string(),
+                routes: vec!["http://localhost:4510/profiles/**".to_string()],
+                health_path: Some("/health".to_string()),
+            }],
+            operation_catalog: vec![operation_catalog_backend_service(
+                "ops-demo",
+                "profile.search",
+                "profile-service",
+                "/profiles/search?query=abc",
+                ExtensionGeneratedOperationVisibility::AgentAndPanel,
+            )],
+            ..Default::default()
+        };
+        let context = WorkspaceModuleOperationContext::ready(Vec::new());
+
+        let modules = build_workspace_modules_with_operation_context(&projection, &[], &context);
+
+        let operation = modules[0]
+            .operations
+            .iter()
+            .find(|operation| operation.operation_key == "profile.search")
+            .expect("backend service operation");
+        assert_eq!(
+            operation.readiness.kind,
+            WorkspaceModuleOperationReadinessKind::Ready
+        );
+    }
+
+    #[test]
+    fn operation_catalog_backend_service_rejects_route_mismatch() {
+        let projection = ExtensionRuntimeProjection {
+            installations: vec![ExtensionInstallationProjection {
+                installation_id: Uuid::new_v4(),
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                display_name: "Ops Demo".to_string(),
+                installed_source: None,
+                package_artifact: Some(artifact_ref("ops-demo")),
+            }],
+            backend_services: vec![ExtensionBackendServiceProjection {
+                extension_key: "ops-demo".to_string(),
+                extension_id: "ops-demo".to_string(),
+                service_key: "profile-service".to_string(),
+                runtime: "node".to_string(),
+                entry: "dist/backend/server.mjs".to_string(),
+                routes: vec!["/profiles/**".to_string()],
+                health_path: None,
+            }],
+            operation_catalog: vec![operation_catalog_backend_service(
+                "ops-demo",
+                "profile.search",
+                "profile-service",
+                "/admin/search",
+                ExtensionGeneratedOperationVisibility::AgentAndPanel,
+            )],
             ..Default::default()
         };
 
@@ -1100,9 +1380,5 @@ mod tests {
             operation.readiness.kind,
             WorkspaceModuleOperationReadinessKind::BackendServiceUnavailable
         );
-        assert!(matches!(
-            &operation.dispatch,
-            WorkspaceModuleOperationDispatch::BackendService { .. }
-        ));
     }
 }

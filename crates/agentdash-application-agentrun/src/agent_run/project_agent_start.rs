@@ -1442,6 +1442,13 @@ mod tests {
             Ok(Vec::new())
         }
 
+        async fn list_open_wait_obligations(
+            &self,
+            _limit: usize,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(Vec::new())
+        }
+
         async fn list_by_wait_producer(
             &self,
             _producer: &agentdash_domain::workflow::WaitProducerRef,

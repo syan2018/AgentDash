@@ -1,7 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
-use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
+use agentdash_application_agentrun::agent_run::{
+    AgentRunTerminalRegistry, ConversationWaitingItemModel,
+};
 use agentdash_domain::DomainError;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxMessage, AgentRunMailboxRepository, ConsumptionBarrier, MailboxDelivery,
@@ -199,6 +201,58 @@ async fn wait_uses_resolved_lifecycle_gate_payload_status() {
         result.items[0].preview.as_deref(),
         Some("provider model unsupported")
     );
+}
+
+#[tokio::test]
+async fn wait_and_workspace_gate_projection_share_kind_preview_and_status() {
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    let gate_repo = Arc::new(FixtureGateRepo::default());
+    let mut gate = LifecycleGate::open(
+        Uuid::new_v4(),
+        Some(Uuid::new_v4()),
+        Some(Uuid::new_v4()),
+        "companion_wait_follow_up",
+        "dispatch-failed",
+        Some(json!({
+            "status": "failed",
+            "summary": "provider model unsupported",
+            "companion_label": "reviewer",
+            "source": "producer_terminal"
+        })),
+    );
+    let gate_id = gate.id;
+    gate.resolve("runtime_terminal");
+    gate_repo.create(&gate).await.expect("create gate");
+
+    let service = test_service_with_gate_repo(terminal_registry, gate_repo);
+    let wait_result = service
+        .wait(
+            WaitToolContext {
+                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                turn_id: "turn-1".to_string(),
+            },
+            WaitActivityRequest {
+                activity_refs: vec![gate_id.to_string()],
+                kinds: vec!["subagent".to_string()],
+                timeout_ms: Some(0),
+                max_items: Some(10),
+                after_cursor: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("wait result");
+    let wait_item = wait_result.items.first().expect("wait item");
+    let workspace_item = ConversationWaitingItemModel::from_lifecycle_gate(&gate);
+    let projection = gate.waiting_projection();
+
+    assert_eq!(wait_item.kind, projection.kind);
+    assert_eq!(workspace_item.kind, projection.kind);
+    assert_eq!(wait_item.preview, projection.preview);
+    assert_eq!(workspace_item.preview, projection.preview);
+    assert_eq!(workspace_item.source_label, projection.source_label);
+    assert_eq!(wait_item.status, "failed");
+    assert_eq!(workspace_item.status, wait_item.status);
 }
 
 #[tokio::test]
@@ -419,6 +473,28 @@ impl LifecycleGateRepository for FixtureGateRepo {
             .unwrap()
             .values()
             .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+            .cloned()
+            .collect())
+    }
+
+    async fn list_open_wait_obligations(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|gate| {
+                gate.is_open()
+                    && gate
+                        .payload_json
+                        .as_ref()
+                        .and_then(WaitObligationDeclaration::from_payload)
+                        .is_some()
+            })
+            .take(limit)
             .cloned()
             .collect())
     }

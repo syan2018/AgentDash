@@ -6,3 +6,4 @@
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend testing and quality expectations for cross-layer runtime work."}
 {"file": ".trellis/spec/frontend/architecture.md", "reason": "Extension panel bridge ownership and frontend composition boundaries."}
 {"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "Project/backend routing facts and local backend selection constraints."}
+{"file": ".trellis/tasks/07-06-extension-backend-service-runtime-bridge/research/integration-map.md", "reason": "Existing extension runtime spine and backendService integration watchpoints."}

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "桌面自动更新横跨云端、桌面壳、前端和发布链路，需要遵守跨层事实源与协议归属。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "桌面壳、本机 runtime auto-connect、Tauri command 和 Dashboard API 边界是强制更新 gate 的核心上下文。"}
+{"file": ".trellis/spec/cross-layer/deployment-runtime.md", "reason": "update endpoint、discovery 字段和运行期环境变量必须符合部署运行契约。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "云端 update endpoint 和桌面前端消费的 DTO 应通过 contract crate 生成。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端 route、application boundary、runtime config 和错误映射需要遵守后端分层架构。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "桌面 UI、设置页和诊断入口需要遵守前端事实源、feature module 和 UI composition 约束。"}

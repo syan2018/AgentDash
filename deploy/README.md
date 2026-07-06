@@ -21,6 +21,7 @@
 | Web Dashboard static assets | `pnpm run frontend:build` | 云端 Web 入口，由 cloud image 内的 `agentdash-server` 托管 |
 | `agentdash-cloud:<version>` image | `pnpm run docker:cloud:build` | Compose / Kubernetes 共用云端镜像 |
 | Windows desktop installer | `pnpm run desktop:bundle` | 桌面端通用包或预配置包 |
+| 桌面自动更新发布目录 | `pnpm run release:metadata -- --desktop-release-dir dist/release/desktop` | 对象存储无关的 version manifest、stable latest manifest 和 upload plan |
 
 ## 版本信息来源
 
@@ -39,9 +40,20 @@
 ```bash
 pnpm run release:metadata
 pnpm run release:metadata -- --out dist/release/agentdash-release.json
+pnpm run release:metadata -- --desktop-release-dir dist/release/desktop
 ```
 
 该命令从根 `package.json`、Cargo workspace metadata、当前 Git commit 和 `AGENTDASH_IMAGE_REPOSITORY` 生成 artifact manifest。云端 `/api/version` 与 `/.well-known/agentdash` 暴露运行中的版本和发现信息。
+
+带 `--desktop-release-dir` 时，命令会从 `target/release/bundle` 发现 Windows NSIS installer、Tauri updater zip 和同名 `.sig`，写出：
+
+```text
+dist/release/desktop/releases/agentdash/<version>/release.json
+dist/release/desktop/channels/stable/latest.json
+dist/release/desktop/upload-plan.json
+```
+
+`release.json` 和 `channels/stable/latest.json` 都按 `platforms.windows-x86_64` 建模，并引用 installer、updater、sha256、signature 和 object key。`upload-plan.json` 只记录通用 `local_path -> object_key` 映射、content type、不可变/可覆盖属性，以及 `AGENTDASH_DESKTOP_RELEASE_PUBLIC_BASE_URL` 这种发布环境占位。主仓不持有具体对象存储实例、访问凭据或私有访问域名；私有发布流程负责把 object key 映射到实际 S3-compatible 上传命令和最终 HTTP URL。
 
 云端 release build 需要把 metadata 注入 Rust 编译环境：
 
@@ -59,8 +71,9 @@ check
 build backend release binary
 build Web Dashboard static assets
 build cloud image
-build desktop installer
+build desktop installer and updater artifact
 write artifact manifest
+write desktop release directory and upload plan
 publish artifacts
 write release notes and compatibility matrix
 ```

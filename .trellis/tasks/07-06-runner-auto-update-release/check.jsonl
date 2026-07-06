@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/cross-layer/deployment-runtime.md", "reason": "检查 runner update runtime env、manifest fetch、未配置策略和对象存储边界是否符合部署契约。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查 runner 更新与本机 runtime / relay / service lifecycle 边界是否保持清晰。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查 API route、application boundary 和错误映射是否保持后端分层。"}
+{"file": ".trellis/spec/backend/diagnostics-guidelines.md", "reason": "检查 update/doctor/status 诊断是否使用统一 diagnostics facade。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 runner update DTO 是否进入 contract crate 并通过生成/漂移检查。"}

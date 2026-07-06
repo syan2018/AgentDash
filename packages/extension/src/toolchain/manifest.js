@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 export const MANIFEST_FILE = "agentdash.extension.json";
@@ -61,6 +61,7 @@ export async function validateProject(projectRoot, options = {}) {
   if (manifest && packageJson) {
     validateManifest(manifest, errors);
     validatePackageJson(packageJson, manifest, errors);
+    await validateBackendServiceEntryRefs(projectRoot, manifest, errors);
     await validateBundleRefs(projectRoot, manifest, Boolean(options.requireBundles), errors, warnings);
   }
   return { errors, warnings, manifest, package_json: packageJson };
@@ -213,6 +214,30 @@ export async function validateBundleRefs(projectRoot, manifest, requireBundles, 
       } else {
         warnings.push(`bundle ${entry} 尚未生成`);
       }
+    }
+  }
+}
+
+/**
+ * @param {string} projectRoot
+ * @param {UnknownRecord} manifest
+ * @param {string[]} errors
+ */
+export async function validateBackendServiceEntryRefs(projectRoot, manifest, errors) {
+  for (const service of arrayField(manifest, "backend_services")) {
+    const record = asRecord(service);
+    if (!record) continue;
+    const entry = stringField(record, "entry");
+    if (!entry) continue;
+    const entryPath = resolvePackageFilePath(projectRoot, entry, "backend_services[].entry", errors);
+    if (!entryPath) continue;
+    try {
+      const info = await stat(entryPath);
+      if (!info.isFile()) {
+        errors.push(`backend_services[].entry 必须指向 package 内普通文件: ${entry}`);
+      }
+    } catch {
+      errors.push(`backend_services[].entry 文件不存在: ${entry}`);
     }
   }
 }
@@ -596,10 +621,18 @@ function validateBackendServices(services, errors) {
       errors.push("backend_services[].runtime 当前必须是 node");
     }
     requireString(record, "entry", errors, "backend_services[].entry");
-    validateStringList(record, "routes", "backend_services[].routes", errors);
-    const healthPath = stringField(record, "health_path");
-    if (healthPath && !healthPath.startsWith("/")) {
-      errors.push("backend_services[].health_path 必须以 / 开头");
+    const entry = stringField(record, "entry");
+    if (entry) {
+      validatePackageFilePath(entry, "backend_services[].entry", errors);
+    }
+    validateRoutePatternList(record, "routes", "backend_services[].routes", errors);
+    if (Object.prototype.hasOwnProperty.call(record, "health_path")) {
+      const healthPath = stringField(record, "health_path");
+      if (!healthPath) {
+        errors.push("backend_services[].health_path 不能为空");
+      } else if (!healthPath.startsWith("/")) {
+        errors.push("backend_services[].health_path 必须以 / 开头");
+      }
     }
   }
 }
@@ -799,6 +832,67 @@ function validateStringList(record, field, label, errors) {
       return;
     }
   }
+}
+
+/**
+ * @param {UnknownRecord} record
+ * @param {string} field
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateRoutePatternList(record, field, label, errors) {
+  const values = record[field];
+  if (!Array.isArray(values) || values.length === 0) {
+    errors.push(`${label} 必须是非空字符串数组`);
+    return;
+  }
+  for (const value of values) {
+    if (typeof value !== "string" || value.trim() === "") {
+      errors.push(`${label} 必须是非空字符串数组`);
+      return;
+    }
+    if (!isRoutePattern(value.trim())) {
+      errors.push(`${label} 必须以 / 或 http(s):// 开头: ${value}`);
+    }
+  }
+}
+
+/**
+ * @param {string} projectRoot
+ * @param {string} raw
+ * @param {string} label
+ * @param {string[]} errors
+ * @returns {string | null}
+ */
+function resolvePackageFilePath(projectRoot, raw, label, errors) {
+  if (!validatePackageFilePath(raw, label, errors)) return null;
+  const resolved = path.resolve(projectRoot, ...raw.split("/"));
+  const relative = path.relative(projectRoot, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    errors.push(`${label} 必须位于 package 根目录内: ${raw}`);
+    return null;
+  }
+  return resolved;
+}
+
+/**
+ * @param {string} raw
+ * @param {string} label
+ * @param {string[]} errors
+ * @returns {boolean}
+ */
+function validatePackageFilePath(raw, label, errors) {
+  if (
+    raw.includes("\\")
+    || raw.includes("\0")
+    || raw.startsWith("/")
+    || path.isAbsolute(raw)
+    || raw.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    errors.push(`${label} 必须是 package 内相对文件路径: ${raw}`);
+    return false;
+  }
+  return true;
 }
 
 /**

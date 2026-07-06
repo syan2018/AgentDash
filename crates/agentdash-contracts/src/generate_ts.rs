@@ -67,6 +67,11 @@ use agentdash_contracts::contract_generation::{
     GeneratedTsFile, NDJSON_STREAM_VALIDATORS_FILENAME, render_common_json_value,
     render_domain_file, render_ndjson_stream_validators,
 };
+use agentdash_contracts::desktop_release::{
+    DesktopManualInstallerArtifact, DesktopUpdateArtifact, DesktopUpdateCheckQuery,
+    DesktopUpdateCheckResponse, DesktopUpdateDiagnostics, DesktopUpdatePolicy,
+    DesktopUpdateRecommendedVersionSource, DesktopUpdateRelease, DesktopUpdateStatus,
+};
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
     ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
@@ -77,7 +82,9 @@ use agentdash_contracts::extension_package::{
     ImportExtensionPackageResponse, InstallExtensionPackageArtifactRequest,
 };
 use agentdash_contracts::extension_runtime::{
-    ExtensionBackendServiceProjectionResponse, ExtensionBundleKindResponse,
+    ExtensionBackendServiceDiagnosticResponse, ExtensionBackendServiceHttpResponse,
+    ExtensionBackendServiceInvokeMetadataResponse, ExtensionBackendServiceProjectionResponse,
+    ExtensionBackendServiceReadinessResponse, ExtensionBundleKindResponse,
     ExtensionBundleProjectionResponse, ExtensionCommandHandlerResponse,
     ExtensionCommandProjectionResponse, ExtensionDependencyDeclarationResponse,
     ExtensionDependencyProjectionResponse, ExtensionFetchRouteProjectionResponse,
@@ -92,6 +99,7 @@ use agentdash_contracts::extension_runtime::{
     ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
     ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeInvocationOutputResponse,
     ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
+    ExtensionRuntimeInvokeBackendServiceRequest, ExtensionRuntimeInvokeBackendServiceResponse,
     ExtensionRuntimeInvokeChannelRequest, ExtensionRuntimeInvokeChannelResponse,
     ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
@@ -376,6 +384,25 @@ fn main() {
             export_all::<UpdatedIdResponse>(dir);
             export_all::<RevokedIdResponse>(dir);
             export_all::<PendingExecutionResponse>(dir);
+        },
+    );
+
+    // --- desktop-release-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "desktop-release-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<DesktopUpdateCheckQuery>(dir);
+            export_all::<DesktopUpdateStatus>(dir);
+            export_all::<DesktopUpdateRecommendedVersionSource>(dir);
+            export_all::<DesktopUpdateArtifact>(dir);
+            export_all::<DesktopManualInstallerArtifact>(dir);
+            export_all::<DesktopUpdateRelease>(dir);
+            export_all::<DesktopUpdatePolicy>(dir);
+            export_all::<DesktopUpdateDiagnostics>(dir);
+            export_all::<DesktopUpdateCheckResponse>(dir);
         },
     );
 
@@ -905,10 +932,16 @@ fn main() {
             export_all::<ExtensionRuntimeProjectionResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
             export_all::<ExtensionRuntimeInvokeChannelRequest>(dir);
+            export_all::<ExtensionRuntimeInvokeBackendServiceRequest>(dir);
             export_all::<ExtensionRuntimeTraceResponse>(dir);
             export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
             export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
+            export_all::<ExtensionBackendServiceInvokeMetadataResponse>(dir);
+            export_all::<ExtensionBackendServiceHttpResponse>(dir);
+            export_all::<ExtensionBackendServiceReadinessResponse>(dir);
+            export_all::<ExtensionBackendServiceDiagnosticResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeBackendServiceResponse>(dir);
             export_all::<UninstallExtensionInstallationResponse>(dir);
         },
     );

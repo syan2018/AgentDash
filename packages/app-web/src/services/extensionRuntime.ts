@@ -7,6 +7,8 @@ import {
 import type {
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,
+  ExtensionRuntimeInvokeBackendServiceRequest,
+  ExtensionRuntimeInvokeBackendServiceResponse,
   ExtensionRuntimeInvokeChannelRequest,
   ExtensionRuntimeInvokeChannelResponse,
   ExtensionRuntimeProjectionResponse,
@@ -37,6 +39,16 @@ export async function invokeAgentRunExtensionRuntimeChannel(
 ): Promise<ExtensionRuntimeInvokeChannelResponse> {
   return api.post<ExtensionRuntimeInvokeChannelResponse>(
     agentRunScopedPath(target, "/extension-runtime/invoke-channel"),
+    request,
+  );
+}
+
+export async function invokeAgentRunExtensionBackendService(
+  target: AgentRunRuntimeTarget,
+  request: ExtensionRuntimeInvokeBackendServiceRequest,
+): Promise<ExtensionRuntimeInvokeBackendServiceResponse> {
+  return api.post<ExtensionRuntimeInvokeBackendServiceResponse>(
+    agentRunScopedPath(target, "/extension-runtime/invoke-backend-service"),
     request,
   );
 }

@@ -49,6 +49,7 @@ test("backendService fetch routes accept generated namespaced service keys", asy
   const response = await routedFetch("/api/search");
 
   assert.equal(response.status, 204);
+  assert.equal(await response.text(), "");
 });
 
 test("createRoutedFetch is opt-in and does not replace global fetch", async () => {
@@ -82,4 +83,69 @@ test("createRoutedFetch is opt-in and does not replace global fetch", async () =
   assert.equal(response.status, 202);
   assert.deepEqual(await response.json(), { ok: true });
   assert.equal(globalThis.fetch, originalFetch);
+});
+
+test("createRoutedFetch reads Request POST body and headers", async () => {
+  const route = parseFetchRouteBinding("/api/**=backendService:repo-tools.api");
+  const routedFetch = createRoutedFetch(
+    [route],
+    {
+      async invokeFetchRoute(request) {
+        assert.equal(request.route.target.kind, "backend_service");
+        assert.equal(request.method, "POST");
+        assert.equal(request.headers["content-type"], "text/plain;charset=UTF-8");
+        assert.equal(request.body, "payload");
+        return { status: 200, body: "ok" };
+      },
+    },
+    { baseUrl: "https://panel.local/" },
+  );
+
+  const request = new Request("https://panel.local/api/users", {
+    method: "POST",
+    headers: { "content-type": "text/plain;charset=UTF-8" },
+    body: "payload",
+  });
+  const response = await routedFetch(request);
+
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "ok");
+});
+
+test("createRoutedFetch drops response bodies for no-body statuses", async () => {
+  const route = parseFetchRouteBinding("/api/**=backendService:repo-tools.api");
+  for (const status of [204, 205, 304]) {
+    const routedFetch = createRoutedFetch(
+      [route],
+      {
+        async invokeFetchRoute() {
+          return { status, body: "ignored" };
+        },
+      },
+      { baseUrl: "https://panel.local/" },
+    );
+
+    const response = await routedFetch("/api/search");
+
+    assert.equal(response.status, status);
+    assert.equal(await response.text(), "");
+  }
+});
+
+test("createRoutedFetch rejects undeclared route without fallback", async () => {
+  const route = parseFetchRouteBinding("/api/**=backendService:repo-tools.api");
+  const routedFetch = createRoutedFetch(
+    [route],
+    {
+      async invokeFetchRoute() {
+        throw new Error("unexpected bridge invoke");
+      },
+    },
+    { baseUrl: "https://panel.local/" },
+  );
+
+  await assert.rejects(
+    () => routedFetch("/private/search"),
+    /fetch route 未声明: \/private\/search/,
+  );
 });

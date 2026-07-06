@@ -6,7 +6,7 @@
 
 ## Background
 
-`extension-app-unified-sdk` 已经完成 SDK、toolchain、manifest、domain payload、runtime projection 与 Workspace Module operation catalog 的协议闭环。`backendService` 目前可声明、可打包进 manifest、可投影、可被 Workspace Module 发现，但执行侧保持 fail-closed。
+`extension-app-unified-sdk` 已经完成 SDK、toolchain、manifest、domain payload、runtime projection 与 Workspace Module operation catalog 的协议闭环。当前任务承接的基线是：`backendService` 已可声明、可打包进 manifest、可投影、可被 Workspace Module 发现，执行侧需要补上 local runtime lifecycle 与 bridge invoke。
 
 这个状态适合 M0-M2 的协议收束，但还不能完成“既有 Web App 带本机/私有后端导出为 extension”的核心场景。下一步需要把 `backend_services[]` 从声明变成可执行的本机服务，并让 panel fetch route 与 Agent operation 共用同一条 bridge 调用路径。
 

@@ -139,11 +139,37 @@ export interface DesktopAutostartStatus {
   message?: string | null
 }
 
+export type DesktopUpdateGateStatus = 'unchecked' | 'ready' | 'force_update_required' | 'unavailable'
+
+export interface DesktopUpdatePolicySnapshot {
+  current_version: string
+  status: DesktopUpdateGateStatus
+  force_update_required: boolean
+  checked_at: string | null
+  latest_version: string | null
+  min_desktop_version: string | null
+  recommended_desktop_version: string | null
+  update_available: boolean | null
+  manifest_url_configured: boolean | null
+  diagnostics_code: string | null
+  diagnostics_message: string | null
+  last_error: string | null
+}
+
+export interface DesktopUpdateInstallResult {
+  installed: boolean
+  version: string | null
+  message: string
+}
+
 export interface DesktopRuntimeSettingsClient {
   loadSettings(): Promise<DesktopRuntimeSettings>
   saveSettings(settings: DesktopRuntimeSettings): Promise<DesktopRuntimeSettings>
   getAutostartStatus(): Promise<DesktopAutostartStatus>
   setAutostartEnabled(enabled: boolean): Promise<DesktopAutostartStatus>
+  getUpdatePolicySnapshot?(): Promise<DesktopUpdatePolicySnapshot>
+  refreshUpdatePolicy?(): Promise<DesktopUpdatePolicySnapshot>
+  installUpdate?(): Promise<DesktopUpdateInstallResult>
 }
 
 export interface RuntimeDiagnosticsSnapshot {

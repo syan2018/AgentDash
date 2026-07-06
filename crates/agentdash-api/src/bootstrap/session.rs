@@ -4,6 +4,9 @@ use std::sync::Arc;
 use crate::agent_run_terminal_control::{
     AgentRunTerminalControlCallback, AgentRunTerminalControlCallbackDeps,
 };
+use agentdash_application::companion::{
+    CompanionModelPreflightError, CompanionModelPreflightPort, CompanionModelPreflightRequest,
+};
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::runtime_session_agent_run_bridge::{
@@ -54,6 +57,9 @@ use agentdash_domain::project::ProjectAuthorizationContext;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
+use agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::{
+    build_effective_profile_catalog_from_db, preflight_effective_model_selection,
+};
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_workspace_module::workspace_module::{
     SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
@@ -313,6 +319,7 @@ pub(crate) async fn build_session_runtime(
             backend_registry: backend_registry.clone(),
             function_runner: function_runner.clone(),
             platform_config: platform_config.clone(),
+            llm_provider_secret: llm_provider_secret.clone(),
         });
     let hook_preset_scripts = AppExecutionHookProvider::builtin_preset_scripts();
     let hook_provider = Arc::new(AppExecutionHookProvider::new(
@@ -514,6 +521,81 @@ struct SessionRuntimeToolComposerDeps {
     backend_registry: Arc<BackendRegistry>,
     function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     platform_config: SharedPlatformConfig,
+    llm_provider_secret: Arc<dyn LlmSecretCodec>,
+}
+
+#[derive(Clone)]
+struct EffectiveProviderCompanionModelPreflight {
+    repos: RepositorySet,
+    llm_provider_secret: Arc<dyn LlmSecretCodec>,
+}
+
+impl EffectiveProviderCompanionModelPreflight {
+    fn new(repos: RepositorySet, llm_provider_secret: Arc<dyn LlmSecretCodec>) -> Self {
+        Self {
+            repos,
+            llm_provider_secret,
+        }
+    }
+}
+
+#[async_trait]
+impl CompanionModelPreflightPort for EffectiveProviderCompanionModelPreflight {
+    async fn preflight_companion_model(
+        &self,
+        request: CompanionModelPreflightRequest,
+    ) -> Result<(), CompanionModelPreflightError> {
+        let provider_id =
+            normalize_model_selector_value(request.executor_config.provider_id.as_deref());
+        let model_id = normalize_model_selector_value(request.executor_config.model_id.as_deref());
+        let catalog = build_effective_profile_catalog_from_db(
+            self.repos.llm_provider_repo.as_ref(),
+            Some(self.repos.llm_provider_credential_repo.as_ref()),
+            self.llm_provider_secret.as_ref(),
+            request.identity.as_ref(),
+        )
+        .await;
+
+        preflight_effective_model_selection(
+            &catalog.providers,
+            provider_id.as_deref(),
+            model_id.as_deref(),
+        )
+        .map_err(|reason| {
+            CompanionModelPreflightError::new(format_companion_model_preflight_error(
+                &request,
+                provider_id.as_deref(),
+                model_id.as_deref(),
+                &reason,
+            ))
+        })
+    }
+}
+
+fn normalize_model_selector_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn format_companion_model_preflight_error(
+    request: &CompanionModelPreflightRequest,
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+    reason: &str,
+) -> String {
+    format!(
+        "SubAgent dispatch model preflight 失败：{reason}。companion_label=`{}`, agent_key=`{}`, project_id={}, project_agent_id={}, parent_run_id={}, parent_agent_id={}, provider_id={}, model_id={}",
+        request.companion_label,
+        request.selected_agent_key,
+        request.project_id,
+        request.selected_project_agent_id,
+        request.parent_run_id,
+        request.parent_agent_id,
+        provider_id.unwrap_or("(missing)"),
+        model_id.unwrap_or("(missing)")
+    )
 }
 
 fn build_session_runtime_tool_composer(
@@ -548,7 +630,11 @@ fn build_session_runtime_tool_composer(
         deps.repos.clone(),
         deps.session_services_handle.clone(),
     )
-    .with_wait_service(wait_service.clone());
+    .with_wait_service(wait_service.clone())
+    .with_model_preflight(Arc::new(EffectiveProviderCompanionModelPreflight::new(
+        deps.repos.clone(),
+        deps.llm_provider_secret.clone(),
+    )));
     let task_provider = TaskRuntimeToolProvider::new(deps.repos.clone());
     let wait_provider = WaitRuntimeToolProvider::from_service(wait_service);
     let workspace_module_provider = WorkspaceModuleRuntimeToolProvider::new(
@@ -560,7 +646,8 @@ fn build_session_runtime_tool_composer(
         deps.workspace_module_agent_run_bridge_handle,
         deps.workspace_module_runtime_gateway_handle,
     )
-    .with_extension_channel_transport(deps.backend_registry);
+    .with_extension_channel_transport(deps.backend_registry.clone())
+    .with_extension_backend_service_transport(deps.backend_registry);
 
     Arc::new(SessionRuntimeToolComposer::new(vec![
         Arc::new(vfs_provider) as Arc<dyn RuntimeToolProvider>,

@@ -3,10 +3,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use agentdash_application::companion::{
-    AgentRunCompanionMailboxDelivery, CompanionGateControlRepos, CompanionGateControlService,
+    AgentRunCompanionMailboxDelivery, SessionEventingCompanionGateDelivery,
 };
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionEventingService as ApplicationSessionEventingService;
+use agentdash_application::wait_obligation::WaitObligationTerminalConvergencePort;
 use agentdash_application_agentrun::agent_run::{
     AgentRunDeliveryTerminalEvent, AgentRunRuntimeTerminalCommand, AgentRunTerminalConvergenceDeps,
     AgentRunTerminalConvergenceService, SessionControlService, SessionCoreService,
@@ -90,42 +91,44 @@ impl AgentRunTerminalControlCallback {
         &self,
         event: AgentRunDeliveryTerminalEvent,
     ) -> Result<(), agentdash_application::ApplicationError> {
-        let service = CompanionGateControlService::with_session_eventing(
-            CompanionGateControlRepos {
-                gate_repo: self.deps.repos.lifecycle_gate_repo.clone(),
-                run_repo: self.deps.repos.lifecycle_run_repo.clone(),
-                agent_repo: self.deps.repos.lifecycle_agent_repo.clone(),
-                frame_repo: self.deps.repos.agent_frame_repo.clone(),
-                anchor_repo: self.deps.repos.execution_anchor_repo.clone(),
-                delivery_binding_repo: self.deps.repos.agent_run_delivery_binding_repo.clone(),
-                lineage_repo: self.deps.repos.agent_lineage_repo.clone(),
-            },
-            self.companion_eventing.clone(),
-        )
-        .with_parent_mailbox_delivery(Arc::new(
-            AgentRunCompanionMailboxDelivery::from_runtime_services(
+        let parent_mailbox_delivery =
+            Arc::new(AgentRunCompanionMailboxDelivery::from_runtime_services(
                 self.deps.repos.clone(),
                 self.session_core.clone(),
                 self.session_control.clone(),
                 self.agent_run_eventing.clone(),
                 self.session_launch.clone(),
-            ),
-        ));
+            ));
+        let service =
+            agentdash_application::wait_obligation::WaitObligationTerminalConvergenceService::with_companion_delivery(
+                self.deps.repos.lifecycle_gate_repo.clone(),
+                self.deps.repos.agent_run_delivery_binding_repo.clone(),
+                Arc::new(SessionEventingCompanionGateDelivery::new(
+                    self.companion_eventing.clone(),
+                )),
+                parent_mailbox_delivery,
+            );
 
         service
-            .observe_wait_producer_terminal(WaitProducerTerminalEvent {
-                producer: WaitProducerRef::AgentRunDelivery {
-                    run_id: event.run_id,
-                    agent_id: event.agent_id,
-                    frame_id: event.frame_id,
-                },
-                terminal_state: event.terminal_state,
-                terminal_message: event.terminal_message,
-                source_turn_id: event.turn_id,
-                trace_ref: event.delivery_trace_ref,
-            })
+            .observe_wait_producer_terminal(wait_producer_terminal_event_from_agent_run(event))
             .await?;
         Ok(())
+    }
+}
+
+fn wait_producer_terminal_event_from_agent_run(
+    event: AgentRunDeliveryTerminalEvent,
+) -> WaitProducerTerminalEvent {
+    WaitProducerTerminalEvent {
+        producer: WaitProducerRef::AgentRunDelivery {
+            run_id: event.run_id,
+            agent_id: event.agent_id,
+            frame_id: event.frame_id,
+        },
+        terminal_state: event.terminal_state,
+        terminal_message: event.terminal_message,
+        source_turn_id: event.turn_id,
+        trace_ref: event.delivery_trace_ref,
     }
 }
 
@@ -154,5 +157,44 @@ impl SessionTerminalCallback for AgentRunTerminalControlCallback {
             return Err(error.to_string());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn maps_agent_run_delivery_terminal_to_wait_producer_terminal_event() {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
+
+        let event = wait_producer_terminal_event_from_agent_run(AgentRunDeliveryTerminalEvent {
+            run_id,
+            agent_id,
+            frame_id: Some(frame_id),
+            terminal_state: "failed".to_string(),
+            terminal_message: Some("provider rejected model".to_string()),
+            turn_id: Some("turn-42".to_string()),
+            delivery_trace_ref: Some("delivery:trace".to_string()),
+        });
+
+        assert_eq!(
+            event.producer,
+            WaitProducerRef::AgentRunDelivery {
+                run_id,
+                agent_id,
+                frame_id: Some(frame_id),
+            }
+        );
+        assert_eq!(event.terminal_state, "failed");
+        assert_eq!(
+            event.terminal_message.as_deref(),
+            Some("provider rejected model")
+        );
+        assert_eq!(event.source_turn_id.as_deref(), Some("turn-42"));
+        assert_eq!(event.trace_ref.as_deref(), Some("delivery:trace"));
     }
 }

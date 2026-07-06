@@ -54,9 +54,17 @@ pub use desktop_settings::{
 };
 pub use extensions::{
     ExtensionArtifactCacheEntry, ExtensionArtifactCacheError, ExtensionArtifactDownloadRequest,
-    LocalExtensionHostActivation, LocalExtensionHostError, LocalExtensionHostHealth,
-    LocalExtensionHostManager, LocalExtensionHostProfile, LocalExtensionHostWorkspaceRoot,
-    LocalTsExtensionHostConfig, download_and_cache_extension_artifact,
+    ExtensionBackendServiceArtifact, ExtensionBackendServiceError,
+    ExtensionBackendServiceInstanceIdentity, ExtensionBackendServiceInvokeError,
+    ExtensionBackendServiceInvokeMetadata, ExtensionBackendServiceInvokeRequest,
+    ExtensionBackendServiceInvokeResponse, ExtensionBackendServiceLogLine,
+    ExtensionBackendServiceMaterialization, ExtensionBackendServiceMaterializeRequest,
+    ExtensionBackendServiceReadiness, ExtensionBackendServiceStartRequest,
+    ExtensionBackendServiceStatus, LocalExtensionBackendServiceManager,
+    LocalExtensionBackendServiceManagerConfig, LocalExtensionHostActivation,
+    LocalExtensionHostError, LocalExtensionHostHealth, LocalExtensionHostManager,
+    LocalExtensionHostProfile, LocalExtensionHostWorkspaceRoot, LocalTsExtensionHostConfig,
+    download_and_cache_extension_artifact,
 };
 
 pub use runtime::{

@@ -1587,6 +1587,28 @@ impl LifecycleGateRepository for MemoryLifecycleGateRepository {
             .collect())
     }
 
+    async fn list_open_wait_obligations(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<LifecycleGate>, DomainError> {
+        Ok(self
+            .gates
+            .lock()
+            .await
+            .iter()
+            .filter(|gate| {
+                gate.is_open()
+                    && gate
+                        .payload_json
+                        .as_ref()
+                        .and_then(WaitObligationDeclaration::from_payload)
+                        .is_some()
+            })
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
     async fn list_by_wait_producer(
         &self,
         producer: &WaitProducerRef,

@@ -475,6 +475,13 @@ pub enum RelayMessage {
         payload: CommandExtensionChannelInvokePayload,
     },
 
+    /// 调用 extension-owned 本机 backendService
+    #[serde(rename = "command.extension_backend_service_invoke")]
+    CommandExtensionBackendServiceInvoke {
+        id: String,
+        payload: CommandExtensionBackendServiceInvokePayload,
+    },
+
     // ── MCP Relay 响应（本机 → 云端）──
     #[serde(rename = "response.mcp_probe_transport")]
     ResponseMcpProbeTransport {
@@ -526,6 +533,15 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ResponseExtensionChannelInvokePayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.extension_backend_service_invoke")]
+    ResponseExtensionBackendServiceInvoke {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseExtensionBackendServiceInvokePayload>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -675,12 +691,14 @@ impl RelayMessage {
             | Self::CommandMcpClose { id, .. }
             | Self::CommandExtensionActionInvoke { id, .. }
             | Self::CommandExtensionChannelInvoke { id, .. }
+            | Self::CommandExtensionBackendServiceInvoke { id, .. }
             | Self::ResponseMcpProbeTransport { id, .. }
             | Self::ResponseMcpListTools { id, .. }
             | Self::ResponseMcpCallTool { id, .. }
             | Self::ResponseMcpClose { id, .. }
             | Self::ResponseExtensionActionInvoke { id, .. }
             | Self::ResponseExtensionChannelInvoke { id, .. }
+            | Self::ResponseExtensionBackendServiceInvoke { id, .. }
             | Self::EventCapabilitiesChanged { id, .. }
             | Self::EventSessionNotification { id, .. }
             | Self::EventSessionStateChanged { id, .. }
@@ -1070,6 +1088,136 @@ mod tests {
         let json = serde_json::to_value(&msg).expect("serialize");
         assert_eq!(json["type"], "response.extension_channel_invoke");
         assert_eq!(json["payload"]["metadata"]["trace_id"], "trace-1");
+    }
+
+    #[test]
+    fn extension_backend_service_invoke_roundtrip() {
+        let msg = RelayMessage::CommandExtensionBackendServiceInvoke {
+            id: "ext-backend-1".to_string(),
+            payload: CommandExtensionBackendServiceInvokePayload {
+                metadata: ExtensionBackendServiceInvokeMetadataRelay {
+                    project_id: "project-1".to_string(),
+                    backend_id: "backend-1".to_string(),
+                    extension_key: "local-webapp".to_string(),
+                    extension_id: "local-webapp".to_string(),
+                    service_key: "local-webapp.api".to_string(),
+                    route: "/api/search".to_string(),
+                    trace_id: "trace-1".to_string(),
+                    invocation_id: "bsinv-1".to_string(),
+                },
+                session_id: "session-1".to_string(),
+                method: "POST".to_string(),
+                headers: std::collections::BTreeMap::from([(
+                    "content-type".to_string(),
+                    "application/json".to_string(),
+                )]),
+                body: Some(br#"{"query":"demo"}"#.to_vec()),
+                package_artifact: ExtensionPackageArtifactRelay {
+                    artifact_id: "artifact-1".to_string(),
+                    archive_digest:
+                        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                            .to_string(),
+                },
+                workspace: Some(ExtensionInvocationWorkspaceRelay {
+                    mount_id: "main".to_string(),
+                    root_ref: "D:/Workspaces/demo".to_string(),
+                }),
+            },
+        };
+
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["type"], "command.extension_backend_service_invoke");
+        assert_eq!(json["payload"]["metadata"]["project_id"], "project-1");
+        assert_eq!(json["payload"]["metadata"]["backend_id"], "backend-1");
+        assert_eq!(json["payload"]["metadata"]["extension_key"], "local-webapp");
+        assert_eq!(json["payload"]["metadata"]["extension_id"], "local-webapp");
+        assert_eq!(
+            json["payload"]["metadata"]["service_key"],
+            "local-webapp.api"
+        );
+        assert_eq!(json["payload"]["metadata"]["route"], "/api/search");
+        assert_eq!(json["payload"]["metadata"]["trace_id"], "trace-1");
+        assert_eq!(json["payload"]["method"], "POST");
+        assert_eq!(
+            json["payload"]["headers"]["content-type"],
+            "application/json"
+        );
+        assert!(json["payload"].get("localhost").is_none());
+
+        let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(deser.id(), "ext-backend-1");
+    }
+
+    #[test]
+    fn extension_backend_service_response_roundtrip() {
+        let msg = RelayMessage::ResponseExtensionBackendServiceInvoke {
+            id: "ext-backend-1".to_string(),
+            payload: Some(ResponseExtensionBackendServiceInvokePayload {
+                metadata: ExtensionBackendServiceInvokeMetadataRelay {
+                    project_id: "project-1".to_string(),
+                    backend_id: "backend-1".to_string(),
+                    extension_key: "local-webapp".to_string(),
+                    extension_id: "local-webapp".to_string(),
+                    service_key: "local-webapp.api".to_string(),
+                    route: "/api/search".to_string(),
+                    trace_id: "trace-1".to_string(),
+                    invocation_id: "bsinv-1".to_string(),
+                },
+                response: Some(ExtensionBackendServiceHttpResponseRelay {
+                    status: 204,
+                    headers: Default::default(),
+                    body: None,
+                }),
+                diagnostic: None,
+            }),
+            error: None,
+        };
+
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["type"], "response.extension_backend_service_invoke");
+        assert_eq!(json["payload"]["metadata"]["backend_id"], "backend-1");
+        assert_eq!(json["payload"]["response"]["status"], 204);
+        assert!(json["payload"]["response"].get("body").is_none());
+
+        let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(deser.id(), "ext-backend-1");
+    }
+
+    #[test]
+    fn extension_backend_service_unavailable_diagnostic_roundtrip() {
+        let msg = RelayMessage::ResponseExtensionBackendServiceInvoke {
+            id: "ext-backend-2".to_string(),
+            payload: Some(ResponseExtensionBackendServiceInvokePayload {
+                metadata: ExtensionBackendServiceInvokeMetadataRelay {
+                    project_id: "project-1".to_string(),
+                    backend_id: "backend-1".to_string(),
+                    extension_key: "local-webapp".to_string(),
+                    extension_id: "local-webapp".to_string(),
+                    service_key: "local-webapp.api".to_string(),
+                    route: "/api/search".to_string(),
+                    trace_id: "trace-2".to_string(),
+                    invocation_id: "bsinv-2".to_string(),
+                },
+                response: None,
+                diagnostic: Some(ExtensionBackendServiceInvokeDiagnosticRelay {
+                    readiness: ExtensionBackendServiceReadinessRelay::ServiceUnavailable,
+                    code: "service_unavailable".to_string(),
+                    message: "backend service is not ready".to_string(),
+                    retryable: true,
+                    details: Some(serde_json::json!({ "state": "starting" })),
+                }),
+            }),
+            error: None,
+        };
+
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(
+            json["payload"]["diagnostic"]["readiness"],
+            "service_unavailable"
+        );
+        assert_eq!(json["payload"]["diagnostic"]["code"], "service_unavailable");
+        assert_eq!(json["payload"]["metadata"]["trace_id"], "trace-2");
+        assert!(json["payload"].get("response").is_none());
     }
 
     #[test]

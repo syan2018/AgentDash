@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查桌面强制更新 gate 是否早于 runtime auto-connect / claim / Relay，并保持 Tauri 薄壳边界。"}
+{"file": ".trellis/spec/cross-layer/deployment-runtime.md", "reason": "检查服务端运行期配置、discovery 字段和未配置策略是否符合部署契约。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 update endpoint DTO 是否进入 contract crate 并通过生成/漂移检查。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查 API route、错误映射、运行期 manifest fetch 和缓存是否保持后端分层。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "检查桌面更新 UI、非强制错误呈现和只读诊断是否符合前端事实源与模块边界。"}

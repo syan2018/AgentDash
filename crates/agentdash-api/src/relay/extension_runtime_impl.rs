@@ -1,17 +1,24 @@
 use std::time::Duration;
 
 use agentdash_application_ports::extension_runtime::{
-    ExtensionActionInvokeRequest, ExtensionActionInvokeResponse, ExtensionChannelConsumerPayload,
+    ExtensionActionInvokeRequest, ExtensionActionInvokeResponse,
+    ExtensionBackendServiceHttpResponsePayload, ExtensionBackendServiceInvokeDiagnosticPayload,
+    ExtensionBackendServiceInvokeMetadataPayload, ExtensionBackendServiceInvokeRequest,
+    ExtensionBackendServiceInvokeResponse, ExtensionBackendServiceReadinessPayload,
+    ExtensionBackendServiceTransport, ExtensionChannelConsumerPayload,
     ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
     ExtensionInvocationWorkspacePayload, ExtensionPackageArtifactPayload,
     ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
     ExtensionRuntimeChannelTransport, ExtensionRuntimeHostPayload,
 };
 use agentdash_relay::{
-    CommandExtensionActionInvokePayload, CommandExtensionChannelInvokePayload,
-    ExtensionChannelConsumerRelay, ExtensionInvocationWorkspaceRelay,
-    ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay, RelayMessage,
-    ResponseExtensionActionInvokePayload, ResponseExtensionChannelInvokePayload,
+    CommandExtensionActionInvokePayload, CommandExtensionBackendServiceInvokePayload,
+    CommandExtensionChannelInvokePayload, ExtensionBackendServiceHttpResponseRelay,
+    ExtensionBackendServiceInvokeDiagnosticRelay, ExtensionBackendServiceInvokeMetadataRelay,
+    ExtensionBackendServiceReadinessRelay, ExtensionChannelConsumerRelay,
+    ExtensionInvocationWorkspaceRelay, ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay,
+    RelayMessage, ResponseExtensionActionInvokePayload,
+    ResponseExtensionBackendServiceInvokePayload, ResponseExtensionChannelInvokePayload,
 };
 use async_trait::async_trait;
 
@@ -85,6 +92,40 @@ impl ExtensionRuntimeChannelTransport for BackendRegistry {
     }
 }
 
+#[async_trait]
+impl ExtensionBackendServiceTransport for BackendRegistry {
+    async fn invoke_extension_backend_service(
+        &self,
+        backend_id: &str,
+        request: ExtensionBackendServiceInvokeRequest,
+    ) -> Result<ExtensionBackendServiceInvokeResponse, ExtensionRuntimeActionTransportError> {
+        let command = RelayMessage::CommandExtensionBackendServiceInvoke {
+            id: RelayMessage::new_id("ext-backend-service"),
+            payload: backend_service_request_to_relay(backend_id, request),
+        };
+        let response = self
+            .send_command_with_timeout(backend_id, command, Duration::from_secs(30))
+            .await
+            .map_err(transport_error_from_backend)?;
+        match response {
+            RelayMessage::ResponseExtensionBackendServiceInvoke {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => Ok(backend_service_response_from_relay(payload)),
+            RelayMessage::ResponseExtensionBackendServiceInvoke {
+                error: Some(error), ..
+            } => Err(ExtensionRuntimeActionTransportError::Failed(
+                error.to_string(),
+            )),
+            other => Err(ExtensionRuntimeActionTransportError::Failed(format!(
+                "unexpected extension backend service relay response: {}",
+                other.id()
+            ))),
+        }
+    }
+}
+
 fn action_request_to_relay(
     request: ExtensionActionInvokeRequest,
 ) -> CommandExtensionActionInvokePayload {
@@ -148,6 +189,112 @@ fn channel_response_from_relay(
         method: response.method,
         output: response.output,
         metadata: response.metadata,
+    }
+}
+
+fn backend_service_request_to_relay(
+    backend_id: &str,
+    request: ExtensionBackendServiceInvokeRequest,
+) -> CommandExtensionBackendServiceInvokePayload {
+    CommandExtensionBackendServiceInvokePayload {
+        metadata: ExtensionBackendServiceInvokeMetadataRelay {
+            project_id: request.project_id,
+            backend_id: backend_id.to_string(),
+            extension_key: request.extension_key,
+            extension_id: request.extension_id,
+            service_key: request.service_key,
+            route: request.route,
+            trace_id: request.trace_id,
+            invocation_id: request.invocation_id,
+        },
+        session_id: request.session_id,
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        package_artifact: package_artifact_to_relay(request.package_artifact),
+        workspace: request.workspace.map(workspace_to_relay),
+    }
+}
+
+fn backend_service_response_from_relay(
+    response: ResponseExtensionBackendServiceInvokePayload,
+) -> ExtensionBackendServiceInvokeResponse {
+    ExtensionBackendServiceInvokeResponse {
+        metadata: backend_service_metadata_from_relay(response.metadata),
+        response: response
+            .response
+            .map(backend_service_http_response_from_relay),
+        diagnostic: response
+            .diagnostic
+            .map(backend_service_diagnostic_from_relay),
+    }
+}
+
+fn backend_service_metadata_from_relay(
+    metadata: ExtensionBackendServiceInvokeMetadataRelay,
+) -> ExtensionBackendServiceInvokeMetadataPayload {
+    ExtensionBackendServiceInvokeMetadataPayload {
+        project_id: metadata.project_id,
+        backend_id: metadata.backend_id,
+        extension_key: metadata.extension_key,
+        extension_id: metadata.extension_id,
+        service_key: metadata.service_key,
+        route: metadata.route,
+        trace_id: metadata.trace_id,
+        invocation_id: metadata.invocation_id,
+    }
+}
+
+fn backend_service_http_response_from_relay(
+    response: ExtensionBackendServiceHttpResponseRelay,
+) -> ExtensionBackendServiceHttpResponsePayload {
+    ExtensionBackendServiceHttpResponsePayload {
+        status: response.status,
+        headers: response.headers,
+        body: response.body,
+    }
+}
+
+fn backend_service_diagnostic_from_relay(
+    diagnostic: ExtensionBackendServiceInvokeDiagnosticRelay,
+) -> ExtensionBackendServiceInvokeDiagnosticPayload {
+    ExtensionBackendServiceInvokeDiagnosticPayload {
+        readiness: backend_service_readiness_from_relay(diagnostic.readiness),
+        code: diagnostic.code,
+        message: diagnostic.message,
+        retryable: diagnostic.retryable,
+        details: diagnostic.details,
+    }
+}
+
+fn backend_service_readiness_from_relay(
+    readiness: ExtensionBackendServiceReadinessRelay,
+) -> ExtensionBackendServiceReadinessPayload {
+    match readiness {
+        ExtensionBackendServiceReadinessRelay::Ready => {
+            ExtensionBackendServiceReadinessPayload::Ready
+        }
+        ExtensionBackendServiceReadinessRelay::MissingArtifact => {
+            ExtensionBackendServiceReadinessPayload::MissingArtifact
+        }
+        ExtensionBackendServiceReadinessRelay::MaterializeFailed => {
+            ExtensionBackendServiceReadinessPayload::MaterializeFailed
+        }
+        ExtensionBackendServiceReadinessRelay::Starting => {
+            ExtensionBackendServiceReadinessPayload::Starting
+        }
+        ExtensionBackendServiceReadinessRelay::HealthFailed => {
+            ExtensionBackendServiceReadinessPayload::HealthFailed
+        }
+        ExtensionBackendServiceReadinessRelay::ProcessExited => {
+            ExtensionBackendServiceReadinessPayload::ProcessExited
+        }
+        ExtensionBackendServiceReadinessRelay::UnsupportedRuntime => {
+            ExtensionBackendServiceReadinessPayload::UnsupportedRuntime
+        }
+        ExtensionBackendServiceReadinessRelay::ServiceUnavailable => {
+            ExtensionBackendServiceReadinessPayload::ServiceUnavailable
+        }
     }
 }
 
@@ -288,6 +435,148 @@ mod tests {
         assert!(relay_err.to_string().contains("boom"));
     }
 
+    #[tokio::test]
+    async fn extension_backend_service_transport_carries_http_intent_and_metadata() {
+        let registry = BackendRegistry::new();
+        let (sender, mut rx) = mpsc::unbounded_channel();
+        registry
+            .try_register(ConnectedBackend {
+                backend_id: "backend-1".to_string(),
+                name: "local".to_string(),
+                version: "0.1.0".to_string(),
+                capabilities: CapabilitiesPayload {
+                    executors: Vec::new(),
+                    supports_cancel: true,
+                    supports_discover_options: true,
+                    ..Default::default()
+                },
+                sender,
+                connected_at: Utc::now(),
+            })
+            .await
+            .expect("register backend");
+
+        let pending = {
+            let registry = registry.clone();
+            tokio::spawn(async move {
+                registry
+                    .invoke_extension_backend_service("backend-1", backend_service_payload())
+                    .await
+            })
+        };
+        let command = rx.recv().await.expect("command should be sent");
+        let RelayMessage::CommandExtensionBackendServiceInvoke { payload, .. } = &command else {
+            panic!("expected extension backend service command");
+        };
+        assert_eq!(payload.metadata.project_id, "project-1");
+        assert_eq!(payload.metadata.backend_id, "backend-1");
+        assert_eq!(payload.metadata.extension_key, "local-webapp");
+        assert_eq!(payload.metadata.extension_id, "local-webapp");
+        assert_eq!(payload.metadata.service_key, "local-webapp.api");
+        assert_eq!(payload.metadata.route, "/api/search");
+        assert_eq!(payload.metadata.trace_id, "trace-1");
+        assert_eq!(payload.method, "POST");
+        assert_eq!(
+            payload.body.as_deref(),
+            Some(br#"{"query":"demo"}"#.as_ref())
+        );
+
+        let response = RelayMessage::ResponseExtensionBackendServiceInvoke {
+            id: command.id().to_string(),
+            payload: Some(ResponseExtensionBackendServiceInvokePayload {
+                metadata: payload.metadata.clone(),
+                response: Some(ExtensionBackendServiceHttpResponseRelay {
+                    status: 200,
+                    headers: std::collections::BTreeMap::from([(
+                        "content-type".to_string(),
+                        "application/json".to_string(),
+                    )]),
+                    body: Some(br#"{"ok":true}"#.to_vec()),
+                }),
+                diagnostic: None,
+            }),
+            error: None,
+        };
+        assert!(registry.resolve_response(&response).await);
+
+        let output = pending
+            .await
+            .expect("join")
+            .expect("transport should succeed");
+        let http_response = output.response.expect("http response");
+        assert_eq!(http_response.status, 200);
+        assert_eq!(
+            http_response.body.as_deref(),
+            Some(br#"{"ok":true}"#.as_ref())
+        );
+        assert_eq!(output.metadata.backend_id, "backend-1");
+        assert!(output.diagnostic.is_none());
+    }
+
+    #[tokio::test]
+    async fn extension_backend_service_transport_maps_unavailable_diagnostic() {
+        let registry = BackendRegistry::new();
+        let (sender, mut rx) = mpsc::unbounded_channel();
+        registry
+            .try_register(ConnectedBackend {
+                backend_id: "backend-1".to_string(),
+                name: "local".to_string(),
+                version: "0.1.0".to_string(),
+                capabilities: CapabilitiesPayload {
+                    executors: Vec::new(),
+                    supports_cancel: true,
+                    supports_discover_options: true,
+                    ..Default::default()
+                },
+                sender,
+                connected_at: Utc::now(),
+            })
+            .await
+            .expect("register backend");
+
+        let pending = {
+            let registry = registry.clone();
+            tokio::spawn(async move {
+                registry
+                    .invoke_extension_backend_service("backend-1", backend_service_payload())
+                    .await
+            })
+        };
+        let command = rx.recv().await.expect("command should be sent");
+        let RelayMessage::CommandExtensionBackendServiceInvoke { payload, .. } = &command else {
+            panic!("expected extension backend service command");
+        };
+        let response = RelayMessage::ResponseExtensionBackendServiceInvoke {
+            id: command.id().to_string(),
+            payload: Some(ResponseExtensionBackendServiceInvokePayload {
+                metadata: payload.metadata.clone(),
+                response: None,
+                diagnostic: Some(ExtensionBackendServiceInvokeDiagnosticRelay {
+                    readiness: ExtensionBackendServiceReadinessRelay::ServiceUnavailable,
+                    code: "service_unavailable".to_string(),
+                    message: "backend service is not ready".to_string(),
+                    retryable: true,
+                    details: Some(json!({ "state": "starting" })),
+                }),
+            }),
+            error: None,
+        };
+        assert!(registry.resolve_response(&response).await);
+
+        let output = pending
+            .await
+            .expect("join")
+            .expect("transport should succeed");
+        let diagnostic = output.diagnostic.expect("diagnostic");
+        assert_eq!(
+            diagnostic.readiness,
+            ExtensionBackendServiceReadinessPayload::ServiceUnavailable
+        );
+        assert_eq!(diagnostic.code, "service_unavailable");
+        assert!(diagnostic.retryable);
+        assert!(output.response.is_none());
+    }
+
     fn command_payload() -> ExtensionActionInvokeRequest {
         ExtensionActionInvokeRequest {
             extension_key: "local-hello".to_string(),
@@ -301,6 +590,35 @@ mod tests {
             workspace: None,
             trace_id: "trace-1".to_string(),
             invocation_id: "rtinv-1".to_string(),
+        }
+    }
+
+    fn backend_service_payload() -> ExtensionBackendServiceInvokeRequest {
+        ExtensionBackendServiceInvokeRequest {
+            extension_key: "local-webapp".to_string(),
+            extension_id: "local-webapp".to_string(),
+            service_key: "local-webapp.api".to_string(),
+            route: "/api/search".to_string(),
+            project_id: "project-1".to_string(),
+            session_id: "session-1".to_string(),
+            method: "POST".to_string(),
+            headers: std::collections::BTreeMap::from([(
+                "content-type".to_string(),
+                "application/json".to_string(),
+            )]),
+            body: Some(br#"{"query":"demo"}"#.to_vec()),
+            package_artifact: ExtensionPackageArtifactPayload {
+                artifact_id: "artifact-1".to_string(),
+                archive_digest:
+                    "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                        .to_string(),
+            },
+            workspace: Some(ExtensionInvocationWorkspacePayload {
+                mount_id: "main".to_string(),
+                root_ref: "D:/Workspaces/demo".to_string(),
+            }),
+            trace_id: "trace-1".to_string(),
+            invocation_id: "bsinv-1".to_string(),
         }
     }
 }

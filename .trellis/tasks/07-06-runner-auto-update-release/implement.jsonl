@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/cross-layer/deployment-runtime.md", "reason": "runner update endpoint、stable manifest URL、最低版本环境变量和未配置策略需要遵守部署运行契约。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "独立 runner、desktop embedded runner、relay、diagnostics 和 service lifecycle 的边界已经在本机 runtime 契约中定义。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "云端 runner update endpoint、runtime config 和错误映射需要保持后端分层。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "agentdash-local 与 agentdash-api 的职责边界决定 runner update CLI 和 API route 的归属。"}
+{"file": ".trellis/spec/backend/diagnostics-guidelines.md", "reason": "runner update check/install/doctor 需要记录可检索的平台过程诊断。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "runner update endpoint DTO 应通过 contracts crate 生成并进行 drift check。"}

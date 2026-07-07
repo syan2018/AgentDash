@@ -9,6 +9,7 @@ use agentdash_application_lifecycle::{
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort;
+use agentdash_application_ports::agent_run_list_invalidation::AgentRunListInvalidationPort;
 use agentdash_application_ports::hook_workflow_projection::{
     HookActiveWorkflowFacts, HookExecutionLogAppendCommand, HookWorkflowProjection,
     HookWorkflowProjectionError, HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
@@ -108,6 +109,7 @@ pub struct RepositorySet {
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
     pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
+    pub agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
 }
 
 impl RepositorySet {

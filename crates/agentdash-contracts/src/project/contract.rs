@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+use agentdash_agent_protocol::ControlPlaneProjectionChanged;
+
 use crate::context::ContextContainerDefinition;
 use crate::story::StoryResponse;
 use crate::workspace::WorkspaceResponse;
@@ -69,6 +71,21 @@ impl ProjectStateChange {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ProjectControlPlaneProjectionChanged {
+    pub project_id: String,
+    pub change: ControlPlaneProjectionChanged,
+}
+
+impl ProjectControlPlaneProjectionChanged {
+    pub fn new(project_id: impl Into<String>, change: ControlPlaneProjectionChanged) -> Self {
+        Self {
+            project_id: project_id.into(),
+            change,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "data")]
 pub enum ProjectEventStreamEnvelope {
     Connected {
@@ -76,6 +93,7 @@ pub enum ProjectEventStreamEnvelope {
         last_event_id: i64,
     },
     StateChanged(ProjectStateChange),
+    ControlPlaneProjectionChanged(ProjectControlPlaneProjectionChanged),
     BackendRuntimeChanged {
         backend_id: String,
     },
@@ -98,6 +116,10 @@ impl ProjectEventStreamEnvelope {
 
     pub fn backend_runtime_changed(backend_id: String) -> Self {
         Self::BackendRuntimeChanged { backend_id }
+    }
+
+    pub fn control_plane_projection_changed(event: ProjectControlPlaneProjectionChanged) -> Self {
+        Self::ControlPlaneProjectionChanged(event)
     }
 
     pub fn heartbeat(timestamp: i64) -> Self {

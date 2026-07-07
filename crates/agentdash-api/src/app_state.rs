@@ -5,6 +5,7 @@ use anyhow::Result;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 
+use crate::agent_run_list_invalidation::ProjectAgentRunListInvalidationPublisher;
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::auth::session_service::AuthSessionService;
@@ -44,6 +45,7 @@ use agentdash_application_runtime_session::session::{
 };
 use agentdash_application_vfs::MountProviderRegistry;
 use agentdash_application_vfs::{VfsMutationDispatcher, VfsService};
+use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_diagnostics::DiagnosticBuffer;
 use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
@@ -57,6 +59,7 @@ use agentdash_integration_api::SkillDiscoveryProvider;
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
+const PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY: usize = 256;
 const PLATFORM_MCP_BASE_URL_ENV: &str = "AGENTDASH_MCP_BASE_URL";
 
 fn configured_platform_mcp_base_url() -> Option<String> {
@@ -105,6 +108,8 @@ pub struct ServiceSet {
     pub backend_registry: Arc<BackendRegistry>,
     /// Backend runtime 在线/离线/能力变化事件 — 供全局事件流驱动前端刷新
     pub backend_runtime_events: broadcast::Sender<String>,
+    /// Project scoped control-plane projection invalidation — 供 AgentRun list 等投影刷新
+    pub project_control_plane_events: broadcast::Sender<ProjectEventStreamEnvelope>,
     /// 串行 Shell 流式输出路由 — ShellExecTool 注册，ws_handler 投递
     pub shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     /// AgentRun scope 终端运行时状态注册表
@@ -188,9 +193,16 @@ impl AppState {
         let integration_registration = collect_integration_registration(integrations)
             .map_err(|err| anyhow::anyhow!("Host Integration 注册失败: {err}"))?;
 
+        let (project_control_plane_events, _project_control_plane_rx) =
+            broadcast::channel(PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY);
+        let agent_run_list_invalidation = Arc::new(ProjectAgentRunListInvalidationPublisher::new(
+            project_control_plane_events.clone(),
+        ));
+
         let repository_bootstrap = crate::bootstrap::repositories::build_repositories(
             pool,
             integration_registration.library_asset_seeds.clone(),
+            Some(agent_run_list_invalidation.clone()),
         )
         .await?;
         let repos = repository_bootstrap.repos;
@@ -254,6 +266,7 @@ impl AppState {
                 skill_discovery_providers: integration_registration.skill_discovery_providers,
                 memory_discovery_providers: integration_registration.memory_discovery_providers,
                 llm_provider_secret: llm_provider_secret.clone(),
+                agent_run_list_invalidation: Some(agent_run_list_invalidation.clone()),
             },
         )
         .await?;
@@ -461,6 +474,7 @@ impl AppState {
                 marketplace_source_providers: integration_registration.marketplace_source_providers,
                 backend_registry,
                 backend_runtime_events,
+                project_control_plane_events,
                 shell_output_registry,
                 terminal_registry,
                 vfs_registry,

@@ -1,7 +1,13 @@
-use agentdash_agent_protocol::UserInputBlock;
+use std::sync::Arc;
+
+use agentdash_agent_protocol::{ControlPlaneProjectionChangeReason, UserInputBlock};
 use agentdash_agent_types::MessageRef;
 use agentdash_application_ports::agent_run_fork_materialization::{
     AgentRunForkMaterializationError, AgentRunForkMaterializationInput,
+    AgentRunForkMaterializationResult,
+};
+use agentdash_application_ports::agent_run_list_invalidation::{
+    AgentRunListInvalidation, AgentRunListInvalidationPort,
 };
 use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_application_runtime_session::session::{SessionBranchingService, SessionForkRequest};
@@ -42,6 +48,7 @@ pub struct AgentRunForkRepos<'a> {
     pub agent_run_mailbox_repo: &'a dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository,
     pub agent_run_lineage_repo: &'a dyn AgentRunLineageRepository,
     pub agent_run_fork_materialization: &'a dyn agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort,
+    pub agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
 }
 
 #[derive(Debug, Clone)]
@@ -310,6 +317,8 @@ impl<'a> AgentRunForkService<'a> {
                 return Err(app_error);
             }
         };
+        self.publish_agent_run_list_invalidated_for_fork(&materialized)
+            .await;
 
         let parent_refs = base_refs(
             &parent.run,
@@ -557,6 +566,25 @@ impl<'a> AgentRunForkService<'a> {
 
     async fn cleanup_child_runtime(&self, runtime_session_id: &str) {
         let _ = self.session_core.delete_session(runtime_session_id).await;
+    }
+
+    async fn publish_agent_run_list_invalidated_for_fork(
+        &self,
+        materialized: &AgentRunForkMaterializationResult,
+    ) {
+        let Some(port) = self.repos.agent_run_list_invalidation.as_ref() else {
+            return;
+        };
+        let _ = port
+            .publish_agent_run_list_invalidated(AgentRunListInvalidation {
+                project_id: materialized.child_run.project_id,
+                run_id: materialized.child_run.id,
+                agent_id: materialized.child_agent.id,
+                frame_id: Some(materialized.child_frame.id),
+                reason: ControlPlaneProjectionChangeReason::AgentRunLineageChanged,
+                delivery_runtime_session_id: Some(materialized.child_runtime_session_id.clone()),
+            })
+            .await;
     }
 }
 
@@ -840,6 +868,28 @@ mod tests {
         MemoryProjectBackendAccessRepository, MemoryRuntimeSessionExecutionAnchorRepository,
     };
 
+    #[derive(Default)]
+    struct RecordingAgentRunListInvalidationPort {
+        items: Mutex<Vec<AgentRunListInvalidation>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRunListInvalidationPort for RecordingAgentRunListInvalidationPort {
+        async fn publish_agent_run_list_invalidated(
+            &self,
+            invalidation: AgentRunListInvalidation,
+        ) -> Result<(), String> {
+            self.items.lock().await.push(invalidation);
+            Ok(())
+        }
+    }
+
+    impl RecordingAgentRunListInvalidationPort {
+        async fn recorded(&self) -> Vec<AgentRunListInvalidation> {
+            self.items.lock().await.clone()
+        }
+    }
+
     #[tokio::test]
     async fn explicit_fork_materializes_child_agent_run_and_cross_run_lineage() {
         let fixture = ForkFixture::new().await;
@@ -932,6 +982,21 @@ mod tests {
         );
         assert_eq!(result.command_receipt.status, "accepted");
         assert!(!result.command_receipt.duplicate);
+
+        let recorded = fixture.invalidations.recorded().await;
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].project_id, fixture.parent_run.project_id);
+        assert_eq!(recorded[0].run_id, result.child_refs.run_id);
+        assert_eq!(recorded[0].agent_id, result.child_refs.agent_id);
+        assert_eq!(recorded[0].frame_id, result.child_refs.frame_id);
+        assert_eq!(
+            recorded[0].reason,
+            ControlPlaneProjectionChangeReason::AgentRunLineageChanged
+        );
+        assert_eq!(
+            recorded[0].delivery_runtime_session_id.as_deref(),
+            result.child_refs.runtime_session_id.as_deref()
+        );
     }
 
     #[tokio::test]
@@ -1290,6 +1355,7 @@ mod tests {
         mailbox: Arc<MemoryAgentRunMailboxRepository>,
         lineages: Arc<MemoryAgentRunLineageRepository>,
         materialization: Arc<MemoryAgentRunForkMaterialization>,
+        invalidations: Arc<RecordingAgentRunListInvalidationPort>,
         session_store: Arc<FixtureSessionStore>,
         core: Arc<TestCorePort>,
         control: Arc<TestControlPort>,
@@ -1321,6 +1387,7 @@ mod tests {
                 delivery_bindings.clone(),
                 lineages.clone(),
             ));
+            let invalidations = Arc::new(RecordingAgentRunListInvalidationPort::default());
             let session_store = Arc::new(FixtureSessionStore::default());
             let core = Arc::new(TestCorePort::default());
             let control = Arc::new(TestControlPort);
@@ -1375,6 +1442,7 @@ mod tests {
                 mailbox,
                 lineages,
                 materialization,
+                invalidations,
                 session_store,
                 core,
                 control,
@@ -1398,6 +1466,7 @@ mod tests {
                 agent_run_mailbox_repo: self.mailbox.as_ref(),
                 agent_run_lineage_repo: self.lineages.as_ref(),
                 agent_run_fork_materialization: self.materialization.as_ref(),
+                agent_run_list_invalidation: Some(self.invalidations.clone()),
             };
             let mailbox = AgentRunMailboxService::new(
                 self.runs.as_ref(),

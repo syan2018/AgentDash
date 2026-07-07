@@ -64,6 +64,46 @@ function projectStateChanged(projectId: string): ProjectEventStreamEnvelope {
   };
 }
 
+function agentRunListInvalidated(projectId: string): ProjectEventStreamEnvelope {
+  return {
+    type: "ControlPlaneProjectionChanged",
+    data: {
+      project_id: projectId,
+      change: {
+        projection: "agent_run_list",
+        reason: "agent_run_lineage_changed",
+        run_id: "run-1",
+        agent_id: "agent-1",
+        frame_id: null,
+        gate_id: null,
+        mailbox_message_id: null,
+        delivery_runtime_session_id: null,
+        workspace_module_presentation: null,
+      },
+    },
+  };
+}
+
+function mailboxInvalidated(projectId: string): ProjectEventStreamEnvelope {
+  return {
+    type: "ControlPlaneProjectionChanged",
+    data: {
+      project_id: projectId,
+      change: {
+        projection: "mailbox",
+        reason: "mailbox_state_changed",
+        run_id: "run-1",
+        agent_id: "agent-1",
+        frame_id: null,
+        gate_id: null,
+        mailbox_message_id: null,
+        delivery_runtime_session_id: null,
+        workspace_module_presentation: null,
+      },
+    },
+  };
+}
+
 describe("agent-run list state store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -101,6 +141,35 @@ describe("agent-run list state store", () => {
     expect(
       useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
     ).toBe("run-2");
+  });
+
+  it("project-scoped AgentRunList projection invalidation 触发列表 refresh", async () => {
+    const before = agentRunEntry("run-1", "agent-1", "刷新前", "2026-06-25T01:00:00Z");
+    const after = agentRunEntry("run-child", "agent-child", "SubAgent", "2026-06-25T02:00:00Z");
+    mockedFetchProjectAgentRuns
+      .mockResolvedValueOnce(listView([before]))
+      .mockResolvedValueOnce(listView([after]));
+
+    await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
+    await invalidateAgentRunListStateForProjectEvent(
+      agentRunListInvalidated("project-1"),
+      "project-1",
+    );
+
+    expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(2);
+    expect(
+      useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
+    ).toBe("run-child");
+  });
+
+  it("忽略非 AgentRunList projection invalidation", async () => {
+    const entry = agentRunEntry("run-1", "agent-1", "当前项目", "2026-06-25T01:00:00Z");
+    mockedFetchProjectAgentRuns.mockResolvedValueOnce(listView([entry]));
+
+    await useAgentRunListStateStore.getState().ensureFirstPage("project-1");
+    await invalidateAgentRunListStateForProjectEvent(mailboxInvalidated("project-1"), "project-1");
+
+    expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(1);
   });
 
   it("忽略其他 Project 的事件", async () => {

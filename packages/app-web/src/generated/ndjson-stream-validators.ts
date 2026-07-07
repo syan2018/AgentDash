@@ -75,6 +75,21 @@ function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
     typeof value.observedAt === "string";
 }
 
+function isControlPlaneProjectionChanged(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isNonEmptyString(value.projection)) return false;
+  if (!isNonEmptyString(value.reason)) return false;
+  if (!isNonEmptyString(value.run_id)) return false;
+  if (!isNonEmptyString(value.agent_id)) return false;
+  if (!(isOptionalString(value.frame_id) || value.frame_id === null)) return false;
+  if (!(isOptionalString(value.gate_id) || value.gate_id === null)) return false;
+  if (!(isOptionalString(value.mailbox_message_id) || value.mailbox_message_id === null)) return false;
+  if (!(isOptionalString(value.delivery_runtime_session_id) || value.delivery_runtime_session_id === null)) return false;
+  return value.workspace_module_presentation === undefined ||
+    value.workspace_module_presentation === null ||
+    isRecord(value.workspace_module_presentation);
+}
+
 export type GeneratedProjectEventStreamConnectedEnvelope = Extract<ProjectEventStreamEnvelope, { type: "Connected" }>;
 
 function isGeneratedProjectEventStreamConnectedEnvelope(value: unknown): value is GeneratedProjectEventStreamConnectedEnvelope {
@@ -137,6 +152,29 @@ function readGeneratedProjectEventStreamStateChangedFailure(value: Record<string
   return null;
 }
 
+export type GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: "ControlPlaneProjectionChanged" }>;
+
+function isGeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope(value: unknown): value is GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope {
+  return isRecord(value) &&
+    value.type === "ControlPlaneProjectionChanged" &&
+    isRecord(value.data) &&
+    isNonEmptyString(value.data.project_id) &&
+    isControlPlaneProjectionChanged(value.data.change);
+}
+
+function readGeneratedProjectEventStreamControlPlaneProjectionChangedFailure(value: Record<string, unknown>): GeneratedNdjsonEnvelopeValidationFailure | null {
+  if (!isRecord(value.data)) {
+    return invalidBranch("ControlPlaneProjectionChanged", "data", "object");
+  }
+  if (!isNonEmptyString(value.data.project_id)) {
+    return invalidBranch("ControlPlaneProjectionChanged", "data.project_id", "non-empty string");
+  }
+  if (!isControlPlaneProjectionChanged(value.data.change)) {
+    return invalidBranch("ControlPlaneProjectionChanged", "data.change", "ControlPlaneProjectionChanged");
+  }
+  return null;
+}
+
 export type GeneratedProjectEventStreamBackendRuntimeChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: "BackendRuntimeChanged" }>;
 
 function isGeneratedProjectEventStreamBackendRuntimeChangedEnvelope(value: unknown): value is GeneratedProjectEventStreamBackendRuntimeChangedEnvelope {
@@ -192,6 +230,12 @@ export function parseGeneratedProjectEventStreamEnvelope(payload: unknown): Gene
         return { ok: true, kind: "StateChanged", envelope: payload };
       }
       return { ok: false, failure: readGeneratedProjectEventStreamStateChangedFailure(payload) ?? invalidBranch("StateChanged", "<root>", "valid StateChanged envelope") };
+    }
+    case "ControlPlaneProjectionChanged": {
+      if (isGeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope(payload)) {
+        return { ok: true, kind: "ControlPlaneProjectionChanged", envelope: payload };
+      }
+      return { ok: false, failure: readGeneratedProjectEventStreamControlPlaneProjectionChangedFailure(payload) ?? invalidBranch("ControlPlaneProjectionChanged", "<root>", "valid ControlPlaneProjectionChanged envelope") };
     }
     case "BackendRuntimeChanged": {
       if (isGeneratedProjectEventStreamBackendRuntimeChangedEnvelope(payload)) {

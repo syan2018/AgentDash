@@ -2,6 +2,7 @@ pub mod accepted_turn_lifecycle;
 pub mod agent_frame_materialization;
 pub mod agent_run_control_effect;
 pub mod agent_run_fork_materialization;
+pub mod agent_run_list_invalidation;
 pub mod agent_run_surface;
 pub mod backend_transport;
 pub mod extension_runtime;

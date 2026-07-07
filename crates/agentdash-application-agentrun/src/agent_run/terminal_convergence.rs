@@ -1,3 +1,7 @@
+use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
+use agentdash_application_ports::agent_run_list_invalidation::{
+    AgentRunListInvalidation, AgentRunListInvalidationPort,
+};
 use std::sync::Arc;
 
 use agentdash_domain::agent::ProjectAgentRepository;
@@ -59,6 +63,7 @@ pub struct AgentRunTerminalConvergenceDeps {
     pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
     pub command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
+    pub agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
 }
 
 impl AgentRunTerminalConvergenceService {
@@ -118,6 +123,14 @@ impl AgentRunTerminalConvergenceService {
         let frame_id = self
             .resolve_current_or_launch_frame(anchor.agent_id, anchor.launch_frame_id)
             .await?;
+        self.publish_list_invalidation(
+            anchor.run_id,
+            anchor.agent_id,
+            frame_id,
+            ControlPlaneProjectionChangeReason::DeliveryTerminal,
+            Some(command.runtime_session_id.clone()),
+        )
+        .await;
 
         Ok(Some(AgentRunDeliveryTerminalEvent {
             run_id: anchor.run_id,
@@ -150,6 +163,14 @@ impl AgentRunTerminalConvergenceService {
         let frame_id = self
             .resolve_current_or_launch_frame(binding.agent_id, binding.launch_frame_id)
             .await?;
+        self.publish_list_invalidation(
+            binding.run_id,
+            binding.agent_id,
+            frame_id,
+            ControlPlaneProjectionChangeReason::DeliveryTerminal,
+            Some(binding.runtime_session_id.clone()),
+        )
+        .await;
         Ok(Some(AgentRunDeliveryTerminalEvent {
             run_id: binding.run_id,
             agent_id: binding.agent_id,
@@ -224,6 +245,32 @@ impl AgentRunTerminalConvergenceService {
             .get(launch_frame_id)
             .await?
             .map(|frame| frame.id))
+    }
+
+    async fn publish_list_invalidation(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        frame_id: Option<Uuid>,
+        reason: ControlPlaneProjectionChangeReason,
+        delivery_runtime_session_id: Option<String>,
+    ) {
+        let Some(port) = self.deps.agent_run_list_invalidation.as_ref() else {
+            return;
+        };
+        let Ok(Some(agent)) = self.deps.lifecycle_agent_repo.get(agent_id).await else {
+            return;
+        };
+        let _ = port
+            .publish_agent_run_list_invalidated(AgentRunListInvalidation {
+                project_id: agent.project_id,
+                run_id,
+                agent_id,
+                frame_id,
+                reason,
+                delivery_runtime_session_id,
+            })
+            .await;
     }
 
     fn mailbox_service(&self) -> AgentRunMailboxService<'_> {

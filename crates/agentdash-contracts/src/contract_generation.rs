@@ -83,6 +83,7 @@ enum FieldValidationRule {
     NullableString,
     JsonObject,
     BackboneEnvelope,
+    ControlPlaneProjectionChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +192,21 @@ function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
     isRecord(value.trace) &&
     typeof value.observedAt === "string";
 }
+
+function isControlPlaneProjectionChanged(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!isNonEmptyString(value.projection)) return false;
+  if (!isNonEmptyString(value.reason)) return false;
+  if (!isNonEmptyString(value.run_id)) return false;
+  if (!isNonEmptyString(value.agent_id)) return false;
+  if (!(isOptionalString(value.frame_id) || value.frame_id === null)) return false;
+  if (!(isOptionalString(value.gate_id) || value.gate_id === null)) return false;
+  if (!(isOptionalString(value.mailbox_message_id) || value.mailbox_message_id === null)) return false;
+  if (!(isOptionalString(value.delivery_runtime_session_id) || value.delivery_runtime_session_id === null)) return false;
+  return value.workspace_module_presentation === undefined ||
+    value.workspace_module_presentation === null ||
+    isRecord(value.workspace_module_presentation);
+}
 "#,
     );
 
@@ -270,6 +286,25 @@ fn ndjson_validator_specs() -> Vec<NdjsonEnvelopeValidatorSpec> {
                             &["data", "created_at"],
                             FieldValidationRule::NonEmptyString,
                             "non-empty string",
+                        ),
+                    ],
+                },
+                NdjsonEnvelopeBranchSpec {
+                    type_literal: "ControlPlaneProjectionChanged",
+                    type_alias: "GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope",
+                    guard_function: "isGeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope",
+                    failure_function: "readGeneratedProjectEventStreamControlPlaneProjectionChangedFailure",
+                    fields: vec![
+                        field(&["data"], FieldValidationRule::Object, "object"),
+                        field(
+                            &["data", "project_id"],
+                            FieldValidationRule::NonEmptyString,
+                            "non-empty string",
+                        ),
+                        field(
+                            &["data", "change"],
+                            FieldValidationRule::ControlPlaneProjectionChanged,
+                            "ControlPlaneProjectionChanged",
                         ),
                     ],
                 },
@@ -515,6 +550,9 @@ fn field_condition(field: &FieldValidationSpec) -> String {
         FieldValidationRule::NullableString => format!("isNullableString({value})"),
         FieldValidationRule::JsonObject => format!("isJsonObject({value})"),
         FieldValidationRule::BackboneEnvelope => format!("isBackboneEnvelope({value})"),
+        FieldValidationRule::ControlPlaneProjectionChanged => {
+            format!("isControlPlaneProjectionChanged({value})")
+        }
     }
 }
 
@@ -765,6 +803,9 @@ mod tests {
         );
         assert!(rendered.contents.contains(
             "export type GeneratedProjectEventStreamStateChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: \"StateChanged\" }>;"
+        ));
+        assert!(rendered.contents.contains(
+            "export type GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: \"ControlPlaneProjectionChanged\" }>;"
         ));
     }
 

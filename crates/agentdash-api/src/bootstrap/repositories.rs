@@ -14,6 +14,7 @@ use agentdash_application_agentrun::agent_run::frame::{
 use agentdash_application_lifecycle::{
     AgentRunLifecycleSurfaceProjector, SessionMetaStoreRuntimeSessionCreator,
 };
+use agentdash_application_ports::agent_run_list_invalidation::AgentRunListInvalidationPort;
 use agentdash_application_runtime_session::session::SessionStoreSet;
 use agentdash_application_shared_library::{
     BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
@@ -50,6 +51,7 @@ pub(crate) struct RepositoryBootstrapOutput {
 pub(crate) async fn build_repositories(
     pool: PgPool,
     integration_library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
+    agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
 ) -> Result<RepositoryBootstrapOutput> {
     agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
         .await
@@ -238,6 +240,7 @@ pub(crate) async fn build_repositories(
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),
         permission_grant_repo: permission_grant_repo.clone(),
+        agent_run_list_invalidation: agent_run_list_invalidation.clone(),
     };
 
     let integration_asset_count = integration_library_asset_seeds.len();

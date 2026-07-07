@@ -80,6 +80,35 @@ describe("project event stream route-local envelope", () => {
     expect(result.envelope.data.kind).toBe("future_backend_kind");
   });
 
+  it("parses ControlPlaneProjectionChanged without advancing the stream cursor", () => {
+    const event = parseProjectEventStreamEnvelope({
+      type: "ControlPlaneProjectionChanged",
+      data: {
+        project_id: "project-1",
+        change: {
+          projection: "agent_run_list",
+          reason: "agent_run_lineage_changed",
+          run_id: "run-1",
+          agent_id: "agent-1",
+        },
+      },
+    });
+
+    expect(event).toEqual({
+      type: "ControlPlaneProjectionChanged",
+      data: {
+        project_id: "project-1",
+        change: {
+          projection: "agent_run_list",
+          reason: "agent_run_lineage_changed",
+          run_id: "run-1",
+          agent_id: "agent-1",
+        },
+      },
+    });
+    expect(event ? readProjectEventStreamCursor(event) : null).toBeNull();
+  });
+
   it("keeps Project stream isolated from Session NDJSON envelope shape", () => {
     const result = parseProjectEventStreamEnvelopeResult({
       type: "connected",

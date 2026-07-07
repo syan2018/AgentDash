@@ -149,7 +149,7 @@ export type ContextUsageSource = "provider" | "providerPlusEstimate" | "localEst
 
 export type ControlPlaneProjection = "workspace" | "agent_run_list" | "mailbox" | "waiting" | "delivery" | "hook_runtime" | "resource_surface" | "title";
 
-export type ControlPlaneProjectionChangeReason = "mailbox_state_changed" | "wait_resolved" | "delivery_terminal" | "companion_result" | "hook_effect_applied" | "hook_auto_resume_queued" | "workspace_module_presented" | "capability_state_changed" | "context_frame_changed" | "title_changed";
+export type ControlPlaneProjectionChangeReason = "agent_run_lineage_changed" | "agent_run_shell_changed" | "agent_run_activity_changed" | "mailbox_state_changed" | "wait_resolved" | "delivery_terminal" | "companion_result" | "hook_effect_applied" | "hook_auto_resume_queued" | "workspace_module_presented" | "capability_state_changed" | "context_frame_changed" | "title_changed";
 
 export type ControlPlaneProjectionChanged = { projection: ControlPlaneProjection, reason: ControlPlaneProjectionChangeReason, run_id: string, agent_id: string, frame_id: string | null, gate_id: string | null, mailbox_message_id: string | null, delivery_runtime_session_id: string | null, workspace_module_presentation: ControlPlaneWorkspaceModulePresentation | null, };
 

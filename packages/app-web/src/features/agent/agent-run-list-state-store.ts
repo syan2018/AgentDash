@@ -284,7 +284,16 @@ export function shouldRefreshAgentRunListStateForProjectEvent(
   event: ProjectEventStreamEnvelope,
   projectId: string,
 ): boolean {
-  return event.type === "StateChanged" && event.data.project_id === projectId;
+  if (event.type === "StateChanged") {
+    return event.data.project_id === projectId;
+  }
+  if (event.type === "ControlPlaneProjectionChanged") {
+    return (
+      event.data.project_id === projectId
+      && event.data.change.projection === "agent_run_list"
+    );
+  }
+  return false;
 }
 
 export async function invalidateAgentRunListStateForProjectEvent(
@@ -292,9 +301,12 @@ export async function invalidateAgentRunListStateForProjectEvent(
   projectId: string,
 ): Promise<void> {
   if (!shouldRefreshAgentRunListStateForProjectEvent(event, projectId)) return;
+  const reason = event.type === "ControlPlaneProjectionChanged"
+    ? `project_event:${event.type}:${event.data.change.projection}:${event.data.change.reason}`
+    : `project_event:${event.type}`;
   await useAgentRunListStateStore
     .getState()
-    .invalidateProject(projectId, `project_event:${event.type}`);
+    .invalidateProject(projectId, reason);
 }
 
 export function refreshAgentRunListState(

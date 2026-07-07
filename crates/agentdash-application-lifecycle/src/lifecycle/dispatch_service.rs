@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
+use agentdash_application_ports::agent_run_list_invalidation::AgentRunListInvalidationPort;
 use agentdash_application_ports::lifecycle_materialization::{
     WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
 };
@@ -110,6 +111,7 @@ pub struct LifecycleDispatchService<'a> {
     workflow_agent_frame_materialization:
         Option<&'a dyn workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort>,
     workflow_graph_planner: Option<&'a dyn workflow_graph_planning_port::WorkflowGraphPlanningPort>,
+    agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
 }
 
 impl<'a> LifecycleDispatchService<'a> {
@@ -136,6 +138,7 @@ impl<'a> LifecycleDispatchService<'a> {
             frame_construction: None,
             workflow_agent_frame_materialization: None,
             workflow_graph_planner: None,
+            agent_run_list_invalidation: None,
         }
     }
 
@@ -184,6 +187,14 @@ impl<'a> LifecycleDispatchService<'a> {
         planner: &'a dyn workflow_graph_planning_port::WorkflowGraphPlanningPort,
     ) -> Self {
         self.workflow_graph_planner = Some(planner);
+        self
+    }
+
+    pub fn with_agent_run_list_invalidation(
+        mut self,
+        port: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    ) -> Self {
+        self.agent_run_list_invalidation = port;
         self
     }
 
@@ -361,7 +372,11 @@ impl<'a> LifecycleDispatchService<'a> {
     }
 
     fn lifecycle_relation_writer(&self) -> LifecycleRelationWriter<'_> {
-        LifecycleRelationWriter::new(self.gate_repo, self.lineage_repo)
+        LifecycleRelationWriter::new(
+            self.gate_repo,
+            self.lineage_repo,
+            self.agent_run_list_invalidation.clone(),
+        )
     }
 
     fn orchestration_reducer_bridge(&self) -> OrchestrationReducerBridge<'_> {
@@ -449,8 +464,12 @@ impl<'a> LifecycleDispatchService<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
+    use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
+    use agentdash_application_ports::agent_run_list_invalidation::{
+        AgentRunListInvalidation, AgentRunListInvalidationPort,
+    };
     use agentdash_application_workflow::orchestration::ROOT_ORCHESTRATION_ROLE;
     use agentdash_domain::workflow::*;
     use agentdash_test_support::workflow::{
@@ -472,6 +491,28 @@ mod tests {
     #[derive(Default)]
     struct InMemoryRuntimeSessionCreator {
         items: Mutex<Vec<Uuid>>,
+    }
+
+    #[derive(Default)]
+    struct RecordingAgentRunListInvalidationPort {
+        items: Mutex<Vec<AgentRunListInvalidation>>,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRunListInvalidationPort for RecordingAgentRunListInvalidationPort {
+        async fn publish_agent_run_list_invalidated(
+            &self,
+            invalidation: AgentRunListInvalidation,
+        ) -> Result<(), String> {
+            self.items.lock().unwrap().push(invalidation);
+            Ok(())
+        }
+    }
+
+    impl RecordingAgentRunListInvalidationPort {
+        fn recorded(&self) -> Vec<AgentRunListInvalidation> {
+            self.items.lock().unwrap().clone()
+        }
     }
 
     #[async_trait::async_trait]
@@ -780,6 +821,72 @@ mod tests {
             anchors[0].runtime_session_id
         );
         assert_eq!(bindings[0].status, DeliveryBindingStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn spawn_child_dispatch_emits_agent_run_list_invalidation() {
+        let project_id = Uuid::new_v4();
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
+        let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
+        let invalidations = Arc::new(RecordingAgentRunListInvalidationPort::default());
+        let parent_run = LifecycleRun::new_control(project_id);
+        let parent_agent =
+            LifecycleAgent::new_root(parent_run.id, project_id, AgentSource::ProjectAgent);
+        run_repo.create(&parent_run).await.expect("seed parent run");
+        agent_repo
+            .create(&parent_agent)
+            .await
+            .expect("seed parent agent");
+
+        let service = make_service(
+            &run_repo,
+            &workflow_repo,
+            &agent_repo,
+            &frame_repo,
+            &assoc_repo,
+            &gate_repo,
+            &lineage_repo,
+            &runtime_session_creator,
+        )
+        .with_anchor_repo(&anchor_repo)
+        .with_delivery_binding_repo(&delivery_binding_repo)
+        .with_agent_run_list_invalidation(Some(invalidations.clone()));
+        let result = service
+            .launch_agent(&AgentLaunchIntent {
+                project_id,
+                source: ExecutionSource::ParentAgent,
+                created_by_user_id: None,
+                subject_ref: None,
+                parent_run_id: Some(parent_run.id),
+                parent_agent_id: Some(parent_agent.id),
+                workflow_graph_ref: None,
+                run_policy: RunPolicy::AppendGraph,
+                agent_policy: AgentPolicy::SpawnChild,
+                context_policy: ContextPolicy::Slice,
+                capability_policy: CapabilityPolicy::InheritedSlice,
+                runtime_policy: RuntimePolicy::CreateRuntimeSession,
+            })
+            .await
+            .expect("spawn child");
+
+        let recorded = invalidations.recorded();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].project_id, project_id);
+        assert_eq!(recorded[0].run_id, parent_run.id);
+        assert_eq!(recorded[0].agent_id, result.runtime_refs.agent_ref);
+        assert_eq!(recorded[0].frame_id, Some(result.runtime_refs.frame_ref));
+        assert_eq!(
+            recorded[0].reason,
+            ControlPlaneProjectionChangeReason::AgentRunLineageChanged
+        );
     }
 
     #[tokio::test]

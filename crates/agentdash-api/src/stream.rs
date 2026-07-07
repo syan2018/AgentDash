@@ -15,6 +15,7 @@ use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_domain::common::events::StreamEvent;
 use agentdash_domain::story::StateChange;
 
+use crate::agent_run_list_invalidation::project_id_from_projection_event;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
@@ -119,11 +120,13 @@ pub async fn event_stream_ndjson(
             "Project 事件流补发完成（NDJSON）"
         );
 
+        let project_id_text = project.id.to_string();
         let mut poll_tick = tokio::time::interval(STREAM_POLL_INTERVAL);
         poll_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut heartbeat_tick = tokio::time::interval(STREAM_HEARTBEAT_INTERVAL);
         heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut backend_runtime_rx = state.services.backend_runtime_events.subscribe();
+        let mut project_control_plane_rx = state.services.project_control_plane_events.subscribe();
 
         loop {
             tokio::select! {
@@ -190,6 +193,39 @@ pub async fn event_stream_ndjson(
                                 route = "/api/events/stream",
                                 project_id = %project.id,
                                 "Project NDJSON 事件流 backend runtime 事件通道已关闭"
+                            );
+                            break;
+                        }
+                    }
+                }
+                event = project_control_plane_rx.recv() => {
+                    match event {
+                        Ok(project_event) => {
+                            if project_id_from_projection_event(&project_event)
+                                .is_some_and(|event_project_id| event_project_id == project_id_text.as_str())
+                            {
+                                if let Some(line) = to_ndjson_line(&project_event) {
+                                    yield Ok(line);
+                                }
+                            }
+                        }
+                        Err(RecvError::Lagged(skipped)) => {
+                            diag!(Warn, Subsystem::Api,
+                                operation = "project_event_stream.ndjson",
+                                stage = "project_control_plane_event_lagged",
+                                route = "/api/events/stream",
+                                project_id = %project.id,
+                                skipped,
+                                "Project NDJSON 事件流 control-plane projection 事件滞后"
+                            );
+                        }
+                        Err(RecvError::Closed) => {
+                            diag!(Warn, Subsystem::Api,
+                                operation = "project_event_stream.ndjson",
+                                stage = "project_control_plane_event_closed",
+                                route = "/api/events/stream",
+                                project_id = %project.id,
+                                "Project NDJSON 事件流 control-plane projection 事件通道已关闭"
                             );
                             break;
                         }

@@ -138,9 +138,10 @@ use agentdash_contracts::permission::{
 };
 use agentdash_contracts::project::{
     AgentPreset, DeletedProjectSubjectGrantResponse, ProjectAccessSummaryResponse, ProjectConfig,
-    ProjectDetailResponse, ProjectEventStreamEnvelope, ProjectResponse, ProjectRole,
-    ProjectStateChange, ProjectStateChangeKind, ProjectSubjectGrantResponse, ProjectSubjectType,
-    ProjectVisibility, RevokeProjectGrantResponse, SchedulingConfig,
+    ProjectControlPlaneProjectionChanged, ProjectDetailResponse, ProjectEventStreamEnvelope,
+    ProjectResponse, ProjectRole, ProjectStateChange, ProjectStateChangeKind,
+    ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse,
+    SchedulingConfig,
 };
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
@@ -556,6 +557,7 @@ fn main() {
             export_all::<ProjectDetailResponse>(dir);
             export_all::<ProjectStateChangeKind>(dir);
             export_all::<ProjectStateChange>(dir);
+            export_all::<ProjectControlPlaneProjectionChanged>(dir);
             export_all::<ProjectEventStreamEnvelope>(dir);
         },
     );

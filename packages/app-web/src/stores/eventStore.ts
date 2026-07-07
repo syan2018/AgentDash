@@ -83,6 +83,10 @@ export const useEventStore = create<EventState>((set, get) => ({
             set({ lastEventId: event.data.id, connected: true, connectionState: 'connected' });
             publishProjectEvent(event);
             break;
+          case 'ControlPlaneProjectionChanged':
+            set({ connected: true, connectionState: 'connected' });
+            publishProjectEvent(event);
+            break;
           case 'BackendRuntimeChanged':
             set({ connected: true, connectionState: 'connected' });
             publishProjectEvent(event);

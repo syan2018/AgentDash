@@ -7,6 +7,7 @@ import {
   type GeneratedNdjsonEnvelopeValidationFailure,
   type GeneratedProjectEventStreamBackendRuntimeChangedEnvelope,
   type GeneratedProjectEventStreamConnectedEnvelope,
+  type GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope,
   type GeneratedProjectEventStreamHeartbeatEnvelope,
   type GeneratedProjectEventStreamStateChangedEnvelope,
 } from "../generated/ndjson-stream-validators";
@@ -17,6 +18,8 @@ export type ProjectEventStreamStateChangedEnvelope =
   GeneratedProjectEventStreamStateChangedEnvelope;
 export type ProjectEventStreamBackendRuntimeChangedEnvelope =
   GeneratedProjectEventStreamBackendRuntimeChangedEnvelope;
+export type ProjectEventStreamControlPlaneProjectionChangedEnvelope =
+  GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope;
 export type ProjectEventStreamHeartbeatEnvelope =
   GeneratedProjectEventStreamHeartbeatEnvelope;
 

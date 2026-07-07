@@ -2397,6 +2397,7 @@ fn agent_run_fork_repos(state: &AppState) -> AgentRunForkRepos<'_> {
         agent_run_mailbox_repo: state.repos.agent_run_mailbox_repo.as_ref(),
         agent_run_lineage_repo: state.repos.agent_run_lineage_repo.as_ref(),
         agent_run_fork_materialization: state.repos.agent_run_fork_materialization.as_ref(),
+        agent_run_list_invalidation: state.repos.agent_run_list_invalidation.clone(),
     }
 }
 

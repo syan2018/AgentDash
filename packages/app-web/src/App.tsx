@@ -294,6 +294,8 @@ function AppContent() {
         case "StateChanged":
           handleStateChange(event.data);
           break;
+        case "ControlPlaneProjectionChanged":
+          break;
         case "Heartbeat":
           break;
       }

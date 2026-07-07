@@ -1357,6 +1357,7 @@ mod tests {
                 project_backend_access_repo: project_backend_access_repo.clone(),
                 command_receipt_repo: command_receipt_repo.clone(),
                 mailbox_repo: mailbox_repo.clone(),
+                agent_run_list_invalidation: None,
             };
             let mailbox_runtime =
                 AgentRunMailboxRuntimeAdapter::new(AgentRunMailboxRuntimeBoundaryDeps {

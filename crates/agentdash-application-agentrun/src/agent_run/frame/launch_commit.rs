@@ -7,8 +7,12 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
+use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
 use agentdash_application_ports::accepted_turn_lifecycle::{
     AcceptedTurnLifecycleAdvanceInput, AcceptedTurnLifecycleAdvancePort,
+};
+use agentdash_application_ports::agent_run_list_invalidation::{
+    AgentRunListInvalidation, AgentRunListInvalidationPort,
 };
 use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitInput, AcceptedLaunchCommitOutcome, AcceptedLaunchCommitPort,
@@ -36,6 +40,7 @@ pub struct AgentRunAcceptedLaunchCommitAdapter {
     agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
     lifecycle_advance: Option<Arc<dyn AcceptedTurnLifecycleAdvancePort>>,
     hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
+    agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
 }
 
 #[derive(Clone)]
@@ -46,6 +51,7 @@ pub struct AgentRunAcceptedLaunchCommitDeps {
     pub agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
     pub lifecycle_advance: Option<Arc<dyn AcceptedTurnLifecycleAdvancePort>>,
     pub hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
+    pub agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
 }
 
 struct CurrentFrameLaunchCommitContext<'a> {
@@ -68,6 +74,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             agent_repo: deps.agent_repo,
             lifecycle_advance: deps.lifecycle_advance,
             hook_runtime_sync: deps.hook_runtime_sync,
+            agent_run_list_invalidation: deps.agent_run_list_invalidation,
         }
     }
 
@@ -129,6 +136,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 .commit_pending_frame(
                     frame_repo.as_ref(),
                     anchor_repo.as_ref(),
+                    agent_repo.as_ref(),
                     delivery_binding_repo.as_ref(),
                     lifecycle_advance.as_ref(),
                     input.runtime_session_id.as_str(),
@@ -157,6 +165,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
         &self,
         frame_repo: &dyn AgentFrameRepository,
         anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+        agent_repo: &dyn LifecycleAgentRepository,
         delivery_binding_repo: &dyn AgentRunDeliveryBindingRepository,
         lifecycle_advance: &dyn AcceptedTurnLifecycleAdvancePort,
         runtime_session_id: &str,
@@ -205,9 +214,11 @@ impl AgentRunAcceptedLaunchCommitAdapter {
 
         outcome.bound_current_delivery = self
             .bind_current_delivery_with_anchor(
+                agent_repo,
                 delivery_binding_repo,
                 &anchor,
                 pending_frame.agent_id,
+                pending_frame.id,
                 turn_id,
             )
             .await?;
@@ -294,9 +305,11 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 outcome.wrote_frame_revision = true;
                 outcome.bound_current_delivery = self
                     .bind_current_delivery_with_anchor(
+                        agent_repo,
                         delivery_binding_repo,
                         &anchor,
                         frame.agent_id,
+                        frame.id,
                         turn_id,
                     )
                     .await?;
@@ -335,9 +348,11 @@ impl AgentRunAcceptedLaunchCommitAdapter {
 
     async fn bind_current_delivery_with_anchor(
         &self,
+        agent_repo: &dyn LifecycleAgentRepository,
         delivery_binding_repo: &dyn AgentRunDeliveryBindingRepository,
         anchor: &RuntimeSessionExecutionAnchor,
         agent_id: Uuid,
+        frame_id: Uuid,
         turn_id: &str,
     ) -> Result<bool, ConnectorError> {
         if anchor.agent_id != agent_id {
@@ -367,6 +382,20 @@ impl AgentRunAcceptedLaunchCommitAdapter {
             return Err(connector_error(format!(
                 "同步 accepted current delivery 失败: {error}"
             )));
+        }
+        if let Some(port) = self.agent_run_list_invalidation.as_ref() {
+            if let Ok(Some(agent)) = agent_repo.get(agent_id).await {
+                let _ = port
+                    .publish_agent_run_list_invalidated(AgentRunListInvalidation {
+                        project_id: agent.project_id,
+                        run_id: anchor.run_id,
+                        agent_id,
+                        frame_id: Some(frame_id),
+                        reason: ControlPlaneProjectionChangeReason::AgentRunShellChanged,
+                        delivery_runtime_session_id: Some(anchor.runtime_session_id.clone()),
+                    })
+                    .await;
+            }
         }
         Ok(true)
     }
@@ -503,6 +532,7 @@ pub fn accepted_launch_commit_port(
     agent_repo: Option<Arc<dyn LifecycleAgentRepository>>,
     lifecycle_advance: Option<Arc<dyn AcceptedTurnLifecycleAdvancePort>>,
     hook_runtime_sync: Option<Arc<dyn AcceptedLaunchHookRuntimeSync>>,
+    agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
 ) -> Arc<dyn AcceptedLaunchCommitPort> {
     Arc::new(AgentRunAcceptedLaunchCommitAdapter::new(
         AgentRunAcceptedLaunchCommitDeps {
@@ -512,6 +542,7 @@ pub fn accepted_launch_commit_port(
             agent_repo,
             lifecycle_advance,
             hook_runtime_sync,
+            agent_run_list_invalidation,
         },
     ))
 }
@@ -563,6 +594,22 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use crate::test_support::MemoryAgentRunDeliveryBindingRepository;
+
+    #[derive(Default)]
+    struct RecordingAgentRunListInvalidationPort {
+        items: Mutex<Vec<AgentRunListInvalidation>>,
+    }
+
+    #[async_trait]
+    impl AgentRunListInvalidationPort for RecordingAgentRunListInvalidationPort {
+        async fn publish_agent_run_list_invalidated(
+            &self,
+            invalidation: AgentRunListInvalidation,
+        ) -> Result<(), String> {
+            self.items.lock().unwrap().push(invalidation);
+            Ok(())
+        }
+    }
 
     #[derive(Default)]
     struct FixtureFrameRepo {
@@ -823,6 +870,7 @@ mod tests {
         let anchor_repo = Arc::new(FixtureAnchorRepo::default());
         anchor_repo.create_once(&anchor).await.unwrap();
         let delivery_binding_repo = Arc::new(MemoryAgentRunDeliveryBindingRepository::default());
+        let invalidations = Arc::new(RecordingAgentRunListInvalidationPort::default());
 
         let adapter = AgentRunAcceptedLaunchCommitAdapter::new(AgentRunAcceptedLaunchCommitDeps {
             frame_repo: Some(frame_repo.clone()),
@@ -831,6 +879,7 @@ mod tests {
             agent_repo: Some(agent_repo.clone()),
             lifecycle_advance: Some(Arc::new(NoopLifecycleAdvance)),
             hook_runtime_sync: None,
+            agent_run_list_invalidation: Some(invalidations.clone()),
         });
 
         let outcome = adapter
@@ -853,6 +902,20 @@ mod tests {
             .expect("current delivery");
         assert_eq!(binding.runtime_session_id, "runtime-a");
         assert_eq!(binding.status, DeliveryBindingStatus::Running);
+        let recorded = invalidations.items.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].project_id, project_id);
+        assert_eq!(recorded[0].run_id, run_id);
+        assert_eq!(recorded[0].agent_id, agent.id);
+        assert_eq!(recorded[0].frame_id, Some(pending_frame.id));
+        assert_eq!(
+            recorded[0].reason,
+            ControlPlaneProjectionChangeReason::AgentRunShellChanged
+        );
+        assert_eq!(
+            recorded[0].delivery_runtime_session_id.as_deref(),
+            Some("runtime-a")
+        );
     }
 
     #[tokio::test]
@@ -884,6 +947,7 @@ mod tests {
             agent_repo: Some(agent_repo),
             lifecycle_advance: Some(Arc::new(NoopLifecycleAdvance)),
             hook_runtime_sync: None,
+            agent_run_list_invalidation: None,
         });
 
         let error = adapter
@@ -934,6 +998,7 @@ mod tests {
             agent_repo: Some(agent_repo),
             lifecycle_advance: Some(Arc::new(FailingLifecycleAdvance)),
             hook_runtime_sync: None,
+            agent_run_list_invalidation: None,
         });
 
         let error = adapter
@@ -979,6 +1044,7 @@ mod tests {
             agent_repo: Some(agent_repo.clone()),
             lifecycle_advance: None,
             hook_runtime_sync: None,
+            agent_run_list_invalidation: None,
         });
 
         assert!(adapter.agent_needs_bootstrap("runtime-bootstrap").await);

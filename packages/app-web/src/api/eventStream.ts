@@ -30,6 +30,7 @@ export function readProjectEventStreamCursor(event: ProjectEventStreamEnvelope):
       return event.data.last_event_id;
     case "StateChanged":
       return event.data.id;
+    case "ControlPlaneProjectionChanged":
     case "BackendRuntimeChanged":
     case "Heartbeat":
       return null;

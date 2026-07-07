@@ -2,6 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
+import type { ControlPlaneProjectionChanged } from "./backbone-protocol";
 import type { ContextContainerDefinition } from "./context-contracts";
 import type { StoryResponse } from "./story-contracts";
 import type { WorkspaceResponse } from "./workspace-contracts";
@@ -14,9 +15,11 @@ export type ProjectAccessSummaryResponse = { role: ProjectRole | null, can_use: 
 
 export type ProjectConfig = { default_agent_type: string | null, default_workspace_id: string | null, agent_presets: Array<AgentPreset>, context_containers: Array<ContextContainerDefinition>, scheduling: SchedulingConfig, };
 
+export type ProjectControlPlaneProjectionChanged = { project_id: string, change: ControlPlaneProjectionChanged, };
+
 export type ProjectDetailResponse = { workspaces: Array<WorkspaceResponse>, stories: Array<StoryResponse>, id: string, name: string, description: string, config: ProjectConfig, created_by_user_id: string, updated_by_user_id: string, visibility: ProjectVisibility, is_template: boolean, cloned_from_project_id: string | null, access: ProjectAccessSummaryResponse, created_at: string, updated_at: string, };
 
-export type ProjectEventStreamEnvelope = { "type": "Connected", "data": { last_event_id: number, } } | { "type": "StateChanged", "data": ProjectStateChange } | { "type": "BackendRuntimeChanged", "data": { backend_id: string, } } | { "type": "Heartbeat", "data": { timestamp: number, } };
+export type ProjectEventStreamEnvelope = { "type": "Connected", "data": { last_event_id: number, } } | { "type": "StateChanged", "data": ProjectStateChange } | { "type": "ControlPlaneProjectionChanged", "data": ProjectControlPlaneProjectionChanged } | { "type": "BackendRuntimeChanged", "data": { backend_id: string, } } | { "type": "Heartbeat", "data": { timestamp: number, } };
 
 export type ProjectResponse = { id: string, name: string, description: string, config: ProjectConfig, created_by_user_id: string, updated_by_user_id: string, visibility: ProjectVisibility, is_template: boolean, cloned_from_project_id: string | null, access: ProjectAccessSummaryResponse, created_at: string, updated_at: string, };
 

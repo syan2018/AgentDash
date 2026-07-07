@@ -441,6 +441,23 @@ async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() 
             .and_then(|metadata| metadata.get("terminal_event_seq")),
         Some(&serde_json::json!(42))
     );
+    let metadata = message.source.metadata.as_ref().expect("source metadata");
+    assert_eq!(
+        metadata.get("channel_id"),
+        Some(&serde_json::json!(effect_id.to_string()))
+    );
+    assert!(
+        metadata
+            .get("channel_message_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+    );
+    assert!(
+        metadata
+            .get("channel_delivery_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+    );
     assert!(message.preview.contains("terminal event #42"));
     assert!(message.retain_payload);
 }

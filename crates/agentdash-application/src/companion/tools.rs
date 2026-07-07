@@ -5,7 +5,13 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, text_user_input_blocks,
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
-use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
+use agentdash_domain::agent_run_mailbox::MailboxSourceIdentity;
+use agentdash_domain::channel::{
+    Channel, ChannelAddress, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryStatus,
+    ChannelDeliveryTarget, ChannelMedium, ChannelMessage, ChannelOwner, ChannelParticipant,
+    ChannelParticipantRef, ChannelPayload, ChannelRecord, ChannelRole, ChannelTopology,
+    MaterializedDeliveryRef,
+};
 #[cfg(test)]
 use agentdash_domain::workflow::LifecycleGateRepository;
 use agentdash_domain::workflow::{
@@ -54,6 +60,9 @@ use crate::agent_run::{
     AgentRunMailboxService, DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
     SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
     mailbox_source_identity_dedup_key,
+};
+use crate::channel::{
+    ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_session_agent_run_bridge::{
@@ -246,14 +255,149 @@ fn companion_wake_source(
         .with_metadata(metadata)
 }
 
-fn companion_wake_source_dedup_key(source: &MailboxSourceIdentity) -> String {
-    mailbox_source_identity_dedup_key(source).unwrap_or_else(|| {
-        format!(
-            "source:{}:{}:fallback",
-            source.namespace.as_str(),
-            source.kind.as_str()
-        )
-    })
+fn companion_channel_service(repos: &crate::repository_set::RepositorySet) -> ChannelService {
+    ChannelService::new(
+        Arc::new(LifecycleRunChannelOwnerStore::new(
+            repos.lifecycle_run_repo.clone(),
+        )),
+        Arc::new(UnsupportedChannelBindingResolver),
+    )
+}
+
+async fn ensure_companion_agent_channel(
+    repos: &crate::repository_set::RepositorySet,
+    run_id: Uuid,
+    parent_agent_id: Uuid,
+    child_agent_id: Uuid,
+    companion_label: &str,
+) -> Result<Uuid, crate::ApplicationError> {
+    let owner = ChannelOwner::LifecycleRun { run_id };
+    let stable_alias = format!("companion:{parent_agent_id}:{child_agent_id}");
+    let service = companion_channel_service(repos);
+    let registry = service.load_registry(&owner).await?;
+    if let Some(record) = registry.channels.iter().find(|record| {
+        record
+            .channel
+            .aliases
+            .iter()
+            .any(|alias| alias == &stable_alias)
+    }) {
+        return Ok(record.channel.id);
+    }
+
+    let mut channel = Channel::new(owner, ChannelMedium::Runtime, ChannelTopology::Direct);
+    channel.aliases = dedup_channel_aliases(vec![
+        "companion".to_string(),
+        stable_alias,
+        companion_label.to_string(),
+    ]);
+    let mut record = ChannelRecord::new(channel);
+    record.participants.push(ChannelParticipant::new(
+        ChannelParticipantRef::LifecycleAgent {
+            run_id,
+            agent_id: parent_agent_id,
+        },
+        ChannelRole::Owner,
+    ));
+    record.participants.push(ChannelParticipant::new(
+        ChannelParticipantRef::LifecycleAgent {
+            run_id,
+            agent_id: child_agent_id,
+        },
+        ChannelRole::Member,
+    ));
+    let channel_id = record.channel.id;
+    service.upsert_channel(record).await?;
+    Ok(channel_id)
+}
+
+async fn ensure_companion_human_channel(
+    repos: &crate::repository_set::RepositorySet,
+    run_id: Uuid,
+    agent_id: Uuid,
+    request_id: &str,
+) -> Result<Uuid, crate::ApplicationError> {
+    let owner = ChannelOwner::LifecycleRun { run_id };
+    let stable_alias = format!("companion_human:{agent_id}:{request_id}");
+    let service = companion_channel_service(repos);
+    let registry = service.load_registry(&owner).await?;
+    if let Some(record) = registry.channels.iter().find(|record| {
+        record
+            .channel
+            .aliases
+            .iter()
+            .any(|alias| alias == &stable_alias)
+    }) {
+        return Ok(record.channel.id);
+    }
+
+    let mut channel = Channel::new(owner, ChannelMedium::Human, ChannelTopology::Direct);
+    channel.aliases = vec![stable_alias, "human".to_string()];
+    let mut record = ChannelRecord::new(channel);
+    record.participants.push(ChannelParticipant::new(
+        ChannelParticipantRef::LifecycleAgent { run_id, agent_id },
+        ChannelRole::Member,
+    ));
+    record.participants.push(ChannelParticipant::new(
+        ChannelParticipantRef::Human {
+            user_id: "human".to_string(),
+        },
+        ChannelRole::External,
+    ));
+    let channel_id = record.channel.id;
+    service.upsert_channel(record).await?;
+    Ok(channel_id)
+}
+
+fn dedup_channel_aliases(aliases: Vec<String>) -> Vec<String> {
+    let mut deduped = Vec::new();
+    for alias in aliases {
+        if !alias.trim().is_empty() && !deduped.iter().any(|existing| existing == &alias) {
+            deduped.push(alias);
+        }
+    }
+    deduped
+}
+
+fn channel_address_from_mailbox_source(source: &MailboxSourceIdentity) -> ChannelAddress {
+    let mut address = ChannelAddress::new(
+        source.namespace.clone(),
+        source.kind.clone(),
+        source.actor.clone(),
+    );
+    if let Some(source_ref) = &source.source_ref {
+        address = address.with_source_ref(source_ref.clone());
+    }
+    if let Some(correlation_ref) = &source.correlation_ref {
+        address = address.with_correlation_ref(correlation_ref.clone());
+    }
+    if let Some(route) = &source.route {
+        address = address.with_route(route.clone());
+    }
+    if let Some(metadata) = &source.metadata {
+        address = address.with_metadata(metadata.clone());
+    }
+    address
+}
+
+fn companion_channel_delivery_intent(
+    channel_id: Uuid,
+    run_id: Uuid,
+    agent_id: Uuid,
+    sender: ChannelParticipantRef,
+    source: &MailboxSourceIdentity,
+    payload_kind: &'static str,
+    input_text: &str,
+) -> ChannelDeliveryIntent {
+    let address = channel_address_from_mailbox_source(source);
+    let mut message = ChannelMessage::new(
+        channel_id,
+        sender,
+        ChannelPayload::text(payload_kind, input_text.to_string()),
+        address,
+    );
+    message.correlation_ref = source.correlation_ref.clone();
+    ChannelDeliveryIntent::new(message, ChannelDeliveryTarget::Mailbox { run_id, agent_id })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -378,6 +522,14 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
             }
         }
 
+        let channel_id = ensure_companion_agent_channel(
+            &self.repos,
+            command.run_id,
+            command.parent_agent_id,
+            command.child_agent_id,
+            "companion",
+        )
+        .await?;
         let source = companion_wake_source(
             "result",
             "agent",
@@ -394,7 +546,6 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "resolved_turn_id": command.resolved_turn_id.clone(),
             }),
         );
-        let source_dedup_key = companion_wake_source_dedup_key(&source);
         let mailbox_result = deliver_companion_mailbox_message(
             &self.repos,
             self.session_core.clone(),
@@ -402,13 +553,18 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
             self.session_eventing.clone(),
             self.session_launch.clone(),
             CompanionMailboxDeliveryInput {
+                channel_id,
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
                 runtime_session_id: command.parent_delivery_runtime_session_id,
+                sender: ChannelParticipantRef::LifecycleAgent {
+                    run_id: command.run_id,
+                    agent_id: command.child_agent_id,
+                },
                 source,
+                payload_kind: "companion_result",
                 input_text: command.input_text,
                 client_command_id,
-                source_dedup_key,
             },
         )
         .await?;
@@ -434,6 +590,14 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
         &self,
         command: CompanionParentRequestMailboxDeliveryCommand,
     ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        let channel_id = ensure_companion_agent_channel(
+            &self.repos,
+            command.run_id,
+            command.parent_agent_id,
+            command.child_agent_id,
+            "companion",
+        )
+        .await?;
         let source = companion_wake_source(
             "parent_request",
             "agent",
@@ -451,7 +615,6 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "wait": command.wait,
             }),
         );
-        let source_dedup_key = companion_wake_source_dedup_key(&source);
         deliver_companion_mailbox_message(
             &self.repos,
             self.session_core.clone(),
@@ -459,13 +622,18 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
             self.session_eventing.clone(),
             self.session_launch.clone(),
             CompanionMailboxDeliveryInput {
+                channel_id,
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
                 runtime_session_id: command.parent_delivery_runtime_session_id,
+                sender: ChannelParticipantRef::LifecycleAgent {
+                    run_id: command.run_id,
+                    agent_id: command.child_agent_id,
+                },
                 source,
+                payload_kind: "companion_parent_request",
                 input_text: command.input_text,
                 client_command_id: format!("companion-parent-request:{}", command.gate_id),
-                source_dedup_key,
             },
         )
         .await
@@ -475,6 +643,14 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
         &self,
         command: CompanionParentResponseMailboxDeliveryCommand,
     ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        let channel_id = ensure_companion_agent_channel(
+            &self.repos,
+            command.run_id,
+            command.parent_agent_id,
+            command.child_agent_id,
+            "companion",
+        )
+        .await?;
         let source = companion_wake_source(
             "parent_response",
             "agent",
@@ -491,7 +667,6 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "resolved_turn_id": command.resolved_turn_id.clone(),
             }),
         );
-        let source_dedup_key = companion_wake_source_dedup_key(&source);
         deliver_companion_mailbox_message(
             &self.repos,
             self.session_core.clone(),
@@ -499,13 +674,18 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
             self.session_eventing.clone(),
             self.session_launch.clone(),
             CompanionMailboxDeliveryInput {
+                channel_id,
                 run_id: command.run_id,
                 agent_id: command.child_agent_id,
                 runtime_session_id: command.child_delivery_runtime_session_id,
+                sender: ChannelParticipantRef::LifecycleAgent {
+                    run_id: command.run_id,
+                    agent_id: command.parent_agent_id,
+                },
                 source,
+                payload_kind: "companion_parent_response",
                 input_text: command.input_text,
                 client_command_id: format!("companion-parent-response:{}", command.gate_id),
-                source_dedup_key,
             },
         )
         .await
@@ -518,6 +698,13 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
         &self,
         command: CompanionHumanResponseMailboxDeliveryCommand,
     ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
+        let channel_id = ensure_companion_human_channel(
+            &self.repos,
+            command.run_id,
+            command.agent_id,
+            &command.request_id,
+        )
+        .await?;
         let source = companion_wake_source(
             "human_response",
             "human",
@@ -534,7 +721,6 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
                 "request_type": command.request_type.clone(),
             }),
         );
-        let source_dedup_key = companion_wake_source_dedup_key(&source);
         deliver_companion_mailbox_message(
             &self.repos,
             self.session_core.clone(),
@@ -542,13 +728,17 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
             self.session_eventing.clone(),
             self.session_launch.clone(),
             CompanionMailboxDeliveryInput {
+                channel_id,
                 run_id: command.run_id,
                 agent_id: command.agent_id,
                 runtime_session_id: command.delivery_runtime_session_id,
+                sender: ChannelParticipantRef::Human {
+                    user_id: "human".to_string(),
+                },
                 source,
+                payload_kind: "companion_human_response",
                 input_text: command.input_text,
                 client_command_id: format!("companion-human-response:{}", command.gate_id),
-                source_dedup_key,
             },
         )
         .await
@@ -556,13 +746,15 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
 }
 
 struct CompanionMailboxDeliveryInput {
+    channel_id: Uuid,
     run_id: Uuid,
     agent_id: Uuid,
     runtime_session_id: String,
+    sender: ChannelParticipantRef,
     source: MailboxSourceIdentity,
+    payload_kind: &'static str,
     input_text: String,
     client_command_id: String,
-    source_dedup_key: String,
 }
 
 fn companion_delivery_projection_input_blocks(
@@ -596,6 +788,19 @@ async fn deliver_companion_mailbox_message(
             input.run_id, input.agent_id, input.runtime_session_id, delivery.runtime_session_id
         )));
     }
+    let channel_intent = companion_channel_delivery_intent(
+        input.channel_id,
+        input.run_id,
+        input.agent_id,
+        input.sender,
+        &input.source,
+        input.payload_kind,
+        &input.input_text,
+    );
+    let materialized =
+        companion_channel_service(repos).materialize_delivery_to_mailbox(&channel_intent)?;
+    let source_dedup_key = mailbox_source_identity_dedup_key(&materialized.message.source)
+        .unwrap_or_else(|| format!("channel_delivery:{}", materialized.delivery_id));
     let mailbox_result = companion_mailbox_service_from_runtime(
         repos,
         session_core,
@@ -607,17 +812,17 @@ async fn deliver_companion_mailbox_message(
         run_id: input.run_id,
         agent_id: input.agent_id,
         frame_id: delivery.current_frame_id,
-        origin: MailboxMessageOrigin::Companion,
-        source: input.source,
+        origin: materialized.message.origin,
+        source: materialized.message.source,
         retain_payload: true,
         schedule_on_submit: true,
         input: companion_delivery_projection_input_blocks(input.input_text),
         client_command_id: input.client_command_id,
-        source_dedup_key: Some(input.source_dedup_key),
+        source_dedup_key: Some(source_dedup_key),
         executor_config: None,
         backend_selection: None,
         identity: None,
-        delivery_intent: None,
+        delivery_intent: Some(format!("channel_delivery:{}", channel_intent.id)),
     })
     .await
     .map_err(map_companion_mailbox_error)?;
@@ -651,6 +856,26 @@ async fn deliver_companion_mailbox_message(
         .accepted_refs
         .as_ref()
         .and_then(|refs| refs.protocol_turn_id.clone());
+    if let Some(mailbox_message_id) = mailbox_message_id {
+        companion_channel_service(repos)
+            .record_delivery_state(
+                &ChannelOwner::LifecycleRun {
+                    run_id: input.run_id,
+                },
+                input.channel_id,
+                ChannelDeliveryState {
+                    delivery_id: channel_intent.id,
+                    message_id: channel_intent.message.id,
+                    target: channel_intent.target.clone(),
+                    status: ChannelDeliveryStatus::Materialized,
+                    materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
+                        message_id: mailbox_message_id,
+                    }),
+                    updated_at: Utc::now(),
+                },
+            )
+            .await?;
+    }
 
     Ok(CompanionParentMailboxDeliveryResult {
         mailbox_message_id,
@@ -1122,13 +1347,45 @@ impl CompanionRequestTool {
                 "adoption_mode": adoption_mode,
                 "task_id": requested_task_id.map(|id| id.to_string()),
             }));
+        let channel_id = ensure_companion_agent_channel(
+            &self.repos,
+            parent_run_id,
+            parent_agent_id,
+            dispatch_result.agent_ref,
+            &companion_label,
+        )
+        .await
+        .map_err(|error| {
+            AgentToolError::ExecutionFailed(format!("companion channel 创建失败: {error}"))
+        })?;
+        let channel_intent = companion_channel_delivery_intent(
+            channel_id,
+            dispatch_result.run_ref,
+            dispatch_result.agent_ref,
+            ChannelParticipantRef::LifecycleAgent {
+                run_id: parent_run_id,
+                agent_id: parent_agent_id,
+            },
+            &source,
+            "companion_dispatch",
+            &dispatch_result.launch_source.dispatch_prompt,
+        );
+        let materialized = companion_channel_service(&self.repos)
+            .materialize_delivery_to_mailbox(&channel_intent)
+            .map_err(|error| {
+                AgentToolError::ExecutionFailed(format!(
+                    "companion channel materialization 失败: {error}"
+                ))
+            })?;
+        let source_dedup_key = mailbox_source_identity_dedup_key(&materialized.message.source)
+            .unwrap_or_else(|| format!("channel_delivery:{}", materialized.delivery_id));
         let mailbox_result = companion_mailbox_service(&self.repos, &session_services)
             .accept_intake_message(AgentRunMailboxIntakeCommand {
                 run_id: dispatch_result.run_ref,
                 agent_id: dispatch_result.agent_ref,
                 frame_id: dispatch_result.frame_ref,
-                origin: MailboxMessageOrigin::Companion,
-                source,
+                origin: materialized.message.origin,
+                source: materialized.message.source,
                 retain_payload: true,
                 schedule_on_submit: true,
                 input: text_user_input_blocks(&dispatch_result.launch_source.dispatch_prompt),
@@ -1136,7 +1393,7 @@ impl CompanionRequestTool {
                     "companion-dispatch:{}:{}",
                     dispatch_plan.dispatch_id, dispatch_result.agent_ref
                 ),
-                source_dedup_key: None,
+                source_dedup_key: Some(source_dedup_key),
                 executor_config: Some(
                     dispatch_result
                         .launch_source
@@ -1145,7 +1402,7 @@ impl CompanionRequestTool {
                 ),
                 backend_selection: None,
                 identity: self.tool_context.identity().cloned(),
-                delivery_intent: None,
+                delivery_intent: Some(format!("channel_delivery:{}", channel_intent.id)),
             })
             .await
             .map_err(|error| {
@@ -1170,6 +1427,31 @@ impl CompanionRequestTool {
                 "child companion mailbox dispatch 未接受首条任务: outcome={mailbox_outcome}, mailbox_message_id={}",
                 mailbox_message_id.as_deref().unwrap_or("(none)")
             )));
+        }
+        if let Some(mailbox_message) = mailbox_result.mailbox_message.as_ref() {
+            companion_channel_service(&self.repos)
+                .record_delivery_state(
+                    &ChannelOwner::LifecycleRun {
+                        run_id: parent_run_id,
+                    },
+                    channel_id,
+                    ChannelDeliveryState {
+                        delivery_id: channel_intent.id,
+                        message_id: channel_intent.message.id,
+                        target: channel_intent.target.clone(),
+                        status: ChannelDeliveryStatus::Materialized,
+                        materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
+                            message_id: mailbox_message.id,
+                        }),
+                        updated_at: Utc::now(),
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    AgentToolError::ExecutionFailed(format!(
+                        "companion channel delivery state 写入失败: {error}"
+                    ))
+                })?;
         }
 
         // ─── Hook: after_subagent_dispatch ──────────────────────────────
@@ -2991,7 +3273,7 @@ mod companion_tests {
         CompanionGateWaitOutcome, CompanionRespondParams, CompanionSliceMode,
         build_companion_dispatch_prompt, build_companion_dispatch_slice,
         build_companion_execution_slice, build_subagent_pending_action, companion_owner_candidates,
-        companion_wake_source, companion_wake_source_dedup_key, merge_gate_result_refs,
+        companion_wake_source, merge_gate_result_refs,
         platform_capability_grant_missing_broker_error, wait_for_lifecycle_gate_resolution,
     };
     use agentdash_domain::workflow::{
@@ -3149,7 +3431,7 @@ mod companion_tests {
     }
 
     #[test]
-    fn companion_wake_source_has_stable_identity_and_dedup_key() {
+    fn companion_wake_source_has_stable_identity() {
         let gate_id = Uuid::new_v4();
         let source = companion_wake_source(
             "result",
@@ -3169,10 +3451,6 @@ mod companion_tests {
             Some(gate_id.to_string().as_str())
         );
         assert_eq!(source.correlation_ref.as_deref(), Some("dispatch-1"));
-        assert_eq!(
-            companion_wake_source_dedup_key(&source),
-            format!("source:companion:result:ref:{gate_id}:correlation:dispatch-1")
-        );
     }
 
     #[test]

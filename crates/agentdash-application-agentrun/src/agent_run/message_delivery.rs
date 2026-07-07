@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use agentdash_agent_protocol::UserInputBlock;
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
+use agentdash_domain::agent_run_mailbox::MailboxMessageOrigin;
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{AgentConfig, PromptPayload};
 
@@ -11,6 +12,7 @@ use crate::error::WorkflowApplicationError;
 #[derive(Debug, Clone)]
 pub struct AgentRunMessageDelivery {
     pub delivery_runtime_session_id: String,
+    pub origin: MailboxMessageOrigin,
     pub input: Vec<UserInputBlock>,
     pub executor_config: Option<AgentConfig>,
     pub planning_input: LaunchPlanningInput,
@@ -49,7 +51,7 @@ impl AgentRunMessageDeliveryPort for SessionTurnMessageDeliveryPort {
         };
         validate_launch_prompt_input(&user_input)?;
         let command =
-            LaunchCommand::lifecycle_agent_user_message_input(user_input, delivery.identity);
+            launch_command_for_mailbox_origin(delivery.origin, user_input, delivery.identity);
         self.session_launch
             .launch_command_in_task(
                 delivery.delivery_runtime_session_id.clone(),
@@ -57,6 +59,22 @@ impl AgentRunMessageDeliveryPort for SessionTurnMessageDeliveryPort {
                 delivery.planning_input,
             )
             .await
+    }
+}
+
+fn launch_command_for_mailbox_origin(
+    origin: MailboxMessageOrigin,
+    input: LaunchPromptInput,
+    identity: Option<AuthIdentity>,
+) -> LaunchCommand {
+    match origin {
+        MailboxMessageOrigin::User => {
+            LaunchCommand::lifecycle_agent_user_message_input(input, identity)
+        }
+        MailboxMessageOrigin::Companion => LaunchCommand::companion_parent_resume_input(input),
+        MailboxMessageOrigin::Hook => LaunchCommand::hook_auto_resume_input(input),
+        MailboxMessageOrigin::Workflow => LaunchCommand::workflow_orchestrator_input(input),
+        MailboxMessageOrigin::System => LaunchCommand::system_delivery_input(input),
     }
 }
 

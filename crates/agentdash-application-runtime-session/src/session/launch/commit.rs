@@ -1,5 +1,8 @@
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+};
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchCommitInput;
+use agentdash_application_ports::launch::LaunchSource;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_spi::{ConnectorError, McpServerReadinessSummary};
 use std::fmt::Display;
@@ -47,6 +50,7 @@ impl TurnCommitter {
                 &prepared.source,
                 turn_id,
                 &prepared.resolved_payload,
+                prepared.launch_source,
                 prepared.started_at_ms,
             )
             .await
@@ -185,18 +189,31 @@ impl TurnCommitter {
         source: &SourceInfo,
         turn_id: &str,
         resolved_payload: &ResolvedPromptPayload,
+        launch_source: LaunchSource,
         started_at_ms: i64,
     ) -> Result<(), ConnectorError> {
         // 直接使用 resolve 阶段已转换好的 canonical 输入，不再二次 round-trip ContentBlock。
         if !resolved_payload.input.is_empty() {
-            let envelope = build_user_input_submitted_envelope(
-                session_id,
-                source,
-                turn_id,
-                &format!("{turn_id}:user-input:0"),
-                agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-                resolved_payload.input.clone(),
-            );
+            let envelope =
+                if should_persist_as_human_user_input(launch_source, &resolved_payload.text_prompt)
+                {
+                    build_user_input_submitted_envelope(
+                        session_id,
+                        source,
+                        turn_id,
+                        &format!("{turn_id}:user-input:0"),
+                        agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                        resolved_payload.input.clone(),
+                    )
+                } else {
+                    build_system_delivery_envelope(
+                        session_id,
+                        source,
+                        turn_id,
+                        launch_source,
+                        &resolved_payload.text_prompt,
+                    )
+                };
             self.deps
                 .eventing
                 .persist_notification(session_id, envelope)
@@ -265,6 +282,7 @@ impl TurnCommitter {
                 source: prepared.source.clone(),
                 terminal_kind: TurnTerminalKind::Failed,
                 terminal_message: Some(error_message.clone()),
+                terminal_diagnostic: None,
                 hook_runtime: prepared.hook_runtime.clone(),
                 post_turn_handler: prepared.post_turn_handler.clone(),
             },
@@ -285,6 +303,113 @@ impl TurnCommitter {
 
 fn connector_commit_error(stage: &str, error: impl Display) -> ConnectorError {
     ConnectorError::Runtime(format!("{stage}: {error}"))
+}
+
+fn should_persist_as_human_user_input(launch_source: LaunchSource, text_prompt: &str) -> bool {
+    matches!(
+        launch_source,
+        LaunchSource::HttpPrompt
+            | LaunchSource::LifecycleAgentUserMessage
+            | LaunchSource::LocalRelayPrompt
+    ) && !contains_project_subagent_notification_marker(text_prompt)
+}
+
+fn contains_project_subagent_notification_marker(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("<subagent_notification>") || trimmed.contains("\n<subagent_notification>")
+}
+
+fn system_delivery_kind(launch_source: LaunchSource, text_prompt: &str) -> &'static str {
+    if contains_project_subagent_notification_marker(text_prompt) {
+        return "subagent_notification";
+    }
+    match launch_source {
+        LaunchSource::CompanionDispatch | LaunchSource::CompanionParentResume => {
+            "companion_delivery"
+        }
+        LaunchSource::SystemDelivery => "system_delivery",
+        LaunchSource::HookAutoResume => "hook_auto_resume",
+        LaunchSource::WorkflowOrchestrator => "workflow_delivery",
+        LaunchSource::RoutineExecutor => "routine_delivery",
+        LaunchSource::HttpPrompt
+        | LaunchSource::LifecycleAgentUserMessage
+        | LaunchSource::LocalRelayPrompt => "system_delivery",
+    }
+}
+
+fn system_delivery_actor(launch_source: LaunchSource, text_prompt: &str) -> &'static str {
+    if contains_project_subagent_notification_marker(text_prompt) {
+        return "agent";
+    }
+    match launch_source {
+        LaunchSource::CompanionDispatch | LaunchSource::CompanionParentResume => "agent",
+        LaunchSource::SystemDelivery => "system",
+        LaunchSource::HookAutoResume
+        | LaunchSource::WorkflowOrchestrator
+        | LaunchSource::RoutineExecutor => "system",
+        LaunchSource::HttpPrompt
+        | LaunchSource::LifecycleAgentUserMessage
+        | LaunchSource::LocalRelayPrompt => "user",
+    }
+}
+
+fn build_system_delivery_envelope(
+    session_id: &str,
+    source: &SourceInfo,
+    turn_id: &str,
+    launch_source: LaunchSource,
+    text_prompt: &str,
+) -> BackboneEnvelope {
+    let summary = bounded_system_delivery_summary(text_prompt);
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "system_message".to_string(),
+            value: serde_json::json!({
+                "kind": system_delivery_kind(launch_source, text_prompt),
+                "origin": "system",
+                "source": {
+                    "namespace": "runtime_launch",
+                    "kind": launch_source_tag(launch_source),
+                    "actor": system_delivery_actor(launch_source, text_prompt),
+                },
+                "status": "delivered",
+                "summary": summary,
+                "message": summary,
+                "turn_id": turn_id,
+            }),
+        }),
+        session_id,
+        source.clone(),
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: Some(0),
+    })
+}
+
+fn launch_source_tag(launch_source: LaunchSource) -> &'static str {
+    match launch_source {
+        LaunchSource::HttpPrompt => "http_prompt",
+        LaunchSource::LifecycleAgentUserMessage => "lifecycle_agent_user_message",
+        LaunchSource::HookAutoResume => "hook_auto_resume",
+        LaunchSource::CompanionDispatch => "companion_dispatch",
+        LaunchSource::CompanionParentResume => "companion_parent_resume",
+        LaunchSource::SystemDelivery => "system_delivery",
+        LaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
+        LaunchSource::RoutineExecutor => "routine_executor",
+        LaunchSource::LocalRelayPrompt => "local_relay_prompt",
+    }
+}
+
+fn bounded_system_delivery_summary(text: &str) -> String {
+    const MAX_CHARS: usize = 2_000;
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+    let mut summary = trimmed.chars().take(MAX_CHARS).collect::<String>();
+    summary.push_str("...");
+    summary
 }
 
 fn apply_turn_start_meta(
@@ -365,6 +490,42 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
+
+    #[test]
+    fn project_subagent_notification_marker_stays_out_of_human_input_boundary() {
+        let text = "<subagent_notification>{\"status\":\"completed\"}</subagent_notification>";
+
+        assert!(!should_persist_as_human_user_input(
+            LaunchSource::HttpPrompt,
+            text
+        ));
+        assert_eq!(
+            system_delivery_kind(LaunchSource::HttpPrompt, text),
+            "subagent_notification"
+        );
+        assert_eq!(
+            system_delivery_actor(LaunchSource::HttpPrompt, text),
+            "agent"
+        );
+    }
+
+    #[test]
+    fn companion_parent_resume_stays_out_of_human_input_boundary() {
+        let text = "Companion child result is available.\n- status: failed";
+
+        assert!(!should_persist_as_human_user_input(
+            LaunchSource::CompanionParentResume,
+            text
+        ));
+        assert_eq!(
+            system_delivery_kind(LaunchSource::CompanionParentResume, text),
+            "companion_delivery"
+        );
+        assert_eq!(
+            system_delivery_actor(LaunchSource::CompanionParentResume, text),
+            "agent"
+        );
+    }
 
     #[tokio::test]
     async fn runtime_command_apply_commit_failure_marks_failed_and_returns_error() {

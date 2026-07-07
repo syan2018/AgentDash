@@ -1,5 +1,6 @@
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_application_ports::frame_launch_envelope::FrameRuntimeSurface;
+use agentdash_application_ports::launch::LaunchSource;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_domain::settings::SettingScope;
 use agentdash_domain::workflow::AgentFrame;
@@ -7,11 +8,12 @@ use agentdash_spi::hooks::{
     ContextAgentConsumptionMode, ContextConnectorProfile, ContextDeliveryAppliedFrame,
     ContextDeliveryConnectorInput, ContextDeliveryEntry, ContextDeliveryMetadata,
     ContextDeliveryPlan, ContextDeliveryRecord, ContextDeliveryTarget, ContextFrame,
-    ContextFrameSection, ContextModelChannel, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
+    ContextFrameSection, ContextModelChannel, HookTrigger, HookTurnStartNotice, RuntimeEventSource,
+    SharedHookRuntime,
 };
 use agentdash_spi::{
-    CapabilityState, ConnectorError, ExecutionContext, McpServerReadinessSummary, RuntimeMcpServer,
-    RuntimeMcpSourceReadiness,
+    CapabilityState, ConnectorError, ExecutionContext, McpServerReadinessSummary, PromptPayload,
+    RuntimeMcpServer, RuntimeMcpSourceReadiness,
 };
 
 use super::deps::TurnPreparationDeps;
@@ -50,6 +52,7 @@ pub(in crate::session) struct PreparedTurn {
     pub resolved_payload: ResolvedPromptPayload,
     pub resolved_follow_up_session_id: Option<String>,
     pub title_hint: String,
+    pub launch_source: LaunchSource,
     pub source: SourceInfo,
     pub connector_context: Option<ExecutionContext>,
     pub context_delivery_record: Option<ContextDeliveryRecord>,
@@ -85,8 +88,20 @@ impl TurnPreparer {
             had_existing_runtime,
         } = input;
 
-        let resolved_payload = launch_plan.resolved_payload.clone();
+        let mut resolved_payload = launch_plan.resolved_payload.clone();
         let title_hint = launch_plan.title_hint.clone();
+        let launch_source = launch_plan.source;
+        let system_delivery_context_frame = build_system_delivery_context_frame(
+            &session_id,
+            &turn_id,
+            launch_source,
+            &resolved_payload.text_prompt,
+        );
+        if system_delivery_context_frame.is_some() {
+            resolved_payload.prompt_payload = PromptPayload::Text(
+                "Continue from the AgentDash system delivery context for this turn.".to_string(),
+            );
+        }
         let resolved_follow_up_session_id = launch_plan.summary.follow_up_session_id.clone();
         let post_turn_handler = launch_plan.terminal_boundary.post_turn_handler.clone();
         let hook_runtime = launch_plan.context.turn.hook_runtime.clone();
@@ -336,6 +351,10 @@ impl TurnPreparer {
         }
 
         let mut turn_context_frames: Vec<ContextFrame> = Vec::new();
+        if let Some(frame) = system_delivery_context_frame {
+            accepted_context_frames_to_emit.push(frame.clone());
+            turn_context_frames.push(frame);
+        }
         for frame in identity_frames {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
@@ -426,6 +445,7 @@ impl TurnPreparer {
             resolved_payload,
             resolved_follow_up_session_id,
             title_hint,
+            launch_source,
             source,
             connector_context: Some(context),
             context_delivery_record,
@@ -532,6 +552,119 @@ fn collect_queued_turn_start_frames(
         .into_iter()
         .filter_map(notice_to_context_frame)
         .collect()
+}
+
+fn build_system_delivery_context_frame(
+    session_id: &str,
+    turn_id: &str,
+    launch_source: LaunchSource,
+    text_prompt: &str,
+) -> Option<ContextFrame> {
+    if should_remain_human_prompt(launch_source, text_prompt) {
+        return None;
+    }
+
+    let kind = system_delivery_kind(launch_source, text_prompt);
+    let source_kind = launch_source_tag(launch_source);
+    let summary = bounded_system_delivery_summary(text_prompt);
+    let rendered_text = format!(
+        "## AgentDash System Delivery\n\n- kind: {kind}\n- source: {source_kind}\n- status: delivered\n- turn_id: {turn_id}\n\n{summary}"
+    );
+    Some(ContextFrame {
+        id: format!("{turn_id}:system-delivery-context"),
+        kind: "system_delivery".to_string(),
+        source: system_delivery_runtime_source(launch_source, text_prompt),
+        phase_node: None,
+        apply_mode: None,
+        delivery_status: "accepted".to_string(),
+        delivery_channel: "connector_context".to_string(),
+        message_role: "system".to_string(),
+        delivery_metadata: ContextDeliveryMetadata::for_frame(
+            "system_delivery",
+            "connector_context",
+            "system",
+        ),
+        rendered_text: rendered_text.clone(),
+        sections: vec![ContextFrameSection::SystemNotice {
+            title: "AgentDash System Delivery".to_string(),
+            summary: format!("{kind} from {source_kind} for session {session_id}."),
+            body: Some(rendered_text),
+        }],
+        created_at_ms: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+fn should_remain_human_prompt(launch_source: LaunchSource, text_prompt: &str) -> bool {
+    matches!(
+        launch_source,
+        LaunchSource::HttpPrompt
+            | LaunchSource::LifecycleAgentUserMessage
+            | LaunchSource::LocalRelayPrompt
+    ) && !contains_project_subagent_notification_marker(text_prompt)
+}
+
+fn contains_project_subagent_notification_marker(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("<subagent_notification>") || trimmed.contains("\n<subagent_notification>")
+}
+
+fn system_delivery_kind(launch_source: LaunchSource, text_prompt: &str) -> &'static str {
+    if contains_project_subagent_notification_marker(text_prompt) {
+        return "subagent_notification";
+    }
+    match launch_source {
+        LaunchSource::CompanionDispatch | LaunchSource::CompanionParentResume => {
+            "companion_delivery"
+        }
+        LaunchSource::SystemDelivery => "system_delivery",
+        LaunchSource::HookAutoResume => "hook_auto_resume",
+        LaunchSource::WorkflowOrchestrator => "workflow_delivery",
+        LaunchSource::RoutineExecutor => "routine_delivery",
+        LaunchSource::HttpPrompt
+        | LaunchSource::LifecycleAgentUserMessage
+        | LaunchSource::LocalRelayPrompt => "system_delivery",
+    }
+}
+
+fn system_delivery_runtime_source(
+    launch_source: LaunchSource,
+    text_prompt: &str,
+) -> RuntimeEventSource {
+    if contains_project_subagent_notification_marker(text_prompt)
+        || matches!(
+            launch_source,
+            LaunchSource::CompanionDispatch | LaunchSource::CompanionParentResume
+        )
+    {
+        RuntimeEventSource::CompanionResult
+    } else {
+        RuntimeEventSource::RuntimeContextUpdate
+    }
+}
+
+fn launch_source_tag(launch_source: LaunchSource) -> &'static str {
+    match launch_source {
+        LaunchSource::HttpPrompt => "http_prompt",
+        LaunchSource::LifecycleAgentUserMessage => "lifecycle_agent_user_message",
+        LaunchSource::HookAutoResume => "hook_auto_resume",
+        LaunchSource::CompanionDispatch => "companion_dispatch",
+        LaunchSource::CompanionParentResume => "companion_parent_resume",
+        LaunchSource::SystemDelivery => "system_delivery",
+        LaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
+        LaunchSource::RoutineExecutor => "routine_executor",
+        LaunchSource::LocalRelayPrompt => "local_relay_prompt",
+    }
+}
+
+fn bounded_system_delivery_summary(text: &str) -> String {
+    const MAX_CHARS: usize = 2_000;
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+    let mut summary = trimmed.chars().take(MAX_CHARS).collect::<String>();
+    summary.push_str("...");
+    summary
 }
 
 fn notice_to_context_frame(notice: HookTurnStartNotice) -> Option<ContextFrame> {
@@ -824,6 +957,38 @@ mod tests {
             false,
             &LaunchFollowUpSource::SessionMeta,
         ));
+    }
+
+    #[test]
+    fn project_subagent_notification_enters_system_delivery_context_frame() {
+        let text = "<subagent_notification>{\"status\":\"completed\"}</subagent_notification>";
+        let frame = build_system_delivery_context_frame(
+            "session-1",
+            "turn-1",
+            LaunchSource::HttpPrompt,
+            text,
+        )
+        .expect("marker should be classified as system delivery");
+
+        assert_eq!(frame.kind, "system_delivery");
+        assert_eq!(frame.message_role, "system");
+        assert_eq!(
+            frame.delivery_metadata.model_channel,
+            ContextModelChannel::System
+        );
+        assert!(frame.rendered_text.contains("kind: subagent_notification"));
+        assert!(frame.rendered_text.contains("source: http_prompt"));
+        assert!(frame.rendered_text.contains("status: delivered"));
+        assert!(frame.rendered_text.contains(text));
+        assert!(
+            build_system_delivery_context_frame(
+                "session-1",
+                "turn-2",
+                LaunchSource::HttpPrompt,
+                "hello from a human",
+            )
+            .is_none()
+        );
     }
 
     #[test]

@@ -78,6 +78,7 @@ impl ConnectorStarter {
                         source: prepared.source.clone(),
                         terminal_kind: TurnTerminalKind::Failed,
                         terminal_message: Some(error.to_string()),
+                        terminal_diagnostic: None,
                         hook_runtime: prepared.hook_runtime.clone(),
                         post_turn_handler: prepared.post_turn_handler.clone(),
                     },

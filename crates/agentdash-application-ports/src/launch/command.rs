@@ -14,6 +14,7 @@ pub enum LaunchSource {
     HookAutoResume,
     CompanionDispatch,
     CompanionParentResume,
+    SystemDelivery,
     WorkflowOrchestrator,
     RoutineExecutor,
     LocalRelayPrompt,
@@ -134,6 +135,7 @@ impl LaunchCommand {
             LaunchSource::HookAutoResume => "hook_auto_resume",
             LaunchSource::CompanionDispatch => "companion_dispatch",
             LaunchSource::CompanionParentResume => "companion_parent_resume",
+            LaunchSource::SystemDelivery => "system_delivery",
             LaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
             LaunchSource::RoutineExecutor => "routine_executor",
             LaunchSource::LocalRelayPrompt => "local_relay_prompt",
@@ -183,6 +185,10 @@ impl LaunchCommand {
 
     pub fn companion_parent_resume_input(input: LaunchPromptInput) -> Self {
         Self::source_input(input, LaunchSource::CompanionParentResume)
+    }
+
+    pub fn system_delivery_input(input: LaunchPromptInput) -> Self {
+        Self::source_input(input, LaunchSource::SystemDelivery)
     }
 
     pub fn companion_dispatch_input(

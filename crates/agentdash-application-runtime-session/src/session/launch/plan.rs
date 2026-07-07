@@ -21,6 +21,7 @@ use crate::session::types::{
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, FrameRuntimeSurface,
 };
+use agentdash_application_ports::launch::LaunchSource;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
@@ -142,6 +143,7 @@ pub struct LaunchPlan {
     pub trace: LaunchPlanTrace,
     pub context: ExecutionContext,
     pub summary: LaunchSummary,
+    pub source: LaunchSource,
 }
 
 pub struct LaunchPlanInput {
@@ -149,6 +151,7 @@ pub struct LaunchPlanInput {
     pub launch_envelope: FrameLaunchEnvelope,
     pub session_id: String,
     pub turn_id: String,
+    pub source: LaunchSource,
     pub launch_path: PromptLaunchPath,
     pub restore_mode: LaunchRestoreMode,
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
@@ -345,6 +348,7 @@ impl LaunchPlan {
             trace,
             context: ExecutionContext { session, turn },
             summary,
+            source: input.source,
         }
     }
 }
@@ -443,6 +447,7 @@ mod tests {
             launch_envelope,
             session_id: "sess-launch".to_string(),
             turn_id: "t1".to_string(),
+            source: LaunchSource::HttpPrompt,
             launch_path,
             restore_mode: LaunchRestoreMode::None,
             hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,

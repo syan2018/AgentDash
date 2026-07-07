@@ -1,4 +1,6 @@
-use super::payload::{message_executor_config, message_input, message_launch_planning_input};
+use super::payload::{
+    build_input_preview, message_executor_config, message_input, message_launch_planning_input,
+};
 use super::policy::runtime_can_launch;
 use super::target::ensure_command_target;
 use super::*;
@@ -13,6 +15,70 @@ enum SteeringDeliveryMode {
 struct SteeringDeliveryResult {
     outcome: AgentRunMailboxScheduleOutcome,
     agent_message: Option<AgentMessage>,
+}
+
+fn mailbox_delivery_projection_envelope(
+    runtime_session_id: &str,
+    turn_id: &str,
+    message: &AgentRunMailboxMessage,
+    delivery_kind: &str,
+    input: &[UserInputBlock],
+) -> BackboneEnvelope {
+    let preview = build_input_preview(input);
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+            key: "system_message".to_string(),
+            value: serde_json::json!({
+                "kind": mailbox_system_event_kind(message),
+                "origin": message.origin.as_str(),
+                "source": mailbox_source_identity_value(&message.source),
+                "delivery_kind": delivery_kind,
+                "status": "delivered",
+                "summary": preview,
+                "message": preview,
+                "refs": {
+                    "mailbox_message_id": message.id.to_string(),
+                    "turn_id": turn_id,
+                    "gate_id": message.source.source_ref.clone(),
+                    "correlation_ref": message.source.correlation_ref.clone(),
+                    "delivery_runtime_session_id": runtime_session_id,
+                },
+            }),
+        }),
+        runtime_session_id,
+        SourceInfo {
+            connector_id: "agent_run_mailbox".to_string(),
+            connector_type: "platform".to_string(),
+            executor_id: Some("AGENT_RUN_MAILBOX".to_string()),
+        },
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: Some(0),
+    })
+}
+
+fn mailbox_system_event_kind(message: &AgentRunMailboxMessage) -> &'static str {
+    match message.origin {
+        MailboxMessageOrigin::Companion => "companion_delivery",
+        MailboxMessageOrigin::Hook => "hook_delivery",
+        MailboxMessageOrigin::Workflow => "workflow_delivery",
+        MailboxMessageOrigin::System => "system_delivery",
+        MailboxMessageOrigin::User => "user_delivery",
+    }
+}
+
+fn mailbox_source_identity_value(source: &MailboxSourceIdentity) -> serde_json::Value {
+    serde_json::json!({
+        "namespace": source.namespace.as_str(),
+        "kind": source.kind.as_str(),
+        "source_ref": source.source_ref.as_deref(),
+        "correlation_ref": source.correlation_ref.as_deref(),
+        "actor": source.actor.as_str(),
+        "route": source.route.as_deref(),
+        "display_label_key": source.display_label_key.as_str(),
+        "metadata": source.metadata.as_ref(),
+    })
 }
 
 fn required_message_delivery_runtime_session_id(
@@ -415,7 +481,8 @@ impl<'a> AgentRunMailboxService<'a> {
         let turn_id = match delivery
             .deliver_user_message(AgentRunMessageDelivery {
                 delivery_runtime_session_id: runtime_session_id.clone(),
-                input,
+                origin: message.origin,
+                input: input.clone(),
                 executor_config,
                 planning_input,
                 identity,
@@ -461,6 +528,15 @@ impl<'a> AgentRunMailboxService<'a> {
         let (run, agent, frame) = self
             .resolve_control_plane_for_delivery(&runtime_session_id)
             .await?;
+        let event_error = self
+            .emit_non_user_mailbox_delivery_projection(
+                &message,
+                &runtime_session_id,
+                &turn_id,
+                "launch",
+                &input,
+            )
+            .await;
         let refs = AgentRunAcceptedRefs {
             run_id: run.id,
             agent_id: agent.id,
@@ -478,7 +554,7 @@ impl<'a> AgentRunMailboxService<'a> {
                 MailboxMessageStatus::Dispatched,
                 Some(turn_id),
                 None,
-                None,
+                event_error,
             )
             .await?;
         self.complete_message_receipt(
@@ -601,43 +677,18 @@ impl<'a> AgentRunMailboxService<'a> {
             SteeringDeliveryMode::DelegateReturn => "delegate",
             SteeringDeliveryMode::LiveSteer => "scheduler",
         };
-        let event_error = match self
-            .session_eventing
-            .emit_user_input_submitted(
+        let event_error = self
+            .emit_mailbox_steering_projection(
+                &message,
                 &runtime_session_id,
                 &active_turn_id,
-                &format!(
-                    "{}:mailbox_steering:{}:{}:{}",
-                    active_turn_id,
-                    event_route,
-                    message.id,
-                    Uuid::new_v4()
-                ),
-                UserInputSubmissionKind::Steer,
-                input,
+                event_route,
+                &input,
+                &run,
+                &agent,
+                &frame,
             )
-            .await
-        {
-            Ok(()) => None,
-            Err(error) => {
-                let event_error = format!("AgentRun mailbox steering 事件写入失败: {error}");
-                let diagnostic_context =
-                    DiagnosticErrorContext::new("agent_run.mailbox.scheduler", "emit_steer_event");
-                diag_error!(Warn, Subsystem::AgentRun,
-                    context = &diagnostic_context,
-                    error = &error,
-                    runtime_session_id = %runtime_session_id,
-                    run_id = %run.id,
-                    agent_id = %agent.id,
-                    frame_id = %frame.id,
-                    mailbox_message_id = %message.id,
-                    active_turn_id = %active_turn_id,
-                    delivery_mode = event_route,
-                    "AgentRun mailbox steering accepted but event projection failed"
-                );
-                Some(event_error)
-            }
-        };
+            .await;
         let updated = self
             .mailbox_repo
             .mark_message_status(
@@ -674,6 +725,116 @@ impl<'a> AgentRunMailboxService<'a> {
             outcome,
             agent_message,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn emit_mailbox_steering_projection(
+        &self,
+        message: &AgentRunMailboxMessage,
+        runtime_session_id: &str,
+        active_turn_id: &str,
+        event_route: &str,
+        input: &[UserInputBlock],
+        run: &LifecycleRun,
+        agent: &LifecycleAgent,
+        frame: &AgentFrame,
+    ) -> Option<String> {
+        if message.origin == MailboxMessageOrigin::User {
+            return match self
+                .session_eventing
+                .emit_user_input_submitted(
+                    runtime_session_id,
+                    active_turn_id,
+                    &format!(
+                        "{}:mailbox_steering:{}:{}:{}",
+                        active_turn_id,
+                        event_route,
+                        message.id,
+                        Uuid::new_v4()
+                    ),
+                    UserInputSubmissionKind::Steer,
+                    input.to_vec(),
+                )
+                .await
+            {
+                Ok(()) => None,
+                Err(error) => {
+                    let event_error = format!("AgentRun mailbox steering 事件写入失败: {error}");
+                    let diagnostic_context = DiagnosticErrorContext::new(
+                        "agent_run.mailbox.scheduler",
+                        "emit_steer_event",
+                    );
+                    diag_error!(Warn, Subsystem::AgentRun,
+                        context = &diagnostic_context,
+                        error = &error,
+                        runtime_session_id = %runtime_session_id,
+                        run_id = %run.id,
+                        agent_id = %agent.id,
+                        frame_id = %frame.id,
+                        mailbox_message_id = %message.id,
+                        active_turn_id = %active_turn_id,
+                        delivery_mode = event_route,
+                        "AgentRun mailbox steering accepted but event projection failed"
+                    );
+                    Some(event_error)
+                }
+            };
+        }
+
+        self.emit_non_user_mailbox_delivery_projection(
+            message,
+            runtime_session_id,
+            active_turn_id,
+            "steer",
+            input,
+        )
+        .await
+    }
+
+    async fn emit_non_user_mailbox_delivery_projection(
+        &self,
+        message: &AgentRunMailboxMessage,
+        runtime_session_id: &str,
+        turn_id: &str,
+        delivery_kind: &str,
+        input: &[UserInputBlock],
+    ) -> Option<String> {
+        if message.origin == MailboxMessageOrigin::User {
+            return None;
+        }
+        let envelope = mailbox_delivery_projection_envelope(
+            runtime_session_id,
+            turn_id,
+            message,
+            delivery_kind,
+            input,
+        );
+        match self
+            .session_eventing
+            .persist_notification(runtime_session_id, envelope)
+            .await
+        {
+            Ok(()) => None,
+            Err(error) => {
+                let event_error = format!("AgentRun mailbox system delivery 事件写入失败: {error}");
+                let diagnostic_context = DiagnosticErrorContext::new(
+                    "agent_run.mailbox.scheduler",
+                    "emit_system_delivery_event",
+                );
+                diag_error!(Warn, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
+                    runtime_session_id = %runtime_session_id,
+                    mailbox_message_id = %message.id,
+                    origin = message.origin.as_str(),
+                    source_namespace = %message.source.namespace,
+                    source_kind = %message.source.kind,
+                    delivery_kind,
+                    "AgentRun mailbox system delivery accepted but event projection failed"
+                );
+                Some(event_error)
+            }
+        }
     }
 
     async fn consume_as_resume_launch_source(

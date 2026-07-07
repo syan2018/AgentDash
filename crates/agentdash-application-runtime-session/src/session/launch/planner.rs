@@ -264,6 +264,7 @@ impl<'a> LaunchPlanner<'a> {
             launch_envelope,
             session_id: sid,
             turn_id: input.turn_id.to_string(),
+            source: command.source(),
             launch_path: prompt_launch_path,
             restore_mode,
             hook_snapshot_reload,

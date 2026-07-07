@@ -3,7 +3,8 @@ use std::io;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, UserInputBlock, UserInputSubmissionKind, text_user_input_blocks,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, UserInputBlock, UserInputSubmissionKind,
+    text_user_input_blocks,
 };
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
 use agentdash_domain::DomainError;
@@ -516,6 +517,70 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
 }
 
 #[tokio::test]
+async fn companion_steering_projects_system_event_instead_of_user_input() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+    let gate_id = Uuid::new_v4();
+    let message = fixture
+        .seed_message_with_origin(
+            "companion-steer",
+            MailboxDelivery::LaunchOrContinueTurn,
+            None,
+            MailboxMessageOrigin::Companion,
+            MailboxSourceIdentity::new("companion", "result", "agent")
+                .with_source_ref(gate_id.to_string())
+                .with_correlation_ref("dispatch-1")
+                .with_route("parent")
+                .with_metadata(serde_json::json!({ "status": "failed" })),
+        )
+        .await;
+    let target = AgentRunMailboxCommandTarget::from_runtime_session_adapter(
+        fixture.run.id,
+        fixture.agent.id,
+        fixture.current_frame.id,
+        fixture.delivery_runtime_session_id.clone(),
+    );
+
+    let outcomes = fixture
+        .service()
+        .schedule_for_target(
+            target,
+            AgentRunMailboxScheduleTrigger::AgentRunTurnBoundary,
+            None,
+        )
+        .await
+        .expect("scheduler drain");
+
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].outcome, AgentRunMailboxCommandOutcome::Steered);
+    assert_eq!(*fixture.eventing.emit_count.lock().await, 0);
+    let persisted = fixture.eventing.persisted.lock().await;
+    assert_eq!(persisted.len(), 1);
+    match &persisted[0].event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
+            assert_eq!(key, "system_message");
+            assert_eq!(
+                value.get("kind"),
+                Some(&serde_json::json!("companion_delivery"))
+            );
+            assert_eq!(value.get("origin"), Some(&serde_json::json!("companion")));
+            assert_eq!(
+                value.pointer("/source/source_ref"),
+                Some(&serde_json::json!(gate_id.to_string()))
+            );
+            assert_eq!(
+                value.pointer("/source/correlation_ref"),
+                Some(&serde_json::json!("dispatch-1"))
+            );
+            assert_eq!(
+                value.pointer("/refs/mailbox_message_id"),
+                Some(&serde_json::json!(message.id.to_string()))
+            );
+        }
+        other => panic!("expected platform system message, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn mailbox_launch_failure_marks_message_and_receipt_failed_without_accepted_refs() {
     let fixture = MailboxSteeringFixture::new(false).await;
     *fixture.core.state.lock().await = SessionExecutionState::Idle;
@@ -709,6 +774,7 @@ impl MailboxSteeringFixture {
             eventing: Arc::new(TestEventingPort {
                 fail_events,
                 emit_count: Mutex::new(0),
+                persisted: Mutex::new(Vec::new()),
             }),
             launch: Arc::new(TestLaunchPort),
             run,
@@ -750,6 +816,24 @@ impl MailboxSteeringFixture {
         delivery: MailboxDelivery,
         expected_active_turn: Option<&str>,
     ) -> AgentRunMailboxMessage {
+        self.seed_message_with_origin(
+            client_command_id,
+            delivery,
+            expected_active_turn,
+            MailboxMessageOrigin::User,
+            MailboxSourceIdentity::composer(),
+        )
+        .await
+    }
+
+    async fn seed_message_with_origin(
+        &self,
+        client_command_id: &str,
+        delivery: MailboxDelivery,
+        expected_active_turn: Option<&str>,
+        origin: MailboxMessageOrigin,
+        source: MailboxSourceIdentity,
+    ) -> AgentRunMailboxMessage {
         let receipt = self
             .receipts
             .claim(NewAgentRunCommandReceipt {
@@ -761,7 +845,7 @@ impl MailboxSteeringFixture {
             })
             .await
             .expect("receipt");
-        let message = mailbox_message(
+        let mut message = mailbox_message(
             self.run.id,
             self.agent.id,
             &self.delivery_runtime_session_id,
@@ -769,6 +853,8 @@ impl MailboxSteeringFixture {
             expected_active_turn.map(str::to_string),
             Some(receipt.receipt().id),
         );
+        message.origin = origin;
+        message.source = source;
         self.mailbox.insert(message.clone()).await;
         message
     }
@@ -1360,6 +1446,7 @@ impl RuntimeSessionControlPort for TestControlPort {
 struct TestEventingPort {
     fail_events: bool,
     emit_count: Mutex<usize>,
+    persisted: Mutex<Vec<BackboneEnvelope>>,
 }
 
 #[async_trait::async_trait]
@@ -1381,8 +1468,9 @@ impl RuntimeSessionEventingPort for TestEventingPort {
     async fn persist_notification(
         &self,
         _session_id: &str,
-        _envelope: BackboneEnvelope,
+        envelope: BackboneEnvelope,
     ) -> Result<(), WorkflowApplicationError> {
+        self.persisted.lock().await.push(envelope);
         Ok(())
     }
 

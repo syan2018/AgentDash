@@ -34,6 +34,7 @@ pub(crate) fn mailbox_item_from_message(message: &AgentRunMailboxMessage) -> Wai
             "correlation_ref": message.source.correlation_ref,
             "source_dedup_key": message.source_dedup_key,
         }),
+        exec: None,
         cursor: Some(message.updated_at.timestamp_millis().to_string()),
         next: Some(json!({
             "source": "mailbox",

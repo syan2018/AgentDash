@@ -120,6 +120,8 @@ pub struct WaitActivityItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub result_refs: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exec: Option<WaitExecDetails>,
     pub cursor: Option<String>,
     pub next: Option<Value>,
     pub updated_at_ms: i64,
@@ -133,6 +135,7 @@ impl WaitActivityItem {
                 | "failed"
                 | "cancelled"
                 | "lost"
+                | "unknown"
                 | "resolved"
                 | "queued"
                 | "ready_to_consume"
@@ -141,4 +144,27 @@ impl WaitActivityItem {
                 | "blocked"
         )
     }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct WaitExecDetails {
+    pub terminal_id: String,
+    pub terminal_state: String,
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_preview: Option<WaitOutputPreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_preview: Option<WaitOutputPreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pty_preview: Option<WaitOutputPreview>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct WaitOutputPreview {
+    pub text: String,
+    pub bytes: usize,
+    pub truncated: bool,
+    pub from: String,
 }

@@ -745,6 +745,12 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 "收到终端输出事件"
             );
             if let Some(term_state) = state.services.terminal_registry.get_terminal(terminal_id) {
+                state.services.terminal_registry.append_terminal_output(
+                    terminal_id,
+                    &payload.data,
+                    payload.truncation.truncated,
+                    payload.truncation.omitted_bytes,
+                );
                 let Some(session_id) = state
                     .services
                     .terminal_registry

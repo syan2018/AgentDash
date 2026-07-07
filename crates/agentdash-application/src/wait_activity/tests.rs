@@ -107,12 +107,334 @@ async fn wait_returns_completed_exec_with_shell_exec_next_ref() {
     assert!(!result.timed_out);
     assert_eq!(result.items[0].status, "completed");
     assert_eq!(
+        result.items[0].exec.as_ref().expect("exec").exit_code,
+        Some(0)
+    );
+    assert_eq!(
+        result.items[0].result_refs["source"]["namespace"],
+        json!("terminal")
+    );
+    assert_eq!(result.items[0].result_refs["source"]["kind"], json!("exec"));
+    assert_eq!(
+        result.items[0].result_refs["output_ref"]["kind"],
+        json!("terminal_output")
+    );
+    assert_eq!(
+        result.items[0].result_refs["diagnostic"]["kind"],
+        json!("exec_exit")
+    );
+    assert_eq!(
         result.items[0]
             .next
             .as_ref()
             .and_then(|next| next.get("tool")),
         Some(&json!("shell_exec"))
     );
+    assert_eq!(
+        result.items[0]
+            .next
+            .as_ref()
+            .and_then(|next| next.get("operation")),
+        Some(&json!("read"))
+    );
+    assert_eq!(
+        result.items[0]
+            .next
+            .as_ref()
+            .and_then(|next| next.get("after_seq")),
+        Some(&json!(0))
+    );
+}
+
+#[tokio::test]
+async fn wait_returns_failed_exec_for_non_zero_exit_with_diagnostic_refs() {
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    terminal_registry.register_terminal_with_metadata(
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+        "term-1",
+        "backend-1",
+        None,
+        Some("main"),
+        Some("D:/repo"),
+        Some("interactive"),
+    );
+    terminal_registry.record_output_snapshot(
+        "term-1",
+        "partial stdout\n",
+        "missing file\n",
+        "",
+        Some(7),
+        false,
+        0,
+    );
+    terminal_registry.update_state("term-1", "exited", Some(2));
+
+    let service = test_service(terminal_registry);
+    let result = service
+        .wait(
+            WaitToolContext {
+                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                turn_id: "turn-1".to_string(),
+            },
+            WaitActivityRequest {
+                activity_refs: vec!["term-1".to_string()],
+                kinds: vec!["exec".to_string()],
+                timeout_ms: Some(0),
+                max_items: Some(10),
+                after_cursor: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("wait result");
+
+    let item = result.items.first().expect("wait item");
+    assert!(!result.timed_out);
+    assert_eq!(item.status, "failed");
+    assert_eq!(item.exec.as_ref().expect("exec").exit_code, Some(2));
+    assert_eq!(
+        item.exec
+            .as_ref()
+            .expect("exec")
+            .stderr_preview
+            .as_ref()
+            .expect("stderr preview")
+            .text,
+        "missing file"
+    );
+    assert_eq!(item.result_refs["diagnostic"]["kind"], json!("exec_exit"));
+    assert_eq!(item.result_refs["diagnostic"]["exit_code"], json!(2));
+    assert_eq!(item.result_refs["output_ref"]["next_seq"], json!(7));
+    assert_eq!(item.cursor, Some(item.updated_at_ms.to_string()));
+    assert_ne!(item.cursor.as_deref(), Some("7"));
+    assert_eq!(
+        item.next.as_ref().and_then(|next| next.get("next_seq")),
+        Some(&json!(7))
+    );
+    assert_eq!(
+        item.diagnostic.as_ref().expect("diagnostic").kind,
+        "exec_exit"
+    );
+    assert!(item.preview.as_deref().unwrap_or("").contains("stderr"));
+}
+
+#[tokio::test]
+async fn wait_maps_cancelled_lost_and_unknown_exec_statuses() {
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    for (terminal_id, state) in [
+        ("term-cancelled", "killed"),
+        ("term-lost", "lost"),
+        ("term-unknown", "mystery"),
+    ] {
+        terminal_registry.register_terminal_with_metadata(
+            "00000000-0000-0000-0000-000000000001",
+            "00000000-0000-0000-0000-000000000002",
+            terminal_id,
+            "backend-1",
+            None,
+            Some("main"),
+            Some("D:/repo"),
+            Some("interactive"),
+        );
+        terminal_registry.update_state(terminal_id, state, None);
+    }
+
+    let service = test_service(terminal_registry);
+    let scope = ResolvedWaitScope {
+        delivery_runtime_session_id: None,
+        run_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("run id")),
+        agent_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000002").expect("agent id")),
+        frame_id: None,
+    };
+    let request = WaitActivityRequest {
+        activity_refs: Vec::new(),
+        kinds: vec!["exec".to_string()],
+        timeout_ms: Some(10),
+        max_items: Some(10),
+        after_cursor: None,
+    };
+
+    let items = service
+        .collect_items(&scope, &request, &BTreeSet::new())
+        .await
+        .expect("items");
+
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.activity_ref == "term-cancelled")
+            .expect("cancelled")
+            .status,
+        "cancelled"
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.activity_ref == "term-lost")
+            .expect("lost")
+            .status,
+        "lost"
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.activity_ref == "term-unknown")
+            .expect("unknown")
+            .status,
+        "unknown"
+    );
+}
+
+#[tokio::test]
+async fn later_wait_salvages_completed_exec_with_preview_and_read_refs() {
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    terminal_registry.register_terminal_with_metadata(
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+        "term-1",
+        "backend-1",
+        None,
+        Some("main"),
+        Some("D:/repo"),
+        Some("interactive"),
+    );
+    terminal_registry.record_output_snapshot("term-1", "done\n", "", "", Some(3), false, 0);
+    terminal_registry.update_state("term-1", "exited", Some(0));
+
+    let service = test_service(terminal_registry);
+    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    let result = service
+        .wait(
+            WaitToolContext {
+                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                turn_id: "turn-1".to_string(),
+            },
+            WaitActivityRequest {
+                activity_refs: vec!["term-1".to_string()],
+                kinds: vec!["exec".to_string()],
+                timeout_ms: Some(0),
+                max_items: Some(10),
+                after_cursor: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("wait result");
+
+    let item = result.items.first().expect("wait item");
+    assert_eq!(item.status, "completed");
+    assert_eq!(
+        item.exec
+            .as_ref()
+            .expect("exec")
+            .stdout_preview
+            .as_ref()
+            .expect("stdout preview")
+            .text,
+        "done"
+    );
+    assert_eq!(item.result_refs["output_ref"]["after_seq"], json!(0));
+    assert_eq!(item.result_refs["output_ref"]["next_seq"], json!(3));
+}
+
+#[tokio::test]
+async fn wait_timeout_does_not_consume_exec_output_projection() {
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    terminal_registry.register_terminal_with_metadata(
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+        "term-1",
+        "backend-1",
+        None,
+        Some("main"),
+        Some("D:/repo"),
+        Some("interactive"),
+    );
+    terminal_registry.record_output_snapshot("term-1", "hello\n", "", "", Some(2), false, 0);
+    terminal_registry.update_state("term-1", "running", None);
+    let before = terminal_registry
+        .get_terminal("term-1")
+        .expect("terminal")
+        .output_projection
+        .expect("projection");
+
+    let service = test_service(terminal_registry.clone());
+    let result = service
+        .wait(
+            WaitToolContext {
+                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                turn_id: "turn-1".to_string(),
+            },
+            WaitActivityRequest {
+                activity_refs: vec!["term-1".to_string()],
+                kinds: vec!["exec".to_string()],
+                timeout_ms: Some(0),
+                max_items: Some(10),
+                after_cursor: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("wait result");
+
+    let after = terminal_registry
+        .get_terminal("term-1")
+        .expect("terminal")
+        .output_projection
+        .expect("projection");
+    assert!(result.timed_out);
+    assert_eq!(before.stdout_preview, after.stdout_preview);
+    assert_eq!(before.next_seq, after.next_seq);
+}
+
+#[tokio::test]
+async fn wait_exec_preview_is_bounded_to_terminal_projection_tail() {
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    terminal_registry.register_terminal_with_metadata(
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+        "term-1",
+        "backend-1",
+        None,
+        Some("main"),
+        Some("D:/repo"),
+        Some("interactive"),
+    );
+    let large_stdout = format!("{}tail", "x".repeat(5000));
+    terminal_registry.record_output_snapshot("term-1", &large_stdout, "", "", Some(9), false, 0);
+    terminal_registry.update_state("term-1", "exited", Some(0));
+
+    let service = test_service(terminal_registry);
+    let result = service
+        .wait(
+            WaitToolContext {
+                delivery_runtime_session_id: Some("runtime-1".to_string()),
+                turn_id: "turn-1".to_string(),
+            },
+            WaitActivityRequest {
+                activity_refs: vec!["term-1".to_string()],
+                kinds: vec!["exec".to_string()],
+                timeout_ms: Some(0),
+                max_items: Some(10),
+                after_cursor: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("wait result");
+
+    let preview = result.items[0]
+        .exec
+        .as_ref()
+        .expect("exec")
+        .stdout_preview
+        .as_ref()
+        .expect("stdout preview");
+    assert!(preview.truncated);
+    assert!(preview.bytes <= 4 * 1024);
+    assert!(preview.text.ends_with("tail"));
+    assert_eq!(preview.from, "tail");
 }
 
 #[tokio::test]

@@ -137,6 +137,27 @@ impl ShellTerminalRegistry for RuntimeShellTerminalRegistry {
         })
     }
 
+    fn record_shell_terminal_output_snapshot(
+        &self,
+        terminal_id: &str,
+        stdout: &str,
+        stderr: &str,
+        pty: &str,
+        next_seq: Option<u64>,
+        truncated: bool,
+        omitted_bytes: usize,
+    ) {
+        self.terminal_registry.record_output_snapshot(
+            terminal_id,
+            stdout,
+            stderr,
+            pty,
+            next_seq,
+            truncated,
+            omitted_bytes,
+        );
+    }
+
     fn remove_shell_terminal(&self, terminal_id: &str) {
         self.terminal_registry.remove_terminal(terminal_id);
     }

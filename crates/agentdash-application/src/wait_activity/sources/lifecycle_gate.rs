@@ -21,6 +21,7 @@ pub(crate) fn gate_item_from_gate(gate: &LifecycleGate) -> WaitActivityItem {
         preview: projection.preview,
         diagnostic,
         result_refs,
+        exec: None,
         cursor: None,
         next: Some(json!({
             "tool": "wait",

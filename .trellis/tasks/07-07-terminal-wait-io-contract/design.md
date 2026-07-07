@@ -21,6 +21,8 @@ future channel system
   = can map source/cursor/payload refs without parsing text
 ```
 
+Terminal wait 与 companion mailbox delivery 共享同一个投影原则：执行结果事实归各自 authority，模型可见内容只是一层 bounded system projection。terminal 这边的 authority 是 terminal registry / output store；companion 这边的 authority 是 `LifecycleGate.payload_json`。二者都不应该把 payload body、stdout/stderr body 或 channel 语义塞进自然语言消息里。
+
 ## Authority Map
 
 | Concern | Owner | Contract |
@@ -33,6 +35,45 @@ future channel system
 | future channel receipt | future channel layer | can consume source refs, cursor, payload refs, diagnostic refs |
 
 RuntimeSession delivery terminal state remains separate from terminal resource state. A RuntimeSession can fail without a PTY terminal resource, and a PTY terminal can be lost without meaning the AgentRun delivery terminal failed.
+
+## System Projection Alignment
+
+If terminal wait completion needs to surface as a session/system notification, it should use the same shape family as companion mailbox delivery projection instead of masquerading as human input:
+
+```json
+{
+  "key": "system_message",
+  "data": {
+    "kind": "terminal_exec_wait",
+    "origin": "system",
+    "source": {
+      "namespace": "terminal",
+      "kind": "exec",
+      "source_ref": "term_abc",
+      "correlation_ref": "runtime-session-or-command-ref",
+      "actor": "system",
+      "route": "wait"
+    },
+    "status": "failed",
+    "summary": "exit 2; stderr: no such file or directory",
+    "result_refs": {
+      "terminal_id": "term_abc",
+      "output_ref": {
+        "kind": "terminal_output",
+        "terminal_id": "term_abc",
+        "after_seq": 42,
+        "next_seq": 87
+      },
+      "diagnostic": {
+        "kind": "exec_exit",
+        "exit_code": 2
+      }
+    }
+  }
+}
+```
+
+This projection is optional for the first implementation. If it is introduced, it must remain a projection over terminal authority, not a second delivery queue. It must not emit `UserInputSubmitted`.
 
 ## Proposed `wait` Exec Item Shape
 
@@ -48,6 +89,12 @@ RuntimeSession delivery terminal state remains separate from terminal resource s
   "preview": "exit 2; stderr: no such file or directory",
   "result_refs": {
     "terminal_id": "term_abc",
+    "source": {
+      "namespace": "terminal",
+      "kind": "exec",
+      "source_ref": "term_abc",
+      "correlation_ref": "runtime-session-or-command-ref"
+    },
     "output_ref": {
       "kind": "terminal_output",
       "terminal_id": "term_abc",
@@ -192,6 +239,7 @@ Future channel system should be able to map terminal wait/read into channel-like
 | `activity_ref` / `terminal_id` | source stream id |
 | `source_ref` | producer identity |
 | `correlation_ref` | command / runtime / turn correlation |
+| `result_refs.source` | normalized source identity |
 | `output_ref.kind=terminal_output` | payload stream ref |
 | `after_seq` / `next_seq` | channel cursor |
 | `stdout_preview` / `stderr_preview` | bounded projection |

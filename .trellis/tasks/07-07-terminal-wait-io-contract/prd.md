@@ -1,8 +1,8 @@
-# 设计 terminal wait IO 交互合同
+# 收束 terminal wait IO 交互合同
 
 ## Goal
 
-设计 terminal / exec wait activity 的 Agent-facing IO 合同，让 `wait` 对已完成或失败的终端命令提供足够的 bounded decision surface，同时保持完整 stdout/stderr 由 `shell_exec read` 读取。该设计需要为后续 channel 系统预留干净的 source/result refs，不把 terminal output 或 channel 语义固化在自由文本里。
+实现 terminal / exec wait activity 的首期 Agent-facing IO 合同，让 `wait` 对已完成或失败的终端命令提供足够的 bounded decision surface，同时保持完整 stdout/stderr 由 `shell_exec read` 读取。该实现需要为后续 channel 系统预留干净的 source/result refs，不把 terminal output 或 channel 语义固化在自由文本里。
 
 ## Background
 
@@ -21,6 +21,7 @@
 - `wait` 是 bounded observer，不是完整 stdout/stderr 传输通道。
 - `shell_exec read` 是 terminal output body 的读取 owner。
 - Workspace waiting projection 与 Agent-facing `wait` 应共享状态、refs 和 bounded preview 语义。
+- terminal wait 的 system message / projection 语义应与 companion mailbox delivery 对齐：结构化来源、activity/output refs、bounded summary 与 full body owner 分离；不能把终端输出或系统通知伪装成 human input。
 - 后续 channel 系统可能接管跨来源消息建模；本设计需要保留 source、target、cursor、payload refs、diagnostic refs 的结构化字段，不把语义塞进一段自然语言。
 
 ## Requirements
@@ -32,17 +33,21 @@
 5. 输出 preview 必须 bounded，且 stdout/stderr 分开表达，便于 Agent 判断失败原因。
 6. 设计需要明确 terminal resource state、exec command state、RuntimeSession delivery terminal state 的边界，避免 `lost/failed/completed` 互相冒充。
 7. 设计需要预留 channel-friendly IO：source identity、activity ref、output cursor、payload refs、diagnostic refs、bounded projection text 分层清晰。
+8. 若实现需要向 session feed/system event 暴露 terminal wait completion projection，应使用与 companion mailbox delivery 对齐的 `system_message` shape：`kind`、`origin`、`source`、`status`、`summary`、`result_refs` / `output_ref`，且不写入 `UserInputSubmitted`。
 
 ## Acceptance Criteria
 
-- [ ] PRD/design 明确 terminal wait authority map：terminal/exec state owner、wait observer、read owner、workspace projection。
-- [ ] 给出 `WaitActivityItem` exec completed/failed 的目标 JSON shape，包括 preview、exit_code、cursor/ref、next read。
-- [ ] 明确 `shell_exec wait_read` / `read_on_complete=true` 是否进入首期实现；若暂缓，写清原因和后续接入点。
-- [ ] 覆盖 race：terminal 已完成后新 wait 可返回结果；wait timeout 不消费 terminal output；read cursor 不丢。
-- [ ] 明确 future channel 迁移时哪些字段可映射到 channel receipt / payload ref。
+- [ ] `wait(activity_refs=[terminal_id])` 对已完成 terminal 返回 `completed` / `failed`，并根据 exit code 区分成功失败。
+- [ ] failed exec wait item 包含 `exit_code`、bounded `stderr_preview`、bounded `stdout_preview`、truncation 信息和 `shell_exec read` continuation refs。
+- [ ] completed exec wait item 可包含 bounded stdout/stderr preview，但完整输出仍只能通过 `shell_exec read` 或现有 terminal output owner 获取。
+- [ ] later wait 能打捞已经完成的 terminal state；wait timeout 不消费 terminal output。
+- [ ] `WaitActivityItem.result_refs` / detail payload 保留 channel-friendly refs：`terminal_id`、`output_ref`、cursor/seq、diagnostic。
+- [ ] 若有 terminal system projection，shape 与 companion mailbox `system_message` 一致，并且不进入 human input。
+- [ ] `shell_exec wait_read` / `read_on_complete=true` 不进入首期实现，除非实现阶段发现已有自然扩展点且不新增第二套 wait protocol。
+- [ ] Rust targeted tests 覆盖 running/completed/failed/lost/cancelled、bounded preview、later wait salvage 和 next read refs。
 
 ## Out Of Scope
 
-- 本任务先做设计，不直接实现 terminal wait 改动。
 - 不改变 terminal output 持久化 owner。
 - 不实现完整 channel 系统。
+- 不实现 `shell_exec wait_read` / `read_on_complete=true` convenience mode，除非它只是复用 wait/read owner 的薄 wrapper。

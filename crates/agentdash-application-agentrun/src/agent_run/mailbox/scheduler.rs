@@ -58,6 +58,36 @@ fn mailbox_delivery_projection_envelope(
     })
 }
 
+fn mailbox_projection_changed_envelope(
+    runtime_session_id: &str,
+    run: &LifecycleRun,
+    agent: &LifecycleAgent,
+    frame: &AgentFrame,
+    message: &AgentRunMailboxMessage,
+) -> BackboneEnvelope {
+    BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
+            ControlPlaneProjectionChanged {
+                projection: ControlPlaneProjection::Mailbox,
+                reason: ControlPlaneProjectionChangeReason::MailboxStateChanged,
+                run_id: run.id.to_string(),
+                agent_id: agent.id.to_string(),
+                frame_id: Some(frame.id.to_string()),
+                gate_id: message.source.source_ref.clone(),
+                mailbox_message_id: Some(message.id.to_string()),
+                delivery_runtime_session_id: Some(runtime_session_id.to_string()),
+                workspace_module_presentation: None,
+            },
+        )),
+        runtime_session_id,
+        SourceInfo {
+            connector_id: "agent_run_mailbox".to_string(),
+            connector_type: "platform".to_string(),
+            executor_id: Some("AGENT_RUN_MAILBOX".to_string()),
+        },
+    )
+}
+
 fn mailbox_system_event_kind(message: &AgentRunMailboxMessage) -> &'static str {
     match message.origin {
         MailboxMessageOrigin::Companion => "companion_delivery",
@@ -557,6 +587,8 @@ impl<'a> AgentRunMailboxService<'a> {
                 event_error,
             )
             .await?;
+        self.emit_mailbox_projection_changed(&runtime_session_id, &run, &agent, &frame, &updated)
+            .await;
         self.complete_message_receipt(
             &updated,
             AgentRunMailboxCommandOutcome::Launched,
@@ -700,6 +732,8 @@ impl<'a> AgentRunMailboxService<'a> {
                 event_error,
             )
             .await?;
+        self.emit_mailbox_projection_changed(&runtime_session_id, &run, &agent, &frame, &updated)
+            .await;
         let refs = AgentRunAcceptedRefs {
             run_id: run.id,
             agent_id: agent.id,
@@ -837,6 +871,39 @@ impl<'a> AgentRunMailboxService<'a> {
         }
     }
 
+    async fn emit_mailbox_projection_changed(
+        &self,
+        runtime_session_id: &str,
+        run: &LifecycleRun,
+        agent: &LifecycleAgent,
+        frame: &AgentFrame,
+        message: &AgentRunMailboxMessage,
+    ) {
+        let envelope =
+            mailbox_projection_changed_envelope(runtime_session_id, run, agent, frame, message);
+        if let Err(error) = self
+            .session_eventing
+            .persist_notification(runtime_session_id, envelope)
+            .await
+        {
+            let diagnostic_context = DiagnosticErrorContext::new(
+                "agent_run.mailbox.scheduler",
+                "emit_mailbox_projection_changed",
+            );
+            diag_error!(Warn, Subsystem::AgentRun,
+                context = &diagnostic_context,
+                error = &error,
+                runtime_session_id = %runtime_session_id,
+                run_id = %run.id,
+                agent_id = %agent.id,
+                frame_id = %frame.id,
+                mailbox_message_id = %message.id,
+                status = message.status.as_str(),
+                "AgentRun mailbox status changed but projection invalidation failed"
+            );
+        }
+    }
+
     async fn consume_as_resume_launch_source(
         &self,
         message: AgentRunMailboxMessage,
@@ -930,6 +997,8 @@ impl<'a> AgentRunMailboxService<'a> {
                 None,
             )
             .await?;
+        self.emit_mailbox_projection_changed(&runtime_session_id, &run, &agent, &frame, &updated)
+            .await;
         self.complete_message_receipt(
             &updated,
             AgentRunMailboxCommandOutcome::Launched,

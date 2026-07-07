@@ -169,6 +169,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - Companion / subagent / human result wake 使用 `namespace="companion"`、稳定 `source_ref=gate_id`、`correlation_ref=request_id|dispatch_id` 和 route metadata。wait 返回值只包含 `status`、`summary`、`timed_out`、`result_refs` 与 bounded preview；结果正文保留在 gate payload、mailbox message 或对应 projection 中，原因是 wait 是 activity watcher，不是大结果传输通道。
 - User-origin payload 可以在 queued/consuming 阶段短期持久以支持恢复；消费成功后按 retention policy 清理。preview、status、accepted refs 和 receipt result 继续保留用于投影与审计。
 - `Consuming` message 必须有 claim token、lease 和 attempt count。scheduler completion 必须比较 claim token 后才能写入 `Dispatched`、`Steered`、`Failed` 或恢复状态。
+- Scheduler 写入 `Dispatched` / `Steered` 等 mailbox projection 可见状态后，必须发布 `ControlPlaneProjectionChanged { projection=Mailbox, reason=MailboxStateChanged, mailbox_message_id, delivery_runtime_session_id }`。原因是 workspace mailbox row、composer outcome 和实时 runtime stream 都观察同一 durable mailbox 事实；状态写入和投影失效必须在 scheduler 边界收敛，前端才能从事件刷新而不是从 submit response 时序推断 queued / delivered 状态。
 - `Consuming` lease 过期且没有 accepted refs 时，message 进入 `Blocked` 并写入 `last_error="delivery_result_unknown"`。该状态表示 delivery 副作用边界不确定，普通 promote 不可重新排队，projection 必须给出 `can_promote=false`，原因是自动或误触重排都可能重复 launch/steer。
 - `thread/resume` 只表示 runtime/view rehydrate，不隐式 drain mailbox。Mailbox resume 是 AgentDash envelope state transition，然后再由 scheduler 选择 `turn/start` 或 `turn/steer`。
 
@@ -219,6 +220,7 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - AgentRun workspace projection tests cover companion/subagent/human lifecycle gates, blocking human `companion_wait + request_type`, and `exec_*` gate kind mapping into `ConversationWaitingItemView`.
 - Companion wait tests cover timeout without closing the gate, resolved payload summary/ref extraction, source identity dedup, duplicate child result no-op, and parent mailbox wake envelope.
 - Terminal / exec wake tests cover hook auto-resume source identity: `source_ref=effect_id`, correlation includes runtime session / source turn / terminal event seq, and replay does not create a duplicate mailbox message.
+- Scheduler/runtime-session tests cover mailbox visible status transitions emitting `ControlPlaneProjectionChanged(MailboxStateChanged)` after the status row is persisted.
 - API tests cover composer submit duplicate receipt, mailbox list/delete/promote/resume, typed conflict for expected active AgentRunTurn mismatch, and no route-local `send_next/enqueue/steer` branch as authority.
 - API/application tests cover composer submit fork outcome for non-owner parent and assert parent mailbox remains unchanged.
 - Companion platform boundary tests cover current missing broker diagnostic for `target=platform` capability grants until broker request facts and response continuation delivery exist.

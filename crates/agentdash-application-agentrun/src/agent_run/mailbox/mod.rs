@@ -3,7 +3,8 @@ use chrono::{Duration, Utc};
 use uuid::Uuid;
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputBlock,
+    BackboneEnvelope, BackboneEvent, ControlPlaneProjection, ControlPlaneProjectionChangeReason,
+    ControlPlaneProjectionChanged, PlatformEvent, SourceInfo, TraceInfo, UserInputBlock,
     UserInputSubmissionKind, user_input_blocks_to_content_parts,
 };
 use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;

@@ -473,6 +473,10 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
         Some(&delegate.active_turn_id),
     )
     .await;
+    assert_mailbox_projection_changed(
+        &delegate.eventing.persisted.lock().await,
+        delegate_message.id,
+    );
     assert!(delegate.mailbox.cleaned(delegate_message.id).await);
 
     let scheduler = MailboxSteeringFixture::new(true).await;
@@ -512,6 +516,10 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
         Some(&scheduler.active_turn_id),
     )
     .await;
+    assert_mailbox_projection_changed(
+        &scheduler.eventing.persisted.lock().await,
+        scheduler_message.id,
+    );
     assert!(scheduler.mailbox.cleaned(scheduler_message.id).await);
     assert_eq!(*scheduler.control.steer_count.lock().await, 1);
 }
@@ -554,7 +562,7 @@ async fn companion_steering_projects_system_event_instead_of_user_input() {
     assert_eq!(outcomes[0].outcome, AgentRunMailboxCommandOutcome::Steered);
     assert_eq!(*fixture.eventing.emit_count.lock().await, 0);
     let persisted = fixture.eventing.persisted.lock().await;
-    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted.len(), 2);
     match &persisted[0].event {
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
             assert_eq!(key, "system_message");
@@ -578,6 +586,7 @@ async fn companion_steering_projects_system_event_instead_of_user_input() {
         }
         other => panic!("expected platform system message, got {other:?}"),
     }
+    assert_mailbox_projection_changed(&persisted, message.id);
 }
 
 #[tokio::test]
@@ -1618,6 +1627,20 @@ fn assert_error_contains(message: &AgentRunMailboxMessage, expected: &str) {
             .is_some_and(|error| error.contains(expected)),
         "expected last_error to contain {expected}, got {:?}",
         message.last_error
+    );
+}
+
+fn assert_mailbox_projection_changed(persisted: &[BackboneEnvelope], mailbox_message_id: Uuid) {
+    let mailbox_message_id = mailbox_message_id.to_string();
+    assert!(
+        persisted.iter().any(|envelope| matches!(
+            &envelope.event,
+            BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(changed))
+                if changed.projection == ControlPlaneProjection::Mailbox
+                    && changed.reason == ControlPlaneProjectionChangeReason::MailboxStateChanged
+                    && changed.mailbox_message_id.as_deref() == Some(mailbox_message_id.as_str())
+        )),
+        "expected mailbox projection changed event for message {mailbox_message_id}, got {persisted:?}",
     );
 }
 

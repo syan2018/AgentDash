@@ -35,6 +35,7 @@
 
 ## Research Anchors
 
+- `.trellis/tasks/07-07-channel-communication-capability-model/research/channel-discussion-journal.md`
 - `.trellis/spec/backend/capability/architecture.md`
 - `.trellis/spec/backend/capability/capability-dimension-pipeline.md`
 - `.trellis/spec/backend/capability/tool-capability-pipeline.md`
@@ -46,7 +47,8 @@
 
 ## Not Ready For Implementation Until
 
-- 第一阶段 MVP 范围明确：内部 AgentTeam broadcast、既有 async 入栈收束、还是外部 IM 验证。
-- Channel capability 是 `CapabilityState` 新维度还是 projection-only surface 已决策。
+- 第一阶段 MVP 切片从 Companion / SubAgent lifecycle temporary channel 开始的范围已被用户最终确认。
+- `LifecycleChannel` 最小实体 / 表命名已决策。
+- `ChannelAddress` 与 `MailboxSourceIdentity` 是嵌入、映射还是同构双类型已决策。
 - Channel message persistence 的第一版范围已决策。
 - 与 extension protocol channel 的命名边界已写入 spec。

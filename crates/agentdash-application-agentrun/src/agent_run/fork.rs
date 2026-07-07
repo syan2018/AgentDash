@@ -796,15 +796,15 @@ mod tests {
     use agentdash_application_runtime_session::session::{
         SessionRuntimeBuilder,
         persistence::{
-            AgentFrameTransitionRecord, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
-            AgentRunControlEffectStore, CompactionProjectionCommitResult,
-            NewAgentRunControlEffectRecord, NewCompactionProjectionCommit, PersistedSessionEvent,
-            RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
-            SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
-            SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
-            SessionLineageStatus, SessionLineageStore, SessionMeta, SessionMetaStore,
-            SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
-            SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult, SessionStoreSet,
+            AgentFrameTransitionRecord, AgentRunControlEffectRecord, AgentRunControlEffectStore,
+            CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
+            NewCompactionProjectionCommit, PersistedSessionEvent, RuntimeCommandRecord,
+            RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord,
+            SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore,
+            SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
+            SessionLineageStore, SessionMeta, SessionMetaStore, SessionProjectionHeadRecord,
+            SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
+            SessionStoreError, SessionStoreResult, SessionStoreSet,
         },
     };
     use agentdash_domain::agent_run_mailbox::MailboxMessageStatus;
@@ -1804,7 +1804,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl AgentRunControlEffectStore for FixtureSessionStore {
-        async fn insert_control_effect(
+        async fn insert_or_get_control_effect(
             &self,
             _effect: NewAgentRunControlEffectRecord,
         ) -> SessionStoreResult<AgentRunControlEffectRecord> {
@@ -1813,13 +1813,18 @@ mod tests {
             ))
         }
 
-        async fn mark_control_effect_running(&self, _effect_id: Uuid) -> SessionStoreResult<()> {
-            Err(SessionStoreError::Internal(
-                "unused in fork tests".to_string(),
-            ))
+        async fn claim_control_effects(
+            &self,
+            _request: agentdash_spi::session_persistence::ClaimAgentRunControlEffectsRequest,
+        ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
+            Ok(Vec::new())
         }
 
-        async fn mark_control_effect_succeeded(&self, _effect_id: Uuid) -> SessionStoreResult<()> {
+        async fn mark_control_effect_succeeded(
+            &self,
+            _effect_id: Uuid,
+            _claim_token: Uuid,
+        ) -> SessionStoreResult<()> {
             Err(SessionStoreError::Internal(
                 "unused in fork tests".to_string(),
             ))
@@ -1828,6 +1833,7 @@ mod tests {
         async fn mark_control_effect_failed(
             &self,
             _effect_id: Uuid,
+            _claim_token: Uuid,
             _error: String,
         ) -> SessionStoreResult<()> {
             Err(SessionStoreError::Internal(
@@ -1838,19 +1844,12 @@ mod tests {
         async fn mark_control_effect_dead_letter(
             &self,
             _effect_id: Uuid,
+            _claim_token: Uuid,
             _error: String,
         ) -> SessionStoreResult<()> {
             Err(SessionStoreError::Internal(
                 "unused in fork tests".to_string(),
             ))
-        }
-
-        async fn list_control_effects_by_status(
-            &self,
-            _statuses: &[AgentRunControlEffectStatus],
-            _limit: u32,
-        ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
-            Ok(Vec::new())
         }
     }
 

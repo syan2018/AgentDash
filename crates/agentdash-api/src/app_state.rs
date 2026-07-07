@@ -348,17 +348,17 @@ impl AppState {
             repos.state_change_repo.clone();
         let story_repo_port: Arc<dyn StoryRepository> = repos.story_repo.clone();
 
-        // 启动对账管线：Session → Wait obligation → Task → Infrastructure（有序不可跳过）
+        // 启动对账管线：Session → Gate wait policy → Task → Infrastructure（有序不可跳过）
         //
         // M2-c：Task 对账改为从 LifecycleRun/step state 反投影，不再需要 session 状态读取器。
         {
             let gate_producer_terminal_convergence: Arc<
-                dyn agentdash_application::wait_obligation::GateProducerTerminalConvergencePort,
-            > = Arc::new(agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
+                dyn agentdash_application::gate_wait_policy::GateProducerTerminalConvergencePort,
+            > = Arc::new(agentdash_application::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
                 repos.lifecycle_gate_repo.clone(),
                 repos.agent_run_delivery_binding_repo.clone(),
                 Arc::new(
-                    agentdash_application::wait_obligation::CompanionGateMailboxWakeDelivery::new(
+                    agentdash_application::gate_wait_policy::CompanionGateMailboxWakeDelivery::new(
                         Arc::new(
                             agentdash_application::companion::AgentRunCompanionMailboxDelivery::from_runtime_services(
                         repos.clone(),

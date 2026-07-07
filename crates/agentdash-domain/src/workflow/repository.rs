@@ -5,11 +5,11 @@ use super::agent_lineage::AgentLineage;
 use super::agent_run_delivery_binding::AgentRunDeliveryBinding;
 use super::agent_run_lineage::AgentRunLineage;
 use super::entity::{AgentProcedure, LifecycleRun, WorkflowGraph};
+use super::gate_wait_policy::WaitProducerRef;
 use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
 use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 use super::runtime_session_anchor::RuntimeSessionExecutionAnchor;
-use super::wait_obligation::WaitProducerRef;
 use crate::common::error::DomainError;
 
 #[async_trait::async_trait]

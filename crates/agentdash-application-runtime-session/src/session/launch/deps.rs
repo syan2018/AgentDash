@@ -20,7 +20,7 @@ use crate::session::persistence::SessionLaunchStores;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
 use crate::session::runtime_transition_service::SessionRuntimeTransitionService;
-use crate::session::terminal_boundary_service::RuntimeTerminalBoundaryService;
+use crate::session::terminal_boundary::RuntimeTerminalBoundaryService;
 use crate::session::title_generator::derive_session_title;
 use crate::session::tool_assembly::{
     AssembledToolSurface, assemble_tool_surface_for_execution_context,

@@ -7,7 +7,7 @@ use agentdash_spi::ConnectorError;
 use super::eventing::SessionEventingService;
 use super::hub_support::{TurnTerminalKind, parse_turn_terminal_event_from_envelope};
 use super::persistence::SessionRuntimeStores;
-use super::terminal_boundary_service::RuntimeTerminalBoundaryService;
+use super::terminal_boundary::RuntimeTerminalBoundaryService;
 use super::turn_processor::{
     SessionTurnProcessorDeps, TurnTerminalDispatch, process_turn_terminal,
 };

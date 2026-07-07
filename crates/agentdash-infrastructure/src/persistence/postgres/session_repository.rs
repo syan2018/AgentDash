@@ -1,7 +1,8 @@
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::session_persistence::{
     AgentFrameTransitionRecord, AgentRunControlEffectRecord, AgentRunControlEffectStatus,
-    AgentRunControlEffectStore, CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
+    AgentRunControlEffectStore, ClaimAgentRunControlEffectsRequest,
+    CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
     NewCompactionProjectionCommit, PersistedSessionEvent, RuntimeCommandRecord,
     RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStore,
     SessionEventBacklog, SessionEventPage, SessionEventStore, SessionLineageRecord,
@@ -50,32 +51,34 @@ impl PostgresSessionRepository {
     async fn update_control_effect_status(
         &self,
         effect_id: uuid::Uuid,
+        claim_token: uuid::Uuid,
         status: AgentRunControlEffectStatus,
         updated_at_ms: i64,
-        increment_attempt: bool,
         last_error: Option<String>,
     ) -> SessionStoreResult<()> {
         let result = sqlx::query(
             r#"
             UPDATE agent_run_control_effects
             SET status = $1,
-                attempt_count = attempt_count + $2,
-                updated_at_ms = $3,
-                last_error = $4
-            WHERE id = $5
+                claim_token = NULL,
+                claim_owner = NULL,
+                claim_expires_at_ms = NULL,
+                updated_at_ms = $2,
+                last_error = $3
+            WHERE id = $4 AND claim_token = $5
             "#,
         )
         .bind(status.as_str())
-        .bind(if increment_attempt { 1_i64 } else { 0_i64 })
         .bind(updated_at_ms)
         .bind(last_error)
         .bind(effect_id.to_string())
+        .bind(claim_token.to_string())
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
         if result.rows_affected() == 0 {
-            return Err(SessionStoreError::NotFound(format!(
-                "AgentRun control effect {effect_id} 不存在"
+            return Err(SessionStoreError::InvalidInput(format!(
+                "AgentRun control effect {effect_id} claim token 不匹配"
             )));
         }
         Ok(())
@@ -535,13 +538,14 @@ impl SessionEventStore for PostgresSessionRepository {
 
 #[async_trait::async_trait]
 impl AgentRunControlEffectStore for PostgresSessionRepository {
-    async fn insert_control_effect(
+    async fn insert_or_get_control_effect(
         &self,
         effect: NewAgentRunControlEffectRecord,
     ) -> SessionStoreResult<AgentRunControlEffectRecord> {
         let now = chrono::Utc::now().timestamp_millis();
         let record = AgentRunControlEffectRecord {
             id: uuid::Uuid::new_v4(),
+            dedup_key: effect.dedup_key,
             run_id: effect.run_id,
             agent_id: effect.agent_id,
             frame_id: effect.frame_id,
@@ -552,6 +556,9 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
             payload: effect.payload,
             status: AgentRunControlEffectStatus::Pending,
             attempt_count: 0,
+            claim_token: None,
+            claim_owner: None,
+            claim_expires_at_ms: None,
             created_at_ms: now,
             updated_at_ms: now,
             last_error: None,
@@ -561,16 +568,27 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
             "agent_run_control_effects.terminal_event_seq",
         )?;
         let payload_json = json_string(&record.payload, "agent_run_control_effects.payload_json")?;
-        sqlx::query(
+        let row = sqlx::query(
             r#"
             INSERT INTO agent_run_control_effects (
-                id, run_id, agent_id, frame_id, delivery_runtime_session_id, turn_id,
+                id, dedup_key, run_id, agent_id, frame_id, delivery_runtime_session_id, turn_id,
                 terminal_event_seq, effect_kind, payload_json, status, attempt_count,
-                created_at_ms, updated_at_ms, last_error
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                claim_token, claim_owner, claim_expires_at_ms, created_at_ms, updated_at_ms,
+                last_error
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18
+            )
+            ON CONFLICT (dedup_key) DO UPDATE
+                SET dedup_key = excluded.dedup_key
+            RETURNING id, dedup_key, run_id, agent_id, frame_id, delivery_runtime_session_id,
+                      turn_id, terminal_event_seq, effect_kind, payload_json, status,
+                      attempt_count, claim_token, claim_owner, claim_expires_at_ms,
+                      created_at_ms, updated_at_ms, last_error
             "#,
         )
         .bind(record.id.to_string())
+        .bind(&record.dedup_key)
         .bind(record.run_id)
         .bind(record.agent_id)
         .bind(record.frame_id)
@@ -581,34 +599,142 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
         .bind(payload_json)
         .bind(record.status.as_str())
         .bind(i64::from(record.attempt_count))
+        .bind(record.claim_token.map(|token| token.to_string()))
+        .bind(&record.claim_owner)
+        .bind(record.claim_expires_at_ms)
         .bind(record.created_at_ms)
         .bind(record.updated_at_ms)
         .bind(&record.last_error)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
-        Ok(record)
+        control_effect_from_row(&row)
     }
 
-    async fn mark_control_effect_running(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
+    async fn claim_control_effects(
+        &self,
+        request: ClaimAgentRunControlEffectsRequest,
+    ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
+        if request.limit == 0 {
+            return Ok(Vec::new());
+        }
+        if request.lease_duration_ms <= 0 {
+            return Err(SessionStoreError::InvalidInput(
+                "control effect claim lease_duration_ms 必须为正数".to_string(),
+            ));
+        }
+        if let Some(keys) = request.dedup_keys.as_ref()
+            && keys.is_empty()
+        {
+            return Ok(Vec::new());
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        let claim_token = uuid::Uuid::new_v4();
+        let claim_expires_at_ms = now.saturating_add(request.lease_duration_ms);
+        let limit = i64::from(request.limit);
+        let rows = if let Some(dedup_keys) = request.dedup_keys {
+            sqlx::query(
+                r#"
+                WITH candidates AS (
+                    SELECT id
+                    FROM agent_run_control_effects
+                    WHERE (
+                        status IN ('pending', 'failed')
+                        OR (
+                            status = 'running'
+                            AND (claim_expires_at_ms IS NULL OR claim_expires_at_ms <= $1)
+                        )
+                    )
+                    AND dedup_key = ANY($6)
+                    ORDER BY updated_at_ms ASC, created_at_ms ASC
+                    LIMIT $5
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE agent_run_control_effects effects
+                SET status = 'running',
+                    attempt_count = effects.attempt_count + 1,
+                    claim_token = $2,
+                    claim_owner = $3,
+                    claim_expires_at_ms = $4,
+                    updated_at_ms = $1,
+                    last_error = NULL
+                FROM candidates
+                WHERE effects.id = candidates.id
+                RETURNING effects.id, effects.dedup_key, effects.run_id, effects.agent_id,
+                          effects.frame_id, effects.delivery_runtime_session_id, effects.turn_id,
+                          effects.terminal_event_seq, effects.effect_kind, effects.payload_json,
+                          effects.status, effects.attempt_count, effects.claim_token,
+                          effects.claim_owner, effects.claim_expires_at_ms,
+                          effects.created_at_ms, effects.updated_at_ms, effects.last_error
+                "#,
+            )
+            .bind(now)
+            .bind(claim_token.to_string())
+            .bind(&request.claim_owner)
+            .bind(claim_expires_at_ms)
+            .bind(limit)
+            .bind(&dedup_keys)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(sqlx_to_session_store_error)?
+        } else {
+            sqlx::query(
+                r#"
+                WITH candidates AS (
+                    SELECT id
+                    FROM agent_run_control_effects
+                    WHERE (
+                        status IN ('pending', 'failed')
+                        OR (
+                            status = 'running'
+                            AND (claim_expires_at_ms IS NULL OR claim_expires_at_ms <= $1)
+                        )
+                    )
+                    ORDER BY updated_at_ms ASC, created_at_ms ASC
+                    LIMIT $5
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE agent_run_control_effects effects
+                SET status = 'running',
+                    attempt_count = effects.attempt_count + 1,
+                    claim_token = $2,
+                    claim_owner = $3,
+                    claim_expires_at_ms = $4,
+                    updated_at_ms = $1,
+                    last_error = NULL
+                FROM candidates
+                WHERE effects.id = candidates.id
+                RETURNING effects.id, effects.dedup_key, effects.run_id, effects.agent_id,
+                          effects.frame_id, effects.delivery_runtime_session_id, effects.turn_id,
+                          effects.terminal_event_seq, effects.effect_kind, effects.payload_json,
+                          effects.status, effects.attempt_count, effects.claim_token,
+                          effects.claim_owner, effects.claim_expires_at_ms,
+                          effects.created_at_ms, effects.updated_at_ms, effects.last_error
+                "#,
+            )
+            .bind(now)
+            .bind(claim_token.to_string())
+            .bind(&request.claim_owner)
+            .bind(claim_expires_at_ms)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(sqlx_to_session_store_error)?
+        };
+        rows.iter().map(control_effect_from_row).collect()
+    }
+
+    async fn mark_control_effect_succeeded(
+        &self,
+        effect_id: uuid::Uuid,
+        claim_token: uuid::Uuid,
+    ) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.update_control_effect_status(
             effect_id,
-            AgentRunControlEffectStatus::Running,
-            now,
-            true,
-            None,
-        )
-        .await
-    }
-
-    async fn mark_control_effect_succeeded(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
-        let now = chrono::Utc::now().timestamp_millis();
-        self.update_control_effect_status(
-            effect_id,
+            claim_token,
             AgentRunControlEffectStatus::Succeeded,
             now,
-            false,
             None,
         )
         .await
@@ -617,14 +743,15 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
     async fn mark_control_effect_failed(
         &self,
         effect_id: uuid::Uuid,
+        claim_token: uuid::Uuid,
         error: String,
     ) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.update_control_effect_status(
             effect_id,
+            claim_token,
             AgentRunControlEffectStatus::Failed,
             now,
-            false,
             Some(error),
         )
         .await
@@ -633,46 +760,18 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
     async fn mark_control_effect_dead_letter(
         &self,
         effect_id: uuid::Uuid,
+        claim_token: uuid::Uuid,
         error: String,
     ) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.update_control_effect_status(
             effect_id,
+            claim_token,
             AgentRunControlEffectStatus::DeadLetter,
             now,
-            false,
             Some(error),
         )
         .await
-    }
-
-    async fn list_control_effects_by_status(
-        &self,
-        statuses: &[AgentRunControlEffectStatus],
-        limit: u32,
-    ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
-        if statuses.is_empty() {
-            return Ok(Vec::new());
-        }
-        let status_filter: Vec<&str> = statuses.iter().map(|status| status.as_str()).collect();
-        let limit = i64::from(limit.max(1));
-        let rows = sqlx::query(
-            r#"
-            SELECT id, run_id, agent_id, frame_id, delivery_runtime_session_id, turn_id,
-                   terminal_event_seq, effect_kind, payload_json, status, attempt_count,
-                   created_at_ms, updated_at_ms, last_error
-            FROM agent_run_control_effects
-            WHERE status = ANY($1)
-            ORDER BY updated_at_ms ASC, created_at_ms ASC
-            LIMIT $2
-            "#,
-        )
-        .bind(&status_filter)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(sqlx_to_session_store_error)?;
-        rows.iter().map(control_effect_from_row).collect()
     }
 }
 

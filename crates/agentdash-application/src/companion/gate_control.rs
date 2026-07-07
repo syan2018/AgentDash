@@ -22,9 +22,9 @@ use crate::agent_run::{
     DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
     DeliveryRuntimeSelectionService,
 };
-use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 #[cfg(test)]
-use crate::wait_obligation::GateProducerTerminalConvergencePort;
+use crate::gate_wait_policy::GateProducerTerminalConvergencePort;
+use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
 const COMPANION_CHILD_WAIT_GATE_KIND: &str = "companion_wait_follow_up";
@@ -694,10 +694,10 @@ impl CompanionGateControlService {
         &self,
         event: GateProducerTerminalEvent,
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
-        crate::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
+        crate::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
             self.gate_repo.clone(),
             self.delivery_binding_repo.clone(),
-            Arc::new(crate::wait_obligation::CompanionGateMailboxWakeDelivery::new(
+            Arc::new(crate::gate_wait_policy::CompanionGateMailboxWakeDelivery::new(
                 self.parent_mailbox_delivery.clone(),
             )),
         )
@@ -2419,7 +2419,7 @@ mod tests {
         gate.payload_json = Some(
             declaration
                 .write_into_payload(gate.payload_json.take())
-                .expect("write wait obligation"),
+                .expect("write gate wait policy"),
         );
         let lineage = AgentLineage::new(
             run_id,

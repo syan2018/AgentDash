@@ -81,8 +81,8 @@ impl SessionRuntimeInner {
 
     pub fn terminal_boundary_service(
         &self,
-    ) -> super::super::terminal_boundary_service::RuntimeTerminalBoundaryService {
-        super::super::terminal_boundary_service::RuntimeTerminalBoundaryService::new(
+    ) -> super::super::terminal_boundary::RuntimeTerminalBoundaryService {
+        super::super::terminal_boundary::RuntimeTerminalBoundaryService::new(
             super::super::terminal_boundary::RuntimeTerminalBoundaryDeps {
                 control_effect_port: self.agent_run_control_effect_port.clone(),
             },

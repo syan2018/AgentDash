@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_domain::workflow::{LifecycleGate, LifecycleGateRepository};
+use agentdash_domain::workflow::{
+    GateWaitPolicyEnvelope, GateWaitPolicyTemplate, LifecycleGate, LifecycleGateRepository,
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -85,6 +87,7 @@ impl LifecycleGateResolver {
             command.correlation_id,
             command.payload,
         );
+        let gate = attach_gate_wait_policy(gate, command.wait_policy)?;
         gate_repo.create(&gate).await?;
 
         Ok(GateTransitionOutcome {
@@ -473,6 +476,32 @@ fn preserve_wait_policy_metadata(payload: &mut Value, existing: Option<&Value>) 
     }
 }
 
+fn attach_gate_wait_policy(
+    mut gate: LifecycleGate,
+    wait_policy: Option<GateWaitPolicyTemplate>,
+) -> Result<LifecycleGate, WorkflowApplicationError> {
+    let Some(wait_policy) = wait_policy else {
+        return Ok(gate);
+    };
+    let agent_id = gate.agent_id.ok_or_else(|| {
+        WorkflowApplicationError::Conflict(format!(
+            "companion gate {} missing agent owner for gate wait policy",
+            gate.id
+        ))
+    })?;
+    let wait_policy =
+        wait_policy.into_agent_run_delivery_policy(gate.run_id, agent_id, gate.frame_id, gate.id);
+    let payload = GateWaitPolicyEnvelope::new(wait_policy)
+        .write_into_payload(gate.payload_json.take())
+        .map_err(|error| {
+            WorkflowApplicationError::Internal(format!(
+                "gate wait policy payload serialize failed: {error}"
+            ))
+        })?;
+    gate.payload_json = Some(payload);
+    Ok(gate)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -650,6 +679,7 @@ mod tests {
                     "turn_id": "turn-1",
                     "request_type": "review",
                 })),
+                wait_policy: None,
             })
             .await
             .expect("open companion gate");

@@ -35,6 +35,7 @@ where
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<uuid::Uuid>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
 {
     Ok(SessionMeta {
@@ -121,8 +122,14 @@ where
     let payload_json = row.get::<String, _>("payload_json");
     let payload = serde_json::from_str::<serde_json::Value>(&payload_json)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
+    let claim_token = row
+        .get::<Option<String>, _>("claim_token")
+        .map(|value| uuid::Uuid::parse_str(&value))
+        .transpose()
+        .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     Ok(AgentRunControlEffectRecord {
         id,
+        dedup_key: row.get::<String, _>("dedup_key"),
         run_id: row.get::<Option<uuid::Uuid>, _>("run_id"),
         agent_id: row.get::<Option<uuid::Uuid>, _>("agent_id"),
         frame_id: row.get::<Option<uuid::Uuid>, _>("frame_id"),
@@ -139,6 +146,9 @@ where
             "agent_run_control_effects.status",
         )?,
         attempt_count,
+        claim_token,
+        claim_owner: row.get::<Option<String>, _>("claim_owner"),
+        claim_expires_at_ms: row.get::<Option<i64>, _>("claim_expires_at_ms"),
         created_at_ms: row.get::<i64, _>("created_at_ms"),
         updated_at_ms: row.get::<i64, _>("updated_at_ms"),
         last_error: row.get::<Option<String>, _>("last_error"),

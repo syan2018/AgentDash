@@ -78,7 +78,7 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(store.getOutputBaseOffset("term-1")).toBe(8);
   });
 
-  it("updates terminal_state_changed and validates state value", () => {
+  it("updates pty_terminal_state_changed and validates state value", () => {
     useTerminalStore.getState().registerTerminal({
       id: "term-1",
       capability: "interactive",
@@ -88,7 +88,7 @@ describe("dispatchSessionPlatformEvent", () => {
     });
 
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
-      kind: "terminal_state_changed",
+      kind: "pty_terminal_state_changed",
       data: {
         terminal_id: "term-1",
         state: "exited",
@@ -128,9 +128,9 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello world");
   });
 
-  it("creates state-only projection for unregistered terminal on terminal_state_changed", () => {
+  it("creates state-only projection for unregistered terminal on pty_terminal_state_changed", () => {
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
-      kind: "terminal_state_changed",
+      kind: "pty_terminal_state_changed",
       data: {
         terminal_id: "term-1",
         state: "lost",
@@ -155,7 +155,7 @@ describe("dispatchSessionPlatformEvent", () => {
     }))).toBe(true);
 
     expect(dispatchSessionPlatformEvent(platformEvent(2, {
-      kind: "terminal_state_changed",
+      kind: "pty_terminal_state_changed",
       data: {
         terminal_id: "term-running-1",
         state: "running",

@@ -15,14 +15,14 @@ use super::eventing::SessionEventingService;
 use super::hub_support::*;
 use super::post_turn_handler::DynPostTurnHandler;
 use super::terminal_boundary::RuntimeTerminalBoundaryEvidence;
-use super::terminal_boundary_service::RuntimeTerminalBoundaryService;
+use super::terminal_boundary::RuntimeTerminalBoundaryService;
 use super::turn_supervisor::TurnSupervisor;
 
 /// Processor 消费的事件类型。
 pub enum TurnEvent {
     /// 一条 BackboneEnvelope（来自 connector stream 或 relay 注入）。
     Notification(Box<BackboneEnvelope>),
-    /// Turn 已结束（来自 connector stream 关闭或 relay event.session_state_changed）。
+    /// Turn 已结束（来自 connector stream 关闭或 relay event.runtime_session_state_changed）。
     Terminal {
         kind: TurnTerminalKind,
         message: Option<String>,
@@ -365,7 +365,7 @@ mod tests {
     };
     use super::super::runtime_registry::SessionRuntimeRegistry;
     use super::super::terminal_boundary::RuntimeTerminalBoundaryDeps;
-    use super::super::terminal_boundary_service::RuntimeTerminalBoundaryService;
+    use super::super::terminal_boundary::RuntimeTerminalBoundaryService;
     use super::super::turn_supervisor::TurnSupervisor;
     use super::super::types::{ExecutionStatus, SessionMeta};
     use super::*;

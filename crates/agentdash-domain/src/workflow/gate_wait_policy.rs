@@ -79,6 +79,38 @@ pub struct WaitWakeTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateWaitPolicyTemplate {
+    pub expected_result: WaitExpectedResult,
+    pub terminal_policy: WaitTerminalPolicy,
+    pub wake_target: WaitWakeTarget,
+}
+
+impl GateWaitPolicyTemplate {
+    pub fn into_agent_run_delivery_policy(
+        self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        frame_id: Option<Uuid>,
+        gate_id: Uuid,
+    ) -> GateWaitPolicy {
+        let mut wake_target = self.wake_target;
+        wake_target.client_command_id = wake_target
+            .client_command_id
+            .replace("{gate_id}", &gate_id.to_string());
+        GateWaitPolicy {
+            source: WaitProducerRef::AgentRunDelivery {
+                run_id,
+                agent_id,
+                frame_id,
+            },
+            expected_result: self.expected_result,
+            terminal_policy: self.terminal_policy,
+            wake_target,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateWaitPolicy {
     pub source: WaitProducerRef,
     pub expected_result: WaitExpectedResult,

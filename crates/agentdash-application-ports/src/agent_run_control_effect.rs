@@ -10,7 +10,12 @@ use uuid::Uuid;
 pub trait AgentRunPostTurnHandler: Send + Sync + 'static {
     async fn on_event(&self, session_id: &str, envelope: &BackboneEnvelope);
 
-    async fn execute_effects(&self, session_id: &str, turn_id: &str, effects: &[HookEffect]);
+    async fn execute_effects(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        effects: &[HookEffect],
+    ) -> Result<(), String>;
 
     fn supported_effect_kinds(&self) -> &[&str];
 

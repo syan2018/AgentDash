@@ -1,6 +1,6 @@
 //! 通用启动对账管线
 //!
-//! 服务重启后按固定顺序执行：Session 恢复 → Wait obligation 收束 → Task view 投影 → Infrastructure。
+//! 服务重启后按固定顺序执行：Session 恢复 → Gate wait policy 收束 → Task view 投影 → Infrastructure。
 //! Phase 之间存在依赖：Task view 投影依赖 Session 先完成（否则会误判 session 仍在运行）。
 //!
 //! **定位说明**：本管线只覆盖 projection 方向（session/lifecycle 真相源 → Task view）。
@@ -12,9 +12,9 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use std::sync::Arc;
 
 use crate::ApplicationError;
+use crate::gate_wait_policy::GateProducerTerminalConvergencePort;
 use crate::session::SessionRuntimeService;
 use crate::task::view_projector::project_task_views_on_boot;
-use crate::wait_obligation::GateProducerTerminalConvergencePort;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
@@ -77,7 +77,7 @@ impl BootReconcileReport {
 ///
 /// 阶段执行顺序固定且不可跳过：
 /// 1. **Session 恢复** — 将残留 running 状态的 session 标记为 interrupted
-/// 2. **Wait obligation 收束** — 用已 terminal 的 producer 修复 open wait obligation
+/// 2. **Gate wait policy 收束** — 用已 terminal 的 producer 修复 open gate wait policy
 /// 3. **Task view 投影** — 根据 LifecycleRun/step state 反投影 Task view
 /// 4. **Infrastructure 恢复** — 预留（定时触发器重建等）
 pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport {
@@ -87,9 +87,9 @@ pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport
     let session_report = run_session_reconcile(&deps.session_runtime).await;
     phases.push(session_report);
 
-    // ── Phase 2: Wait Obligation Terminal Convergence ───────
-    let wait_obligation_report = run_wait_obligation_reconcile(deps).await;
-    phases.push(wait_obligation_report);
+    // ── Phase 2: Gate Wait Policy Terminal Fallback ─────────
+    let gate_wait_policy_report = run_gate_wait_policy_reconcile(deps).await;
+    phases.push(gate_wait_policy_report);
 
     // ── Phase 3: Task View Projection ───────────────────────
     let task_report = run_task_view_projection(deps).await;
@@ -156,8 +156,8 @@ async fn run_session_reconcile(session_runtime: &SessionRuntimeService) -> Phase
     }
 }
 
-async fn run_wait_obligation_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
-    run_wait_obligation_reconcile_phase(
+async fn run_gate_wait_policy_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
+    run_gate_wait_policy_reconcile_phase(
         &deps.lifecycle_gate_repo,
         &deps.agent_run_delivery_binding_repo,
         &deps.gate_producer_terminal_convergence,
@@ -165,19 +165,19 @@ async fn run_wait_obligation_reconcile(deps: &BootReconcileDeps) -> PhaseReport 
     .await
 }
 
-async fn run_wait_obligation_reconcile_phase(
+async fn run_gate_wait_policy_reconcile_phase(
     gate_repo: &Arc<dyn LifecycleGateRepository>,
     delivery_binding_repo: &Arc<dyn AgentRunDeliveryBindingRepository>,
     convergence: &Arc<dyn GateProducerTerminalConvergencePort>,
 ) -> PhaseReport {
-    let phase = "wait_obligation_convergence";
+    let phase = "gate_wait_policy_terminal_fallback";
     let gates = match gate_repo
         .list_open_gate_wait_policies(GATE_WAIT_POLICY_RECONCILE_LIMIT)
         .await
     {
         Ok(gates) => gates,
         Err(error) => {
-            let context = DiagnosticErrorContext::new("reconcile.boot", "wait_obligation_scan")
+            let context = DiagnosticErrorContext::new("reconcile.boot", "gate_wait_policy_scan")
                 .with_field("phase", phase)
                 .with_field("fatal", false);
             diag_error!(
@@ -187,7 +187,7 @@ async fn run_wait_obligation_reconcile_phase(
                 error = &error,
                 phase = phase,
                 fatal = false,
-                "Phase 2 (Wait Obligation Convergence) 扫描失败"
+                "Phase 2 (Gate Wait Policy Terminal Fallback) 扫描失败"
             );
             return PhaseReport {
                 phase,
@@ -212,15 +212,15 @@ async fn run_wait_obligation_reconcile_phase(
             diag!(
                 Debug,
                 Subsystem::Reconcile,
-                operation = "reconcile.boot.wait_obligation",
-                stage = "invalid_wait_obligation_declaration",
+                operation = "reconcile.boot.gate_wait_policy",
+                stage = "invalid_gate_wait_policy",
                 gate_id = %gate.id,
-                "boot wait obligation reconcile skipped an unparsable declaration"
+                "boot gate wait policy reconcile skipped an unparsable policy"
             );
             continue;
         };
 
-        let event = match producer_terminal_event_for_obligation(
+        let event = match producer_terminal_event_for_gate_wait_policy(
             delivery_binding_repo,
             &gate,
             &declaration,
@@ -234,7 +234,7 @@ async fn run_wait_obligation_reconcile_phase(
             }
             Err(error) => {
                 let context = DiagnosticErrorContext::new(
-                    "reconcile.boot.wait_obligation",
+                    "reconcile.boot.gate_wait_policy",
                     "producer_fact_lookup",
                 )
                 .with_field("phase", phase)
@@ -246,7 +246,7 @@ async fn run_wait_obligation_reconcile_phase(
                     error = &error,
                     phase = phase,
                     gate_id = %gate.id,
-                    "boot wait obligation producer fact lookup failed"
+                    "boot gate wait policy producer fact lookup failed"
                 );
                 errors.push(error.to_string());
                 continue;
@@ -257,18 +257,18 @@ async fn run_wait_obligation_reconcile_phase(
             .observe_gate_producer_terminal(event.clone())
             .await
         {
-            Ok(result) if result.no_matching_obligation() => {
+            Ok(result) if result.no_matching_gate_wait_policy() => {
                 skipped += 1;
                 diag!(
                     Debug,
                     Subsystem::Reconcile,
-                    operation = "reconcile.boot.wait_obligation",
-                    stage = "no_matching_obligation",
+                    operation = "reconcile.boot.gate_wait_policy",
+                    stage = "no_matching_gate_wait_policy",
                     gate_id = %gate.id,
                     producer = ?event.producer,
                     terminal_state = %event.terminal_state,
                     delivery_trace_ref = ?event.trace_ref,
-                    "boot wait obligation convergence found no matching obligation"
+                    "boot gate producer terminal fallback found no matching gate wait policy"
                 );
             }
             Ok(result) => {
@@ -276,19 +276,19 @@ async fn run_wait_obligation_reconcile_phase(
                 diag!(
                     Debug,
                     Subsystem::Reconcile,
-                    operation = "reconcile.boot.wait_obligation",
+                    operation = "reconcile.boot.gate_wait_policy",
                     stage = "reconciled",
                     gate_id = %gate.id,
                     producer = ?event.producer,
                     terminal_state = %event.terminal_state,
                     delivery_trace_ref = ?event.trace_ref,
                     outcome_count = result.outcomes.len(),
-                    "boot wait obligation convergence reconciled terminal producer"
+                    "boot gate producer terminal fallback reconciled terminal producer"
                 );
             }
             Err(error) => {
                 let context = DiagnosticErrorContext::new(
-                    "reconcile.boot.wait_obligation",
+                    "reconcile.boot.gate_wait_policy",
                     "convergence_failure",
                 )
                 .with_field("phase", phase)
@@ -303,7 +303,7 @@ async fn run_wait_obligation_reconcile_phase(
                     producer = ?event.producer,
                     terminal_state = %event.terminal_state,
                     delivery_trace_ref = ?event.trace_ref,
-                    "boot wait obligation convergence failed"
+                    "boot gate producer terminal fallback failed"
                 );
                 errors.push(error.to_string());
             }
@@ -317,7 +317,7 @@ async fn run_wait_obligation_reconcile_phase(
         reconciled = reconciled,
         skipped = skipped,
         error_count = errors.len(),
-        "Phase 2 (Wait Obligation Convergence) 完成"
+        "Phase 2 (Gate Wait Policy Terminal Fallback) 完成"
     );
 
     PhaseReport {
@@ -328,7 +328,7 @@ async fn run_wait_obligation_reconcile_phase(
     }
 }
 
-async fn producer_terminal_event_for_obligation(
+async fn producer_terminal_event_for_gate_wait_policy(
     delivery_binding_repo: &Arc<dyn AgentRunDeliveryBindingRepository>,
     gate: &LifecycleGate,
     declaration: &GateWaitPolicyEnvelope,
@@ -347,14 +347,14 @@ async fn producer_terminal_event_for_obligation(
                 diag!(
                     Debug,
                     Subsystem::Reconcile,
-                    operation = "reconcile.boot.wait_obligation",
+                    operation = "reconcile.boot.gate_wait_policy",
                     stage = "producer_not_terminal",
                     reason = "binding_missing",
                     gate_id = %gate.id,
                     producer_run_id = %run_id,
                     producer_agent_id = %agent_id,
                     producer_frame_id = ?frame_id,
-                    "boot wait obligation producer binding is unavailable"
+                    "boot gate wait policy producer binding is unavailable"
                 );
                 return Ok(None);
             };
@@ -364,7 +364,7 @@ async fn producer_terminal_event_for_obligation(
                     diag!(
                         Debug,
                         Subsystem::Reconcile,
-                        operation = "reconcile.boot.wait_obligation",
+                        operation = "reconcile.boot.gate_wait_policy",
                         stage = "producer_not_terminal",
                         reason = "frame_mismatch",
                         gate_id = %gate.id,
@@ -373,7 +373,7 @@ async fn producer_terminal_event_for_obligation(
                         producer_frame_id = ?frame_id,
                         binding_frame_id = %binding.launch_frame_id,
                         delivery_status = %binding.status,
-                        "boot wait obligation producer binding does not match declared frame"
+                        "boot gate wait policy producer binding does not match declared frame"
                     );
                     return Ok(None);
                 }
@@ -383,7 +383,7 @@ async fn producer_terminal_event_for_obligation(
                 diag!(
                     Debug,
                     Subsystem::Reconcile,
-                    operation = "reconcile.boot.wait_obligation",
+                    operation = "reconcile.boot.gate_wait_policy",
                     stage = "producer_not_terminal",
                     reason = "delivery_status",
                     gate_id = %gate.id,
@@ -391,7 +391,7 @@ async fn producer_terminal_event_for_obligation(
                     producer_agent_id = %agent_id,
                     producer_frame_id = ?frame_id,
                     delivery_status = %binding.status,
-                    "boot wait obligation producer is not terminal"
+                    "boot gate wait policy producer is not terminal"
                 );
                 return Ok(None);
             }
@@ -400,13 +400,13 @@ async fn producer_terminal_event_for_obligation(
                 diag!(
                     Warn,
                     Subsystem::Reconcile,
-                    operation = "reconcile.boot.wait_obligation",
+                    operation = "reconcile.boot.gate_wait_policy",
                     stage = "producer_terminal_fact_incomplete",
                     gate_id = %gate.id,
                     producer_run_id = %run_id,
                     producer_agent_id = %agent_id,
                     delivery_trace_ref = %binding.runtime_session_id,
-                    "boot wait obligation terminal producer is missing terminal_state"
+                    "boot gate wait policy terminal producer is missing terminal_state"
                 );
                 return Ok(None);
             };
@@ -532,7 +532,7 @@ mod tests {
         }
     }
 
-    fn open_wait_obligation_gate(
+    fn open_gate_wait_policy_gate(
         run_id: Uuid,
         child_agent_id: Uuid,
         child_frame_id: Uuid,
@@ -623,7 +623,7 @@ mod tests {
             mode,
             events: Mutex::new(Vec::new()),
         });
-        let gate = open_wait_obligation_gate(
+        let gate = open_gate_wait_policy_gate(
             binding.run_id,
             binding.agent_id,
             binding.launch_frame_id,
@@ -642,16 +642,16 @@ mod tests {
         let gate_repo: Arc<dyn LifecycleGateRepository> = gate_repo;
         let delivery_repo: Arc<dyn AgentRunDeliveryBindingRepository> = delivery_repo;
         let convergence: Arc<dyn GateProducerTerminalConvergencePort> = convergence;
-        run_wait_obligation_reconcile_phase(&gate_repo, &delivery_repo, &convergence).await
+        run_gate_wait_policy_reconcile_phase(&gate_repo, &delivery_repo, &convergence).await
     }
 
     #[tokio::test]
-    async fn wait_obligation_reconcile_observes_terminal_agent_run_delivery() {
+    async fn gate_wait_policy_reconcile_observes_terminal_agent_run_delivery() {
         let run_id = Uuid::new_v4();
         let child_agent_id = Uuid::new_v4();
         let child_frame_id = Uuid::new_v4();
         let gate =
-            open_wait_obligation_gate(run_id, child_agent_id, child_frame_id, Uuid::new_v4());
+            open_gate_wait_policy_gate(run_id, child_agent_id, child_frame_id, Uuid::new_v4());
         let binding = binding_for_gate(&gate, DeliveryBindingStatus::Terminal);
         let gate_id = gate.id;
         let (gate_repo, delivery_repo, convergence) =
@@ -682,8 +682,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_obligation_reconcile_skips_non_terminal_producer() {
-        let gate = open_wait_obligation_gate(
+    async fn gate_wait_policy_reconcile_skips_non_terminal_producer() {
+        let gate = open_gate_wait_policy_gate(
             Uuid::new_v4(),
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -703,8 +703,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_obligation_reconcile_reports_no_matching_obligation_as_skipped() {
-        let gate = open_wait_obligation_gate(
+    async fn gate_wait_policy_reconcile_reports_no_matching_policy_as_skipped() {
+        let gate = open_gate_wait_policy_gate(
             Uuid::new_v4(),
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -723,8 +723,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_obligation_reconcile_reports_convergence_failure_as_error() {
-        let gate = open_wait_obligation_gate(
+    async fn gate_wait_policy_reconcile_reports_fallback_failure_as_error() {
+        let gate = open_gate_wait_policy_gate(
             Uuid::new_v4(),
             Uuid::new_v4(),
             Uuid::new_v4(),

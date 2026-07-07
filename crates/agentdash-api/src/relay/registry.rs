@@ -568,7 +568,9 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::ResponseToolSearch { .. } => "response.tool.search",
         RelayMessage::EventCapabilitiesChanged { .. } => "event.capabilities_changed",
         RelayMessage::EventSessionNotification { .. } => "event.session_notification",
-        RelayMessage::EventSessionStateChanged { .. } => "event.session_state_changed",
+        RelayMessage::EventRuntimeSessionStateChanged { .. } => {
+            "event.runtime_session_state_changed"
+        }
         RelayMessage::EventDiscoverOptionsPatch { .. } => "event.discover_options_patch",
         RelayMessage::CommandMcpProbeTransport { .. } => "command.mcp_probe_transport",
         RelayMessage::CommandMcpListTools { .. } => "command.mcp_list_tools",
@@ -598,7 +600,7 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::ResponseTerminalResize { .. } => "response.terminal.resize",
         RelayMessage::ResponseTerminalKill { .. } => "response.terminal.kill",
         RelayMessage::EventTerminalOutput { .. } => "event.terminal.output",
-        RelayMessage::EventTerminalStateChanged { .. } => "event.terminal.state_changed",
+        RelayMessage::EventPtyTerminalStateChanged { .. } => "event.pty_terminal.state_changed",
         RelayMessage::Error { .. } => "error",
     }
 }

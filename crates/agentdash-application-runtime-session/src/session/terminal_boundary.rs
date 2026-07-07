@@ -21,7 +21,8 @@ pub(crate) struct RuntimeTerminalBoundaryEvidence {
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
-pub(crate) struct RuntimeTerminalBoundaryDispatcher {
+#[derive(Clone)]
+pub struct RuntimeTerminalBoundaryService {
     deps: RuntimeTerminalBoundaryDeps,
 }
 
@@ -30,12 +31,12 @@ pub(crate) struct RuntimeTerminalBoundaryDeps {
     pub control_effect_port: Arc<RwLock<Option<Arc<dyn AgentRunControlEffectPort>>>>,
 }
 
-impl RuntimeTerminalBoundaryDispatcher {
-    pub fn new(deps: RuntimeTerminalBoundaryDeps) -> Self {
+impl RuntimeTerminalBoundaryService {
+    pub(crate) fn new(deps: RuntimeTerminalBoundaryDeps) -> Self {
         Self { deps }
     }
 
-    pub async fn observe_terminal_boundary(&self, input: RuntimeTerminalBoundaryEvidence) {
+    pub(crate) async fn observe_terminal_boundary(&self, input: RuntimeTerminalBoundaryEvidence) {
         let terminal_state = input.terminal_kind.state_tag().to_string();
         let terminal_hook_context =
             input

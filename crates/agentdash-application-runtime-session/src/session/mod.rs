@@ -48,7 +48,6 @@ pub(crate) mod runtime_services;
 pub mod stall_detector;
 // terminal_cache removed: replaced by AgentRunTerminalRegistry in agentdash-application-agentrun
 pub(crate) mod terminal_boundary;
-pub(crate) mod terminal_boundary_service;
 pub(crate) mod title_generator;
 pub(crate) mod title_service;
 pub(crate) mod tool_assembly;
@@ -100,7 +99,7 @@ pub use runtime_commands::{
 pub use runtime_control::SessionRuntimeService;
 pub use runtime_services::SessionRuntimeServices;
 pub use runtime_transition_service::SessionRuntimeTransitionService;
-pub use terminal_boundary_service::RuntimeTerminalBoundaryService;
+pub use terminal_boundary::RuntimeTerminalBoundaryService;
 pub use title_service::SessionTitleService;
 pub use tool_result_cache::{
     SESSION_TOOL_RESULT_CACHE_DEFAULT_TTL, SessionToolResultCache, SessionToolResultCacheMetadata,

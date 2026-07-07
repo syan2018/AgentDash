@@ -75,14 +75,14 @@ impl GateProducerTerminalConvergenceServiceAdapter {
         .await
         .map_err(application_error_from_workflow_gate_error)?;
 
-        if result.no_matching_obligation() {
+        if result.no_matching_gate_wait_policy() {
             diag!(
                 Debug,
                 Subsystem::AgentRun,
                 producer = ?event.producer,
                 terminal_state = %event.terminal_state,
                 delivery_trace_ref = ?event.trace_ref,
-                "gate producer terminal convergence found no matching obligation"
+                "gate producer terminal fallback found no matching gate wait policy"
             );
         }
 
@@ -102,7 +102,7 @@ impl GateProducerTerminalConvergenceServiceAdapter {
                 outcome_kind = ?outcome.kind,
                 result_status = ?outcome.result_status,
                 delivery_intent_count = outcome.delivery_intents.len(),
-                "gate producer terminal convergence outcome delivered"
+                "gate producer terminal fallback outcome delivered"
             );
         }
         Ok(result)

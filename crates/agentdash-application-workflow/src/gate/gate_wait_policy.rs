@@ -28,7 +28,7 @@ pub struct GateProducerTerminalConvergenceResult {
 }
 
 impl GateProducerTerminalConvergenceResult {
-    pub fn no_matching_obligation(&self) -> bool {
+    pub fn no_matching_gate_wait_policy(&self) -> bool {
         self.outcomes.is_empty()
     }
 }

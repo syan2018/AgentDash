@@ -1,4 +1,4 @@
-use agentdash_domain::workflow::ExecutorSpec;
+use agentdash_domain::workflow::{ExecutorSpec, GateWaitPolicyTemplate};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -22,6 +22,7 @@ pub struct OpenCompanionGateCommand {
     pub gate_kind: String,
     pub correlation_id: String,
     pub payload: Option<Value>,
+    pub wait_policy: Option<GateWaitPolicyTemplate>,
 }
 
 #[derive(Debug, Clone)]

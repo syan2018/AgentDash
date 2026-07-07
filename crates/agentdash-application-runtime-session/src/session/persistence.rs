@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 pub use agentdash_spi::session_persistence::{
     AgentFrameTransitionRecord, AgentRunControlEffectKind, AgentRunControlEffectRecord,
-    AgentRunControlEffectStatus, AgentRunControlEffectStore, CompactionProjectionCommitResult,
-    NewAgentRunControlEffectRecord, NewCompactionProjectionCommit, PersistedSessionEvent,
-    RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord,
-    SessionCompactionStatus, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
-    SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
-    SessionLineageStore, SessionMeta, SessionMetaStore, SessionProjectionHeadRecord,
-    SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
-    SessionStoreError, SessionStoreResult,
+    AgentRunControlEffectStatus, AgentRunControlEffectStore, ClaimAgentRunControlEffectsRequest,
+    CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
+    NewCompactionProjectionCommit, PersistedSessionEvent, RuntimeCommandRecord,
+    RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus,
+    SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore,
+    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore,
+    SessionMeta, SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
 };
 
 #[derive(Clone)]

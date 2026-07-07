@@ -468,7 +468,7 @@ impl LifecycleJourneyProjection {
                         })
                         .apply_output(event, data);
                 }
-                BackboneEvent::Platform(PlatformEvent::TerminalStateChanged {
+                BackboneEvent::Platform(PlatformEvent::PtyTerminalStateChanged {
                     terminal_id,
                     state,
                     exit_code,

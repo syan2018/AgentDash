@@ -601,13 +601,13 @@ AgentRun control-effect 类型：
 - `agent_run_delivery_convergence`
 - `wait_producer_terminal_convergence`
 - `lifecycle_terminal_convergence`
-- `mailbox_wake_delivery`
 - `hook_effects`
 - `hook_auto_resume_delivery`
-- `hook_runtime_projection_changed`
 
 Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。effect 失败只影响 outbox
 状态，不回滚 terminal event，也不改变 AgentRun delivery binding 已经表达的运行态。
+Hook runtime projection change 继续由 runtime command / projection owner 表达；它不作为 AgentRun
+terminal control-effect kind，因为 AgentRun outbox 的每个 kind 都必须具备真实 replay executor。
 
 ## Persistence Store Boundaries
 

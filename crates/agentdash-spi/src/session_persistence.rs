@@ -429,10 +429,8 @@ pub enum AgentRunControlEffectKind {
     AgentRunDeliveryConvergence,
     WaitProducerTerminalConvergence,
     LifecycleTerminalConvergence,
-    MailboxWakeDelivery,
     HookEffects,
     HookAutoResumeDelivery,
-    HookRuntimeProjectionChanged,
 }
 
 impl AgentRunControlEffectKind {
@@ -441,10 +439,8 @@ impl AgentRunControlEffectKind {
             Self::AgentRunDeliveryConvergence => "agent_run_delivery_convergence",
             Self::WaitProducerTerminalConvergence => "wait_producer_terminal_convergence",
             Self::LifecycleTerminalConvergence => "lifecycle_terminal_convergence",
-            Self::MailboxWakeDelivery => "mailbox_wake_delivery",
             Self::HookEffects => "hook_effects",
             Self::HookAutoResumeDelivery => "hook_auto_resume_delivery",
-            Self::HookRuntimeProjectionChanged => "hook_runtime_projection_changed",
         }
     }
 }
@@ -457,10 +453,8 @@ impl TryFrom<&str> for AgentRunControlEffectKind {
             "agent_run_delivery_convergence" => Ok(Self::AgentRunDeliveryConvergence),
             "wait_producer_terminal_convergence" => Ok(Self::WaitProducerTerminalConvergence),
             "lifecycle_terminal_convergence" => Ok(Self::LifecycleTerminalConvergence),
-            "mailbox_wake_delivery" => Ok(Self::MailboxWakeDelivery),
             "hook_effects" => Ok(Self::HookEffects),
             "hook_auto_resume_delivery" => Ok(Self::HookAutoResumeDelivery),
-            "hook_runtime_projection_changed" => Ok(Self::HookRuntimeProjectionChanged),
             other => Err(format!("unknown AgentRun control effect kind: {other}")),
         }
     }
@@ -507,6 +501,7 @@ impl TryFrom<&str> for AgentRunControlEffectStatus {
 #[serde(rename_all = "snake_case")]
 pub struct AgentRunControlEffectRecord {
     pub id: Uuid,
+    pub dedup_key: String,
     pub run_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
     pub frame_id: Option<Uuid>,
@@ -517,6 +512,9 @@ pub struct AgentRunControlEffectRecord {
     pub payload: serde_json::Value,
     pub status: AgentRunControlEffectStatus,
     pub attempt_count: u32,
+    pub claim_token: Option<Uuid>,
+    pub claim_owner: Option<String>,
+    pub claim_expires_at_ms: Option<i64>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub last_error: Option<String>,
@@ -524,6 +522,7 @@ pub struct AgentRunControlEffectRecord {
 
 #[derive(Debug, Clone)]
 pub struct NewAgentRunControlEffectRecord {
+    pub dedup_key: String,
     pub run_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
     pub frame_id: Option<Uuid>,
@@ -532,6 +531,14 @@ pub struct NewAgentRunControlEffectRecord {
     pub terminal_event_seq: u64,
     pub effect_kind: AgentRunControlEffectKind,
     pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClaimAgentRunControlEffectsRequest {
+    pub claim_owner: String,
+    pub lease_duration_ms: i64,
+    pub limit: u32,
+    pub dedup_keys: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -837,27 +844,31 @@ pub trait SessionEventStore: Send + Sync {
 
 #[async_trait]
 pub trait AgentRunControlEffectStore: Send + Sync {
-    async fn insert_control_effect(
+    async fn insert_or_get_control_effect(
         &self,
         effect: NewAgentRunControlEffectRecord,
     ) -> SessionStoreResult<AgentRunControlEffectRecord>;
-    async fn mark_control_effect_running(&self, effect_id: Uuid) -> SessionStoreResult<()>;
-    async fn mark_control_effect_succeeded(&self, effect_id: Uuid) -> SessionStoreResult<()>;
+    async fn claim_control_effects(
+        &self,
+        request: ClaimAgentRunControlEffectsRequest,
+    ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>>;
+    async fn mark_control_effect_succeeded(
+        &self,
+        effect_id: Uuid,
+        claim_token: Uuid,
+    ) -> SessionStoreResult<()>;
     async fn mark_control_effect_failed(
         &self,
         effect_id: Uuid,
+        claim_token: Uuid,
         error: String,
     ) -> SessionStoreResult<()>;
     async fn mark_control_effect_dead_letter(
         &self,
         effect_id: Uuid,
+        claim_token: Uuid,
         error: String,
     ) -> SessionStoreResult<()>;
-    async fn list_control_effects_by_status(
-        &self,
-        statuses: &[AgentRunControlEffectStatus],
-        limit: u32,
-    ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>>;
 }
 
 #[async_trait]

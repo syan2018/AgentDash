@@ -2,9 +2,8 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
-    GateWaitPolicy, GateWaitPolicyEnvelope, InteractionDispatchIntent, LifecycleTaskPlanItemPatch,
-    RunPolicy, RuntimePolicy, WaitExpectedResult, WaitProducerRef, WaitTerminalOutcome,
-    WaitTerminalPolicy, WaitWakeTarget,
+    GateWaitPolicyTemplate, InteractionDispatchIntent, LifecycleTaskPlanItemPatch, RunPolicy,
+    RuntimePolicy, WaitExpectedResult, WaitTerminalOutcome, WaitTerminalPolicy, WaitWakeTarget,
 };
 use agentdash_spi::AgentConfig;
 use agentdash_spi::action_type as at;
@@ -84,6 +83,11 @@ impl<'a> CompanionChildDispatchService<'a> {
                             "dispatch_id": request.dispatch_id,
                             "task_id": request.task_id.map(|id| id.to_string()),
                         })),
+                        wait_policy: Some(companion_agent_run_delivery_wait_policy_template(
+                            request.dispatch_id.clone(),
+                            request.parent_run_id,
+                            request.parent_agent_id,
+                        )),
                     },
                 })
                 .await
@@ -92,14 +96,6 @@ impl<'a> CompanionChildDispatchService<'a> {
                         "dispatch 失败: {error}"
                     ))
                 })?;
-            self.declare_child_wait_obligation(
-                &request,
-                result.gate_ref,
-                result.runtime_refs.run_ref,
-                result.runtime_refs.agent_ref,
-                result.runtime_refs.frame_ref,
-            )
-            .await?;
             let delivery_runtime_session_id =
                 require_delivery_runtime_session(result.delivery_runtime_ref)?;
             CompanionChildDispatchOutcome {
@@ -208,69 +204,14 @@ impl<'a> CompanionChildDispatchService<'a> {
             .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))?;
         Ok(())
     }
-
-    async fn declare_child_wait_obligation(
-        &self,
-        request: &CompanionChildDispatchRequest,
-        gate_id: Uuid,
-        child_run_id: Uuid,
-        child_agent_id: Uuid,
-        child_frame_id: Uuid,
-    ) -> Result<(), agentdash_spi::AgentToolError> {
-        let mut gate = self
-            .repos
-            .lifecycle_gate_repo
-            .get(gate_id)
-            .await
-            .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))?
-            .ok_or_else(|| {
-                agentdash_spi::AgentToolError::ExecutionFailed(format!(
-                    "companion wait gate {gate_id} 不存在，无法声明 wait obligation"
-                ))
-            })?;
-        let declaration = companion_agent_run_delivery_wait_policy(
-            child_run_id,
-            child_agent_id,
-            Some(child_frame_id),
-            request.dispatch_id.clone(),
-            request.parent_run_id,
-            request.parent_agent_id,
-            gate_id,
-            &request.companion_label,
-        );
-        gate.payload_json = Some(
-            declaration
-                .write_into_payload(gate.payload_json.take())
-                .map_err(|error| {
-                    agentdash_spi::AgentToolError::ExecutionFailed(format!(
-                        "companion wait obligation payload 序列化失败: {error}"
-                    ))
-                })?,
-        );
-        self.repos
-            .lifecycle_gate_repo
-            .update(&gate)
-            .await
-            .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))
-    }
 }
 
-fn companion_agent_run_delivery_wait_policy(
-    child_run_id: Uuid,
-    child_agent_id: Uuid,
-    child_frame_id: Option<Uuid>,
+fn companion_agent_run_delivery_wait_policy_template(
     correlation_ref: String,
     target_run_id: Uuid,
     target_agent_id: Uuid,
-    gate_id: Uuid,
-    companion_label: &str,
-) -> GateWaitPolicyEnvelope {
-    GateWaitPolicyEnvelope::new(GateWaitPolicy {
-        source: WaitProducerRef::AgentRunDelivery {
-            run_id: child_run_id,
-            agent_id: child_agent_id,
-            frame_id: child_frame_id,
-        },
+) -> GateWaitPolicyTemplate {
+    GateWaitPolicyTemplate {
         expected_result: WaitExpectedResult {
             kind: "companion_result".to_string(),
             correlation_ref: Some(correlation_ref),
@@ -293,10 +234,9 @@ fn companion_agent_run_delivery_wait_policy(
             namespace: "companion".to_string(),
             target_run_id,
             target_agent_id,
-            client_command_id: format!("companion-result:{gate_id}"),
+            client_command_id: "companion-result:{gate_id}".to_string(),
         },
-    })
-    .with_display_value("companion_label", serde_json::json!(companion_label))
+    }
 }
 
 fn require_delivery_runtime_session(

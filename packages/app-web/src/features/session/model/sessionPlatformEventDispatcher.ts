@@ -28,7 +28,7 @@ export function dispatchSessionPlatformEvent(event: SessionEventEnvelope, onErro
     return true;
   }
 
-  if (platform.kind === "terminal_state_changed") {
+  if (platform.kind === "pty_terminal_state_changed") {
     if (!isTerminalProcessState(platform.data.state)) {
       onError?.(new Error(`非法终端状态: ${platform.data.state}`));
       return true;

@@ -29,7 +29,7 @@ use super::launch::SessionLaunchService;
 use super::persistence::SessionStoreSet;
 use super::runtime_control::SessionRuntimeService;
 use super::runtime_transition_service::SessionRuntimeTransitionService;
-use super::terminal_boundary_service::RuntimeTerminalBoundaryService;
+use super::terminal_boundary::RuntimeTerminalBoundaryService;
 use super::title_service::SessionTitleService;
 use crate::context::SharedContextAuditBus;
 

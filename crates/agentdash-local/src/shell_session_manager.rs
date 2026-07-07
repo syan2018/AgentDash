@@ -440,9 +440,9 @@ impl ShellSessionManager {
                 session.updated_at = Instant::now();
                 session.notify.notify_waiters();
                 if let Some(terminal_id) = session.terminal_id.clone() {
-                    event = Some(TerminalStateChangedPayload {
+                    event = Some(PtyTerminalStateChangedPayload {
                         terminal_id,
-                        state: TerminalProcessState::Killed,
+                        state: PtyTerminalProcessState::Killed,
                         exit_code: None,
                         message: Some("terminate requested".to_string()),
                     });
@@ -455,10 +455,12 @@ impl ShellSessionManager {
             }
         };
         if let Some(payload) = event {
-            let _ = self.event_tx.send(RelayMessage::EventTerminalStateChanged {
-                id: RelayMessage::new_id("term-state"),
-                payload,
-            });
+            let _ = self
+                .event_tx
+                .send(RelayMessage::EventPtyTerminalStateChanged {
+                    id: RelayMessage::new_id("term-state"),
+                    payload,
+                });
         }
         Ok(ToolShellTerminateResponse {
             session_id: payload.session_id,
@@ -551,15 +553,17 @@ impl ShellSessionManager {
             .insert(session_id.clone(), session);
 
         if let Some(terminal_id) = terminal_id {
-            let _ = self.event_tx.send(RelayMessage::EventTerminalStateChanged {
-                id: RelayMessage::new_id("term-state"),
-                payload: TerminalStateChangedPayload {
-                    terminal_id,
-                    state: TerminalProcessState::Running,
-                    exit_code: None,
-                    message: None,
-                },
-            });
+            let _ = self
+                .event_tx
+                .send(RelayMessage::EventPtyTerminalStateChanged {
+                    id: RelayMessage::new_id("term-state"),
+                    payload: PtyTerminalStateChangedPayload {
+                        terminal_id,
+                        state: PtyTerminalProcessState::Running,
+                        exit_code: None,
+                        message: None,
+                    },
+                });
         }
 
         if let Some(timeout_ms) = spec.timeout_ms {
@@ -674,10 +678,10 @@ impl ShellSessionManager {
             session.notify.notify_waiters();
             session.terminal_id.clone().map(|terminal_id| {
                 let state = match session.state {
-                    ToolShellSessionState::Killed => TerminalProcessState::Killed,
-                    _ => TerminalProcessState::Exited,
+                    ToolShellSessionState::Killed => PtyTerminalProcessState::Killed,
+                    _ => PtyTerminalProcessState::Exited,
                 };
-                TerminalStateChangedPayload {
+                PtyTerminalStateChangedPayload {
                     terminal_id,
                     state,
                     exit_code: Some(code),
@@ -686,10 +690,12 @@ impl ShellSessionManager {
             })
         };
         if let Some(payload) = event {
-            let _ = self.event_tx.send(RelayMessage::EventTerminalStateChanged {
-                id: RelayMessage::new_id("term-state"),
-                payload,
-            });
+            let _ = self
+                .event_tx
+                .send(RelayMessage::EventPtyTerminalStateChanged {
+                    id: RelayMessage::new_id("term-state"),
+                    payload,
+                });
         }
     }
 
@@ -710,18 +716,20 @@ impl ShellSessionManager {
             session
                 .terminal_id
                 .clone()
-                .map(|terminal_id| TerminalStateChangedPayload {
+                .map(|terminal_id| PtyTerminalStateChangedPayload {
                     terminal_id,
-                    state: TerminalProcessState::Killed,
+                    state: PtyTerminalProcessState::Killed,
                     exit_code: None,
                     message: Some("timeout reached".to_string()),
                 })
         };
         if let Some(payload) = event {
-            let _ = self.event_tx.send(RelayMessage::EventTerminalStateChanged {
-                id: RelayMessage::new_id("term-state"),
-                payload,
-            });
+            let _ = self
+                .event_tx
+                .send(RelayMessage::EventPtyTerminalStateChanged {
+                    id: RelayMessage::new_id("term-state"),
+                    payload,
+                });
         }
     }
 

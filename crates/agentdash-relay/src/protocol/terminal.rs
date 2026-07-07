@@ -87,9 +87,9 @@ impl TerminalOutputPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalStateChangedPayload {
+pub struct PtyTerminalStateChangedPayload {
     pub terminal_id: String,
-    pub state: TerminalProcessState,
+    pub state: PtyTerminalProcessState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,7 +98,7 @@ pub struct TerminalStateChangedPayload {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum TerminalProcessState {
+pub enum PtyTerminalProcessState {
     Running,
     Exited,
     Lost,

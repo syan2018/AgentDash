@@ -1437,6 +1437,7 @@ impl CompanionRequestTool {
                 gate_kind: gate_kind.to_string(),
                 correlation_id: request_id,
                 payload: Some(gate_meta),
+                wait_policy: None,
             })
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;

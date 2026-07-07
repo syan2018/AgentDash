@@ -7,12 +7,13 @@ use tokio::sync::Mutex;
 use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
     AgentRunControlEffectRecord, AgentRunControlEffectStatus, AgentRunControlEffectStore,
-    CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
-    NewCompactionProjectionCommit, PersistedSessionEvent, SessionCompactionRecord,
-    SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore,
-    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore,
-    SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
+    ClaimAgentRunControlEffectsRequest, CompactionProjectionCommitResult,
+    NewAgentRunControlEffectRecord, NewCompactionProjectionCommit, PersistedSessionEvent,
+    SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
+    SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
+    SessionLineageStore, SessionMetaStore, SessionProjectionHeadRecord,
+    SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
+    SessionStoreError, SessionStoreResult,
 };
 use super::runtime_commands::{
     AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
@@ -224,7 +225,7 @@ impl SessionEventStore for FixtureRuntimeTraceStore {
 
 #[async_trait::async_trait]
 impl AgentRunControlEffectStore for FixtureRuntimeTraceStore {
-    async fn insert_control_effect(
+    async fn insert_or_get_control_effect(
         &self,
         effect: NewAgentRunControlEffectRecord,
     ) -> SessionStoreResult<AgentRunControlEffectRecord> {
@@ -236,9 +237,18 @@ impl AgentRunControlEffectStore for FixtureRuntimeTraceStore {
                 "session {delivery_runtime_session_id} 不存在"
             )));
         }
+        if let Some(existing) = guard
+            .control_effects
+            .iter()
+            .find(|existing| existing.dedup_key == effect.dedup_key)
+            .cloned()
+        {
+            return Ok(existing);
+        }
         let now = chrono::Utc::now().timestamp_millis();
         let record = AgentRunControlEffectRecord {
             id: uuid::Uuid::new_v4(),
+            dedup_key: effect.dedup_key,
             run_id: effect.run_id,
             agent_id: effect.agent_id,
             frame_id: effect.frame_id,
@@ -249,6 +259,9 @@ impl AgentRunControlEffectStore for FixtureRuntimeTraceStore {
             payload: effect.payload,
             status: AgentRunControlEffectStatus::Pending,
             attempt_count: 0,
+            claim_token: None,
+            claim_owner: None,
+            claim_expires_at_ms: None,
             created_at_ms: now,
             updated_at_ms: now,
             last_error: None,
@@ -257,19 +270,68 @@ impl AgentRunControlEffectStore for FixtureRuntimeTraceStore {
         Ok(record)
     }
 
-    async fn mark_control_effect_running(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
-        self.update_control_effect(effect_id, |effect, now| {
+    async fn claim_control_effects(
+        &self,
+        request: ClaimAgentRunControlEffectsRequest,
+    ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
+        if request.limit == 0 {
+            return Ok(Vec::new());
+        }
+        if request.lease_duration_ms <= 0 {
+            return Err(SessionStoreError::InvalidInput(
+                "control effect claim lease_duration_ms 必须为正数".to_string(),
+            ));
+        }
+        let mut guard = self.inner.lock().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        let claim_expires_at_ms = now.saturating_add(request.lease_duration_ms);
+        let claim_token = uuid::Uuid::new_v4();
+        let mut candidates = guard
+            .control_effects
+            .iter_mut()
+            .filter(|effect| {
+                request
+                    .dedup_keys
+                    .as_ref()
+                    .is_none_or(|keys| keys.contains(&effect.dedup_key))
+            })
+            .filter(|effect| {
+                matches!(
+                    effect.status,
+                    AgentRunControlEffectStatus::Pending | AgentRunControlEffectStatus::Failed
+                ) || (effect.status == AgentRunControlEffectStatus::Running
+                    && effect
+                        .claim_expires_at_ms
+                        .is_none_or(|expires| expires <= now))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|effect| (effect.updated_at_ms, effect.created_at_ms));
+        let limit = usize::try_from(request.limit)
+            .map_err(|_| SessionStoreError::InvalidData("分页大小超出 usize 范围".to_string()))?;
+        let mut claimed = Vec::new();
+        for effect in candidates.into_iter().take(limit) {
             effect.status = AgentRunControlEffectStatus::Running;
             effect.attempt_count = effect.attempt_count.saturating_add(1);
+            effect.claim_token = Some(claim_token);
+            effect.claim_owner = Some(request.claim_owner.clone());
+            effect.claim_expires_at_ms = Some(claim_expires_at_ms);
             effect.updated_at_ms = now;
             effect.last_error = None;
-        })
-        .await
+            claimed.push(effect.clone());
+        }
+        Ok(claimed)
     }
 
-    async fn mark_control_effect_succeeded(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
-        self.update_control_effect(effect_id, |effect, now| {
+    async fn mark_control_effect_succeeded(
+        &self,
+        effect_id: uuid::Uuid,
+        claim_token: uuid::Uuid,
+    ) -> SessionStoreResult<()> {
+        self.update_control_effect(effect_id, claim_token, |effect, now| {
             effect.status = AgentRunControlEffectStatus::Succeeded;
+            effect.claim_token = None;
+            effect.claim_owner = None;
+            effect.claim_expires_at_ms = None;
             effect.updated_at_ms = now;
             effect.last_error = None;
         })
@@ -279,10 +341,14 @@ impl AgentRunControlEffectStore for FixtureRuntimeTraceStore {
     async fn mark_control_effect_failed(
         &self,
         effect_id: uuid::Uuid,
+        claim_token: uuid::Uuid,
         error: String,
     ) -> SessionStoreResult<()> {
-        self.update_control_effect(effect_id, |effect, now| {
+        self.update_control_effect(effect_id, claim_token, |effect, now| {
             effect.status = AgentRunControlEffectStatus::Failed;
+            effect.claim_token = None;
+            effect.claim_owner = None;
+            effect.claim_expires_at_ms = None;
             effect.updated_at_ms = now;
             effect.last_error = Some(error);
         })
@@ -292,33 +358,18 @@ impl AgentRunControlEffectStore for FixtureRuntimeTraceStore {
     async fn mark_control_effect_dead_letter(
         &self,
         effect_id: uuid::Uuid,
+        claim_token: uuid::Uuid,
         error: String,
     ) -> SessionStoreResult<()> {
-        self.update_control_effect(effect_id, |effect, now| {
+        self.update_control_effect(effect_id, claim_token, |effect, now| {
             effect.status = AgentRunControlEffectStatus::DeadLetter;
+            effect.claim_token = None;
+            effect.claim_owner = None;
+            effect.claim_expires_at_ms = None;
             effect.updated_at_ms = now;
             effect.last_error = Some(error);
         })
         .await
-    }
-
-    async fn list_control_effects_by_status(
-        &self,
-        statuses: &[AgentRunControlEffectStatus],
-        limit: u32,
-    ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
-        let guard = self.inner.lock().await;
-        let limit = usize::try_from(limit.max(1))
-            .map_err(|_| SessionStoreError::InvalidData("分页大小超出 usize 范围".to_string()))?;
-        let mut records = guard
-            .control_effects
-            .iter()
-            .filter(|effect| statuses.contains(&effect.status))
-            .cloned()
-            .collect::<Vec<_>>();
-        records.sort_by_key(|effect| (effect.updated_at_ms, effect.created_at_ms));
-        records.truncate(limit);
-        Ok(records)
     }
 }
 
@@ -768,6 +819,7 @@ impl FixtureRuntimeTraceStore {
     async fn update_control_effect(
         &self,
         effect_id: uuid::Uuid,
+        claim_token: uuid::Uuid,
         update: impl FnOnce(&mut AgentRunControlEffectRecord, i64),
     ) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
@@ -779,6 +831,11 @@ impl FixtureRuntimeTraceStore {
             .ok_or_else(|| {
                 SessionStoreError::NotFound(format!("AgentRun control effect {effect_id} 不存在"))
             })?;
+        if effect.claim_token != Some(claim_token) {
+            return Err(SessionStoreError::InvalidInput(format!(
+                "AgentRun control effect {effect_id} claim token 不匹配"
+            )));
+        }
         update(effect, now);
         Ok(())
     }
@@ -1169,49 +1226,141 @@ mod tests {
             .await
             .expect("应能创建 session");
 
+        let new_record = NewAgentRunControlEffectRecord {
+            dedup_key: "runtime_terminal:sess-effects:turn-1:1:hook_auto_resume_delivery:test"
+                .to_string(),
+            run_id: None,
+            agent_id: None,
+            frame_id: None,
+            delivery_runtime_session_id: Some("sess-effects".to_string()),
+            turn_id: "turn-1".to_string(),
+            terminal_event_seq: 1,
+            effect_kind: AgentRunControlEffectKind::HookAutoResumeDelivery,
+            payload: serde_json::json!({ "reason": "test" }),
+        };
         let record = persistence
-            .insert_control_effect(NewAgentRunControlEffectRecord {
+            .insert_or_get_control_effect(new_record.clone())
+            .await
+            .expect("应能写入 outbox");
+        let duplicate = persistence
+            .insert_or_get_control_effect(NewAgentRunControlEffectRecord {
+                payload: serde_json::json!({ "reason": "duplicate payload ignored" }),
+                ..new_record
+            })
+            .await
+            .expect("重复 terminal evidence 应返回既有 outbox");
+        assert_eq!(duplicate.id, record.id);
+        assert_eq!(duplicate.payload, serde_json::json!({ "reason": "test" }));
+        assert_eq!(record.status, AgentRunControlEffectStatus::Pending);
+        assert_eq!(record.attempt_count, 0);
+
+        let claimed = persistence
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: "test-worker".to_string(),
+                lease_duration_ms: 60_000,
+                limit: 10,
+                dedup_keys: None,
+            })
+            .await
+            .expect("应能 claim pending outbox");
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, record.id);
+        assert_eq!(claimed[0].attempt_count, 1);
+        assert_eq!(claimed[0].status, AgentRunControlEffectStatus::Running);
+        assert_eq!(claimed[0].claim_owner.as_deref(), Some("test-worker"));
+        let claim_token = claimed[0].claim_token.expect("claim 应写入 token");
+
+        let second_claim = persistence
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: "other-worker".to_string(),
+                lease_duration_ms: 60_000,
+                limit: 10,
+                dedup_keys: None,
+            })
+            .await
+            .expect("未过期 running row 不应被重复 claim");
+        assert!(second_claim.is_empty());
+
+        persistence
+            .mark_control_effect_failed(record.id, claim_token, "boom".to_string())
+            .await
+            .expect("应能标记 failed");
+        let retried = persistence
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: "retry-worker".to_string(),
+                lease_duration_ms: 60_000,
+                limit: 10,
+                dedup_keys: Some(vec![record.dedup_key.clone()]),
+            })
+            .await
+            .expect("failed row 应可重新 claim");
+        assert_eq!(retried.len(), 1);
+        assert_eq!(retried[0].attempt_count, 2);
+        assert_eq!(retried[0].last_error, None);
+        let retry_token = retried[0].claim_token.expect("retry claim 应写入 token");
+
+        persistence
+            .mark_control_effect_succeeded(record.id, retry_token)
+            .await
+            .expect("应能标记 succeeded");
+        let after_success = persistence
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: "after-success".to_string(),
+                lease_duration_ms: 60_000,
+                limit: 10,
+                dedup_keys: None,
+            })
+            .await
+            .expect("succeeded row 不应被 replay claim");
+        assert!(after_success.is_empty());
+
+        let dead_letter = persistence
+            .insert_or_get_control_effect(NewAgentRunControlEffectRecord {
+                dedup_key: "runtime_terminal:sess-effects:turn-2:2:hook_auto_resume_delivery:test"
+                    .to_string(),
                 run_id: None,
                 agent_id: None,
                 frame_id: None,
                 delivery_runtime_session_id: Some("sess-effects".to_string()),
-                turn_id: "turn-1".to_string(),
-                terminal_event_seq: 1,
+                turn_id: "turn-2".to_string(),
+                terminal_event_seq: 2,
                 effect_kind: AgentRunControlEffectKind::HookAutoResumeDelivery,
                 payload: serde_json::json!({ "reason": "test" }),
             })
             .await
             .expect("应能写入 outbox");
-        assert_eq!(record.status, AgentRunControlEffectStatus::Pending);
-        assert_eq!(record.attempt_count, 0);
-
+        let claimed_dead_letter = persistence
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: "dead-letter-worker".to_string(),
+                lease_duration_ms: 60_000,
+                limit: 10,
+                dedup_keys: Some(vec![dead_letter.dedup_key.clone()]),
+            })
+            .await
+            .expect("应能 claim dead-letter fixture");
+        let dead_letter_token = claimed_dead_letter[0]
+            .claim_token
+            .expect("dead-letter claim 应写入 token");
         persistence
-            .mark_control_effect_running(record.id)
+            .mark_control_effect_dead_letter(
+                dead_letter.id,
+                dead_letter_token,
+                "too many attempts".to_string(),
+            )
             .await
-            .expect("应能标记 running");
-        let running = persistence
-            .list_control_effects_by_status(&[AgentRunControlEffectStatus::Running], 10)
-            .await
-            .expect("应能查询 running");
-        assert_eq!(running.len(), 1);
-        assert_eq!(running[0].attempt_count, 1);
-
-        persistence
-            .mark_control_effect_failed(record.id, "boom".to_string())
-            .await
-            .expect("应能标记 failed");
-        let failed = persistence
-            .list_control_effects_by_status(&[AgentRunControlEffectStatus::Failed], 10)
-            .await
-            .expect("应能查询 failed");
-        assert_eq!(failed[0].last_error.as_deref(), Some("boom"));
+            .expect("应能标记 dead-letter");
 
         persistence
             .delete_session("sess-effects")
             .await
             .expect("应能删除 session");
         let remaining = persistence
-            .list_control_effects_by_status(&[AgentRunControlEffectStatus::Failed], 10)
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: "after-delete".to_string(),
+                lease_duration_ms: 60_000,
+                limit: 10,
+                dedup_keys: None,
+            })
             .await
             .expect("应能查询 outbox");
         assert!(remaining.is_empty());

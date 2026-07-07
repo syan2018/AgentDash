@@ -134,7 +134,7 @@ AgentRunWorkspacePage / Agent 入口 → LifecycleAgent message command { prompt
 
 ### 1. Scope / Trigger
 
-- Trigger: Companion `target=sub` dispatch 会创建 child AgentRun、mailbox intake 和可选 durable wait obligation。
+- Trigger: Companion `target=sub` dispatch 会创建 child AgentRun、mailbox intake 和可选 durable gate wait policy。
 - Scope: `CompanionRequestTool`、`CollaborationRuntimeToolProvider`、API session bootstrap、PiAgent provider registry effective profile catalog、LLM Provider credential resolver。
 
 ### 2. Signatures
@@ -175,11 +175,11 @@ build_effective_profile_catalog_from_db(
 
 ### 3. Contracts
 
-- SubAgent dispatch runs model preflight after resolving the selected ProjectAgent and before hook dispatch planning, `LifecycleDispatchService::open_interaction_gate`, `launch_agent`, child mailbox intake, or wait obligation declaration.
+- SubAgent dispatch runs model preflight after resolving the selected ProjectAgent and before hook dispatch planning, `LifecycleDispatchService::open_interaction_gate`, `launch_agent`, child mailbox intake, or gate wait policy creation.
 - The preflight fact source is the provider/account effective profile catalog: provider enabled state, credential mode, global/user credential resolution, dynamic model discovery when supported, configured models, default model and blocked models.
 - The preflight request carries the current `AuthIdentity` so `global_or_user` and `user_required` providers resolve with the same account context as runtime execution.
 - API bootstrap owns the concrete preflight adapter because it has both `RepositorySet` and `LlmSecretCodec`; application companion code only consumes `CompanionModelPreflightPort`.
-- `openai_codex` credentials are account-scoped ChatGPT OAuth credentials. When no stable account model discovery exists, preflight validates the effective provider and configured/blocked model contract; runtime provider 400 remains a terminal fact that wait obligation convergence must resolve.
+- `openai_codex` credentials are account-scoped ChatGPT OAuth credentials. When no stable account model discovery exists, preflight validates the effective provider and configured/blocked model contract; runtime provider 400 remains a terminal fact that gate producer terminal convergence must resolve.
 
 ### 4. Validation & Error Matrix
 
@@ -192,7 +192,7 @@ build_effective_profile_catalog_from_db(
 | Selected model is blocked | Return visible blocked-model error. |
 | Only `model_id` is supplied and multiple executable providers expose it | Return visible ambiguity error requiring `provider_id`. |
 | Effective provider/model passes preflight | Continue normal companion dispatch. |
-| Runtime provider later returns terminal 400 despite preflight | Runtime terminal convergence remains responsible for resolving any existing wait obligation. |
+| Runtime provider later returns terminal 400 despite preflight | Runtime terminal convergence remains responsible for resolving any existing gate wait policy. |
 
 ### 5. Good/Base/Bad Cases
 

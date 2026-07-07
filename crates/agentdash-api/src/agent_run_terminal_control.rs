@@ -3,10 +3,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use agentdash_application::companion::AgentRunCompanionMailboxDelivery;
-use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::wait_obligation::{
+use agentdash_application::gate_wait_policy::{
     CompanionGateMailboxWakeDelivery, GateProducerTerminalConvergencePort,
 };
+use agentdash_application::repository_set::RepositorySet;
 use agentdash_application_agentrun::agent_run::{
     SessionControlService, SessionCoreService,
     SessionEventingService as AgentRunSessionEventingService, SessionLaunchService,
@@ -60,7 +60,7 @@ impl AgentRunWaitProducerTerminalConvergencePort for ApiWaitProducerTerminalConv
                 self.session_launch.clone(),
             ));
         let service =
-            agentdash_application::wait_obligation::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
+            agentdash_application::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
                 self.repos.lifecycle_gate_repo.clone(),
                 self.repos.agent_run_delivery_binding_repo.clone(),
                 Arc::new(CompanionGateMailboxWakeDelivery::new(parent_mailbox_delivery)),
@@ -74,7 +74,7 @@ impl AgentRunWaitProducerTerminalConvergencePort for ApiWaitProducerTerminalConv
                     Warn,
                     Subsystem::Api,
                     error = %error,
-                    "AgentRun wait producer terminal convergence 失败"
+                    "AgentRun gate producer terminal fallback 失败"
                 );
                 error.to_string()
             })?;

@@ -78,6 +78,7 @@ impl<'a> LifecycleRelationWriter<'a> {
                 gate_kind: policy.gate_kind.clone(),
                 correlation_id: correlation,
                 payload: policy.payload.clone(),
+                wait_policy: policy.wait_policy.clone(),
             },
         )
         .await?;

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality gate for Rust changes and tests."}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Verify terminal/control effect state ownership."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Verify mailbox wake dedup and wait projection behavior."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Verify LifecycleGate resolver and dispatch boundaries."}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Verify Backbone/relay event naming and generated frontend contracts."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend test and generated type quality gate if relay terminal projection changes."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer review guide for final integration check."}

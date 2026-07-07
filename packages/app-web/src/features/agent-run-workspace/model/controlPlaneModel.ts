@@ -77,6 +77,13 @@ export function planAgentRunMessageSent(): AgentRunControlPlaneEffectPlan {
   };
 }
 
+export function planAgentRunTurnEnded(): AgentRunControlPlaneEffectPlan {
+  return {
+    refreshWorkspaceState: true,
+    refreshAgentRunListReason: "turn_ended",
+  };
+}
+
 export function planAgentRunWorkspaceModuleOpened(): AgentRunControlPlaneEffectPlan {
   return {
     refreshWorkspaceState: true,

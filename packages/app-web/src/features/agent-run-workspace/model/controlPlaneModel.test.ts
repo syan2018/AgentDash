@@ -24,6 +24,7 @@ import {
 import {
   planAgentRunMessageSent,
   planAgentRunSystemEvent,
+  planAgentRunTurnEnded,
   planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
 } from "./controlPlaneModel";
@@ -196,6 +197,10 @@ describe("AgentRun control-plane model", () => {
       refreshWorkspaceState: true,
       hookRuntimeRefresh: { reason: "message_sent", immediate: true },
       refreshAgentRunListReason: "message_sent",
+    });
+    expect(planAgentRunTurnEnded()).toEqual({
+      refreshWorkspaceState: true,
+      refreshAgentRunListReason: "turn_ended",
     });
     expect(planAgentRunWorkspaceModuleOpened()).toEqual({
       refreshWorkspaceState: true,

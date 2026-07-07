@@ -17,6 +17,7 @@ import type {
 import {
   planAgentRunMessageSent,
   planAgentRunSystemEvent,
+  planAgentRunTurnEnded,
   planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
   type AgentRunControlPlaneEffectPlan,
@@ -380,8 +381,9 @@ export function useAgentRunWorkspaceControlPlane({
   }, [currentAgentId, currentRunId]);
 
   const handleTurnEnd = useCallback(() => {
+    applyControlPlaneEffectPlan(planAgentRunTurnEnded());
     refreshStatusBarTasks();
-  }, [refreshStatusBarTasks]);
+  }, [applyControlPlaneEffectPlan, refreshStatusBarTasks]);
 
   const handleTaskPlanChanged = useCallback(() => {
     refreshStatusBarTasks();

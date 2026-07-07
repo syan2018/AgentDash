@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 58
+- **Total Sessions**: 59
 - **Last Active**: 2026-07-07
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~162 | Active |
+| `journal-2.md` | ~195 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 59 | 2026-07-07 | 用户偏好工作状态 Project 选择 | `9fe340a6f` | `main` |
 | 58 | 2026-07-07 | 收束 SubAgent 与 Companion 失败事实源 | `3f0bee89c`, `64d6109ed`, `94298b610`, `7279e8f97`, `d1d93110d`, `43e18aad4`, `67b24b44d`, `4646f9594` | `main` |
 | 57 | 2026-07-07 | Agent 生命周期边界收口 | `430582dd`, `50b597b9`, `346c1573`, `0956e219`, `9d62140b`, `4e8bf9ac`, `b1376ccc`, `ebacd4b0`, `232fb3c9`, `6dc3b52f`, `f35668b1`, `e3128ee4` | `codex/agent-lifecycle-fact-source-review` |
 | 56 | 2026-07-06 | 收束 SubAgent terminal gate | `9f795b800`, `d4dc52cf7`, `2b2689823`, `9acc63e7a`, `d28c94093` | `main` |

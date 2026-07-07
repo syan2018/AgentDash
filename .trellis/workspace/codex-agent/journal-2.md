@@ -160,3 +160,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 59: 用户偏好工作状态 Project 选择
+
+**Date**: 2026-07-07
+**Task**: 用户偏好工作状态 Project 选择
+**Branch**: `main`
+
+### Summary
+
+新增 user-scope ui.workspace_state，前端启动恢复上次 Project，并在显式 Project 切换、创建、克隆、删除时写回用户工作状态。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9fe340a6f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

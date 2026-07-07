@@ -238,7 +238,7 @@ export function EventFullCard({
             </div>
           )}
           {debugRaw && (
-            <pre className={`overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
+            <pre className={`max-h-48 overflow-auto whitespace-pre-wrap ${CB.codeBlock}`}>
               {debugRaw}
             </pre>
           )}

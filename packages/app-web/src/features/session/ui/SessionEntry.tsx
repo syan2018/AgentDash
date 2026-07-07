@@ -40,6 +40,8 @@ import { SessionTaskEventCard } from "./SessionTaskEventCard";
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
+import { BoundedDiagnosticDisclosure } from "./BoundedDiagnosticText";
+import { projectDiagnosticDetails, projectDiagnosticText } from "./boundedDiagnosticTextModel";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CodexErrorInfo, ErrorNotification } from "../../../generated/backbone-protocol";
@@ -195,7 +197,10 @@ export function SingleEntry({
 function SessionErrorCard({ notification }: { notification: ErrorNotification }) {
   const { error } = notification;
   const errorInfo = formatCodexErrorInfo(error.codexErrorInfo);
-  const details = error.additionalDetails?.trim();
+  const messageProjection = projectDiagnosticText(error.message);
+  const details = error.additionalDetails?.trim() ?? "";
+  const detailProjection = details.length > 0 ? projectDiagnosticDetails(details) : null;
+  const hasDetails = Boolean(detailProjection?.structuredLines.length || detailProjection?.overflowText);
 
   return (
     <div className="rounded-[8px] border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
@@ -211,17 +216,34 @@ function SessionErrorCard({ notification }: { notification: ErrorNotification })
         )}
       </div>
 
-      <pre className="mt-2 whitespace-pre-wrap wrap-anywhere font-sans text-sm leading-6 text-foreground">
-        {error.message}
-      </pre>
+      <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
+        {messageProjection.summary}
+      </p>
+      {messageProjection.overflowText && (
+        <BoundedDiagnosticDisclosure
+          text={messageProjection.overflowText}
+          label="完整错误响应"
+          tone="danger"
+          showPreview={false}
+        />
+      )}
 
-      {details && (
-        <details className="mt-2 text-xs text-destructive/80" open>
-          <summary className="cursor-pointer select-none">错误详情</summary>
-          <pre className="mt-1 whitespace-pre-wrap wrap-anywhere rounded-[6px] bg-background/60 px-2 py-1.5 font-mono text-[11px] leading-5 text-foreground/80">
-            {details}
-          </pre>
-        </details>
+      {hasDetails && detailProjection && (
+        <div className="mt-2 space-y-1 text-xs text-destructive/80">
+          <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-destructive/60">错误详情</p>
+          {detailProjection.structuredLines.length > 0 && (
+            <pre className="whitespace-pre-wrap break-words rounded-[6px] bg-background/60 px-2 py-1.5 font-mono text-[11px] leading-5 text-foreground/80">
+              {detailProjection.structuredLines.join("\n")}
+            </pre>
+          )}
+          {detailProjection.overflowText && (
+            <BoundedDiagnosticDisclosure
+              text={detailProjection.overflowText}
+              label="完整详情"
+              tone="danger"
+            />
+          )}
+        </div>
       )}
 
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-destructive/70">

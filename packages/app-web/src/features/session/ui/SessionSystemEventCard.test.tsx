@@ -210,6 +210,34 @@ describe("SessionSystemEventCard", () => {
     expect(isRenderableSystemEventUpdate(event)).toBe(false);
     expect(renderToStaticMarkup(<SessionSystemEventCard event={event} />)).toBe("");
   });
+
+  it("session_rewound 长 provider message 默认不展开完整 HTML", () => {
+    const htmlBody = `<html><head><style>${"body{}".repeat(80)}</style></head><body>UNIQUE_REWOUND_HTML_TAIL</body></html>`;
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "session_rewound",
+        data: {
+          discarded_turn_id: "turn-failed",
+          discarded_entry_index: 1,
+          stable_event_seq: 42n,
+          stable_turn_id: "turn-stable",
+          reason: "runtime_failure",
+          replacement_turn_id: null,
+          message: `执行器运行错误: Pi Agent loop 错误: LLM 桥接错误: Codex API 返回 403 Forbidden: ${htmlBody}`,
+        },
+      },
+    };
+
+    expect(isRenderableSystemEventUpdate(event)).toBe(true);
+    const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
+
+    expect(markup).toContain("SESSION_REWOUND");
+    expect(markup).toContain("Codex API 返回 403 Forbidden");
+    expect(markup).toContain("丢弃轮次：turn-failed");
+    expect(markup).toContain("稳定轮次：turn-stable");
+    expect(markup).not.toContain("UNIQUE_REWOUND_HTML_TAIL");
+  });
 });
 
 function sampleContextFrameData(): JsonObject {

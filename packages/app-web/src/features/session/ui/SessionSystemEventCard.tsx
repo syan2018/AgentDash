@@ -15,6 +15,8 @@ import {
 } from "../model/platformEvent";
 import { EventStripCard, EventFullCard } from "./EventCards";
 import { ContextFrameCard } from "./ContextFrameCard";
+import { BoundedDiagnosticDisclosure } from "./BoundedDiagnosticText";
+import { projectDiagnosticText, type DiagnosticTextProjection } from "./boundedDiagnosticTextModel";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import type { ContextFrame } from "../model/contextFrame";
 
@@ -90,6 +92,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   provider_attempt_status:         "模型状态",
   provider_retry:                  "模型重试",
   provider_status:                 "模型状态",
+  session_rewound:                 "SESSION_REWOUND",
   hook_event:                      "流程事件",
 };
 
@@ -111,6 +114,7 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   provider_attempt_status:         "模型服务状态更新",
   provider_retry:                  "模型服务正在重试",
   provider_status:                 "模型服务状态更新",
+  session_rewound:                 "已丢弃失败轮次，恢复到上一稳定状态",
   hook_event:                      "流程产生新事件",
 };
 
@@ -305,15 +309,23 @@ export function SessionSystemEventCard({ event, contextFrame }: SessionSystemEve
   const badge = SEVERITY_BADGE[severity] ?? DEFAULT_BADGE;
   const typeLabel = EVENT_TYPE_LABELS[eventType] ?? eventType;
   const message = eventMessage ?? EVENT_TYPE_DEFAULT_MESSAGES[eventType] ?? "系统事件";
+  const messageProjection = projectDiagnosticText(message);
   const detailLines = buildGenericDetailLines(eventType, eventData);
-  const extraData = formatExtraData(eventData);
+  const extraData = formatGenericDebugData(eventData, messageProjection);
   return (
     <EventFullCard
       badgeToken={typeLabel}
       badgeClass={badge}
-      message={message}
+      message={messageProjection.summary}
       detailLines={detailLines}
       debugRaw={extraData ?? undefined}
+      debugBody={messageProjection.overflowText ? (
+        <BoundedDiagnosticDisclosure
+          text={messageProjection.overflowText}
+          label="完整事件消息"
+          showPreview={false}
+        />
+      ) : undefined}
     />
   );
 }
@@ -550,6 +562,20 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
   if (eventType === "executor_session_bound") {
     const esId = typeof data.executor_session_id === "string" ? data.executor_session_id : null;
     if (esId) lines.push(`执行器会话：${esId.slice(0, 12)}...`);
+    return lines;
+  }
+
+  if (eventType === "session_rewound") {
+    const discardedTurnId = typeof data.discarded_turn_id === "string" ? data.discarded_turn_id : null;
+    const stableTurnId = typeof data.stable_turn_id === "string" ? data.stable_turn_id : null;
+    const replacementTurnId = typeof data.replacement_turn_id === "string" ? data.replacement_turn_id : null;
+    const reason = typeof data.reason === "string" ? data.reason : null;
+    const stableEventSeq = readOptionalNumber(data.stable_event_seq);
+    if (discardedTurnId) lines.push(`丢弃轮次：${discardedTurnId}`);
+    if (stableTurnId) lines.push(`稳定轮次：${stableTurnId}`);
+    if (stableEventSeq != null) lines.push(`稳定事件序号：${stableEventSeq}`);
+    if (replacementTurnId) lines.push(`替换轮次：${replacementTurnId}`);
+    if (reason) lines.push(`原因：${reason}`);
     return lines;
   }
 
@@ -796,10 +822,29 @@ function normalizeHookInjections(
   return injections.length > 0 ? injections : undefined;
 }
 
+function formatGenericDebugData(
+  value: Record<string, unknown> | null,
+  messageProjection: DiagnosticTextProjection,
+): string | null {
+  if (!value) return null;
+  if (typeof value.message === "string" && messageProjection.overflowText) {
+    return formatExtraData({
+      ...value,
+      message: messageProjection.summary,
+      message_bounded: true,
+    });
+  }
+  return formatExtraData(value);
+}
+
 function formatExtraData(value: unknown): string | null {
   if (value == null) return null;
   if (typeof value === "string") return value;
-  try { return JSON.stringify(value, null, 2); } catch { return null; }
+  try {
+    return JSON.stringify(value, (_key, item) => (
+      typeof item === "bigint" ? item.toString() : item
+    ), 2);
+  } catch { return null; }
 }
 
 export default SessionSystemEventCard;

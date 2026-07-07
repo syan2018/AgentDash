@@ -496,6 +496,7 @@ impl SessionEventingService {
         let stable = latest_stable_terminal_before(&events, terminal_event_seq);
         let discarded_entry_index =
             latest_agent_loop_entry_index_before(&events, discarded_turn_id, terminal_event_seq);
+        let message = bounded_session_rewound_message(message);
         let envelope = BackboneEnvelope::new(
             BackboneEvent::Platform(PlatformEvent::SessionRewound(SessionRewound {
                 discarded_turn_id: discarded_turn_id.to_string(),
@@ -936,6 +937,39 @@ impl SessionEventingService {
             executor_id,
         }
     }
+}
+
+const SESSION_REWOUND_MESSAGE_LIMIT: usize = 512;
+
+fn bounded_session_rewound_message(message: Option<String>) -> Option<String> {
+    let text = message?;
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(html_start) = lower
+        .find("<html")
+        .or_else(|| lower.find("<!doctype"))
+        .or_else(|| lower.find("<head"))
+    {
+        let prefix = trimmed[..html_start].trim().trim_end_matches(':').trim();
+        if prefix.is_empty() {
+            return Some("HTML error response body omitted".to_string());
+        }
+        return Some(format!("{prefix}; HTML error response body omitted"));
+    }
+    Some(bounded_text(trimmed, SESSION_REWOUND_MESSAGE_LIMIT))
+}
+
+fn bounded_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut bounded = text.chars().take(max_chars).collect::<String>();
+    bounded.push_str("...");
+    bounded
 }
 
 fn build_context_delivery_record_envelope(
@@ -1762,6 +1796,21 @@ mod tests {
             SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new()))),
             Arc::new(NoopConnector),
         )
+    }
+
+    #[test]
+    fn session_rewound_message_omits_html_error_body() {
+        let message = "Codex API 返回 403 Forbidden: <html><head><style>body{display:flex}</style></head><body><svg>very long icon</svg><p>Unable to load site</p></body></html>";
+
+        let bounded = bounded_session_rewound_message(Some(message.to_string()))
+            .expect("message should be retained");
+
+        assert_eq!(
+            bounded,
+            "Codex API 返回 403 Forbidden; HTML error response body omitted"
+        );
+        assert!(!bounded.contains("<html"));
+        assert!(!bounded.contains("<svg"));
     }
 
     fn test_meta(session_id: &str) -> SessionMeta {

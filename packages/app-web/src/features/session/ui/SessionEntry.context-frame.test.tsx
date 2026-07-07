@@ -59,6 +59,45 @@ describe("SessionEntry 错误事件", () => {
     expect(html).toContain("code=refresh_token_reused");
     expect(html).toContain("turn turn-1");
   });
+
+  it("provider HTML 错误默认只展示摘要和结构化详情", () => {
+    const htmlBody = `<html><head><style>${"body{}".repeat(80)}</style></head><body>UNIQUE_PROVIDER_HTML_TAIL</body></html>`;
+    const entry: SessionDisplayEntry = {
+      id: "error-provider-1",
+      sessionId: "session-1",
+      timestamp: 1,
+      eventSeq: 1,
+      turnId: "turn-1",
+      event: {
+        type: "error",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          willRetry: false,
+          error: {
+            message: `Codex API 返回 403 Forbidden: ${htmlBody}`,
+            codexErrorInfo: null,
+            additionalDetails: [
+              "kind=Provider",
+              "code=auth_error",
+              "http_status=403",
+              `body=${htmlBody}`,
+            ].join("\n"),
+          },
+        },
+      },
+    };
+
+    const html = renderToStaticMarkup(<SessionEntry item={entry} />);
+
+    expect(html).toContain("Codex API 返回 403 Forbidden");
+    expect(html).toContain("kind=Provider");
+    expect(html).toContain("code=auth_error");
+    expect(html).toContain("http_status=403");
+    expect(html).toContain("完整错误响应");
+    expect(html).toContain("完整详情");
+    expect(html).not.toContain("UNIQUE_PROVIDER_HTML_TAIL");
+  });
 });
 
 function contextFrameEntry(id: string, kind: string): AggregatedContextFrameGroup["entries"][number] {

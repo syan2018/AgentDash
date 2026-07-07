@@ -1,6 +1,6 @@
 # Channel 通信能力讨论 Journal
 
-> **Superseded note（2026-07-07 后续 realignment）**：本文记录的是早期讨论过程，其中 "第一版 companion channel 不是 Project 全局资产"、"v1 通过 runtime effect expose lifecycle channel ref"、"后续再做 Project / Story / AgentTeam persistent channel asset、broadcast/fan-out、external IM binding" 等结论已被最新对齐推翻。最新结论见 `research/channel-service-first-principles-realignment.md` 与当前 `design.md`：Channel 是一等领域与 `ChannelService` 主干，Project 公共 Channel / 企业 IM 是明确架构输入；Lifecycle 只是 runtime-scoped channel 的一种 owner/scope。
+> **Superseded note（2026-07-07 后续 realignment）**：本文记录的是早期讨论过程，其中 "第一版 companion channel 不是 Project 全局资产"、"v1 通过 runtime effect expose lifecycle channel ref"、"后续再做 Project / Story / AgentTeam persistent channel asset、broadcast/fan-out、external IM binding" 等结论已被最新对齐推翻。最新结论见 `research/channel-service-first-principles-realignment.md` 与当前 `design.md`：Channel 是一等领域与 owner-scoped lazy `ChannelService` 主干，Project 公共 Channel / 企业 IM 是明确架构输入但物理承载等待 Assets 系统收束；Lifecycle runtime channel 默认进入 owner-local `ChannelRegistryDocument`。
 
 ## 背景
 

@@ -1,5 +1,6 @@
 {"file": ".trellis/tasks/07-07-channel-communication-capability-model/research/channel-discussion-journal.md", "reason": "检查实现规划是否保留最新讨论中的已决策边界与未决问题。"}
 {"file": ".trellis/tasks/07-07-channel-communication-capability-model/research/channel-service-first-principles-realignment.md", "reason": "检查文档和后续实现是否采用最新 ChannelService-first 决策。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 Channel 持久化是否遵守 owner-local document 与独立 store 判断矩阵。"}
 {"file": ".trellis/spec/backend/capability/architecture.md", "reason": "检查 Channel capability 设计是否违反 AgentRun final visible capability/admission 的唯一入口。"}
 {"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "检查 capability dimension / projection-only 选择是否具备 declaration/effect/replay 语义。"}
 {"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "检查 Channel 没有被误建成队列或绕过 mailbox scheduler。"}

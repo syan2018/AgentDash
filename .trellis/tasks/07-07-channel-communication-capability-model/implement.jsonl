@@ -1,5 +1,6 @@
 {"file": ".trellis/tasks/07-07-channel-communication-capability-model/research/channel-discussion-journal.md", "reason": "本任务最新讨论 journal，记录 ChannelAddress、CapabilityState.channel、Companion lifecycle temporary channel 与 Mailbox attribution 决策。"}
 {"file": ".trellis/tasks/07-07-channel-communication-capability-model/research/channel-service-first-principles-realignment.md", "reason": "最新 ChannelService-first realignment，推翻 lifecycle-only channel 决策并记录 Project/IM 驱动。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Agent runtime fact storage 第一性规范，定义 owner-local document 与独立 store 的判断边界。"}
 {"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Channel capability 需要对齐 AgentRun effective capability/admission 与 ToolCapability 开放 key 的边界。"}
 {"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "评估 Channel 是否应成为新的 capability dimension 或 projection-only surface。"}
 {"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "对齐 Workspace Module 作为通用能力面的投影和工具装配方式。"}

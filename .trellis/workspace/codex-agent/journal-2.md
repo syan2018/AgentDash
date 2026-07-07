@@ -160,3 +160,37 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 59: Companion 回流最小合同收束
+
+**Date**: 2026-07-07
+**Task**: Companion 回流最小合同收束
+**Branch**: `codex/companion-channel-convergence`
+
+### Summary
+
+规划并实现 companion_respond payload + optional reply_to 最小模型合同，收敛 dispatch prompt、skill 文档、runtime resolver 与测试/spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aaff7f105` | (see git log) |
+| `5560ec09d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

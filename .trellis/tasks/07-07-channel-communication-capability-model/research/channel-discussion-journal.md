@@ -166,6 +166,28 @@ egress_policy = thread_reply_only | approval_required | rate_limited
 ## 仍需细化的问题
 
 - `LifecycleChannel` 最小表/实体字段如何命名：使用通用 `channels` + owner scope，还是先用 `lifecycle_channels`。
-- Runtime effect payload 具体形态：`dimension=channel / effect_type=expose_channel_ref` 是否足够。
 - 是否在第一版就把 composer input 显式称为 `namespace=core, kind=composer` 的 built-in channel family。
 - ChannelAddress 是直接复用 `MailboxSourceIdentity` 类型，还是提取 domain value object 后让 Mailbox source identity 映射/嵌入它。当前推荐后者。
+- Channel message persistence 的第一版最小 schema（channel ref / participants / binding 具体字段）尚未设计，只确认了"不做完整 event log"。
+- Channel capability 通过 `PermissionGrant` 累积可见性的通用机制尚未设计（现有 grant 判定硬编码基于 Tool 维度）。
+
+## 2026-07-07 二轮对齐：代码核实 + 用户决策
+
+在第一轮讨论基础上，派 4 个只读 Explore agent 核实 design.md 的关键假设是否与代码现状一致，随后与用户逐项对齐。核实与决策结果：
+
+**核实纠正的事实**（已同步回 `prd.md`/`design.md`，此处只留摘要，细节见两处正文）：
+
+- `MailboxSourceIdentity` 确实已是开放结构，`MailboxMessageSource` closed enum 已在 migration `0032`（commit `f6e2406e6`）修复消除，06-28 任务记录的 `canvas_action` drift 是历史问题、已解决。
+- `platform` namespace 目前只有 spec/design 里的前瞻占位，代码里没有任何路径真正构造它；`target=platform` 现状是 missing-broker 诊断。
+- Workspace Module **不是**干净的 "projection-only 先例"——声明式部分挂在 `CapabilityState.workspace_module` 但未注册进 `CapabilityDimensionRegistry`；运行时曝光部分完全走独立的 `AgentFrame.visible_workspace_module_refs_json` 列，绕开 registry；两者只在读取时由专用 resolver OR 合并。这是历史权宜实现。
+- `AccumulationPolicy::Accumulate` 已有完整先例：VFS dimension 的 `apply_mount_operations`/`MountDirective::{AddMount,RemoveMount,ReplaceMount,AddLink,RemoveLink}`（`runtime_capability.rs:822-838`）实现了"运行时累积、可撤销"；`Accumulate` 的文档注释本身就点名"canvas mount append"为典型场景（`session_persistence.rs:148-149`）。不需要新的 AccumulationPolicy。
+- `companion_request target=sub` 首条任务确实已经走 AgentRun Mailbox（W3 属实），但 design.md 提议的 lifecycle-scoped temporary channel、`RuntimeCapabilityEffect(dimension=channel)`、AgentFrame 可见的 channel alias/reply surface——代码里完全不存在，是全新机制，不是迁移。
+- `CompanionReplyContract` 真实字段（`route/request_id/channel/aliases/model_instruction`）与 design.md 引用的 `namespace/kind/source_ref/correlation_ref` 词汇不是同一个结构；后者属于 `MailboxSourceIdentity`。
+- Extension Protocol Channel（`channel_key`/`protocol_channels`）是贯穿 domain→contracts（有 TS codegen）→relay→runtime-gateway→前端 bridge→UI 文案的完整上线功能，与 design.md 提议的 Agent 通信 Channel 存在真实的心智模型冲突（都叫 Channel、都是 AgentRun-scoped、都是 capability 门禁的 invoke 语义），但当前没有具体标识符重名。
+
+**用户决策**：
+
+- MVP 切片范围confirmed：Companion / SubAgent lifecycle-scoped temporary channel。
+- Capability 路线：**不**采用"仿 Workspace Module 现状"的 AgentFrame 侧信道方案；直接把 Channel 做成一等 `CapabilityState.channel` dimension，理由是长期扩展到全局 channel 时这一步逃不掉，现在直接建对形态比以后migrate 更省。用户明确指出 VFS/canvas mount 的 accumulate 先例可以直接复用，纠正了最初"没有 append 先例、需要新 policy"的过度保守判断。
+- 命名边界：新 Channel 保留 `Channel` 命名；Extension Protocol Channel 使用面不大，是重命名或收束进统一 Channel 体系（作为未来某个 `ChannelMedium`）的候选，而不是让新概念让路。这不是 v1（Companion lifecycle channel）范围内要处理的事。
+- 下一步：先把上述纠正写回 `design.md`/`prd.md`/`implement.md`（已完成），再规划可执行的 MVP 子任务。

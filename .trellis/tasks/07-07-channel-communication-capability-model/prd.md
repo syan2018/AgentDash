@@ -12,16 +12,16 @@
 
 - Channel 显然不应演进成队列；它应是一套广播与通用入栈机制。
 - Companion 工具本质上应是使用 Channel 能力的工具；`target=sub` 是带创建 Channel、创建 child AgentRun 和建立 parent/child 关系副作用的特例。
-- Channel 应被视为类似 Workspace Module 的通用能力面：Agent 能否接入某个 IM、某个 Project team channel 或某个 Story collaboration channel，本质上应由 capability surface / admission 决定。
+- Channel 能否被 Agent 接入某个 IM、某个 Project team channel 或某个 Story collaboration channel，本质上应由 capability surface / admission 决定——这个产品语义参照 Workspace Module（能力面由 capability 决定可见性），但**不**照搬 Workspace Module 当前的技术实现（见下方代码核实结论）。
 - 既有 Companion、Terminal 等异步消息行为需要在进入 Mailbox 前拥有标准结构；后续同种构造应能以通用路径入 box。
 
 仓库中已有相关基础：
 
-- AgentRun Mailbox 已经具备开放的 `MailboxSourceIdentity`，用于 delivery attribution、dedup、correlation 和 projection。
-- Capability 系统已经支持开放 string key、dimension module 和 Workspace Module 可见性投影，可作为 Channel capability 的参照。
-- Workspace Module 已经表达“某类通用能力面通过 capability 投影给 Agent，再通过 descriptor / operation / readiness 暴露操作”的模式。
-- 最近的 Companion reply contract 已收敛为 `payload + optional reply_to`，它可以视为 Channel reply contract 的早期局部形态。
-- 既有长期任务 `.trellis/tasks/06-28-agent-custom-channel-draft` 已记录外部 IM / 自定义信道方向；`.trellis/tasks/06-28-integration-channel-mailbox-convergence` 已记录 Mailbox source identity 与 Companion/Routine 入站收束方向。
+- AgentRun Mailbox 已经具备开放的 `MailboxSourceIdentity`（`namespace/kind/source_ref/correlation_ref/actor/route/display_label_key/metadata`），用于 delivery attribution、dedup、correlation 和 projection。
+- Capability 系统的 `CapabilityDimensionModule` + `AccumulationPolicy` 机制已经支持”运行时累积授予、可撤销”的 dimension（VFS 的 `apply_mount_operations`/`MountDirective::{AddMount,RemoveMount,...}` 是直接可复刻的先例），可作为 Channel capability dimension 的参照。
+- **代码核实纠正（2026-07-07 二轮对齐）**：Workspace Module 并不是干净的”能力面通过 capability 投影、再通过 descriptor/operation/readiness 暴露操作”的参照实现——它的声明式部分挂在 `CapabilityState.workspace_module` 但从未注册进 `CapabilityDimensionRegistry`，运行时曝光部分完全走独立的 `AgentFrame.visible_workspace_module_refs_json` 列绕开 registry，两者只在读取时由专用 resolver OR 合并。这是历史权宜实现，Channel 改为直接复刻 VFS dimension 的 `Accumulate` 模式，不复刻 Workspace Module 现状。
+- **代码核实纠正**：“Companion reply contract 已收敛为 `payload + optional reply_to`，是 Channel reply contract 的早期局部形态”这个类比不够准确——`CompanionReplyContract` 的真实字段是 `route/request_id/channel/aliases/model_instruction`，`namespace/kind/source_ref/correlation_ref` 这套词汇实际属于 `MailboxSourceIdentity`，不是 `CompanionReplyContract`。方向判断（Companion 回复合同未来可以收敛进 Channel 体系）仍然成立，但字段层面不是同一个结构的早期形态。
+- 既有长期任务 `.trellis/tasks/06-28-agent-custom-channel-draft` 已记录外部 IM / 自定义信道方向；`.trellis/tasks/06-28-integration-channel-mailbox-convergence` 已记录 Mailbox source identity 与 Companion/Routine 入站收束方向（该任务 work-items W0-W8 已全部 `implemented`/`done`，但 `task.json` 仍是 `in_progress`，尚未收尾归档）。
 
 ## Requirements
 
@@ -38,12 +38,12 @@
 
 ## Acceptance Criteria
 
-- [ ] `design.md` 记录 Channel 的长期领域模型、核心边界和与 Mailbox / Gate / Capability / Workspace Module 的关系。
-- [ ] `design.md` 记录 Project / Story / AgentTeam broadcast、外部 IM、Companion、Terminal 四类代表链路的候选数据流。
-- [ ] `design.md` 明确 Channel capability surface 的建议方向，以及它与 ToolCapability / WorkspaceModule capability / PermissionGrant 的区别。
-- [ ] `design.md` 记录短期不做的内容，避免把本任务误解为立即实现外部 IM、全局队列或重写 Companion。
-- [ ] `implement.md` 只记录未来分阶段探索路线，不进入可执行实现计划，直到用户确认后续 MVP 范围。
-- [ ] `implement.jsonl` 与 `check.jsonl` 包含真实 spec / 既有任务上下文条目，便于后续研究或检查。
+- [x] `design.md` 记录 Channel 的长期领域模型、核心边界和与 Mailbox / Gate / Capability / Workspace Module 的关系。
+- [x] `design.md` 记录 Project / Story / AgentTeam broadcast、外部 IM、Companion、Terminal 四类代表链路的候选数据流。
+- [x] `design.md` 明确 Channel capability surface 的建议方向，以及它与 ToolCapability / WorkspaceModule capability / PermissionGrant 的区别。（2026-07-07：capability 落地路线已决策为一等 dimension；PermissionGrant 集成仍是明确记录的 Still Open 项，不是未处理的遗漏。）
+- [x] `design.md` 记录短期不做的内容，避免把本任务误解为立即实现外部 IM、全局队列或重写 Companion。
+- [x] `implement.md` 只记录未来分阶段探索路线，不进入可执行实现计划，直到用户确认后续 MVP 范围。（2026-07-07：MVP 范围已确认为 Companion/SubAgent lifecycle-scoped temporary channel；是否据此拆分新的可执行子任务留给下一步决定，本文档仍保持路线图形态。）
+- [x] `implement.jsonl` 与 `check.jsonl` 包含真实 spec / 既有任务上下文条目，便于后续研究或检查。
 
 ## Out Of Scope
 
@@ -55,6 +55,6 @@
 
 ## Open Questions
 
-- OQ1: Channel 第一阶段 MVP 应优先验证“内部 AgentTeam / Project / Story 广播”，还是优先验证“Companion / Terminal 等既有异步行为统一入栈”？
-- OQ2: Channel capability 应作为新的 capability dimension 进入 `CapabilityState`，还是先以 Workspace Module 类似的 projection-only surface 试验？
-- OQ3: 外部 IM 的持久化 ChannelEventLog 是否应从第一版就设计进 schema，还是等内部 Channel 模型稳定后再引入？
+- ~~OQ1: Channel 第一阶段 MVP 应优先验证"内部 AgentTeam / Project / Story 广播"，还是优先验证"Companion / Terminal 等既有异步行为统一入栈"？~~ **已决策（2026-07-07）**：优先 Companion / SubAgent lifecycle-scoped temporary channel。
+- ~~OQ2: Channel capability 应作为新的 capability dimension 进入 `CapabilityState`，还是先以 Workspace Module 类似的 projection-only surface 试验？~~ **已决策（2026-07-07）**：作为一等 `CapabilityState.channel` dimension，`AccumulationPolicy::Accumulate`，对齐 VFS `apply_mount_operations`/`MountDirective` 的现有实现模式，不走 Workspace Module 式 projection-only 路线。详见 `design.md` "Channel Capability" 一节。
+- OQ3: 外部 IM 的持久化 ChannelEventLog 是否应从第一版就设计进 schema，还是等内部 Channel 模型稳定后再引入？（本轮未重新讨论，journal.md 现有倾向"等内部模型稳定后再引入"继续有效，但未经用户重新确认，不算新决策。）

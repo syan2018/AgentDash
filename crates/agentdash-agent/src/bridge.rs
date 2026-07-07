@@ -70,6 +70,8 @@ pub enum BridgeError {
     Provider {
         message: String,
         classification: ProviderErrorClassification,
+        provider: Option<String>,
+        model: Option<String>,
     },
 }
 
@@ -190,6 +192,28 @@ impl BridgeError {
         Self::Provider {
             message: message.into(),
             classification,
+            provider: None,
+            model: None,
+        }
+    }
+
+    pub fn with_provider_context(
+        self,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        match self {
+            Self::Provider {
+                message,
+                classification,
+                ..
+            } => Self::Provider {
+                message,
+                classification,
+                provider: Some(provider.into()),
+                model: Some(model.into()),
+            },
+            other => other,
         }
     }
 
@@ -206,6 +230,20 @@ impl BridgeError {
 
     pub fn is_aborted(&self) -> bool {
         self.classification().kind == ProviderErrorKind::Aborted
+    }
+
+    pub fn provider_label(&self) -> Option<&str> {
+        match self {
+            Self::Provider { provider, .. } => provider.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn model_id(&self) -> Option<&str> {
+        match self {
+            Self::Provider { model, .. } => model.as_deref(),
+            _ => None,
+        }
     }
 }
 

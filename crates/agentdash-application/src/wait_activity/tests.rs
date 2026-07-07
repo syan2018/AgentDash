@@ -168,7 +168,16 @@ async fn wait_uses_resolved_lifecycle_gate_payload_status() {
         "dispatch-failed",
         Some(json!({
             "status": "failed",
-            "summary": "provider model unsupported"
+            "summary": "provider model unsupported",
+            "diagnostic": {
+                "kind": "provider",
+                "code": "invalid_request",
+                "http_status": 400,
+                "provider": "Example LLM",
+                "model": "example-chat-large",
+                "message": "request rejected by provider",
+                "retryable": false
+            }
         })),
     );
     let gate_id = gate.id;
@@ -200,6 +209,104 @@ async fn wait_uses_resolved_lifecycle_gate_payload_status() {
     assert_eq!(
         result.items[0].preview.as_deref(),
         Some("provider model unsupported")
+    );
+    let diagnostic = result.items[0].diagnostic.as_ref().expect("diagnostic");
+    assert_eq!(diagnostic.kind, "provider");
+    assert_eq!(diagnostic.code.as_deref(), Some("invalid_request"));
+    assert_eq!(diagnostic.http_status, Some(400));
+    assert_eq!(diagnostic.provider.as_deref(), Some("Example LLM"));
+    assert_eq!(diagnostic.model.as_deref(), Some("example-chat-large"));
+    assert!(!diagnostic.retryable);
+    assert_eq!(
+        result.items[0].result_refs["diagnostic"]["code"],
+        json!("invalid_request")
+    );
+}
+
+#[tokio::test]
+async fn wait_exposes_gate_payload_child_evidence_refs() {
+    let terminal_registry = AgentRunTerminalRegistry::new();
+    let gate_repo = Arc::new(FixtureGateRepo::default());
+    let run_id = Uuid::new_v4();
+    let child_agent_id = Uuid::new_v4();
+    let child_frame_id = Uuid::new_v4();
+    let mut gate = LifecycleGate::open(
+        run_id,
+        Some(child_agent_id),
+        Some(child_frame_id),
+        "companion_wait_follow_up",
+        "dispatch-refs",
+        Some(json!({
+            "status": "failed",
+            "summary": "provider model unsupported",
+            "result_refs": {
+                "schema_version": 1,
+                "gate_id": "gate-payload-ref",
+                "child": {
+                    "run_id": run_id.to_string(),
+                    "agent_id": child_agent_id.to_string(),
+                    "frame_id": child_frame_id.to_string(),
+                    "delivery_runtime_session_id": "child-session"
+                },
+                "evidence": [
+                    {
+                        "kind": "lifecycle_file",
+                        "scope": "child_delivery_session",
+                        "child_run_id": run_id.to_string(),
+                        "child_agent_id": child_agent_id.to_string(),
+                        "child_frame_id": child_frame_id.to_string(),
+                        "delivery_runtime_session_id": "child-session",
+                        "mount_id": "lifecycle",
+                        "path": "session/events.json"
+                    },
+                    {
+                        "kind": "runtime_trace",
+                        "scope": "child_delivery_session",
+                        "child_run_id": run_id.to_string(),
+                        "child_agent_id": child_agent_id.to_string(),
+                        "child_frame_id": child_frame_id.to_string(),
+                        "delivery_runtime_session_id": "child-session"
+                    }
+                ]
+            }
+        })),
+    );
+    let gate_id = gate.id;
+    gate.resolve("runtime_terminal");
+    gate_repo.create(&gate).await.expect("create gate");
+
+    let service = test_service_with_gate_repo(terminal_registry, gate_repo);
+    let result = service
+        .wait(
+            WaitToolContext {
+                delivery_runtime_session_id: Some("parent-session".to_string()),
+                turn_id: "turn-1".to_string(),
+            },
+            WaitActivityRequest {
+                activity_refs: vec![gate_id.to_string()],
+                kinds: vec!["subagent".to_string()],
+                timeout_ms: Some(0),
+                max_items: Some(10),
+                after_cursor: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("wait result");
+
+    let refs = &result.items[0].result_refs;
+    assert_eq!(refs["gate_id"], json!(gate_id.to_string()));
+    assert_eq!(refs["child"]["run_id"], json!(run_id.to_string()));
+    assert_eq!(
+        refs["child"]["delivery_runtime_session_id"],
+        json!("child-session")
+    );
+    assert_eq!(refs["evidence"][0]["path"], json!("session/events.json"));
+    assert_eq!(refs["evidence"][1]["kind"], json!("runtime_trace"));
+    assert!(
+        !serde_json::to_string(refs)
+            .expect("serialize refs")
+            .contains("lifecycle://session/")
     );
 }
 

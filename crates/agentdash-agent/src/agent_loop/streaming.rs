@@ -922,7 +922,9 @@ async fn emit_provider_failure(emit: &AgentEventSink, error: &BridgeError) {
                 .with_code(provider_reason_code(&classification))
                 .with_retryable(classification.is_retryable_before_visible_delta())
                 .with_aborted(error.is_aborted())
-                .with_http_status(classification.http_status),
+                .with_http_status(classification.http_status)
+                .with_provider(error.provider_label().map(ToOwned::to_owned))
+                .with_model(error.model_id().map(ToOwned::to_owned)),
         },
     )
     .await;

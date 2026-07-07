@@ -25,6 +25,7 @@ pub(crate) fn exec_item_from_terminal(terminal: &TerminalState) -> WaitActivityI
         source_ref: Some(terminal.terminal_id.clone()),
         correlation_ref: None,
         preview: terminal.cwd.clone(),
+        diagnostic: None,
         result_refs: json!({
             "terminal_id": terminal.terminal_id,
             "mount_id": terminal.mount_id,

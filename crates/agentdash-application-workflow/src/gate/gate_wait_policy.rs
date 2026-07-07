@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_control_effect::RuntimeTerminalDiagnostic;
 use agentdash_domain::workflow::{
     AgentRunDeliveryBindingRepository, GateWaitPolicyEnvelope, LifecycleGate,
     LifecycleGateRepository, WaitProducerRef,
@@ -11,6 +12,7 @@ use crate::WorkflowApplicationError;
 
 use super::{
     GateDeliveryIntent, GateMailboxWakeIntent, LifecycleGateResolver, ResolveGatePayloadCommand,
+    child_evidence::child_evidence_result_refs,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +20,7 @@ pub struct GateProducerTerminalEvent {
     pub producer: WaitProducerRef,
     pub terminal_state: String,
     pub terminal_message: Option<String>,
+    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub source_turn_id: Option<String>,
     pub trace_ref: Option<String>,
 }
@@ -217,13 +220,33 @@ fn producer_terminal_result_payload(
         .wait_policy
         .terminal_policy
         .outcome_for_terminal_state(&event.terminal_state);
+    let summary = event
+        .terminal_diagnostic
+        .as_ref()
+        .map(diagnostic_summary)
+        .unwrap_or_else(|| {
+            "Producer reached terminal before the expected result was written.".to_string()
+        });
+    let WaitProducerRef::AgentRunDelivery {
+        run_id,
+        agent_id,
+        frame_id,
+    } = &event.producer;
+    let result_refs = child_evidence_result_refs(
+        gate.id,
+        *run_id,
+        *agent_id,
+        *frame_id,
+        event.trace_ref.as_deref(),
+    );
     json!({
         "gate_id": gate.id.to_string(),
         "request_id": payload_request_id(gate, envelope, &json!({})),
         "status": terminal_outcome.status,
-        "summary": "Producer reached terminal before the expected result was written.",
+        "summary": summary,
         "terminal_state": event.terminal_state,
         "terminal_message": event.terminal_message,
+        "diagnostic": event.terminal_diagnostic,
         "delivery_trace_ref": event.trace_ref,
         "resolved_turn_id": event.source_turn_id,
         "failure_kind": terminal_outcome.failure_kind,
@@ -231,7 +254,30 @@ fn producer_terminal_result_payload(
         "findings": [],
         "follow_ups": [],
         "artifact_refs": [],
+        "result_refs": result_refs,
     })
+}
+
+fn diagnostic_summary(diagnostic: &RuntimeTerminalDiagnostic) -> String {
+    match (
+        diagnostic.provider.as_deref(),
+        diagnostic.http_status,
+        diagnostic.code.as_deref(),
+    ) {
+        (Some(provider), Some(status), Some(code)) => {
+            format!(
+                "{provider} returned {status} {code}: {}",
+                diagnostic.message
+            )
+        }
+        (Some(provider), Some(status), None) => {
+            format!("{provider} returned {status}: {}", diagnostic.message)
+        }
+        (Some(provider), None, Some(code)) => {
+            format!("{provider} {code}: {}", diagnostic.message)
+        }
+        _ => diagnostic.message.clone(),
+    }
 }
 
 fn payload_request_id(
@@ -526,6 +572,7 @@ mod tests {
             },
             terminal_state: terminal_state.to_string(),
             terminal_message: None,
+            terminal_diagnostic: None,
             source_turn_id: Some("child-turn".to_string()),
             trace_ref: Some("child-session".to_string()),
         }
@@ -565,6 +612,46 @@ mod tests {
         assert_eq!(payload["status"], json!("failed"));
         assert_eq!(payload["failure_kind"], json!("missing_companion_respond"));
         assert_eq!(payload["source"], json!("producer_terminal"));
+        assert_eq!(
+            payload["result_refs"]["child"]["run_id"],
+            json!(run_id.to_string())
+        );
+        assert_eq!(
+            payload["result_refs"]["child"]["agent_id"],
+            json!(child_agent_id.to_string())
+        );
+        assert_eq!(
+            payload["result_refs"]["child"]["frame_id"],
+            json!(child_frame_id.to_string())
+        );
+        assert_eq!(
+            payload["result_refs"]["child"]["delivery_runtime_session_id"],
+            json!("child-session")
+        );
+        let evidence = payload["result_refs"]["evidence"]
+            .as_array()
+            .expect("evidence refs");
+        assert!(evidence.iter().any(|entry| {
+            entry.get("kind") == Some(&json!("lifecycle_file"))
+                && entry.get("mount_id") == Some(&json!("lifecycle"))
+                && entry.get("path") == Some(&json!("session/events.json"))
+                && entry.get("delivery_runtime_session_id") == Some(&json!("child-session"))
+        }));
+        assert!(
+            evidence
+                .iter()
+                .any(|entry| entry.get("kind") == Some(&json!("agent_run_journal")))
+        );
+        assert!(
+            evidence
+                .iter()
+                .any(|entry| entry.get("kind") == Some(&json!("runtime_trace")))
+        );
+        assert!(
+            !serde_json::to_string(&payload["result_refs"])
+                .expect("serialize refs")
+                .contains("lifecycle://session/")
+        );
         assert!(payload.get("wait_policy").is_some());
         assert!(matches!(
             &first.outcomes[0].delivery_intents[0],
@@ -586,6 +673,55 @@ mod tests {
             .expect("load gate")
             .expect("gate");
         assert_eq!(stored_after_replay.payload_json, stored.payload_json);
+    }
+
+    #[tokio::test]
+    async fn producer_terminal_payload_preserves_runtime_provider_diagnostic() {
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
+        let gate = open_companion_gate(
+            run_id,
+            parent_agent_id,
+            child_agent_id,
+            child_frame_id,
+            json!({ "preview": "review requested" }),
+        );
+        let (gate_repo, service) = service_fixture(&gate, run_id, parent_agent_id).await;
+        let mut event = terminal_event(run_id, child_agent_id, child_frame_id, "failed");
+        event.terminal_diagnostic = Some(RuntimeTerminalDiagnostic {
+            kind: "provider".to_string(),
+            code: Some("invalid_request".to_string()),
+            http_status: Some(400),
+            provider: Some("Example LLM".to_string()),
+            model: Some("example-chat-large".to_string()),
+            message: "request rejected by provider".to_string(),
+            retryable: false,
+        });
+
+        let result = service
+            .observe_producer_terminal(event)
+            .await
+            .expect("terminal convergence");
+        assert_eq!(result.outcomes.len(), 1);
+
+        let stored = gate_repo
+            .get(gate.id)
+            .await
+            .expect("load gate")
+            .expect("gate");
+        let payload = stored.payload_json.as_ref().expect("payload");
+        assert_eq!(
+            payload["summary"],
+            json!("Example LLM returned 400 invalid_request: request rejected by provider")
+        );
+        assert_eq!(payload["diagnostic"]["kind"], json!("provider"));
+        assert_eq!(payload["diagnostic"]["code"], json!("invalid_request"));
+        assert_eq!(payload["diagnostic"]["http_status"], json!(400));
+        assert_eq!(payload["diagnostic"]["provider"], json!("Example LLM"));
+        assert_eq!(payload["diagnostic"]["model"], json!("example-chat-large"));
+        assert_eq!(payload["diagnostic"]["retryable"], json!(false));
     }
 
     #[tokio::test]

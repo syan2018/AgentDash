@@ -9,8 +9,8 @@ use agentdash_agent::{
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
     ItemUpdatedNotification, PlatformEvent, ProviderAttemptPhase as ProtocolProviderAttemptPhase,
-    ProviderAttemptStatus as ProtocolProviderAttemptStatus, SourceInfo, ThreadTokenUsage,
-    ThreadTokenUsageUpdatedNotification, TraceInfo, backbone::thread_item,
+    ProviderAttemptStatus as ProtocolProviderAttemptStatus, RuntimeTerminalDiagnostic, SourceInfo,
+    ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TraceInfo, backbone::thread_item,
 };
 use agentdash_agent_protocol::{ContextUsageSource, NormalizedContextUsage, TokenUsageBreakdown};
 use agentdash_agent_types::{
@@ -233,6 +233,25 @@ fn run_error_notification(
         Some(run_error_codex_error_info(error)),
         run_error_details(error),
     )
+}
+
+fn run_error_terminal_diagnostic(error: &AgentRunError) -> RuntimeTerminalDiagnostic {
+    RuntimeTerminalDiagnostic {
+        kind: match error.kind {
+            AgentRunErrorKind::Provider => "provider",
+            AgentRunErrorKind::HookBlocked => "hook",
+            AgentRunErrorKind::Runtime => "runtime",
+            AgentRunErrorKind::Tool => "tool",
+            AgentRunErrorKind::Unknown => "unknown",
+        }
+        .to_string(),
+        code: error.code.clone(),
+        http_status: error.http_status,
+        provider: error.provider.clone(),
+        model: error.model.clone(),
+        message: error.message.clone(),
+        retryable: error.retryable,
+    }
 }
 
 fn error_notification(
@@ -880,10 +899,18 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
             )]
         }
 
-        AgentEvent::RunError { error } => vec![wrap(
-            BackboneEvent::Error(run_error_notification(session_id, turn_id, error)),
-            *entry_index,
-        )],
+        AgentEvent::RunError { error } => vec![
+            wrap(
+                BackboneEvent::Platform(PlatformEvent::RuntimeTerminalDiagnostic(
+                    run_error_terminal_diagnostic(error),
+                )),
+                *entry_index,
+            ),
+            wrap(
+                BackboneEvent::Error(run_error_notification(session_id, turn_id, error)),
+                *entry_index,
+            ),
+        ],
 
         AgentEvent::MessageUpdate {
             message,

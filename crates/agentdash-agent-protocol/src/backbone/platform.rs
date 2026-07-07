@@ -30,6 +30,9 @@ pub enum PlatformEvent {
     /// Provider attempt lifecycle status, used for model connection/retry UI.
     ProviderAttemptStatus(ProviderAttemptStatus),
 
+    /// Bounded runtime terminal diagnostic captured before terminal convergence.
+    RuntimeTerminalDiagnostic(RuntimeTerminalDiagnostic),
+
     /// Session projection was rewound to a stable boundary after a failed turn.
     SessionRewound(SessionRewound),
 
@@ -48,6 +51,23 @@ pub enum PlatformEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeTerminalDiagnostic {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub message: String,
+    #[serde(default)]
+    pub retryable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]

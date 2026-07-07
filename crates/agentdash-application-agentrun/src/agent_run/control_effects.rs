@@ -116,6 +116,7 @@ impl AgentRunControlEffectService {
                     turn_id: input.turn_id.clone(),
                     terminal_state: input.terminal_state.clone(),
                     terminal_message: input.terminal_message.clone(),
+                    terminal_diagnostic: input.terminal_diagnostic.clone(),
                     source: context.source.clone(),
                 },
             )
@@ -221,6 +222,7 @@ impl AgentRunControlEffectService {
             payload: serde_json::json!({
                 "terminal_state": input.terminal_state,
                 "terminal_message": input.terminal_message,
+                "terminal_diagnostic": input.terminal_diagnostic,
             }),
         })
         .await
@@ -379,6 +381,7 @@ impl AgentRunControlEffectService {
             frame_id: owner.frame_id,
             terminal_state: input.terminal_state.clone(),
             terminal_message: input.terminal_message.clone(),
+            terminal_diagnostic: input.terminal_diagnostic.clone(),
             source_turn_id: Some(input.turn_id.clone()),
             delivery_trace_ref: Some(input.delivery_runtime_session_id.clone()),
         };
@@ -483,12 +486,18 @@ impl AgentRunControlEffectService {
             .get("terminal_message")
             .and_then(|value| value.as_str())
             .map(ToOwned::to_owned);
+        let terminal_diagnostic = record
+            .payload
+            .get("terminal_diagnostic")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok());
         self.terminal_convergence_service()
             .converge_runtime_terminal(AgentRunRuntimeTerminalCommand {
                 runtime_session_id: delivery_runtime_session_id.to_string(),
                 turn_id: record.turn_id.clone(),
                 terminal_state,
                 terminal_message,
+                terminal_diagnostic,
                 observed_at: Utc::now(),
             })
             .await
@@ -824,7 +833,9 @@ mod tests {
         MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository, MemoryProjectAgentRepository,
         MemoryProjectBackendAccessRepository, MemoryRuntimeSessionExecutionAnchorRepository,
     };
-    use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo, UserInputSubmissionKind};
+    use agentdash_agent_protocol::{
+        BackboneEnvelope, RuntimeTerminalDiagnostic, SourceInfo, UserInputSubmissionKind,
+    };
     use agentdash_application_ports::agent_run_control_effect::{
         AgentRunHookEffectHandlerRegistry, AgentRunTerminalHookContext,
         EmptyAgentRunHookEffectHandlerRegistry,
@@ -1357,7 +1368,7 @@ mod tests {
                 project_backend_access_repo: project_backend_access_repo.clone(),
                 command_receipt_repo: command_receipt_repo.clone(),
                 mailbox_repo: mailbox_repo.clone(),
-                agent_run_list_invalidation: None,
+                project_projection_notifications: None,
             };
             let mailbox_runtime =
                 AgentRunMailboxRuntimeAdapter::new(AgentRunMailboxRuntimeBoundaryDeps {
@@ -1408,6 +1419,7 @@ mod tests {
             terminal_event_seq: 42,
             terminal_state: "completed".to_string(),
             terminal_message: None,
+            terminal_diagnostic: None,
             terminal_hook_context: Some(AgentRunTerminalHookContext {
                 hook_runtime: Arc::new(TestHookRuntime {
                     session_id: "session-1".to_string(),
@@ -1425,6 +1437,60 @@ mod tests {
                 },
             }),
         }
+    }
+
+    #[tokio::test]
+    async fn terminal_delivery_effect_payload_preserves_runtime_provider_diagnostic() {
+        let fixture =
+            ControlEffectFixture::new(Vec::new(), Arc::new(EmptyAgentRunHookEffectHandlerRegistry));
+        let mut input = terminal_input(None);
+        input.terminal_state = "failed".to_string();
+        input.terminal_message = Some("provider failed".to_string());
+        input.terminal_diagnostic = Some(RuntimeTerminalDiagnostic {
+            kind: "provider".to_string(),
+            code: Some("invalid_request".to_string()),
+            http_status: Some(400),
+            provider: Some("Example LLM".to_string()),
+            model: Some("example-chat-large".to_string()),
+            message: "request rejected by provider".to_string(),
+            retryable: false,
+        });
+
+        fixture
+            .service
+            .observe_runtime_terminal(input)
+            .await
+            .expect("runtime terminal control effects");
+
+        let records = fixture
+            .store
+            .records_by_kind(AgentRunControlEffectKind::AgentRunDeliveryConvergence)
+            .await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].payload["terminal_diagnostic"]["kind"],
+            serde_json::json!("provider")
+        );
+        assert_eq!(
+            records[0].payload["terminal_diagnostic"]["code"],
+            serde_json::json!("invalid_request")
+        );
+        assert_eq!(
+            records[0].payload["terminal_diagnostic"]["http_status"],
+            serde_json::json!(400)
+        );
+        assert_eq!(
+            records[0].payload["terminal_diagnostic"]["provider"],
+            serde_json::json!("Example LLM")
+        );
+        assert_eq!(
+            records[0].payload["terminal_diagnostic"]["model"],
+            serde_json::json!("example-chat-large")
+        );
+        assert_eq!(
+            records[0].payload["terminal_diagnostic"]["retryable"],
+            serde_json::json!(false)
+        );
     }
 
     async fn insert_durable_hook_effect_row(

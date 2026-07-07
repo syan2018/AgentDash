@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::frame_launch_envelope::TerminalHookEffectBinding;
+pub use agentdash_agent_protocol::RuntimeTerminalDiagnostic;
 use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo};
 use agentdash_spi::hooks::{HookControlTarget, HookEffect, HookRuntimeAccess, SharedHookRuntime};
 use async_trait::async_trait;
@@ -78,6 +79,7 @@ pub struct AgentRunTerminalControlInput {
     pub terminal_event_seq: u64,
     pub terminal_state: String,
     pub terminal_message: Option<String>,
+    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub terminal_hook_context: Option<AgentRunTerminalHookContext>,
 }
 
@@ -86,6 +88,7 @@ pub struct AgentRunTerminalHookTriggerInput {
     pub turn_id: String,
     pub terminal_state: String,
     pub terminal_message: Option<String>,
+    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub source: SourceInfo,
 }
 
@@ -106,6 +109,7 @@ pub struct AgentRunWaitProducerTerminalEvent {
     pub frame_id: Option<Uuid>,
     pub terminal_state: String,
     pub terminal_message: Option<String>,
+    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub source_turn_id: Option<String>,
     pub delivery_trace_ref: Option<String>,
 }

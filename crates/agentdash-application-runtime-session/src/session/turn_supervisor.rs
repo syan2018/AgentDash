@@ -192,6 +192,7 @@ impl TurnSupervisor {
         TurnEvent::Terminal {
             kind: TurnTerminalKind::Interrupted,
             message: Some(message.into()),
+            diagnostic: None,
         }
     }
 }

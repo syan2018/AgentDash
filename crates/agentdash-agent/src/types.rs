@@ -157,6 +157,10 @@ pub struct AgentRunError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub http_status: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
 }
 
@@ -169,6 +173,8 @@ impl AgentRunError {
             retryable: false,
             aborted: false,
             http_status: None,
+            provider: None,
+            model: None,
             details: None,
         }
     }
@@ -190,6 +196,16 @@ impl AgentRunError {
 
     pub fn with_http_status(mut self, http_status: Option<u16>) -> Self {
         self.http_status = http_status;
+        self
+    }
+
+    pub fn with_provider(mut self, provider: Option<String>) -> Self {
+        self.provider = provider;
+        self
+    }
+
+    pub fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model;
         self
     }
 }

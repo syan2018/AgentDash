@@ -126,7 +126,7 @@ impl SessionRuntimeService {
                     latest_turn_id = Some(turn_id.to_string());
                 }
             }
-            if let Some((turn_id, terminal_kind, message)) =
+            if let Some((turn_id, terminal_kind, message, _diagnostic)) =
                 parse_turn_terminal_event_from_envelope(&event.notification)
             {
                 terminal_by_turn.insert(turn_id, (terminal_kind, message));
@@ -224,6 +224,7 @@ impl SessionRuntimeService {
                 source,
                 terminal_kind,
                 terminal_message,
+                terminal_diagnostic: None,
                 hook_runtime: None,
                 post_turn_handler: None,
             },

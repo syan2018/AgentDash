@@ -1,6 +1,6 @@
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputBlock,
-    UserInputSubmissionKind, UserInputSubmittedNotification,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, RuntimeTerminalDiagnostic, SourceInfo,
+    TraceInfo, UserInputBlock, UserInputSubmissionKind, UserInputSubmittedNotification,
 };
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::{CapabilityState, ContextFragment, ExecutionSessionFrame};
@@ -73,6 +73,7 @@ pub(super) fn build_turn_terminal_notification_with_timing(
     turn_id: &str,
     terminal_kind: TurnTerminalKind,
     message: Option<String>,
+    diagnostic: Option<RuntimeTerminalDiagnostic>,
     timing: Option<TurnTiming>,
 ) -> BackboneEnvelope {
     build_turn_terminal_envelope_with_timing(
@@ -81,6 +82,7 @@ pub(super) fn build_turn_terminal_notification_with_timing(
         turn_id,
         terminal_kind,
         message,
+        diagnostic,
         timing,
     )
 }
@@ -91,11 +93,13 @@ pub(super) fn build_turn_terminal_envelope_with_timing(
     turn_id: &str,
     terminal_kind: TurnTerminalKind,
     message: Option<String>,
+    diagnostic: Option<RuntimeTerminalDiagnostic>,
     timing: Option<TurnTiming>,
 ) -> BackboneEnvelope {
     let mut value = serde_json::json!({
         "terminal_type": terminal_kind.event_type(),
         "message": message,
+        "diagnostic": diagnostic,
     });
     if let Some(timing) = timing
         && let Some(object) = value.as_object_mut()
@@ -130,7 +134,12 @@ pub(super) fn build_turn_terminal_envelope_with_timing(
 /// 从 BackboneEnvelope 直接解析 turn terminal 事件。
 pub(super) fn parse_turn_terminal_event_from_envelope(
     envelope: &BackboneEnvelope,
-) -> Option<(String, TurnTerminalKind, Option<String>)> {
+) -> Option<(
+    String,
+    TurnTerminalKind,
+    Option<String>,
+    Option<RuntimeTerminalDiagnostic>,
+)> {
     let turn_id = envelope.trace.turn_id.as_deref()?.trim();
     if turn_id.is_empty() {
         return None;
@@ -154,7 +163,11 @@ pub(super) fn parse_turn_terminal_event_from_envelope(
                 .get("message")
                 .and_then(serde_json::Value::as_str)
                 .map(ToString::to_string);
-            Some((turn_id.to_string(), kind, message))
+            let diagnostic = value
+                .get("diagnostic")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok());
+            Some((turn_id.to_string(), kind, message, diagnostic))
         }
         BackboneEvent::TurnCompleted(completed) => Some((
             turn_id.to_string(),
@@ -164,7 +177,27 @@ pub(super) fn parse_turn_terminal_event_from_envelope(
                 .error
                 .as_ref()
                 .map(|error| error.message.clone()),
+            None,
         )),
+        _ => None,
+    }
+}
+
+pub(super) fn runtime_terminal_diagnostic_from_envelope(
+    envelope: &BackboneEnvelope,
+) -> Option<RuntimeTerminalDiagnostic> {
+    match &envelope.event {
+        BackboneEvent::Platform(PlatformEvent::RuntimeTerminalDiagnostic(diagnostic)) => {
+            Some(diagnostic.clone())
+        }
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+            if key == "turn_terminal" =>
+        {
+            value
+                .get("diagnostic")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+        }
         _ => None,
     }
 }

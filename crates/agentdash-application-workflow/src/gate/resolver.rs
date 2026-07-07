@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::WorkflowApplicationError;
 
+use super::child_evidence::child_evidence_result_refs;
 use super::commands::{
     CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
     OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveGatePayloadCommand,
@@ -374,6 +375,13 @@ impl LifecycleGateResolver {
             command.payload.get("status").and_then(Value::as_str),
         )?;
         let existing_payload = gate.payload_json.clone();
+        let result_refs = child_evidence_result_refs(
+            gate.id,
+            command.run_id,
+            command.child_agent_id,
+            gate.frame_id,
+            command.child_delivery_runtime_session_id.as_deref(),
+        );
         let mut payload = json!({
             "gate_id": gate.id.to_string(),
             "request_id": command.request_id,
@@ -391,6 +399,7 @@ impl LifecycleGateResolver {
             "child_agent_id": command.child_agent_id.to_string(),
             "parent_agent_id": command.parent_agent_id.to_string(),
             "resolved_turn_id": command.resolved_turn_id,
+            "result_refs": result_refs,
         });
         preserve_wait_policy_metadata(&mut payload, existing_payload.as_ref());
 
@@ -737,5 +746,79 @@ mod tests {
         let payload = outcome.gate.payload_json.as_ref().expect("payload");
         assert_eq!(payload["status"], json!("pending"));
         assert!(payload.get("parent_mailbox_delivery").is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_child_result_includes_child_evidence_locator() {
+        let repo = Arc::new(FixtureGateRepo::default());
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
+        let gate = LifecycleGate::open(
+            run_id,
+            Some(child_agent_id),
+            Some(child_frame_id),
+            "companion_wait_follow_up",
+            "dispatch-1",
+            Some(json!({ "summary": "pending" })),
+        );
+        let gate_id = gate.id;
+        repo.create(&gate).await.expect("seed gate");
+
+        let outcome = LifecycleGateResolver::new(repo.clone())
+            .complete_child_result(CompleteChildResultGateCommand {
+                gate_id,
+                request_id: "dispatch-1".to_string(),
+                run_id,
+                parent_agent_id,
+                parent_delivery_runtime_session_id: "parent-session".to_string(),
+                child_agent_id,
+                child_delivery_runtime_session_id: Some("child-session".to_string()),
+                resolved_turn_id: "child-turn".to_string(),
+                companion_label: "reviewer".to_string(),
+                payload: json!({
+                    "status": "completed",
+                    "summary": "done",
+                    "findings": [],
+                    "follow_ups": [],
+                    "artifact_refs": []
+                }),
+                resolved_by: format!("child_agent:{child_agent_id}"),
+            })
+            .await
+            .expect("complete child result");
+
+        let payload = outcome.gate.payload_json.as_ref().expect("payload");
+        assert_eq!(payload["status"], json!("completed"));
+        assert_eq!(
+            payload["result_refs"]["child"]["run_id"],
+            json!(run_id.to_string())
+        );
+        assert_eq!(
+            payload["result_refs"]["child"]["agent_id"],
+            json!(child_agent_id.to_string())
+        );
+        assert_eq!(
+            payload["result_refs"]["child"]["frame_id"],
+            json!(child_frame_id.to_string())
+        );
+        assert_eq!(
+            payload["result_refs"]["child"]["delivery_runtime_session_id"],
+            json!("child-session")
+        );
+        let evidence = payload["result_refs"]["evidence"]
+            .as_array()
+            .expect("evidence refs");
+        assert!(evidence.iter().any(|entry| {
+            entry.get("kind") == Some(&json!("lifecycle_file"))
+                && entry.get("mount_id") == Some(&json!("lifecycle"))
+                && entry.get("path") == Some(&json!("session/messages"))
+        }));
+        assert!(
+            !serde_json::to_string(&payload["result_refs"])
+                .expect("serialize refs")
+                .contains("lifecycle://session/")
+        );
     }
 }

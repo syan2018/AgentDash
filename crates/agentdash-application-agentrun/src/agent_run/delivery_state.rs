@@ -1,3 +1,4 @@
+use agentdash_agent_protocol::RuntimeTerminalDiagnostic;
 use agentdash_domain::workflow::{
     AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository, DeliveryBindingStatus,
     RuntimeSessionExecutionAnchorRepository,
@@ -51,6 +52,10 @@ impl<'a> AgentRunDeliveryStateService<'a> {
             input.turn_id.clone(),
             input.terminal_state.clone(),
             input.terminal_message.clone(),
+            input
+                .terminal_diagnostic
+                .as_ref()
+                .and_then(|diagnostic| serde_json::to_value(diagnostic).ok()),
             input.observed_at,
         );
         self.repos.delivery_binding_repo.upsert(&binding).await?;
@@ -65,6 +70,7 @@ pub struct AgentRunTerminalTransitionInput {
     pub turn_id: String,
     pub terminal_state: String,
     pub terminal_message: Option<String>,
+    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub observed_at: DateTime<Utc>,
 }
 
@@ -102,6 +108,15 @@ mod tests {
                 turn_id: "turn-1".to_string(),
                 terminal_state: "failed".to_string(),
                 terminal_message: Some("provider failed".to_string()),
+                terminal_diagnostic: Some(RuntimeTerminalDiagnostic {
+                    kind: "provider".to_string(),
+                    code: Some("invalid_request".to_string()),
+                    http_status: Some(400),
+                    provider: Some("Example LLM".to_string()),
+                    model: Some("example-chat-large".to_string()),
+                    message: "provider failed".to_string(),
+                    retryable: false,
+                }),
                 observed_at: Utc::now(),
             })
             .await
@@ -118,6 +133,14 @@ mod tests {
         assert_eq!(binding.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(binding.terminal_state.as_deref(), Some("failed"));
         assert_eq!(binding.terminal_message.as_deref(), Some("provider failed"));
+        assert_eq!(
+            binding
+                .terminal_diagnostic
+                .as_ref()
+                .and_then(|value| value.get("code"))
+                .and_then(serde_json::Value::as_str),
+            Some("invalid_request")
+        );
     }
 
     #[tokio::test]
@@ -165,6 +188,7 @@ mod tests {
                 turn_id: "turn-old".to_string(),
                 terminal_state: "failed".to_string(),
                 terminal_message: Some("old runtime failed late".to_string()),
+                terminal_diagnostic: None,
                 observed_at: Utc::now(),
             })
             .await

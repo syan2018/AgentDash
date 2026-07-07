@@ -118,6 +118,7 @@ fn wait_producer_terminal_event_from_agent_run(
         },
         terminal_state: event.terminal_state,
         terminal_message: event.terminal_message,
+        terminal_diagnostic: event.terminal_diagnostic,
         source_turn_id: event.source_turn_id,
         trace_ref: event.delivery_trace_ref,
     }
@@ -141,6 +142,7 @@ mod tests {
                 frame_id: Some(frame_id),
                 terminal_state: "failed".to_string(),
                 terminal_message: Some("provider rejected model".to_string()),
+                terminal_diagnostic: None,
                 source_turn_id: Some("turn-42".to_string()),
                 delivery_trace_ref: Some("delivery:trace".to_string()),
             });

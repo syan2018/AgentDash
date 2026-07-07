@@ -572,7 +572,7 @@ fn ensure_fork_point_turn_completed(
                 == Some(turn_id)
             && matches!(
                 parse_turn_terminal_event_from_envelope(&event.notification),
-                Some((terminal_turn_id, TurnTerminalKind::Completed, _))
+                Some((terminal_turn_id, TurnTerminalKind::Completed, _, _))
                     if terminal_turn_id == turn_id
             )
     });
@@ -689,6 +689,7 @@ mod tests {
             turn_id,
             TurnTerminalKind::Completed,
             Some("done".to_string()),
+            None,
             None,
         )
     }

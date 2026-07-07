@@ -8,6 +8,7 @@ use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent};
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use tokio::sync::mpsc;
 
+use agentdash_agent_protocol::RuntimeTerminalDiagnostic;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::hooks::SharedHookRuntime;
 
@@ -26,6 +27,7 @@ pub enum TurnEvent {
     Terminal {
         kind: TurnTerminalKind,
         message: Option<String>,
+        diagnostic: Option<RuntimeTerminalDiagnostic>,
     },
 }
 
@@ -51,6 +53,7 @@ pub(in crate::session) struct TurnTerminalDispatch {
     pub(in crate::session) source: SourceInfo,
     pub(in crate::session) terminal_kind: TurnTerminalKind,
     pub(in crate::session) terminal_message: Option<String>,
+    pub(in crate::session) terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub(in crate::session) hook_runtime: Option<SharedHookRuntime>,
     pub(in crate::session) post_turn_handler: Option<DynPostTurnHandler>,
 }
@@ -99,22 +102,31 @@ impl SessionTurnProcessor {
 
         let mut terminal_kind = TurnTerminalKind::Completed;
         let mut terminal_message: Option<String> = None;
+        let mut terminal_diagnostic: Option<RuntimeTerminalDiagnostic> = None;
         let mut received_terminal = false;
 
         while let Some(event) = rx.recv().await {
             match event {
                 TurnEvent::Notification(notification) => {
-                    Self::handle_notification(
+                    if let Some(diagnostic) = Self::handle_notification(
                         &deps,
                         &session_id,
                         &notification,
                         &post_turn_handler,
                     )
-                    .await;
+                    .await
+                    {
+                        terminal_diagnostic = Some(diagnostic);
+                    }
                 }
-                TurnEvent::Terminal { kind, message } => {
+                TurnEvent::Terminal {
+                    kind,
+                    message,
+                    diagnostic,
+                } => {
                     terminal_kind = kind;
                     terminal_message = message;
+                    terminal_diagnostic = diagnostic.or(terminal_diagnostic);
                     received_terminal = true;
                     break;
                 }
@@ -140,6 +152,7 @@ impl SessionTurnProcessor {
                 source,
                 terminal_kind,
                 terminal_message,
+                terminal_diagnostic,
                 hook_runtime,
                 post_turn_handler,
             },
@@ -156,15 +169,17 @@ impl SessionTurnProcessor {
         session_id: &str,
         envelope: &BackboneEnvelope,
         post_turn_handler: &Option<DynPostTurnHandler>,
-    ) {
+    ) -> Option<RuntimeTerminalDiagnostic> {
         if let Some(handler) = post_turn_handler.as_ref() {
             handler.on_event(session_id, envelope).await;
         }
+        let diagnostic = runtime_terminal_diagnostic_from_envelope(envelope);
         let notification = Self::notification_with_turn_duration(deps, session_id, envelope).await;
         let _ = deps
             .eventing
             .persist_notification(session_id, notification)
             .await;
+        diagnostic
     }
 
     async fn notification_with_turn_duration(
@@ -230,6 +245,7 @@ pub(in crate::session) async fn process_turn_terminal(
         source,
         terminal_kind,
         terminal_message,
+        terminal_diagnostic,
         hook_runtime,
         post_turn_handler,
     } = input;
@@ -247,6 +263,7 @@ pub(in crate::session) async fn process_turn_terminal(
         &turn_id,
         terminal_kind,
         terminal_message.clone(),
+        terminal_diagnostic.clone(),
         terminal_timing,
     );
     let terminal_event = deps
@@ -321,6 +338,7 @@ pub(in crate::session) async fn process_turn_terminal(
         terminal_event_seq,
         terminal_kind,
         terminal_message: terminal_message.clone(),
+        terminal_diagnostic: terminal_diagnostic.clone(),
         source,
         hook_runtime,
         post_turn_handler,
@@ -444,6 +462,7 @@ mod tests {
         tx.send(TurnEvent::Terminal {
             kind: TurnTerminalKind::Completed,
             message: None,
+            diagnostic: None,
         })
         .expect("terminal event should be queued");
         drop(tx);
@@ -534,6 +553,7 @@ mod tests {
         tx.send(TurnEvent::Terminal {
             kind: TurnTerminalKind::Failed,
             message: Some("provider disconnected".to_string()),
+            diagnostic: None,
         })
         .expect("terminal event should be queued");
         drop(tx);
@@ -673,6 +693,15 @@ mod tests {
                 },
                 terminal_kind: TurnTerminalKind::Failed,
                 terminal_message: Some("connector start failed".to_string()),
+                terminal_diagnostic: Some(RuntimeTerminalDiagnostic {
+                    kind: "provider".to_string(),
+                    code: Some("invalid_request".to_string()),
+                    http_status: Some(400),
+                    provider: Some("Example LLM".to_string()),
+                    model: Some("example-chat-large".to_string()),
+                    message: "request rejected by provider".to_string(),
+                    retryable: false,
+                }),
                 hook_runtime: None,
                 post_turn_handler: None,
             },
@@ -680,6 +709,34 @@ mod tests {
         .await;
 
         assert!(!registry.has_active_turn(session_id).await);
+        let events = stores
+            .events
+            .list_all_events(session_id)
+            .await
+            .expect("read events");
+        let terminal_meta = events
+            .iter()
+            .find_map(|event| match &event.notification.event {
+                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+                    if key == "turn_terminal" =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            })
+            .expect("turn terminal meta event");
+        assert_eq!(
+            terminal_meta["diagnostic"]["code"],
+            serde_json::json!("invalid_request")
+        );
+        assert_eq!(
+            terminal_meta["diagnostic"]["http_status"],
+            serde_json::json!(400)
+        );
+        assert_eq!(
+            terminal_meta["diagnostic"]["provider"],
+            serde_json::json!("Example LLM")
+        );
         let notifications = notifications.lock().await;
         assert_eq!(notifications.len(), 1);
         let notification = &notifications[0];
@@ -690,6 +747,16 @@ mod tests {
             notification.terminal_message.as_deref(),
             Some("connector start failed")
         );
+        let diagnostic = notification
+            .terminal_diagnostic
+            .as_ref()
+            .expect("terminal diagnostic");
+        assert_eq!(diagnostic.kind, "provider");
+        assert_eq!(diagnostic.code.as_deref(), Some("invalid_request"));
+        assert_eq!(diagnostic.http_status, Some(400));
+        assert_eq!(diagnostic.provider.as_deref(), Some("Example LLM"));
+        assert_eq!(diagnostic.model.as_deref(), Some("example-chat-large"));
+        assert!(!diagnostic.retryable);
         assert!(notification.terminal_event_seq > 0);
         assert_eq!(*broadcast_seen_before_callback.lock().await, Some(false));
     }

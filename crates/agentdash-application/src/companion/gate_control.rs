@@ -2464,6 +2464,7 @@ mod tests {
             },
             terminal_state: "failed".to_string(),
             terminal_message: Some("provider model unsupported".to_string()),
+            terminal_diagnostic: None,
             source_turn_id: Some("turn-child-1".to_string()),
             trace_ref: Some("child-session".to_string()),
         };

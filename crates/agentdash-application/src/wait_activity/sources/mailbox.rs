@@ -22,6 +22,7 @@ pub(crate) fn mailbox_item_from_message(message: &AgentRunMailboxMessage) -> Wai
         source_ref: message.source.source_ref.clone(),
         correlation_ref: message.source.correlation_ref.clone(),
         preview: Some(bound_string(&message.preview, WAIT_PREVIEW_CHARS)),
+        diagnostic: None,
         result_refs: json!({
             "mailbox_message_id": message.id.to_string(),
             "run_id": message.run_id.to_string(),

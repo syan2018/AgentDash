@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use agentdash_application_ports::agent_run_control_effect::RuntimeTerminalDiagnostic;
 use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -116,6 +117,8 @@ pub struct WaitActivityItem {
     pub source_ref: Option<String>,
     pub correlation_ref: Option<String>,
     pub preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub result_refs: Value,
     pub cursor: Option<String>,
     pub next: Option<Value>,

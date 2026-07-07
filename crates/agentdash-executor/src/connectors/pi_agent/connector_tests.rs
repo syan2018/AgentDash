@@ -8,7 +8,7 @@ use agentdash_agent::{
     TokenUsage, ToolResultAddressProvider,
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
-use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
+use agentdash_agent_protocol::{BackboneEvent, PlatformEvent, SourceInfo};
 use agentdash_agent_types::AgentDashThreadItem;
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
@@ -747,14 +747,16 @@ fn provider_attempt_status_maps_to_platform_event() {
 }
 
 #[test]
-fn provider_run_error_maps_to_error_event() {
+fn provider_run_error_maps_to_terminal_diagnostic_and_error_event() {
     let event = AgentEvent::RunError {
         error: agentdash_agent::AgentRunError::new(
             agentdash_agent::AgentRunErrorKind::Provider,
-            "刷新 Codex token 返回 401 Unauthorized",
+            "provider returned 400 invalid_request",
         )
-        .with_code(Some("auth_error".to_string()))
-        .with_http_status(Some(401)),
+        .with_code(Some("invalid_request".to_string()))
+        .with_http_status(Some(400))
+        .with_provider(Some("Example LLM".to_string()))
+        .with_model(Some("example-chat-large".to_string())),
     };
 
     let mut entry_index = 0;
@@ -770,23 +772,32 @@ fn provider_run_error_maps_to_error_event() {
         &mut tool_call_states,
     );
 
-    assert_eq!(envelopes.len(), 1);
+    assert_eq!(envelopes.len(), 2);
     match &envelopes[0].event {
+        BackboneEvent::Platform(PlatformEvent::RuntimeTerminalDiagnostic(diagnostic)) => {
+            assert_eq!(diagnostic.kind, "provider");
+            assert_eq!(diagnostic.code.as_deref(), Some("invalid_request"));
+            assert_eq!(diagnostic.http_status, Some(400));
+            assert_eq!(diagnostic.provider.as_deref(), Some("Example LLM"));
+            assert_eq!(diagnostic.model.as_deref(), Some("example-chat-large"));
+            assert_eq!(diagnostic.message, "provider returned 400 invalid_request");
+            assert!(!diagnostic.retryable);
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+    match &envelopes[1].event {
         BackboneEvent::Error(error) => {
             assert_eq!(error.thread_id, "session-1");
             assert_eq!(error.turn_id, "turn-1");
-            assert_eq!(
-                error.error.message,
-                "刷新 Codex token 返回 401 Unauthorized"
-            );
+            assert_eq!(error.error.message, "provider returned 400 invalid_request");
             assert_eq!(
                 error.error.codex_error_info,
-                Some(codex::CodexErrorInfo::Unauthorized)
+                Some(codex::CodexErrorInfo::BadRequest)
             );
             assert!(!error.will_retry);
             assert_eq!(
                 error.error.additional_details.as_deref(),
-                Some("kind=Provider\ncode=auth_error\nhttp_status=401")
+                Some("kind=Provider\ncode=invalid_request\nhttp_status=400")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),

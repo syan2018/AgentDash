@@ -1071,7 +1071,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
             meta.executor_session_id = Some(executor_session_id.clone());
         }
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
-            if let Some((turn_id, terminal_kind, message)) =
+            if let Some((turn_id, terminal_kind, message, _diagnostic)) =
                 parse_turn_terminal_event_from_envelope(envelope)
             {
                 meta.last_turn_id = Some(turn_id);

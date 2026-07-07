@@ -1004,7 +1004,8 @@ fn latest_stable_terminal_before(
         .iter()
         .filter(|event| event.event_seq < event_seq)
         .filter_map(|event| {
-            let (turn_id, kind, _) = parse_turn_terminal_event_from_envelope(&event.notification)?;
+            let (turn_id, kind, _, _) =
+                parse_turn_terminal_event_from_envelope(&event.notification)?;
             (kind == TurnTerminalKind::Completed).then_some(StableTerminalBoundary {
                 event_seq: event.event_seq,
                 turn_id,
@@ -1055,7 +1056,7 @@ fn latest_failed_terminal_rewind_boundary(
     };
     let mut latest_terminal: Option<(u64, String, TurnTerminalKind, u64)> = None;
     for event in events {
-        let Some((turn_id, kind, _message)) =
+        let Some((turn_id, kind, _message, _diagnostic)) =
             parse_turn_terminal_event_from_envelope(&event.notification)
         else {
             continue;
@@ -2203,6 +2204,7 @@ mod tests {
                     TurnTerminalKind::Completed,
                     None,
                     None,
+                    None,
                 ),
             )
             .await
@@ -2254,6 +2256,7 @@ mod tests {
                     "turn-failed",
                     TurnTerminalKind::Failed,
                     Some("provider disconnected".to_string()),
+                    None,
                     None,
                 ),
             )
@@ -2346,6 +2349,7 @@ mod tests {
                     TurnTerminalKind::Completed,
                     None,
                     None,
+                    None,
                 ),
             )
             .await
@@ -2398,6 +2402,7 @@ mod tests {
                         failed_turn,
                         TurnTerminalKind::Failed,
                         Some("provider disconnected".to_string()),
+                        None,
                         None,
                     ),
                 )
@@ -2815,6 +2820,7 @@ mod tests {
                     &source,
                     "turn-eph",
                     TurnTerminalKind::Completed,
+                    None,
                     None,
                     None,
                 ),

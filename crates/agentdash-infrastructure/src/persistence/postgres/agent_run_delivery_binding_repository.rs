@@ -34,6 +34,7 @@ struct DeliveryBindingRow {
     last_turn_id: Option<String>,
     terminal_state: Option<String>,
     terminal_message: Option<String>,
+    terminal_diagnostic: Option<serde_json::Value>,
     observed_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -87,6 +88,7 @@ impl TryFrom<DeliveryBindingRow> for AgentRunDeliveryBinding {
             last_turn_id: row.last_turn_id,
             terminal_state: row.terminal_state,
             terminal_message: row.terminal_message,
+            terminal_diagnostic: row.terminal_diagnostic,
             observed_at: row.observed_at,
             updated_at: row.updated_at,
         })
@@ -101,8 +103,8 @@ impl AgentRunDeliveryBindingRepository for PostgresAgentRunDeliveryBindingReposi
                 (run_id, agent_id, runtime_session_id, launch_frame_id,
                  orchestration_id, node_path, node_attempt, status,
                  active_turn_id, last_turn_id, terminal_state, terminal_message,
-                 observed_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                 terminal_diagnostic, observed_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
                ON CONFLICT (run_id, agent_id) DO UPDATE SET
                    runtime_session_id = EXCLUDED.runtime_session_id,
                    launch_frame_id = EXCLUDED.launch_frame_id,
@@ -114,6 +116,7 @@ impl AgentRunDeliveryBindingRepository for PostgresAgentRunDeliveryBindingReposi
                    last_turn_id = EXCLUDED.last_turn_id,
                    terminal_state = EXCLUDED.terminal_state,
                    terminal_message = EXCLUDED.terminal_message,
+                   terminal_diagnostic = EXCLUDED.terminal_diagnostic,
                    observed_at = EXCLUDED.observed_at,
                    updated_at = EXCLUDED.updated_at"#,
         )
@@ -129,6 +132,7 @@ impl AgentRunDeliveryBindingRepository for PostgresAgentRunDeliveryBindingReposi
         .bind(&binding.last_turn_id)
         .bind(&binding.terminal_state)
         .bind(&binding.terminal_message)
+        .bind(&binding.terminal_diagnostic)
         .bind(binding.observed_at)
         .bind(binding.updated_at)
         .execute(&self.pool)
@@ -146,6 +150,7 @@ impl AgentRunDeliveryBindingRepository for PostgresAgentRunDeliveryBindingReposi
             r#"SELECT run_id, agent_id, runtime_session_id, launch_frame_id,
                       orchestration_id, node_path, node_attempt, status,
                       active_turn_id, last_turn_id, terminal_state, terminal_message,
+                      terminal_diagnostic,
                       observed_at, updated_at
                FROM agent_run_delivery_bindings
                WHERE run_id = $1 AND agent_id = $2"#,
@@ -164,6 +169,7 @@ impl AgentRunDeliveryBindingRepository for PostgresAgentRunDeliveryBindingReposi
             r#"SELECT run_id, agent_id, runtime_session_id, launch_frame_id,
                       orchestration_id, node_path, node_attempt, status,
                       active_turn_id, last_turn_id, terminal_state, terminal_message,
+                      terminal_diagnostic,
                       observed_at, updated_at
                FROM agent_run_delivery_bindings
                WHERE run_id = $1

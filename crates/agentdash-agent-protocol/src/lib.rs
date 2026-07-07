@@ -12,8 +12,8 @@ pub use backbone::platform::{
     ControlPlaneProjection, ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged,
     ControlPlaneWorkspaceModulePresentation, HookTraceCompletion, HookTraceData,
     HookTraceDiagnostic, HookTraceInjection, HookTracePayload, HookTraceSeverity, HookTraceTrigger,
-    PlatformEvent, ProviderAttemptPhase, ProviderAttemptStatus, SessionRewindReason,
-    SessionRewound,
+    PlatformEvent, ProviderAttemptPhase, ProviderAttemptStatus, RuntimeTerminalDiagnostic,
+    SessionRewindReason, SessionRewound,
 };
 pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
@@ -43,7 +43,8 @@ mod tests {
     use super::{
         BackboneEnvelope, BackboneEvent, ControlPlaneProjection,
         ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged, PlatformEvent,
-        ProviderAttemptPhase, ProviderAttemptStatus, SessionRewindReason, SessionRewound,
+        ProviderAttemptPhase, ProviderAttemptStatus, RuntimeTerminalDiagnostic,
+        SessionRewindReason, SessionRewound,
     };
 
     #[test]
@@ -88,6 +89,31 @@ mod tests {
         assert_eq!(value["payload"]["data"]["delay_ms"], 2_000);
         assert_eq!(value["payload"]["data"]["provider"], "openai");
         assert_eq!(value["payload"]["data"]["model"], "gpt-4.1");
+    }
+
+    #[test]
+    fn runtime_terminal_diagnostic_platform_event_uses_typed_contract() {
+        let event = BackboneEvent::Platform(PlatformEvent::RuntimeTerminalDiagnostic(
+            RuntimeTerminalDiagnostic {
+                kind: "provider".to_string(),
+                code: Some("invalid_request".to_string()),
+                http_status: Some(400),
+                provider: Some("Example LLM".to_string()),
+                model: Some("example-chat-large".to_string()),
+                message: "provider returned 400".to_string(),
+                retryable: false,
+            },
+        ));
+
+        let value = serde_json::to_value(event).expect("serialize diagnostic platform event");
+        assert_eq!(value["type"], "platform");
+        assert_eq!(value["payload"]["kind"], "runtime_terminal_diagnostic");
+        assert_eq!(value["payload"]["data"]["kind"], "provider");
+        assert_eq!(value["payload"]["data"]["code"], "invalid_request");
+        assert_eq!(value["payload"]["data"]["http_status"], 400);
+        assert_eq!(value["payload"]["data"]["provider"], "Example LLM");
+        assert_eq!(value["payload"]["data"]["model"], "example-chat-large");
+        assert_eq!(value["payload"]["data"]["retryable"], false);
     }
 
     #[test]

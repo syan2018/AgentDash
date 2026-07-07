@@ -86,13 +86,14 @@ async fn run_stream(
         .await
         .map_err(|error| super::provider_transport_error("Codex HTTP 请求失败", error))?;
 
-    let response = check_codex_api_response(response).await?;
+    let response = check_codex_api_response(response, model_id).await?;
 
     process_responses_stream(response, "读取 Codex 响应流失败", tx).await
 }
 
 async fn check_codex_api_response(
     response: reqwest::Response,
+    model_id: &str,
 ) -> Result<reqwest::Response, BridgeError> {
     if response.status().is_success() {
         return Ok(response);
@@ -106,7 +107,8 @@ async fn check_codex_api_response(
     Err(BridgeError::provider(
         format!("Codex API 返回 {status}: {display_body}"),
         classification,
-    ))
+    )
+    .with_provider_context("Codex API", model_id))
 }
 
 fn classify_codex_api_error(

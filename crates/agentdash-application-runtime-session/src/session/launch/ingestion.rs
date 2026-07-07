@@ -75,12 +75,16 @@ fn spawn_stream_adapter(
         while let Some(next) = stream.next().await {
             match next {
                 Ok(notification) => {
-                    if let Some((terminal_turn_id, kind, message)) =
+                    if let Some((terminal_turn_id, kind, message, diagnostic)) =
                         parse_turn_terminal_event_from_envelope(&notification)
                         && terminal_turn_id == turn_id
                     {
                         let _ = processor_tx.send(
-                            crate::session::turn_processor::TurnEvent::Terminal { kind, message },
+                            crate::session::turn_processor::TurnEvent::Terminal {
+                                kind,
+                                message,
+                                diagnostic,
+                            },
                         );
                         return;
                     }
@@ -104,6 +108,7 @@ fn spawn_stream_adapter(
                         processor_tx.send(crate::session::turn_processor::TurnEvent::Terminal {
                             kind,
                             message,
+                            diagnostic: None,
                         });
                     return;
                 }
@@ -111,8 +116,11 @@ fn spawn_stream_adapter(
         }
         let (kind, message) =
             resolve_stream_terminal(&turn_supervisor, &session_id, &turn_id, None).await;
-        let _ = processor_tx
-            .send(crate::session::turn_processor::TurnEvent::Terminal { kind, message });
+        let _ = processor_tx.send(crate::session::turn_processor::TurnEvent::Terminal {
+            kind,
+            message,
+            diagnostic: None,
+        });
     })
 }
 

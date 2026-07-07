@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::runtime_session_anchor::RuntimeSessionExecutionAnchor;
@@ -84,6 +85,8 @@ pub struct AgentRunDeliveryBinding {
     pub terminal_state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_diagnostic: Option<Value>,
     pub observed_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -107,6 +110,7 @@ impl AgentRunDeliveryBinding {
             last_turn_id: None,
             terminal_state: None,
             terminal_message: None,
+            terminal_diagnostic: None,
             observed_at,
             updated_at: observed_at,
         }
@@ -119,6 +123,7 @@ impl AgentRunDeliveryBinding {
         self.last_turn_id = Some(turn_id);
         self.terminal_state = None;
         self.terminal_message = None;
+        self.terminal_diagnostic = None;
         self.updated_at = updated_at;
         self
     }
@@ -128,6 +133,7 @@ impl AgentRunDeliveryBinding {
         turn_id: impl Into<String>,
         terminal_state: impl Into<String>,
         terminal_message: Option<String>,
+        terminal_diagnostic: Option<Value>,
         updated_at: DateTime<Utc>,
     ) -> Self {
         self.status = DeliveryBindingStatus::Terminal;
@@ -135,6 +141,7 @@ impl AgentRunDeliveryBinding {
         self.last_turn_id = Some(turn_id.into());
         self.terminal_state = Some(terminal_state.into());
         self.terminal_message = terminal_message;
+        self.terminal_diagnostic = terminal_diagnostic;
         self.updated_at = updated_at;
         self
     }
@@ -203,6 +210,7 @@ mod agent_run_delivery_binding_tests {
         assert_eq!(binding.last_turn_id, None);
         assert_eq!(binding.terminal_state, None);
         assert_eq!(binding.terminal_message, None);
+        assert_eq!(binding.terminal_diagnostic, None);
         assert_eq!(binding.observed_at, observed_at);
         assert_eq!(binding.updated_at, observed_at);
     }
@@ -238,6 +246,11 @@ mod agent_run_delivery_binding_tests {
             "turn-1",
             "failed",
             Some("provider failed".to_string()),
+            Some(serde_json::json!({
+                "kind": "provider",
+                "message": "provider failed",
+                "retryable": false,
+            })),
             terminal_at,
         );
 
@@ -246,6 +259,14 @@ mod agent_run_delivery_binding_tests {
         assert_eq!(binding.last_turn_id.as_deref(), Some("turn-1"));
         assert_eq!(binding.terminal_state.as_deref(), Some("failed"));
         assert_eq!(binding.terminal_message.as_deref(), Some("provider failed"));
+        assert_eq!(
+            binding
+                .terminal_diagnostic
+                .as_ref()
+                .and_then(|value| value.get("kind"))
+                .and_then(Value::as_str),
+            Some("provider")
+        );
         assert_eq!(binding.updated_at, terminal_at);
     }
 }

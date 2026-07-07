@@ -122,6 +122,7 @@ mod tests {
             "turn-1",
             "failed",
             Some("provider failed".to_string()),
+            None,
             Utc::now(),
         );
 

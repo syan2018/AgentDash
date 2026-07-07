@@ -415,6 +415,10 @@ async fn producer_terminal_event_for_gate_wait_policy(
                 producer: declaration.wait_policy.source.clone(),
                 terminal_state,
                 terminal_message: binding.terminal_message.clone(),
+                terminal_diagnostic: binding
+                    .terminal_diagnostic
+                    .clone()
+                    .and_then(|value| serde_json::from_value(value).ok()),
                 source_turn_id: binding.last_turn_id.clone(),
                 trace_ref: Some(binding.runtime_session_id.clone()),
             }))
@@ -602,6 +606,7 @@ mod tests {
                 "child-turn",
                 "failed",
                 Some("provider failed".to_string()),
+                None,
                 Utc::now(),
             )
         } else {

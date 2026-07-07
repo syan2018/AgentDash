@@ -832,7 +832,7 @@ impl AgentTool for CompanionRequestTool {
     }
 
     fn description(&self) -> &str {
-        "发起结构化 companion 交互请求；用于询问用户、申请平台能力、协调 parent/sub session，或把动态 workflow 提案交给人/平台评审。payload 必须是 JSON object；交互正文统一使用 payload.message，复杂规则见 companion-system skill。"
+        "发起结构化 companion 交互请求。基础目标：human=询问/审批用户；sub=派发子 Agent（payload.agent_key 必须取当前 Companion Agent Roster 的精确 agent_key）；parent=回传父会话；platform=请求平台 broker。payload 必须是 JSON object；正文用 payload.message。进阶协议参考 companion-system skill。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -2197,7 +2197,8 @@ fn companion_request_payload_schema(_: &mut schemars::SchemaGenerator) -> schema
                         "enum": ["suggestion", "follow_up_required", "blocking_review"]
                     },
                     "agent_key": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "Only for target=sub: exact canonical key from the current Companion Agent Roster Delta / Effective Companion Agents, e.g. payload.agent_key=\"sub-agent\". Do not use executor or display_name."
                     },
                     "max_fragments": { "type": "integer", "minimum": 1 },
                     "max_constraints": { "type": "integer", "minimum": 1 }

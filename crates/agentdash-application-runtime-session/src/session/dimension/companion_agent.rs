@@ -99,6 +99,9 @@ impl DimensionDelta for CompanionAgentDimensionDelta {
         if self.effective.is_empty() {
             lines.push("- （无）".to_string());
         } else {
+            lines.push(
+                "- 调用提示：使用 `companion_request` 且 `target: \"sub\"` 时，必须把下列精确 `agent_key` 填入 `payload.agent_key`；不要使用 executor 或 display_name。".to_string(),
+            );
             for agent in &self.effective {
                 lines.push(format_agent_line(agent, "可调用"));
             }

@@ -30,6 +30,8 @@ Use this skill when a session has companion tools and needs structured cross-sub
 - `parent`: send review or completion material back to the parent session.
 - `sub`: dispatch work to a companion agent or session.
 
+For `target: "sub"`, choose `payload.agent_key` from the current **Companion Agent Roster Delta / Effective Companion Agents** section. The canonical value is the text after `agent_key`; for example, a roster line containing `agent_key: "sub-agent"` means use `payload.agent_key: "sub-agent"`. Do not use the executor or display name as the key.
+
 Read `references/human-interaction.md` for approval, free-form question, and notification examples.
 
 ## Payload Types

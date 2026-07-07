@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
+use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
 use agentdash_application_ports::accepted_turn_lifecycle::{
     AcceptedTurnLifecycleAdvanceInput, AcceptedTurnLifecycleAdvancePort,
+};
+use agentdash_application_ports::project_projection_notification::{
+    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
 };
 use agentdash_application_workflow::orchestration::{
     OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
@@ -17,6 +21,7 @@ use async_trait::async_trait;
 pub struct AcceptedTurnLifecycleAdvanceService {
     anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     run_repo: Arc<dyn LifecycleRunRepository>,
+    project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
 impl AcceptedTurnLifecycleAdvanceService {
@@ -27,7 +32,16 @@ impl AcceptedTurnLifecycleAdvanceService {
         Self {
             anchor_repo,
             run_repo,
+            project_projection_notifications: None,
         }
+    }
+
+    pub fn with_project_projection_notifications(
+        mut self,
+        port: Option<Arc<dyn ProjectProjectionNotificationPort>>,
+    ) -> Self {
+        self.project_projection_notifications = port;
+        self
     }
 }
 
@@ -97,6 +111,20 @@ impl AcceptedTurnLifecycleAdvancePort for AcceptedTurnLifecycleAdvanceService {
                 anchor.run_id, input.runtime_session_id, input.turn_id
             ))
         })?;
+        if let Some(port) = self.project_projection_notifications.as_ref() {
+            let _ = port
+                .publish_project_projection_invalidated(
+                    ProjectProjectionInvalidation::agent_run_list(
+                        updated_run.project_id,
+                        updated_run.id,
+                        anchor.agent_id,
+                        Some(anchor.launch_frame_id),
+                        ControlPlaneProjectionChangeReason::AgentRunActivityChanged,
+                        Some(input.runtime_session_id.clone()),
+                    ),
+                )
+                .await;
+        }
         Ok(())
     }
 }
@@ -104,11 +132,12 @@ impl AcceptedTurnLifecycleAdvancePort for AcceptedTurnLifecycleAdvanceService {
 pub fn accepted_turn_lifecycle_advance_port(
     anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     run_repo: Arc<dyn LifecycleRunRepository>,
+    project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 ) -> Arc<dyn AcceptedTurnLifecycleAdvancePort> {
-    Arc::new(AcceptedTurnLifecycleAdvanceService::new(
-        anchor_repo,
-        run_repo,
-    ))
+    Arc::new(
+        AcceptedTurnLifecycleAdvanceService::new(anchor_repo, run_repo)
+            .with_project_projection_notifications(project_projection_notifications),
+    )
 }
 
 fn orchestration_binding(
@@ -279,6 +308,22 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingProjectProjectionNotificationPort {
+        items: Mutex<Vec<ProjectProjectionInvalidation>>,
+    }
+
+    #[async_trait]
+    impl ProjectProjectionNotificationPort for RecordingProjectProjectionNotificationPort {
+        async fn publish_project_projection_invalidated(
+            &self,
+            invalidation: ProjectProjectionInvalidation,
+        ) -> Result<(), String> {
+            self.items.lock().unwrap().push(invalidation);
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn accepted_turn_advances_claimed_orchestration_node_to_started() {
         let project_id = Uuid::new_v4();
@@ -335,6 +380,69 @@ mod tests {
             vec![RuntimeTraceRef::RuntimeSession {
                 session_id: "runtime-accepted".to_string(),
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn accepted_turn_emits_run_activity_projection_notification() {
+        let project_id = Uuid::new_v4();
+        let mut run = LifecycleRun::new_control(project_id);
+        let source_ref = OrchestrationSourceRef::WorkflowGraph {
+            graph_id: Uuid::new_v4(),
+            graph_version: Some(1),
+        };
+        let mut orchestration =
+            activate_root_orchestration(source_ref.clone(), plan_snapshot(source_ref));
+        let orchestration_id = orchestration.orchestration_id;
+        orchestration.node_tree[0].status = RuntimeNodeStatus::Claiming;
+        orchestration.activation.ready_node_ids.clear();
+        orchestration.dispatch.ready_node_ids.clear();
+        run.add_orchestration(orchestration);
+        let run_id = run.id;
+        let agent_id = Uuid::new_v4();
+        let launch_frame = AgentFrame::new_initial(agent_id);
+        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
+            "runtime-activity",
+            run_id,
+            launch_frame.id,
+            agent_id,
+            orchestration_id,
+            "entry",
+            1,
+        );
+        let anchor_repo = Arc::new(FixtureAnchorRepo::default());
+        anchor_repo.create_once(&anchor).await.unwrap();
+        let run_repo = Arc::new(FixtureRunRepo::default());
+        run_repo.create(&run).await.unwrap();
+        let notifications = Arc::new(RecordingProjectProjectionNotificationPort::default());
+        let service = AcceptedTurnLifecycleAdvanceService::new(anchor_repo, run_repo)
+            .with_project_projection_notifications(Some(notifications.clone()));
+
+        service
+            .advance_node_started_for_accepted_turn(AcceptedTurnLifecycleAdvanceInput {
+                runtime_session_id: "runtime-activity".to_string(),
+                turn_id: "turn-activity".to_string(),
+            })
+            .await
+            .expect("accepted lifecycle advance");
+
+        let recorded = notifications.items.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            recorded[0].projection,
+            agentdash_agent_protocol::ControlPlaneProjection::AgentRunList
+        );
+        assert_eq!(
+            recorded[0].reason,
+            ControlPlaneProjectionChangeReason::AgentRunActivityChanged
+        );
+        assert_eq!(recorded[0].project_id, project_id);
+        assert_eq!(recorded[0].run_id, run_id);
+        assert_eq!(recorded[0].agent_id, agent_id);
+        assert_eq!(recorded[0].frame_id, Some(launch_frame.id));
+        assert_eq!(
+            recorded[0].delivery_runtime_session_id.as_deref(),
+            Some("runtime-activity")
         );
     }
 

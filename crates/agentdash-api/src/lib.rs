@@ -1,4 +1,3 @@
-mod agent_run_list_invalidation;
 pub mod agent_run_runtime_surface;
 mod agent_run_terminal_control;
 pub mod app_state;
@@ -9,6 +8,7 @@ pub mod dto;
 pub mod integrations;
 pub mod mount_providers;
 pub mod oauth_flow;
+mod project_projection_notification;
 pub mod relay;
 pub mod routes;
 pub mod rpc;

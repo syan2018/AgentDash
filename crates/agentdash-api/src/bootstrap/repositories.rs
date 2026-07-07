@@ -14,7 +14,7 @@ use agentdash_application_agentrun::agent_run::frame::{
 use agentdash_application_lifecycle::{
     AgentRunLifecycleSurfaceProjector, SessionMetaStoreRuntimeSessionCreator,
 };
-use agentdash_application_ports::agent_run_list_invalidation::AgentRunListInvalidationPort;
+use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_application_runtime_session::session::SessionStoreSet;
 use agentdash_application_shared_library::{
     BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
@@ -51,7 +51,7 @@ pub(crate) struct RepositoryBootstrapOutput {
 pub(crate) async fn build_repositories(
     pool: PgPool,
     integration_library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
-    agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 ) -> Result<RepositoryBootstrapOutput> {
     agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
         .await
@@ -225,6 +225,7 @@ pub(crate) async fn build_repositories(
         agent_frame_repo: agent_frame_repo.clone(),
         lifecycle_subject_association_repo: lifecycle_subject_association_repo.clone(),
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
+        gate_result_delivery_marker_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),
         agent_run_lineage_repo: agent_run_lineage_repo.clone(),
         execution_anchor_repo: execution_anchor_repo.clone(),
@@ -240,7 +241,7 @@ pub(crate) async fn build_repositories(
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),
         permission_grant_repo: permission_grant_repo.clone(),
-        agent_run_list_invalidation: agent_run_list_invalidation.clone(),
+        project_projection_notifications: project_projection_notifications.clone(),
     };
 
     let integration_asset_count = integration_library_asset_seeds.len();

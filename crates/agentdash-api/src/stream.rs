@@ -15,9 +15,9 @@ use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_domain::common::events::StreamEvent;
 use agentdash_domain::story::StateChange;
 
-use crate::agent_run_list_invalidation::project_id_from_projection_event;
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
+use crate::project_projection_notification::project_id_from_projection_event;
 use crate::rpc::ApiError;
 
 const STREAM_BATCH_LIMIT: i64 = 256;

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
-use agentdash_application_ports::agent_run_list_invalidation::{
-    AgentRunListInvalidation, AgentRunListInvalidationPort,
+use agentdash_application_ports::project_projection_notification::{
+    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
 };
 use uuid::Uuid;
 
@@ -19,7 +19,7 @@ use super::plan::DispatchPlan;
 pub(crate) struct LifecycleRelationWriter<'a> {
     gate_repo: &'a dyn LifecycleGateRepository,
     lineage_repo: &'a dyn AgentLineageRepository,
-    agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
 pub(crate) struct RelationWriteResult {
@@ -30,12 +30,12 @@ impl<'a> LifecycleRelationWriter<'a> {
     pub(crate) fn new(
         gate_repo: &'a dyn LifecycleGateRepository,
         lineage_repo: &'a dyn AgentLineageRepository,
-        agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+        project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
     ) -> Self {
         Self {
             gate_repo,
             lineage_repo,
-            agent_run_list_invalidation,
+            project_projection_notifications,
         }
     }
 
@@ -56,16 +56,18 @@ impl<'a> LifecycleRelationWriter<'a> {
                 None,
             );
             self.lineage_repo.create(&lineage).await?;
-            if let Some(port) = self.agent_run_list_invalidation.as_ref() {
+            if let Some(port) = self.project_projection_notifications.as_ref() {
                 let _ = port
-                    .publish_agent_run_list_invalidated(AgentRunListInvalidation {
-                        project_id: run.project_id,
-                        run_id: run.id,
-                        agent_id: agent.id,
-                        frame_id: Some(frame_id),
-                        reason: ControlPlaneProjectionChangeReason::AgentRunLineageChanged,
-                        delivery_runtime_session_id: None,
-                    })
+                    .publish_project_projection_invalidated(
+                        ProjectProjectionInvalidation::agent_run_list(
+                            run.project_id,
+                            run.id,
+                            agent.id,
+                            Some(frame_id),
+                            ControlPlaneProjectionChangeReason::AgentRunLineageChanged,
+                            None,
+                        ),
+                    )
                     .await;
             }
         }

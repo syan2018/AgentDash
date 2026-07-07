@@ -35,12 +35,12 @@ use agentdash_application_agentrun::agent_run::{
     runtime_session_effective_capability_port,
 };
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
-use agentdash_application_ports::agent_run_list_invalidation::AgentRunListInvalidationPort;
 use agentdash_application_ports::agent_run_surface::{
     AgentRunEffectiveCapabilityView as PortsAgentRunEffectiveCapabilityView,
     AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort,
 };
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
+use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
     SessionCoreService, SessionEventingService, SessionHookService, SessionLaunchService,
@@ -224,7 +224,7 @@ pub(crate) struct SessionBootstrapInput {
     pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
     pub memory_discovery_providers: Vec<Arc<dyn agentdash_spi::MemoryDiscoveryProvider>>,
     pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
-    pub agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    pub project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
 pub(crate) struct SessionBootstrapOutput {
@@ -268,7 +268,7 @@ pub(crate) async fn build_session_runtime(
         skill_discovery_providers,
         memory_discovery_providers,
         llm_provider_secret,
-        agent_run_list_invalidation,
+        project_projection_notifications,
     } = input;
 
     let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
@@ -385,7 +385,7 @@ pub(crate) async fn build_session_runtime(
             repos.execution_anchor_repo.clone(),
             repos.lifecycle_agent_repo.clone(),
         )
-        .with_agent_run_list_invalidation(agent_run_list_invalidation.clone()),
+        .with_project_projection_notifications(project_projection_notifications.clone()),
     ));
     if let Some(base_sp) = base_system_prompt {
         session_runtime_builder = session_runtime_builder.with_system_prompt_config(base_sp);
@@ -411,10 +411,11 @@ pub(crate) async fn build_session_runtime(
                 agentdash_application_lifecycle::accepted_turn_lifecycle_advance_port(
                     repos.execution_anchor_repo.clone(),
                     repos.lifecycle_run_repo.clone(),
+                    project_projection_notifications.clone(),
                 ),
             ),
             Some(accepted_launch_hook_sync),
-            agent_run_list_invalidation.clone(),
+            project_projection_notifications.clone(),
         ))
         .await;
     let mailbox_runtime_adapter =
@@ -477,7 +478,7 @@ pub(crate) async fn build_session_runtime(
             project_backend_access_repo: repos.project_backend_access_repo.clone(),
             command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
             mailbox_repo: repos.agent_run_mailbox_repo.clone(),
-            agent_run_list_invalidation: agent_run_list_invalidation.clone(),
+            project_projection_notifications: project_projection_notifications.clone(),
         },
         session_core: agent_run_session_core(session_core.clone()),
         session_control: agent_run_session_control(session_control.clone()),

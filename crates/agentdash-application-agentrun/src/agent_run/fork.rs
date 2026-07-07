@@ -6,10 +6,10 @@ use agentdash_application_ports::agent_run_fork_materialization::{
     AgentRunForkMaterializationError, AgentRunForkMaterializationInput,
     AgentRunForkMaterializationResult,
 };
-use agentdash_application_ports::agent_run_list_invalidation::{
-    AgentRunListInvalidation, AgentRunListInvalidationPort,
-};
 use agentdash_application_ports::launch::BackendSelectionInput;
+use agentdash_application_ports::project_projection_notification::{
+    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
+};
 use agentdash_application_runtime_session::session::{SessionBranchingService, SessionForkRequest};
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_domain::agent_run_mailbox::{AgentRunMailboxMessage, MailboxSourceIdentity};
@@ -48,7 +48,7 @@ pub struct AgentRunForkRepos<'a> {
     pub agent_run_mailbox_repo: &'a dyn agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository,
     pub agent_run_lineage_repo: &'a dyn AgentRunLineageRepository,
     pub agent_run_fork_materialization: &'a dyn agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort,
-    pub agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    pub project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
 #[derive(Debug, Clone)]
@@ -317,7 +317,7 @@ impl<'a> AgentRunForkService<'a> {
                 return Err(app_error);
             }
         };
-        self.publish_agent_run_list_invalidated_for_fork(&materialized)
+        self.publish_project_projection_invalidated_for_fork(&materialized)
             .await;
 
         let parent_refs = base_refs(
@@ -568,22 +568,22 @@ impl<'a> AgentRunForkService<'a> {
         let _ = self.session_core.delete_session(runtime_session_id).await;
     }
 
-    async fn publish_agent_run_list_invalidated_for_fork(
+    async fn publish_project_projection_invalidated_for_fork(
         &self,
         materialized: &AgentRunForkMaterializationResult,
     ) {
-        let Some(port) = self.repos.agent_run_list_invalidation.as_ref() else {
+        let Some(port) = self.repos.project_projection_notifications.as_ref() else {
             return;
         };
         let _ = port
-            .publish_agent_run_list_invalidated(AgentRunListInvalidation {
-                project_id: materialized.child_run.project_id,
-                run_id: materialized.child_run.id,
-                agent_id: materialized.child_agent.id,
-                frame_id: Some(materialized.child_frame.id),
-                reason: ControlPlaneProjectionChangeReason::AgentRunLineageChanged,
-                delivery_runtime_session_id: Some(materialized.child_runtime_session_id.clone()),
-            })
+            .publish_project_projection_invalidated(ProjectProjectionInvalidation::agent_run_list(
+                materialized.child_run.project_id,
+                materialized.child_run.id,
+                materialized.child_agent.id,
+                Some(materialized.child_frame.id),
+                ControlPlaneProjectionChangeReason::AgentRunLineageChanged,
+                Some(materialized.child_runtime_session_id.clone()),
+            ))
             .await;
     }
 }
@@ -869,23 +869,23 @@ mod tests {
     };
 
     #[derive(Default)]
-    struct RecordingAgentRunListInvalidationPort {
-        items: Mutex<Vec<AgentRunListInvalidation>>,
+    struct RecordingProjectProjectionNotificationPort {
+        items: Mutex<Vec<ProjectProjectionInvalidation>>,
     }
 
     #[async_trait::async_trait]
-    impl AgentRunListInvalidationPort for RecordingAgentRunListInvalidationPort {
-        async fn publish_agent_run_list_invalidated(
+    impl ProjectProjectionNotificationPort for RecordingProjectProjectionNotificationPort {
+        async fn publish_project_projection_invalidated(
             &self,
-            invalidation: AgentRunListInvalidation,
+            invalidation: ProjectProjectionInvalidation,
         ) -> Result<(), String> {
             self.items.lock().await.push(invalidation);
             Ok(())
         }
     }
 
-    impl RecordingAgentRunListInvalidationPort {
-        async fn recorded(&self) -> Vec<AgentRunListInvalidation> {
+    impl RecordingProjectProjectionNotificationPort {
+        async fn recorded(&self) -> Vec<ProjectProjectionInvalidation> {
             self.items.lock().await.clone()
         }
     }
@@ -1355,7 +1355,7 @@ mod tests {
         mailbox: Arc<MemoryAgentRunMailboxRepository>,
         lineages: Arc<MemoryAgentRunLineageRepository>,
         materialization: Arc<MemoryAgentRunForkMaterialization>,
-        invalidations: Arc<RecordingAgentRunListInvalidationPort>,
+        invalidations: Arc<RecordingProjectProjectionNotificationPort>,
         session_store: Arc<FixtureSessionStore>,
         core: Arc<TestCorePort>,
         control: Arc<TestControlPort>,
@@ -1387,7 +1387,7 @@ mod tests {
                 delivery_bindings.clone(),
                 lineages.clone(),
             ));
-            let invalidations = Arc::new(RecordingAgentRunListInvalidationPort::default());
+            let invalidations = Arc::new(RecordingProjectProjectionNotificationPort::default());
             let session_store = Arc::new(FixtureSessionStore::default());
             let core = Arc::new(TestCorePort::default());
             let control = Arc::new(TestControlPort);
@@ -1466,7 +1466,7 @@ mod tests {
                 agent_run_mailbox_repo: self.mailbox.as_ref(),
                 agent_run_lineage_repo: self.lineages.as_ref(),
                 agent_run_fork_materialization: self.materialization.as_ref(),
-                agent_run_list_invalidation: Some(self.invalidations.clone()),
+                project_projection_notifications: Some(self.invalidations.clone()),
             };
             let mailbox = AgentRunMailboxService::new(
                 self.runs.as_ref(),

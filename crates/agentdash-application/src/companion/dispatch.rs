@@ -178,7 +178,7 @@ impl<'a> CompanionChildDispatchService<'a> {
         .with_delivery_binding_repo(self.repos.agent_run_delivery_binding_repo.as_ref())
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref())
         .with_frame_construction_port(self.repos.agent_frame_construction.as_ref())
-        .with_agent_run_list_invalidation(self.repos.agent_run_list_invalidation.clone())
+        .with_project_projection_notifications(self.repos.project_projection_notifications.clone())
     }
 
     async fn bind_selected_project_agent(

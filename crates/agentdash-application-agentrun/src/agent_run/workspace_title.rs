@@ -1,6 +1,6 @@
 use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
-use agentdash_application_ports::agent_run_list_invalidation::{
-    AgentRunListInvalidation, AgentRunListInvalidationPort,
+use agentdash_application_ports::project_projection_notification::{
+    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
 };
 use agentdash_application_ports::workspace_title::{WorkspaceTitleError, WorkspaceTitlePort};
 use agentdash_domain::workflow::{
@@ -13,7 +13,7 @@ use std::sync::Arc;
 pub struct AgentRunWorkspaceTitleAdapter {
     anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
-    agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
 impl AgentRunWorkspaceTitleAdapter {
@@ -24,15 +24,15 @@ impl AgentRunWorkspaceTitleAdapter {
         Self {
             anchor_repo,
             agent_repo,
-            agent_run_list_invalidation: None,
+            project_projection_notifications: None,
         }
     }
 
-    pub fn with_agent_run_list_invalidation(
+    pub fn with_project_projection_notifications(
         mut self,
-        port: Option<Arc<dyn AgentRunListInvalidationPort>>,
+        port: Option<Arc<dyn ProjectProjectionNotificationPort>>,
     ) -> Self {
-        self.agent_run_list_invalidation = port;
+        self.project_projection_notifications = port;
         self
     }
 }
@@ -71,16 +71,18 @@ impl WorkspaceTitlePort for AgentRunWorkspaceTitleAdapter {
                 .update(&agent)
                 .await
                 .map_err(|e| WorkspaceTitleError::Internal(e.to_string()))?;
-            if let Some(port) = self.agent_run_list_invalidation.as_ref() {
+            if let Some(port) = self.project_projection_notifications.as_ref() {
                 let _ = port
-                    .publish_agent_run_list_invalidated(AgentRunListInvalidation {
-                        project_id: agent.project_id,
-                        run_id: anchor.run_id,
-                        agent_id: agent.id,
-                        frame_id: Some(anchor.launch_frame_id),
-                        reason: ControlPlaneProjectionChangeReason::TitleChanged,
-                        delivery_runtime_session_id: Some(runtime_session_id.to_string()),
-                    })
+                    .publish_project_projection_invalidated(
+                        ProjectProjectionInvalidation::agent_run_list(
+                            agent.project_id,
+                            anchor.run_id,
+                            agent.id,
+                            Some(anchor.launch_frame_id),
+                            ControlPlaneProjectionChangeReason::TitleChanged,
+                            Some(runtime_session_id.to_string()),
+                        ),
+                    )
                     .await;
             }
         }
@@ -104,14 +106,14 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingInvalidationPort {
-        items: Mutex<Vec<AgentRunListInvalidation>>,
+        items: Mutex<Vec<ProjectProjectionInvalidation>>,
     }
 
     #[async_trait::async_trait]
-    impl AgentRunListInvalidationPort for RecordingInvalidationPort {
-        async fn publish_agent_run_list_invalidated(
+    impl ProjectProjectionNotificationPort for RecordingInvalidationPort {
+        async fn publish_project_projection_invalidated(
             &self,
-            invalidation: AgentRunListInvalidation,
+            invalidation: ProjectProjectionInvalidation,
         ) -> Result<(), String> {
             self.items.lock().unwrap().push(invalidation);
             Ok(())
@@ -119,7 +121,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn title_update_emits_agent_run_list_invalidation() {
+    async fn title_update_emits_project_projection_notifications() {
         let run_id = Uuid::new_v4();
         let project_id = Uuid::new_v4();
         let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
@@ -137,7 +139,7 @@ mod tests {
         agents.create(&agent).await.expect("agent");
 
         let updated = AgentRunWorkspaceTitleAdapter::new(anchors, agents)
-            .with_agent_run_list_invalidation(Some(invalidations.clone()))
+            .with_project_projection_notifications(Some(invalidations.clone()))
             .update_workspace_title("runtime-title", "新标题".to_string(), "source")
             .await
             .expect("title update");

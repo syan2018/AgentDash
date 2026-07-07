@@ -1,6 +1,6 @@
-use agentdash_agent_protocol::{ControlPlaneProjection, ControlPlaneProjectionChanged};
-use agentdash_application_ports::agent_run_list_invalidation::{
-    AgentRunListInvalidation, AgentRunListInvalidationPort,
+use agentdash_agent_protocol::ControlPlaneProjectionChanged;
+use agentdash_application_ports::project_projection_notification::{
+    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
 };
 use agentdash_contracts::project::{
     ProjectControlPlaneProjectionChanged, ProjectEventStreamEnvelope,
@@ -9,30 +9,30 @@ use async_trait::async_trait;
 use tokio::sync::broadcast;
 
 #[derive(Clone)]
-pub(crate) struct ProjectAgentRunListInvalidationPublisher {
+pub(crate) struct ProjectProjectionNotificationPublisher {
     sender: broadcast::Sender<ProjectEventStreamEnvelope>,
 }
 
-impl ProjectAgentRunListInvalidationPublisher {
+impl ProjectProjectionNotificationPublisher {
     pub(crate) fn new(sender: broadcast::Sender<ProjectEventStreamEnvelope>) -> Self {
         Self { sender }
     }
 }
 
 #[async_trait]
-impl AgentRunListInvalidationPort for ProjectAgentRunListInvalidationPublisher {
-    async fn publish_agent_run_list_invalidated(
+impl ProjectProjectionNotificationPort for ProjectProjectionNotificationPublisher {
+    async fn publish_project_projection_invalidated(
         &self,
-        invalidation: AgentRunListInvalidation,
+        invalidation: ProjectProjectionInvalidation,
     ) -> Result<(), String> {
         let change = ControlPlaneProjectionChanged {
-            projection: ControlPlaneProjection::AgentRunList,
+            projection: invalidation.projection,
             reason: invalidation.reason,
             run_id: invalidation.run_id.to_string(),
             agent_id: invalidation.agent_id.to_string(),
             frame_id: invalidation.frame_id.map(|id| id.to_string()),
-            gate_id: None,
-            mailbox_message_id: None,
+            gate_id: invalidation.gate_id.map(|id| id.to_string()),
+            mailbox_message_id: invalidation.mailbox_message_id.map(|id| id.to_string()),
             delivery_runtime_session_id: invalidation.delivery_runtime_session_id,
             workspace_module_presentation: None,
         };

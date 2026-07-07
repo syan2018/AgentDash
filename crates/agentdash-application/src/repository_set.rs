@@ -9,12 +9,12 @@ use agentdash_application_lifecycle::{
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
 use agentdash_application_ports::agent_run_fork_materialization::AgentRunForkMaterializationPort;
-use agentdash_application_ports::agent_run_list_invalidation::AgentRunListInvalidationPort;
 use agentdash_application_ports::hook_workflow_projection::{
     HookActiveWorkflowFacts, HookExecutionLogAppendCommand, HookWorkflowProjection,
     HookWorkflowProjectionError, HookWorkflowProjectionPort, HookWorkflowProjectionQuery,
 };
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
+use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_application_ports::runtime_session_delivery::RuntimeSessionCreationPort;
 use agentdash_application_ports::workflow_agent_frame_materialization::WorkflowAgentNodeFrameMaterializationPort;
 use agentdash_application_shared_library::SharedLibraryRepositorySet;
@@ -45,9 +45,10 @@ use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
     AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, AgentRunLineageRepository,
-    LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
-    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
+    GateResultDeliveryMarkerRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
+    WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 use async_trait::async_trait;
@@ -94,6 +95,7 @@ pub struct RepositorySet {
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
     pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
+    pub gate_result_delivery_marker_repo: Arc<dyn GateResultDeliveryMarkerRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     pub agent_run_lineage_repo: Arc<dyn AgentRunLineageRepository>,
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
@@ -109,7 +111,7 @@ pub struct RepositorySet {
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
     pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
-    pub agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    pub project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
 impl RepositorySet {

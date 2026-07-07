@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
-use agentdash_application_ports::agent_run_list_invalidation::AgentRunListInvalidationPort;
 use agentdash_application_ports::lifecycle_materialization::{
     WorkflowAgentNodeMaterializationRequest, WorkflowAgentNodeMaterializationResult,
 };
+use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_application_ports::runtime_session_delivery as runtime_session_delivery_port;
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
 use agentdash_application_ports::workflow_graph_planning as workflow_graph_planning_port;
@@ -111,7 +111,7 @@ pub struct LifecycleDispatchService<'a> {
     workflow_agent_frame_materialization:
         Option<&'a dyn workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort>,
     workflow_graph_planner: Option<&'a dyn workflow_graph_planning_port::WorkflowGraphPlanningPort>,
-    agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
 impl<'a> LifecycleDispatchService<'a> {
@@ -138,7 +138,7 @@ impl<'a> LifecycleDispatchService<'a> {
             frame_construction: None,
             workflow_agent_frame_materialization: None,
             workflow_graph_planner: None,
-            agent_run_list_invalidation: None,
+            project_projection_notifications: None,
         }
     }
 
@@ -190,11 +190,11 @@ impl<'a> LifecycleDispatchService<'a> {
         self
     }
 
-    pub fn with_agent_run_list_invalidation(
+    pub fn with_project_projection_notifications(
         mut self,
-        port: Option<Arc<dyn AgentRunListInvalidationPort>>,
+        port: Option<Arc<dyn ProjectProjectionNotificationPort>>,
     ) -> Self {
-        self.agent_run_list_invalidation = port;
+        self.project_projection_notifications = port;
         self
     }
 
@@ -375,7 +375,7 @@ impl<'a> LifecycleDispatchService<'a> {
         LifecycleRelationWriter::new(
             self.gate_repo,
             self.lineage_repo,
-            self.agent_run_list_invalidation.clone(),
+            self.project_projection_notifications.clone(),
         )
     }
 
@@ -467,8 +467,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
-    use agentdash_application_ports::agent_run_list_invalidation::{
-        AgentRunListInvalidation, AgentRunListInvalidationPort,
+    use agentdash_application_ports::project_projection_notification::{
+        ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
     };
     use agentdash_application_workflow::orchestration::ROOT_ORCHESTRATION_ROLE;
     use agentdash_domain::workflow::*;
@@ -494,23 +494,23 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct RecordingAgentRunListInvalidationPort {
-        items: Mutex<Vec<AgentRunListInvalidation>>,
+    struct RecordingProjectProjectionNotificationPort {
+        items: Mutex<Vec<ProjectProjectionInvalidation>>,
     }
 
     #[async_trait::async_trait]
-    impl AgentRunListInvalidationPort for RecordingAgentRunListInvalidationPort {
-        async fn publish_agent_run_list_invalidated(
+    impl ProjectProjectionNotificationPort for RecordingProjectProjectionNotificationPort {
+        async fn publish_project_projection_invalidated(
             &self,
-            invalidation: AgentRunListInvalidation,
+            invalidation: ProjectProjectionInvalidation,
         ) -> Result<(), String> {
             self.items.lock().unwrap().push(invalidation);
             Ok(())
         }
     }
 
-    impl RecordingAgentRunListInvalidationPort {
-        fn recorded(&self) -> Vec<AgentRunListInvalidation> {
+    impl RecordingProjectProjectionNotificationPort {
+        fn recorded(&self) -> Vec<ProjectProjectionInvalidation> {
             self.items.lock().unwrap().clone()
         }
     }
@@ -824,7 +824,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_child_dispatch_emits_agent_run_list_invalidation() {
+    async fn spawn_child_dispatch_emits_project_projection_notifications() {
         let project_id = Uuid::new_v4();
         let run_repo = MemoryLifecycleRunRepository::default();
         let workflow_repo = MemoryWorkflowGraphRepository::default();
@@ -836,7 +836,7 @@ mod tests {
         let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
         let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
-        let invalidations = Arc::new(RecordingAgentRunListInvalidationPort::default());
+        let invalidations = Arc::new(RecordingProjectProjectionNotificationPort::default());
         let parent_run = LifecycleRun::new_control(project_id);
         let parent_agent =
             LifecycleAgent::new_root(parent_run.id, project_id, AgentSource::ProjectAgent);
@@ -858,7 +858,7 @@ mod tests {
         )
         .with_anchor_repo(&anchor_repo)
         .with_delivery_binding_repo(&delivery_binding_repo)
-        .with_agent_run_list_invalidation(Some(invalidations.clone()));
+        .with_project_projection_notifications(Some(invalidations.clone()));
         let result = service
             .launch_agent(&AgentLaunchIntent {
                 project_id,

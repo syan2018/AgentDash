@@ -1,6 +1,7 @@
 use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
-use agentdash_application_ports::agent_run_list_invalidation::{
-    AgentRunListInvalidation, AgentRunListInvalidationPort,
+use agentdash_agent_protocol::RuntimeTerminalDiagnostic;
+use agentdash_application_ports::project_projection_notification::{
+    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
 };
 use std::sync::Arc;
 
@@ -29,6 +30,7 @@ pub struct AgentRunRuntimeTerminalCommand {
     pub turn_id: String,
     pub terminal_state: String,
     pub terminal_message: Option<String>,
+    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub observed_at: DateTime<Utc>,
 }
 
@@ -39,6 +41,7 @@ pub struct AgentRunDeliveryTerminalEvent {
     pub frame_id: Option<Uuid>,
     pub terminal_state: String,
     pub terminal_message: Option<String>,
+    pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub turn_id: Option<String>,
     pub delivery_trace_ref: Option<String>,
 }
@@ -63,7 +66,7 @@ pub struct AgentRunTerminalConvergenceDeps {
     pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
     pub command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
-    pub agent_run_list_invalidation: Option<Arc<dyn AgentRunListInvalidationPort>>,
+    pub project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
 }
 
 impl AgentRunTerminalConvergenceService {
@@ -105,6 +108,7 @@ impl AgentRunTerminalConvergenceService {
             turn_id: command.turn_id.clone(),
             terminal_state: command.terminal_state.clone(),
             terminal_message: command.terminal_message.clone(),
+            terminal_diagnostic: command.terminal_diagnostic.clone(),
             observed_at: command.observed_at,
         })
         .await?;
@@ -138,6 +142,7 @@ impl AgentRunTerminalConvergenceService {
             frame_id,
             terminal_state: command.terminal_state,
             terminal_message: command.terminal_message,
+            terminal_diagnostic: command.terminal_diagnostic,
             turn_id: Some(command.turn_id),
             delivery_trace_ref: Some(command.runtime_session_id),
         }))
@@ -177,6 +182,9 @@ impl AgentRunTerminalConvergenceService {
             frame_id,
             terminal_state,
             terminal_message: binding.terminal_message,
+            terminal_diagnostic: binding
+                .terminal_diagnostic
+                .and_then(|value| serde_json::from_value(value).ok()),
             turn_id: binding.last_turn_id,
             delivery_trace_ref: Some(binding.runtime_session_id),
         }))
@@ -255,21 +263,21 @@ impl AgentRunTerminalConvergenceService {
         reason: ControlPlaneProjectionChangeReason,
         delivery_runtime_session_id: Option<String>,
     ) {
-        let Some(port) = self.deps.agent_run_list_invalidation.as_ref() else {
+        let Some(port) = self.deps.project_projection_notifications.as_ref() else {
             return;
         };
         let Ok(Some(agent)) = self.deps.lifecycle_agent_repo.get(agent_id).await else {
             return;
         };
         let _ = port
-            .publish_agent_run_list_invalidated(AgentRunListInvalidation {
-                project_id: agent.project_id,
+            .publish_project_projection_invalidated(ProjectProjectionInvalidation::agent_run_list(
+                agent.project_id,
                 run_id,
                 agent_id,
                 frame_id,
                 reason,
                 delivery_runtime_session_id,
-            })
+            ))
             .await;
     }
 

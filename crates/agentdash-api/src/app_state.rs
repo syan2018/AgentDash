@@ -5,8 +5,8 @@ use anyhow::Result;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 
-use crate::agent_run_list_invalidation::ProjectAgentRunListInvalidationPublisher;
 use crate::integrations::{builtin_integrations, collect_integration_registration};
+use crate::project_projection_notification::ProjectProjectionNotificationPublisher;
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
@@ -195,14 +195,14 @@ impl AppState {
 
         let (project_control_plane_events, _project_control_plane_rx) =
             broadcast::channel(PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY);
-        let agent_run_list_invalidation = Arc::new(ProjectAgentRunListInvalidationPublisher::new(
-            project_control_plane_events.clone(),
-        ));
+        let project_projection_notifications = Arc::new(
+            ProjectProjectionNotificationPublisher::new(project_control_plane_events.clone()),
+        );
 
         let repository_bootstrap = crate::bootstrap::repositories::build_repositories(
             pool,
             integration_registration.library_asset_seeds.clone(),
-            Some(agent_run_list_invalidation.clone()),
+            Some(project_projection_notifications.clone()),
         )
         .await?;
         let repos = repository_bootstrap.repos;
@@ -266,7 +266,7 @@ impl AppState {
                 skill_discovery_providers: integration_registration.skill_discovery_providers,
                 memory_discovery_providers: integration_registration.memory_discovery_providers,
                 llm_provider_secret: llm_provider_secret.clone(),
-                agent_run_list_invalidation: Some(agent_run_list_invalidation.clone()),
+                project_projection_notifications: Some(project_projection_notifications.clone()),
             },
         )
         .await?;

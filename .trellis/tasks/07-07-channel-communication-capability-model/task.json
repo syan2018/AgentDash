@@ -1,8 +1,8 @@
 {
   "id": "channel-communication-capability-model",
   "name": "channel-communication-capability-model",
-  "title": "ChannelService 文档型通信主干一期实现",
-  "description": "交付 Channel 一等领域、owner-local ChannelRegistryDocument、ChannelService skeleton、CapabilityState.channel 投影与 mailbox/gate materialization intent 边界。",
+  "title": "ChannelService 完整通信主干推进",
+  "description": "交付 Channel 一等领域、owner-local ChannelRegistryDocument、通用 owner document mutation、ChannelService、CapabilityState.channel、Mailbox/Gate materialization 与 Companion/SubAgent/runtime wake 收束。",
   "status": "planning",
   "dev_type": "backend",
   "scope": "channel,capability,agentrun",

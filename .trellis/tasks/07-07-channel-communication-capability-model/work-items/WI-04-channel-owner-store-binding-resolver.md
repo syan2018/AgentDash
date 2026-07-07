@@ -1,6 +1,6 @@
 # WI-04 ChannelOwnerStore And BindingResolver
 
-Status: planned
+Status: done
 Owner: implement worker
 Depends On: WI-01
 Can Run With: WI-02, WI-09
@@ -30,3 +30,8 @@ cargo check -p agentdash-application
 ## Progress Log
 
 - initialized
+- candidate implementation exists in workspace with the ChannelService application batch
+- implemented `ChannelOwnerStore`, LifecycleRun-backed owner store, `ChannelBindingResolver`, unresolved and unsupported resolution contracts
+- targeted checks were run by host and must be verified by native check worker before this item can move forward: `cargo test -p agentdash-application channel`; `cargo check -p agentdash-application`
+- native check worker `Ohm` completed WI-10 full-scope check; owner store and binding resolver verification passed
+- dispatcher integration review passed; application channel test passed

@@ -2,16 +2,18 @@
 
 ## Current State
 
-本任务是完整端到端实现任务，当前状态为 `planning`。进入实现前必须完成：
+本任务是完整端到端实现任务，当前状态为 `in_progress`。实现前置条件已完成：
 
 - `prd.md`、`design.md`、`implement.md` 已收敛。
 - `implement.jsonl`、`check.jsonl` 已有真实上下文条目。
 - `work-items/` 已初始化，每个工作项有独立追踪文件。
-- 用户确认进入实现后运行 `python ./.trellis/scripts/task.py start .trellis/tasks/07-07-channel-communication-capability-model`。
+- task 已通过 `task.py start` 激活；主会话作为 dispatcher 推进工作项。
 
 ## Dispatch Model
 
 主会话是 dispatcher，负责拆分、派发、等待、合并、更新工作项状态和提交规划。实现 worker 和检查 worker 只处理被派发的工作项。
+
+当前 Codex 线程使用原生 spawn agent 作为派发执行面：`trellis-implement` / `trellis-check` 通过 Codex native spawn 创建，主会话只负责主持、合并、复核和提交。本任务后续执行状态以 `work-items/README.md`、各 `WI-*.md`、原生 agent id/nickname 与 checkpoint commit 为准。
 
 Trellis 标准链路：
 
@@ -48,7 +50,7 @@ blocked 可从任意状态进入；解除后回到 dispatched 或 checking。
 
 Dispatcher 更新规则：
 
-- 派发前：在 `work-items/README.md` 和对应 `WI-*.md` 标记 `dispatched`，写入 worker/channel 名。
+- 派发前：在 `work-items/README.md` 和对应 `WI-*.md` 标记 `dispatched`，写入原生 agent nickname/id。
 - worker 完成后：记录摘要、修改文件、已跑命令、遗留风险。
 - targeted check 通过后：标记 `ready_for_integration`。
 - 全量集成检查通过后：标记 `done`。
@@ -109,18 +111,9 @@ WI-10 做全量检查、死代码清理、文档同步和提交准备。
 
 ## Dispatch Commands
 
-创建一个任务级 channel：
+每次派发给原生 worker 的 brief 必须包含 active task、work item、角色自豁免、写入范围和完成回报格式：
 
-```powershell
-$TASK=".trellis/tasks/07-07-channel-communication-capability-model"
-trellis channel create channel-service-dispatch --task "$TASK" --by dispatcher --cwd "$PWD"
-```
-
-每次发送给 worker 的 brief 必须包含 active task、work item 和角色自豁免：
-
-```powershell
-$WI="$TASK/work-items/WI-01-domain-document-model.md"
-$brief = @"
+```text
 Active task: $TASK
 Work item: $WI
 
@@ -128,85 +121,16 @@ You are already the trellis-implement worker for this work item.
 Implement this work item directly. Do not spawn trellis-implement or trellis-check.
 Read the injected prd/design/implement files, then read the work item file.
 Before finishing, report changed files, commands run, remaining risks, and the next status for the work item tracker.
-"@
 ```
 
-派发 implement worker：
+Dispatcher 记录规则：
 
-```powershell
-trellis channel spawn channel-service-dispatch `
-  --agent implement `
-  --provider codex `
-  --as wi01-impl `
-  --file "$TASK/prd.md" `
-  --file "$TASK/design.md" `
-  --file "$TASK/implement.md" `
-  --file "$TASK/work-items/WI-01-domain-document-model.md" `
-  --jsonl "$TASK/implement.jsonl" `
-  --cwd "$PWD" `
-  --timeout 90m
-
-$brief | trellis channel send channel-service-dispatch `
-  --as dispatcher `
-  --to wi01-impl `
-  --delivery-mode requireRunningWorker `
-  --stdin
-
-trellis channel wait channel-service-dispatch `
-  --as dispatcher `
-  --from wi01-impl `
-  --kind done,error `
-  --timeout 90m
-```
-
-派发 check worker：
-
-```powershell
-trellis channel spawn channel-service-dispatch `
-  --agent check `
-  --provider codex `
-  --as wi01-check `
-  --file "$TASK/prd.md" `
-  --file "$TASK/design.md" `
-  --file "$TASK/implement.md" `
-  --file "$TASK/work-items/WI-01-domain-document-model.md" `
-  --jsonl "$TASK/check.jsonl" `
-  --cwd "$PWD" `
-  --timeout 45m
-
-$checkBrief = @"
-Active task: $TASK
-Work item: $WI
-
-You are already the trellis-check worker for this work item.
-Review and fix this work item directly. Do not spawn trellis-implement or trellis-check.
-Check against prd/design/implement, the work item file, and check.jsonl context.
-Before finishing, report findings, fixes, commands run, residual risk, and whether the work item can move to ready_for_integration.
-"@
-
-$checkBrief | trellis channel send channel-service-dispatch `
-  --as dispatcher `
-  --to wi01-check `
-  --delivery-mode requireRunningWorker `
-  --stdin
-
-trellis channel wait channel-service-dispatch `
-  --as dispatcher `
-  --from wi01-check `
-  --kind done,error `
-  --timeout 45m
-```
-
-并行等待多个 worker 时使用 `--all`：
-
-```powershell
-trellis channel wait channel-service-dispatch `
-  --as dispatcher `
-  --from wi02-impl,wi04-impl,wi09-impl `
-  --kind done,error `
-  --all `
-  --timeout 90m
-```
+- 原生 worker 创建后，在 `work-items/README.md` 记录 agent nickname 和 agent id。
+- 派发实现 worker 时，对应 `WI-*.md` 标记 `dispatched` 或 `implementing`，`Owner` 保持 `implement worker`。
+- 派发检查 worker 时，对应 `WI-*.md` 标记 `checking`，`Owner` 保持 `check worker` 或原实现 owner。
+- worker 结果合并后，dispatcher 记录 worker 报告、修改文件、命令结果和下一状态。
+- 主线程在集成期处理共享文件或小范围冲突时，记录为 `host integration fix`，并交给 check worker 复核。
+- 并行派发时每个 worker 必须有不重叠的写入范围；共享文件只在 dispatcher 合并时处理。
 
 ## Interleaved Checks
 
@@ -280,7 +204,8 @@ If unrelated dirty files exist, list them as unrecognized and exclude them from 
 恢复主持任务派发上下文时按这个顺序读取：
 
 ```powershell
-python ./.trellis/scripts/task.py current --source
+python ./.trellis/scripts/get_context.py
+python ./.trellis/scripts/get_context.py --mode phase
 Get-Content -Raw .trellis/tasks/07-07-channel-communication-capability-model/task.json
 Get-Content -Raw .trellis/tasks/07-07-channel-communication-capability-model/prd.md
 Get-Content -Raw .trellis/tasks/07-07-channel-communication-capability-model/design.md
@@ -290,15 +215,9 @@ Get-Content -Raw .trellis/tasks/07-07-channel-communication-capability-model/wor
 Get-Content -Raw .trellis/tasks/07-07-channel-communication-capability-model/implement.jsonl
 Get-Content -Raw .trellis/tasks/07-07-channel-communication-capability-model/check.jsonl
 git status --short
-trellis channel list --all
 ```
 
-如果 `task.py current --source` 没有 active task，用本文件所在路径作为主持任务路径。若有 worker 正在跑，从 `work-items/README.md` 找 channel / worker handle，再用：
-
-```powershell
-trellis channel messages channel-service-dispatch --raw --no-progress
-trellis channel wait channel-service-dispatch --as dispatcher --from <worker> --kind done,error --timeout 1s
-```
+如果 `get_context.py` 没有 active task，用本文件所在路径作为主持任务路径。若有原生 worker 正在跑，从 `work-items/README.md` 找 agent nickname/id，并用 Codex native `wait_agent` / `resume_agent` 恢复。
 
 恢复后先更新对应 `WI-*.md` 的 `Progress Log`，再继续派发。
 

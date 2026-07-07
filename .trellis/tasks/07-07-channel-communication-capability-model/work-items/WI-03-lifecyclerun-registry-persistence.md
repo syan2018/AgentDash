@@ -1,6 +1,6 @@
 # WI-03 LifecycleRun Registry Persistence
 
-Status: planned
+Status: done
 Owner: implement worker
 Depends On: WI-01, WI-02
 Can Run With: WI-06
@@ -31,3 +31,8 @@ cargo test -p agentdash-infrastructure lifecycle_run
 ## Progress Log
 
 - initialized
+- candidate implementation exists in workspace as the persistence batch with WI-02
+- added `lifecycle_runs.channel_registry jsonb` migration, typed `LifecycleRun.channel_registry` mapping, roundtrip and stale update preservation tests
+- targeted checks were run by host and must be verified by native check worker before this item can move forward: `cargo test -p agentdash-infrastructure channel_registry`; `cargo test -p agentdash-infrastructure lifecycle_run`; `pnpm run migration:guard`
+- native check worker `Ohm` completed WI-10 full-scope check; LifecycleRun registry persistence verification passed
+- dispatcher integration review passed; migration guard and affected-package cargo check passed

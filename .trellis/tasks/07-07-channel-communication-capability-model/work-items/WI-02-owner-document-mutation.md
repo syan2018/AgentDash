@@ -1,6 +1,6 @@
 # WI-02 Owner Document Mutation Contract
 
-Status: planned
+Status: done
 Owner: implement worker
 Depends On: WI-01 mutation type shape
 Can Run With: WI-04, WI-09
@@ -28,3 +28,8 @@ cargo check -p agentdash-infrastructure
 ## Progress Log
 
 - initialized
+- candidate implementation exists in workspace as the persistence batch with WI-03
+- implemented typed Postgres JSONB owner document row-lock helper and semantic `LifecycleRunRepository::mutate_channel_registry`
+- targeted checks were run by host and must be verified by native check worker before this item can move forward: `cargo check -p agentdash-domain -p agentdash-infrastructure -p agentdash-test-support`; `cargo test -p agentdash-infrastructure channel_registry`; `pnpm run migration:guard`
+- native check worker `Ohm` completed WI-10 full-scope check; owner document mutation verification passed
+- dispatcher integration review passed; affected-package cargo check and migration guard passed

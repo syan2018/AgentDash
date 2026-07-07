@@ -1,7 +1,7 @@
 # WI-10 Integration, Static Checks, Cleanup
 
-Status: planned
-Owner: dispatcher + check worker
+Status: done
+Owner: check worker
 Depends On: WI-01, WI-02, WI-03, WI-04, WI-05, WI-06, WI-07, WI-08, WI-09
 Can Run With: none
 Expected Commit: `test(channel): 补齐 Channel 全链路验证`
@@ -36,3 +36,7 @@ rg -n "accept_intake_message|LifecycleGateResolver|GateDeliveryIntent" crates/ag
 ## Progress Log
 
 - initialized
+- dispatched native check worker `Ohm` (`019f3db3-ae9a-7440-8549-9b66e4ceff10`) for full-scope review/fix
+- full-scope check fixed ChannelAddress mapper duplication, ChannelService semantic update/remove mutation gaps, and clippy findings in new channel code
+- verification passed: migration guard, affected-package cargo check, targeted channel/companion/agentrun/infrastructure tests, static scans, and affected-package clippy with existing large enum baseline allowed
+- dispatcher integration review passed: static scans, `cargo check`, migration guard, `cargo test -p agentdash-domain channel`, and `cargo test -p agentdash-application channel`

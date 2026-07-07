@@ -1,6 +1,6 @@
 # WI-06 CapabilityState.channel Projection
 
-Status: planned
+Status: done
 Owner: implement worker
 Depends On: WI-01, WI-04
 Can Run With: WI-03, WI-05 partial
@@ -31,3 +31,8 @@ cargo check -p agentdash-spi -p agentdash-application-agentrun
 ## Progress Log
 
 - initialized
+- candidate implementation exists in workspace for SPI dimension, runtime replay and projection tests
+- implemented `CapabilityState.channel`, channel delta reporting, channel Accumulate effect constants, `ChannelCapabilityDimensionModule` Expose/Revoke replay and normalization
+- targeted checks were run by host and must be verified by native check worker before this item can move forward: `cargo test -p agentdash-spi channel`; `cargo test -p agentdash-application-agentrun channel`; `cargo check -p agentdash-spi -p agentdash-application-agentrun`
+- native check worker `Ohm` completed WI-10 full-scope check; channel projection verification passed
+- dispatcher integration review passed; affected-package cargo check passed

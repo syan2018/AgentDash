@@ -6,6 +6,7 @@ pub mod backend;
 pub mod backend_execution_placement;
 pub mod canvas;
 pub mod capability;
+pub mod channel;
 pub mod companion;
 pub mod context;
 pub mod error;

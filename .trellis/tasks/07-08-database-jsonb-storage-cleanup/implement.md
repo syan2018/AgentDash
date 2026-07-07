@@ -1,52 +1,86 @@
-# 存量 JSON 文本列 JSONB 收敛执行计划
+# 存量 JSON 文本列 JSONB 收敛执行追踪
 
-## Current State
+## 当前进度
 
-本任务处于 planning。已确认仓库当前同时存在：
+状态：Phase 3 提交与 PR。
 
-- 新范式：`jsonb` columns + `sqlx::types::Json<T>` mapping。
-- 旧范式：结构化 JSON 存在 `TEXT` 中，repository 手写 parse/serialize helper。
+已完成：
 
-目标是把 live schema 和 repository 主线收敛到明确的 `jsonb` / `json` / scalar / raw `TEXT` 分类，不继续把结构化业务事实当字符串保存。默认业务文档目标是 `jsonb`。
+- 三路并行盘点：schema/migration、runtime/workflow repository、product/config repository。
+- 汇总 inventory：`research/text-json-column-inventory.md`。
+- 新增 migration：`0058_json_text_columns_to_jsonb.sql`。
+- PostgreSQL repository 读写从 JSON 字符串协议收束到 `jsonb` typed mapping / `serde_json::Value` 边界 helper。
+- Scalar enum 字段保持 PostgreSQL `text`，迁移中只规范化历史 JSON-string 值。
+- 原生 `trellis-check` 子代理 `Bacon` 已完成全量 diff 复核，无未修复问题。
 
-## Phases
+正在进行：
 
-1. **Inventory**
-   - 新增 `research/text-json-column-inventory.md`。
-   - 从 migrations、repository row structs、mapper、insert/update SQL 中列出所有候选列。
-   - 每列给出目标类型和分类：convert to jsonb / convert to json / keep text / promote scalar / defer。
+- 主线程提交、归档、记录 journal、创建 PR。
 
-2. **Migration Design**
-   - 为 convert 列设计一个或多个 migration。
-   - 对 nullable、not null、default object、default array 分别使用正确 `USING` 表达式。
-   - 只有 inventory 明确要求保留 JSON 文本形态时才使用 `json`；其余结构化文档使用 `jsonb`。
-   - 对需要重命名的 `_json` 列单独列出 rename 计划和 repository 影响。
+## 派发链路
 
-3. **Repository Conversion**
-   - 将已迁移列的 bind/read 改为 `sqlx::types::Json<T>` 或窄共享 JSON document codec。
-   - 移除对应局部 `parse_json_column` / `serialize_json_column` helper。
-   - 对仍保留 `TEXT` 的 raw text 列保留普通 string mapping。
-   - 不引入完整 repository scaffold，不改变 repository trait 或 use-case deps。
+本任务采用主线程集成 + 并行 worker 盘点/检查：
 
-4. **Tests**
-   - 更新 PostgreSQL repository roundtrip tests。
-   - 增加 migration upgrade fixture：旧 text JSON row 可迁为 jsonb。
-   - 对 shape mismatch 保留带 `table.column` context 的错误。
+| Worker | 范围 | 输出 | 状态 |
+| --- | --- | --- | --- |
+| Herschel | migration/source schema 中 TEXT JSON live inventory | `research/schema-text-json-inventory.md` | done |
+| Singer | workflow/runtime/session/mailbox/state-change repository inventory | `research/runtime-workflow-repository-inventory.md` | done |
+| Hubble | product/config/workspace/canvas/routine repository inventory | `research/product-config-repository-inventory.md` | done |
+| Bacon | 全量 diff check、验证、可确定问题直接修复 | final answer / code edits if needed | done |
 
-5. **Spec Cleanup**
-   - 如果执行中发现新的 JSONB codec / repository helper 约定，更新 `.trellis/spec/backend/database-guidelines.md`。
-   - 若最终保留某些 `TEXT` JSON-looking 列，把业务原因回填到 inventory。
+主线程负责：
 
-## Validation Commands
+- 合并 research 结论并解决冲突。
+- 维护 migration 与 repository 代码一致性。
+- 跑最终验证命令。
+- 统一提交、归档、journal、PR。
 
-- `pnpm run migration:guard`
-- 相关 PostgreSQL repository tests，范围由 inventory 最终列决定
-- `rg -n "_json\\s+text|DEFAULT '\\{\\}'::text|DEFAULT '\\[\\]'::text" crates/agentdash-infrastructure/migrations`
-- `rg -n "parse_json_column|serialize_json_column|serde_json::from_str|serde_json::to_string" crates/agentdash-infrastructure/src/persistence/postgres`
+## Work Items
 
-## Risk Notes
+每个工作项有独立追踪文件：
 
-- `ALTER COLUMN ... TYPE jsonb USING col::jsonb` 会暴露历史坏数据；预研期应优先修正数据和 schema，而不是吞掉错误。
-- `json` 是少数例外，不是折中默认；如果只是“可能以后要看原文”，应保留 raw `TEXT` 或另存 raw payload，而不是把业务 document 迁到 `json`。
-- 有些 `TEXT` 字段只是名字像 JSON，但本质是 source text、markdown、用户文本或源码；inventory 必须先判定业务语义。
-- `_json` 后缀清理会扩大 SQL、repository、测试影响面；如果无法一次完成，应先完成类型收敛并为命名整理留下明确 follow-up。
+- `workitems/WI-01-inventory.md`
+- `workitems/WI-02-migration.md`
+- `workitems/WI-03-product-config-repositories.md`
+- `workitems/WI-04-workflow-runtime-repositories.md`
+- `workitems/WI-05-session-auth-state-mailbox.md`
+- `workitems/WI-06-validation-pr.md`
+
+当前状态：
+
+| Work Item | 状态 | 说明 |
+| --- | --- | --- |
+| WI-01 Inventory | done | 三份 worker 盘点已汇总成最终 inventory。 |
+| WI-02 Migration | done | 0058 forward migration 覆盖 live structured TEXT JSON 列；scalar enum 归 text。 |
+| WI-03 Product/config repositories | done | project/agent/backend/story/workspace/canvas/settings/LLM/MCP/routine/VFS/backend-access 已转换。 |
+| WI-04 Workflow/runtime repositories | done | workflow/lifecycle/gate/lineage/runtime session 路径已转换。 |
+| WI-05 Session/auth/state/mailbox | done | session_core、auth session、state change、mailbox source metadata 已转换。 |
+| WI-06 Validation/PR | done | 本地验证和独立 check 均已通过，进入提交/PR。 |
+
+## 验证命令
+
+已通过：
+
+```bash
+cargo fmt
+cargo fmt --check
+cargo check -p agentdash-infrastructure
+cargo check --workspace
+TEST_DATABASE_URL='' DATABASE_URL='' cargo test -p agentdash-infrastructure --lib
+pnpm run migration:guard
+rg -n 'parse_json_column|serialize_json_column|serde_json::from_str|serde_json::to_string|json_string|trim_matches' crates/agentdash-infrastructure/src/persistence/postgres crates/agentdash-infrastructure/src/persistence/session_core.rs -S
+```
+
+Migration history grep 会命中历史 migration；最终判断看 `0058_json_text_columns_to_jsonb.sql` 的 target conversion 和 `research/text-json-column-inventory.md` 的分类结论。
+
+## 压缩恢复方式
+
+压缩后恢复主持上下文时按顺序读取：
+
+1. `AGENTS.md` 和 `.trellis/workflow.md`。
+2. `.trellis/tasks/07-08-database-jsonb-storage-cleanup/prd.md`、`design.md`、本文件。
+3. `research/text-json-column-inventory.md`。
+4. `workitems/*.md`。
+5. `git status --short --branch` 与当前 diff。
+
+然后继续提交、归档、记录 journal、创建 PR。

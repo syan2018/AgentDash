@@ -5,6 +5,7 @@ use agentdash_domain::story::{
     ChangeKind, Story, StoryContext, StoryPriority, StoryRepository, StoryStatus, StoryType,
 };
 
+use super::json_document::{from_jsonb, to_jsonb};
 use super::state_change_store::append_state_change_in_tx;
 
 pub struct PostgresStoryRepository {
@@ -36,11 +37,11 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(story.default_workspace_id.map(|id| id.to_string()))
         .bind(&story.title)
         .bind(&story.description)
-        .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
-        .bind(serde_json::to_string(&story.tags)?)
-        .bind(serde_json::to_string(&story.context)?)
+        .bind(story_status_to_str(&story.status))
+        .bind(story_priority_to_str(&story.priority))
+        .bind(story_type_to_str(&story.story_type))
+        .bind(to_jsonb(&story.tags, "stories.tags")?)
+        .bind(to_jsonb(&story.context, "stories.context")?)
         .bind(story.created_at)
         .bind(story.updated_at)
         .execute(&mut *tx)
@@ -139,8 +140,8 @@ struct StoryRow {
     status: String,
     priority: String,
     story_type: String,
-    tags: String,
-    context: String,
+    tags: serde_json::Value,
+    context: serde_json::Value,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -154,8 +155,8 @@ impl TryFrom<StoryRow> for Story {
             id: row.id.clone(),
         })?;
 
-        let context: StoryContext = parse_json_column(&row.context, "stories.context")?;
-        let tags: Vec<String> = parse_json_column(&row.tags, "stories.tags")?;
+        let context: StoryContext = from_jsonb(row.context, "stories.context")?;
+        let tags: Vec<String> = from_jsonb(row.tags, "stories.tags")?;
 
         let default_workspace_id = row
             .default_workspace_id
@@ -219,11 +220,11 @@ async fn update_story_row_in_tx(
     .bind(story.default_workspace_id.map(|id| id.to_string()))
     .bind(&story.title)
     .bind(&story.description)
-    .bind(serde_json::to_string(&story.status)?.trim_matches('"'))
-    .bind(serde_json::to_string(&story.priority)?.trim_matches('"'))
-    .bind(serde_json::to_string(&story.story_type)?.trim_matches('"'))
-    .bind(serde_json::to_string(&story.tags)?)
-    .bind(serde_json::to_string(&story.context)?)
+    .bind(story_status_to_str(&story.status))
+    .bind(story_priority_to_str(&story.priority))
+    .bind(story_type_to_str(&story.story_type))
+    .bind(to_jsonb(&story.tags, "stories.tags")?)
+    .bind(to_jsonb(&story.context, "stories.context")?)
     .bind(story.updated_at)
     .bind(story.id.to_string())
     .execute(&mut **tx)
@@ -244,14 +245,6 @@ fn story_payload(story: &Story) -> Result<serde_json::Value, DomainError> {
         .map_err(|error| DomainError::InvalidConfig(format!("stories.state_payload: {error}")))
 }
 
-fn parse_json_column<T: serde::de::DeserializeOwned>(
-    raw: &str,
-    field: &str,
-) -> Result<T, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
 fn parse_story_status(raw: &str) -> Result<StoryStatus, DomainError> {
     match raw {
         "created" => Ok(StoryStatus::Created),
@@ -267,6 +260,18 @@ fn parse_story_status(raw: &str) -> Result<StoryStatus, DomainError> {
     }
 }
 
+fn story_status_to_str(value: &StoryStatus) -> &'static str {
+    match value {
+        StoryStatus::Created => "created",
+        StoryStatus::ContextReady => "context_ready",
+        StoryStatus::Decomposed => "decomposed",
+        StoryStatus::Executing => "executing",
+        StoryStatus::Completed => "completed",
+        StoryStatus::Failed => "failed",
+        StoryStatus::Cancelled => "cancelled",
+    }
+}
+
 fn parse_story_priority(raw: &str) -> Result<StoryPriority, DomainError> {
     match raw {
         "p0" => Ok(StoryPriority::P0),
@@ -276,6 +281,15 @@ fn parse_story_priority(raw: &str) -> Result<StoryPriority, DomainError> {
         _ => Err(DomainError::InvalidConfig(format!(
             "stories.priority: 未知优先级 `{raw}`"
         ))),
+    }
+}
+
+fn story_priority_to_str(value: &StoryPriority) -> &'static str {
+    match value {
+        StoryPriority::P0 => "p0",
+        StoryPriority::P1 => "p1",
+        StoryPriority::P2 => "p2",
+        StoryPriority::P3 => "p3",
     }
 }
 
@@ -290,5 +304,16 @@ fn parse_story_type(raw: &str) -> Result<StoryType, DomainError> {
         _ => Err(DomainError::InvalidConfig(format!(
             "stories.story_type: 未知类型 `{raw}`"
         ))),
+    }
+}
+
+fn story_type_to_str(value: &StoryType) -> &'static str {
+    match value {
+        StoryType::Feature => "feature",
+        StoryType::Bugfix => "bugfix",
+        StoryType::Refactor => "refactor",
+        StoryType::Docs => "docs",
+        StoryType::Test => "test",
+        StoryType::Other => "other",
     }
 }

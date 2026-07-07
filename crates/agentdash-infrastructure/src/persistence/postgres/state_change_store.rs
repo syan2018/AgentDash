@@ -18,7 +18,7 @@ pub async fn append_state_change(
     .bind(project_id.to_string())
     .bind(entity_id.to_string())
     .bind(kind_to_db_value(&kind)?)
-    .bind(payload.to_string())
+    .bind(payload)
     .bind(backend_id)
     .bind(chrono::Utc::now())
     .execute(pool)
@@ -43,7 +43,7 @@ pub async fn append_state_change_in_tx(
     .bind(project_id.to_string())
     .bind(entity_id.to_string())
     .bind(kind_to_db_value(&kind)?)
-    .bind(payload.to_string())
+    .bind(payload)
     .bind(backend_id)
     .bind(chrono::Utc::now())
     .execute(&mut **tx)
@@ -116,7 +116,17 @@ pub async fn latest_state_change_id_by_project(
 }
 
 fn kind_to_db_value(kind: &ChangeKind) -> Result<String, DomainError> {
-    Ok(serde_json::to_string(kind)?.trim_matches('"').to_string())
+    Ok(match kind {
+        ChangeKind::StoryCreated => "story_created",
+        ChangeKind::StoryUpdated => "story_updated",
+        ChangeKind::StoryStatusChanged => "story_status_changed",
+        ChangeKind::StoryDeleted => "story_deleted",
+        ChangeKind::TaskCreated => "task_created",
+        ChangeKind::TaskUpdated => "task_updated",
+        ChangeKind::TaskStatusChanged => "task_status_changed",
+        ChangeKind::TaskDeleted => "task_deleted",
+    }
+    .to_string())
 }
 
 #[derive(sqlx::FromRow)]
@@ -125,7 +135,7 @@ struct StateChangeRow {
     project_id: String,
     entity_id: String,
     kind: String,
-    payload: String,
+    payload: serde_json::Value,
     backend_id: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -145,7 +155,7 @@ impl TryFrom<StateChangeRow> for StateChange {
                 id: row.entity_id.clone(),
             })?,
             kind: parse_change_kind(&row.kind)?,
-            payload: parse_json_payload(&row.payload)?,
+            payload: row.payload,
             backend_id: row.backend_id.and_then(|value| {
                 let trimmed = value.trim();
                 if trimmed.is_empty() {
@@ -173,9 +183,4 @@ fn parse_change_kind(raw: &str) -> Result<ChangeKind, DomainError> {
             "state_changes.kind: 未知值 `{raw}`"
         ))),
     }
-}
-
-fn parse_json_payload(raw: &str) -> Result<serde_json::Value, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("state_changes.payload: {error}")))
 }

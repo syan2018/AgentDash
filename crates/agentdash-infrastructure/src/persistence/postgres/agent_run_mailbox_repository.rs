@@ -11,6 +11,7 @@ use agentdash_domain::agent_run_mailbox::{
 };
 use agentdash_domain::common::error::DomainError;
 
+use super::json_document::to_optional_jsonb;
 use super::{db_err, sql_err_for};
 
 pub struct PostgresAgentRunMailboxRepository {
@@ -112,7 +113,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         let order_key = self
             .next_order_key(message.run_id, message.agent_id)
             .await?;
-        let source_metadata = serialize_json_column(
+        let source_metadata = to_optional_jsonb(
             message.source.metadata.as_ref(),
             "agent_run_mailbox_messages.source_metadata",
         )?;
@@ -690,7 +691,7 @@ struct AgentRunMailboxMessageRow {
     source_actor: String,
     source_route: Option<String>,
     source_display_label_key: String,
-    source_metadata: Option<String>,
+    source_metadata: Option<Value>,
     delivery: String,
     delivery_json: Value,
     barrier: String,
@@ -740,10 +741,7 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
                 actor: row.source_actor,
                 route: row.source_route,
                 display_label_key: row.source_display_label_key,
-                metadata: parse_json_column(
-                    row.source_metadata,
-                    "agent_run_mailbox_messages.source_metadata",
-                )?,
+                metadata: row.source_metadata,
             },
             delivery: MailboxDelivery::from_parts(&row.delivery, row.delivery_json)?,
             barrier: ConsumptionBarrier::try_from(row.barrier.as_str())?,
@@ -814,30 +812,6 @@ impl TryFrom<AgentRunMailboxStateRow> for AgentRunMailboxState {
     }
 }
 
-fn serialize_json_column(
-    value: Option<&Value>,
-    column: &'static str,
-) -> Result<Option<String>, DomainError> {
-    value
-        .map(|value| {
-            serde_json::to_string(value).map_err(|error| {
-                DomainError::InvalidConfig(format!("{column} 无法序列化: {error}"))
-            })
-        })
-        .transpose()
-}
-
-fn parse_json_column(
-    raw: Option<String>,
-    column: &'static str,
-) -> Result<Option<Value>, DomainError> {
-    raw.map(|raw| {
-        serde_json::from_str::<Value>(&raw)
-            .map_err(|error| DomainError::InvalidConfig(format!("{column} 无法解析: {error}")))
-    })
-    .transpose()
-}
-
 fn parse_uuid(raw: &str, entity: &'static str) -> Result<Uuid, DomainError> {
     raw.parse()
         .map_err(|_| DomainError::InvalidConfig(format!("{entity} id 无效: {raw}")))
@@ -847,6 +821,7 @@ fn parse_uuid(raw: &str, entity: &'static str) -> Result<Uuid, DomainError> {
 mod tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
+    use serde_json::json;
 
     async fn insert_mailbox_refs(pool: &PgPool, run_id: Uuid, agent_id: Uuid, session_id: &str) {
         let project_id = Uuid::new_v4();
@@ -861,10 +836,12 @@ mod tests {
         sqlx::query(
             "INSERT INTO lifecycle_runs \
              (id,project_id,topology,orchestrations,status,execution_log,created_at,updated_at,last_activity_at) \
-             VALUES ($1,$2,'plain','[]','\"ready\"','[]',now(),now(),now())",
+             VALUES ($1,$2,'plain',$3,'ready',$4,now(),now(),now())",
         )
         .bind(run_id.to_string())
         .bind(project_id.to_string())
+        .bind(json!([]))
+        .bind(json!([]))
         .execute(pool)
         .await
         .expect("insert run");

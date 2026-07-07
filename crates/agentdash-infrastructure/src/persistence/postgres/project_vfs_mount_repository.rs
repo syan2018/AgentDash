@@ -4,6 +4,8 @@ use uuid::Uuid;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountRepository};
 
+use super::json_document::{from_jsonb, from_optional_jsonb, to_jsonb, to_optional_jsonb};
+
 pub struct PostgresProjectVfsMountRepository {
     pool: PgPool,
 }
@@ -25,9 +27,9 @@ struct ProjectVfsMountRow {
     mount_id: String,
     display_name: String,
     description: Option<String>,
-    capabilities: String,
-    installed_source: Option<String>,
-    content: String,
+    capabilities: serde_json::Value,
+    installed_source: Option<serde_json::Value>,
+    content: serde_json::Value,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -42,12 +44,12 @@ impl TryFrom<ProjectVfsMountRow> for ProjectVfsMount {
             mount_id: row.mount_id,
             display_name: row.display_name,
             description: row.description,
-            capabilities: parse_json_column(&row.capabilities, "project_vfs_mounts.capabilities")?,
-            installed_source: parse_json_optional(
+            capabilities: from_jsonb(row.capabilities, "project_vfs_mounts.capabilities")?,
+            installed_source: from_optional_jsonb(
                 row.installed_source,
                 "project_vfs_mounts.installed_source",
             )?,
-            content: parse_json_column(&row.content, "project_vfs_mounts.content")?,
+            content: from_jsonb(row.content, "project_vfs_mounts.content")?,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -68,18 +70,12 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
         .bind(&mount.mount_id)
         .bind(&mount.display_name)
         .bind(&mount.description)
-        .bind(serialize_json_column(
-            &mount.capabilities,
-            "project_vfs_mounts.capabilities",
-        )?)
-        .bind(serialize_json_optional(
-            &mount.installed_source,
+        .bind(to_jsonb(&mount.capabilities, "project_vfs_mounts.capabilities")?)
+        .bind(to_optional_jsonb(
+            mount.installed_source.as_ref(),
             "project_vfs_mounts.installed_source",
         )?)
-        .bind(serialize_json_column(
-            &mount.content,
-            "project_vfs_mounts.content",
-        )?)
+        .bind(to_jsonb(&mount.content, "project_vfs_mounts.content")?)
         .bind(mount.created_at)
         .bind(mount.updated_at)
         .execute(&self.pool)
@@ -142,18 +138,12 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
         .bind(&mount.mount_id)
         .bind(&mount.display_name)
         .bind(&mount.description)
-        .bind(serialize_json_column(
-            &mount.capabilities,
-            "project_vfs_mounts.capabilities",
-        )?)
-        .bind(serialize_json_optional(
-            &mount.installed_source,
+        .bind(to_jsonb(&mount.capabilities, "project_vfs_mounts.capabilities")?)
+        .bind(to_optional_jsonb(
+            mount.installed_source.as_ref(),
             "project_vfs_mounts.installed_source",
         )?)
-        .bind(serialize_json_column(
-            &mount.content,
-            "project_vfs_mounts.content",
-        )?)
+        .bind(to_jsonb(&mount.content, "project_vfs_mounts.content")?)
         .bind(mount.updated_at)
         .bind(mount.id.to_string())
         .bind(mount.project_id.to_string())
@@ -178,38 +168,4 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(raw).map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
-fn parse_json_column<T: serde::de::DeserializeOwned>(
-    raw: &str,
-    field: &str,
-) -> Result<T, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
-fn parse_json_optional<T: serde::de::DeserializeOwned>(
-    raw: Option<String>,
-    field: &str,
-) -> Result<Option<T>, DomainError> {
-    raw.map(|value| parse_json_column(&value, field))
-        .transpose()
-}
-
-fn serialize_json_column<T: serde::Serialize>(
-    value: &T,
-    field: &str,
-) -> Result<String, DomainError> {
-    serde_json::to_string(value)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
-fn serialize_json_optional<T: serde::Serialize>(
-    value: &Option<T>,
-    field: &str,
-) -> Result<Option<String>, DomainError> {
-    value
-        .as_ref()
-        .map(|source| serialize_json_column(source, field))
-        .transpose()
 }

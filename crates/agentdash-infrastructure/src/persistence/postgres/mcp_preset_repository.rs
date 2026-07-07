@@ -7,6 +7,8 @@ use agentdash_domain::mcp_preset::{
 };
 use agentdash_domain::shared_library::InstalledAssetSource;
 
+use super::json_document::{from_jsonb, from_optional_jsonb, to_jsonb, to_optional_jsonb};
+
 pub struct PostgresMcpPresetRepository {
     pool: PgPool,
 }
@@ -34,9 +36,12 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
         .bind(&preset.key)
         .bind(&preset.display_name)
         .bind(preset.description.as_deref())
-        .bind(serde_json::to_string(&preset.transport)?)
-        .bind(serde_json::to_string(&preset.route_policy)?)
-        .bind(runtime_binding_json(&preset.runtime_binding)?)
+        .bind(to_jsonb(&preset.transport, "mcp_presets.transport")?)
+        .bind(route_policy_to_db(preset.route_policy))
+        .bind(to_optional_jsonb(
+            preset.runtime_binding.as_ref(),
+            "mcp_presets.runtime_binding",
+        )?)
         .bind(preset.source.tag())
         .bind(preset.source.builtin_key())
         .bind(installed_library_asset_id(&preset.installed_source))
@@ -99,9 +104,12 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
         .bind(&preset.key)
         .bind(&preset.display_name)
         .bind(preset.description.as_deref())
-        .bind(serde_json::to_string(&preset.transport)?)
-        .bind(serde_json::to_string(&preset.route_policy)?)
-        .bind(runtime_binding_json(&preset.runtime_binding)?)
+        .bind(to_jsonb(&preset.transport, "mcp_presets.transport")?)
+        .bind(route_policy_to_db(preset.route_policy))
+        .bind(to_optional_jsonb(
+            preset.runtime_binding.as_ref(),
+            "mcp_presets.runtime_binding",
+        )?)
         .bind(preset.source.tag())
         .bind(preset.source.builtin_key())
         .bind(installed_library_asset_id(&preset.installed_source))
@@ -199,16 +207,6 @@ fn installed_at(source: &Option<InstalledAssetSource>) -> Option<chrono::DateTim
     source.as_ref().map(|source| source.installed_at)
 }
 
-fn runtime_binding_json(
-    runtime_binding: &Option<McpRuntimeBindingConfig>,
-) -> Result<Option<String>, DomainError> {
-    runtime_binding
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(Into::into)
-}
-
 fn parse_installed_source(
     library_asset_id: Option<String>,
     source_ref: Option<String>,
@@ -245,9 +243,9 @@ struct McpPresetRow {
     key: String,
     display_name: String,
     description: Option<String>,
-    transport: String,
+    transport: serde_json::Value,
     route_policy: String,
-    runtime_binding: Option<String>,
+    runtime_binding: Option<serde_json::Value>,
     source: String,
     builtin_key: Option<String>,
     library_asset_id: Option<String>,
@@ -263,23 +261,10 @@ impl TryFrom<McpPresetRow> for McpPreset {
     type Error = DomainError;
 
     fn try_from(row: McpPresetRow) -> Result<Self, Self::Error> {
-        let transport: McpTransportConfig =
-            serde_json::from_str(&row.transport).map_err(|error| {
-                DomainError::InvalidConfig(format!("mcp_presets.transport: {error}"))
-            })?;
-        let route_policy: McpRoutePolicy =
-            serde_json::from_str(&row.route_policy).map_err(|error| {
-                DomainError::InvalidConfig(format!("mcp_presets.route_policy: {error}"))
-            })?;
-        let runtime_binding: Option<McpRuntimeBindingConfig> = row
-            .runtime_binding
-            .as_deref()
-            .map(|raw| {
-                serde_json::from_str(raw).map_err(|error| {
-                    DomainError::InvalidConfig(format!("mcp_presets.runtime_binding: {error}"))
-                })
-            })
-            .transpose()?;
+        let transport: McpTransportConfig = from_jsonb(row.transport, "mcp_presets.transport")?;
+        let route_policy: McpRoutePolicy = parse_route_policy(&row.route_policy)?;
+        let runtime_binding: Option<McpRuntimeBindingConfig> =
+            from_optional_jsonb(row.runtime_binding, "mcp_presets.runtime_binding")?;
 
         let source = match row.source.as_str() {
             "builtin" => {
@@ -326,6 +311,25 @@ impl TryFrom<McpPresetRow> for McpPreset {
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
+    }
+}
+
+fn route_policy_to_db(policy: McpRoutePolicy) -> &'static str {
+    match policy {
+        McpRoutePolicy::Auto => "auto",
+        McpRoutePolicy::Relay => "relay",
+        McpRoutePolicy::Direct => "direct",
+    }
+}
+
+fn parse_route_policy(raw: &str) -> Result<McpRoutePolicy, DomainError> {
+    match raw {
+        "auto" => Ok(McpRoutePolicy::Auto),
+        "relay" => Ok(McpRoutePolicy::Relay),
+        "direct" => Ok(McpRoutePolicy::Direct),
+        other => Err(DomainError::InvalidConfig(format!(
+            "mcp_presets.route_policy 无效: {other}"
+        ))),
     }
 }
 

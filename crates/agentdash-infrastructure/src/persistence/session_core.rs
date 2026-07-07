@@ -14,6 +14,7 @@ use agentdash_spi::session_persistence::{
     SessionLineageRelationKind, SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord,
     SessionProjectionSegmentRecord, SessionStoreError, SessionStoreResult,
 };
+use serde_json::Value;
 use sqlx::Row;
 
 /// `synthetic` 列在 postgres 存为 BOOLEAN，由 row 类型实现该 trait 让
@@ -60,11 +61,12 @@ pub(crate) fn persisted_event_from_row<R>(row: &R) -> SessionStoreResult<Persist
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Value: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
 {
-    let notification_json = row.get::<String, _>("notification_json");
-    let notification = serde_json::from_str::<BackboneEnvelope>(&notification_json)
+    let notification_json = row.get::<Value, _>("notification_json");
+    let notification = serde_json::from_value::<BackboneEnvelope>(notification_json)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let event_seq_i64 = row.get::<i64, _>("event_seq");
     let event_seq = parse_non_negative_u64(event_seq_i64, "runtime_session_events.event_seq")?;
@@ -105,6 +107,7 @@ where
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<uuid::Uuid>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Value: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
 {
@@ -119,9 +122,7 @@ where
         row.get::<i64, _>("attempt_count"),
         "agent_run_control_effects.attempt_count",
     )?;
-    let payload_json = row.get::<String, _>("payload_json");
-    let payload = serde_json::from_str::<serde_json::Value>(&payload_json)
-        .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
+    let payload = row.get::<Value, _>("payload_json");
     let claim_token = row
         .get::<Option<String>, _>("claim_token")
         .map(|value| uuid::Uuid::parse_str(&value))
@@ -160,6 +161,7 @@ where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Value: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
@@ -167,8 +169,8 @@ where
     let id_raw = row.get::<String, _>("id");
     let id = uuid::Uuid::parse_str(&id_raw)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
-    let payload_json = row.get::<String, _>("payload_json");
-    let delivery = serde_json::from_str::<RuntimeDeliveryCommand>(&payload_json)
+    let payload_json = row.get::<Value, _>("payload_json");
+    let delivery = serde_json::from_value::<RuntimeDeliveryCommand>(payload_json)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let frame_transition = agent_frame_transition_from_row(row)?;
     let frame_transition_id = row.get::<String, _>("frame_transition_id");
@@ -205,6 +207,7 @@ where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Value: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
 {
@@ -218,17 +221,16 @@ where
     let run_id = uuid::Uuid::parse_str(&run_id_raw).map_err(|error| {
         SessionStoreError::InvalidData(format!("agent_frame_transitions.run_id 不是 UUID: {error}"))
     })?;
-    let capability_keys_json = row.get::<String, _>("frame_transition_capability_keys_json");
-    let capability_keys = serde_json::from_str::<std::collections::BTreeSet<String>>(
-        &capability_keys_json,
-    )
-    .map_err(|error| {
-        SessionStoreError::InvalidData(format!(
-            "解析 agent_frame_transitions.capability_keys_json 失败: {error}"
-        ))
-    })?;
-    let transition_json = row.get::<String, _>("frame_transition_transition_json");
-    let transition = serde_json::from_str::<RuntimeCapabilityTransition>(&transition_json)
+    let capability_keys_json = row.get::<Value, _>("frame_transition_capability_keys_json");
+    let capability_keys =
+        serde_json::from_value::<std::collections::BTreeSet<String>>(capability_keys_json)
+            .map_err(|error| {
+                SessionStoreError::InvalidData(format!(
+                    "解析 agent_frame_transitions.capability_keys_json 失败: {error}"
+                ))
+            })?;
+    let transition_json = row.get::<Value, _>("frame_transition_transition_json");
+    let transition = serde_json::from_value::<RuntimeCapabilityTransition>(transition_json)
         .map_err(|error| {
             SessionStoreError::InvalidData(format!(
                 "解析 agent_frame_transitions.transition_json 失败: {error}"
@@ -252,6 +254,7 @@ where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Value: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
@@ -303,16 +306,16 @@ where
             "runtime_session_compactions.first_kept_event_seq",
         )?,
         summary: row.get::<String, _>("summary"),
-        replacement_projection_json: parse_json_column(
-            row.get::<String, _>("replacement_projection_json"),
+        replacement_projection_json: required_json_value(
+            row.get::<Value, _>("replacement_projection_json"),
             "runtime_session_compactions.replacement_projection_json",
         )?,
-        token_stats_json: parse_json_column(
-            row.get::<String, _>("token_stats_json"),
+        token_stats_json: required_json_value(
+            row.get::<Value, _>("token_stats_json"),
             "runtime_session_compactions.token_stats_json",
         )?,
-        diagnostics_json: parse_json_column(
-            row.get::<String, _>("diagnostics_json"),
+        diagnostics_json: required_json_value(
+            row.get::<Value, _>("diagnostics_json"),
             "runtime_session_compactions.diagnostics_json",
         )?,
         created_by: row.get::<Option<String>, _>("created_by"),
@@ -328,6 +331,7 @@ where
     R: Row + SessionRow,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Value: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
@@ -355,13 +359,13 @@ where
             row.get::<Option<i64>, _>("source_end_event_seq"),
             "runtime_session_projection_segments.source_end_event_seq",
         )?,
-        source_refs_json: parse_json_column(
-            row.get::<String, _>("source_refs_json"),
+        source_refs_json: required_json_value(
+            row.get::<Value, _>("source_refs_json"),
             "runtime_session_projection_segments.source_refs_json",
         )?,
         generated_by_compaction_id: row.get::<Option<String>, _>("generated_by_compaction_id"),
-        content_json: parse_json_column(
-            row.get::<String, _>("content_json"),
+        content_json: required_json_value(
+            row.get::<Value, _>("content_json"),
             "runtime_session_projection_segments.content_json",
         )?,
         token_estimate: parse_optional_non_negative_u64(
@@ -379,6 +383,7 @@ where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Value: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
@@ -408,6 +413,7 @@ where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Value: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
@@ -423,8 +429,8 @@ where
             row.get::<Option<i64>, _>("fork_point_event_seq"),
             "runtime_session_lineage.fork_point_event_seq",
         )?,
-        fork_point_ref_json: parse_json_column(
-            row.get::<String, _>("fork_point_ref_json"),
+        fork_point_ref_json: required_json_value(
+            row.get::<Value, _>("fork_point_ref_json"),
             "runtime_session_lineage.fork_point_ref_json",
         )?,
         fork_point_compaction_id: row.get::<Option<String>, _>("fork_point_compaction_id"),
@@ -434,18 +440,18 @@ where
         )?,
         created_at_ms: row.get::<i64, _>("created_at_ms"),
         updated_at_ms: row.get::<i64, _>("updated_at_ms"),
-        metadata_json: parse_json_column(
-            row.get::<String, _>("metadata_json"),
+        metadata_json: required_json_value(
+            row.get::<Value, _>("metadata_json"),
             "runtime_session_lineage.metadata_json",
         )?,
     })
 }
 
-pub(crate) fn json_string<T: serde::Serialize>(
+pub(crate) fn json_value<T: serde::Serialize>(
     value: &T,
     column: &str,
-) -> SessionStoreResult<String> {
-    serde_json::to_string(value)
+) -> SessionStoreResult<Value> {
+    serde_json::to_value(value)
         .map_err(|error| SessionStoreError::InvalidData(format!("序列化 {column} 失败: {error}")))
 }
 
@@ -548,12 +554,16 @@ pub(crate) fn parse_non_negative_u32(value: i64, field: &str) -> SessionStoreRes
         .map_err(|_| SessionStoreError::InvalidData(format!("{field} 超出 u32 范围: {value}")))
 }
 
-pub(crate) fn parse_json_column(
-    raw: String,
+pub(crate) fn required_json_value(
+    raw: Value,
     column: &str,
 ) -> SessionStoreResult<serde_json::Value> {
-    serde_json::from_str(&raw)
-        .map_err(|error| SessionStoreError::InvalidData(format!("解析 {column} 失败: {error}")))
+    if raw.is_null() {
+        return Err(SessionStoreError::InvalidData(format!(
+            "{column} 不允许为 null"
+        )));
+    }
+    Ok(raw)
 }
 
 pub(crate) fn validate_commit_session(

@@ -7,6 +7,7 @@ use agentdash_domain::canvas::{
 };
 use agentdash_domain::common::error::DomainError;
 
+use super::json_document::{from_jsonb, to_jsonb};
 use super::{db_err, sql_err_for};
 
 pub struct PostgresCanvasRuntimeStateRepository {
@@ -36,7 +37,10 @@ impl CanvasRuntimeStateRepository for PostgresCanvasRuntimeStateRepository {
         &self,
         observation: CanvasRuntimeObservation,
     ) -> Result<CanvasRuntimeObservation, DomainError> {
-        let payload = serde_json::to_string(&observation).map_err(DomainError::Serialization)?;
+        let payload = to_jsonb(
+            &observation,
+            "agent_run_canvas_runtime_observations.payload",
+        )?;
         let now = Utc::now();
         sqlx::query_as::<_, CanvasRuntimeStateRow>(
             "INSERT INTO agent_run_canvas_runtime_observations \
@@ -95,7 +99,7 @@ impl CanvasRuntimeStateRepository for PostgresCanvasRuntimeStateRepository {
         &self,
         snapshot: CanvasInteractionSnapshot,
     ) -> Result<CanvasInteractionSnapshot, DomainError> {
-        let payload = serde_json::to_string(&snapshot).map_err(DomainError::Serialization)?;
+        let payload = to_jsonb(&snapshot, "agent_run_canvas_interaction_snapshots.payload")?;
         let now = Utc::now();
         sqlx::query_as::<_, CanvasRuntimeStateRow>(
             "INSERT INTO agent_run_canvas_interaction_snapshots \
@@ -151,7 +155,7 @@ impl CanvasRuntimeStateRepository for PostgresCanvasRuntimeStateRepository {
 struct CanvasRuntimeStateRow {
     #[allow(dead_code)]
     id: String,
-    payload: String,
+    payload: serde_json::Value,
     #[allow(dead_code)]
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -160,10 +164,16 @@ struct CanvasRuntimeStateRow {
 
 impl CanvasRuntimeStateRow {
     fn into_runtime_observation(self) -> Result<CanvasRuntimeObservation, DomainError> {
-        serde_json::from_str(&self.payload).map_err(DomainError::Serialization)
+        from_jsonb(
+            self.payload,
+            "agent_run_canvas_runtime_observations.payload",
+        )
     }
 
     fn into_interaction_snapshot(self) -> Result<CanvasInteractionSnapshot, DomainError> {
-        serde_json::from_str(&self.payload).map_err(DomainError::Serialization)
+        from_jsonb(
+            self.payload,
+            "agent_run_canvas_interaction_snapshots.payload",
+        )
     }
 }

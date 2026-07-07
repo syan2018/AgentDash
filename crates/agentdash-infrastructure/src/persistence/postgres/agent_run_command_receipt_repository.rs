@@ -410,6 +410,7 @@ mod tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::AgentRunCommandKind;
+    use serde_json::json;
 
     fn new_receipt(command_id: &str, digest: &str) -> NewAgentRunCommandReceipt {
         NewAgentRunCommandReceipt {
@@ -469,10 +470,12 @@ mod tests {
         sqlx::query(
             "INSERT INTO lifecycle_runs \
              (id,project_id,topology,orchestrations,status,execution_log,created_at,updated_at,last_activity_at) \
-             VALUES ($1,$2,'plain','[]','\"ready\"','[]',now(),now(),now())",
+             VALUES ($1,$2,'plain',$3,'ready',$4,now(),now(),now())",
         )
         .bind(run_id.to_string())
         .bind(project_id.to_string())
+        .bind(json!([]))
+        .bind(json!([]))
         .execute(&pool)
         .await
         .expect("insert run");

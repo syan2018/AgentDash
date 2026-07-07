@@ -32,12 +32,6 @@ impl PostgresProjectBackendAccessRepository {
 #[async_trait::async_trait]
 impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
     async fn create(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
-        let root_policy =
-            serialize_json(&access.root_policy, "project_backend_access.root_policy")?;
-        let capability_policy = serialize_json(
-            &access.capability_policy,
-            "project_backend_access.capability_policy",
-        )?;
         sqlx::query(
             "INSERT INTO project_backend_access
              (id, project_id, backend_id, status, access_mode, priority, root_policy, capability_policy, note, created_by, created_at, updated_at)
@@ -49,8 +43,8 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         .bind(access_status_to_str(access.status))
         .bind(access_mode_to_str(access.access_mode))
         .bind(access.priority)
-        .bind(root_policy)
-        .bind(capability_policy)
+        .bind(access.root_policy.clone())
+        .bind(access.capability_policy.clone())
         .bind(access.note.as_deref())
         .bind(access.created_by.as_deref())
         .bind(access.created_at)
@@ -62,12 +56,6 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
     }
 
     async fn update(&self, access: &ProjectBackendAccess) -> Result<(), DomainError> {
-        let root_policy =
-            serialize_json(&access.root_policy, "project_backend_access.root_policy")?;
-        let capability_policy = serialize_json(
-            &access.capability_policy,
-            "project_backend_access.capability_policy",
-        )?;
         let result = sqlx::query(
             "UPDATE project_backend_access
              SET status = $1, access_mode = $2, priority = $3, root_policy = $4, capability_policy = $5, note = $6, updated_at = $7
@@ -76,8 +64,8 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         .bind(access_status_to_str(access.status))
         .bind(access_mode_to_str(access.access_mode))
         .bind(access.priority)
-        .bind(root_policy)
-        .bind(capability_policy)
+        .bind(access.root_policy.clone())
+        .bind(access.capability_policy.clone())
         .bind(access.note.as_deref())
         .bind(Utc::now())
         .bind(access.id.to_string())
@@ -228,14 +216,8 @@ impl BackendWorkspaceInventoryRepository for PostgresProjectBackendAccessReposit
         let prepared = items
             .iter()
             .map(|item| {
-                let identity_payload = serialize_json(
-                    &item.identity_payload,
-                    "backend_workspace_inventory.identity_payload",
-                )?;
-                let detected_facts = serialize_json(
-                    &item.detected_facts,
-                    "backend_workspace_inventory.detected_facts",
-                )?;
+                let identity_payload = item.identity_payload.clone();
+                let detected_facts = item.detected_facts.clone();
                 Ok::<_, DomainError>((item, identity_payload, detected_facts))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -410,18 +392,12 @@ fn inventory_from_row(
     })
 }
 
-fn serialize_json(value: &Value, field: &str) -> Result<String, DomainError> {
-    serde_json::to_string(value)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
 fn parse_json_col(
     row: &sqlx::postgres::PgRow,
     column: &str,
     field: &str,
 ) -> Result<Value, DomainError> {
-    let raw = string_col(row, column, field)?;
-    serde_json::from_str(&raw)
+    row.try_get::<Value, _>(column)
         .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 

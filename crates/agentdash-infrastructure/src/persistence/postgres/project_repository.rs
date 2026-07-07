@@ -6,6 +6,8 @@ use agentdash_domain::project::{
     ProjectVisibility,
 };
 
+use super::json_document::{from_jsonb, to_jsonb};
+
 pub struct PostgresProjectRepository {
     pool: PgPool,
 }
@@ -38,7 +40,7 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project.id.to_string())
         .bind(&project.name)
         .bind(&project.description)
-        .bind(serde_json::to_string(&project.config)?)
+        .bind(to_jsonb(&project.config, "projects.config")?)
         .bind(&project.created_by_user_id)
         .bind(&project.updated_by_user_id)
         .bind(project.visibility.as_str())
@@ -108,7 +110,7 @@ impl ProjectRepository for PostgresProjectRepository {
         )
         .bind(&project.name)
         .bind(&project.description)
-        .bind(serde_json::to_string(&project.config)?)
+        .bind(to_jsonb(&project.config, "projects.config")?)
         .bind(&project.created_by_user_id)
         .bind(&project.updated_by_user_id)
         .bind(project.visibility.as_str())
@@ -237,7 +239,7 @@ struct ProjectRow {
     id: String,
     name: String,
     description: String,
-    config: String,
+    config: serde_json::Value,
     created_by_user_id: String,
     updated_by_user_id: String,
     visibility: String,
@@ -269,7 +271,7 @@ impl TryFrom<ProjectRow> for Project {
             })?,
             name: row.name,
             description: row.description,
-            config: parse_json_column(&row.config, "projects.config")?,
+            config: from_jsonb(row.config, "projects.config")?,
             created_by_user_id: row.created_by_user_id,
             updated_by_user_id: row.updated_by_user_id,
             visibility: parse_project_visibility(&row.visibility)?,
@@ -306,14 +308,6 @@ impl TryFrom<ProjectSubjectGrantRow> for ProjectSubjectGrant {
             updated_at: row.updated_at,
         })
     }
-}
-
-fn parse_json_column<T: serde::de::DeserializeOwned>(
-    raw: &str,
-    field: &str,
-) -> Result<T, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 fn parse_project_visibility(value: &str) -> Result<ProjectVisibility, DomainError> {

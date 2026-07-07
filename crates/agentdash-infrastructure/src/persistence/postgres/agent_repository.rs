@@ -5,6 +5,8 @@ use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 
+use super::json_document::{from_jsonb, to_jsonb};
+
 pub struct PostgresProjectAgentRepository {
     pool: PgPool,
 }
@@ -25,7 +27,7 @@ struct ProjectAgentRow {
     project_id: String,
     name: String,
     agent_type: String,
-    config: String,
+    config: serde_json::Value,
     installed_library_asset_id: Option<String>,
     installed_source_ref: Option<String>,
     installed_source_version: Option<String>,
@@ -51,7 +53,7 @@ impl TryFrom<ProjectAgentRow> for ProjectAgent {
             })?,
             name: row.name,
             agent_type: row.agent_type,
-            config: parse_json_column(&row.config, "project_agents.config")?,
+            config: from_jsonb(row.config, "project_agents.config")?,
             installed_source: parse_installed_source(
                 row.installed_library_asset_id,
                 row.installed_source_ref,
@@ -74,7 +76,6 @@ const PROJECT_AGENT_COLUMNS: &str = "id, project_id, name, agent_type, config, i
 #[async_trait::async_trait]
 impl ProjectAgentRepository for PostgresProjectAgentRepository {
     async fn create(&self, agent: &ProjectAgent) -> Result<(), DomainError> {
-        let config_json = serialize_json_column(&agent.config, "project_agents.config")?;
         sqlx::query(
             "INSERT INTO project_agents (id, project_id, name, agent_type, config, installed_library_asset_id, installed_source_ref, installed_source_version, installed_source_digest, installed_at, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
@@ -83,7 +84,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
         .bind(agent.project_id.to_string())
         .bind(&agent.name)
         .bind(&agent.agent_type)
-        .bind(config_json)
+        .bind(to_jsonb(&agent.config, "project_agents.config")?)
         .bind(installed_library_asset_id(&agent.installed_source))
         .bind(installed_source_ref(&agent.installed_source))
         .bind(installed_source_version(&agent.installed_source))
@@ -158,13 +159,12 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
     }
 
     async fn update(&self, agent: &ProjectAgent) -> Result<(), DomainError> {
-        let config_json = serialize_json_column(&agent.config, "project_agents.config")?;
         sqlx::query(
             "UPDATE project_agents SET name = $1, agent_type = $2, config = $3, installed_library_asset_id = $4, installed_source_ref = $5, installed_source_version = $6, installed_source_digest = $7, installed_at = $8, default_lifecycle_key = $9, is_default_for_story = $10, is_default_for_task = $11, knowledge_enabled = $12, updated_at = $13 WHERE id = $14 AND project_id = $15",
         )
         .bind(&agent.name)
         .bind(&agent.agent_type)
-        .bind(config_json)
+        .bind(to_jsonb(&agent.config, "project_agents.config")?)
         .bind(installed_library_asset_id(&agent.installed_source))
         .bind(installed_source_ref(&agent.installed_source))
         .bind(installed_source_version(&agent.installed_source))
@@ -192,22 +192,6 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
             .map_err(super::db_err)?;
         Ok(())
     }
-}
-
-fn parse_json_column<T: serde::de::DeserializeOwned>(
-    raw: &str,
-    field: &str,
-) -> Result<T, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
-fn serialize_json_column<T: serde::Serialize>(
-    value: &T,
-    field: &str,
-) -> Result<String, DomainError> {
-    serde_json::to_string(value)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {

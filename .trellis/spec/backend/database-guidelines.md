@@ -10,6 +10,7 @@ PostgreSQL + SQLx 覆盖云端业务库与本机 embedded PostgreSQL。
 | 命名 | 数据库列名和 JSON 字段使用 `snake_case`。 |
 | 文档列 | 新增结构化文档列使用 `jsonb`，列名表达业务语义，不追加 `_json` / `_jsonb`。 |
 | Typed mapping | Domain / repository 边界使用 typed value object；repository 使用 `sqlx::types::Json<T>` 或共享 codec。 |
+| JSON codec | PostgreSQL repository 在 SQLx 边界绑定 `jsonb` 为 `serde_json::Value` / `sqlx::types::Json<T>`，再映射到领域类型；错误上下文包含 `table.column`。 |
 | 历史 TEXT JSON | 既有 `TEXT` JSON 是历史 schema 事实；批量转换只放进明确数据库整理任务。 |
 | Scalar 字段 | 高频过滤、排序、权限判断、claim/lease 状态使用 PostgreSQL scalar 列。 |
 | 时间 | 时间字段使用 PostgreSQL timestamp，repository 直接 bind/read `chrono::DateTime<Utc>`。 |

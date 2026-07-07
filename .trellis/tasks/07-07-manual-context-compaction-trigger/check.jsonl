@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "检查手动压缩是否仍满足 projection commit 与边界引用不变量。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查新增 API/DTO 是否通过合同生成传递到前端。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "检查上下文浮层入口是否符合现有前端分层和交互约定。"}
+{"file": ".trellis/tasks/07-07-manual-context-compaction-trigger/research/reference-synthesis.md", "reason": "检查实现是否采纳了本轮调研确认的 provenance、continuation、diagnostics、checkpoint 测试要求。"}

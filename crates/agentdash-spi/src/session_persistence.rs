@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_domain::channel::ChannelDirective;
 use agentdash_domain::workflow::MountDirective;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -197,6 +198,7 @@ pub struct RuntimeCapabilityTransition {
 pub const CAPABILITY_DIMENSION_TOOL: &str = "tool";
 pub const CAPABILITY_DIMENSION_MCP: &str = "mcp";
 pub const CAPABILITY_DIMENSION_COMPANION: &str = "companion";
+pub const CAPABILITY_DIMENSION_CHANNEL: &str = "channel";
 pub const CAPABILITY_DIMENSION_VFS: &str = "vfs";
 pub const CAPABILITY_DIMENSION_SKILL: &str = "skill";
 pub const CAPABILITY_DIMENSION_WORKSPACE_MODULE: &str = "workspace_module";
@@ -207,6 +209,7 @@ pub const DECLARATION_TYPE_MOUNT_OPERATION: &str = "mount_operation";
 pub const EFFECT_TYPE_SET_TOOL_ACCESS: &str = "set_tool_access";
 pub const EFFECT_TYPE_SET_MCP_SERVER_SET: &str = "set_server_set";
 pub const EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER: &str = "set_agent_roster";
+pub const EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES: &str = "apply_channel_directives";
 pub const EFFECT_TYPE_APPLY_VFS_OVERLAY: &str = "apply_vfs_overlay";
 pub const EFFECT_TYPE_APPLY_MOUNT_OPERATIONS: &str = "apply_mount_operations";
 
@@ -228,6 +231,12 @@ pub struct SetMcpServerSetEffect {
 #[serde(rename_all = "camelCase")]
 pub struct SetCompanionAgentRosterEffect {
     pub agents: Vec<CompanionAgentEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyChannelDirectivesEffect {
+    pub directives: Vec<ChannelDirective>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

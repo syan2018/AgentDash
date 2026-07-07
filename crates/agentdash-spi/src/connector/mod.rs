@@ -9,6 +9,7 @@ use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
 };
+use agentdash_domain::channel::ChannelCapabilityRef;
 use agentdash_domain::common::{AgentConfig, MountCapability, Vfs};
 use async_trait::async_trait;
 use futures::Stream;
@@ -410,6 +411,14 @@ pub struct CompanionDimension {
     pub agents: Vec<crate::context::capability::CompanionAgentEntry>,
 }
 
+/// Channel 维度的运行态。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelDimension {
+    /// 当前 AgentFrame 可见且可操作的 channel refs。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub visible_channels: Vec<ChannelCapabilityRef>,
+}
+
 /// VFS 维度的运行态。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VfsDimension {
@@ -505,6 +514,9 @@ pub struct CapabilityState {
     pub tool: ToolDimension,
     /// Companion 维度。
     pub companion: CompanionDimension,
+    /// Channel 维度。
+    #[serde(default)]
+    pub channel: ChannelDimension,
     /// VFS 维度。
     pub vfs: VfsDimension,
     /// Skill 维度。
@@ -657,6 +669,7 @@ impl CapabilityState {
                 mcp_servers: self.tool.mcp_servers.clone(),
             },
             companion: self.companion.clone(),
+            channel: self.channel.clone(),
             vfs: self.vfs.clone(),
             // skill 不参与 capability 交集裁剪，保持调用方当前会话可见技能面。
             skill: self.skill.clone(),

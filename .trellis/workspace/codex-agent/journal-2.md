@@ -120,3 +120,43 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 58: 收束 SubAgent 与 Companion 失败事实源
+
+**Date**: 2026-07-07
+**Task**: 收束 SubAgent 与 Companion 失败事实源
+**Branch**: `main`
+
+### Summary
+
+围绕 LifecycleGate 单一结果事实源收束 SubAgent/Companion failure 链路：补齐 AgentRun list projection invalidation、runtime diagnostic/result refs、thin gate delivery marker、system delivery 人类输入边界、parent result bounded projection，并归档任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3f0bee89c` | (see git log) |
+| `64d6109ed` | (see git log) |
+| `94298b610` | (see git log) |
+| `7279e8f97` | (see git log) |
+| `d1d93110d` | (see git log) |
+| `43e18aad4` | (see git log) |
+| `67b24b44d` | (see git log) |
+| `4646f9594` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -5,6 +5,7 @@ mod agent_run_lineage;
 mod command_receipt;
 pub mod dispatch;
 mod entity;
+mod gate_result_delivery_marker;
 mod gate_wait_policy;
 mod lifecycle_agent;
 mod lifecycle_gate;
@@ -33,6 +34,11 @@ pub use dispatch::{
 pub use entity::{
     AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, WorkflowGraphDraft,
     build_effective_contract, build_effective_contract_from_contract,
+};
+pub use gate_result_delivery_marker::{
+    ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
+    CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
+    GateResultDeliveryMarkerRepository, GateResultDeliveryStatus, RegisterGateResultWaiterRequest,
 };
 pub use gate_wait_policy::{
     GATE_WAIT_POLICY_SCHEMA_VERSION, GateWaitPolicy, GateWaitPolicyEnvelope,

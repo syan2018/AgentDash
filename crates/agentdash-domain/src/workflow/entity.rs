@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::DomainError;
+use crate::channel::ChannelRegistryDocument;
 use crate::shared_library::InstalledAssetSource;
 
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
@@ -167,6 +168,8 @@ pub struct LifecycleRun {
     pub status: LifecycleRunStatus,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
+    #[serde(default)]
+    pub channel_registry: ChannelRegistryDocument,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
@@ -190,6 +193,7 @@ impl LifecycleRun {
             tasks: Vec::new(),
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
+            channel_registry: ChannelRegistryDocument::default(),
             created_at: now,
             updated_at: now,
             last_activity_at: now,
@@ -211,6 +215,7 @@ impl LifecycleRun {
             tasks: Vec::new(),
             status: LifecycleRunStatus::Ready,
             execution_log: Vec::new(),
+            channel_registry: ChannelRegistryDocument::default(),
             created_at: now,
             updated_at: now,
             last_activity_at: now,

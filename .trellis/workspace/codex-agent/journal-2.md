@@ -194,3 +194,41 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 60: 完成 ChannelService 通信主干
+
+**Date**: 2026-07-08
+**Task**: 完成 ChannelService 通信主干
+**Branch**: `codex/companion-channel-convergence`
+
+### Summary
+
+完成 Channel 领域模型、LifecycleRun owner-local registry、owner document mutation、ChannelService、channel capability projection、Mailbox/Gate materialization 与 Companion/runtime wake 收束；通过原生 check agent 和主会话集成验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f3755482` | (see git log) |
+| `a5ab28c8` | (see git log) |
+| `1ced2cb8` | (see git log) |
+| `eab97226` | (see git log) |
+| `769c526d` | (see git log) |
+| `be31c14a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

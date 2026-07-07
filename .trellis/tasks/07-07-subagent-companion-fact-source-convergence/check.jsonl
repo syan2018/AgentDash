@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Check mailbox wake/result delivery remains a delivery envelope and does not become a second result authority."}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Check terminal fallback preserves LifecycleGate ownership and first-writer-wins semantics."}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Check any projection or diagnostic event changes preserve typed Backbone protocol and generated TS bindings."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Check AgentRun list/workspace refresh follows backend projection authority instead of local inference."}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Check child evidence locators point through correct AgentRun/lifecycle surfaces and do not assume child-local paths are parent-visible."}
+{"file": ".trellis/tasks/07-07-agent-lifecycle-fact-source-convergence/prd.md", "reason": "Check acceptance criteria still align with the durable terminal effect and gate fallback work already completed."}

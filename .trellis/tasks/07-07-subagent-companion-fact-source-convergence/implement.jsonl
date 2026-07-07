@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Defines mailbox as delivery envelope authority and states that wait facts belong to LifecycleGate while companion result wake uses source identity/dedup."}
+{"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Defines LifecycleGate wait policy terminal convergence and the correct RuntimeSession terminal -> WaitProducerRef -> gate -> mailbox wake flow."}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Defines Backbone PlatformEvent and control-plane projection events consumed by frontend streams."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Defines AgentRun workspace/list projection ownership and frontend refresh rules for control-plane snapshots."}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "Defines AgentRun lifecycle session mount and makes clear that child evidence locators need parent-visible resolver research before implementation."}
+{"file": ".trellis/tasks/07-07-agent-lifecycle-fact-source-convergence/design.md", "reason": "Previous task design for durable terminal effect outbox and gate wait policy convergence, which this task builds on."}

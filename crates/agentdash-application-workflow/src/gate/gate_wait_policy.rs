@@ -435,6 +435,19 @@ mod tests {
             Ok(())
         }
 
+        async fn upsert_if_current_runtime_session(
+            &self,
+            binding: &AgentRunDeliveryBinding,
+        ) -> Result<bool, DomainError> {
+            if self.binding.run_id == binding.run_id
+                && self.binding.agent_id == binding.agent_id
+                && self.binding.runtime_session_id != binding.runtime_session_id
+            {
+                return Ok(false);
+            }
+            Ok(true)
+        }
+
         async fn get_current(
             &self,
             run_id: Uuid,

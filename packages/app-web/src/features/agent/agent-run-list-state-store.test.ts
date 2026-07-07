@@ -17,6 +17,20 @@ vi.mock("../../services/lifecycle", () => ({
 
 const mockedFetchProjectAgentRuns = vi.mocked(fetchProjectAgentRuns);
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve: (value: T) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function agentRunEntry(
   runId: string,
   agentId: string,
@@ -160,6 +174,78 @@ describe("agent-run list state store", () => {
     expect(
       useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
     ).toBe("run-child");
+  });
+
+  it("first-page refresh in-flight 时收到 AgentRunList invalidation 会串行补一次刷新", async () => {
+    const stale = agentRunEntry("run-stale", "agent-stale", "旧快照", "2026-06-25T01:00:00Z");
+    const fresh = agentRunEntry("run-fresh", "agent-fresh", "新快照", "2026-06-25T02:00:00Z");
+    const firstRefresh = deferred<AgentRunWorkspaceListView>();
+    const secondRefresh = deferred<AgentRunWorkspaceListView>();
+    mockedFetchProjectAgentRuns
+      .mockReturnValueOnce(firstRefresh.promise)
+      .mockReturnValueOnce(secondRefresh.promise);
+
+    const initialRefresh = useAgentRunListStateStore
+      .getState()
+      .refreshProject("project-1", "initial");
+    await vi.waitFor(() => {
+      expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(1);
+    });
+
+    const invalidationRefresh = invalidateAgentRunListStateForProjectEvent(
+      agentRunListInvalidated("project-1"),
+      "project-1",
+    );
+    expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(1);
+
+    firstRefresh.resolve(listView([stale]));
+    await vi.waitFor(() => {
+      expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(2);
+    });
+    expect(mockedFetchProjectAgentRuns).toHaveBeenLastCalledWith("project-1", { limit: 30 });
+
+    secondRefresh.resolve(listView([fresh]));
+    await Promise.all([initialRefresh, invalidationRefresh]);
+
+    expect(
+      useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
+    ).toBe("run-fresh");
+  });
+
+  it("first-page refresh 失败时不会因 dirty generation 无限重试，下一次失效可恢复", async () => {
+    const fresh = agentRunEntry("run-fresh", "agent-fresh", "恢复快照", "2026-06-25T02:00:00Z");
+    const firstRefresh = deferred<AgentRunWorkspaceListView>();
+    mockedFetchProjectAgentRuns
+      .mockReturnValueOnce(firstRefresh.promise)
+      .mockResolvedValueOnce(listView([fresh]));
+
+    const initialRefresh = useAgentRunListStateStore
+      .getState()
+      .refreshProject("project-1", "initial");
+    await vi.waitFor(() => {
+      expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(1);
+    });
+
+    const invalidationRefresh = invalidateAgentRunListStateForProjectEvent(
+      agentRunListInvalidated("project-1"),
+      "project-1",
+    );
+    firstRefresh.reject(new Error("network down"));
+    await Promise.all([initialRefresh, invalidationRefresh]);
+
+    expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(1);
+    expect(useAgentRunListStateStore.getState().byProjectId["project-1"]?.status).toBe("error");
+
+    await invalidateAgentRunListStateForProjectEvent(
+      agentRunListInvalidated("project-1"),
+      "project-1",
+    );
+
+    expect(mockedFetchProjectAgentRuns).toHaveBeenCalledTimes(2);
+    expect(useAgentRunListStateStore.getState().byProjectId["project-1"]?.status).toBe("ready");
+    expect(
+      useAgentRunListStateStore.getState().byProjectId["project-1"]?.entries[0]?.run_ref.run_id,
+    ).toBe("run-fresh");
   });
 
   it("忽略非 AgentRunList projection invalidation", async () => {

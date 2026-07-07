@@ -60,7 +60,8 @@ pub use delivery_runtime_selection::{
     DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
 };
 pub use delivery_state::{
-    AgentRunDeliveryStateRepos, AgentRunDeliveryStateService, AgentRunTerminalTransitionInput,
+    AgentRunDeliveryStateRepos, AgentRunDeliveryStateService, AgentRunDeliveryTransition,
+    AgentRunRunningTransitionInput, AgentRunTerminalTransitionInput,
 };
 pub use effective_capability::{
     AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityAdapter,

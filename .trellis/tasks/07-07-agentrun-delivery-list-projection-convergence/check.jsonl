@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend quality and module contract review entry point."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Review delivery/list projection invalidation contract."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality and feature module review entry point."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Review list store convergence behavior against state-management conventions."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Review cross-layer event/DTO consistency."}
+{"file": ".trellis/tasks/07-07-agentrun-delivery-list-projection-convergence/research/current-state.md", "reason": "Task-specific findings for regression review."}

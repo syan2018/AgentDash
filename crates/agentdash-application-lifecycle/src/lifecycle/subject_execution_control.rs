@@ -720,6 +720,25 @@ mod tests {
             Ok(())
         }
 
+        async fn upsert_if_current_runtime_session(
+            &self,
+            binding: &AgentRunDeliveryBinding,
+        ) -> Result<bool, DomainError> {
+            let mut bindings = self.bindings.lock().unwrap();
+            if let Some(existing) = bindings
+                .iter_mut()
+                .find(|item| item.run_id == binding.run_id && item.agent_id == binding.agent_id)
+            {
+                if existing.runtime_session_id != binding.runtime_session_id {
+                    return Ok(false);
+                }
+                *existing = binding.clone();
+            } else {
+                bindings.push(binding.clone());
+            }
+            Ok(true)
+        }
+
         async fn get_current(
             &self,
             run_id: Uuid,

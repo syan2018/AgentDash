@@ -1,8 +1,5 @@
-use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
 use agentdash_agent_protocol::RuntimeTerminalDiagnostic;
-use agentdash_application_ports::project_projection_notification::{
-    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
-};
+use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use std::sync::Arc;
 
 use agentdash_domain::agent::ProjectAgentRepository;
@@ -99,47 +96,41 @@ impl AgentRunTerminalConvergenceService {
             return Ok(None);
         };
 
-        let updated = AgentRunDeliveryStateService::new(AgentRunDeliveryStateRepos {
+        let frame_id = self
+            .resolve_current_or_launch_frame(anchor.agent_id, anchor.launch_frame_id)
+            .await?;
+        let transition = AgentRunDeliveryStateService::new(AgentRunDeliveryStateRepos {
             execution_anchor_repo: self.deps.execution_anchor_repo.as_ref(),
             delivery_binding_repo: self.deps.delivery_binding_repo.as_ref(),
+            lifecycle_agent_repo: self.deps.lifecycle_agent_repo.as_ref(),
+            project_projection_notifications: self.deps.project_projection_notifications.as_deref(),
         })
         .mark_terminal_from_runtime_session(AgentRunTerminalTransitionInput {
             runtime_session_id: command.runtime_session_id.clone(),
             turn_id: command.turn_id.clone(),
+            frame_id,
             terminal_state: command.terminal_state.clone(),
             terminal_message: command.terminal_message.clone(),
             terminal_diagnostic: command.terminal_diagnostic.clone(),
             observed_at: command.observed_at,
         })
         .await?;
-        if !updated {
+        let Some(transition) = transition else {
             return Ok(None);
-        }
+        };
 
         self.apply_mailbox_terminal_effect(
-            anchor.run_id,
-            anchor.agent_id,
-            &command.runtime_session_id,
+            transition.run_id,
+            transition.agent_id,
+            &transition.delivery_runtime_session_id,
             &command.terminal_state,
         )
         .await?;
 
-        let frame_id = self
-            .resolve_current_or_launch_frame(anchor.agent_id, anchor.launch_frame_id)
-            .await?;
-        self.publish_list_invalidation(
-            anchor.run_id,
-            anchor.agent_id,
-            frame_id,
-            ControlPlaneProjectionChangeReason::DeliveryTerminal,
-            Some(command.runtime_session_id.clone()),
-        )
-        .await;
-
         Ok(Some(AgentRunDeliveryTerminalEvent {
-            run_id: anchor.run_id,
-            agent_id: anchor.agent_id,
-            frame_id,
+            run_id: transition.run_id,
+            agent_id: transition.agent_id,
+            frame_id: transition.frame_id,
             terminal_state: command.terminal_state,
             terminal_message: command.terminal_message,
             terminal_diagnostic: command.terminal_diagnostic,
@@ -168,18 +159,18 @@ impl AgentRunTerminalConvergenceService {
         let frame_id = self
             .resolve_current_or_launch_frame(binding.agent_id, binding.launch_frame_id)
             .await?;
-        self.publish_list_invalidation(
-            binding.run_id,
-            binding.agent_id,
-            frame_id,
-            ControlPlaneProjectionChangeReason::DeliveryTerminal,
-            Some(binding.runtime_session_id.clone()),
-        )
+        let transition = AgentRunDeliveryStateService::new(AgentRunDeliveryStateRepos {
+            execution_anchor_repo: self.deps.execution_anchor_repo.as_ref(),
+            delivery_binding_repo: self.deps.delivery_binding_repo.as_ref(),
+            lifecycle_agent_repo: self.deps.lifecycle_agent_repo.as_ref(),
+            project_projection_notifications: self.deps.project_projection_notifications.as_deref(),
+        })
+        .publish_terminal_binding_invalidation(&binding, frame_id)
         .await;
         Ok(Some(AgentRunDeliveryTerminalEvent {
-            run_id: binding.run_id,
-            agent_id: binding.agent_id,
-            frame_id,
+            run_id: transition.run_id,
+            agent_id: transition.agent_id,
+            frame_id: transition.frame_id,
             terminal_state,
             terminal_message: binding.terminal_message,
             terminal_diagnostic: binding
@@ -253,32 +244,6 @@ impl AgentRunTerminalConvergenceService {
             .get(launch_frame_id)
             .await?
             .map(|frame| frame.id))
-    }
-
-    async fn publish_list_invalidation(
-        &self,
-        run_id: Uuid,
-        agent_id: Uuid,
-        frame_id: Option<Uuid>,
-        reason: ControlPlaneProjectionChangeReason,
-        delivery_runtime_session_id: Option<String>,
-    ) {
-        let Some(port) = self.deps.project_projection_notifications.as_ref() else {
-            return;
-        };
-        let Ok(Some(agent)) = self.deps.lifecycle_agent_repo.get(agent_id).await else {
-            return;
-        };
-        let _ = port
-            .publish_project_projection_invalidated(ProjectProjectionInvalidation::agent_run_list(
-                agent.project_id,
-                run_id,
-                agent_id,
-                frame_id,
-                reason,
-                delivery_runtime_session_id,
-            ))
-            .await;
     }
 
     fn mailbox_service(&self) -> AgentRunMailboxService<'_> {

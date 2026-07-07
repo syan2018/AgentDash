@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for AgentRun delivery state services and quality baseline."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "AgentRun mailbox and delivery projection contract touched by this convergence task."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec index for app-web feature/store conventions."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store convergence semantics and frontend state source rules."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Project event and generated DTO contract shared by backend and frontend."}
+{"file": ".trellis/tasks/07-07-agentrun-delivery-list-projection-convergence/research/current-state.md", "reason": "Task-specific evidence of current delivery/list projection gaps."}

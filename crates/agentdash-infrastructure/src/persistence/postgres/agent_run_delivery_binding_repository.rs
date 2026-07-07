@@ -141,6 +141,54 @@ impl AgentRunDeliveryBindingRepository for PostgresAgentRunDeliveryBindingReposi
         Ok(())
     }
 
+    async fn upsert_if_current_runtime_session(
+        &self,
+        binding: &AgentRunDeliveryBinding,
+    ) -> Result<bool, DomainError> {
+        let result = sqlx::query(
+            r#"INSERT INTO agent_run_delivery_bindings
+                (run_id, agent_id, runtime_session_id, launch_frame_id,
+                 orchestration_id, node_path, node_attempt, status,
+                 active_turn_id, last_turn_id, terminal_state, terminal_message,
+                 terminal_diagnostic, observed_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+               ON CONFLICT (run_id, agent_id) DO UPDATE SET
+                   runtime_session_id = EXCLUDED.runtime_session_id,
+                   launch_frame_id = EXCLUDED.launch_frame_id,
+                   orchestration_id = EXCLUDED.orchestration_id,
+                   node_path = EXCLUDED.node_path,
+                   node_attempt = EXCLUDED.node_attempt,
+                   status = EXCLUDED.status,
+                   active_turn_id = EXCLUDED.active_turn_id,
+                   last_turn_id = EXCLUDED.last_turn_id,
+                   terminal_state = EXCLUDED.terminal_state,
+                   terminal_message = EXCLUDED.terminal_message,
+                   terminal_diagnostic = EXCLUDED.terminal_diagnostic,
+                   observed_at = EXCLUDED.observed_at,
+                   updated_at = EXCLUDED.updated_at
+               WHERE agent_run_delivery_bindings.runtime_session_id = EXCLUDED.runtime_session_id"#,
+        )
+        .bind(binding.run_id.to_string())
+        .bind(binding.agent_id.to_string())
+        .bind(&binding.runtime_session_id)
+        .bind(binding.launch_frame_id.to_string())
+        .bind(binding.orchestration_id.map(|id| id.to_string()))
+        .bind(&binding.node_path)
+        .bind(binding.node_attempt.map(|attempt| attempt as i32))
+        .bind(binding.status.as_str())
+        .bind(&binding.active_turn_id)
+        .bind(&binding.last_turn_id)
+        .bind(&binding.terminal_state)
+        .bind(&binding.terminal_message)
+        .bind(&binding.terminal_diagnostic)
+        .bind(binding.observed_at)
+        .bind(binding.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn get_current(
         &self,
         run_id: Uuid,
@@ -379,6 +427,45 @@ mod tests {
             .expect("replacement binding exists");
         assert_eq!(current.runtime_session_id, replacement_session_id);
         assert_eq!(current.status, DeliveryBindingStatus::Ready);
+
+        let stale_terminal = AgentRunDeliveryBinding::from_anchor(
+            &anchor,
+            DeliveryBindingStatus::Terminal,
+            Utc::now(),
+        )
+        .mark_terminal("turn-stale", "failed", None, None, Utc::now());
+        let wrote_stale = repo
+            .upsert_if_current_runtime_session(&stale_terminal)
+            .await
+            .expect("conditional stale upsert");
+        assert!(!wrote_stale);
+        let current = repo
+            .get_current(run.id, agent.id)
+            .await
+            .expect("get after stale write")
+            .expect("binding still exists");
+        assert_eq!(current.runtime_session_id, replacement_session_id);
+        assert_eq!(current.status, DeliveryBindingStatus::Ready);
+
+        let replacement_running = AgentRunDeliveryBinding::from_anchor(
+            &replacement_anchor,
+            DeliveryBindingStatus::Running,
+            Utc::now(),
+        )
+        .mark_running("turn-current", Utc::now());
+        let wrote_current = repo
+            .upsert_if_current_runtime_session(&replacement_running)
+            .await
+            .expect("conditional current upsert");
+        assert!(wrote_current);
+        let current = repo
+            .get_current(run.id, agent.id)
+            .await
+            .expect("get after current write")
+            .expect("binding still exists");
+        assert_eq!(current.runtime_session_id, replacement_session_id);
+        assert_eq!(current.status, DeliveryBindingStatus::Running);
+        assert_eq!(current.active_turn_id.as_deref(), Some("turn-current"));
 
         repo.delete_by_session(&replacement_session_id)
             .await

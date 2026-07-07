@@ -7,7 +7,6 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
-use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
 use agentdash_application_ports::accepted_turn_lifecycle::{
     AcceptedTurnLifecycleAdvanceInput, AcceptedTurnLifecycleAdvancePort,
 };
@@ -15,22 +14,23 @@ use agentdash_application_ports::frame_launch_envelope::{
     AcceptedLaunchCommitInput, AcceptedLaunchCommitOutcome, AcceptedLaunchCommitPort,
     AcceptedLaunchHookRuntimeSync,
 };
-use agentdash_application_ports::project_projection_notification::{
-    ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
-};
+use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
-    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, RuntimeSessionExecutionAnchor,
+    AgentFrame, AgentFrameRepository, AgentRunDeliveryBindingRepository, LifecycleAgent,
+    LifecycleAgentRepository, RuntimeSessionExecutionAnchor,
     RuntimeSessionExecutionAnchorRepository,
 };
 use agentdash_spi::{CapabilityState, ConnectorError};
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::agent_run::AgentFrameRuntimeTarget;
 use crate::agent_run::frame::builder::AgentFrameBuilder;
 use crate::agent_run::runtime_capability::capability_state_to_frame_surfaces;
+use crate::agent_run::{
+    AgentFrameRuntimeTarget, AgentRunDeliveryStateRepos, AgentRunDeliveryStateService,
+    AgentRunRunningTransitionInput,
+};
 
 #[derive(Clone)]
 pub struct AgentRunAcceptedLaunchCommitAdapter {
@@ -214,6 +214,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
 
         outcome.bound_current_delivery = self
             .bind_current_delivery_with_anchor(
+                anchor_repo,
                 agent_repo,
                 delivery_binding_repo,
                 &anchor,
@@ -305,6 +306,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 outcome.wrote_frame_revision = true;
                 outcome.bound_current_delivery = self
                     .bind_current_delivery_with_anchor(
+                        anchor_repo,
                         agent_repo,
                         delivery_binding_repo,
                         &anchor,
@@ -348,6 +350,7 @@ impl AgentRunAcceptedLaunchCommitAdapter {
 
     async fn bind_current_delivery_with_anchor(
         &self,
+        anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
         agent_repo: &dyn LifecycleAgentRepository,
         delivery_binding_repo: &dyn AgentRunDeliveryBindingRepository,
         anchor: &RuntimeSessionExecutionAnchor,
@@ -361,45 +364,41 @@ impl AgentRunAcceptedLaunchCommitAdapter {
                 anchor.runtime_session_id, anchor.agent_id
             )));
         }
-        let binding = AgentRunDeliveryBinding::from_anchor(
-            anchor,
-            DeliveryBindingStatus::Running,
-            chrono::Utc::now(),
-        )
-        .mark_running(turn_id, chrono::Utc::now());
-        if let Err(error) = delivery_binding_repo.upsert(&binding).await {
-            let diagnostic_context =
-                DiagnosticErrorContext::new("agent_run.launch_commit", "bind_current_delivery");
-            diag_error!(Error, Subsystem::AgentRun,
-                context = &diagnostic_context,
-                error = &error,
-                session_id = %anchor.runtime_session_id,
-                run_id = %anchor.run_id,
-                agent_id = %agent_id,
-                launch_frame_id = %anchor.launch_frame_id,
-                "Failed to sync accepted current delivery"
-            );
-            return Err(connector_error(format!(
-                "同步 accepted current delivery 失败: {error}"
-            )));
-        }
-        if let Some(port) = self.project_projection_notifications.as_ref() {
-            if let Ok(Some(agent)) = agent_repo.get(agent_id).await {
-                let _ = port
-                    .publish_project_projection_invalidated(
-                        ProjectProjectionInvalidation::agent_run_list(
-                            agent.project_id,
-                            anchor.run_id,
-                            agent_id,
-                            Some(frame_id),
-                            ControlPlaneProjectionChangeReason::AgentRunShellChanged,
-                            Some(anchor.runtime_session_id.clone()),
-                        ),
-                    )
-                    .await;
+        let observed_at = chrono::Utc::now();
+        let service = AgentRunDeliveryStateService::new(AgentRunDeliveryStateRepos {
+            execution_anchor_repo: anchor_repo,
+            delivery_binding_repo,
+            lifecycle_agent_repo: agent_repo,
+            project_projection_notifications: self.project_projection_notifications.as_deref(),
+        });
+        match service
+            .mark_running_from_accepted_turn(AgentRunRunningTransitionInput {
+                runtime_session_id: anchor.runtime_session_id.clone(),
+                turn_id: turn_id.to_string(),
+                frame_id,
+                observed_at,
+            })
+            .await
+        {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false),
+            Err(error) => {
+                let diagnostic_context =
+                    DiagnosticErrorContext::new("agent_run.launch_commit", "bind_current_delivery");
+                diag_error!(Error, Subsystem::AgentRun,
+                    context = &diagnostic_context,
+                    error = &error,
+                    session_id = %anchor.runtime_session_id,
+                    run_id = %anchor.run_id,
+                    agent_id = %agent_id,
+                    launch_frame_id = %anchor.launch_frame_id,
+                    "Failed to sync accepted current delivery"
+                );
+                Err(connector_error(format!(
+                    "同步 accepted current delivery 失败: {error}"
+                )))
             }
         }
-        Ok(true)
     }
 
     async fn load_anchor_for_session(
@@ -587,9 +586,13 @@ async fn resolve_current_agent_frame_for_runtime_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_agent_protocol::ControlPlaneProjectionChangeReason;
+    use agentdash_application_ports::project_projection_notification::{
+        ProjectProjectionInvalidation, ProjectProjectionNotificationPort,
+    };
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameSurfaceDocument, AgentSource, LifecycleAgent,
+        AgentFrame, AgentFrameSurfaceDocument, AgentSource, DeliveryBindingStatus, LifecycleAgent,
         RuntimeSessionExecutionAnchor,
     };
     use std::sync::Mutex;
@@ -912,7 +915,7 @@ mod tests {
         assert_eq!(recorded[0].frame_id, Some(pending_frame.id));
         assert_eq!(
             recorded[0].reason,
-            ControlPlaneProjectionChangeReason::AgentRunShellChanged
+            ControlPlaneProjectionChangeReason::AgentRunActivityChanged
         );
         assert_eq!(
             recorded[0].delivery_runtime_session_id.as_deref(),

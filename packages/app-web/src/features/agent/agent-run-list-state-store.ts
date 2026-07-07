@@ -38,6 +38,9 @@ type AgentRunListStateSet = StoreApi<AgentRunListStoreState>["setState"];
 type AgentRunListStateGet = StoreApi<AgentRunListStoreState>["getState"];
 
 const firstPageInflight = new Map<string, Promise<void>>();
+const firstPageDirtyGeneration = new Map<string, number>();
+const firstPageAppliedGeneration = new Map<string, number>();
+const firstPageRequestedLimit = new Map<string, number>();
 const loadMoreInflight = new Map<string, Promise<void>>();
 
 export function idleAgentRunListState(
@@ -82,6 +85,17 @@ function appendPageEntries(
   return next;
 }
 
+function markFirstPageDirty(projectId: string, limit: number): void {
+  firstPageDirtyGeneration.set(
+    projectId,
+    (firstPageDirtyGeneration.get(projectId) ?? 0) + 1,
+  );
+  firstPageRequestedLimit.set(
+    projectId,
+    Math.max(firstPageRequestedLimit.get(projectId) ?? 0, limit),
+  );
+}
+
 function loadingFirstPageState(
   projectId: string,
   current: AgentRunListState | undefined,
@@ -100,6 +114,85 @@ function loadingFirstPageState(
   };
 }
 
+async function runFirstPageRefreshLoop(
+  set: AgentRunListStateSet,
+  get: AgentRunListStateGet,
+  projectId: string,
+): Promise<void> {
+  try {
+    while (true) {
+      const targetGeneration = firstPageDirtyGeneration.get(projectId) ?? 0;
+      const current = get().byProjectId[projectId];
+      const requestLimit = Math.max(
+        firstPageRequestedLimit.get(projectId) ?? 0,
+        current?.first_page_limit ?? 0,
+        AGENT_RUN_LIST_FIRST_PAGE_LIMIT,
+      );
+      set((state) => ({
+        byProjectId: (() => {
+          const previous = state.byProjectId[projectId];
+          const refreshing = previous?.status === "ready"
+            || previous?.status === "refreshing"
+            || (previous?.entries.length ?? 0) > 0;
+          return {
+            ...state.byProjectId,
+            [projectId]: loadingFirstPageState(
+              projectId,
+              previous,
+              requestLimit,
+              refreshing,
+            ),
+          };
+        })(),
+      }));
+
+      try {
+        const view = await fetchProjectAgentRuns(projectId, { limit: requestLimit });
+        set((state) => ({
+          byProjectId: {
+            ...state.byProjectId,
+            [projectId]: {
+              project_id: projectId,
+              status: "ready",
+              entries: view.agent_runs,
+              next_cursor: view.next_cursor ?? null,
+              first_page_limit: requestLimit,
+              is_loading_more: false,
+              error: null,
+            },
+          },
+        }));
+        firstPageAppliedGeneration.set(projectId, targetGeneration);
+      } catch (error: unknown) {
+        set((state) => {
+          const previous = state.byProjectId[projectId];
+          return {
+            byProjectId: {
+              ...state.byProjectId,
+              [projectId]: {
+                project_id: projectId,
+                status: "error",
+                entries: previous?.entries ?? [],
+                next_cursor: previous?.next_cursor ?? null,
+                first_page_limit: previous?.first_page_limit ?? requestLimit,
+                is_loading_more: false,
+                error: errorMessage(error),
+              },
+            },
+          };
+        });
+        return;
+      }
+
+      const dirtyGeneration = firstPageDirtyGeneration.get(projectId) ?? 0;
+      const appliedGeneration = firstPageAppliedGeneration.get(projectId) ?? 0;
+      if (dirtyGeneration <= appliedGeneration) return;
+    }
+  } finally {
+    firstPageInflight.delete(projectId);
+  }
+}
+
 async function fetchFirstPage(
   set: AgentRunListStateSet,
   get: AgentRunListStateGet,
@@ -115,60 +208,22 @@ async function fetchFirstPage(
     return;
   }
 
+  const requestLimit = Math.max(
+    limit,
+    current?.first_page_limit ?? 0,
+    AGENT_RUN_LIST_FIRST_PAGE_LIMIT,
+  );
+  if (force || !firstPageInflight.has(trimmed)) {
+    markFirstPageDirty(trimmed, requestLimit);
+  }
+
   const existing = firstPageInflight.get(trimmed);
   if (existing) {
     await existing;
     return;
   }
 
-  const requestLimit = Math.max(limit, current?.first_page_limit ?? 0, AGENT_RUN_LIST_FIRST_PAGE_LIMIT);
-  set((state) => ({
-    byProjectId: {
-      ...state.byProjectId,
-      [trimmed]: loadingFirstPageState(trimmed, state.byProjectId[trimmed], requestLimit, force),
-    },
-  }));
-
-  const request = fetchProjectAgentRuns(trimmed, { limit: requestLimit })
-    .then((view) => {
-      set((state) => ({
-        byProjectId: {
-          ...state.byProjectId,
-          [trimmed]: {
-            project_id: trimmed,
-            status: "ready",
-            entries: view.agent_runs,
-            next_cursor: view.next_cursor ?? null,
-            first_page_limit: requestLimit,
-            is_loading_more: false,
-            error: null,
-          },
-        },
-      }));
-    })
-    .catch((error: unknown) => {
-      set((state) => {
-        const previous = state.byProjectId[trimmed];
-        return {
-          byProjectId: {
-            ...state.byProjectId,
-            [trimmed]: {
-              project_id: trimmed,
-              status: "error",
-              entries: previous?.entries ?? [],
-              next_cursor: previous?.next_cursor ?? null,
-              first_page_limit: previous?.first_page_limit ?? requestLimit,
-              is_loading_more: false,
-              error: errorMessage(error),
-            },
-          },
-        };
-      });
-    })
-    .finally(() => {
-      firstPageInflight.delete(trimmed);
-    });
-
+  const request = runFirstPageRefreshLoop(set, get, trimmed);
   firstPageInflight.set(trimmed, request);
   await request;
 }
@@ -264,6 +319,9 @@ export const useAgentRunListStateStore = create<AgentRunListStoreState>()((set, 
     const trimmed = projectId.trim();
     if (!trimmed) return;
     firstPageInflight.delete(trimmed);
+    firstPageDirtyGeneration.delete(trimmed);
+    firstPageAppliedGeneration.delete(trimmed);
+    firstPageRequestedLimit.delete(trimmed);
     set((state) => {
       const next = { ...state.byProjectId };
       delete next[trimmed];

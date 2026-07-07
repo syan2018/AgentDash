@@ -84,6 +84,10 @@ pub trait LifecycleAgentRepository: Send + Sync {
 #[async_trait::async_trait]
 pub trait AgentRunDeliveryBindingRepository: Send + Sync {
     async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError>;
+    async fn upsert_if_current_runtime_session(
+        &self,
+        binding: &AgentRunDeliveryBinding,
+    ) -> Result<bool, DomainError>;
     async fn get_current(
         &self,
         run_id: Uuid,

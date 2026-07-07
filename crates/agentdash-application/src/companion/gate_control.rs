@@ -490,7 +490,7 @@ impl CompanionGateControlService {
             .get("status")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("completed");
-        let input_text = build_parent_result_mailbox_input_text(
+        let input_text = build_parent_result_delivery_projection_text(
             input.gate_id,
             &input.request_id,
             &input.companion_label,
@@ -1133,7 +1133,7 @@ fn application_error_from_workflow_gate_error(
     }
 }
 
-pub(crate) fn build_parent_result_mailbox_input_text(
+pub(crate) fn build_parent_result_delivery_projection_text(
     gate_id: Uuid,
     request_id: &str,
     companion_label: &str,
@@ -1141,13 +1141,20 @@ pub(crate) fn build_parent_result_mailbox_input_text(
     summary: &str,
     payload: &serde_json::Value,
 ) -> String {
+    const SUMMARY_LIMIT: usize = 1_000;
+    const ITEM_LIMIT: usize = 500;
+    const MAX_ITEMS: usize = 12;
+
     let mut lines = vec![
-        "Companion child result is available.".to_string(),
+        "Companion result delivery projection.".to_string(),
         format!("- request_id: {request_id}"),
         format!("- gate_id: {gate_id}"),
         format!("- companion_label: {companion_label}"),
         format!("- status: {status}"),
-        format!("- summary: {summary}"),
+        format!(
+            "- summary: {}",
+            bounded_projection_text(summary, SUMMARY_LIMIT)
+        ),
     ];
     if let Some(findings) = payload
         .get("findings")
@@ -1156,11 +1163,15 @@ pub(crate) fn build_parent_result_mailbox_input_text(
         let rendered = findings
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .map(|finding| format!("  - {finding}"))
+            .take(MAX_ITEMS)
+            .map(|finding| format!("  - {}", bounded_projection_text(finding, ITEM_LIMIT)))
             .collect::<Vec<_>>();
         if !rendered.is_empty() {
             lines.push("- findings:".to_string());
             lines.extend(rendered);
+            if findings.len() > MAX_ITEMS {
+                lines.push(format!("  - ... {} more", findings.len() - MAX_ITEMS));
+            }
         }
     }
     if let Some(follow_ups) = payload
@@ -1170,14 +1181,28 @@ pub(crate) fn build_parent_result_mailbox_input_text(
         let rendered = follow_ups
             .iter()
             .filter_map(serde_json::Value::as_str)
-            .map(|follow_up| format!("  - {follow_up}"))
+            .take(MAX_ITEMS)
+            .map(|follow_up| format!("  - {}", bounded_projection_text(follow_up, ITEM_LIMIT)))
             .collect::<Vec<_>>();
         if !rendered.is_empty() {
             lines.push("- follow_ups:".to_string());
             lines.extend(rendered);
+            if follow_ups.len() > MAX_ITEMS {
+                lines.push(format!("  - ... {} more", follow_ups.len() - MAX_ITEMS));
+            }
         }
     }
     lines.join("\n")
+}
+
+fn bounded_projection_text(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let mut bounded = trimmed.chars().take(max_chars).collect::<String>();
+    bounded.push_str("...");
+    bounded
 }
 
 fn build_parent_request_mailbox_input_text(
@@ -1292,6 +1317,35 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn parent_result_delivery_projection_text_is_bounded() {
+        let long_summary = "s".repeat(1_200);
+        let long_finding = "f".repeat(700);
+        let findings = (0..13)
+            .map(|_| serde_json::Value::String(long_finding.clone()))
+            .collect::<Vec<_>>();
+        let payload = serde_json::json!({
+            "findings": findings,
+            "follow_ups": ["short follow-up"],
+        });
+
+        let text = build_parent_result_delivery_projection_text(
+            Uuid::new_v4(),
+            "request-1",
+            "companion",
+            "failed",
+            &long_summary,
+            &payload,
+        );
+
+        assert!(text.starts_with("Companion result delivery projection."));
+        assert!(text.contains(&format!("{}...", "s".repeat(1_000))));
+        assert!(!text.contains(&"s".repeat(1_100)));
+        assert!(text.contains(&format!("  - {}...", "f".repeat(500))));
+        assert!(!text.contains(&"f".repeat(650)));
+        assert!(text.contains("  - ... 1 more"));
+    }
 
     #[derive(Default)]
     struct FixtureGateRepo {
@@ -2337,7 +2391,17 @@ mod tests {
             assert!(
                 mailbox_commands[0]
                     .input_text
-                    .contains("Companion child result is available.")
+                    .contains("- status: completed")
+            );
+            assert!(
+                mailbox_commands[0]
+                    .input_text
+                    .contains("- summary: review complete")
+            );
+            assert!(
+                mailbox_commands[0]
+                    .input_text
+                    .starts_with("Companion result delivery projection.")
             );
         }
 

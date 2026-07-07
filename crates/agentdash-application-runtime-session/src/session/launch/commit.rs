@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn companion_parent_resume_stays_out_of_human_input_boundary() {
-        let text = "Companion child result is available.\n- status: failed";
+        let text = "Companion result delivery projection.\n- status: failed";
 
         assert!(!should_persist_as_human_user_input(
             LaunchSource::CompanionParentResume,

@@ -55,6 +55,26 @@
    - Ensure mailbox status does not carry non-mailbox result-delivery states.
    - Ensure provider/runtime fatal errors do not degrade to generic missing-result summaries.
 
+## Progress
+
+### 2026-07-07 Old Path Cleanup Slice
+
+- Cleared: `Companion child result is available.` no longer appears in production code or Rust assertions. Parent result wake text is now named and rendered as `Companion result delivery projection.`, so the natural-language line is explicitly a bounded projection, not a result or evidence authority.
+- Cleared: companion gate-control tests no longer use the old natural-language heading as semantic authority. The focused assertion now checks derived projection fields from the gate result (`status` / `summary`) while the authoritative refs remain on the command and payload.
+- Cleared: non-user mailbox steering/launch delivery was verified to stay out of `UserInputSubmitted`. `MailboxMessageOrigin::User` is the only mailbox steering path that emits user input; companion/system/hook/workflow delivery emits a `system_message` platform projection with origin/source/refs.
+- Cleared: launch commit/preparation were verified to keep companion parent resume and `<subagent_notification>` marker text out of the human input boundary. Non-human launch sources become system delivery context/projection instead of human composer input.
+- Thin carrier retained: companion mailbox delivery still converts bounded projection text into `UserInputBlock` at one helper, `companion_delivery_projection_input_blocks`. This remains because the current mailbox scheduler and launch command contract consume canonical input blocks for model continuation. The helper documents that structured facts live in `MailboxSourceIdentity`, dedup keys, gate refs and gate payload; the text is only the continuation projection.
+- Thin carrier retained: `Companion*MailboxDeliveryCommand.input_text` is still present for parent request/response/human-response projections. Renaming every command field was intentionally left out of this cleanup slice because it would be broad churn without changing the fact boundary; the source identity and mailbox origin already carry the typed route semantics.
+- Cleared: parent result continuation text is bounded before entering the model-continuation carrier. Summary, findings and follow-ups are clipped by length and item count so large result authority remains in gate payload / refs, not in projection text.
+- Not expanded: no future channel system, no new mailbox payload store, and no compatibility branch were added.
+
+### 2026-07-07 Final Check Summary
+
+- Passed: `cargo check -p agentdash-application -p agentdash-application-runtime-session -p agentdash-application-agentrun -p agentdash-application-workflow -p agentdash-application-lifecycle`.
+- Passed: `cargo test -p agentdash-application companion --lib`, including bounded parent result delivery projection coverage.
+- Passed: focused companion/system human-boundary tests and AgentRun list projection frontend tests in check-agent review.
+- Known unrelated blockers: broad clippy is blocked by existing `clippy::large_enum_variant` in workflow dispatch domain; broad app-web check is blocked by existing React compiler lint issues outside this task's touched files. Targeted backend/frontend checks for this task passed.
+
 ## Risk Areas
 
 - `text_user_input_blocks` may be used by both human input and system continuation; changing its caller shape can affect model context. Prefer introducing a typed companion/system delivery path or explicit source projection instead of changing generic user input semantics.

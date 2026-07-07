@@ -555,6 +555,13 @@ struct CompanionMailboxDeliveryInput {
     source_dedup_key: String,
 }
 
+fn companion_delivery_projection_input_blocks(
+    projection_text: String,
+) -> Vec<agentdash_agent_protocol::UserInputBlock> {
+    // companion mailbox 的结构化事实在 source / dedup / gate refs 中；这里的文本只用于续跑投影。
+    text_user_input_blocks(projection_text)
+}
+
 async fn deliver_companion_mailbox_message(
     repos: &crate::repository_set::RepositorySet,
     session_core: SessionCoreService,
@@ -594,7 +601,7 @@ async fn deliver_companion_mailbox_message(
         source: input.source,
         retain_payload: true,
         schedule_on_submit: true,
-        input: text_user_input_blocks(input.input_text),
+        input: companion_delivery_projection_input_blocks(input.input_text),
         client_command_id: input.client_command_id,
         source_dedup_key: Some(input.source_dedup_key),
         executor_config: None,

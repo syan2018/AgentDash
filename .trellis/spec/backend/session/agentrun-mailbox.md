@@ -248,6 +248,135 @@ completed terminal callback -> dequeue in-memory pending queue -> dispatch next 
 BeforeStop/terminal callback 恢复路径 -> schedule(AgentRunTurnBoundary) -> claim one durable envelope -> continue or launch
 ```
 
+## Scenario: Companion / SubAgent Gate Result Delivery Convergence
+
+### 1. Scope / Trigger
+
+- Trigger: companion / SubAgent / human wait 的 `LifecycleGate` resolve 后，需要在 blocking waiter、later `wait` 观察和 parent Agent continuation 之间保持同一结果事实。
+- Scope: `LifecycleGate` resolved payload、`gate_result_delivery_markers`、companion parent mailbox wake、`WaitActivityService` lifecycle-gate source、runtime terminal diagnostic projection、AgentRun mailbox scheduler system projection。
+
+该场景是 gate / mailbox / wait 的边界合同。`LifecycleGate` 持有等待结果；mailbox 只承载需要继续 AgentRun 的 delivery envelope；wait 是观察者；delivery marker 只表达同一 gate result 的交付收敛状态。
+
+### 2. Signatures
+
+PostgreSQL marker table:
+
+```sql
+gate_result_delivery_markers(
+  gate_id text not null,
+  result_attempt integer not null,
+  status text not null,
+  target_run_id text not null,
+  target_agent_id text not null,
+  waiter_ref text,
+  mailbox_message_id uuid,
+  command_receipt_id uuid,
+  claim_token uuid,
+  claim_expires_at timestamptz,
+  created_at timestamptz not null,
+  updated_at timestamptz not null,
+  primary key (gate_id, result_attempt)
+)
+```
+
+Marker status values:
+
+```text
+pending | delivered_to_waiter | queued_for_parent_continuation | dispatched_to_parent
+```
+
+Gate result payload carries bounded result facts:
+
+```json
+{
+  "status": "failed",
+  "summary": "Producer reached terminal before the expected result was written.",
+  "diagnostic": {
+    "kind": "provider",
+    "code": "invalid_request",
+    "http_status": 400,
+    "provider": "llm_provider",
+    "model": "configured-model",
+    "message": "bounded provider message",
+    "retryable": false
+  },
+  "result_refs": {
+    "gate_id": "...",
+    "child": {
+      "run_id": "...",
+      "agent_id": "...",
+      "frame_id": "...",
+      "delivery_runtime_session_id": "..."
+    },
+    "evidence": [
+      { "kind": "journal", "scope": "child_agent_run", "relative": "journal" }
+    ]
+  }
+}
+```
+
+### 3. Contracts
+
+- `LifecycleGate.payload_json` 是 companion / SubAgent wait result authority。terminal fallback、normal companion response、wait result 和 parent continuation 都从该 payload 派生状态、summary、diagnostic 和 refs。
+- Runtime terminal diagnostic 进入 gate payload 时必须保持 bounded typed fields；generic missing-result summary 可以保留为 protocol fallback summary，但不能替代 provider/runtime diagnostic。
+- `gate_result_delivery_markers` key 为 `gate_id + result_attempt`。它只保存交付收敛所需的状态、claim 和目标引用，不保存 gate result payload、conversation text、scheduler policy 或 channel routing。
+- Blocking waiter 能 claim `delivered_to_waiter` 时，parent mailbox continuation 不再为同一 `gate_id + result_attempt` 创建第二条结果 delivery。
+- 无可 claim waiter、waiter 消失或 replay 发现 marker 未完成时，resolver 可以 claim `queued_for_parent_continuation`，然后由 mailbox 负责 durable envelope 和 scheduler delivery。
+- Later `wait(activity_refs=[gate_id])` 直接读取已 resolved gate payload。timeout/cancel 是 wait call 结果，不消费 gate result。
+- Companion / system parent continuation 的模型文本是 bounded projection。结构化 authority 留在 gate payload、`MailboxSourceIdentity`、source dedup key 和 result refs。
+- Non-user mailbox delivery 进入 `system_message` platform projection 或 `system_delivery` context frame；只有 `MailboxMessageOrigin::User` 会提交 `UserInputSubmitted`。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| gate resolved and blocking waiter claim succeeds | marker becomes `delivered_to_waiter`; tool returns gate payload; no parent mailbox result continuation is queued for the same attempt |
+| gate resolved and no waiter is claimable | marker becomes `queued_for_parent_continuation`; mailbox receives one companion/system-origin envelope |
+| process crashes after gate resolve before delivery state | replay reads resolved gate payload and marker state, then completes either waiter delivery or parent continuation claim |
+| wait call times out before gate resolve | gate remains open/resolvable; later wait or continuation policy can still observe the result |
+| provider/runtime fatal caused terminal fallback | gate payload contains fallback summary plus bounded diagnostic fields |
+| terminal fallback races normal companion response | first resolved gate payload remains authoritative; later delivery only ensures convergence |
+| parent continuation text is generated from payload | text is clipped by length/item count; large result body remains behind gate payload / refs |
+| non-user mailbox steering is delivered | scheduler emits system projection instead of `UserInputSubmitted` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `companion_request(wait=true)` waits on the gate, gate resolves with provider diagnostic, marker records `delivered_to_waiter`, and the caller sees diagnostic/result refs without also receiving an async parent wake for the same result.
+- Good: async SubAgent fails after parent is idle; gate payload stores diagnostic/evidence refs, marker claims parent continuation, mailbox stores one companion-origin envelope, and model context receives a bounded system delivery projection.
+- Base: later generic `wait(activity_refs=[gate_id])` returns the resolved gate result even though the original waiter no longer exists.
+- Bad: mailbox row/status stores `delivered_to_waiter` or duplicates gate payload; that state belongs to the marker and the result belongs to `LifecycleGate`.
+- Bad: parent continuation text is treated as the result body; the text is only a bounded delivery projection.
+
+### 6. Tests Required
+
+- Gate workflow tests cover terminal fallback diagnostic payload, child evidence refs, and first-writer-wins normal-result / fallback race.
+- Marker repository tests cover waiter claim, parent continuation claim, replay of incomplete marker, and mutual exclusion for the same `gate_id + result_attempt`.
+- Companion tests cover duplicate child result idempotency, parent mailbox wake source identity, and bounded parent result delivery projection text.
+- Wait activity tests cover resolved gate diagnostic/result refs and timeout without consuming the gate.
+- Mailbox scheduler/runtime-session tests cover non-user delivery emitting system projection while user-origin delivery still emits `UserInputSubmitted`.
+- Frontend/project stream tests cover AgentRun list projection invalidation without depending on an open workspace stream.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+Runtime terminal failed
+  -> mailbox input text says result failed
+  -> wait also returns generic failure
+  -> parent Agent decides between two text facts
+```
+
+#### Correct
+
+```text
+Runtime terminal failed
+  -> LifecycleGate resolved payload carries status + diagnostic + result_refs
+  -> delivery marker claims waiter or parent continuation
+  -> wait observes gate payload
+  -> mailbox/model receives one bounded system-origin projection when continuation is needed
+```
+
 ## Scenario: AgentRun Wait Activity Runtime Tool
 
 ### 1. Scope / Trigger

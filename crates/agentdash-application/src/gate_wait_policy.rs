@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use crate::ApplicationError;
 use crate::companion::gate_control::{
     CompanionParentMailboxDelivery, CompanionParentMailboxDeliveryCommand,
-    build_parent_result_mailbox_input_text,
+    build_parent_result_delivery_projection_text,
 };
 
 #[async_trait]
@@ -208,7 +208,7 @@ async fn deliver_companion_child_result_to_parent(
         .get("status")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("completed");
-    let input_text = build_parent_result_mailbox_input_text(
+    let input_text = build_parent_result_delivery_projection_text(
         intent.gate_id,
         &intent.request_id,
         &companion_label,

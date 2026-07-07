@@ -78,7 +78,7 @@ pub static BUILTIN_GUIDELINE_RULES: &[MountFileDiscoveryRule] = &[MountFileDisco
     key: "agents_md",
     file_names: &["AGENTS.md"],
     scan_root: true,
-    scan_children: true,
+    scan_children: false,
     scan_prefixes: &[],
     max_size_bytes: 64 * 1024,
 }];
@@ -465,7 +465,10 @@ async fn try_read_dynamic_file(
         mount_id: mount_id.to_string(),
         path: path.to_string(),
     };
-    let read = match service.read_text(vfs, &target, None, identity).await {
+    let read = match service
+        .read_text_for_discovery(vfs, &target, None, identity)
+        .await
+    {
         Ok(r) => r,
         Err(_) => return,
     };
@@ -551,7 +554,10 @@ async fn try_read_file(
         mount_id: mount_id.to_string(),
         path: path.to_string(),
     };
-    let read = match service.read_text(vfs, &target, None, identity).await {
+    let read = match service
+        .read_text_for_discovery(vfs, &target, None, identity)
+        .await
+    {
         Ok(r) => r,
         Err(_) => return, // 文件不存在或不可读，静默跳过
     };
@@ -590,7 +596,7 @@ async fn list_entries_at(
     identity: Option<&AuthIdentity>,
 ) -> Vec<RuntimeFileEntry> {
     let list_result = service
-        .list(
+        .list_for_discovery(
             vfs,
             mount_id,
             ListOptions {
@@ -666,7 +672,7 @@ mod tests {
         assert_eq!(BUILTIN_GUIDELINE_RULES[0].key, "agents_md");
         assert_eq!(BUILTIN_GUIDELINE_RULES[0].file_names, &["AGENTS.md"]);
         assert!(BUILTIN_GUIDELINE_RULES[0].scan_root);
-        assert!(BUILTIN_GUIDELINE_RULES[0].scan_children);
+        assert!(!BUILTIN_GUIDELINE_RULES[0].scan_children);
         assert!(
             !BUILTIN_GUIDELINE_RULES
                 .iter()

@@ -57,6 +57,12 @@ pub struct BasicTextSearchRequest<'a> {
     pub identity: Option<&'a agentdash_spi::platform::auth::AuthIdentity>,
 }
 
+#[derive(Clone, Copy)]
+enum VfsOperationLogMode {
+    Standard,
+    DiscoveryProbe,
+}
+
 fn admit_single_mount_patch_targets(
     policy: &RuntimeVfsAccessPolicy,
     mount_id: &str,
@@ -316,8 +322,33 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, MountError> {
-        self.read_text_with_policy(vfs, None, target, overlay, identity)
-            .await
+        self.read_text_with_policy_and_log_mode(
+            vfs,
+            None,
+            target,
+            overlay,
+            identity,
+            VfsOperationLogMode::Standard,
+        )
+        .await
+    }
+
+    pub async fn read_text_for_discovery(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, MountError> {
+        self.read_text_with_policy_and_log_mode(
+            vfs,
+            None,
+            target,
+            overlay,
+            identity,
+            VfsOperationLogMode::DiscoveryProbe,
+        )
+        .await
     }
 
     pub async fn read_text_with_policy(
@@ -327,6 +358,26 @@ impl VfsService {
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, MountError> {
+        self.read_text_with_policy_and_log_mode(
+            vfs,
+            access_policy,
+            target,
+            overlay,
+            identity,
+            VfsOperationLogMode::Standard,
+        )
+        .await
+    }
+
+    async fn read_text_with_policy_and_log_mode(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        log_mode: VfsOperationLogMode,
     ) -> Result<ReadResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
@@ -353,12 +404,13 @@ impl VfsService {
             .provider
             .read_text(&dispatch.mount, &dispatch.path, &dispatch.ctx)
             .await;
-        log_vfs_operation_result(
+        log_vfs_operation_result_with_mode(
             &dispatch.mount,
             "read_text",
             &dispatch.path,
             started_at,
             result.as_ref().err(),
+            log_mode,
         );
         result
     }
@@ -1137,8 +1189,36 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ListResult, MountError> {
-        self.list_with_policy(vfs, None, mount_id, options, overlay, identity)
-            .await
+        self.list_with_policy_and_log_mode(
+            vfs,
+            None,
+            mount_id,
+            options,
+            overlay,
+            identity,
+            VfsOperationLogMode::Standard,
+        )
+        .await
+    }
+
+    pub async fn list_for_discovery(
+        &self,
+        vfs: &Vfs,
+        mount_id: &str,
+        options: ListOptions,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ListResult, MountError> {
+        self.list_with_policy_and_log_mode(
+            vfs,
+            None,
+            mount_id,
+            options,
+            overlay,
+            identity,
+            VfsOperationLogMode::DiscoveryProbe,
+        )
+        .await
     }
 
     pub async fn list_with_policy(
@@ -1149,6 +1229,29 @@ impl VfsService {
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ListResult, MountError> {
+        self.list_with_policy_and_log_mode(
+            vfs,
+            access_policy,
+            mount_id,
+            options,
+            overlay,
+            identity,
+            VfsOperationLogMode::Standard,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn list_with_policy_and_log_mode(
+        &self,
+        vfs: &Vfs,
+        access_policy: Option<&RuntimeVfsAccessPolicy>,
+        mount_id: &str,
+        options: ListOptions,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+        log_mode: VfsOperationLogMode,
     ) -> Result<ListResult, MountError> {
         let dispatch = self.resolve_provider_dispatch(
             vfs,
@@ -1175,12 +1278,13 @@ impl VfsService {
                     .provider
                     .list(&dispatch.mount, &opts, &dispatch.ctx)
                     .await;
-                log_vfs_operation_result(
+                log_vfs_operation_result_with_mode(
                     &dispatch.mount,
                     "list",
                     &opts.path,
                     started_at,
                     result.as_ref().err(),
+                    log_mode,
                 );
                 return result;
             }
@@ -1195,12 +1299,13 @@ impl VfsService {
                 .provider
                 .list(&dispatch.mount, &full_opts, &dispatch.ctx)
                 .await;
-            log_vfs_operation_result(
+            log_vfs_operation_result_with_mode(
                 &dispatch.mount,
                 "list",
                 &full_opts.path,
                 started_at,
                 full_result.as_ref().err(),
+                log_mode,
             );
             let full_result = full_result?;
             let mut files = BTreeMap::new();
@@ -1232,12 +1337,13 @@ impl VfsService {
             .provider
             .list(&dispatch.mount, &opts, &dispatch.ctx)
             .await;
-        log_vfs_operation_result(
+        log_vfs_operation_result_with_mode(
             &dispatch.mount,
             "list",
             &opts.path,
             started_at,
             result.as_ref().err(),
+            log_mode,
         );
         result
     }
@@ -1483,8 +1589,47 @@ fn log_vfs_operation_result(
     started_at: Instant,
     error: Option<&MountError>,
 ) {
+    log_vfs_operation_result_with_mode(
+        mount,
+        operation,
+        path,
+        started_at,
+        error,
+        VfsOperationLogMode::Standard,
+    );
+}
+
+fn log_vfs_operation_result_with_mode(
+    mount: &Mount,
+    operation: &str,
+    path: &str,
+    started_at: Instant,
+    error: Option<&MountError>,
+    log_mode: VfsOperationLogMode,
+) {
     let duration_ms = started_at.elapsed().as_millis();
     if let Some(error) = error {
+        if matches!(log_mode, VfsOperationLogMode::DiscoveryProbe) {
+            diag!(
+                Debug,
+                Subsystem::Vfs,
+                operation = "vfs.mount_operation",
+                stage = operation,
+                provider = %mount.provider,
+                mount_id = %mount.id,
+                backend_id = %mount.backend_id,
+                mount_operation = operation,
+                path,
+                duration_ms,
+                success = false,
+                error_kind = mount_error_kind(error),
+                error = %error,
+                error_debug = ?error,
+                "VFS discovery probe skipped candidate"
+            );
+            return;
+        }
+
         let context = DiagnosticErrorContext::new("vfs.mount_operation", operation)
             .with_field("provider", &mount.provider)
             .with_field("mount_id", &mount.id)

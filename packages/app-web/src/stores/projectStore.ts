@@ -11,12 +11,21 @@ import type {
   ProjectConfig,
 } from '../types';
 import * as projectService from '../services/project';
+import {
+  createEmptyUserWorkspaceState,
+  loadUserWorkspaceState,
+  resolveWorkspaceProjectSelection,
+  saveUserWorkspaceState,
+  setCurrentProjectInUserWorkspaceState,
+  type UserWorkspaceState,
+} from '../services/userWorkspaceState';
 
 interface ProjectState {
   projects: Project[];
   agentsByProjectId: Record<string, ProjectAgentSummary[]>;
   grantsByProjectId: Record<string, ProjectSubjectGrant[]>;
   currentProjectId: string | null;
+  userWorkspaceState: UserWorkspaceState;
   isLoading: boolean;
   error: string | null;
 
@@ -81,11 +90,42 @@ function upsertAgentSummary(
     : [...existing, agent];
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function loadUserWorkspaceStateResult(): Promise<{
+  state: UserWorkspaceState;
+  error: string | null;
+}> {
+  try {
+    return {
+      state: await loadUserWorkspaceState(),
+      error: null,
+    };
+  } catch (e) {
+    return {
+      state: createEmptyUserWorkspaceState(),
+      error: errorMessage(e),
+    };
+  }
+}
+
+function persistUserWorkspaceState(
+  state: UserWorkspaceState,
+  set: (partial: Partial<ProjectState>) => void,
+): void {
+  void saveUserWorkspaceState(state).catch((e) => {
+    set({ error: errorMessage(e) });
+  });
+}
+
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
   agentsByProjectId: {},
   grantsByProjectId: {},
   currentProjectId: null,
+  userWorkspaceState: createEmptyUserWorkspaceState(),
   isLoading: false,
   error: null,
 
@@ -181,10 +221,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fetchProjects: async () => {
     set({ isLoading: true, error: null });
     try {
-      const projects = await projectService.fetchProjects();
-      set({ projects, isLoading: false });
-      if (!get().currentProjectId && projects.length > 0) {
-        set({ currentProjectId: projects[0].id });
+      const [projects, workspaceStateResult] = await Promise.all([
+        projectService.fetchProjects(),
+        loadUserWorkspaceStateResult(),
+      ]);
+      const selection = resolveWorkspaceProjectSelection(
+        projects,
+        get().currentProjectId,
+        workspaceStateResult.state,
+      );
+      set({
+        projects,
+        currentProjectId: selection.currentProjectId,
+        userWorkspaceState: selection.workspaceState,
+        error: workspaceStateResult.error,
+        isLoading: false,
+      });
+      if (selection.shouldPersist) {
+        persistUserWorkspaceState(selection.workspaceState, set);
       }
     } catch (e) {
       set({ error: (e as Error).message, isLoading: false });
@@ -194,10 +248,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   createProject: async (name, description, config) => {
     try {
       const project = await projectService.createProject(name, description, config);
-      set((s) => ({
-        projects: [project, ...s.projects],
-        currentProjectId: project.id,
-      }));
+      set((s) => {
+        const userWorkspaceState = setCurrentProjectInUserWorkspaceState(s.userWorkspaceState, project.id);
+        persistUserWorkspaceState(userWorkspaceState, set);
+        return {
+          projects: [project, ...s.projects],
+          currentProjectId: project.id,
+          userWorkspaceState,
+        };
+      });
       return project;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -335,11 +394,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   cloneProject: async (projectId, payload) => {
     try {
       const project = await projectService.cloneProject(projectId, payload);
-      set((state) => ({
-        projects: [project, ...state.projects],
-        currentProjectId: project.id,
-        error: null,
-      }));
+      set((state) => {
+        const userWorkspaceState = setCurrentProjectInUserWorkspaceState(state.userWorkspaceState, project.id);
+        persistUserWorkspaceState(userWorkspaceState, set);
+        return {
+          projects: [project, ...state.projects],
+          currentProjectId: project.id,
+          userWorkspaceState,
+          error: null,
+        };
+      });
       return project;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -381,7 +445,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  selectProject: (id) => set({ currentProjectId: id }),
+  selectProject: (id) => {
+    set((state) => {
+      const userWorkspaceState = setCurrentProjectInUserWorkspaceState(state.userWorkspaceState, id);
+      persistUserWorkspaceState(userWorkspaceState, set);
+      return {
+        currentProjectId: id,
+        userWorkspaceState,
+      };
+    });
+  },
 
   deleteProject: async (id) => {
     try {
@@ -390,18 +463,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const remaining = s.projects.filter((p) => p.id !== id);
         const nextCurrentProjectId =
           s.currentProjectId === id ? (remaining[0]?.id ?? null) : s.currentProjectId;
+        const nextWorkspaceStateSeed = setCurrentProjectInUserWorkspaceState(
+          s.userWorkspaceState,
+          nextCurrentProjectId,
+        );
+        const nextSelection = resolveWorkspaceProjectSelection(
+          remaining,
+          nextCurrentProjectId,
+          nextWorkspaceStateSeed,
+        );
         const nextAgentsByProjectId = { ...s.agentsByProjectId };
         const nextGrantsByProjectId = { ...s.grantsByProjectId };
         const nextProjectAgentConfigsByProjectId = { ...s.projectAgentConfigsByProjectId };
         delete nextAgentsByProjectId[id];
         delete nextGrantsByProjectId[id];
         delete nextProjectAgentConfigsByProjectId[id];
+        if (nextSelection.shouldPersist) {
+          persistUserWorkspaceState(nextSelection.workspaceState, set);
+        }
         return {
           projects: remaining,
           agentsByProjectId: nextAgentsByProjectId,
           grantsByProjectId: nextGrantsByProjectId,
           projectAgentConfigsByProjectId: nextProjectAgentConfigsByProjectId,
-          currentProjectId: nextCurrentProjectId,
+          currentProjectId: nextSelection.currentProjectId,
+          userWorkspaceState: nextSelection.workspaceState,
           error: null,
         };
       });

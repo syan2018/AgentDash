@@ -62,6 +62,39 @@
 - Task plan facts 从 Run / AgentRun scoped API 进入 AgentRun workspace model 或专用 Task plan store；Story 页面只消费 Story Task projection cache。
 - `lifecycleStore` 是 SubjectExecution、runtime artifacts、latest runtime node 与 linked runs 的唯一执行投影缓存；Task plan store 和 `storyStore` 不保存这些运行事实。
 
+## Dashboard Workspace State
+
+Dashboard 顶层导航的用户工作状态使用 user-scope settings 中的单个结构化 key：
+
+```text
+ui.workspace_state
+```
+
+当前结构：
+
+```ts
+type UserWorkspaceState = {
+  schema_version: 1
+  navigation: {
+    current_project_id: string | null
+  }
+  recent: {
+    project_ids: string[]
+  }
+}
+```
+
+`projectStore` 负责把 Project CRUD、当前 Project 选择和该 setting 同步起来。`fetchProjects()` 加载可访问 Project 后读取 `ui.workspace_state`，优先恢复 `navigation.current_project_id`；如果该 Project 当前不可访问，则选择确定的可用 Project 并写回修正后的结构。用户显式选择、创建、克隆或删除当前 Project 后，也通过同一结构写回。
+
+该状态放在 user-scope settings 的原因是 Dashboard 顶层 Project 选择是用户工作台偏好，不属于 Project 聚合事实，也不属于 `agent.pi.user_preferences` 这类 Agent 启动上下文。结构化 value 让后续 Dashboard 默认 tab、最近 Project、入口偏好等状态可以在同一用户工作状态下演进。
+
+实现边界：
+
+- settings key、JSON 解析、recent Project 去重和不可用 Project 修正收口在 `services/userWorkspaceState.ts`。
+- `projectStore` 只消费 service 输出的 typed state 和选择结果，不直接拼 setting key 或解析 JSON。
+- 新增字段时保持 `schema_version`，并用 service 层 normalize 让旧用户缺失字段时得到确定默认值。
+- 验证覆盖 service 纯函数和 `projectStore` 行为：恢复上次 Project、列表顺序不覆盖偏好、不可用偏好修正、显式切换写回、创建/删除后的写回。
+
 ## Story Task Projection 与 Run-scoped Task Plan State
 
 Story 页面展示的 Task 列表是 projection，来源于 Story-bound LifecycleRun、linked run 和可选 `story_ref`。该缓存可以放在 `storyStore`，命名应表达 projection 语义，例如 `storyTaskProjectionByStoryId`。

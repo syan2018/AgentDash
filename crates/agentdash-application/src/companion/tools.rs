@@ -32,6 +32,12 @@ use uuid::Uuid;
 
 use super::dispatch::{CompanionChildDispatchRequest, CompanionChildDispatchService};
 use super::model_preflight::{CompanionModelPreflightPort, CompanionModelPreflightRequest};
+use super::reply_contract::{
+    COMPANION_ACTION_CHANNEL, COMPANION_CHILD_CHANNEL, COMPANION_PARENT_CHANNEL,
+    CompanionPayloadExpectation, CompanionReplyContract, CompanionReplyRoute,
+    CompanionReplySelectorParam, ModelReplyInstruction, ModelReplySelector,
+    alias_is_raw_internal_ref, normalize_reply_alias,
+};
 use super::tool_context::{
     CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
 };
@@ -64,6 +70,10 @@ const COMPANION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 const COMPANION_WAIT_PREVIEW_CHARS: usize = 2_000;
 const GATE_RESULT_DELIVERY_ATTEMPT: i32 = 1;
 const GATE_RESULT_PARENT_CONTINUATION_LEASE_SECONDS: i64 = 60;
+const COMPANION_CHILD_WAIT_GATE_KIND: &str = "companion_wait";
+const COMPANION_CHILD_BLOCKING_WAIT_GATE_KIND: &str = "companion_wait_blocking";
+const COMPANION_CHILD_FOLLOW_UP_WAIT_GATE_KIND: &str = "companion_wait_follow_up";
+const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
 
 struct SelectedCompanionAgent {
     project_agent: ProjectAgent,
@@ -1777,9 +1787,10 @@ impl CompanionRequestTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompanionRespondParams {
-    /// 回应的 request_id（companion_request 返回的 gate id / dispatch id / pending action id）
-    pub request_id: String,
-    /// 结构化 JSON object payload。示例：{"type":"resolution","status":"approved","summary":"..."}
+    /// Optional selector. Omit it when the prompt lists a single active reply target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<CompanionReplySelectorParam>,
+    /// Structured JSON object payload. Registered response types are validated semantically at runtime.
     #[schemars(schema_with = "companion_response_payload_schema")]
     pub payload: serde_json::Value,
 }
@@ -1812,7 +1823,7 @@ impl AgentTool for CompanionRespondTool {
     }
 
     fn description(&self) -> &str {
-        "回应 companion 交互请求；用于回传用户决策、平台结果、parent/sub session 结论或结构化审阅结果。request_id 指定对象，payload 必须是 JSON object 并匹配 expected response type。"
+        "回应当前 companion 交互请求；完成工作后调用并传入 payload。reply_to 可省略，只有 prompt 明确列出多个回复目标时才使用 current/alias 短 selector。payload 必须是 JSON object，注册 response type 的业务字段由运行时语义校验。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1840,13 +1851,6 @@ impl AgentTool for CompanionRespondTool {
             return Err(AgentToolError::InvalidArguments(error));
         }
 
-        let request_id = raw.request_id.trim();
-        if request_id.is_empty() {
-            return Err(AgentToolError::InvalidArguments(
-                "request_id 不能为空".to_string(),
-            ));
-        }
-
         let current_session_id = self
             .tool_context
             .require_delivery_runtime_session_id("回应 companion 请求")?
@@ -1854,106 +1858,218 @@ impl AgentTool for CompanionRespondTool {
         let session_services =
             require_session_services(&self.session_services_handle, "回应 companion 请求").await?;
 
-        // 多个独立副作用，不互斥：
-        // 1. parent agent resolve parent-owned LifecycleGate
-        // 2. resolve 当前 session 的 pending action delivery/cache
-        // 3. child agent 通过 child-owned LifecycleGate 回传结果给 parent agent
-        // 哪些命中由上下文决定，可以同时命中多个。
-
-        let resolved_parent_request = self
-            .try_resolve_parent_request_gate(
-                request_id,
-                &current_session_id,
-                &payload,
-                &session_services,
-            )
+        let reply_target = self
+            .resolve_reply_target(raw.reply_to.as_ref(), &current_session_id)
             .await?;
+        let request_id = reply_target.request_id.as_str();
 
-        let resolved_action = self
-            .try_resolve_pending_action(
-                request_id,
-                &current_session_id,
-                &payload,
-                &session_services,
-            )
-            .await?;
-
-        let completed_to_parent = self
-            .try_complete_to_parent(request_id, &current_session_id, &payload, &session_services)
-            .await?;
-
-        // 根据命中情况构造返回值
-        let mut modes = Vec::new();
-        if resolved_parent_request.is_some() {
-            modes.push("resolve_parent_request_gate");
-        }
-        if resolved_action.is_some() {
-            modes.push("resolve_pending_action");
-        }
-        if completed_to_parent.is_some() {
-            modes.push("complete_to_parent");
-        }
-
-        if modes.is_empty() {
-            if let Some(expected_dispatch_id) = self
-                .current_companion_dispatch_id(&current_session_id)
-                .await?
-            {
-                return Err(AgentToolError::ExecutionFailed(format!(
-                    "request_id=`{request_id}` 不匹配当前 companion dispatch_id=`{expected_dispatch_id}`"
-                )));
-            }
-            return Err(AgentToolError::ExecutionFailed(format!(
-                "request_id=`{request_id}` 不匹配任何 pending action 或 companion session"
-            )));
-        }
-
-        // 优先使用 pending action 的返回值（包含结案详情），其次用 complete_to_parent 的
-        let result = resolved_parent_request
-            .or(resolved_action)
-            .or(completed_to_parent)
-            .unwrap_or_else(|| AgentToolResult {
-                content: vec![ContentPart::text(format!(
-                    "已回应 companion 请求。\n- request_id: {}\n- modes: {}",
+        let result = match reply_target.route {
+            CompanionReplyRoute::ParentRequestGate => self
+                .try_resolve_parent_request_gate(
                     request_id,
-                    modes.join(", ")
-                ))],
-                is_error: false,
-                details: Some(serde_json::json!({
-                    "modes": modes,
-                    "request_id": request_id,
-                    "session_id": current_session_id,
-                })),
-            });
+                    &current_session_id,
+                    &payload,
+                    &session_services,
+                )
+                .await?,
+            CompanionReplyRoute::PendingAction => self
+                .try_resolve_pending_action(
+                    request_id,
+                    &current_session_id,
+                    &payload,
+                    &session_services,
+                )
+                .await?,
+            CompanionReplyRoute::ChildDispatch => {
+                self.try_complete_to_parent(
+                    request_id,
+                    &current_session_id,
+                    &payload,
+                    &session_services,
+                )
+                .await?
+            }
+        }
+        .ok_or_else(|| {
+            AgentToolError::ExecutionFailed(format!(
+                "resolved companion reply target `{}` could not be completed. Retry with the minimal call:\n{}",
+                reply_target.model_selector_label(),
+                reply_target.model_instruction.minimal_arguments_json()
+            ))
+        })?;
 
         Ok(result)
     }
 }
 
 impl CompanionRespondTool {
-    /// 查找当前 child agent 自己持有的 open interaction gate correlation_id。
-    async fn current_companion_dispatch_id(
+    async fn resolve_reply_target(
+        &self,
+        selector: Option<&CompanionReplySelectorParam>,
+        current_session_id: &str,
+    ) -> Result<CompanionReplyContract, AgentToolError> {
+        let candidates = self.active_reply_targets(current_session_id).await?;
+        let matches = match selector {
+            None => candidates.clone(),
+            Some(CompanionReplySelectorParam::Current { channel }) => {
+                if let Some(channel) = channel.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                    candidates
+                        .iter()
+                        .filter(|candidate| candidate.channel == channel)
+                        .cloned()
+                        .collect()
+                } else {
+                    candidates.clone()
+                }
+            }
+            Some(CompanionReplySelectorParam::Alias { alias }) => {
+                if alias_is_raw_internal_ref(alias) {
+                    return Err(AgentToolError::InvalidArguments(
+                        "reply_to.alias 只接受 prompt 中列出的短 alias，不接受 raw GUID 或内部 id"
+                            .to_string(),
+                    ));
+                }
+                let Some(alias) = normalize_reply_alias(alias) else {
+                    return Err(AgentToolError::InvalidArguments(
+                        "reply_to.alias 不能为空".to_string(),
+                    ));
+                };
+                candidates
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.aliases.iter().any(|item| *item == alias.as_str())
+                    })
+                    .cloned()
+                    .collect()
+            }
+        };
+
+        match matches.as_slice() {
+            [target] => Ok(target.clone()),
+            [] => Err(self.reply_resolution_error(
+                "没有匹配的 active companion reply target",
+                selector,
+                &candidates,
+            )),
+            _ => Err(self.reply_resolution_error(
+                "当前存在多个 active companion reply target，需要使用 prompt 中列出的 alias/current selector",
+                selector,
+                &matches,
+            )),
+        }
+    }
+
+    async fn active_reply_targets(
         &self,
         current_session_id: &str,
-    ) -> Result<Option<String>, AgentToolError> {
-        let child_frame = match resolve_current_frame_from_delivery_trace_ref(
+    ) -> Result<Vec<CompanionReplyContract>, AgentToolError> {
+        let mut targets = Vec::new();
+
+        if let Some((_anchor, _agent, frame)) = resolve_current_frame_from_delivery_trace_ref(
             current_session_id,
             self.repos.execution_anchor_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_frame_repo.as_ref(),
         )
         .await
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
         {
-            Ok(Some((_anchor, _agent, frame))) => frame,
-            _ => return Ok(None),
+            let gates = self
+                .repos
+                .lifecycle_gate_repo
+                .list_open_for_agent(frame.agent_id)
+                .await
+                .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
+            for gate in gates {
+                if is_companion_child_reply_gate(&gate.gate_kind, gate.payload_json.as_ref()) {
+                    targets.push(CompanionReplyContract::new(
+                        CompanionReplyRoute::ChildDispatch,
+                        gate.correlation_id,
+                        COMPANION_PARENT_CHANNEL,
+                        vec!["parent"],
+                        ModelReplyInstruction::completion_for_current_companion()
+                            .with_reply_to(ModelReplySelector::alias("parent")),
+                    ));
+                } else if gate.gate_kind == COMPANION_PARENT_REQUEST_GATE_KIND {
+                    targets.push(CompanionReplyContract::new(
+                        CompanionReplyRoute::ParentRequestGate,
+                        gate.id.to_string(),
+                        COMPANION_CHILD_CHANNEL,
+                        vec!["child"],
+                        ModelReplyInstruction::completion_for_current_companion()
+                            .with_reply_to(ModelReplySelector::alias("child")),
+                    ));
+                }
+            }
+        }
+
+        if let Some(hook_runtime) = self.tool_context.hook_runtime() {
+            targets.extend(
+                hook_runtime
+                    .pending_actions()
+                    .iter()
+                    .filter(|action| action.status == HookPendingActionStatus::Pending)
+                    .map(|action| {
+                        CompanionReplyContract::new(
+                            CompanionReplyRoute::PendingAction,
+                            action.id.clone(),
+                            COMPANION_ACTION_CHANNEL,
+                            vec!["action"],
+                            ModelReplyInstruction::from_payload_expectation(
+                                CompanionPayloadExpectation {
+                                    expected_type: Some("resolution".to_string()),
+                                    required_fields: vec![
+                                        "type".to_string(),
+                                        "status".to_string(),
+                                        "summary".to_string(),
+                                    ],
+                                    example_payload: serde_json::json!({
+                                        "type": "resolution",
+                                        "status": "approved",
+                                        "summary": "..."
+                                    }),
+                                    repair_hint: Some(
+                                        "Use alias `action` only when the prompt lists it as a reply target."
+                                            .to_string(),
+                                    ),
+                                },
+                                Some(ModelReplySelector::alias("action")),
+                            ),
+                        )
+                    }),
+            );
+        }
+
+        Ok(targets)
+    }
+
+    fn reply_resolution_error(
+        &self,
+        reason: &str,
+        selector: Option<&CompanionReplySelectorParam>,
+        candidates: &[CompanionReplyContract],
+    ) -> AgentToolError {
+        let received = selector
+            .map(CompanionReplySelectorParam::received_label)
+            .unwrap_or_else(|| "omitted".to_string());
+        let available = if candidates.is_empty() {
+            "none".to_string()
+        } else {
+            candidates
+                .iter()
+                .map(CompanionReplyContract::available_selector_text)
+                .collect::<Vec<_>>()
+                .join("; ")
         };
-        let gates = self
-            .repos
-            .lifecycle_gate_repo
-            .list_open_for_agent(child_frame.agent_id)
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-        Ok(gates.into_iter().next().map(|g| g.correlation_id))
+        let repair_instruction = candidates
+            .first()
+            .map(|candidate| candidate.model_instruction.clone())
+            .unwrap_or_else(ModelReplyInstruction::completion_for_current_companion);
+
+        AgentToolError::ExecutionFailed(format!(
+            "{reason}\n- received_selector: {received}\n- available_selectors: {available}\n- minimal_valid_call:\n{}",
+            repair_instruction.minimal_arguments_json()
+        ))
     }
 
     /// 路径 0：parent agent 回应 parent-owned LifecycleGate。
@@ -2154,6 +2270,16 @@ impl CompanionRespondTool {
     }
 }
 
+fn is_companion_child_reply_gate(gate_kind: &str, payload: Option<&serde_json::Value>) -> bool {
+    match gate_kind {
+        COMPANION_CHILD_BLOCKING_WAIT_GATE_KIND | COMPANION_CHILD_FOLLOW_UP_WAIT_GATE_KIND => true,
+        COMPANION_CHILD_WAIT_GATE_KIND => payload
+            .and_then(|payload| payload.get("request_type"))
+            .is_none(),
+        _ => false,
+    }
+}
+
 // ─── Payload 解析辅助 ───────────────────────────────────────────────
 
 fn parse_slice_mode(value: &str) -> CompanionSliceMode {
@@ -2258,48 +2384,7 @@ fn companion_response_payload_schema(_: &mut schemars::SchemaGenerator) -> schem
     schemars::json_schema!({
         "type": "object",
         "additionalProperties": true,
-        "anyOf": [
-            {
-                "type": "object",
-                "required": ["type", "status", "summary"],
-                "properties": {
-                    "type": { "const": "completion" },
-                    "status": { "type": "string" },
-                    "summary": { "type": "string", "minLength": 1 }
-                }
-            },
-            {
-                "type": "object",
-                "required": ["type", "status", "summary"],
-                "properties": {
-                    "type": { "const": "resolution" },
-                    "status": { "type": "string" },
-                    "summary": { "type": "string", "minLength": 1 }
-                }
-            },
-            {
-                "type": "object",
-                "required": ["type", "choice"],
-                "properties": {
-                    "type": { "const": "decision" },
-                    "choice": { "type": "string", "minLength": 1 },
-                    "status": { "type": "string" },
-                    "summary": { "type": "string" }
-                }
-            },
-            {
-                "type": "object",
-                "required": ["type", "status", "summary"],
-                "properties": {
-                    "type": { "const": "capability_grant_result" },
-                    "status": {
-                        "type": "string",
-                        "enum": ["approved", "rejected", "pending_user_approval", "applied", "failed", "expired", "revoked"]
-                    },
-                    "summary": { "type": "string", "minLength": 1 }
-                }
-            }
-        ]
+        "description": "Open companion response payload object. Registered payload.type values are validated semantically by PayloadTypeRegistry."
     })
 }
 
@@ -2551,6 +2636,7 @@ pub struct CompanionDispatchPlan {
     pub parent_turn_id: String,
     pub adoption_mode: CompanionAdoptionMode,
     pub slice: CompanionDispatchSlice,
+    pub reply_instruction: ModelReplyInstruction,
 }
 
 #[derive(Debug, Clone)]
@@ -2563,8 +2649,8 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
     let mut sections = vec!["[Companion Dispatch Context]".to_string()];
 
     sections.push(format!(
-        "## Dispatch Metadata\n- dispatch_id: {}\n- companion_label: {}\n- slice_mode: {:?}\n- adoption_mode: {:?}",
-        plan.dispatch_id, plan.companion_label, plan.slice.mode, plan.adoption_mode
+        "## Dispatch Context\n- companion_label: {}\n- slice_mode: {:?}\n- adoption_mode: {:?}",
+        plan.companion_label, plan.slice.mode, plan.adoption_mode
     ));
 
     let context_injections: Vec<_> = plan
@@ -2610,9 +2696,7 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
     }
 
     sections.push(format!("## 派发任务\n{}", user_prompt.trim()));
-    sections.push(
-        "## 回流要求\n- 完成后请调用 `companion_respond`。\n- payload 中必填 summary。\n- 如有关键发现请写入 findings。\n- 如需要主 session 后续行动请写入 follow_ups。".to_string(),
-    );
+    sections.push(plan.reply_instruction.render_markdown_section());
     sections.join("\n\n")
 }
 
@@ -2647,6 +2731,7 @@ fn build_companion_dispatch_plan(
         parent_turn_id: config.parent_turn_id.to_string(),
         adoption_mode: config.adoption_mode,
         slice,
+        reply_instruction: ModelReplyInstruction::completion_for_current_companion(),
     }
 }
 
@@ -2900,12 +2985,13 @@ fn companion_project_id_for_owner(
 
 #[cfg(test)]
 mod companion_tests {
+    use super::super::reply_contract::ModelReplyInstruction;
     use super::{
         CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice,
-        CompanionGateWaitOutcome, CompanionSliceMode, build_companion_dispatch_prompt,
-        build_companion_dispatch_slice, build_companion_execution_slice,
-        build_subagent_pending_action, companion_owner_candidates, companion_wake_source,
-        companion_wake_source_dedup_key, merge_gate_result_refs,
+        CompanionGateWaitOutcome, CompanionRespondParams, CompanionSliceMode,
+        build_companion_dispatch_prompt, build_companion_dispatch_slice,
+        build_companion_execution_slice, build_subagent_pending_action, companion_owner_candidates,
+        companion_wake_source, companion_wake_source_dedup_key, merge_gate_result_refs,
         platform_capability_grant_missing_broker_error, wait_for_lifecycle_gate_resolution,
     };
     use agentdash_domain::workflow::{
@@ -2913,6 +2999,7 @@ mod companion_tests {
     };
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
+    use agentdash_spi::context::tool_schema_sanitizer::schema_value;
     use agentdash_spi::{McpTransportConfig, MountCapability, RuntimeMcpServer, Vfs};
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -3410,13 +3497,61 @@ mod companion_tests {
                 omitted_fragment_count: 0,
                 omitted_constraint_count: 0,
             },
+            reply_instruction: ModelReplyInstruction::completion_for_current_companion(),
         };
 
         let prompt = build_companion_dispatch_prompt(&plan, "请帮我 review 当前实现");
 
         assert!(prompt.contains("companion_respond"));
-        assert!(prompt.contains("dispatch_id: dispatch-1"));
+        assert!(prompt.contains("\"payload\""));
+        assert!(prompt.contains("\"type\": \"completion\""));
+        assert!(!prompt.contains("dispatch_id"));
+        assert!(!prompt.contains("gate_id"));
+        assert!(!prompt.contains("run_id"));
+        assert!(!prompt.contains("agent_id"));
+        assert!(!prompt.contains("frame_id"));
+        assert!(!prompt.contains("session_id"));
         assert!(prompt.contains("请帮我 review 当前实现"));
+    }
+
+    #[test]
+    fn companion_response_payload_schema_is_open_object() {
+        let schema = schema_value::<CompanionRespondParams>();
+        let payload_schema = &schema["properties"]["payload"];
+
+        assert_eq!(payload_schema["type"], serde_json::json!("object"));
+        assert_eq!(
+            payload_schema["additionalProperties"],
+            serde_json::json!(true)
+        );
+        assert!(payload_schema.get("anyOf").is_none());
+        assert!(schema["properties"].get("request_id").is_none());
+
+        let params: CompanionRespondParams = serde_json::from_value(serde_json::json!({
+            "payload": {
+                "type": "custom_response",
+                "status": "ok",
+                "domain_specific": { "anything": true }
+            }
+        }))
+        .expect("custom payload should deserialize");
+        assert_eq!(params.payload["type"], serde_json::json!("custom_response"));
+        assert!(params.reply_to.is_none());
+    }
+
+    #[test]
+    fn companion_skill_docs_do_not_expose_request_id_contract() {
+        let skill = include_str!(
+            "../../../agentdash-domain/src/companion/skills/companion-system/SKILL.md"
+        );
+        let response_adoption = include_str!(
+            "../../../agentdash-domain/src/companion/skills/companion-system/references/response-adoption.md"
+        );
+
+        assert!(!skill.contains("request_id"));
+        assert!(!response_adoption.contains("request_id"));
+        assert!(response_adoption.contains("\"payload\""));
+        assert!(response_adoption.contains("\"reply_to\""));
     }
 
     #[test]

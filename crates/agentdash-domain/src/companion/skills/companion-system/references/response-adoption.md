@@ -1,16 +1,28 @@
 # Response Adoption
 
-`companion_respond` always names the `request_id` and sends an object payload.
+`companion_respond` sends an object `payload`. Omit `reply_to` when the prompt lists a single active reply target; include the exact short selector only when the prompt lists multiple reply targets.
 
 ```json
 {
-  "request_id": "dispatch-1",
   "payload": {
     "type": "completion",
     "status": "completed",
     "summary": "子任务完成",
     "findings": ["需要补一个 UI renderer"],
     "follow_ups": ["运行 app-web typecheck"]
+  }
+}
+```
+
+When a prompt lists multiple targets, keep the selector short and copy only the listed alias.
+
+```json
+{
+  "reply_to": { "kind": "alias", "alias": "parent" },
+  "payload": {
+    "type": "completion",
+    "status": "completed",
+    "summary": "子任务完成"
   }
 }
 ```

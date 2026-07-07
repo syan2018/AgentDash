@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Project 是顶层导航和隔离单元，前端不能创建第二套业务事实源。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "projectStore 负责 Project CRUD + 选择，用户工作状态需要按现有 Zustand store 约定接入。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "settings-contracts generated DTO 是 user-scope settings wire 类型来源，service 不应重声明后端 DTO。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "前后端共享 settings DTO 通过 contract crate 生成，改动应复用现有 generated contract。"}

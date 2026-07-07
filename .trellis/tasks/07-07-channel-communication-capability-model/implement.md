@@ -2,58 +2,77 @@
 
 ## Current State
 
-本任务只记录预评估，不进入 implementation phase。不要运行 `task.py start`，除非后续用户明确要求把某个 MVP 切片进入实现。
+本任务只记录预评估与文档修订，不进入 implementation phase。不要运行 `task.py start`，除非后续用户明确要求把某个切片进入实现。
+
+最新对齐已经推翻 lifecycle-only temporary channel MVP 作为主模型的结论。下一步实现任务应从通用 Channel domain / ChannelService skeleton 开始，再用 Companion/SubAgent 和 Project IM 两条代表链路验证。
 
 ## Suggested Future Phases
 
-1. **Glossary / Spec**
-   - 收敛 Channel、Participant、Message、Binding、Delivery、DeliveryPolicy、ReplyAddress、PublishOutbox、ChannelCapability。
-   - 明确 Channel 与 Mailbox、LifecycleGate、PermissionGrant、RuntimeSession、Terminal output 的事实源边界。
+1. **Channel Domain / Service Skeleton**
+   - 新增 `agentdash-domain::channel` 领域模型：Channel、Participant、Binding、Message、Delivery、DeliveryPolicy、ReplyAddress、PublishOutbox、ChannelAddress。
+   - 新增 application 层 `ChannelService` 边界：维护 channel、participants、bindings、broadcast policy、message ingress、delivery planning、mailbox/gate/outbox materialization intent。
+   - 明确 `LifecycleRun` 是 `ChannelOwner::LifecycleRun` 的 scope，不引入一等 `LifecycleChannel`。
 
-2. **Channel Capability Dimension**
-   - 已决策（2026-07-07）：新增 `CapabilityState.channel` 一等 dimension，`AccumulationPolicy::Accumulate`，effect 形态对齐 VFS `apply_mount_operations`/`MountDirective`（`ChannelDirective::{Expose,Revoke}`）。不做 projection-only surface，不对齐 Workspace Module 现状（现状是历史权宜的三段式混合实现）。
-   - 定义 visible channel refs、aliases、operations、readiness、ingress/egress policy。
-   - 待实现阶段确定：`CapabilityState` 新增必填字段的 serde 迁移策略（参照 `workspace_module` 字段引入先例）；是否需要 `PermissionGrant` 驱动的 channel 可见性（目前无通用机制，需另设计）。
+2. **Project / External IM Capable Asset Model**
+   - 设计 Project-owned persistent Channel 与 External IM binding。
+   - 定义 external workspace / room / thread / user / message identity normalization。
+   - 定义 publish outbox、approval、audit、rate-limit 与 identity mapping 的最小合同。
+   - 决定 Channel 持久化形态：独立表、Project asset，或二者组合。
 
-3. **Ingress / DeliveryPlan Prototype**
-   - 先在 application 内部定义 Channel envelope / delivery intent / materializer。
-   - 覆盖 Companion reply、Terminal wake、Human response 等已有异步行为，验证进入 Mailbox 前的标准结构。
+3. **Channel Capability Dimension**
+   - 新增 `CapabilityState.channel` 一等 dimension，`AccumulationPolicy::Accumulate`。
+   - 将 Channel facts / participant policy 投影为 AgentFrame visible channel refs、aliases、operations、readiness、ingress/egress policy。
+   - 明确 capability projection 不保存 membership，不成为 Channel 事实源。
+   - 细化 ProjectAgent / Project channel assignment / PermissionGrant 对 Channel capability 的输入关系。
 
-4. **Mailbox Materializer**
-   - 将需要 AgentRun 消费的 ChannelDelivery 统一 materialize 为 AgentRunMailboxMessage。
-   - 让 `ChannelAddress`（原 `MailboxSourceIdentity`，已决策整体重定位、不留别名）引用 Channel message / delivery attribution。
+4. **Ingress / DeliveryPlan Prototype**
+   - 定义 Channel ingress envelope、delivery intent、materializer。
+   - 覆盖 IM inbound、Companion reply、Terminal wake、Human response 等已有异步行为。
+   - `ChannelAddress` 从 `MailboxSourceIdentity` 抽象出来，作为 source/delivery attribution 值对象。
 
-5. **Companion Facade Migration**
+5. **Mailbox Materializer**
+   - 将需要 AgentRun 消费的 `ChannelDelivery` materialize 为 AgentRunMailboxMessage。
+   - Mailbox source identity / dedup key 引用 Channel message、delivery、binding 或 provider event refs。
+   - 保持 mailbox scheduler 不按 channel source 分支决定消费语义。
+
+6. **Companion / SubAgent Facade Migration**
    - 将 `companion_request` / `companion_respond` 视为 Channel request/reply facade。
-   - `target=sub` 作为在同一个 `LifecycleRun` 下新增 `lifecycle_agents` 行、并向 `LifecycleRun.channels` append 一条 `LifecycleChannel` 的 target resolver（不创建新 run_id）。
+   - `target=sub` 创建或解析 LifecycleRun-scoped runtime Channel，参与者包含 parent/child AgentRun refs。
+   - Gate 继续拥有 wait/result state；Channel 只规划消息、reply address 和 delivery materialization。
 
-6. **Multi-Agent LifecycleRun / Project / Story Channel**
-   - 验证 internal broadcast、role routing、shared channel context 和 multi-agent fan-out。（此前称 "AgentTeam Channel"；已决策 AgentTeam 不是独立实体，只是一个 `LifecycleRun` 下多 Agent 协作的说法。）
-
-7. **External IM Adapter**
-   - 引入 external binding、identity mapping、provider idempotency、publish outbox、approval/rate limit。
+7. **Old Path Cleanup**
+   - 清理 Companion / Terminal / system wake 中绕过 ChannelService 的 ad hoc delivery 路径。
+   - 清理把系统/子 Agent 通知伪装成普通 human input 的路径。
+   - 保持 06-28 Mailbox source identity 收束成果，避免 ChannelService 变成第二个 mailbox。
 
 ## Research Anchors
 
+- `.trellis/tasks/07-07-channel-communication-capability-model/research/channel-service-first-principles-realignment.md`
 - `.trellis/tasks/07-07-channel-communication-capability-model/research/channel-discussion-journal.md`
-- `.trellis/tasks/07-07-channel-communication-capability-model/research/v1-decision-evidence-and-open-items.md`（注意：其中 D3/D5 的表设计建议已被 design.md "Resolved" 最终版本覆盖，实现时以 design.md 为准）
+- `.trellis/tasks/07-07-channel-communication-capability-model/research/v1-decision-evidence-and-open-items.md`（其中 lifecycle-only 最终决策已被最新 realignment 推翻；代码证据仍可参考）
 - `.trellis/spec/backend/capability/architecture.md`
 - `.trellis/spec/backend/capability/capability-dimension-pipeline.md`
-- `.trellis/spec/backend/capability/tool-capability-pipeline.md`
 - `.trellis/spec/backend/session/agentrun-mailbox.md`
 - `.trellis/spec/cross-layer/frontend-backend-contracts.md`
 - `.trellis/spec/cross-layer/shared-library-contract.md`
 - `.trellis/tasks/06-28-agent-custom-channel-draft/design.md`
 - `.trellis/tasks/06-28-integration-channel-mailbox-convergence/design.md`
 
+## Decisions To Preserve
+
+- Channel 是一等领域与 `ChannelService` 主干；Lifecycle 只是 runtime-scoped channel 的一种 owner/scope。
+- Project 公共 Channel / 企业 IM 接入是明确需求，应从架构起点纳入，而不是后续补丁。
+- Channel participants、binding、broadcast policy、message/delivery planning 是 Channel 事实。
+- `CapabilityState.channel` 是 AgentFrame 可见操作投影，不是 membership 或 policy 事实源。
+- `ChannelAddress` 从 `MailboxSourceIdentity` 抽象出来的方向保留，但它只负责 source/delivery attribution。
+- Mailbox 只负责 AgentRun durable consumption；LifecycleGate 只负责 wait/result authority。
+
 ## Not Ready For Implementation Until
 
-全部已决策（2026-07-07，经五轮对齐，其中持久化模型三次纠正）：
+- [ ] Channel 持久化方案明确：独立 `channels`/`channel_participants`/`channel_bindings` 表、Project asset，或混合方案。
+- [ ] Project Channel assignment 与 Agent capability projection 的输入关系明确。
+- [ ] 外部 IM 的 first slice 明确：只做 schema/service skeleton，还是包含某个 provider 的 bounded adapter。
+- [ ] `ChannelAddress` 迁移影响面重新核对，尤其是 frontend 是否依赖 `display_label_key` 字符串前缀。
+- [ ] 与 Extension Protocol Channel 的命名边界在后续 spec update 中写清；本任务只记录方向，不顺手改 extension runtime。
 
-- [x] MVP 切片范围：Companion / SubAgent lifecycle-scoped temporary channel，parent/child 共享同一个 `LifecycleRun`（不创建新 run_id）。
-- [x] Channel 持久化形态：`LifecycleRun.channels: Vec<LifecycleChannel>`，作为结构化字段随 `ALTER TABLE lifecycle_runs ADD COLUMN` 挂在既有 `lifecycle_runs` 表上（对齐 `orchestrations`/`execution_log` 先例），不新建 `channels`/`lifecycle_channels`/`channel_participants` 表。参与关系由各参与方 `CapabilityState.channel.visible_channels` 的引用表达。
-- [x] `ChannelOwner` 模型：`AgentRun{run_id,agent_id}` 与 `AgentTeam{team_id}` 合并为 `LifecycleRun{run_id}`。
-- [x] `ChannelAddress` 与 `MailboxSourceIdentity` 的关系：直接重定位为 `agentdash-domain::channel::ChannelAddress`，全部调用点迁移，不留别名/re-export。
-- [~] 与 extension protocol channel 的命名边界：方向已决策（新 Channel 保留命名，Extension Protocol Channel 是重命名/收束候选），已写入本任务 `design.md`；写入全局 `.trellis/spec/` 是后续实现任务 Phase 3.3（Spec Update）的工作，不在预评估阶段做。
-
-本预评估任务的阻塞性决策已经全部清空。下一步是另开一个可实施的 MVP 子任务，把这些决策转成真正的 `prd.md`/`design.md`/`implement.md` 执行计划（需要用户对是否创建新任务给出许可，规划仍先于实现）。
+当前文档修订后，阻塞性问题不是"是否要 ChannelService"，而是下一步可执行任务如何切分持久化与 Project/IM 首个落地范围。

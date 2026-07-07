@@ -1,5 +1,7 @@
 # Channel v1 决策证据汇总与剩余三项评估方法
 
+> **再次过期提示（2026-07-07 后续 realignment）**：本文中把 `LifecycleRun.channels: Vec<LifecycleChannel>` 标为最终决策的说明已经被推翻。最新结论见 `research/channel-service-first-principles-realignment.md` 与 `design.md`：Channel 是一等领域与 `ChannelService` 主干，`LifecycleRun` 只是 runtime-scoped channel 的一种 owner/scope；participants、bindings、broadcast policy、message/delivery planning 属于 Channel 事实，`CapabilityState.channel` 只作为 AgentFrame 可见操作投影。本文的代码证据和 D3/D5 对"通用 Channel 命名 / 独立 participants"的早期论证仍有参考价值，但实现时不得沿用 lifecycle-only 最终决策。
+
 > **过期提示（2026-07-07 五轮后追加）**：Part B 里 D3（LifecycleChannel 命名）和 D5（持久化最小 schema）给出的"新建 `channels`/`channel_participants` 表"建议已被推翻两次，最终决策见 `design.md` "Resolved" 一节——Channel 不新建任何表，而是作为 `LifecycleRun.channels: Vec<LifecycleChannel>` 结构化字段挂在既有 `lifecycle_runs` 表上（对齐 `orchestrations`/`execution_log` 先例），且 Companion `target=sub` 的 child 复用 parent 的 `run_id`（不是独立 run）。D4（ChannelAddress 关系）的"整体重定位"结论仍然有效，但补充为"不保留别名/re-export，直接迁移全部调用点"。Part A 的证据本身（文件:行号）仍然准确，只是 Part B 的结论已被覆盖；实现时以 `design.md` 为准，本文档保留作为过程记录。
 
 - 记录时间：2026-07-07（二轮对齐之后的补充研究）

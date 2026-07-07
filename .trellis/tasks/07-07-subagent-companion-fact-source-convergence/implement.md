@@ -39,7 +39,7 @@
    - Ensure companion result wake stores structured payload/source/ref as authority.
    - Adjust conversation/feed projection so companion/system wake does not appear as human user input.
    - Keep model continuation concise and system-origin when scheduler injects it.
-   - Route Codex-native `<subagent_notification>` payloads into system/subagent-origin projection or wait result surfaces instead of ordinary human transcript messages.
+   - Route AgentDash `<subagent_notification>` payloads into system/subagent-origin projection or wait result surfaces instead of ordinary human transcript messages.
 
 8. Add focused verification
    - Backend tests for terminal fallback diagnostic, duplicate wake idempotency, normal-result race.
@@ -167,9 +167,9 @@ This slice can proceed in parallel with Slice B as long as shared Backbone/contr
 
 Can start in parallel as a focused research/implementation slice, then integrate with Slice B/C when the marker and mailbox source contracts are stable.
 
-1. Locate Codex-native subagent notification ingress
+1. Locate AgentDash subagent notification ingress
    - Find where `<subagent_notification>` or equivalent subagent completion/failure payload enters the main conversation.
-   - Identify whether it is added by Codex app surface, mailbox wake, companion delivery, or a wait/subagent notification bridge.
+   - Identify whether it is added by host/tooling surface, mailbox wake, companion delivery, or a wait/subagent notification bridge.
 
 2. Reclassify source before model-visible transcript assembly
    - Human composer input remains the only ordinary user input.
@@ -252,7 +252,7 @@ implement-gate-delivery-marker:
   add thin gate result delivery marker and waiter/mailbox mutual exclusion.
 
 research-or-implement-system-subagent-notification:
-  prevent Codex-native subagent notification from entering human transcript.
+  prevent AgentDash subagent/system notification from entering human transcript.
 
 implement-child-evidence-locator:
   add researched child evidence locator contract/result refs.

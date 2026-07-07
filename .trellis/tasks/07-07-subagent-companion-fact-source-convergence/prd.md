@@ -24,7 +24,7 @@
 - mailbox wake 被渲染为 `build_parent_result_mailbox_input_text`，见 `crates/agentdash-application/src/gate_wait_policy.rs:211` 和 `crates/agentdash-application/src/companion/gate_control.rs:1136`。
 - companion mailbox delivery 以 `origin: MailboxMessageOrigin::Companion` 写入 mailbox，但内容是 `text_user_input_blocks(input.input_text)`，见 `crates/agentdash-application/src/companion/tools.rs:519`、`crates/agentdash-application/src/companion/tools.rs:523` 和 `crates/agentdash-application/src/companion/tools.rs:527`。
 - wait 工具从同一个 resolved gate 投影 `WaitActivityItem`，并在 tool details 中返回 `items`，见 `crates/agentdash-application/src/wait_activity/sources/lifecycle_gate.rs:10` 和 `crates/agentdash-application/src/wait_activity/tool.rs:52`。
-- 当前 Codex 原生 subagent completion notification 可以以 `<subagent_notification>...</subagent_notification>` 的用户消息形态进入主会话 transcript。这与 companion mailbox wake 的问题同构：系统/子 Agent 通知被主 Agent 当成 human input，而不是 system/subagent-origin delivery projection。
+- 当前宿主/工具层可以把 AgentDash 子 Agent completion notification 以 `<subagent_notification>...</subagent_notification>` 的用户消息形态暴露到主会话 transcript。这与 companion mailbox wake 的问题同构：系统/子 Agent 通知被主 Agent 当成 human input，而不是 system/subagent-origin delivery projection。
 
 ## Research Consolidation
 
@@ -77,7 +77,7 @@
 14. 本任务产出的 source identity、delivery envelope、result refs 和 projection discriminant 必须为后续 channel 系统迁移保持干净边界：当前不实现完整 channel 系统，但不能继续依赖自由文本消息承担跨来源消息建模。
 15. durable delivery convergence marker 可以独立于 mailbox 存在，但必须保持薄模型：只表达 `gate_id + result_attempt` 的交付状态、claim/replay 所需字段和目标引用，不复制 mailbox scheduling、payload storage、conversation rendering 或 channel routing 职责。
 16. 错误路径清理必须纳入验收：旧的自由文本 companion result wake、重复 mailbox/companion/wait 同义投递、child-local lifecycle URI 误暴露、mailbox 承载非 mailbox 状态、以及仍把 provider/runtime fatal 退化成 generic missing-result summary 的路径都必须移除或收束到新事实模型。
-17. Codex 原生 subagent / companion / system notification 必须进入 system/subagent-origin 投影或工具等待结果，不得以 `<subagent_notification>` 等 human user message 形态注入主会话 transcript。系统投递可以被 UI 展示、被主 Agent 观察、被 future channel 系统迁移，但不能伪装成用户输入。
+17. AgentDash 的 subagent / companion / system notification 必须进入 system/subagent-origin 投影或工具等待结果，不得以 `<subagent_notification>` 等 human user message 形态注入主会话 transcript。系统投递可以被 UI 展示、被主 Agent 观察、被 future channel 系统迁移，但不能伪装成用户输入。
 
 ## Acceptance Criteria
 
@@ -98,7 +98,7 @@
 - [ ] provider/runtime fatal 不再落成单一 generic summary；gate result、wait result 和 mailbox projection 都能引用同一 bounded diagnostic。
 - [ ] result refs 不再输出 parent 视图下不可解析的 child-local lifecycle URI；child evidence 只通过经调研确认的 locator 合同暴露。
 - [ ] 相关 Rust unit/integration tests、frontend store/model tests、TypeScript generated contract check 按实际改动范围通过。
-- [ ] Codex 原生 subagent completion/failure notification 不再以用户消息出现在主会话；它必须被归类为 system/subagent-origin event、wait result 或 bounded delivery projection。
+- [ ] AgentDash subagent completion/failure notification 不再以用户消息出现在主会话；它必须被归类为 system/subagent-origin event、wait result 或 bounded delivery projection。
 
 ## Out of Scope
 

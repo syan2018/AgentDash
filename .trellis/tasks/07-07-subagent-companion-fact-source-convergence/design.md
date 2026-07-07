@@ -143,9 +143,9 @@ Extend terminal-derived gate result payload with bounded diagnostic fields:
     "kind": "provider",
     "code": "invalid_request",
     "http_status": 400,
-    "provider": "Codex API",
-    "model": "gpt-5.3-codex",
-    "message": "The model is not supported when using Codex with a ChatGPT account.",
+    "provider": "llm_provider",
+    "model": "configured-model",
+    "message": "The configured model is not available for this provider/account.",
     "retryable": false
   },
   "result_refs": {
@@ -179,7 +179,7 @@ Agent-facing continuation is a projection of the mailbox envelope, not the mailb
 
 Human composer input remains the only ordinary user input. Companion/system wake can still continue the parent model turn, but its role/source must be visible to Backbone projection and model context assembly so UI and future agents do not confuse it with a human-authored message.
 
-Codex-native subagent notifications follow the same rule. A payload such as:
+AgentDash subagent/system notifications follow the same rule. A payload such as:
 
 ```xml
 <subagent_notification>
@@ -187,7 +187,7 @@ Codex-native subagent notifications follow the same rule. A payload such as:
 </subagent_notification>
 ```
 
-is not user input, even when it appears in the outer Codex conversation surface. AgentDash should classify it as system/subagent-origin delivery metadata or wait result material before it reaches model-visible conversation assembly. If it needs to be shown, the UI should render it as a system/subagent event; if it needs to be consumed by the Agent, the model context should carry a bounded source discriminant, correlation refs and result refs.
+is not user input, even when the host/tooling surface currently presents it alongside user messages. AgentDash should classify it as system/subagent-origin delivery metadata or wait result material before it reaches model-visible conversation assembly. If it needs to be shown, the UI should render it as a system/subagent event; if it needs to be consumed by the Agent, the model context should carry a bounded source discriminant, correlation refs and result refs.
 
 ### Duplicate Source Reduction
 
@@ -295,7 +295,7 @@ The implementation must remove or converge known wrong paths instead of layering
 | mailbox row/status carrying gate-result delivery state | Move `delivered_to_waiter` style state to the thin marker; mailbox only tracks continuation envelope delivery. |
 | child-local `lifecycle://session/...` exposed as parent-visible result ref | Replace with child evidence locator contract after research. |
 | frontend list refresh depending on a currently open workspace stream | Add AgentRun list projection invalidation consumption for the list itself. |
-| Codex-native `<subagent_notification>` printed as human/user message | Route it into system/subagent-origin event projection or wait result; never append it as ordinary human composer input. |
+| AgentDash `<subagent_notification>` printed as human/user message | Route it into system/subagent-origin event projection or wait result; never append it as ordinary human composer input. |
 | AgentRun list notification implemented as one-off list-specific plumbing | Collapse toward a generic project projection notification port; `agent_run_list` is a projection discriminant, not a bespoke transport. |
 
 No implementation should keep the old path as a fallback unless it is only an internal migration step removed before this task completes. The project is pre-release, so schema/DTO cleanup should prefer the correct model over compatibility.

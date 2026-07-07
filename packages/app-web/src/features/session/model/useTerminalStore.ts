@@ -7,8 +7,8 @@ function isTerminalClosed(state: TerminalProcessState): boolean {
   return state === "exited" || state === "killed" || state === "lost";
 }
 
-function projectionKey(eventSeq: number): string {
-  return `${eventSeq}`;
+function projectionKey(streamIdentity: string, eventSeq: number): string {
+  return `${streamIdentity}:${eventSeq}`;
 }
 
 function retainOutput(data: string): { output: string; baseOffset: number } {
@@ -43,11 +43,13 @@ interface TerminalStoreState {
   appendOutput: (terminalId: string, data: string) => void;
   replaceOutput: (terminalId: string, data: string) => void;
   projectOutputEvent: (
+    streamIdentity: string,
     eventSeq: number,
     terminalId: string,
     data: string,
   ) => boolean;
   projectStateEvent: (
+    streamIdentity: string,
     eventSeq: number,
     terminalId: string,
     state: TerminalProcessState,
@@ -146,8 +148,8 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
       };
     }),
 
-  projectOutputEvent: (eventSeq, terminalId, data) => {
-    const key = projectionKey(eventSeq);
+  projectOutputEvent: (streamIdentity, eventSeq, terminalId, data) => {
+    const key = projectionKey(streamIdentity, eventSeq);
     if (get().projectedEventKeys.has(key)) return false;
     set((state) => ({
       projectedEventKeys: new Set(state.projectedEventKeys).add(key),
@@ -156,8 +158,8 @@ export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
     return true;
   },
 
-  projectStateEvent: (eventSeq, terminalId, newState, exitCode) => {
-    const key = projectionKey(eventSeq);
+  projectStateEvent: (streamIdentity, eventSeq, terminalId, newState, exitCode) => {
+    const key = projectionKey(streamIdentity, eventSeq);
     if (get().projectedEventKeys.has(key)) return false;
     set((state) => ({
       projectedEventKeys: new Set(state.projectedEventKeys).add(key),

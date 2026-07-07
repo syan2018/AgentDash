@@ -59,14 +59,14 @@ Contract:
 - completion policy validation 由 orchestration runtime reducer 拥有。
 - 本机执行能力的权限、预算和系统桥接开关由 AgentRun capability / permission surface 表达。
 
-## Scenario: LifecycleGate Wait Obligation Terminal Convergence
+## Scenario: LifecycleGate Gate Wait Policy Terminal Convergence
 
 ### 1. Scope / Trigger
 
-- Trigger: a durable `LifecycleGate` waits for a producer result, and the producer reaches terminal before the expected result writer completes.
-- Scope: `agentdash-domain::workflow::wait_obligation` declarations, `LifecycleGateRepository::list_by_wait_producer`, `agentdash-application-workflow::gate::WaitObligationConvergenceService`, companion child wait gates, parent mailbox wake intents, and boot/replay callers that feed producer terminal facts.
+- Trigger: a durable `LifecycleGate` carries a gate wait policy for a producer result, and the producer reaches terminal before the expected result writer completes.
+- Scope: `agentdash-domain::workflow::gate_wait_policy` payloads, `LifecycleGateRepository::list_by_wait_producer`, `agentdash-application-workflow::gate::GateProducerTerminalConvergenceService`, companion child wait gates, parent mailbox wake intents, and boot/replay callers that feed producer terminal facts.
 
-This scenario keeps wait completion authority with the writer that owns the durable wait fact. Runtime callbacks and boot reconcile provide producer terminal facts; they do not inspect gate kinds or runtime session anchors as business addresses.
+This scenario keeps wait completion authority with `LifecycleGate`, because the gate is the durable owner of review/resume/wait state. Runtime callbacks and boot reconcile provide producer terminal facts; they do not inspect gate kinds or runtime session anchors as business addresses.
 
 ### 2. Signatures
 
@@ -81,18 +81,24 @@ pub enum WaitProducerRef {
     },
 }
 
-pub struct WaitObligationDeclaration {
-    pub wait_source: WaitSourceDeclaration,
-    pub expected_result: WaitExpectedResultDeclaration,
-    pub on_producer_terminal_without_result: WaitProducerTerminalPolicy,
-    pub wake: WaitWakeDeclaration,
+pub struct GateWaitPolicyEnvelope {
+    pub schema_version: u32,
+    pub wait_policy: GateWaitPolicy,
+    pub display: Map<String, Value>,
+}
+
+pub struct GateWaitPolicy {
+    pub source: WaitProducerRef,
+    pub expected_result: WaitExpectedResult,
+    pub terminal_policy: WaitTerminalPolicy,
+    pub wake_target: WaitWakeTarget,
 }
 ```
 
 Repository and convergence surface:
 
 ```rust
-LifecycleGateRepository::list_open_wait_obligations(
+LifecycleGateRepository::list_open_wait_policies(
     limit: usize,
 ) -> Result<Vec<LifecycleGate>, DomainError>
 
@@ -100,15 +106,15 @@ LifecycleGateRepository::list_by_wait_producer(
     producer: &WaitProducerRef,
 ) -> Result<Vec<LifecycleGate>, DomainError>
 
-WaitObligationConvergenceService::observe_producer_terminal(
-    event: WaitProducerTerminalEvent,
-) -> Result<WaitObligationConvergenceResult, WorkflowApplicationError>
+GateProducerTerminalConvergenceService::observe_producer_terminal(
+    event: GateProducerTerminalEvent,
+) -> Result<GateProducerTerminalConvergenceResult, WorkflowApplicationError>
 
-pub trait WaitObligationTerminalConvergencePort: Send + Sync {
-    async fn observe_wait_producer_terminal(
+pub trait GateProducerTerminalConvergencePort: Send + Sync {
+    async fn observe_gate_producer_terminal(
         &self,
-        event: WaitProducerTerminalEvent,
-    ) -> Result<WaitObligationConvergenceResult, ApplicationError>;
+        event: GateProducerTerminalEvent,
+    ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError>;
 }
 
 pub struct LifecycleGateWaitingProjection {
@@ -118,31 +124,33 @@ pub struct LifecycleGateWaitingProjection {
 }
 ```
 
-Companion child wait gates currently persist the declaration in `LifecycleGate.payload_json`:
+Companion child wait gates persist the wait policy envelope in `LifecycleGate.payload_json` when the gate is opened:
 
 ```json
 {
-  "wait_source": {
-    "kind": "agent_run_delivery",
-    "run_id": "...",
-    "agent_id": "...",
-    "frame_id": "...",
-    "correlation_ref": "dispatch-..."
-  },
-  "expected_result": {
-    "kind": "companion_result",
-    "correlation_ref": "dispatch-..."
-  },
-  "on_producer_terminal_without_result": {
-    "failed": "failed",
-    "interrupted": "cancelled",
-    "completed": "protocol_failed"
-  },
-  "wake": {
-    "namespace": "companion",
-    "target_run_id": "...",
-    "target_agent_id": "...",
-    "client_command_id": "companion-result:{gate_id}"
+  "schema_version": 1,
+  "wait_policy": {
+    "source": {
+      "kind": "agent_run_delivery",
+      "run_id": "...",
+      "agent_id": "...",
+      "frame_id": "..."
+    },
+    "expected_result": {
+      "kind": "companion_result",
+      "correlation_ref": "dispatch-..."
+    },
+    "terminal_policy": {
+      "failed": { "status": "failed", "failure_kind": "runtime_terminal_failed" },
+      "interrupted": { "status": "cancelled", "failure_kind": "runtime_terminal_cancelled" },
+      "completed": { "status": "failed", "failure_kind": "missing_companion_respond" }
+    },
+    "wake_target": {
+      "namespace": "companion",
+      "target_run_id": "...",
+      "target_agent_id": "...",
+      "client_command_id": "companion-result:{gate_id}"
+    }
   }
 }
 ```
@@ -150,15 +158,15 @@ Companion child wait gates currently persist the declaration in `LifecycleGate.p
 ### 3. Contracts
 
 - `WaitProducerRef` is the business location of the producer. Runtime session ids remain trace refs and diagnostics; AgentRun delivery producers use `run_id + agent_id + frame_id`.
-- `list_open_wait_obligations` is the bounded boot/retry scan for gates that declare `wait_source`、`expected_result` and `on_producer_terminal_without_result`.
+- `list_open_wait_policies` is the bounded boot/retry scan for gates that carry `wait_policy.source`、`wait_policy.expected_result` and `wait_policy.terminal_policy`.
 - `list_by_wait_producer` is a precise lookup over declared wait source fields. It is not a gate-kind scan, because the same gate kind can later represent different producer/result contracts.
 - `observe_producer_terminal` resolves only gates whose declaration matches the producer and whose `expected_result.kind` is supported by the convergence implementation.
-- If the gate is open, convergence writes a result payload with `source="producer_terminal"`, terminal diagnostics, status mapped by `on_producer_terminal_without_result`, and preserved wait declaration metadata.
+- If the gate is open, convergence writes a result payload with `source="producer_terminal"`, terminal diagnostics, status mapped by `terminal_policy`, and preserved gate wait policy metadata.
 - If the gate is already resolved, convergence preserves the existing payload and returns delivery intents to ensure the wake is observable.
 - Normal result writers and producer terminal convergence are first-writer-wins. A race that discovers the gate was resolved after an open read must reload the gate and switch to delivery ensure rather than overwrite.
-- Parent wake delivery uses the declaration's stable command id, for companion child results `companion-result:{gate_id}`, so replay and terminal callback recovery are idempotent.
-- Production callers enter terminal wait convergence through `agentdash_application::wait_obligation::WaitObligationTerminalConvergencePort`. The application service owns workflow convergence plus delivery intent execution; companion gate control owns normal companion result writers and delivery adapters.
-- Runtime terminal callbacks and boot reconcile inject the application wait-obligation service. They must not construct companion gate control to resolve producer terminal facts.
+- Parent wake delivery uses the policy's stable command id, for companion child results `companion-result:{gate_id}`, so replay and terminal callback recovery are idempotent.
+- Production callers enter terminal convergence through `agentdash_application::gate_wait_policy::GateProducerTerminalConvergencePort`. The application service owns workflow convergence plus delivery intent execution; companion gate control owns normal companion result writers and delivery adapters.
+- Runtime terminal callbacks and boot reconcile inject the application gate wait policy service. They must not construct companion gate control to resolve producer terminal facts.
 - `LifecycleGate::waiting_projection()` owns gate waiting item `kind`、`source_label` and `preview` derivation. Wait activity and AgentRun workspace waiting projection both consume this helper so gate kind mapping and preview fallback cannot drift between surfaces.
 - `LifecycleGateRepository::find_by_agent_and_correlation` is reserved for precise normal companion result writer lookup. Terminal callback and boot reconcile use wait producer declarations instead.
 
@@ -166,8 +174,8 @@ Companion child wait gates currently persist the declaration in `LifecycleGate.p
 
 | 条件 | 结果 |
 | --- | --- |
-| wait declaration missing or unparsable | gate is skipped by producer convergence |
-| producer ref has no matching gates | convergence returns no matching obligation and logs diagnostic context |
+| gate wait policy missing or unparsable | gate is skipped by producer convergence |
+| producer ref has no matching gates | convergence returns no matching gate wait policy and logs diagnostic context |
 | matching gate is open | resolver completes gate with terminal-derived result payload |
 | matching gate resolves concurrently before terminal write | convergence reloads and ensures delivery without payload overwrite |
 | matching gate is already resolved | existing payload is retained and parent wake delivery is ensured |
@@ -182,21 +190,21 @@ Companion child wait gates currently persist the declaration in `LifecycleGate.p
 - Good: SubAgent runtime fails, AgentRun terminal convergence emits `WaitProducerRef::AgentRunDelivery`, matching companion wait gate resolves to `failed`, and parent mailbox receives one `companion-result:{gate_id}` wake.
 - Good: Child calls `companion_respond` before the terminal callback arrives; terminal convergence reloads the resolved gate and only ensures the same parent wake delivery.
 - Good: A new LifecycleGate source appears in both wait tool and workspace waiting items through the shared `LifecycleGateWaitingProjection`.
-- Base: Producer terminal event has no wait declaration because it is an ordinary AgentRun; convergence returns no matching obligation without mutating gates.
+- Base: Producer terminal event has no gate wait policy because it is an ordinary AgentRun; convergence returns no matching gate wait policy without mutating gates.
 - Bad: A caller derives parent/child ownership from `runtime_session_id` outside the AgentRun seam, because runtime session ids are connector trace evidence rather than wait producer identity.
-- Bad: API terminal callback or boot reconcile calls companion gate control directly to resolve producer terminal facts, because that makes companion request handling the owner of a generic wait obligation contract.
+- Bad: API terminal callback or boot reconcile calls companion gate control directly to resolve producer terminal facts, because that makes companion request handling the owner of a generic gate wait policy contract.
 
 ### 6. Tests Required
 
-- Unit: `WaitObligationDeclaration` serializes into gate payload and preserves existing companion metadata.
+- Unit: `GateWaitPolicyEnvelope` serializes into gate payload and preserves existing companion metadata.
 - Unit: producer terminal resolves open companion wait gate and maps failed/interrupted/completed terminal states.
 - Unit: producer terminal replay against a resolved gate preserves payload and returns delivery ensure intents.
 - Race: normal result writer and producer terminal convergence each reload resolved gates and preserve first-writer-wins semantics.
 - Repository: Postgres `list_by_wait_producer` matches `payload_json.wait_source.kind/run_id/agent_id/frame_id` and does not depend on `gate_kind`.
 - Integration: AgentRun terminal callback feeds `WaitProducerTerminalEvent` after `AgentRunDeliveryBinding` terminal convergence.
-- Reconcile: boot recovery scans declared open wait obligations and feeds producer terminal facts through the same convergence surface.
+- Reconcile: boot recovery scans declared open gate wait policies and feeds producer terminal facts through the same convergence surface.
 - Unit: wait activity and workspace waiting projection assert the same `LifecycleGateWaitingProjection.kind` and `preview` for the same gate.
-- Unit: production terminal callback and boot reconcile are wired to `WaitObligationTerminalConvergencePort`; companion gate terminal convergence entry points are test-only or absent from production callers.
+- Unit: production terminal callback and boot reconcile are wired to `GateProducerTerminalConvergencePort`; companion gate terminal convergence entry points are test-only or absent from production callers.
 
 ### 7. Wrong vs Correct
 
@@ -212,7 +220,7 @@ RuntimeSession terminal -> scan open companion_wait_follow_up gates -> resolve g
 RuntimeSession terminal
   -> AgentRunDeliveryBinding terminal
   -> WaitProducerRef::AgentRunDelivery
-  -> LifecycleGate wait obligation convergence
+  -> LifecycleGate gate wait policy convergence
   -> parent mailbox wake
 ```
 

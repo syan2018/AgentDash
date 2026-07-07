@@ -10,9 +10,9 @@ use agentdash_domain::agent_run_mailbox::{
     MailboxDrainMode, MailboxMessageStatus, NewAgentRunMailboxMessage,
 };
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, RuntimeSessionExecutionAnchorRepository, WaitObligationDeclaration,
-    WaitProducerRef,
+    AgentFrame, AgentFrameRepository, GateWaitPolicyEnvelope, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository,
+    RuntimeSessionExecutionAnchorRepository, WaitProducerRef,
 };
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::connector::RuntimeToolProvider;
@@ -477,7 +477,7 @@ impl LifecycleGateRepository for FixtureGateRepo {
             .collect())
     }
 
-    async fn list_open_wait_obligations(
+    async fn list_open_gate_wait_policies(
         &self,
         limit: usize,
     ) -> Result<Vec<LifecycleGate>, DomainError> {
@@ -491,7 +491,7 @@ impl LifecycleGateRepository for FixtureGateRepo {
                     && gate
                         .payload_json
                         .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
+                        .and_then(GateWaitPolicyEnvelope::from_payload_opt)
                         .is_some()
             })
             .take(limit)
@@ -511,8 +511,8 @@ impl LifecycleGateRepository for FixtureGateRepo {
             .filter(|gate| {
                 gate.payload_json
                     .as_ref()
-                    .and_then(WaitObligationDeclaration::from_payload)
-                    .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                    .and_then(GateWaitPolicyEnvelope::from_payload_opt)
+                    .is_some_and(|declaration| declaration.wait_policy.source == *producer)
             })
             .cloned()
             .collect())

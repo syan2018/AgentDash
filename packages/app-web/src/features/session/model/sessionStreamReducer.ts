@@ -586,7 +586,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
       return prev;
     }
 
-    if (platform.kind === "terminal_output" || platform.kind === "terminal_state_changed") {
+    if (platform.kind === "terminal_output" || platform.kind === "pty_terminal_state_changed") {
       return prev;
     }
 

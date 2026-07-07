@@ -1,6 +1,5 @@
 mod admission_delegate;
 mod assignment_context_frame;
-mod auto_resume_context_frame;
 pub mod bootstrap;
 mod branching;
 mod compaction_checkpoint;
@@ -17,7 +16,6 @@ pub(crate) mod runtime_transition_service;
 pub mod control;
 pub mod core;
 pub(crate) mod dimension;
-pub(crate) mod effects_service;
 mod environment_context_frame;
 pub mod eventing;
 mod guidelines_context_frame;
@@ -49,7 +47,7 @@ mod runtime_registry;
 pub(crate) mod runtime_services;
 pub mod stall_detector;
 // terminal_cache removed: replaced by AgentRunTerminalRegistry in agentdash-application-agentrun
-pub(crate) mod terminal_effects;
+pub(crate) mod terminal_boundary;
 pub(crate) mod title_generator;
 pub(crate) mod title_service;
 pub(crate) mod tool_assembly;
@@ -73,7 +71,6 @@ pub use context_usage_projection::{
 };
 pub use control::{SessionControlService, SessionTurnSteerCommand};
 pub use core::SessionCoreService;
-pub use effects_service::SessionEffectsService;
 pub use eventing::SessionEventingService;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
@@ -83,15 +80,15 @@ pub use launch::{LaunchCommandOutcome, SessionLaunchService};
 #[cfg(test)]
 pub use memory_persistence::FixtureRuntimeTraceStore;
 pub use persistence::{
-    PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
-    SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
-    SessionLineageStore, SessionMetaStore, SessionProjectionStore, SessionRuntimeCommandStore,
-    SessionStoreSet, SessionTerminalEffectStore,
+    AgentRunControlEffectStore, PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog,
+    SessionEventPage, SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
+    SessionLineageStatus, SessionLineageStore, SessionMetaStore, SessionProjectionStore,
+    SessionRuntimeCommandStore, SessionStoreSet,
 };
 pub use post_turn_handler::{
-    DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
-    EmptyTerminalHookEffectHandlerRegistry, PostTurnHandler, SessionTerminalCallback,
-    SessionTerminalNotification, TerminalHookEffectBinding, TerminalHookEffectHandlerRegistry,
+    DynPostTurnHandler, DynTerminalHookEffectHandlerRegistry,
+    EmptyTerminalHookEffectHandlerRegistry, PostTurnHandler, TerminalHookEffectBinding,
+    TerminalHookEffectHandlerRegistry,
 };
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_builder::SessionRuntimeBuilder;
@@ -102,9 +99,7 @@ pub use runtime_commands::{
 pub use runtime_control::SessionRuntimeService;
 pub use runtime_services::SessionRuntimeServices;
 pub use runtime_transition_service::SessionRuntimeTransitionService;
-pub use terminal_effects::{
-    NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
-};
+pub use terminal_boundary::RuntimeTerminalBoundaryService;
 pub use title_service::SessionTitleService;
 pub use tool_result_cache::{
     SESSION_TOOL_RESULT_CACHE_DEFAULT_TTL, SessionToolResultCache, SessionToolResultCacheMetadata,

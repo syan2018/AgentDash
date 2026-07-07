@@ -5,6 +5,7 @@ mod agent_run_lineage;
 mod command_receipt;
 pub mod dispatch;
 mod entity;
+mod gate_wait_policy;
 mod lifecycle_agent;
 mod lifecycle_gate;
 mod lifecycle_subject_association;
@@ -12,7 +13,6 @@ mod repository;
 mod runtime_session_anchor;
 mod validation;
 mod value_objects;
-mod wait_obligation;
 
 pub use agent_frame::{AgentFrame, AgentFrameSurfaceDocument};
 pub use agent_lineage::AgentLineage;
@@ -33,6 +33,12 @@ pub use dispatch::{
 pub use entity::{
     AgentProcedure, LifecycleRun, LifecycleRunTopology, WorkflowGraph, WorkflowGraphDraft,
     build_effective_contract, build_effective_contract_from_contract,
+};
+pub use gate_wait_policy::{
+    GATE_WAIT_POLICY_SCHEMA_VERSION, GateWaitPolicy, GateWaitPolicyEnvelope,
+    GateWaitPolicyJsonPaths, GateWaitPolicyPathNames, GateWaitPolicyPayloadError,
+    GateWaitPolicyTemplate, WaitExpectedResult, WaitProducerRef, WaitTerminalOutcome,
+    WaitTerminalPolicy, WaitWakeTarget,
 };
 pub use lifecycle_agent::{AgentSource, LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::{LifecycleGate, LifecycleGateWaitingProjection};
@@ -72,8 +78,4 @@ pub use value_objects::{
     WorkflowScriptHumanGateCapability, WorkflowScriptProvenance, WorkflowScriptProvenanceSource,
     WorkflowSessionTerminalState, mcp_capability_key, mcp_tool_capability_path,
     reduce_tool_capability_directives, workflow_script_source_digest,
-};
-pub use wait_obligation::{
-    WaitExpectedResultDeclaration, WaitObligationDeclaration, WaitProducerRef,
-    WaitProducerTerminalPolicy, WaitSourceDeclaration, WaitWakeDeclaration,
 };

@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, ControlPlaneProjection, ControlPlaneProjectionChangeReason,
+    ControlPlaneProjectionChanged, ControlPlaneWorkspaceModulePresentation, PlatformEvent,
+    SourceInfo, TraceInfo,
 };
 use agentdash_application_ports::agent_frame_materialization::{
     CanvasVisibilityReason, RuntimeSurfaceUpdateRequest,
@@ -311,6 +313,7 @@ pub(crate) struct WorkspaceModuleInvokeCommand<'a> {
 pub(crate) struct WorkspaceModulePresentCommand<'a> {
     pub installation_repo: &'a Arc<dyn ProjectExtensionInstallationRepository>,
     pub canvas_repo: &'a Arc<dyn CanvasRepository>,
+    pub execution_anchor_repo: &'a Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub project_id: Uuid,
     pub turn_id: &'a str,
     pub visibility_source: &'a WorkspaceModuleVisibilitySource,
@@ -964,12 +967,20 @@ async fn present(
         ))
     })?;
 
-    let notification = build_present_notification(
+    let notification = match build_present_projection_notification(
+        command.execution_anchor_repo.as_ref(),
         command.runtime_context.delivery_runtime_session_id(),
         command.turn_id,
-        "workspace_module_presented",
-        value,
-    );
+        &presentation,
+        value.clone(),
+    )
+    .await
+    {
+        Ok(notification) => notification,
+        Err(diagnostic) => {
+            return Ok(WorkspaceModuleOperationOutcome::Diagnostic(diagnostic));
+        }
+    };
     command
         .runtime_context
         .inject_agent_run_notification(notification)
@@ -1580,6 +1591,50 @@ fn build_present_notification(
     })
 }
 
+async fn build_present_projection_notification(
+    execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+    delivery_runtime_session_id: &str,
+    turn_id: &str,
+    presentation: &WorkspaceModulePresentation,
+    payload: serde_json::Value,
+) -> Result<BackboneEnvelope, WorkspaceModuleCommandDiagnostic> {
+    let anchor = current_anchor(execution_anchor_repo, delivery_runtime_session_id).await?;
+    let source = SourceInfo {
+        connector_id: "agentdash-workspace-module".to_string(),
+        connector_type: "runtime_tool".to_string(),
+        executor_id: None,
+    };
+    Ok(BackboneEnvelope::new(
+        BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
+            ControlPlaneProjectionChanged {
+                projection: ControlPlaneProjection::ResourceSurface,
+                reason: ControlPlaneProjectionChangeReason::WorkspaceModulePresented,
+                run_id: anchor.run_id.to_string(),
+                agent_id: anchor.agent_id.to_string(),
+                frame_id: Some(anchor.launch_frame_id.to_string()),
+                gate_id: None,
+                mailbox_message_id: None,
+                delivery_runtime_session_id: Some(delivery_runtime_session_id.to_string()),
+                workspace_module_presentation: Some(ControlPlaneWorkspaceModulePresentation {
+                    module_id: presentation.module_id.clone(),
+                    view_key: presentation.view_key.clone(),
+                    renderer_kind: presentation.renderer_kind.clone(),
+                    presentation_uri: presentation.presentation_uri.clone(),
+                    title: presentation.title.clone(),
+                    payload: Some(payload),
+                    diagnostics: None,
+                }),
+            },
+        )),
+        delivery_runtime_session_id,
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1821,11 +1876,12 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct EmptyRuntimeSessionExecutionAnchorRepo;
+    struct StaticRuntimeSessionExecutionAnchorRepo {
+        anchor: RuntimeSessionExecutionAnchor,
+    }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for EmptyRuntimeSessionExecutionAnchorRepo {
+    impl RuntimeSessionExecutionAnchorRepository for StaticRuntimeSessionExecutionAnchorRepo {
         async fn create_once(
             &self,
             _anchor: &RuntimeSessionExecutionAnchor,
@@ -1839,30 +1895,41 @@ mod tests {
 
         async fn find_by_session(
             &self,
-            _runtime_session_id: &str,
+            runtime_session_id: &str,
         ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(None)
+            Ok((self.anchor.runtime_session_id == runtime_session_id).then(|| self.anchor.clone()))
         }
 
         async fn list_by_run(
             &self,
-            _run_id: Uuid,
+            run_id: Uuid,
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(Vec::new())
+            Ok((self.anchor.run_id == run_id)
+                .then(|| self.anchor.clone())
+                .into_iter()
+                .collect())
         }
 
         async fn list_by_agent(
             &self,
-            _agent_id: Uuid,
+            agent_id: Uuid,
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(Vec::new())
+            Ok((self.anchor.agent_id == agent_id)
+                .then(|| self.anchor.clone())
+                .into_iter()
+                .collect())
         }
 
         async fn list_by_project_session_ids(
             &self,
-            _runtime_session_ids: &[String],
+            runtime_session_ids: &[String],
         ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(Vec::new())
+            Ok(runtime_session_ids
+                .iter()
+                .any(|runtime_session_id| runtime_session_id == &self.anchor.runtime_session_id)
+                .then(|| self.anchor.clone())
+                .into_iter()
+                .collect())
         }
     }
 
@@ -2010,8 +2077,18 @@ mod tests {
         let canvas_repo: Arc<dyn CanvasRepository> = canvas_repo;
         let canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository> =
             Arc::new(EmptyCanvasRuntimeStateRepo);
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame_id = Uuid::new_v4();
         let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
-            Arc::new(EmptyRuntimeSessionExecutionAnchorRepo);
+            Arc::new(StaticRuntimeSessionExecutionAnchorRepo {
+                anchor: RuntimeSessionExecutionAnchor::new_dispatch(
+                    "session-a",
+                    run_id,
+                    frame_id,
+                    agent_id,
+                ),
+            });
         let current_user =
             ProjectAuthorizationContext::new("user-1".to_string(), Vec::new(), false);
         let visibility_source = WorkspaceModuleVisibilitySource::default()
@@ -2086,6 +2163,15 @@ mod tests {
         .expect("canvas");
         canvas_repo.create(&canvas).await.expect("create canvas");
         let canvas_repo: Arc<dyn CanvasRepository> = canvas_repo;
+        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
+            Arc::new(StaticRuntimeSessionExecutionAnchorRepo {
+                anchor: RuntimeSessionExecutionAnchor::new_dispatch(
+                    "session-a",
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                ),
+            });
         let current_user =
             ProjectAuthorizationContext::new("user-1".to_string(), Vec::new(), false);
         let visibility_source = WorkspaceModuleVisibilitySource::default()
@@ -2109,6 +2195,7 @@ mod tests {
             WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
                 installation_repo: &installation_repo,
                 canvas_repo: &canvas_repo,
+                execution_anchor_repo: &execution_anchor_repo,
                 project_id,
                 turn_id: "turn-a",
                 visibility_source: &visibility_source,
@@ -2155,6 +2242,15 @@ mod tests {
         .expect("canvas");
         canvas_repo.create(&canvas).await.expect("create canvas");
         let canvas_repo: Arc<dyn CanvasRepository> = canvas_repo;
+        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
+            Arc::new(StaticRuntimeSessionExecutionAnchorRepo {
+                anchor: RuntimeSessionExecutionAnchor::new_dispatch(
+                    "session-a",
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                ),
+            });
         let current_user =
             ProjectAuthorizationContext::new("user-1".to_string(), Vec::new(), false);
         let visibility_source = WorkspaceModuleVisibilitySource::default()
@@ -2178,6 +2274,7 @@ mod tests {
             WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
                 installation_repo: &installation_repo,
                 canvas_repo: &canvas_repo,
+                execution_anchor_repo: &execution_anchor_repo,
                 project_id,
                 turn_id: "turn-a",
                 visibility_source: &visibility_source,

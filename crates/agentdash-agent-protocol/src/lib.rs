@@ -9,9 +9,11 @@ pub use backbone::item::{
     ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
 };
 pub use backbone::platform::{
-    HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
-    HookTraceSeverity, HookTraceTrigger, PlatformEvent, ProviderAttemptPhase,
-    ProviderAttemptStatus, SessionRewindReason, SessionRewound,
+    ControlPlaneProjection, ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged,
+    ControlPlaneWorkspaceModulePresentation, HookTraceCompletion, HookTraceData,
+    HookTraceDiagnostic, HookTraceInjection, HookTracePayload, HookTraceSeverity, HookTraceTrigger,
+    PlatformEvent, ProviderAttemptPhase, ProviderAttemptStatus, SessionRewindReason,
+    SessionRewound,
 };
 pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
@@ -39,8 +41,9 @@ mod tests {
     use ts_rs::TS;
 
     use super::{
-        BackboneEnvelope, BackboneEvent, PlatformEvent, ProviderAttemptPhase,
-        ProviderAttemptStatus, SessionRewindReason, SessionRewound,
+        BackboneEnvelope, BackboneEvent, ControlPlaneProjection,
+        ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged, PlatformEvent,
+        ProviderAttemptPhase, ProviderAttemptStatus, SessionRewindReason, SessionRewound,
     };
 
     #[test]
@@ -85,6 +88,39 @@ mod tests {
         assert_eq!(value["payload"]["data"]["delay_ms"], 2_000);
         assert_eq!(value["payload"]["data"]["provider"], "openai");
         assert_eq!(value["payload"]["data"]["model"], "gpt-4.1");
+    }
+
+    #[test]
+    fn control_plane_projection_changed_platform_event_uses_typed_contract() {
+        let event = BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
+            ControlPlaneProjectionChanged {
+                projection: ControlPlaneProjection::Workspace,
+                reason: ControlPlaneProjectionChangeReason::MailboxStateChanged,
+                run_id: "run-1".to_string(),
+                agent_id: "agent-1".to_string(),
+                frame_id: Some("frame-1".to_string()),
+                gate_id: Some("gate-1".to_string()),
+                mailbox_message_id: Some("mailbox-1".to_string()),
+                delivery_runtime_session_id: Some("session-1".to_string()),
+                workspace_module_presentation: None,
+            },
+        ));
+
+        let value =
+            serde_json::to_value(event).expect("serialize control-plane projection platform event");
+        assert_eq!(value["type"], "platform");
+        assert_eq!(value["payload"]["kind"], "control_plane_projection_changed");
+        assert_eq!(value["payload"]["data"]["projection"], "workspace");
+        assert_eq!(value["payload"]["data"]["reason"], "mailbox_state_changed");
+        assert_eq!(value["payload"]["data"]["run_id"], "run-1");
+        assert_eq!(value["payload"]["data"]["agent_id"], "agent-1");
+        assert_eq!(value["payload"]["data"]["frame_id"], "frame-1");
+        assert_eq!(value["payload"]["data"]["gate_id"], "gate-1");
+        assert_eq!(value["payload"]["data"]["mailbox_message_id"], "mailbox-1");
+        assert_eq!(
+            value["payload"]["data"]["delivery_runtime_session_id"],
+            "session-1",
+        );
     }
 
     #[test]

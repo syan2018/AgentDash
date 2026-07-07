@@ -4,10 +4,10 @@ use std::{collections::HashMap, io, sync::Arc};
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 
-use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
 use super::hub_support::{TurnTerminalKind, parse_turn_terminal_event_from_envelope};
 use super::persistence::SessionRuntimeStores;
+use super::terminal_boundary::RuntimeTerminalBoundaryService;
 use super::turn_processor::{
     SessionTurnProcessorDeps, TurnTerminalDispatch, process_turn_terminal,
 };
@@ -18,7 +18,7 @@ pub struct SessionRuntimeService {
     stores: SessionRuntimeStores,
     turn_supervisor: TurnSupervisor,
     eventing: SessionEventingService,
-    effects: SessionEffectsService,
+    terminal_boundary: RuntimeTerminalBoundaryService,
     connector: Arc<dyn agentdash_spi::AgentConnector>,
 }
 
@@ -27,14 +27,14 @@ impl SessionRuntimeService {
         stores: SessionRuntimeStores,
         turn_supervisor: TurnSupervisor,
         eventing: SessionEventingService,
-        effects: SessionEffectsService,
+        terminal_boundary: RuntimeTerminalBoundaryService,
         connector: Arc<dyn agentdash_spi::AgentConnector>,
     ) -> Self {
         Self {
             stores,
             turn_supervisor,
             eventing,
-            effects,
+            terminal_boundary,
             connector,
         }
     }
@@ -216,7 +216,7 @@ impl SessionRuntimeService {
             &SessionTurnProcessorDeps {
                 turn_supervisor: self.turn_supervisor.clone(),
                 eventing: self.eventing.clone(),
-                effects: self.effects.clone(),
+                terminal_boundary: self.terminal_boundary.clone(),
             },
             TurnTerminalDispatch {
                 session_id,

@@ -796,15 +796,15 @@ mod tests {
     use agentdash_application_runtime_session::session::{
         SessionRuntimeBuilder,
         persistence::{
-            AgentFrameTransitionRecord, CompactionProjectionCommitResult,
-            NewCompactionProjectionCommit, NewTerminalEffectRecord, PersistedSessionEvent,
-            RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
-            SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
-            SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
-            SessionLineageStatus, SessionLineageStore, SessionMeta, SessionMetaStore,
-            SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
-            SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult, SessionStoreSet,
-            SessionTerminalEffectStore, TerminalEffectRecord, TerminalEffectStatus,
+            AgentFrameTransitionRecord, AgentRunControlEffectRecord, AgentRunControlEffectStore,
+            CompactionProjectionCommitResult, NewAgentRunControlEffectRecord,
+            NewCompactionProjectionCommit, PersistedSessionEvent, RuntimeCommandRecord,
+            RuntimeCommandStatus, RuntimeDeliveryCommand, SessionCompactionRecord,
+            SessionCompactionStore, SessionEventBacklog, SessionEventPage, SessionEventStore,
+            SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
+            SessionLineageStore, SessionMeta, SessionMetaStore, SessionProjectionHeadRecord,
+            SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
+            SessionStoreError, SessionStoreResult, SessionStoreSet,
         },
     };
     use agentdash_domain::agent_run_mailbox::MailboxMessageStatus;
@@ -1669,7 +1669,7 @@ mod tests {
             SessionStoreSet {
                 meta: self.clone(),
                 events: self.clone(),
-                terminal_effects: self.clone(),
+                control_effects: self.clone(),
                 runtime_commands: self.clone(),
                 compactions: self.clone(),
                 projections: self.clone(),
@@ -1803,54 +1803,53 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl SessionTerminalEffectStore for FixtureSessionStore {
-        async fn insert_terminal_effect(
+    impl AgentRunControlEffectStore for FixtureSessionStore {
+        async fn insert_or_get_control_effect(
             &self,
-            _effect: NewTerminalEffectRecord,
-        ) -> SessionStoreResult<TerminalEffectRecord> {
+            _effect: NewAgentRunControlEffectRecord,
+        ) -> SessionStoreResult<AgentRunControlEffectRecord> {
             Err(SessionStoreError::Internal(
                 "unused in fork tests".to_string(),
             ))
         }
 
-        async fn mark_terminal_effect_running(&self, _effect_id: Uuid) -> SessionStoreResult<()> {
-            Err(SessionStoreError::Internal(
-                "unused in fork tests".to_string(),
-            ))
-        }
-
-        async fn mark_terminal_effect_succeeded(&self, _effect_id: Uuid) -> SessionStoreResult<()> {
-            Err(SessionStoreError::Internal(
-                "unused in fork tests".to_string(),
-            ))
-        }
-
-        async fn mark_terminal_effect_failed(
+        async fn claim_control_effects(
             &self,
-            _effect_id: Uuid,
-            _error: String,
-        ) -> SessionStoreResult<()> {
-            Err(SessionStoreError::Internal(
-                "unused in fork tests".to_string(),
-            ))
-        }
-
-        async fn mark_terminal_effect_dead_letter(
-            &self,
-            _effect_id: Uuid,
-            _error: String,
-        ) -> SessionStoreResult<()> {
-            Err(SessionStoreError::Internal(
-                "unused in fork tests".to_string(),
-            ))
-        }
-
-        async fn list_terminal_effects_by_status(
-            &self,
-            _statuses: &[TerminalEffectStatus],
-            _limit: u32,
-        ) -> SessionStoreResult<Vec<TerminalEffectRecord>> {
+            _request: agentdash_spi::session_persistence::ClaimAgentRunControlEffectsRequest,
+        ) -> SessionStoreResult<Vec<AgentRunControlEffectRecord>> {
             Ok(Vec::new())
+        }
+
+        async fn mark_control_effect_succeeded(
+            &self,
+            _effect_id: Uuid,
+            _claim_token: Uuid,
+        ) -> SessionStoreResult<()> {
+            Err(SessionStoreError::Internal(
+                "unused in fork tests".to_string(),
+            ))
+        }
+
+        async fn mark_control_effect_failed(
+            &self,
+            _effect_id: Uuid,
+            _claim_token: Uuid,
+            _error: String,
+        ) -> SessionStoreResult<()> {
+            Err(SessionStoreError::Internal(
+                "unused in fork tests".to_string(),
+            ))
+        }
+
+        async fn mark_control_effect_dead_letter(
+            &self,
+            _effect_id: Uuid,
+            _claim_token: Uuid,
+            _error: String,
+        ) -> SessionStoreResult<()> {
+            Err(SessionStoreError::Internal(
+                "unused in fork tests".to_string(),
+            ))
         }
     }
 

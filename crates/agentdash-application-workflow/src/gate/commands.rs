@@ -1,4 +1,4 @@
-use agentdash_domain::workflow::ExecutorSpec;
+use agentdash_domain::workflow::{ExecutorSpec, GateWaitPolicyTemplate};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -11,6 +11,7 @@ pub enum LifecycleGateCommand {
     OpenParentRequest(OpenParentRequestGateCommand),
     ResolveParentRequest(ResolveParentRequestGateCommand),
     CompleteChildResult(CompleteChildResultGateCommand),
+    ResolveGatePayload(ResolveGatePayloadCommand),
 }
 
 #[derive(Debug, Clone)]
@@ -21,6 +22,7 @@ pub struct OpenCompanionGateCommand {
     pub gate_kind: String,
     pub correlation_id: String,
     pub payload: Option<Value>,
+    pub wait_policy: Option<GateWaitPolicyTemplate>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +92,13 @@ pub struct CompleteChildResultGateCommand {
     pub child_delivery_runtime_session_id: Option<String>,
     pub resolved_turn_id: String,
     pub companion_label: String,
+    pub payload: Value,
+    pub resolved_by: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolveGatePayloadCommand {
+    pub gate_id: Uuid,
     pub payload: Value,
     pub resolved_by: String,
 }

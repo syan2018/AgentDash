@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::agent_run_terminal_control::{
-    AgentRunTerminalControlCallback, AgentRunTerminalControlCallbackDeps,
+    ApiLifecycleTerminalConvergenceAdapter, ApiWaitProducerTerminalConvergenceAdapter,
 };
 use agentdash_application::companion::{
     CompanionModelPreflightError, CompanionModelPreflightPort, CompanionModelPreflightRequest,
@@ -24,13 +24,15 @@ use agentdash_application::wait_activity::{
 use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
 use agentdash_application_agentrun::agent_run::AgentRunWorkspaceTitleAdapter;
 use agentdash_application_agentrun::agent_run::{
+    AgentRunControlEffectDeps, AgentRunControlEffectService,
     AgentRunEffectiveCapabilityView as ApplicationAgentRunEffectiveCapabilityView,
-    AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
+    AgentRunMailboxRuntimeAdapter, AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
     AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
-    accepted_launch_commit_port, agent_run_effective_capability_port, hook_target_runtime_port,
-    mailbox_runtime_port, runtime_session_effective_capability_port,
+    AgentRunTerminalConvergenceDeps, accepted_launch_commit_port,
+    agent_run_effective_capability_port, hook_target_runtime_port,
+    runtime_session_effective_capability_port,
 };
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
 use agentdash_application_ports::agent_run_surface::{
@@ -40,11 +42,9 @@ use agentdash_application_ports::agent_run_surface::{
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
 use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
-    SessionCoreService, SessionEffectsService, SessionEventingService, SessionHookService,
-    SessionLaunchService, SessionRuntimeBuilder, SessionRuntimeService,
-    SessionRuntimeTransitionService, SessionStoreSet, SessionTerminalCallback,
-    SessionTerminalNotification, SessionTitleService, SessionToolResultCache,
-    SessionToolResultCachePut,
+    SessionCoreService, SessionEventingService, SessionHookService, SessionLaunchService,
+    SessionRuntimeBuilder, SessionRuntimeService, SessionRuntimeTransitionService, SessionStoreSet,
+    SessionTitleService, SessionToolResultCache, SessionToolResultCachePut,
 };
 use agentdash_application_vfs::tools::RuntimeVfsState;
 use agentdash_application_vfs::tools::{ShellTerminalRegistration, ShellTerminalRegistry};
@@ -236,7 +236,7 @@ pub(crate) struct SessionBootstrapOutput {
     pub session_hooks: SessionHookService,
     pub session_runtime_transition: SessionRuntimeTransitionService,
     pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
-    pub session_effects: SessionEffectsService,
+    pub agent_run_control_effects: AgentRunControlEffectService,
     pub session_title: SessionTitleService,
     pub connector: Arc<dyn AgentConnector>,
     pub hook_provider: Arc<AppExecutionHookProvider>,
@@ -355,6 +355,7 @@ pub(crate) async fn build_session_runtime(
         repos.permission_grant_repo.clone(),
     );
 
+    let control_effect_store = session_stores.control_effects.clone();
     let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_stores(
         connector.clone(),
         Some(hook_provider.clone()),
@@ -409,23 +410,24 @@ pub(crate) async fn build_session_runtime(
             Some(accepted_launch_hook_sync),
         ))
         .await;
-    let runtime_mailbox_port = mailbox_runtime_port(AgentRunMailboxRuntimeBoundaryDeps {
-        lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
-        lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
-        project_agent_repo: repos.project_agent_repo.clone(),
-        agent_frame_repo: repos.agent_frame_repo.clone(),
-        execution_anchor_repo: repos.execution_anchor_repo.clone(),
-        delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
-        project_backend_access_repo: repos.project_backend_access_repo.clone(),
-        command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
-        mailbox_repo: repos.agent_run_mailbox_repo.clone(),
-        session_core: agent_run_session_core(session_core.clone()),
-        session_control: agent_run_session_control(session_control.clone()),
-        session_eventing: agent_run_session_eventing(session_eventing.clone()),
-        session_launch: Arc::new(agent_run_session_launch(session_launch.clone())),
-    });
+    let mailbox_runtime_adapter =
+        AgentRunMailboxRuntimeAdapter::new(AgentRunMailboxRuntimeBoundaryDeps {
+            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+            project_agent_repo: repos.project_agent_repo.clone(),
+            agent_frame_repo: repos.agent_frame_repo.clone(),
+            execution_anchor_repo: repos.execution_anchor_repo.clone(),
+            delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
+            project_backend_access_repo: repos.project_backend_access_repo.clone(),
+            command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
+            mailbox_repo: repos.agent_run_mailbox_repo.clone(),
+            session_core: agent_run_session_core(session_core.clone()),
+            session_control: agent_run_session_control(session_control.clone()),
+            session_eventing: agent_run_session_eventing(session_eventing.clone()),
+            session_launch: Arc::new(agent_run_session_launch(session_launch.clone())),
+        });
     session_runtime_builder
-        .set_mailbox_runtime_port(runtime_mailbox_port)
+        .set_mailbox_runtime_port(Arc::new(mailbox_runtime_adapter.clone()))
         .await;
     let runtime_surface_update =
         AgentRunRuntimeSurfaceUpdateService::new(AgentRunRuntimeSurfaceUpdateDeps {
@@ -436,7 +438,6 @@ pub(crate) async fn build_session_runtime(
             extra_skill_dirs: extra_skill_dirs.clone(),
             skill_discovery_providers: skill_discovery_providers.clone(),
         });
-    let session_effects = session_runtime_builder.effects_service();
     let session_title = session_runtime_builder.title_service();
 
     let orchestrator = Arc::new(
@@ -446,25 +447,45 @@ pub(crate) async fn build_session_runtime(
         )
         .with_function_runner(function_runner),
     );
-    let agent_run_terminal_control_callback = Arc::new(AgentRunTerminalControlCallback::new(
-        AgentRunTerminalControlCallbackDeps {
-            repos: repos.clone(),
-        },
+
+    let wait_producer_terminal_port = Arc::new(ApiWaitProducerTerminalConvergenceAdapter::new(
+        repos.clone(),
         agent_run_session_core(session_core.clone()),
         agent_run_session_control(session_control.clone()),
         agent_run_session_eventing(session_eventing.clone()),
-        session_eventing.clone(),
         agent_run_session_launch(session_launch.clone()),
     ));
+    let lifecycle_terminal_port = Arc::new(ApiLifecycleTerminalConvergenceAdapter::new(
+        orchestrator.clone(),
+    ));
+    let agent_run_control_effects = AgentRunControlEffectService::new(AgentRunControlEffectDeps {
+        control_effect_store,
+        terminal_convergence_deps: AgentRunTerminalConvergenceDeps {
+            lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
+            lifecycle_agent_repo: repos.lifecycle_agent_repo.clone(),
+            project_agent_repo: repos.project_agent_repo.clone(),
+            agent_frame_repo: repos.agent_frame_repo.clone(),
+            execution_anchor_repo: repos.execution_anchor_repo.clone(),
+            delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
+            project_backend_access_repo: repos.project_backend_access_repo.clone(),
+            command_receipt_repo: repos.agent_run_command_receipt_repo.clone(),
+            mailbox_repo: repos.agent_run_mailbox_repo.clone(),
+        },
+        session_core: agent_run_session_core(session_core.clone()),
+        session_control: agent_run_session_control(session_control.clone()),
+        session_eventing: agent_run_session_eventing(session_eventing.clone()),
+        session_launch: agent_run_session_launch(session_launch.clone()),
+        mailbox_runtime: mailbox_runtime_adapter,
+        terminal_hook_trigger_port: session_runtime_builder.agent_run_terminal_hook_trigger_port(),
+        wait_producer_terminal_port,
+        lifecycle_terminal_port,
+        hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
+    });
+    agent_run_control_effects
+        .set_hook_effect_handler_registry(Arc::new(EmptyTerminalHookEffectHandlerRegistry))
+        .await;
     session_runtime_builder
-        .set_terminal_callback(Arc::new(CompositeSessionTerminalCallback {
-            callbacks: vec![
-                agent_run_terminal_control_callback,
-                Arc::new(LifecycleTerminalCallbackAdapter {
-                    inner: orchestrator,
-                }),
-            ],
-        }))
+        .set_agent_run_control_effect_port(Arc::new(agent_run_control_effects.clone()))
         .await;
     session_runtime_builder
         .set_hook_effect_handler_registry(Arc::new(EmptyTerminalHookEffectHandlerRegistry))
@@ -498,7 +519,7 @@ pub(crate) async fn build_session_runtime(
         session_hooks,
         session_runtime_transition,
         runtime_surface_update,
-        session_effects,
+        agent_run_control_effects,
         session_title,
         connector,
         hook_provider,
@@ -657,49 +678,6 @@ fn build_session_runtime_tool_composer(
         Arc::new(wait_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(workspace_module_provider) as Arc<dyn RuntimeToolProvider>,
     ]))
-}
-
-struct CompositeSessionTerminalCallback {
-    callbacks: Vec<Arc<dyn SessionTerminalCallback>>,
-}
-
-struct LifecycleTerminalCallbackAdapter {
-    inner: Arc<agentdash_application_lifecycle::LifecycleOrchestrator>,
-}
-
-#[async_trait]
-impl SessionTerminalCallback for LifecycleTerminalCallbackAdapter {
-    async fn on_session_terminal(
-        &self,
-        notification: SessionTerminalNotification,
-    ) -> Result<(), String> {
-        agentdash_application_lifecycle::lifecycle::orchestrator::SessionTerminalCallback::on_session_terminal(
-            self.inner.as_ref(),
-            &notification.session_id,
-            &notification.terminal_state,
-        )
-            .await
-    }
-}
-
-#[async_trait]
-impl SessionTerminalCallback for CompositeSessionTerminalCallback {
-    async fn on_session_terminal(
-        &self,
-        notification: SessionTerminalNotification,
-    ) -> Result<(), String> {
-        let mut errors = Vec::new();
-        for callback in &self.callbacks {
-            if let Err(error) = callback.on_session_terminal(notification.clone()).await {
-                errors.push(error);
-            }
-        }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors.join("; "))
-        }
-    }
 }
 
 struct PiAgentConnectorDeps {

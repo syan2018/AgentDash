@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::gate_wait_policy::GateWaitPolicyTemplate;
 use super::lifecycle_subject_association::SubjectRef;
 
 // ─── Policy Enums ────────────────────────────────────────────────────────────
@@ -72,6 +73,8 @@ pub struct GatePolicy {
     pub gate_kind: String,
     pub correlation_id: Option<String>,
     pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_policy: Option<GateWaitPolicyTemplate>,
 }
 
 // ─── Ref Types ───────────────────────────────────────────────────────────────

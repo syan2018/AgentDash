@@ -106,6 +106,89 @@ Codex 原生协议没有覆盖的平台能力通过 `PlatformEvent` 扩展。Pla
 
 前端模型上下文面板的 refresh key 来自 `turn_completed`、内部 platform `context_compacted` 和 `ContextFrame(kind="compaction_summary")`。`executor_context_compacted` 只影响时间线/状态展示语义，因为内部 projection store 没有发生 commit。
 
+### Scenario: Runtime Delivery And PTY Terminal Boundaries
+
+#### 1. Scope / Trigger
+
+Relay disconnect、remote runtime terminal 和浏览器交互式终端会同时影响“执行交付状态”和“终端资源状态”。这两个状态必须使用不同 wire discriminant 与 Backbone payload，原因是 RuntimeSession terminal 驱动 AgentRun delivery / control effects，而 PTY terminal state 只更新 terminal resource projection。
+
+#### 2. Signatures
+
+Relay runtime delivery terminal event:
+
+```json
+{
+  "type": "event.runtime_session_state_changed",
+  "payload": {
+    "runtime_session_id": "runtime-session-1",
+    "turn_id": "turn-1",
+    "state": "completed | failed | cancelled | started",
+    "message": "optional terminal detail"
+  }
+}
+```
+
+Relay PTY terminal resource state event:
+
+```json
+{
+  "type": "event.pty_terminal.state_changed",
+  "payload": {
+    "terminal_id": "terminal-1",
+    "state": "running | exited | lost | killed",
+    "exit_code": null,
+    "message": "optional resource detail"
+  }
+}
+```
+
+Backbone PTY terminal projection event:
+
+```rust
+PlatformEvent::PtyTerminalStateChanged {
+    terminal_id,
+    state,
+    exit_code,
+    message,
+}
+```
+
+#### 3. Contracts
+
+- `event.runtime_session_state_changed.payload.runtime_session_id` is the delivery RuntimeSession id. Terminal states other than `started` are routed to `RelaySessionEvent::Terminal` and then into RuntimeSession terminal processing.
+- `event.pty_terminal.state_changed.payload.terminal_id` is a terminal resource id. It updates `AgentRunTerminalRegistry` and injects `PlatformEvent::PtyTerminalStateChanged` into the relevant session stream when an active session can be resolved.
+- Frontend terminal projection consumes `PlatformEvent.kind === "pty_terminal_state_changed"` for terminal state and `terminal_output` for terminal output. The session feed reducer filters both resource projection events out of chat entries.
+- Backend disconnect may emit both runtime delivery terminal and PTY terminal lost facts; the shared value `lost` is interpreted only after checking the event discriminant.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Runtime delivery event state is `started` | Relay records no terminal transition. |
+| Runtime delivery event state is `completed` / `failed` / `cancelled` | Relay feeds `RelaySessionEvent::Terminal` for `runtime_session_id`. |
+| PTY terminal event state is `lost` | Terminal registry marks the terminal lost and emits `pty_terminal_state_changed`. |
+| Frontend receives `pty_terminal_state_changed` with an unknown state | Dispatcher reports a terminal-state validation error and does not update terminal state. |
+| Same stream identity and event sequence is projected twice | Terminal store keeps the first projection and ignores the duplicate. |
+
+#### 5. Good/Base/Bad Cases
+
+- Good: backend disconnect produces a delivery runtime lost fact and one or more PTY terminal lost facts; AgentRun delivery terminal and terminal tab resource state update independently.
+- Base: a PTY terminal exits without a runtime terminal event; only terminal registry and terminal tab state change.
+- Base: a runtime delivery fails without an interactive terminal; RuntimeSession terminal processing still runs through the runtime terminal boundary.
+
+#### 6. Tests Required
+
+- Relay protocol tests assert `event.runtime_session_state_changed` serializes `runtime_session_id` and `event.pty_terminal.state_changed` serializes `terminal_id`.
+- `cargo check -p agentdash-api` covers relay handler routing and Backbone `PlatformEvent` variants.
+- Frontend session model tests assert `pty_terminal_state_changed` updates terminal store, invalid states are rejected, duplicate projections are idempotent, and terminal resource events do not become chat feed entries.
+
+#### 7. Canonical Mapping
+
+| Fact | Canonical event / payload | Projection owner |
+| --- | --- | --- |
+| Delivery RuntimeSession terminal | `event.runtime_session_state_changed` / `runtime_session_id` | RuntimeSession terminal processor -> AgentRun control plane |
+| PTY terminal resource lifecycle | `event.pty_terminal.state_changed` / `terminal_id` | Terminal registry + frontend terminal store |
+
 Provider retry/reconnect 与失败轮次恢复使用一等 `PlatformEvent` variants，而不是
 `SessionMetaUpdate` 自由 key：
 

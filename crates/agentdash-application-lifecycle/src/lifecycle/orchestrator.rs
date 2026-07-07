@@ -7,7 +7,8 @@
 //! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / session services。
 //! 不是后台进程 — 通过事件驱动（advance tool / session terminal）被调用。
 //!
-//! 实现 `SessionTerminalCallback`，由 `session runtime` 在 session 完全终止后自动调用。
+//! 实现 lifecycle terminal convergence port，由 AgentRun control effect executor 在
+//! delivery terminal 收敛后调用。
 
 use std::sync::Arc;
 
@@ -35,8 +36,8 @@ use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, load_scoped_port
 use crate::lifecycle::session_terminal_summary;
 
 #[async_trait::async_trait]
-pub trait SessionTerminalCallback: Send + Sync + 'static {
-    async fn on_session_terminal(
+pub trait LifecycleTerminalConvergencePort: Send + Sync + 'static {
+    async fn observe_lifecycle_terminal(
         &self,
         session_id: &str,
         terminal_state: &str,
@@ -406,8 +407,8 @@ impl LifecycleOrchestrator {
 }
 
 #[async_trait::async_trait]
-impl SessionTerminalCallback for LifecycleOrchestrator {
-    async fn on_session_terminal(
+impl LifecycleTerminalConvergencePort for LifecycleOrchestrator {
+    async fn observe_lifecycle_terminal(
         &self,
         session_id: &str,
         terminal_state: &str,

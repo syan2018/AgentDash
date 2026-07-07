@@ -4,24 +4,18 @@
 //! - `emit_session_hook_trigger`（从 `session/event_bridge.rs` 迁入，顺手删 `_tx` 占位）
 //! - `ensure_hook_runtime`（按需懒重建 hook snapshot runtime）
 //! - `collect_runtime_context_update_injections`（PhaseNode 等 runtime context 更新）
-//! - `schedule_unanchored_hook_auto_resume`（非 AgentRun runtime 的 hook auto-resume）
 
-use super::super::auto_resume_context_frame::build_auto_resume_context_frame;
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_injection_sink::{
     RuntimeHookInjectionSink, RuntimeInjectionSource, SessionRuntimeHookInjectionSink,
 };
-use super::super::hook_messages as msg;
 use super::super::hub_support::session_hook_trace_decision;
-use super::super::terminal_effects::{
-    TerminalAutoResumePort, TerminalAutoResumeRequest, TerminalHookTriggerPort,
-    TerminalHookTriggerRequest,
-};
 use super::SessionRuntimeInner;
-use agentdash_agent_protocol::{SourceInfo, text_user_input_blocks};
-use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
-use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxAutoResumeRequest;
-use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
+use agentdash_agent_protocol::SourceInfo;
+use agentdash_application_ports::agent_run_control_effect::{
+    AgentRunTerminalHookTriggerInput, AgentRunTerminalHookTriggerPort,
+};
+use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::hooks::{
     HookEffect, HookInjection, HookRuntimeAccess, HookRuntimeEvaluationQuery,
@@ -221,190 +215,30 @@ impl SessionRuntimeInner {
         .await;
         injections
     }
-
-    /// Processor 请求的 auto-resume 入口。
-    ///
-    /// PR 7c：把原先散落在 `turn_processor` 里的"计数检查 + 递增 + schedule"
-    /// 三件事统一在这里处理。processor 只需发出"需要续跑"的信号，限流在 hub
-    /// 侧完成，便于未来加全局限流 / per-executor 配额等策略。
-    ///
-    /// 返回值仅用于单测断言；业务路径 fire-and-forget。
-    pub(in crate::session) async fn request_hook_auto_resume(
-        &self,
-        request: TerminalAutoResumeRequest,
-    ) -> Result<bool, String> {
-        const MAX_HOOK_AUTO_RESUMES: u32 = 2;
-        let session_id = request.session_id.clone();
-
-        // 原子：读取当前计数 + 若未超限则递增。
-        let decision = self
-            .runtime_registry
-            .increment_auto_resume_if_allowed(&session_id, MAX_HOOK_AUTO_RESUMES)
-            .await;
-
-        if decision {
-            diag!(Info, Subsystem::Hooks,
-
-                session_id = %session_id,
-                "Hook auto-resume: stop gate unsatisfied, scheduling retry"
-            );
-            match self.try_enqueue_hook_auto_resume_mailbox(&request).await {
-                AutoResumeMailboxRoute::Routed => {}
-                AutoResumeMailboxRoute::NoAnchor => {
-                    self.schedule_unanchored_hook_auto_resume(session_id)
-                }
-                AutoResumeMailboxRoute::Failed(error) => {
-                    self.runtime_registry
-                        .release_auto_resume_reservation(&session_id)
-                        .await;
-                    return Err(error);
-                }
-            }
-            Ok(true)
-        } else {
-            diag!(Warn, Subsystem::Hooks,
-
-                operation = "session.hook_auto_resume",
-                stage = "auto_resume_limit",
-                session_id = %session_id,
-                effect_id = %request.effect_id,
-                turn_id = %request.turn_id,
-                terminal_event_seq = request.terminal_event_seq,
-                max = MAX_HOOK_AUTO_RESUMES,
-                "Hook auto-resume: 达到上限，放弃续跑"
-            );
-            Ok(false)
-        }
-    }
-
-    async fn try_enqueue_hook_auto_resume_mailbox(
-        &self,
-        request: &TerminalAutoResumeRequest,
-    ) -> AutoResumeMailboxRoute {
-        let Some(port) = self.mailbox_runtime_port.read().await.clone() else {
-            return AutoResumeMailboxRoute::NoAnchor;
-        };
-        match port
-            .accept_hook_auto_resume_effect(RuntimeSessionMailboxAutoResumeRequest {
-                session_id: request.session_id.clone(),
-                effect_id: request.effect_id,
-                source_turn_id: request.turn_id.clone(),
-                terminal_event_seq: request.terminal_event_seq,
-                input: text_user_input_blocks(msg::AUTO_RESUME_PROMPT),
-            })
-            .await
-        {
-            Ok(true) => {
-                if let Some(frame) = build_auto_resume_context_frame(
-                    "hook_before_stop_continue",
-                    msg::AUTO_RESUME_PROMPT,
-                ) {
-                    let _ = self
-                        .emit_context_frame(&request.session_id, None, &frame)
-                        .await;
-                }
-                AutoResumeMailboxRoute::Routed
-            }
-            Ok(false) => AutoResumeMailboxRoute::NoAnchor,
-            Err(error) => {
-                let context = DiagnosticErrorContext::new(
-                    "session.hook_auto_resume",
-                    "create_mailbox_envelope",
-                );
-                diag_error!(
-                    Warn,
-                    Subsystem::Hooks,
-                    context = &context,
-                    error = &error,
-                    session_id = %request.session_id,
-                    effect_id = %request.effect_id,
-                    turn_id = %request.turn_id,
-                    terminal_event_seq = request.terminal_event_seq,
-                    payload_key_count = request.payload.as_object().map(|object| object.len()).unwrap_or(0),
-                    "Hook auto-resume mailbox envelope 创建失败"
-                );
-                AutoResumeMailboxRoute::Failed(error.to_string())
-            }
-        }
-    }
-
-    /// Hook auto-resume: schedule a delayed follow-up prompt in a separate task.
-    /// Uses fire-and-forget to avoid awaiting `start_prompt` directly inside
-    /// the stream-processing spawn block (whose Future is not Send).
-    ///
-    /// **关键对齐**：auto-resume 与 HTTP 主通道必须经过同一条 provider，
-    /// 否则 owner context / MCP / capability_state / context_bundle 会漂移，
-    /// Agent 失去工作流背景 → 复读上一轮。因此这里固定走 strict launch：
-    /// provider 缺失/失败时直接放弃本次 auto-resume，禁止裸请求降级。
-    pub(crate) fn schedule_unanchored_hook_auto_resume(&self, session_id: String) {
-        let hub = self.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let command = LaunchCommand::hook_auto_resume_input(LaunchPromptInput::from_text(
-                msg::AUTO_RESUME_PROMPT,
-            ));
-            if let Some(frame) = build_auto_resume_context_frame(
-                "hook_before_stop_continue",
-                msg::AUTO_RESUME_PROMPT,
-            ) {
-                let _ = hub.emit_context_frame(&session_id, None, &frame).await;
-            }
-
-            if let Err(e) = hub
-                .launch_service()
-                .launch_command(&session_id, command, LaunchPlanningInput::default())
-                .await
-            {
-                let context =
-                    DiagnosticErrorContext::new("session.hook_auto_resume", "launch_unanchored");
-                diag_error!(
-                    Warn,
-                    Subsystem::Hooks,
-                    context = &context,
-                    error = &e,
-                    session_id = %session_id,
-                    "Hook auto-resume launch 失败"
-                );
-            }
-        });
-    }
 }
 
 #[async_trait::async_trait]
-impl TerminalHookTriggerPort for SessionRuntimeInner {
-    async fn emit_terminal_hook_trigger(
+impl AgentRunTerminalHookTriggerPort for SessionRuntimeInner {
+    async fn emit_agent_run_terminal_hook_trigger(
         &self,
         hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
-        input: TerminalHookTriggerRequest<'_>,
+        input: AgentRunTerminalHookTriggerInput,
     ) -> Vec<HookEffect> {
         self.emit_session_hook_trigger(
             hook_runtime,
             &HookTriggerInput {
-                session_id: input.session_id,
-                turn_id: input.turn_id,
-                trigger: input.trigger,
-                payload: input.payload,
-                refresh_reason: input.refresh_reason,
+                session_id: &input.delivery_runtime_session_id,
+                turn_id: Some(&input.turn_id),
+                trigger: HookTrigger::SessionTerminal,
+                payload: Some(serde_json::json!({
+                    "terminal_state": input.terminal_state,
+                    "message": input.terminal_message,
+                })),
+                refresh_reason: "trigger:session_terminal",
                 source: input.source,
             },
         )
         .await
         .effects
     }
-}
-
-#[async_trait::async_trait]
-impl TerminalAutoResumePort for SessionRuntimeInner {
-    async fn request_hook_auto_resume(
-        &self,
-        request: TerminalAutoResumeRequest,
-    ) -> Result<bool, String> {
-        SessionRuntimeInner::request_hook_auto_resume(self, request).await
-    }
-}
-
-enum AutoResumeMailboxRoute {
-    Routed,
-    NoAnchor,
-    Failed(String),
 }

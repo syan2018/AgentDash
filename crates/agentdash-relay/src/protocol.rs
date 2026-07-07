@@ -418,11 +418,11 @@ pub enum RelayMessage {
         payload: SessionNotificationPayload,
     },
 
-    /// 执行状态变更
-    #[serde(rename = "event.session_state_changed")]
-    EventSessionStateChanged {
+    /// RuntimeSession delivery 状态变更
+    #[serde(rename = "event.runtime_session_state_changed")]
+    EventRuntimeSessionStateChanged {
         id: String,
-        payload: SessionStateChangedPayload,
+        payload: RuntimeSessionStateChangedPayload,
     },
 
     /// 执行器选项发现 patch（流式）
@@ -623,10 +623,10 @@ pub enum RelayMessage {
         payload: TerminalOutputPayload,
     },
 
-    #[serde(rename = "event.terminal.state_changed")]
-    EventTerminalStateChanged {
+    #[serde(rename = "event.pty_terminal.state_changed")]
+    EventPtyTerminalStateChanged {
         id: String,
-        payload: TerminalStateChangedPayload,
+        payload: PtyTerminalStateChangedPayload,
     },
 
     // ── 通用错误 ──
@@ -701,7 +701,7 @@ impl RelayMessage {
             | Self::ResponseExtensionBackendServiceInvoke { id, .. }
             | Self::EventCapabilitiesChanged { id, .. }
             | Self::EventSessionNotification { id, .. }
-            | Self::EventSessionStateChanged { id, .. }
+            | Self::EventRuntimeSessionStateChanged { id, .. }
             | Self::EventDiscoverOptionsPatch { id, .. }
             | Self::EventToolShellOutput { id, .. }
             | Self::CommandTerminalSpawn { id, .. }
@@ -713,7 +713,7 @@ impl RelayMessage {
             | Self::ResponseTerminalResize { id, .. }
             | Self::ResponseTerminalKill { id, .. }
             | Self::EventTerminalOutput { id, .. }
-            | Self::EventTerminalStateChanged { id, .. }
+            | Self::EventPtyTerminalStateChanged { id, .. }
             | Self::Error { id, .. } => id,
         }
     }
@@ -782,6 +782,48 @@ mod tests {
                 .expect("payload object")
                 .contains_key(&old_raw_field)
         );
+    }
+
+    #[test]
+    fn runtime_session_state_changed_uses_runtime_session_wire_name() {
+        let msg = RelayMessage::EventRuntimeSessionStateChanged {
+            id: "runtime-terminal-1".to_string(),
+            payload: RuntimeSessionStateChangedPayload {
+                runtime_session_id: "runtime-session-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                state: RuntimeSessionState::Failed,
+                message: Some("backend disconnected".to_string()),
+            },
+        };
+
+        let json = serde_json::to_value(&msg).expect("serialize runtime session state");
+        assert_eq!(json["type"], "event.runtime_session_state_changed");
+        assert_eq!(json["payload"]["runtime_session_id"], "runtime-session-1");
+        assert!(json["payload"].get("session_id").is_none());
+
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(decoded.id(), "runtime-terminal-1");
+    }
+
+    #[test]
+    fn pty_terminal_state_changed_uses_pty_terminal_wire_name() {
+        let msg = RelayMessage::EventPtyTerminalStateChanged {
+            id: "pty-terminal-1".to_string(),
+            payload: PtyTerminalStateChangedPayload {
+                terminal_id: "terminal-1".to_string(),
+                state: PtyTerminalProcessState::Lost,
+                exit_code: None,
+                message: Some("backend disconnected".to_string()),
+            },
+        };
+
+        let json = serde_json::to_value(&msg).expect("serialize pty terminal state");
+        assert_eq!(json["type"], "event.pty_terminal.state_changed");
+        assert_eq!(json["payload"]["terminal_id"], "terminal-1");
+        assert_eq!(json["payload"]["state"], "lost");
+
+        let decoded: RelayMessage = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(decoded.id(), "pty-terminal-1");
     }
 
     #[test]

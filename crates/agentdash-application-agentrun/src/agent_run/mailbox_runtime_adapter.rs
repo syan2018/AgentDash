@@ -2,7 +2,8 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, UserInputBlock,
+    BackboneEnvelope, BackboneEvent, ControlPlaneProjection, ControlPlaneProjectionChangeReason,
+    ControlPlaneProjectionChanged, PlatformEvent, SourceInfo, UserInputBlock,
 };
 use agentdash_application_ports::runtime_session_live::{
     RuntimeSessionLivePortError, RuntimeSessionMailboxAutoResumeRequest,
@@ -198,7 +199,7 @@ impl MailboxBoundaryStage<'_> {
             .await;
         match result {
             Ok(outcomes) if !outcomes.is_empty() => {
-                self.emit_mailbox_state_changed("steer_consumed").await;
+                self.emit_mailbox_projection_changed("steer_consumed").await;
             }
             Err(error) if !matches!(error, WorkflowApplicationError::NotFound(_)) => {
                 let diagnostic_context = DiagnosticErrorContext::new(
@@ -217,11 +218,33 @@ impl MailboxBoundaryStage<'_> {
         }
     }
 
-    async fn emit_mailbox_state_changed(&self, reason: &str) {
+    async fn emit_mailbox_projection_changed(&self, reason: &str) {
+        let Ok(Some(anchor)) = self
+            .deps
+            .execution_anchor_repo
+            .find_by_session(self.runtime_session_id)
+            .await
+        else {
+            return;
+        };
+        let reason = match reason {
+            "steer_consumed" => ControlPlaneProjectionChangeReason::MailboxStateChanged,
+            _ => ControlPlaneProjectionChangeReason::MailboxStateChanged,
+        };
         let envelope = BackboneEnvelope::new(
-            BackboneEvent::Platform(PlatformEvent::MailboxStateChanged {
-                reason: reason.to_string(),
-            }),
+            BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
+                ControlPlaneProjectionChanged {
+                    projection: ControlPlaneProjection::Mailbox,
+                    reason,
+                    run_id: anchor.run_id.to_string(),
+                    agent_id: anchor.agent_id.to_string(),
+                    frame_id: Some(anchor.launch_frame_id.to_string()),
+                    gate_id: None,
+                    mailbox_message_id: None,
+                    delivery_runtime_session_id: Some(self.runtime_session_id.to_string()),
+                    workspace_module_presentation: None,
+                },
+            )),
             self.runtime_session_id,
             SourceInfo {
                 connector_id: "mailbox".to_string(),

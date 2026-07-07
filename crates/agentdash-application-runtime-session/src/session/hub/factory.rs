@@ -6,6 +6,7 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use agentdash_application_ports::agent_run_control_effect::AgentRunControlEffectPort;
 use agentdash_application_ports::agent_run_surface::{
     AgentRunEffectiveCapabilityPort, AgentRunRuntimeSurfaceQueryPort,
 };
@@ -53,7 +54,7 @@ impl SessionRuntimeInner {
             self.stores.runtime_stores(),
             self.turn_supervisor.clone(),
             self.eventing_service(),
-            self.effects_service(),
+            self.terminal_boundary_service(),
             self.connector.clone(),
         )
     }
@@ -70,14 +71,20 @@ impl SessionRuntimeInner {
         super::super::hooks_service::SessionHookService::new(self.clone())
     }
 
-    pub fn effects_service(&self) -> super::super::effects_service::SessionEffectsService {
-        super::super::effects_service::SessionEffectsService::new(
-            super::super::terminal_effects::TerminalEffectDeps {
-                terminal_effects: self.stores.terminal_effects.clone(),
-                hook_trigger: Arc::new(self.clone()),
-                terminal_callback: self.terminal_callback.clone(),
-                hook_effect_handler_registry: self.hook_effect_handler_registry.clone(),
-                auto_resume: Arc::new(self.clone()),
+    pub fn agent_run_terminal_hook_trigger_port(
+        &self,
+    ) -> Arc<
+        dyn agentdash_application_ports::agent_run_control_effect::AgentRunTerminalHookTriggerPort,
+    > {
+        Arc::new(self.clone())
+    }
+
+    pub fn terminal_boundary_service(
+        &self,
+    ) -> super::super::terminal_boundary::RuntimeTerminalBoundaryService {
+        super::super::terminal_boundary::RuntimeTerminalBoundaryService::new(
+            super::super::terminal_boundary::RuntimeTerminalBoundaryDeps {
+                control_effect_port: self.agent_run_control_effect_port.clone(),
             },
         )
     }
@@ -112,7 +119,7 @@ impl SessionRuntimeInner {
             vfs_service: None,
             extra_skill_dirs: Vec::new(),
             skill_discovery_providers: Vec::new(),
-            terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
+            agent_run_control_effect_port: Arc::new(tokio::sync::RwLock::new(None)),
             hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
             frame_launch_envelope_provider: Arc::new(tokio::sync::RwLock::new(None)),
             accepted_launch_commit_port: Arc::new(tokio::sync::RwLock::new(None)),
@@ -284,16 +291,11 @@ impl SessionRuntimeInner {
         self
     }
 
-    /// 注入 session 终态全局回调（如 LifecycleOrchestrator）。
-    ///
-    /// 可在 SessionRuntimeInner 构造完成后调用（支持延迟注入解决循环依赖）。
-    /// 由于 `terminal_callback` 是共享状态（`Arc<RwLock<...>>`），
-    /// 调用后所有已 clone 的 hub 实例都会生效。
-    pub async fn set_terminal_callback(
+    pub async fn set_agent_run_control_effect_port(
         &self,
-        callback: super::super::post_turn_handler::DynSessionTerminalCallback,
+        port: Arc<dyn AgentRunControlEffectPort>,
     ) {
-        *self.terminal_callback.write().await = Some(callback);
+        *self.agent_run_control_effect_port.write().await = Some(port);
     }
 
     pub async fn set_hook_effect_handler_registry(
@@ -341,8 +343,8 @@ impl SessionRuntimeInner {
         if self.mcp_tool_discovery.is_none() {
             return Err("SessionRuntimeInner 缺少 mcp_tool_discovery".to_string());
         }
-        if self.terminal_callback.read().await.is_none() {
-            return Err("SessionRuntimeInner 缺少 terminal_callback".to_string());
+        if self.agent_run_control_effect_port.read().await.is_none() {
+            return Err("SessionRuntimeInner 缺少 agent_run_control_effect_port".to_string());
         }
         if self.hook_effect_handler_registry.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 hook_effect_handler_registry".to_string());

@@ -76,3 +76,47 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 57: Agent 生命周期边界收口
+
+**Date**: 2026-07-07
+**Task**: Agent 生命周期边界收口
+**Branch**: `codex/agent-lifecycle-fact-source-review`
+
+### Summary
+
+完成 AgentRun/RuntimeSession 生命周期事实源收口：Gate wait typed envelope、AgentRun control effects、typed projection refresh、companion legacy session meta cleanup、gate notification intent cleanup、MailboxStateChanged legacy protocol removal，并通过原生 subagent 终审。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `430582dd` | (see git log) |
+| `50b597b9` | (see git log) |
+| `346c1573` | (see git log) |
+| `0956e219` | (see git log) |
+| `9d62140b` | (see git log) |
+| `4e8bf9ac` | (see git log) |
+| `b1376ccc` | (see git log) |
+| `ebacd4b0` | (see git log) |
+| `232fb3c9` | (see git log) |
+| `6dc3b52f` | (see git log) |
+| `f35668b1` | (see git log) |
+| `e3128ee4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

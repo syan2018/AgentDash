@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_domain::workflow::{LifecycleGate, LifecycleGateRepository};
+use agentdash_domain::workflow::{
+    GateWaitPolicyEnvelope, GateWaitPolicyTemplate, LifecycleGate, LifecycleGateRepository,
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -8,14 +10,13 @@ use crate::WorkflowApplicationError;
 
 use super::commands::{
     CompleteChildResultGateCommand, LifecycleGateCommand, OpenCompanionGateCommand,
-    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveParentRequestGateCommand,
-    ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
+    OpenParentRequestGateCommand, OpenWorkflowHumanGateCommand, ResolveGatePayloadCommand,
+    ResolveParentRequestGateCommand, ResolveWorkflowHumanGateCommand, RespondHumanGateCommand,
 };
 use super::outcome::{
-    CompanionChildResultDeliveryIntent, CompanionEventNotificationIntent,
-    CompanionHumanResponseDeliveryIntent, CompanionParentRequestDeliveryIntent,
-    CompanionParentResponseDeliveryIntent, GateDeliveryIntent, GateNotificationIntent,
-    GateTransitionKind, GateTransitionOutcome,
+    CompanionChildResultDeliveryIntent, CompanionHumanResponseDeliveryIntent,
+    CompanionParentRequestDeliveryIntent, CompanionParentResponseDeliveryIntent,
+    GateDeliveryIntent, GateTransitionKind, GateTransitionOutcome,
 };
 
 const WORKFLOW_HUMAN_GATE_KIND: &str = "orchestration_human_gate";
@@ -55,6 +56,9 @@ impl LifecycleGateResolver {
             LifecycleGateCommand::CompleteChildResult(command) => {
                 self.complete_child_result(command).await
             }
+            LifecycleGateCommand::ResolveGatePayload(command) => {
+                self.resolve_gate_payload(command).await
+            }
         }
     }
 
@@ -83,13 +87,13 @@ impl LifecycleGateResolver {
             command.correlation_id,
             command.payload,
         );
+        let gate = attach_gate_wait_policy(gate, command.wait_policy)?;
         gate_repo.create(&gate).await?;
 
         Ok(GateTransitionOutcome {
             gate,
             transition: GateTransitionKind::Opened,
             delivery_intents: Vec::new(),
-            notification_intents: Vec::new(),
         })
     }
 
@@ -124,7 +128,6 @@ impl LifecycleGateResolver {
             gate,
             transition: GateTransitionKind::Opened,
             delivery_intents: Vec::new(),
-            notification_intents: Vec::new(),
         })
     }
 
@@ -147,7 +150,6 @@ impl LifecycleGateResolver {
             gate,
             transition: GateTransitionKind::Resolved,
             delivery_intents: Vec::new(),
-            notification_intents: Vec::new(),
         })
     }
 
@@ -193,7 +195,6 @@ impl LifecycleGateResolver {
             gate,
             transition: GateTransitionKind::Resolved,
             delivery_intents: vec![intent],
-            notification_intents: Vec::new(),
         })
     }
 
@@ -250,23 +251,10 @@ impl LifecycleGateResolver {
                 wait: command.wait,
                 payload: payload.clone(),
             });
-        let notification_intent =
-            GateNotificationIntent::CompanionReviewRequest(CompanionEventNotificationIntent {
-                delivery_runtime_session_id: command.parent_delivery_runtime_session_id,
-                turn_id: command.turn_id,
-                event_type: "companion_review_request".to_string(),
-                message: format!(
-                    "Companion `{}` 请求审阅: {}",
-                    command.companion_label, command.message
-                ),
-                payload,
-            });
-
         Ok(GateTransitionOutcome {
             gate,
             transition: GateTransitionKind::Opened,
             delivery_intents: vec![delivery_intent],
-            notification_intents: vec![notification_intent],
         })
     }
 
@@ -345,21 +333,29 @@ impl LifecycleGateResolver {
                 payload: payload.clone(),
             },
         );
-        let notification_intent = GateNotificationIntent::CompanionParentRequestResolved(
-            CompanionEventNotificationIntent {
-                delivery_runtime_session_id: command.parent_delivery_runtime_session_id,
-                turn_id: command.resolved_turn_id,
-                event_type: "companion_parent_request_resolved".to_string(),
-                message: "Parent companion request 已通过 LifecycleGate resolve".to_string(),
-                payload,
-            },
-        );
-
         Ok(GateTransitionOutcome {
             gate,
             transition: GateTransitionKind::Resolved,
             delivery_intents: vec![delivery_intent],
-            notification_intents: vec![notification_intent],
+        })
+    }
+
+    pub async fn resolve_gate_payload(
+        &self,
+        command: ResolveGatePayloadCommand,
+    ) -> Result<GateTransitionOutcome, WorkflowApplicationError> {
+        let mut gate = self.load_open_gate(command.gate_id).await?;
+        let existing_payload = gate.payload_json.clone();
+        let mut payload = command.payload;
+        preserve_wait_policy_metadata(&mut payload, existing_payload.as_ref());
+        gate.payload_json = Some(payload.clone());
+        gate.resolve(command.resolved_by);
+        self.gate_repo.update(&gate).await?;
+
+        Ok(GateTransitionOutcome {
+            gate,
+            transition: GateTransitionKind::Resolved,
+            delivery_intents: Vec::new(),
         })
     }
 
@@ -396,7 +392,7 @@ impl LifecycleGateResolver {
             "parent_agent_id": command.parent_agent_id.to_string(),
             "resolved_turn_id": command.resolved_turn_id,
         });
-        preserve_wait_obligation_metadata(&mut payload, existing_payload.as_ref());
+        preserve_wait_policy_metadata(&mut payload, existing_payload.as_ref());
 
         gate.payload_json = Some(payload.clone());
         gate.resolve(command.resolved_by);
@@ -418,32 +414,10 @@ impl LifecycleGateResolver {
                 resolved_turn_id: command.resolved_turn_id.clone(),
                 payload: payload.clone(),
             });
-        let mut notification_intents = vec![GateNotificationIntent::CompanionResultAvailable(
-            CompanionEventNotificationIntent {
-                delivery_runtime_session_id: command.parent_delivery_runtime_session_id,
-                turn_id: command.resolved_turn_id.clone(),
-                event_type: "companion_result_available".to_string(),
-                message: "Companion child agent 已回传结果 (mailbox accepted)".to_string(),
-                payload: payload.clone(),
-            },
-        )];
-        if let Some(session_id) = command.child_delivery_runtime_session_id {
-            notification_intents.push(GateNotificationIntent::CompanionResultReturned(
-                CompanionEventNotificationIntent {
-                    delivery_runtime_session_id: session_id,
-                    turn_id: command.resolved_turn_id,
-                    event_type: "companion_result_returned".to_string(),
-                    message: "已通过 LifecycleGate 回传结果到 parent agent".to_string(),
-                    payload: payload.clone(),
-                },
-            ));
-        }
-
         Ok(GateTransitionOutcome {
             gate,
             transition: GateTransitionKind::Resolved,
             delivery_intents: vec![delivery_intent],
-            notification_intents,
         })
     }
 
@@ -488,27 +462,44 @@ fn normalize_companion_result_status(
     }
 }
 
-fn preserve_wait_obligation_metadata(payload: &mut Value, existing: Option<&Value>) {
+fn preserve_wait_policy_metadata(payload: &mut Value, existing: Option<&Value>) {
     let Some(target) = payload.as_object_mut() else {
         return;
     };
     let Some(existing) = existing.and_then(Value::as_object) else {
         return;
     };
-    for key in [
-        "wait_source",
-        "expected_result",
-        "on_producer_terminal_without_result",
-        "wake",
-        "companion_label",
-        "adoption_mode",
-        "dispatch_id",
-        "task_id",
-    ] {
+    for key in ["schema_version", "wait_policy", "display"] {
         if let Some(value) = existing.get(key) {
             target.insert(key.to_string(), value.clone());
         }
     }
+}
+
+fn attach_gate_wait_policy(
+    mut gate: LifecycleGate,
+    wait_policy: Option<GateWaitPolicyTemplate>,
+) -> Result<LifecycleGate, WorkflowApplicationError> {
+    let Some(wait_policy) = wait_policy else {
+        return Ok(gate);
+    };
+    let agent_id = gate.agent_id.ok_or_else(|| {
+        WorkflowApplicationError::Conflict(format!(
+            "companion gate {} missing agent owner for gate wait policy",
+            gate.id
+        ))
+    })?;
+    let wait_policy =
+        wait_policy.into_agent_run_delivery_policy(gate.run_id, agent_id, gate.frame_id, gate.id);
+    let payload = GateWaitPolicyEnvelope::new(wait_policy)
+        .write_into_payload(gate.payload_json.take())
+        .map_err(|error| {
+            WorkflowApplicationError::Internal(format!(
+                "gate wait policy payload serialize failed: {error}"
+            ))
+        })?;
+    gate.payload_json = Some(payload);
+    Ok(gate)
 }
 
 #[cfg(test)]
@@ -520,7 +511,7 @@ mod tests {
 
     use agentdash_domain::{
         DomainError,
-        workflow::{LifecycleGateRepository, WaitObligationDeclaration, WaitProducerRef},
+        workflow::{GateWaitPolicyEnvelope, LifecycleGateRepository, WaitProducerRef},
     };
 
     use super::*;
@@ -558,7 +549,7 @@ mod tests {
                 .collect())
         }
 
-        async fn list_open_wait_obligations(
+        async fn list_open_gate_wait_policies(
             &self,
             limit: usize,
         ) -> Result<Vec<LifecycleGate>, DomainError> {
@@ -572,7 +563,7 @@ mod tests {
                         && gate
                             .payload_json
                             .as_ref()
-                            .and_then(WaitObligationDeclaration::from_payload)
+                            .and_then(GateWaitPolicyEnvelope::from_payload_opt)
                             .is_some()
                 })
                 .take(limit)
@@ -592,8 +583,8 @@ mod tests {
                 .filter(|gate| {
                     gate.payload_json
                         .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
-                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                        .and_then(GateWaitPolicyEnvelope::from_payload_opt)
+                        .is_some_and(|declaration| declaration.wait_policy.source == *producer)
                 })
                 .cloned()
                 .collect())
@@ -688,13 +679,13 @@ mod tests {
                     "turn_id": "turn-1",
                     "request_type": "review",
                 })),
+                wait_policy: None,
             })
             .await
             .expect("open companion gate");
 
         assert_eq!(outcome.transition, GateTransitionKind::Opened);
         assert!(outcome.delivery_intents.is_empty());
-        assert!(outcome.notification_intents.is_empty());
         assert_eq!(outcome.gate.run_id, run_id);
         assert_eq!(outcome.gate.agent_id, Some(agent_id));
         assert_eq!(outcome.gate.frame_id, Some(frame_id));
@@ -743,7 +734,6 @@ mod tests {
 
         assert_eq!(outcome.transition, GateTransitionKind::Opened);
         assert_eq!(outcome.delivery_intents.len(), 1);
-        assert_eq!(outcome.notification_intents.len(), 1);
         let payload = outcome.gate.payload_json.as_ref().expect("payload");
         assert_eq!(payload["status"], json!("pending"));
         assert!(payload.get("parent_mailbox_delivery").is_none());

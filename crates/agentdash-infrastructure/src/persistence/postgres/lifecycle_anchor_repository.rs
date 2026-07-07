@@ -1,10 +1,10 @@
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentFrameSurfaceDocument, AgentLineage,
-    AgentLineageRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
-    WaitProducerRef,
+    AgentLineageRepository, GateWaitPolicyEnvelope, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleGate, LifecycleGateRepository, LifecycleSubjectAssociation,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository, SubjectRef, WaitProducerRef,
 };
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -606,7 +606,7 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         .collect()
     }
 
-    async fn list_open_wait_obligations(
+    async fn list_open_gate_wait_policies(
         &self,
         limit: usize,
     ) -> Result<Vec<LifecycleGate>, DomainError> {
@@ -614,24 +614,35 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
             return Ok(Vec::new());
         }
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        sqlx::query_as::<_, GateRow>(
+        let paths = GateWaitPolicyEnvelope::json_paths();
+        let query = format!(
             r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
                FROM lifecycle_gates
                WHERE status='open'
                  AND payload_json IS NOT NULL
-                 AND payload_json::jsonb ? 'wait_source'
-                 AND payload_json::jsonb ? 'expected_result'
-                 AND payload_json::jsonb ? 'on_producer_terminal_without_result'
+                 AND payload_json::jsonb ->> '{schema_version}' = '1'
+                 AND payload_json::jsonb ? '{wait_policy}'
+                 AND payload_json::jsonb -> '{wait_policy}' ? '{source}'
+                 AND payload_json::jsonb -> '{wait_policy}' ? '{expected_result}'
+                 AND payload_json::jsonb -> '{wait_policy}' ? '{terminal_policy}'
+                 AND payload_json::jsonb -> '{wait_policy}' ? '{wake_target}'
                ORDER BY created_at
                LIMIT $1"#,
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
+            schema_version = paths.schema_version,
+            wait_policy = paths.wait_policy,
+            source = paths.source,
+            expected_result = paths.expected_result,
+            terminal_policy = paths.terminal_policy,
+            wake_target = paths.wake_target,
+        );
+        sqlx::query_as::<_, GateRow>(&query)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect()
     }
 
     async fn list_by_wait_producer(
@@ -644,25 +655,36 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
                 agent_id,
                 frame_id,
             } => {
-                let rows = sqlx::query_as::<_, GateRow>(
+                let paths = GateWaitPolicyEnvelope::json_paths();
+                let query = format!(
                     r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
                        FROM lifecycle_gates
                        WHERE payload_json IS NOT NULL
-                         AND payload_json::jsonb -> 'wait_source' ->> 'kind' = 'agent_run_delivery'
-                         AND payload_json::jsonb -> 'wait_source' ->> 'run_id' = $1
-                         AND payload_json::jsonb -> 'wait_source' ->> 'agent_id' = $2
+                         AND payload_json::jsonb ->> '{schema_version}' = '1'
+                         AND payload_json::jsonb -> '{wait_policy}' -> '{source}' ->> '{kind}' = $4
+                         AND payload_json::jsonb -> '{wait_policy}' -> '{source}' ->> '{run_id}' = $1
+                         AND payload_json::jsonb -> '{wait_policy}' -> '{source}' ->> '{agent_id}' = $2
                          AND (
                             $3::text IS NULL
-                            OR payload_json::jsonb -> 'wait_source' ->> 'frame_id' = $3
+                            OR payload_json::jsonb -> '{wait_policy}' -> '{source}' ->> '{frame_id}' = $3
                          )
                        ORDER BY created_at"#,
-                )
-                .bind(run_id.to_string())
-                .bind(agent_id.to_string())
-                .bind(frame_id.map(|id| id.to_string()))
-                .fetch_all(&self.pool)
-                .await
-                .map_err(db_err)?;
+                    schema_version = paths.schema_version,
+                    wait_policy = paths.wait_policy,
+                    source = paths.source,
+                    kind = paths.kind,
+                    run_id = paths.run_id,
+                    agent_id = paths.agent_id,
+                    frame_id = paths.frame_id,
+                );
+                let rows = sqlx::query_as::<_, GateRow>(&query)
+                    .bind(run_id.to_string())
+                    .bind(agent_id.to_string())
+                    .bind(frame_id.map(|id| id.to_string()))
+                    .bind(producer.kind())
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(db_err)?;
                 rows.into_iter().map(TryInto::try_into).collect()
             }
         }

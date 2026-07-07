@@ -24,9 +24,9 @@ use agentdash_application_agentrun::agent_run::runtime_surface::{
     AgentRunResourceSurfaceQuery, AgentRunResourceSurfaceQueryDeps,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentRunPresentationReadModelQuery, AgentRunPresentationReadModelQueryDeps,
-    AgentRunPresentationReadModelQueryRepos, AgentRunRuntimeSurfaceQuery,
-    AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
+    AgentRunControlEffectService, AgentRunPresentationReadModelQuery,
+    AgentRunPresentationReadModelQueryDeps, AgentRunPresentationReadModelQueryRepos,
+    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateService,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
@@ -38,8 +38,8 @@ use agentdash_application_runtime_gateway::{
     CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,
 };
 use agentdash_application_runtime_session::session::{
-    SessionBranchingService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
+    SessionBranchingService, SessionControlService, SessionCoreService, SessionEventingService,
+    SessionHookService, SessionLaunchService, SessionRuntimeService,
     SessionRuntimeTransitionService, SessionTitleService,
 };
 use agentdash_application_vfs::MountProviderRegistry;
@@ -85,7 +85,7 @@ pub struct ServiceSet {
     pub presentation_read_model_query: AgentRunPresentationReadModelQuery,
     pub resource_surface_query: AgentRunResourceSurfaceQuery,
     pub vfs_surface_resolver: VfsSurfaceResolver,
-    pub session_effects: SessionEffectsService,
+    pub agent_run_control_effects: AgentRunControlEffectService,
     pub session_title: SessionTitleService,
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
@@ -267,7 +267,7 @@ impl AppState {
         let session_hooks = session_bootstrap.session_hooks;
         let session_runtime_transition = session_bootstrap.session_runtime_transition;
         let runtime_surface_update = session_bootstrap.runtime_surface_update;
-        let session_effects = session_bootstrap.session_effects;
+        let agent_run_control_effects = session_bootstrap.agent_run_control_effects;
         let session_title = session_bootstrap.session_title;
         let connector = session_bootstrap.connector;
         let hook_provider = session_bootstrap.hook_provider;
@@ -348,27 +348,26 @@ impl AppState {
             repos.state_change_repo.clone();
         let story_repo_port: Arc<dyn StoryRepository> = repos.story_repo.clone();
 
-        // 启动对账管线：Session → Wait obligation → Task → Infrastructure（有序不可跳过）
+        // 启动对账管线：Session → Gate wait policy → Task → Infrastructure（有序不可跳过）
         //
         // M2-c：Task 对账改为从 LifecycleRun/step state 反投影，不再需要 session 状态读取器。
         {
-            let wait_obligation_terminal_convergence: Arc<
-                dyn agentdash_application::wait_obligation::WaitObligationTerminalConvergencePort,
-            > = Arc::new(agentdash_application::wait_obligation::WaitObligationTerminalConvergenceService::with_companion_delivery(
+            let gate_producer_terminal_convergence: Arc<
+                dyn agentdash_application::gate_wait_policy::GateProducerTerminalConvergencePort,
+            > = Arc::new(agentdash_application::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
                 repos.lifecycle_gate_repo.clone(),
                 repos.agent_run_delivery_binding_repo.clone(),
                 Arc::new(
-                    agentdash_application::companion::SessionEventingCompanionGateDelivery::new(
-                        session_eventing.clone(),
-                    ),
-                ),
-                Arc::new(
-                    agentdash_application::companion::AgentRunCompanionMailboxDelivery::from_runtime_services(
+                    agentdash_application::gate_wait_policy::CompanionGateMailboxWakeDelivery::new(
+                        Arc::new(
+                            agentdash_application::companion::AgentRunCompanionMailboxDelivery::from_runtime_services(
                         repos.clone(),
                         agent_run_session_core(session_core.clone()),
                         agent_run_session_control(session_control.clone()),
                         agent_run_session_eventing(session_eventing.clone()),
                         agent_run_session_launch(session_launch.clone()),
+                            ),
+                        ),
                     ),
                 ),
             ));
@@ -385,7 +384,7 @@ impl AppState {
                 execution_anchor_repo: repos.execution_anchor_repo.clone(),
                 lifecycle_gate_repo: repos.lifecycle_gate_repo.clone(),
                 agent_run_delivery_binding_repo: repos.agent_run_delivery_binding_repo.clone(),
-                wait_obligation_terminal_convergence,
+                gate_producer_terminal_convergence,
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
             if report.has_errors() {
@@ -451,7 +450,7 @@ impl AppState {
                 presentation_read_model_query,
                 resource_surface_query,
                 vfs_surface_resolver,
-                session_effects,
+                agent_run_control_effects,
                 session_title,
                 connector,
                 vfs_service,

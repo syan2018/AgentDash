@@ -88,7 +88,7 @@ impl TurnPreparer {
         let resolved_payload = launch_plan.resolved_payload.clone();
         let title_hint = launch_plan.title_hint.clone();
         let resolved_follow_up_session_id = launch_plan.summary.follow_up_session_id.clone();
-        let post_turn_handler = launch_plan.terminal_effects.post_turn_handler.clone();
+        let post_turn_handler = launch_plan.terminal_boundary.post_turn_handler.clone();
         let hook_runtime = launch_plan.context.turn.hook_runtime.clone();
         let mut runtime_delegate_facets = launch_plan.runtime_delegate_facets.clone();
         let hook_snapshot_contribution = launch_plan.hooks.snapshot_contribution.clone();

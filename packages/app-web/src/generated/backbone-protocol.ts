@@ -147,6 +147,14 @@ export type ContextCompactedNotification = { threadId: string, turnId: string, }
 
 export type ContextUsageSource = "provider" | "providerPlusEstimate" | "localEstimate";
 
+export type ControlPlaneProjection = "workspace" | "agent_run_list" | "mailbox" | "waiting" | "delivery" | "hook_runtime" | "resource_surface" | "title";
+
+export type ControlPlaneProjectionChangeReason = "mailbox_state_changed" | "wait_resolved" | "delivery_terminal" | "companion_result" | "hook_effect_applied" | "hook_auto_resume_queued" | "workspace_module_presented" | "capability_state_changed" | "context_frame_changed" | "title_changed";
+
+export type ControlPlaneProjectionChanged = { projection: ControlPlaneProjection, reason: ControlPlaneProjectionChangeReason, run_id: string, agent_id: string, frame_id: string | null, gate_id: string | null, mailbox_message_id: string | null, delivery_runtime_session_id: string | null, workspace_module_presentation: ControlPlaneWorkspaceModulePresentation | null, };
+
+export type ControlPlaneWorkspaceModulePresentation = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload: JsonValue | null, diagnostics: JsonValue | null, };
+
 export type DynamicToolCallOutputContentItem = { "type": "inputText", text: string, } | { "type": "inputImage", imageUrl: string, };
 
 export type DynamicToolCallStatus = "inProgress" | "completed" | "failed";
@@ -268,7 +276,7 @@ export type PlanDeltaNotification = { threadId: string, turnId: string, itemId: 
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } } | { "kind": "mailbox_state_changed", "data": { reason: string, } };
+export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
 
 export type ProviderAttemptPhase = "connecting" | "connected_waiting_first_delta" | "streaming" | "retry_scheduled" | "retrying" | "failed" | "succeeded";
 

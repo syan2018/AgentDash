@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Runtime terminal boundary, AgentRun delivery binding, and control effect outbox ownership rules."}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Mailbox wake, source identity dedup, scheduler and wait activity contracts."}
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "LifecycleGate ownership, gate resolver intent, and RuntimeSessionExecutionAnchor boundaries."}
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Backbone event source-of-truth and relay/runtime event naming contracts."}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Repository/outbox persistence conventions and error boundaries."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Migration and database schema expectations for durable fact changes."}
+{"file": ".trellis/spec/backend/hooks/execution-hook-runtime.md", "reason": "Hook runtime ownership and replay boundaries."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer fact-source and data-flow review guide for backend/API/frontend changes."}

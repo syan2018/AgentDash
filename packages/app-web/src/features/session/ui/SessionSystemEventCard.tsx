@@ -1,7 +1,7 @@
 /**
  * 系统事件卡片
  *
- * 渲染 platform 事件中的系统/hook/companion 事件。
+ * 渲染 platform 事件中的系统和 hook 事件。
  * badge 是唯一染色点，卡片外框和文字保持中性色。
  */
 
@@ -14,7 +14,6 @@ import {
   isRecord,
 } from "../model/platformEvent";
 import { EventStripCard, EventFullCard } from "./EventCards";
-import { SessionCompanionRequestCard } from "./SessionCompanionRequestCard";
 import { ContextFrameCard } from "./ContextFrameCard";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import type { ContextFrame } from "../model/contextFrame";
@@ -85,13 +84,6 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   approval_requested:              "等待审批",
   approval_resolved:               "审批结果",
   hook_action_resolved:            "事项已结案",
-  companion_dispatch_registered:   "协作 Agent 已派发",
-  companion_result_available:      "协作结果可用",
-  companion_result_returned:       "协作结果已回传",
-  companion_human_request:         "Agent 请求用户回应",
-  companion_human_response:        "用户已回应 Agent",
-  companion_review_request:        "协作 Agent 提审",
-  workspace_module_presented:      "Workspace Module 已展示",
   workspace_module_present_failed: "Workspace Module 展示失败",
   context_frame:          "Agent 上下文",
   session_branch_forked:           "会话已分叉",
@@ -113,13 +105,6 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   approval_requested:              "当前工具调用正在等待审批",
   approval_resolved:               "当前工具调用审批已完成",
   hook_action_resolved:            "一项流程干预已被结案",
-  companion_dispatch_registered:   "已注册协作 Agent 派发",
-  companion_result_available:      "协作 Agent 已回传结果",
-  companion_result_returned:       "协作结果已回传到当前会话",
-  companion_human_request:         "Agent 正在等待用户回应",
-  companion_human_response:        "已将用户回应写入当前会话",
-  companion_review_request:        "协作 Agent 请求审阅",
-  workspace_module_presented:      "已请求打开 Workspace Module 视图",
   workspace_module_present_failed: "后端未找到可展示的 Workspace Module 视图",
   context_frame:          "Agent 上下文已更新",
   session_branch_forked:           "已从父会话分叉出当前会话",
@@ -214,9 +199,8 @@ export function SessionSystemEventCard({ event, contextFrame }: SessionSystemEve
     return null;
   }
 
-  // ── companion_human_request → 交互卡片 ──
-  if (eventType === "companion_human_request") {
-    return <SessionCompanionRequestCard event={event} />;
+  if (eventType.startsWith("companion_")) {
+    return null;
   }
 
   if (eventType === "context_frame") {
@@ -560,40 +544,6 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
     const resolutionNote = typeof data.resolution_note === "string" ? data.resolution_note : null;
     if (summary) lines.push(`摘要：${summary}`);
     if (resolutionNote) lines.push(`说明：${resolutionNote}`);
-    return lines;
-  }
-
-  if (eventType === "companion_dispatch_registered" ||
-      eventType === "companion_result_available" ||
-      eventType === "companion_result_returned") {
-    const label = typeof data.companion_label === "string" ? data.companion_label : null;
-    const agentName = typeof data.agent_name === "string" ? data.agent_name : null;
-    const summary = typeof data.summary === "string" ? data.summary : null;
-    const status = typeof data.status === "string" ? data.status : null;
-    if (agentName) lines.push(`协作 Agent：${agentName}`);
-    else if (label) lines.push(`协作 Agent：${label}`);
-    if (status) lines.push(`状态：${status}`);
-    if (summary) lines.push(`摘要：${summary}`);
-    return lines;
-  }
-
-  if (eventType === "companion_review_request") {
-    const label = typeof data.companion_label === "string" ? data.companion_label : null;
-    const prompt = typeof data.prompt === "string" ? data.prompt : null;
-    const wait = typeof data.wait === "boolean" ? data.wait : null;
-    if (label) lines.push(`协作 Agent：${label}`);
-    if (prompt) lines.push(`提审内容：${prompt}`);
-    if (wait != null) lines.push(`等待回应：${wait ? "是" : "否"}`);
-    return lines;
-  }
-
-  if (eventType === "companion_human_response") {
-    const status = typeof data.status === "string" ? data.status : null;
-    const summary = typeof data.summary === "string" ? data.summary : null;
-    const resumed = typeof data.resumed_waiting_tool === "boolean" ? data.resumed_waiting_tool : null;
-    if (status) lines.push(`状态：${status}`);
-    if (summary) lines.push(`摘要：${summary}`);
-    if (resumed != null) lines.push(`挂起工具：${resumed ? "已恢复" : "未挂起 / 已离线"}`);
     return lines;
   }
 

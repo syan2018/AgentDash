@@ -13,7 +13,6 @@ use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{AgentConnector, ConnectorError};
 
 use crate::context::SharedContextAuditBus;
-use crate::session::effects_service::SessionEffectsService;
 use crate::session::eventing::SessionEventingService;
 use crate::session::hooks_service::SessionHookService;
 use crate::session::hub::SessionRuntimeInner;
@@ -21,6 +20,7 @@ use crate::session::persistence::SessionLaunchStores;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
 use crate::session::runtime_transition_service::SessionRuntimeTransitionService;
+use crate::session::terminal_boundary::RuntimeTerminalBoundaryService;
 use crate::session::title_generator::derive_session_title;
 use crate::session::tool_assembly::{
     AssembledToolSurface, assemble_tool_surface_for_execution_context,
@@ -53,7 +53,7 @@ pub(in crate::session) struct SessionLaunchDeps {
     eventing: SessionEventingService,
     hooks: SessionHookService,
     runtime_transition: SessionRuntimeTransitionService,
-    effects: SessionEffectsService,
+    terminal_boundary: RuntimeTerminalBoundaryService,
 }
 
 impl SessionLaunchDeps {
@@ -78,7 +78,7 @@ impl SessionLaunchDeps {
             eventing: inner.eventing_service(),
             hooks: inner.hook_service(),
             runtime_transition: inner.runtime_transition_service(),
-            effects: inner.effects_service(),
+            terminal_boundary: inner.terminal_boundary_service(),
         }
     }
 
@@ -121,7 +121,7 @@ impl SessionLaunchDeps {
             connector: self.connector.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
             eventing: self.eventing.clone(),
-            effects: self.effects.clone(),
+            terminal_boundary: self.terminal_boundary.clone(),
         }
     }
 
@@ -133,7 +133,7 @@ impl SessionLaunchDeps {
             stores: self.stores.clone(),
             eventing: self.eventing.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
-            effects: self.effects.clone(),
+            terminal_boundary: self.terminal_boundary.clone(),
             accepted_launch_commit,
         }
     }
@@ -157,7 +157,7 @@ impl SessionLaunchDeps {
         StreamIngestionDeps {
             turn_supervisor: self.turn_supervisor.clone(),
             eventing: self.eventing.clone(),
-            effects: self.effects.clone(),
+            terminal_boundary: self.terminal_boundary.clone(),
         }
     }
 }
@@ -224,7 +224,7 @@ pub(super) struct ConnectorStartDeps {
     pub(super) connector: Arc<dyn AgentConnector>,
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) eventing: SessionEventingService,
-    pub(super) effects: SessionEffectsService,
+    pub(super) terminal_boundary: RuntimeTerminalBoundaryService,
 }
 
 #[derive(Clone)]
@@ -232,7 +232,7 @@ pub(super) struct TurnCommitDeps {
     pub(super) stores: SessionLaunchStores,
     pub(super) eventing: SessionEventingService,
     pub(super) turn_supervisor: TurnSupervisor,
-    pub(super) effects: SessionEffectsService,
+    pub(super) terminal_boundary: RuntimeTerminalBoundaryService,
     pub(super) accepted_launch_commit: Arc<dyn AcceptedLaunchCommitPort>,
 }
 
@@ -279,5 +279,5 @@ impl TurnCommitDeps {
 pub(super) struct StreamIngestionDeps {
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) eventing: SessionEventingService,
-    pub(super) effects: SessionEffectsService,
+    pub(super) terminal_boundary: RuntimeTerminalBoundaryService,
 }

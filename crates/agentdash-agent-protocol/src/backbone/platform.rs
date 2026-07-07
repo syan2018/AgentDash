@@ -33,11 +33,14 @@ pub enum PlatformEvent {
     /// Session projection was rewound to a stable boundary after a failed turn.
     SessionRewound(SessionRewound),
 
+    /// AgentRun control-plane projection invalidation hint.
+    ControlPlaneProjectionChanged(ControlPlaneProjectionChanged),
+
     /// 交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。
     TerminalOutput { terminal_id: String, data: String },
 
-    /// 终端生命周期变更（创建/退出/丢失/用户终止）。
-    TerminalStateChanged {
+    /// PTY/交互式终端生命周期变更（创建/退出/丢失/用户终止）。
+    PtyTerminalStateChanged {
         terminal_id: String,
         state: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,9 +48,67 @@ pub enum PlatformEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+}
 
-    /// Mailbox 消息状态变更（消费/删除/promote 等），前端据此刷新 mailbox 视图。
-    MailboxStateChanged { reason: String },
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct ControlPlaneProjectionChanged {
+    pub projection: ControlPlaneProjection,
+    pub reason: ControlPlaneProjectionChangeReason,
+    pub run_id: String,
+    pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mailbox_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_runtime_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_module_presentation: Option<ControlPlaneWorkspaceModulePresentation>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlPlaneProjection {
+    Workspace,
+    AgentRunList,
+    Mailbox,
+    Waiting,
+    Delivery,
+    HookRuntime,
+    ResourceSurface,
+    Title,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlPlaneProjectionChangeReason {
+    MailboxStateChanged,
+    WaitResolved,
+    DeliveryTerminal,
+    CompanionResult,
+    HookEffectApplied,
+    HookAutoResumeQueued,
+    WorkspaceModulePresented,
+    CapabilityStateChanged,
+    ContextFrameChanged,
+    TitleChanged,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct ControlPlaneWorkspaceModulePresentation {
+    pub module_id: String,
+    pub view_key: String,
+    pub renderer_kind: String,
+    pub presentation_uri: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

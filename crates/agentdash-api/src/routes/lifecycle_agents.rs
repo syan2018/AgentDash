@@ -1625,77 +1625,14 @@ async fn load_agent_run_workspace_snapshot(
         &lifecycle_surface_projection,
         state.services.lifecycle_read_model_query.as_ref(),
     );
-    let mut snapshot = service
+    service
         .resolve(app_workspace::AgentRunWorkspaceQueryInput {
             run: context.run.clone(),
             agent: context.agent.clone(),
             viewer_user_id: Some(viewer_user_id.to_string()),
         })
         .await
-        .map_err(ApiError::from)?;
-    append_exec_terminal_waiting_items(&mut snapshot, state);
-    Ok(snapshot)
-}
-
-fn append_exec_terminal_waiting_items(
-    snapshot: &mut app_workspace::AgentRunWorkspaceSnapshot,
-    state: &AppState,
-) {
-    let run_id = snapshot.run.id.to_string();
-    let agent_id = snapshot.agent.id.to_string();
-    let existing_exec_refs = snapshot
-        .conversation
-        .mailbox
-        .waiting_items
-        .iter()
-        .filter(|item| item.kind == "exec")
-        .map(|item| {
-            item.source_ref
-                .clone()
-                .unwrap_or_else(|| item.wait_id.clone())
-        })
-        .collect::<HashSet<_>>();
-
-    let terminal_items = state
-        .services
-        .terminal_registry
-        .list_terminals(&run_id, &agent_id)
-        .into_iter()
-        .filter(|terminal| exec_terminal_is_waiting(&terminal.state))
-        .filter(|terminal| !existing_exec_refs.contains(&terminal.terminal_id))
-        .map(exec_terminal_waiting_item);
-    snapshot
-        .conversation
-        .mailbox
-        .waiting_items
-        .extend(terminal_items);
-}
-
-fn exec_terminal_is_waiting(state: &str) -> bool {
-    matches!(state, "starting" | "running")
-}
-
-fn exec_terminal_waiting_item(
-    terminal: agentdash_application_agentrun::agent_run::terminal_registry::TerminalState,
-) -> app_agent_run::ConversationWaitingItemModel {
-    app_agent_run::ConversationWaitingItemModel {
-        wait_id: terminal.terminal_id.clone(),
-        gate_id: terminal.terminal_id.clone(),
-        kind: "exec".to_string(),
-        source_ref: Some(terminal.terminal_id),
-        correlation_ref: None,
-        status: terminal.state,
-        source_label: Some("Terminal".to_string()),
-        preview: terminal.cwd,
-        created_at: timestamp_millis_to_rfc3339(terminal.created_at),
-        resolved_at: terminal.exited_at.map(timestamp_millis_to_rfc3339),
-    }
-}
-
-fn timestamp_millis_to_rfc3339(timestamp_millis: i64) -> String {
-    DateTime::<Utc>::from_timestamp_millis(timestamp_millis)
-        .unwrap_or_else(Utc::now)
-        .to_rfc3339()
+        .map_err(ApiError::from)
 }
 
 /// 轻量列表条目：列表/lineage ref 共用，避免为每个主 Run 走完整详情快照。
@@ -2683,43 +2620,6 @@ mod tests {
     };
 
     use super::*;
-
-    #[test]
-    fn exec_terminal_waiting_item_uses_terminal_id_as_exec_ref() {
-        let terminal =
-            agentdash_application_agentrun::agent_run::terminal_registry::TerminalState {
-                terminal_id: "term-1".to_string(),
-                run_id: "run-1".to_string(),
-                agent_id: "agent-1".to_string(),
-                backend_id: "backend-1".to_string(),
-                mount_id: Some("main".to_string()),
-                cwd: Some("D:/repo".to_string()),
-                capability: Some("interactive".to_string()),
-                state: "running".to_string(),
-                exit_code: None,
-                process_id: None,
-                created_at: 0,
-                exited_at: None,
-            };
-
-        let item = exec_terminal_waiting_item(terminal);
-
-        assert_eq!(item.wait_id, "term-1");
-        assert_eq!(item.gate_id, "term-1");
-        assert_eq!(item.kind, "exec");
-        assert_eq!(item.source_ref.as_deref(), Some("term-1"));
-        assert_eq!(item.status, "running");
-        assert_eq!(item.preview.as_deref(), Some("D:/repo"));
-    }
-
-    #[test]
-    fn exec_terminal_waiting_projection_only_keeps_live_states() {
-        assert!(exec_terminal_is_waiting("starting"));
-        assert!(exec_terminal_is_waiting("running"));
-        assert!(!exec_terminal_is_waiting("exited"));
-        assert!(!exec_terminal_is_waiting("killed"));
-        assert!(!exec_terminal_is_waiting("lost"));
-    }
 
     #[test]
     fn agent_run_fork_response_preserves_redirect_and_lineage() {

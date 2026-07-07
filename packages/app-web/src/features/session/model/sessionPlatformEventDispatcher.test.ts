@@ -21,9 +21,9 @@ function resetTerminalStore(): void {
   });
 }
 
-function envelope(event: BackboneEvent): BackboneEnvelope {
+function envelope(event: BackboneEvent, sessionId = "session-1"): BackboneEnvelope {
   return {
-    sessionId: "session-1",
+    sessionId,
     source: {
       connectorId: "connector",
       connectorType: "test",
@@ -38,9 +38,13 @@ function envelope(event: BackboneEvent): BackboneEnvelope {
   };
 }
 
-function platformEvent(seq: number, platform: PlatformEvent): SessionEventEnvelope {
+function platformEvent(
+  seq: number,
+  platform: PlatformEvent,
+  sessionId = "session-1",
+): SessionEventEnvelope {
   return {
-    session_id: "session-1",
+    session_id: sessionId,
     event_seq: seq,
     occurred_at_ms: seq,
     committed_at_ms: seq,
@@ -50,7 +54,7 @@ function platformEvent(seq: number, platform: PlatformEvent): SessionEventEnvelo
     notification: envelope({
       type: "platform",
       payload: platform,
-    }),
+    }, sessionId),
   };
 }
 
@@ -74,7 +78,7 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(store.getOutputBaseOffset("term-1")).toBe(8);
   });
 
-  it("updates terminal_state_changed and validates state value", () => {
+  it("updates pty_terminal_state_changed and validates state value", () => {
     useTerminalStore.getState().registerTerminal({
       id: "term-1",
       capability: "interactive",
@@ -84,7 +88,7 @@ describe("dispatchSessionPlatformEvent", () => {
     });
 
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
-      kind: "terminal_state_changed",
+      kind: "pty_terminal_state_changed",
       data: {
         terminal_id: "term-1",
         state: "exited",
@@ -99,7 +103,7 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(terminal?.exitCode).toBe(0);
   });
 
-  it("does not duplicate output on repeated terminal_output event projection", () => {
+  it("deduplicates terminal_output by stream identity and event sequence", () => {
     const event = platformEvent(1, {
       kind: "terminal_output",
       data: {
@@ -112,11 +116,21 @@ describe("dispatchSessionPlatformEvent", () => {
     expect(dispatchSessionPlatformEvent(event)).toBe(true);
 
     expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello");
+
+    expect(dispatchSessionPlatformEvent(platformEvent(1, {
+      kind: "terminal_output",
+      data: {
+        terminal_id: "term-1",
+        data: " world",
+      },
+    }, "agent-run-journal-1"))).toBe(true);
+
+    expect(useTerminalStore.getState().getOutput("term-1")).toBe("hello world");
   });
 
-  it("creates state-only projection for unregistered terminal on terminal_state_changed", () => {
+  it("creates state-only projection for unregistered terminal on pty_terminal_state_changed", () => {
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
-      kind: "terminal_state_changed",
+      kind: "pty_terminal_state_changed",
       data: {
         terminal_id: "term-1",
         state: "lost",
@@ -141,7 +155,7 @@ describe("dispatchSessionPlatformEvent", () => {
     }))).toBe(true);
 
     expect(dispatchSessionPlatformEvent(platformEvent(2, {
-      kind: "terminal_state_changed",
+      kind: "pty_terminal_state_changed",
       data: {
         terminal_id: "term-running-1",
         state: "running",
@@ -160,9 +174,17 @@ describe("dispatchSessionPlatformEvent", () => {
 
   it("does not consume unknown platform events", () => {
     const handled = dispatchSessionPlatformEvent(platformEvent(1, {
-      kind: "mailbox_state_changed",
+      kind: "control_plane_projection_changed",
       data: {
-        reason: "refresh",
+        projection: "mailbox",
+        reason: "mailbox_state_changed",
+        run_id: "run-1",
+        agent_id: "agent-1",
+        frame_id: null,
+        gate_id: null,
+        mailbox_message_id: null,
+        delivery_runtime_session_id: null,
+        workspace_module_presentation: null,
       },
     }));
 

@@ -45,7 +45,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "runtime_session_projection_heads",
     "runtime_session_projection_segments",
     "runtime_session_delivery_commands",
-    "runtime_session_terminal_effects",
+    "agent_run_control_effects",
     "runtime_sessions",
     "settings",
     "skill_assets",

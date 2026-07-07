@@ -20,11 +20,11 @@ use agentdash_domain::workflow::{
     AgentProcedureRepository, AgentRunCommandClaim, AgentRunCommandReceipt,
     AgentRunCommandReceiptRepository, AgentRunCommandStatus, AgentRunDeliveryBinding,
     AgentRunDeliveryBindingRepository, AgentRunLineage, AgentRunLineageRepository,
-    DeliveryBindingStatus, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociation,
-    LifecycleSubjectAssociationRepository, NewAgentRunCommandReceipt,
+    DeliveryBindingStatus, GateWaitPolicyEnvelope, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleGate, LifecycleGateRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, NewAgentRunCommandReceipt,
     RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
-    WaitObligationDeclaration, WaitProducerRef, WorkflowGraph, WorkflowGraphRepository,
+    WaitProducerRef, WorkflowGraph, WorkflowGraphRepository,
 };
 use chrono::Utc;
 use tokio::sync::Mutex;
@@ -1587,7 +1587,7 @@ impl LifecycleGateRepository for MemoryLifecycleGateRepository {
             .collect())
     }
 
-    async fn list_open_wait_obligations(
+    async fn list_open_gate_wait_policies(
         &self,
         limit: usize,
     ) -> Result<Vec<LifecycleGate>, DomainError> {
@@ -1601,7 +1601,7 @@ impl LifecycleGateRepository for MemoryLifecycleGateRepository {
                     && gate
                         .payload_json
                         .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
+                        .and_then(GateWaitPolicyEnvelope::from_payload_opt)
                         .is_some()
             })
             .take(limit)
@@ -1621,8 +1621,8 @@ impl LifecycleGateRepository for MemoryLifecycleGateRepository {
             .filter(|gate| {
                 gate.payload_json
                     .as_ref()
-                    .and_then(WaitObligationDeclaration::from_payload)
-                    .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                    .and_then(GateWaitPolicyEnvelope::from_payload_opt)
+                    .is_some_and(|declaration| declaration.wait_policy.source == *producer)
             })
             .cloned()
             .collect())

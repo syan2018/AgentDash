@@ -519,7 +519,7 @@ async fn handle_backend_connection(
             };
             let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
                 agentdash_agent_protocol::BackboneEvent::Platform(
-                    agentdash_agent_protocol::PlatformEvent::TerminalStateChanged {
+                    agentdash_agent_protocol::PlatformEvent::PtyTerminalStateChanged {
                         terminal_id: terminal_id.clone(),
                         state: "lost".to_string(),
                         exit_code: None,
@@ -643,7 +643,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 }
             }
         }
-        RelayMessage::EventSessionStateChanged { payload, .. } => {
+        RelayMessage::EventRuntimeSessionStateChanged { payload, .. } => {
             use agentdash_application_ports::backend_transport::{
                 RelaySessionEvent, RelayTerminalKind,
             };
@@ -651,24 +651,24 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             diag!(Info, Subsystem::Relay,
 
                 backend_id = %backend_id,
-                session_id = %payload.session_id,
+                runtime_session_id = %payload.runtime_session_id,
                 state = ?payload.state,
-                "收到远程会话状态变更"
+                "收到远程 RuntimeSession delivery 状态变更"
             );
 
-            if matches!(payload.state, agentdash_relay::SessionState::Started) {
+            if matches!(payload.state, agentdash_relay::RuntimeSessionState::Started) {
                 return;
             }
 
             let terminal_kind = match payload.state {
-                agentdash_relay::SessionState::Completed => RelayTerminalKind::Completed,
-                agentdash_relay::SessionState::Failed => RelayTerminalKind::Failed,
-                agentdash_relay::SessionState::Cancelled => RelayTerminalKind::Interrupted,
-                agentdash_relay::SessionState::Started => unreachable!(),
+                agentdash_relay::RuntimeSessionState::Completed => RelayTerminalKind::Completed,
+                agentdash_relay::RuntimeSessionState::Failed => RelayTerminalKind::Failed,
+                agentdash_relay::RuntimeSessionState::Cancelled => RelayTerminalKind::Interrupted,
+                agentdash_relay::RuntimeSessionState::Started => unreachable!(),
             };
 
             if !state.services.backend_registry.feed_session_event(
-                &payload.session_id,
+                &payload.runtime_session_id,
                 RelaySessionEvent::Terminal {
                     kind: terminal_kind,
                     message: payload.message.clone(),
@@ -677,8 +677,8 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 diag!(Debug, Subsystem::Relay,
 
                     backend_id = %backend_id,
-                    session_id = %payload.session_id,
-                    "relay terminal 到达时 session sink 不存在（session 可能已结束）"
+                    runtime_session_id = %payload.runtime_session_id,
+                    "relay runtime terminal 到达时 session sink 不存在（session 可能已结束）"
                 );
             }
         }
@@ -815,19 +815,19 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
             }
         }
-        RelayMessage::EventTerminalStateChanged { payload, .. } => {
+        RelayMessage::EventPtyTerminalStateChanged { payload, .. } => {
             diag!(Info, Subsystem::Relay,
 
                 backend_id = %backend_id,
                 terminal_id = %payload.terminal_id,
                 state = ?payload.state,
-                "收到终端状态变更事件"
+                "收到 PTY 终端状态变更事件"
             );
             let state_str = match payload.state {
-                agentdash_relay::TerminalProcessState::Running => "running",
-                agentdash_relay::TerminalProcessState::Exited => "exited",
-                agentdash_relay::TerminalProcessState::Lost => "lost",
-                agentdash_relay::TerminalProcessState::Killed => "killed",
+                agentdash_relay::PtyTerminalProcessState::Running => "running",
+                agentdash_relay::PtyTerminalProcessState::Exited => "exited",
+                agentdash_relay::PtyTerminalProcessState::Lost => "lost",
+                agentdash_relay::PtyTerminalProcessState::Killed => "killed",
             };
             state.services.terminal_registry.update_state(
                 &payload.terminal_id,
@@ -851,7 +851,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 };
                 let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
                     agentdash_agent_protocol::BackboneEvent::Platform(
-                        agentdash_agent_protocol::PlatformEvent::TerminalStateChanged {
+                        agentdash_agent_protocol::PlatformEvent::PtyTerminalStateChanged {
                             terminal_id: payload.terminal_id.clone(),
                             state: state_str.to_string(),
                             exit_code: payload.exit_code,

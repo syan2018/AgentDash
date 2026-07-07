@@ -656,7 +656,7 @@ mod tests {
         let stores = SessionStoreSet {
             meta: persistence.clone(),
             events: spy.clone(),
-            terminal_effects: persistence.clone(),
+            control_effects: persistence.clone(),
             runtime_commands: persistence.clone(),
             compactions: persistence.clone(),
             projections: persistence.clone(),

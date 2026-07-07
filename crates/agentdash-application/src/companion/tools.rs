@@ -36,7 +36,7 @@ use super::{
     CompanionParentMailboxDeliveryCommand, CompanionParentMailboxDeliveryResult,
     CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
     CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
-    ResolveCompanionParentRequestCommand, build_companion_event_notification,
+    ResolveCompanionParentRequestCommand,
 };
 use crate::agent_run::{
     AgentFrameRuntimeTarget, AgentRunMailboxCommandOutcome, AgentRunMailboxIntakeCommand,
@@ -151,22 +151,19 @@ impl<'a> CompanionGateControlFactory<'a> {
         Self { repos }
     }
 
-    fn with_session_eventing(
+    fn with_agent_run_delivery(
         &self,
         session_services: &SessionToolServices,
     ) -> CompanionGateControlService {
-        CompanionGateControlService::with_session_eventing(
-            CompanionGateControlRepos {
-                gate_repo: self.repos.lifecycle_gate_repo.clone(),
-                run_repo: self.repos.lifecycle_run_repo.clone(),
-                frame_repo: self.repos.agent_frame_repo.clone(),
-                agent_repo: self.repos.lifecycle_agent_repo.clone(),
-                anchor_repo: self.repos.execution_anchor_repo.clone(),
-                delivery_binding_repo: self.repos.agent_run_delivery_binding_repo.clone(),
-                lineage_repo: self.repos.agent_lineage_repo.clone(),
-            },
-            session_services.eventing.clone(),
-        )
+        CompanionGateControlService::with_agent_run_projection(CompanionGateControlRepos {
+            gate_repo: self.repos.lifecycle_gate_repo.clone(),
+            run_repo: self.repos.lifecycle_run_repo.clone(),
+            frame_repo: self.repos.agent_frame_repo.clone(),
+            agent_repo: self.repos.lifecycle_agent_repo.clone(),
+            anchor_repo: self.repos.execution_anchor_repo.clone(),
+            delivery_binding_repo: self.repos.agent_run_delivery_binding_repo.clone(),
+            lineage_repo: self.repos.agent_lineage_repo.clone(),
+        })
         .with_parent_mailbox_delivery(Arc::new(AgentRunCompanionMailboxDelivery::new(
             self.repos.clone(),
             session_services.clone(),
@@ -1277,8 +1274,8 @@ impl CompanionRequestTool {
             .to_string();
         let session_services =
             require_session_services(&self.session_services_handle, "向上提审").await?;
-        let gate_control =
-            CompanionGateControlFactory::new(&self.repos).with_session_eventing(&session_services);
+        let gate_control = CompanionGateControlFactory::new(&self.repos)
+            .with_agent_run_delivery(&session_services);
         let opened = gate_control
             .open_parent_request(OpenCompanionParentRequestCommand {
                 child_runtime_session_id: current_session_id,
@@ -1384,8 +1381,6 @@ impl CompanionRequestTool {
             .tool_context
             .require_delivery_runtime_session_id("向用户发起请求")?
             .to_string();
-        let session_services =
-            require_session_services(&self.session_services_handle, "向用户发起请求").await?;
         let anchor = self
             .tool_context
             .require_lifecycle_anchor("向用户发起请求", &self.repos)
@@ -1442,6 +1437,7 @@ impl CompanionRequestTool {
                 gate_kind: gate_kind.to_string(),
                 correlation_id: request_id,
                 payload: Some(gate_meta),
+                wait_policy: None,
             })
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
@@ -1449,32 +1445,6 @@ impl CompanionRequestTool {
         let request_id = gate_id.to_string();
 
         if wait {
-            let notification = build_companion_event_notification(
-                &current_session_id,
-                self.tool_context.turn_id(),
-                "companion_human_request",
-                prompt.to_string(),
-                serde_json::json!({
-                    "request_id": request_id.clone(),
-                    "gate_id": request_id.clone(),
-                    "message": prompt,
-                    "options": options.clone(),
-                    "wait": true,
-                    "payload_type": payload_type,
-                    "ui_hint": ui_hint,
-                    "payload": payload,
-                }),
-            );
-            if let Err(error) = session_services
-                .eventing
-                .inject_notification(&current_session_id, notification)
-                .await
-            {
-                return Err(AgentToolError::ExecutionFailed(format!(
-                    "发送用户协作请求失败: {error}"
-                )));
-            }
-
             let wait_outcome = self.poll_gate_until_resolved(gate_id, cancel).await?;
 
             if matches!(wait_outcome, CompanionGateWaitOutcome::TimedOut) {
@@ -1532,30 +1502,6 @@ impl CompanionRequestTool {
                 })),
             })
         } else {
-            let notification = build_companion_event_notification(
-                &current_session_id,
-                self.tool_context.turn_id(),
-                "companion_human_request",
-                prompt.to_string(),
-                serde_json::json!({
-                    "request_id": request_id.clone(),
-                    "gate_id": request_id.clone(),
-                    "message": prompt,
-                    "options": options.clone(),
-                    "wait": false,
-                    "payload_type": payload_type,
-                    "ui_hint": ui_hint,
-                    "payload": payload,
-                }),
-            );
-            session_services
-                .eventing
-                .inject_notification(&current_session_id, notification)
-                .await
-                .map_err(|error| {
-                    AgentToolError::ExecutionFailed(format!("发送用户协作请求失败: {error}"))
-                })?;
-
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
                     "已向用户发送请求。\n- request_id: {request_id}\n- 用户回应后会进入当前 AgentRun mailbox。"
@@ -1873,7 +1819,7 @@ impl CompanionRespondTool {
         session_services: &SessionToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
         let service =
-            CompanionGateControlFactory::new(&self.repos).with_session_eventing(session_services);
+            CompanionGateControlFactory::new(&self.repos).with_agent_run_delivery(session_services);
         let Some(result) = service
             .resolve_parent_request(ResolveCompanionParentRequestCommand {
                 request_id: request_id.to_string(),
@@ -2025,7 +1971,7 @@ impl CompanionRespondTool {
         session_services: &SessionToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
         let service =
-            CompanionGateControlFactory::new(&self.repos).with_session_eventing(session_services);
+            CompanionGateControlFactory::new(&self.repos).with_agent_run_delivery(session_services);
         let Some(result) = service
             .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
                 request_id: request_id.to_string(),
@@ -2816,7 +2762,7 @@ mod companion_tests {
         wait_for_lifecycle_gate_resolution,
     };
     use agentdash_domain::workflow::{
-        LifecycleGate, LifecycleGateRepository, WaitObligationDeclaration, WaitProducerRef,
+        GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
     };
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
@@ -2860,7 +2806,7 @@ mod companion_tests {
                 .collect())
         }
 
-        async fn list_open_wait_obligations(
+        async fn list_open_gate_wait_policies(
             &self,
             limit: usize,
         ) -> Result<Vec<LifecycleGate>, agentdash_domain::DomainError> {
@@ -2874,7 +2820,7 @@ mod companion_tests {
                         && gate
                             .payload_json
                             .as_ref()
-                            .and_then(WaitObligationDeclaration::from_payload)
+                            .and_then(GateWaitPolicyEnvelope::from_payload_opt)
                             .is_some()
                 })
                 .take(limit)
@@ -2894,8 +2840,8 @@ mod companion_tests {
                 .filter(|gate| {
                     gate.payload_json
                         .as_ref()
-                        .and_then(WaitObligationDeclaration::from_payload)
-                        .is_some_and(|declaration| declaration.wait_source.producer == *producer)
+                        .and_then(GateWaitPolicyEnvelope::from_payload_opt)
+                        .is_some_and(|declaration| declaration.wait_policy.source == *producer)
                 })
                 .cloned()
                 .collect())

@@ -1,7 +1,6 @@
 pub(crate) mod dispatch;
 pub mod gate_control;
 pub mod model_preflight;
-pub mod notifications;
 pub mod payload_types;
 pub mod runtime_tool_provider;
 pub(crate) mod skill_projection;
@@ -16,13 +15,9 @@ pub use gate_control::{
     CompanionParentRequestMailboxDeliveryCommand, CompanionParentResponseMailboxDeliveryCommand,
     CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
     ResolveCompanionParentRequestCommand, RespondCompanionGateCommand,
-    SessionEventingCompanionGateDelivery,
 };
 pub use model_preflight::{
     CompanionModelPreflightError, CompanionModelPreflightPort, CompanionModelPreflightRequest,
-};
-pub use notifications::{
-    build_companion_event_notification, build_companion_human_response_notification,
 };
 pub use payload_types::PayloadTypeRegistry;
 pub use runtime_tool_provider::CollaborationRuntimeToolProvider;

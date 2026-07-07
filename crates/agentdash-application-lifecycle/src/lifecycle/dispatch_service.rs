@@ -615,6 +615,120 @@ mod tests {
     // Tests
 
     #[tokio::test]
+    async fn interaction_dispatch_creates_gate_with_initial_wait_policy() {
+        let project_id = Uuid::new_v4();
+        let parent_run = LifecycleRun::new_control(project_id);
+        let parent_agent =
+            LifecycleAgent::new_root(parent_run.id, project_id, AgentSource::ProjectAgent);
+        let run_repo = MemoryLifecycleRunRepository::default();
+        let workflow_repo = MemoryWorkflowGraphRepository::default();
+        let agent_repo = MemoryLifecycleAgentRepository::default();
+        let frame_repo = MemoryAgentFrameRepository::default();
+        let assoc_repo = MemoryLifecycleSubjectAssociationRepository::default();
+        let gate_repo = MemoryLifecycleGateRepository::default();
+        let lineage_repo = MemoryAgentLineageRepository::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
+        let anchor_repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
+        let delivery_binding_repo = MemoryAgentRunDeliveryBindingRepository::default();
+        run_repo.create(&parent_run).await.expect("seed parent run");
+        agent_repo
+            .create(&parent_agent)
+            .await
+            .expect("seed parent agent");
+        let service = make_service(
+            &run_repo,
+            &workflow_repo,
+            &agent_repo,
+            &frame_repo,
+            &assoc_repo,
+            &gate_repo,
+            &lineage_repo,
+            &runtime_session_creator,
+        )
+        .with_anchor_repo(&anchor_repo)
+        .with_delivery_binding_repo(&delivery_binding_repo);
+
+        let result = service
+            .open_interaction_gate(&InteractionDispatchIntent {
+                project_id,
+                source: ExecutionSource::ParentAgent,
+                parent_run_id: parent_run.id,
+                parent_agent_id: parent_agent.id,
+                workflow_graph_ref: None,
+                context_policy: ContextPolicy::Slice,
+                capability_policy: CapabilityPolicy::InheritedSlice,
+                runtime_policy: RuntimePolicy::CreateRuntimeSession,
+                gate_policy: GatePolicy {
+                    gate_kind: "companion_wait_follow_up".to_string(),
+                    correlation_id: Some("dispatch-1".to_string()),
+                    payload: Some(serde_json::json!({
+                        "companion_label": "reviewer",
+                        "dispatch_id": "dispatch-1",
+                    })),
+                    wait_policy: Some(GateWaitPolicyTemplate {
+                        expected_result: WaitExpectedResult {
+                            kind: "companion_result".to_string(),
+                            correlation_ref: Some("dispatch-1".to_string()),
+                        },
+                        terminal_policy: WaitTerminalPolicy {
+                            failed: WaitTerminalOutcome {
+                                status: "failed".to_string(),
+                                failure_kind: "runtime_terminal_failed".to_string(),
+                            },
+                            interrupted: WaitTerminalOutcome {
+                                status: "cancelled".to_string(),
+                                failure_kind: "runtime_terminal_cancelled".to_string(),
+                            },
+                            completed: WaitTerminalOutcome {
+                                status: "failed".to_string(),
+                                failure_kind: "missing_companion_respond".to_string(),
+                            },
+                        },
+                        wake_target: WaitWakeTarget {
+                            namespace: "companion".to_string(),
+                            target_run_id: parent_run.id,
+                            target_agent_id: parent_agent.id,
+                            client_command_id: "companion-result:{gate_id}".to_string(),
+                        },
+                    }),
+                },
+            })
+            .await
+            .expect("interaction dispatch");
+
+        let stored_gate = gate_repo
+            .get(result.gate_ref)
+            .await
+            .expect("load gate")
+            .expect("gate");
+        let envelope = GateWaitPolicyEnvelope::from_payload(
+            stored_gate.payload_json.as_ref().expect("payload"),
+        )
+        .expect("gate wait policy");
+
+        assert_eq!(stored_gate.agent_id, Some(result.runtime_refs.agent_ref));
+        assert_eq!(stored_gate.frame_id, Some(result.runtime_refs.frame_ref));
+        assert_eq!(envelope.display["companion_label"], "reviewer");
+        assert_eq!(
+            envelope.wait_policy.source,
+            WaitProducerRef::AgentRunDelivery {
+                run_id: result.runtime_refs.run_ref,
+                agent_id: result.runtime_refs.agent_ref,
+                frame_id: Some(result.runtime_refs.frame_ref),
+            }
+        );
+        assert_eq!(
+            envelope.wait_policy.wake_target.client_command_id,
+            format!("companion-result:{}", result.gate_ref)
+        );
+        assert_eq!(
+            gate_repo.debug_list().await.len(),
+            1,
+            "wait policy is part of the original gate create, not a second gate write"
+        );
+    }
+
+    #[tokio::test]
     async fn agent_launch_creates_plain_surface_without_orchestration_binding() {
         let project_id = Uuid::new_v4();
         let run_repo = MemoryLifecycleRunRepository::default();

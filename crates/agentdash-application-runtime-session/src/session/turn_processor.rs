@@ -11,18 +11,18 @@ use tokio::sync::mpsc;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::hooks::SharedHookRuntime;
 
-use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
 use super::hub_support::*;
 use super::post_turn_handler::DynPostTurnHandler;
-use super::terminal_effects::{TerminalCallbackDispatchInput, TerminalEffectDispatchInput};
+use super::terminal_boundary::RuntimeTerminalBoundaryEvidence;
+use super::terminal_boundary::RuntimeTerminalBoundaryService;
 use super::turn_supervisor::TurnSupervisor;
 
 /// Processor 消费的事件类型。
 pub enum TurnEvent {
     /// 一条 BackboneEnvelope（来自 connector stream 或 relay 注入）。
     Notification(Box<BackboneEnvelope>),
-    /// Turn 已结束（来自 connector stream 关闭或 relay event.session_state_changed）。
+    /// Turn 已结束（来自 connector stream 关闭或 relay event.runtime_session_state_changed）。
     Terminal {
         kind: TurnTerminalKind,
         message: Option<String>,
@@ -42,7 +42,7 @@ pub struct SessionTurnProcessorConfig {
 pub(in crate::session) struct SessionTurnProcessorDeps {
     pub(in crate::session) turn_supervisor: TurnSupervisor,
     pub(in crate::session) eventing: SessionEventingService,
-    pub(in crate::session) effects: SessionEffectsService,
+    pub(in crate::session) terminal_boundary: RuntimeTerminalBoundaryService,
 }
 
 pub(in crate::session) struct TurnTerminalDispatch {
@@ -315,27 +315,7 @@ pub(in crate::session) async fn process_turn_terminal(
 
     deps.turn_supervisor.clear_active_turn(&session_id).await;
 
-    let terminal_callback_input = TerminalCallbackDispatchInput {
-        session_id: session_id.clone(),
-        turn_id: turn_id.clone(),
-        terminal_event_seq,
-        terminal_kind,
-        terminal_message: terminal_message.clone(),
-    };
-    deps.effects
-        .dispatch_terminal_callback(terminal_callback_input)
-        .await;
-
-    deps.eventing
-        .broadcast_persisted_event(&session_id, terminal_event)
-        .await;
-    if let Some(rewind_event) = rewind_event {
-        deps.eventing
-            .broadcast_persisted_event(&session_id, rewind_event)
-            .await;
-    }
-
-    let terminal_effect_input = TerminalEffectDispatchInput {
+    let terminal_boundary_evidence = RuntimeTerminalBoundaryEvidence {
         session_id: session_id.clone(),
         turn_id: turn_id.clone(),
         terminal_event_seq,
@@ -346,9 +326,18 @@ pub(in crate::session) async fn process_turn_terminal(
         post_turn_handler,
     };
 
-    deps.effects
-        .dispatch_terminal_effects(terminal_effect_input)
+    deps.terminal_boundary
+        .observe_terminal_boundary(terminal_boundary_evidence)
         .await;
+
+    deps.eventing
+        .broadcast_persisted_event(&session_id, terminal_event)
+        .await;
+    if let Some(rewind_event) = rewind_event {
+        deps.eventing
+            .broadcast_persisted_event(&session_id, rewind_event)
+            .await;
+    }
 }
 
 #[cfg(test)]
@@ -358,7 +347,6 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_agent_protocol::{PlatformEvent, SourceInfo};
-    use agentdash_spi::hooks::{HookEffect, HookRuntimeAccess};
     use agentdash_spi::{
         AgentConfig, AgentConnector, CapabilityState, ConnectorCapabilities, ConnectorError,
         ConnectorType, ExecutionContext, ExecutionSessionFrame, ExecutionStream, PromptPayload,
@@ -369,23 +357,22 @@ mod tests {
     use uuid::Uuid;
 
     use super::super::FixtureRuntimeTraceStore;
-    use super::super::effects_service::SessionEffectsService;
     use super::super::eventing::SessionEventingService;
     use super::super::hub_support::{SessionProfile, TurnExecution, TurnTerminalKind};
     use super::super::persistence::{
         PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionEventStore,
         SessionStoreSet,
     };
-    use super::super::post_turn_handler::{SessionTerminalCallback, SessionTerminalNotification};
     use super::super::runtime_registry::SessionRuntimeRegistry;
-    use super::super::terminal_effects::{
-        TerminalAutoResumePort, TerminalAutoResumeRequest, TerminalEffectDeps,
-        TerminalHookTriggerPort, TerminalHookTriggerRequest,
-    };
+    use super::super::terminal_boundary::RuntimeTerminalBoundaryDeps;
+    use super::super::terminal_boundary::RuntimeTerminalBoundaryService;
     use super::super::turn_supervisor::TurnSupervisor;
     use super::super::types::{ExecutionStatus, SessionMeta};
     use super::*;
     use crate::session::persistence::{SessionStoreError, SessionStoreResult};
+    use agentdash_application_ports::agent_run_control_effect::{
+        AgentRunControlEffectPort, AgentRunTerminalControlInput,
+    };
 
     #[tokio::test]
     async fn terminal_persist_failure_still_clears_active_turn() {
@@ -438,12 +425,8 @@ mod tests {
                 registry.clone(),
                 Arc::new(NoopConnector),
             ),
-            effects: SessionEffectsService::new(TerminalEffectDeps {
-                terminal_effects: stores.terminal_effects.clone(),
-                hook_trigger: Arc::new(NoopHookTrigger),
-                terminal_callback: Arc::new(RwLock::new(None)),
-                hook_effect_handler_registry: Arc::new(RwLock::new(None)),
-                auto_resume: Arc::new(NoopAutoResume),
+            terminal_boundary: RuntimeTerminalBoundaryService::new(RuntimeTerminalBoundaryDeps {
+                control_effect_port: Arc::new(RwLock::new(None)),
             }),
         };
         let config = SessionTurnProcessorConfig {
@@ -532,12 +515,8 @@ mod tests {
                 registry.clone(),
                 Arc::new(NoopConnector),
             ),
-            effects: SessionEffectsService::new(TerminalEffectDeps {
-                terminal_effects: stores.terminal_effects.clone(),
-                hook_trigger: Arc::new(NoopHookTrigger),
-                terminal_callback: Arc::new(RwLock::new(None)),
-                hook_effect_handler_registry: Arc::new(RwLock::new(None)),
-                auto_resume: Arc::new(NoopAutoResume),
+            terminal_boundary: RuntimeTerminalBoundaryService::new(RuntimeTerminalBoundaryDeps {
+                control_effect_port: Arc::new(RwLock::new(None)),
             }),
         };
         let config = SessionTurnProcessorConfig {
@@ -610,7 +589,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_turn_terminal_dispatches_session_terminal_callback() {
+    async fn process_turn_terminal_dispatches_control_plane_intake() {
         let session_id = "sess-terminal-callback";
         let turn_id = "turn-1";
         let registry = SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new())));
@@ -665,6 +644,11 @@ mod tests {
         let notifications = Arc::new(Mutex::new(Vec::new()));
         let broadcast_rx = Arc::new(Mutex::new(registry.subscribe(session_id).await));
         let broadcast_seen_before_callback = Arc::new(Mutex::new(None));
+        let control_port = Arc::new(RecordingControlEffectPort {
+            notifications: notifications.clone(),
+            broadcast_rx: Some(broadcast_rx),
+            broadcast_seen_before_callback: Some(broadcast_seen_before_callback.clone()),
+        });
         let deps = SessionTurnProcessorDeps {
             turn_supervisor: supervisor.clone(),
             eventing: SessionEventingService::new(
@@ -672,20 +656,8 @@ mod tests {
                 registry.clone(),
                 Arc::new(NoopConnector),
             ),
-            effects: SessionEffectsService::new(TerminalEffectDeps {
-                terminal_effects: stores.terminal_effects.clone(),
-                hook_trigger: Arc::new(NoopHookTrigger),
-                terminal_callback: Arc::new(RwLock::new(Some(Arc::new(
-                    RecordingTerminalCallback {
-                        notifications: notifications.clone(),
-                        broadcast_rx: Some(broadcast_rx),
-                        broadcast_seen_before_callback: Some(
-                            broadcast_seen_before_callback.clone(),
-                        ),
-                    },
-                )))),
-                hook_effect_handler_registry: Arc::new(RwLock::new(None)),
-                auto_resume: Arc::new(NoopAutoResume),
+            terminal_boundary: RuntimeTerminalBoundaryService::new(RuntimeTerminalBoundaryDeps {
+                control_effect_port: Arc::new(RwLock::new(Some(control_port))),
             }),
         };
 
@@ -711,7 +683,7 @@ mod tests {
         let notifications = notifications.lock().await;
         assert_eq!(notifications.len(), 1);
         let notification = &notifications[0];
-        assert_eq!(notification.session_id, session_id);
+        assert_eq!(notification.delivery_runtime_session_id, session_id);
         assert_eq!(notification.turn_id, turn_id);
         assert_eq!(notification.terminal_state, "failed");
         assert_eq!(
@@ -722,17 +694,17 @@ mod tests {
         assert_eq!(*broadcast_seen_before_callback.lock().await, Some(false));
     }
 
-    struct RecordingTerminalCallback {
-        notifications: Arc<Mutex<Vec<SessionTerminalNotification>>>,
+    struct RecordingControlEffectPort {
+        notifications: Arc<Mutex<Vec<AgentRunTerminalControlInput>>>,
         broadcast_rx: Option<Arc<Mutex<broadcast::Receiver<PersistedSessionEvent>>>>,
         broadcast_seen_before_callback: Option<Arc<Mutex<Option<bool>>>>,
     }
 
     #[async_trait]
-    impl SessionTerminalCallback for RecordingTerminalCallback {
-        async fn on_session_terminal(
+    impl AgentRunControlEffectPort for RecordingControlEffectPort {
+        async fn observe_runtime_terminal(
             &self,
-            notification: SessionTerminalNotification,
+            notification: AgentRunTerminalControlInput,
         ) -> Result<(), String> {
             if let (Some(rx), Some(result)) =
                 (&self.broadcast_rx, &self.broadcast_seen_before_callback)
@@ -802,31 +774,6 @@ mod tests {
             _from_seq: u64,
         ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
             Ok(Vec::new())
-        }
-    }
-
-    struct NoopHookTrigger;
-
-    #[async_trait]
-    impl TerminalHookTriggerPort for NoopHookTrigger {
-        async fn emit_terminal_hook_trigger(
-            &self,
-            _hook_runtime: &dyn HookRuntimeAccess,
-            _input: TerminalHookTriggerRequest<'_>,
-        ) -> Vec<HookEffect> {
-            Vec::new()
-        }
-    }
-
-    struct NoopAutoResume;
-
-    #[async_trait]
-    impl TerminalAutoResumePort for NoopAutoResume {
-        async fn request_hook_auto_resume(
-            &self,
-            _request: TerminalAutoResumeRequest,
-        ) -> Result<bool, String> {
-            Ok(false)
         }
     }
 

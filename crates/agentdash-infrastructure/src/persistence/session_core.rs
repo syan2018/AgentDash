@@ -7,12 +7,12 @@ use agentdash_agent_protocol::{
     AgentDashThreadItem, BackboneEnvelope, BackboneEvent, PlatformEvent,
 };
 use agentdash_spi::session_persistence::{
-    AgentFrameTransitionRecord, ExecutionStatus, NewCompactionProjectionCommit,
+    AgentFrameTransitionRecord, AgentRunControlEffectKind, AgentRunControlEffectRecord,
+    AgentRunControlEffectStatus, ExecutionStatus, NewCompactionProjectionCommit,
     PersistedSessionEvent, RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus,
     RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
     SessionLineageRelationKind, SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord,
-    SessionProjectionSegmentRecord, SessionStoreError, SessionStoreResult, TerminalEffectRecord,
-    TerminalEffectStatus, TerminalEffectType,
+    SessionProjectionSegmentRecord, SessionStoreError, SessionStoreResult,
 };
 use sqlx::Row;
 
@@ -33,7 +33,9 @@ where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<uuid::Uuid>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
 {
     Ok(SessionMeta {
@@ -97,11 +99,12 @@ pub(crate) fn persisted_event_from_envelope(
     }
 }
 
-pub(crate) fn terminal_effect_from_row<R>(row: &R) -> SessionStoreResult<TerminalEffectRecord>
+pub(crate) fn control_effect_from_row<R>(row: &R) -> SessionStoreResult<AgentRunControlEffectRecord>
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<uuid::Uuid>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
 {
@@ -110,30 +113,42 @@ where
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let terminal_event_seq = parse_non_negative_u64(
         row.get::<i64, _>("terminal_event_seq"),
-        "runtime_session_terminal_effects.terminal_event_seq",
+        "agent_run_control_effects.terminal_event_seq",
     )?;
     let attempt_count = parse_non_negative_u32(
         row.get::<i64, _>("attempt_count"),
-        "runtime_session_terminal_effects.attempt_count",
+        "agent_run_control_effects.attempt_count",
     )?;
     let payload_json = row.get::<String, _>("payload_json");
     let payload = serde_json::from_str::<serde_json::Value>(&payload_json)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
-    Ok(TerminalEffectRecord {
+    let claim_token = row
+        .get::<Option<String>, _>("claim_token")
+        .map(|value| uuid::Uuid::parse_str(&value))
+        .transpose()
+        .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
+    Ok(AgentRunControlEffectRecord {
         id,
-        session_id: row.get::<String, _>("session_id"),
+        dedup_key: row.get::<String, _>("dedup_key"),
+        run_id: row.get::<Option<uuid::Uuid>, _>("run_id"),
+        agent_id: row.get::<Option<uuid::Uuid>, _>("agent_id"),
+        frame_id: row.get::<Option<uuid::Uuid>, _>("frame_id"),
+        delivery_runtime_session_id: row.get::<Option<String>, _>("delivery_runtime_session_id"),
         turn_id: row.get::<String, _>("turn_id"),
         terminal_event_seq,
-        effect_type: parse_terminal_effect_type(
-            row.get::<String, _>("effect_type"),
-            "runtime_session_terminal_effects.effect_type",
+        effect_kind: parse_control_effect_kind(
+            row.get::<String, _>("effect_kind"),
+            "agent_run_control_effects.effect_kind",
         )?,
         payload,
-        status: parse_terminal_effect_status(
+        status: parse_control_effect_status(
             row.get::<String, _>("status"),
-            "runtime_session_terminal_effects.status",
+            "agent_run_control_effects.status",
         )?,
         attempt_count,
+        claim_token,
+        claim_owner: row.get::<Option<String>, _>("claim_owner"),
+        claim_expires_at_ms: row.get::<Option<i64>, _>("claim_expires_at_ms"),
         created_at_ms: row.get::<i64, _>("created_at_ms"),
         updated_at_ms: row.get::<i64, _>("updated_at_ms"),
         last_error: row.get::<Option<String>, _>("last_error"),
@@ -451,19 +466,19 @@ pub(crate) fn parse_execution_status(
     }
 }
 
-pub(crate) fn parse_terminal_effect_type(
+pub(crate) fn parse_control_effect_kind(
     value: String,
     field: &str,
-) -> SessionStoreResult<TerminalEffectType> {
-    TerminalEffectType::try_from(value.as_str())
+) -> SessionStoreResult<AgentRunControlEffectKind> {
+    AgentRunControlEffectKind::try_from(value.as_str())
         .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 
-pub(crate) fn parse_terminal_effect_status(
+pub(crate) fn parse_control_effect_status(
     value: String,
     field: &str,
-) -> SessionStoreResult<TerminalEffectStatus> {
-    TerminalEffectStatus::try_from(value.as_str())
+) -> SessionStoreResult<AgentRunControlEffectStatus> {
+    AgentRunControlEffectStatus::try_from(value.as_str())
         .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 

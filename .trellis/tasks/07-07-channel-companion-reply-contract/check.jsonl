@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/architecture.md","reason":"检查实现是否保持 application/domain/infrastructure/bootstrap 分层。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"检查 companion launch source 与派发上下文是否只输出最小 model instruction。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"检查 AgentRun/frame/gate/runtime session owner 边界是否未被 reply contract 打乱。"}
+{"file":".trellis/spec/backend/domain-payload-typing.md","reason":"检查 payload schema openness 与语义校验是否符合类型化 payload 约定。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 LifecycleGate owner/resolver 边界是否保持清晰。"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"检查实现没有把 mailbox 升级为 channel broker 或迁移 source identity。"}
+{"file":".trellis/tasks/07-07-terminal-wait-io-contract/design.md","reason":"检查模型可见输出是否保持 bounded/minimal，不暴露无关内部 refs。"}

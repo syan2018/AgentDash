@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 60
+- **Total Sessions**: 61
 - **Last Active**: 2026-07-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~234 | Active |
+| `journal-2.md` | ~267 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 61 | 2026-07-08 | 存量 JSON 文本列 JSONB 收敛 | `1dd7b043` | `codex/database-jsonb-storage-cleanup` |
 | 60 | 2026-07-08 | 完成 ChannelService 通信主干 | `f3755482`, `a5ab28c8`, `1ced2cb8`, `eab97226`, `769c526d`, `be31c14a` | `codex/companion-channel-convergence` |
 | 59 | 2026-07-07 | Companion 回流最小合同收束 | `aaff7f105`, `5560ec09d` | `codex/companion-channel-convergence` |
 | 58 | 2026-07-07 | 收束 SubAgent 与 Companion 失败事实源 | `3f0bee89c`, `64d6109ed`, `94298b610`, `7279e8f97`, `d1d93110d`, `43e18aad4`, `67b24b44d`, `4646f9594` | `main` |

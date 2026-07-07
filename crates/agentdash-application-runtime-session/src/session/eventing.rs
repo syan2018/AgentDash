@@ -8,6 +8,7 @@ use agentdash_agent_protocol::{
 use agentdash_agent_types::{
     AgentContextEnvelope, AgentDashNativeThreadItem, AgentDashThreadItem, AgentMessage, MessageRef,
 };
+use agentdash_domain::workflow::ManualContextCompactionRequestRepository;
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::trace::{
     HookTraceStorageDisposition, hook_trace_payload_storage_disposition,
@@ -58,6 +59,8 @@ pub struct SessionEventingService {
     connector: Arc<dyn agentdash_spi::AgentConnector>,
     workspace_title_port:
         Option<Arc<dyn agentdash_application_ports::workspace_title::WorkspaceTitlePort>>,
+    manual_context_compaction_request_repo:
+        Option<Arc<dyn ManualContextCompactionRequestRepository>>,
 }
 
 impl SessionEventingService {
@@ -71,6 +74,7 @@ impl SessionEventingService {
             runtime_registry,
             connector,
             workspace_title_port: None,
+            manual_context_compaction_request_repo: None,
         }
     }
 
@@ -79,6 +83,14 @@ impl SessionEventingService {
         port: Option<Arc<dyn agentdash_application_ports::workspace_title::WorkspaceTitlePort>>,
     ) -> Self {
         self.workspace_title_port = port;
+        self
+    }
+
+    pub(super) fn with_manual_context_compaction_request_repo(
+        mut self,
+        repo: Option<Arc<dyn ManualContextCompactionRequestRepository>>,
+    ) -> Self {
+        self.manual_context_compaction_request_repo = repo;
         self
     }
 
@@ -728,18 +740,29 @@ impl SessionEventingService {
         let reason = value
             .get("reason")
             .and_then(serde_json::Value::as_str)
-            .map(ToString::to_string)
-            .or_else(|| Some("token_pressure".to_string()));
+            .unwrap_or("token_pressure")
+            .to_string();
         let phase = value
             .get("phase")
             .and_then(serde_json::Value::as_str)
-            .map(ToString::to_string)
-            .or_else(|| Some("pre_provider".to_string()));
+            .unwrap_or("pre_provider")
+            .to_string();
         let strategy = value
             .get("strategy")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("summary_prefix")
             .to_string();
+        let implementation = value
+            .get("implementation")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("local_summary")
+            .to_string();
+        let request_id = value
+            .get("request_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToString::to_string);
+        let request_id_for_status = request_id.clone();
         let budget_scope = value
             .get("budget_scope")
             .and_then(serde_json::Value::as_str)
@@ -756,8 +779,11 @@ impl SessionEventingService {
                 source_end_event_seq,
                 first_kept_event_seq,
                 trigger: &trigger,
-                phase: phase.as_deref(),
+                reason: &reason,
+                phase: &phase,
                 strategy: &strategy,
+                implementation: &implementation,
+                request_id: request_id.as_deref(),
             },
         );
 
@@ -774,8 +800,8 @@ impl SessionEventingService {
                 failed_event_seq: None,
                 status: SessionCompactionStatus::ProjectionCommitted,
                 trigger: trigger.clone(),
-                reason,
-                phase: phase.clone(),
+                reason: Some(reason.clone()),
+                phase: Some(phase.clone()),
                 strategy: strategy.clone(),
                 budget_scope,
                 base_head_event_seq: Some(base_head_event_seq),
@@ -792,13 +818,26 @@ impl SessionEventingService {
                     "first_kept_event_seq": first_kept_event_seq,
                     "compacted_until_ref": boundary_ref.clone(),
                     "first_kept_ref": first_kept_ref.clone(),
+                    "trigger": trigger.clone(),
+                    "reason": reason.clone(),
+                    "phase": phase.clone(),
+                    "strategy": strategy.clone(),
+                    "implementation": implementation.clone(),
+                    "request_id": request_id.clone(),
                 }),
                 token_stats_json: serde_json::json!({
                     "tokens_before": tokens_before,
                     "messages_compacted": messages_compacted,
                     "newly_compacted_messages": newly_compacted_messages,
                 }),
-                diagnostics_json: serde_json::json!({}),
+                diagnostics_json: serde_json::json!({
+                    "trigger": trigger.clone(),
+                    "reason": reason.clone(),
+                    "phase": phase.clone(),
+                    "strategy": strategy.clone(),
+                    "implementation": implementation.clone(),
+                    "request_id": request_id.clone(),
+                }),
                 created_by: Some("agent".to_string()),
                 created_at_ms: timestamp_ms,
                 completed_at_ms: None,
@@ -819,6 +858,12 @@ impl SessionEventingService {
                     "first_kept_ref": first_kept_ref.clone(),
                     "messages_compacted": messages_compacted,
                     "newly_compacted_messages": newly_compacted_messages,
+                    "trigger": trigger,
+                    "reason": reason,
+                    "phase": phase,
+                    "strategy": strategy,
+                    "implementation": implementation,
+                    "request_id": request_id.clone(),
                 }),
                 generated_by_compaction_id: Some(compaction_id.clone()),
                 content_json: serde_json::json!({
@@ -833,18 +878,149 @@ impl SessionEventingService {
                 projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
                 projection_version,
                 head_event_seq: completed_event_seq,
-                active_compaction_id: Some(compaction_id),
+                active_compaction_id: Some(compaction_id.clone()),
                 updated_by_event_seq: None,
                 updated_at_ms: 0,
             },
         };
 
-        Ok(self
+        let commit_result = match self
             .stores
             .projections
             .commit_compaction_projection(session_id, commit)
             .await
-            .map(Some)?)
+        {
+            Ok(result) => result,
+            Err(error) => {
+                self.mark_manual_compaction_failed_after_projection_error(
+                    request_id_for_status.as_deref(),
+                    error.to_string(),
+                )
+                .await;
+                return Err(error.into());
+            }
+        };
+
+        self.mark_manual_compaction_completed_after_projection_commit(
+            request_id_for_status.as_deref(),
+            &compaction_id,
+            projection_version,
+            &lifecycle_item_id,
+            &boundary_ref,
+            first_kept_ref.as_ref(),
+            source_start_event_seq,
+            source_end_event_seq,
+            first_kept_event_seq,
+        )
+        .await;
+
+        Ok(Some(commit_result))
+    }
+
+    async fn mark_manual_compaction_completed_after_projection_commit(
+        &self,
+        request_id: Option<&str>,
+        compaction_id: &str,
+        projection_version: u64,
+        lifecycle_item_id: &str,
+        compacted_until_ref: &MessageRef,
+        first_kept_ref: Option<&MessageRef>,
+        source_start_event_seq: Option<u64>,
+        source_end_event_seq: u64,
+        first_kept_event_seq: Option<u64>,
+    ) {
+        let Some(repo) = self.manual_context_compaction_request_repo.as_ref() else {
+            return;
+        };
+        let Some(request_id) = request_id else {
+            return;
+        };
+        let Ok(request_uuid) = uuid::Uuid::parse_str(request_id) else {
+            diag!(
+                Warn,
+                Subsystem::SessionLaunch,
+                request_id = %request_id,
+                "context_compacted request_id 不是 UUID，跳过 manual request completed 写回"
+            );
+            return;
+        };
+
+        let compacted_until_ref_value = serde_json::to_value(compacted_until_ref).ok();
+        let first_kept_ref_value = serde_json::to_value(first_kept_ref).ok();
+        let result_metadata = serde_json::json!({
+            "status": "completed",
+            "compaction_id": compaction_id,
+            "projection_version": projection_version,
+            "lifecycle_item_id": lifecycle_item_id,
+            "source_start_event_seq": source_start_event_seq,
+            "source_end_event_seq": source_end_event_seq,
+            "first_kept_event_seq": first_kept_event_seq,
+        });
+
+        if let Err(error) = repo
+            .mark_completed(
+                request_uuid,
+                compaction_id.to_string(),
+                compacted_until_ref_value,
+                first_kept_ref_value,
+                Some(result_metadata),
+            )
+            .await
+        {
+            let context = DiagnosticErrorContext::new(
+                "session.eventing",
+                "manual_context_compaction_completed",
+            );
+            diag_error!(
+                Warn,
+                Subsystem::SessionLaunch,
+                context = &context,
+                error = &error,
+                request_id = %request_id,
+                compaction_id = %compaction_id,
+                "manual context compaction request completed 写回失败"
+            );
+        }
+    }
+
+    async fn mark_manual_compaction_failed_after_projection_error(
+        &self,
+        request_id: Option<&str>,
+        error_message: String,
+    ) {
+        let Some(repo) = self.manual_context_compaction_request_repo.as_ref() else {
+            return;
+        };
+        let Some(request_id) = request_id else {
+            return;
+        };
+        let Ok(request_uuid) = uuid::Uuid::parse_str(request_id) else {
+            return;
+        };
+        if let Err(error) = repo
+            .mark_failed(
+                request_uuid,
+                Some(serde_json::json!({
+                    "status": "failed",
+                    "reason": "projection_commit_failed",
+                    "error": error_message,
+                })),
+            )
+            .await
+        {
+            let context = DiagnosticErrorContext::new(
+                "session.eventing",
+                "manual_context_compaction_projection_failed",
+            );
+            diag_error!(
+                Warn,
+                Subsystem::SessionLaunch,
+                context = &context,
+                error = &error,
+                request_id = %request_id,
+                "manual context compaction request failed 写回失败"
+            );
+        }
     }
 
     async fn persist_context_frame_direct(
@@ -1710,8 +1886,11 @@ struct ContextCompactedCommitEnrichment<'a> {
     source_end_event_seq: u64,
     first_kept_event_seq: Option<u64>,
     trigger: &'a str,
-    phase: Option<&'a str>,
+    reason: &'a str,
+    phase: &'a str,
     strategy: &'a str,
+    implementation: &'a str,
+    request_id: Option<&'a str>,
 }
 
 fn enrich_context_compacted_commit_value(
@@ -1754,15 +1933,25 @@ fn enrich_context_compacted_commit_value(
         "trigger".to_string(),
         serde_json::Value::String(enrichment.trigger.to_string()),
     );
-    if let Some(phase) = enrichment.phase {
-        obj.insert(
-            "phase".to_string(),
-            serde_json::Value::String(phase.to_string()),
-        );
-    }
+    obj.insert(
+        "reason".to_string(),
+        serde_json::Value::String(enrichment.reason.to_string()),
+    );
+    obj.insert(
+        "phase".to_string(),
+        serde_json::Value::String(enrichment.phase.to_string()),
+    );
     obj.insert(
         "strategy".to_string(),
         serde_json::Value::String(enrichment.strategy.to_string()),
+    );
+    obj.insert(
+        "implementation".to_string(),
+        serde_json::Value::String(enrichment.implementation.to_string()),
+    );
+    obj.insert(
+        "request_id".to_string(),
+        serde_json::to_value(enrichment.request_id).unwrap_or(serde_json::Value::Null),
     );
 }
 
@@ -2167,6 +2356,81 @@ mod tests {
             .await
             .expect("read projection head");
         assert!(head.is_none());
+    }
+
+    #[tokio::test]
+    async fn context_compacted_defaults_provenance_metadata_for_projection_commit() {
+        let session_id = "sess-context-compaction-default-provenance";
+        let persistence = Arc::new(FixtureRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores.clone());
+
+        service
+            .persist_notification(
+                session_id,
+                final_assistant_message_envelope_at_entry(
+                    session_id,
+                    "turn-1",
+                    0,
+                    "answer before compaction",
+                ),
+            )
+            .await
+            .expect("persist assistant");
+
+        let persisted = service
+            .persist_notification(
+                session_id,
+                context_compacted_envelope(
+                    session_id,
+                    serde_json::json!({
+                        "lifecycle_item_id": "compact-defaults",
+                        "summary": "历史摘要",
+                        "tokens_before": 48_000,
+                        "messages_compacted": 1,
+                        "newly_compacted_messages": 1,
+                        "compacted_until_ref": { "turn_id": "turn-1", "entry_index": 0 },
+                        "first_kept_ref": null,
+                    }),
+                ),
+            )
+            .await
+            .expect("persist context compacted");
+
+        let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) =
+            &persisted.notification.event
+        else {
+            panic!("expected context_compacted platform event");
+        };
+        assert_eq!(value["trigger"], "auto");
+        assert_eq!(value["reason"], "token_pressure");
+        assert_eq!(value["phase"], "pre_provider");
+        assert_eq!(value["strategy"], "summary_prefix");
+        assert_eq!(value["implementation"], "local_summary");
+        assert!(value["request_id"].is_null());
+
+        let compactions = stores
+            .compactions
+            .list_compactions(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await
+            .expect("list compactions");
+        let compaction = compactions
+            .first()
+            .expect("compaction record should be committed");
+        assert_eq!(compaction.trigger, "auto");
+        assert_eq!(compaction.reason.as_deref(), Some("token_pressure"));
+        assert_eq!(compaction.phase.as_deref(), Some("pre_provider"));
+        assert_eq!(compaction.strategy, "summary_prefix");
+        assert_eq!(
+            compaction.diagnostics_json["implementation"],
+            "local_summary"
+        );
+        assert!(compaction.diagnostics_json["request_id"].is_null());
     }
 
     #[tokio::test]

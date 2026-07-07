@@ -3,23 +3,33 @@ import type {
   SessionProjectionSegmentViewResponse,
   SessionProjectionViewResponse,
 } from "../../../generated/session-contracts";
+import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import {
+  compactAgentRunContext,
   fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
 import type { TokenUsageInfo } from "../model/types";
+import {
+  commandPrecondition,
+  contextCompactionOutcomeMessage,
+  newClientCommandId,
+} from "./sessionProjectionCompactionAction";
 
 export interface SessionProjectionViewProps {
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey?: number;
   tokenUsage?: TokenUsageInfo | null;
+  compactContextCommand?: ConversationCommandView;
   /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
   embedded?: boolean;
 }
 
 export interface SessionProjectionViewPanelProps {
   projection: SessionProjectionViewResponse | null;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
   tokenUsage?: TokenUsageInfo | null;
+  compactContextCommand?: ConversationCommandView;
   isLoading?: boolean;
   error?: string | null;
   onRefresh?: () => void;
@@ -36,6 +46,43 @@ async function fetchSessionProjectionForTarget({
     return fetchAgentRunRuntimeContextProjection(agentRunTarget);
   }
   return null;
+}
+
+interface ContextCompactionActionState {
+  kind: "none" | "pending" | "success" | "error";
+  message?: string;
+}
+
+function CompactContextIcon({ loading }: { loading: boolean }) {
+  if (loading) {
+    return (
+      <span
+        aria-hidden="true"
+        className="h-3.5 w-3.5 animate-spin rounded-[8px] border border-current border-t-transparent"
+      />
+    );
+  }
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8 3v5H3" />
+      <path d="M16 21v-5h5" />
+      <path d="M3 8l6-6" />
+      <path d="M21 16l-6 6" />
+      <path d="M16 3v5h5" />
+      <path d="M8 21v-5H3" />
+      <path d="M21 8l-6-6" />
+      <path d="M3 16l6 6" />
+    </svg>
+  );
 }
 
 interface ContextCategoryRow {
@@ -195,16 +242,68 @@ function SegmentRow({ segment }: { segment: SessionProjectionSegmentViewResponse
 
 export function SessionProjectionViewPanel({
   projection,
+  agentRunTarget = null,
   tokenUsage,
+  compactContextCommand,
   isLoading = false,
   error = null,
   onRefresh,
   embedded = false,
 }: SessionProjectionViewPanelProps) {
+  const [compactAction, setCompactAction] = useState<ContextCompactionActionState>({ kind: "none" });
   const categories = buildContextCategories(projection, tokenUsage);
   const messageBreakdown = projection?.context_usage.messages;
   const topTools = projection?.context_usage.top_tools ?? [];
   const topAttachments = projection?.context_usage.top_attachments ?? [];
+  const compactPending = compactAction.kind === "pending";
+  const compactUnavailableReason =
+    compactContextCommand?.unavailable_reason
+    ?? compactContextCommand?.disabled_code
+    ?? "当前不可压缩";
+  const compactDisabled =
+    !agentRunTarget
+    || !compactContextCommand
+    || !compactContextCommand.enabled
+    || compactPending;
+  const compactButtonTitle = compactPending
+    ? "压缩请求提交中"
+    : compactContextCommand?.enabled
+      ? "压缩上下文"
+      : compactUnavailableReason;
+  const handleCompactContext = useCallback(async () => {
+    if (!agentRunTarget || !compactContextCommand || compactPending) return;
+    if (!compactContextCommand.enabled) {
+      setCompactAction({
+        kind: "error",
+        message: compactUnavailableReason,
+      });
+      return;
+    }
+    setCompactAction({ kind: "pending", message: "提交中" });
+    try {
+      const response = await compactAgentRunContext(agentRunTarget.runId, agentRunTarget.agentId, {
+        client_command_id: newClientCommandId(),
+        command: commandPrecondition(compactContextCommand),
+      });
+      const failedOutcome = response.outcome === "blocked" || response.outcome === "failed";
+      setCompactAction({
+        kind: failedOutcome ? "error" : "success",
+        message: contextCompactionOutcomeMessage(response),
+      });
+      onRefresh?.();
+    } catch (err) {
+      setCompactAction({
+        kind: "error",
+        message: err instanceof Error ? err.message : "压缩请求失败",
+      });
+    }
+  }, [
+    agentRunTarget,
+    compactContextCommand,
+    compactPending,
+    compactUnavailableReason,
+    onRefresh,
+  ]);
   const card = (
       <div
         className={
@@ -247,14 +346,39 @@ export function SessionProjectionViewPanel({
               {isLoading ? "加载中" : "暂无投影"}
             </span>
           )}
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={isLoading}
-            className="ml-auto rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
-          >
-            {isLoading ? "刷新中" : "刷新"}
-          </button>
+          <div className="ml-auto flex items-center gap-1.5">
+            {compactAction.message && (
+              <span
+                className={`max-w-40 truncate text-xs ${
+                  compactAction.kind === "error" ? "text-destructive" : "text-muted-foreground"
+                }`}
+                title={compactAction.message}
+              >
+                {compactAction.message}
+              </span>
+            )}
+            {compactContextCommand && (
+              <button
+                type="button"
+                onClick={() => { void handleCompactContext(); }}
+                disabled={compactDisabled}
+                title={compactButtonTitle}
+                aria-label="手动压缩上下文"
+                className="inline-flex h-7 items-center gap-1 rounded-[8px] border border-border bg-background px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <CompactContextIcon loading={compactPending} />
+                <span>{compactPending ? "提交中" : "压缩"}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={isLoading}
+              className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+            >
+              {isLoading ? "刷新中" : "刷新"}
+            </button>
+          </div>
         </div>
         {error && (
           <div className="border-t border-border px-3 py-2 text-xs text-destructive">
@@ -347,6 +471,7 @@ export function SessionProjectionView({
   agentRunTarget = null,
   refreshKey = 0,
   tokenUsage = null,
+  compactContextCommand,
   embedded = false,
 }: SessionProjectionViewProps) {
   const [projection, setProjection] = useState<SessionProjectionViewResponse | null>(null);
@@ -371,13 +496,23 @@ export function SessionProjectionView({
   }, [agentRunTarget]);
 
   useEffect(() => {
-    void refresh();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        void refresh();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [refresh, refreshKey]);
 
   return (
     <SessionProjectionViewPanel
       projection={projection}
+      agentRunTarget={agentRunTarget}
       tokenUsage={tokenUsage}
+      compactContextCommand={compactContextCommand}
       isLoading={isLoading}
       error={error}
       onRefresh={() => void refresh()}

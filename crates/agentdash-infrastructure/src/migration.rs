@@ -38,6 +38,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "routines",
     "runner_registration_tokens",
     "runtime_health",
+    "runtime_session_compaction_requests",
     "runtime_session_execution_anchors",
     "runtime_session_compactions",
     "runtime_session_events",

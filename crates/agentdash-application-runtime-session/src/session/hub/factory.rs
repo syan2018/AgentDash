@@ -47,6 +47,9 @@ impl SessionRuntimeInner {
             self.connector.clone(),
         )
         .with_workspace_title_port(self.workspace_title_port.clone())
+        .with_manual_context_compaction_request_repo(
+            self.manual_context_compaction_request_repo.clone(),
+        )
     }
 
     pub fn runtime_service(&self) -> super::super::runtime_control::SessionRuntimeService {
@@ -140,6 +143,7 @@ impl SessionRuntimeInner {
             hook_target_port: None,
             mailbox_runtime_port: Arc::new(tokio::sync::RwLock::new(None)),
             lifecycle_gate_repo: None,
+            manual_context_compaction_request_repo: None,
             workspace_title_port: None,
         }
     }
@@ -189,6 +193,14 @@ impl SessionRuntimeInner {
         repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
     ) -> Self {
         self.lifecycle_gate_repo = Some(repo);
+        self
+    }
+
+    pub fn with_manual_context_compaction_request_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::ManualContextCompactionRequestRepository>,
+    ) -> Self {
+        self.manual_context_compaction_request_repo = Some(repo);
         self
     }
 

@@ -12,6 +12,7 @@ mod extension_package_artifact_repository;
 mod inline_file_repository;
 mod lifecycle_anchor_repository;
 mod llm_provider_repository;
+mod manual_context_compaction_request_repository;
 mod mcp_preset_repository;
 mod permission_grant_repository;
 mod project_backend_access_repository;
@@ -167,6 +168,7 @@ pub use lifecycle_anchor_repository::{
 pub use llm_provider_repository::{
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
 };
+pub use manual_context_compaction_request_repository::PostgresManualContextCompactionRequestRepository;
 pub use mcp_preset_repository::PostgresMcpPresetRepository;
 pub use permission_grant_repository::PostgresPermissionGrantRepository;
 pub use project_backend_access_repository::PostgresProjectBackendAccessRepository;

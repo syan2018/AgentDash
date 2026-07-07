@@ -1287,7 +1287,37 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
             )]
         }
 
-        AgentEvent::ContextCompactionFailed { item_id, error } => {
+        AgentEvent::ContextCompactionNoop {
+            item_id,
+            reason,
+            metadata,
+        } => vec![wrap(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "context_compaction_noop".to_string(),
+                value: serde_json::json!({
+                    "lifecycle_item_id": item_id,
+                    "status": "noop",
+                    "noop_reason": reason,
+                    "trigger": &metadata.trigger,
+                    "reason": &metadata.reason,
+                    "phase": &metadata.phase,
+                    "strategy": &metadata.strategy,
+                    "implementation": &metadata.implementation,
+                    "request_id": &metadata.request_id,
+                    "metadata": metadata,
+                }),
+            }),
+            *entry_index,
+        )],
+
+        AgentEvent::ContextCompactionFailed {
+            item_id,
+            error,
+            metadata,
+        } => {
+            let metadata_value = metadata
+                .as_ref()
+                .map(|metadata| serde_json::to_value(metadata).unwrap_or(serde_json::Value::Null));
             vec![
                 wrap(
                     BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
@@ -1296,6 +1326,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                             "lifecycle_item_id": item_id.clone(),
                             "status": "failed",
                             "error": error.clone(),
+                            "metadata": metadata_value,
                         }),
                     }),
                     *entry_index,
@@ -1318,6 +1349,7 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
             messages,
             compacted_until_ref,
             first_kept_ref,
+            metadata,
             newly_compacted_messages,
             ..
         } => {
@@ -1344,6 +1376,12 @@ pub(super) fn convert_event_to_envelopes_with_runtime_context(
                             "newly_compacted_messages": newly_compacted_messages,
                             "compacted_until_ref": compacted_until_ref,
                             "first_kept_ref": first_kept_ref,
+                            "trigger": &metadata.trigger,
+                            "reason": &metadata.reason,
+                            "phase": &metadata.phase,
+                            "strategy": &metadata.strategy,
+                            "implementation": &metadata.implementation,
+                            "request_id": &metadata.request_id,
                             "timestamp_ms": timestamp,
                         }),
                     }),

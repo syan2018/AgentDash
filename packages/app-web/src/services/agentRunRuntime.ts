@@ -6,7 +6,9 @@ import type {
 import type {
   AgentRunToolCallApprovalResponse,
   AgentRunToolCallRejectionResponse,
+  AgentRunContextCompactionCommandResponse,
 } from "../generated/agent-run-mailbox-contracts";
+import type { AgentRunCommandOnlyRequest } from "../generated/workflow-contracts";
 
 export interface AgentRunRuntimeTarget {
   runId: string;
@@ -41,6 +43,17 @@ export async function fetchAgentRunRuntimeContextProjection(
     if ((err as ApiHttpError).status === 404) return null;
     throw err;
   }
+}
+
+export async function compactAgentRunContext(
+  runId: string,
+  agentId: string,
+  request: AgentRunCommandOnlyRequest,
+): Promise<AgentRunContextCompactionCommandResponse> {
+  return api.post<AgentRunContextCompactionCommandResponse>(
+    agentRunScopedPath({ runId, agentId }, "/runtime/context/compact"),
+    request,
+  );
 }
 
 export async function approveAgentRunToolCall(

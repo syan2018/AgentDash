@@ -41,6 +41,8 @@ ContextCompactionFailed
 
 应用层在持久化 `context_compacted` 时提交 checkpoint / segments / head，并由该 metadata 派生 `ContextFrame(kind="compaction_summary")`。checkpoint 提交完成后再让 item completed 进入普通事件流，这样 resume 不会看到只有 completed marker、没有恢复事实的状态。
 
+当 compact 策略被触发但当前 transcript 没有合法 `MessageRef` cut point 时，runtime 发送 `PlatformEvent::SessionMetaUpdate(key = "context_compaction_noop")`，payload 携带 `noop_reason` 与 compaction provenance。该事件只用于用户命令和运行诊断可观察性，不创建 `session_compactions(status = projection_committed)`，原因是没有 summary、source range 和 replacement projection 时，active projection checkpoint 不能被替换。
+
 内部 `context_compacted` payload 是显式 boundary 契约，必须携带：
 
 | Field | 含义 |

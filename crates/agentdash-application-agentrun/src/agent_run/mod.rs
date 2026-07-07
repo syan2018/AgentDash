@@ -1,6 +1,7 @@
 mod admission;
 mod cancel_command;
 pub(crate) mod command_receipt;
+mod context_compaction_command;
 mod control_effects;
 mod conversation_snapshot;
 mod delete_command;
@@ -35,6 +36,14 @@ pub use cancel_command::{
     AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCancelRuntimePort,
 };
 pub use command_receipt::AgentRunCommandReceiptView;
+pub use context_compaction_command::{
+    AgentRunContextCompactionCommand, AgentRunContextCompactionCommandDeps,
+    AgentRunContextCompactionCommandResult, AgentRunContextCompactionCommandService,
+    AgentRunContextCompactionOutcome, AgentRunContextCompactionRuntimeLaunchCommand,
+    AgentRunContextCompactionRuntimeLaunchOutcome, AgentRunContextCompactionRuntimePort,
+    AgentRunContextCompactionRuntimeTodoPort, AgentRunContextCompactionSessionRuntimePort,
+    AgentRunRuntimeCommandFulfillmentDecision, AgentRunRuntimeCommandFulfillmentService,
+};
 pub use control_effects::{AgentRunControlEffectDeps, AgentRunControlEffectService};
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,

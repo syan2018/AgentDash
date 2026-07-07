@@ -192,6 +192,35 @@ pub struct AgentRunCommandReceipt {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum AgentRunContextCompactionCommandOutcome {
+    ScheduledNextTurn,
+    LaunchedCompactionTurn,
+    NoEligibleMessages,
+    Blocked,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunContextCompactionCommandResponse {
+    pub command_receipt: AgentRunCommandReceipt,
+    pub outcome: AgentRunContextCompactionCommandOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum BackendSelectionModeDto {
     Explicit,
     AutoIdle,

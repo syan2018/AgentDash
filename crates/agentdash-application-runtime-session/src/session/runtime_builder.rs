@@ -191,6 +191,14 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_manual_context_compaction_request_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::ManualContextCompactionRequestRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_manual_context_compaction_request_repo(repo);
+        self
+    }
+
     pub fn with_lifecycle_agent_repo(
         mut self,
         repo: Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>,

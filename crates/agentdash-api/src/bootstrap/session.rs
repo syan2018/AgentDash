@@ -400,6 +400,9 @@ pub(crate) async fn build_session_runtime(
     .with_effective_capability_port(effective_capability_port)
     .with_hook_target_port(hook_target_runtime_port())
     .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone())
+    .with_manual_context_compaction_request_repo(
+        repos.manual_context_compaction_request_repo.clone(),
+    )
     .with_settings_repository(repos.settings_repo.clone())
     .with_workspace_title_port(Arc::new(
         AgentRunWorkspaceTitleAdapter::new(

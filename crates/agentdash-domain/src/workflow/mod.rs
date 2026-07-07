@@ -10,6 +10,7 @@ mod gate_wait_policy;
 mod lifecycle_agent;
 mod lifecycle_gate;
 mod lifecycle_subject_association;
+mod manual_context_compaction_request;
 mod repository;
 mod runtime_session_anchor;
 mod validation;
@@ -49,6 +50,11 @@ pub use gate_wait_policy::{
 pub use lifecycle_agent::{AgentSource, LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::{LifecycleGate, LifecycleGateWaitingProjection};
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
+pub use manual_context_compaction_request::{
+    ManualContextCompactionRequest, ManualContextCompactionRequestRepository,
+    ManualContextCompactionRequestStatus, ManualContextCompactionRequestedMode,
+    NewManualContextCompactionRequest,
+};
 pub use repository::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
     AgentRunDeliveryBindingRepository, AgentRunLineageRepository, LifecycleAgentRepository,

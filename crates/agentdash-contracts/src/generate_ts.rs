@@ -7,6 +7,7 @@ use std::{
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
+    AgentRunContextCompactionCommandOutcome, AgentRunContextCompactionCommandResponse,
     AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse,
     AgentRunForkSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
     AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
@@ -310,6 +311,8 @@ fn main() {
             export_all::<BackendSelectionModeDto>(dir);
             export_all::<BackendSelectionRequestDto>(dir);
             export_all::<AgentRunCommandReceipt>(dir);
+            export_all::<AgentRunContextCompactionCommandOutcome>(dir);
+            export_all::<AgentRunContextCompactionCommandResponse>(dir);
             export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<AgentRunMessageCommandResponse>(dir);
             export_all::<AgentRunToolCallApprovalResponse>(dir);

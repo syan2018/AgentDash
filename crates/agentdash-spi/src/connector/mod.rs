@@ -224,8 +224,17 @@ fn operations_for_mount_capabilities(
 ///
 /// per-turn 动态：工具集、hook runtime、runtime delegate facets、系统 prompt 产出等；
 /// 会随 session hot-update 或 hook 触发而重建。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionTurnMode {
+    #[default]
+    AssistantResponse,
+    ContextCompaction,
+}
+
 #[derive(Clone, Default)]
 pub struct ExecutionTurnFrame {
+    pub mode: ExecutionTurnMode,
     pub hook_runtime: Option<Arc<dyn HookRuntimeAccess>>,
     pub capability_state: CapabilityState,
     pub runtime_delegates: AgentRuntimeDelegateSet,

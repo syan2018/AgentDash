@@ -16,17 +16,21 @@ use agentdash_application_agentrun::agent_run::{
 };
 use agentdash_application_agentrun::agent_run::{
     AgentRunAdmissionService, AgentRunCancelCommand, AgentRunCancelCommandService,
-    AgentRunCommandReceiptView, AgentRunDeleteCommand, AgentRunDeleteCommandService,
-    AgentRunDeleteRepos, AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkRepos,
-    AgentRunForkService, AgentRunForkSubmitCommand, AgentRunMailboxControlCommand,
-    AgentRunMailboxService, AgentRunMailboxUserMessageCommand, AgentRunTerminalLaunchTarget,
-    DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
-    DeliveryRuntimeSelectionService,
+    AgentRunCommandReceiptView, AgentRunContextCompactionCommand,
+    AgentRunContextCompactionCommandDeps, AgentRunContextCompactionCommandResult,
+    AgentRunContextCompactionCommandService, AgentRunContextCompactionOutcome,
+    AgentRunContextCompactionSessionRuntimePort, AgentRunDeleteCommand,
+    AgentRunDeleteCommandService, AgentRunDeleteRepos, AgentRunForkCommand,
+    AgentRunForkCommandResult, AgentRunForkRepos, AgentRunForkService, AgentRunForkSubmitCommand,
+    AgentRunMailboxControlCommand, AgentRunMailboxService, AgentRunMailboxUserMessageCommand,
+    AgentRunTerminalLaunchTarget, DeliveryRuntimeSelectionError,
+    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_contracts::agent_run_mailbox::{
-    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunForkLineageView,
-    AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
+    AgentRunCommandReceipt, AgentRunComposerSubmitRequest, AgentRunContextCompactionCommandOutcome,
+    AgentRunContextCompactionCommandResponse, AgentRunForkLineageView, AgentRunForkOutcomeView,
+    AgentRunForkRequest, AgentRunForkResponse, AgentRunForkSubmitRequest,
     AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest, AgentRunMailboxView,
     AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
     AgentRunToolCallRejectionResponse, MailboxMessageView, MailboxStateView,
@@ -168,6 +172,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/projection",
             axum::routing::get(get_agent_run_runtime_context_projection),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/compact",
+            axum::routing::post(compact_agent_run_context),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/context/audit",
@@ -989,6 +997,56 @@ async fn cancel_agent_run(
     .await
     .map_err(ApiError::from)?;
     Ok(Json(agent_run_command_receipt_contract(receipt)))
+}
+
+async fn compact_agent_run_context(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+    Json(body): Json<AgentRunCommandOnlyRequest>,
+) -> Result<Json<AgentRunContextCompactionCommandResponse>, ApiError> {
+    if body.client_command_id.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "client_command_id 不能为空".to_string(),
+        ));
+    }
+    let context = resolve_agent_run_context(
+        &state,
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    agent_run_workspace_command_policy(state.as_ref())
+        .ensure_command_allowed(
+            command_policy_context(&context),
+            app_workspace::AgentRunWorkspaceCommandPrecondition::ContextCompact {
+                command: command_precondition_to_application(body.command.clone()),
+            },
+        )
+        .await
+        .map_err(command_policy_error)?;
+
+    let runtime = AgentRunContextCompactionSessionRuntimePort::new(
+        state.services.session_launch.clone(),
+        state.repos.manual_context_compaction_request_repo.clone(),
+    );
+    let result =
+        AgentRunContextCompactionCommandService::new(AgentRunContextCompactionCommandDeps {
+            command_receipt_repo: state.repos.agent_run_command_receipt_repo.as_ref(),
+            compaction_request_repo: state.repos.manual_context_compaction_request_repo.as_ref(),
+            delivery_selection_repos: delivery_runtime_selection_repositories(state.as_ref()),
+            runtime: &runtime,
+        })
+        .compact_context(AgentRunContextCompactionCommand {
+            run_id: context.run.id,
+            agent_id: context.agent.id,
+            client_command_id: body.client_command_id,
+        })
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(agent_run_context_compaction_command_response(result)))
 }
 
 async fn get_agent_run_runtime_control(
@@ -2112,6 +2170,9 @@ fn conversation_command_kind_to_contract(
             ConversationCommandKind::ResumeMailbox
         }
         app_agent_run::ConversationCommandKindModel::Cancel => ConversationCommandKind::Cancel,
+        app_agent_run::ConversationCommandKindModel::CompactContext => {
+            ConversationCommandKind::CompactContext
+        }
     }
 }
 
@@ -2135,6 +2196,9 @@ fn conversation_command_kind_to_application(
             app_agent_run::ConversationCommandKindModel::ResumeMailbox
         }
         ConversationCommandKind::Cancel => app_agent_run::ConversationCommandKindModel::Cancel,
+        ConversationCommandKind::CompactContext => {
+            app_agent_run::ConversationCommandKindModel::CompactContext
+        }
     }
 }
 
@@ -2582,6 +2646,35 @@ fn agent_run_command_receipt_contract(
         status: receipt.status,
         duplicate: receipt.duplicate,
         message: receipt.message,
+    }
+}
+
+fn agent_run_context_compaction_command_response(
+    result: AgentRunContextCompactionCommandResult,
+) -> AgentRunContextCompactionCommandResponse {
+    AgentRunContextCompactionCommandResponse {
+        command_receipt: agent_run_command_receipt_contract(result.command_receipt),
+        outcome: match result.outcome {
+            AgentRunContextCompactionOutcome::ScheduledNextTurn => {
+                AgentRunContextCompactionCommandOutcome::ScheduledNextTurn
+            }
+            AgentRunContextCompactionOutcome::LaunchedCompactionTurn => {
+                AgentRunContextCompactionCommandOutcome::LaunchedCompactionTurn
+            }
+            AgentRunContextCompactionOutcome::NoEligibleMessages => {
+                AgentRunContextCompactionCommandOutcome::NoEligibleMessages
+            }
+            AgentRunContextCompactionOutcome::Blocked => {
+                AgentRunContextCompactionCommandOutcome::Blocked
+            }
+            AgentRunContextCompactionOutcome::Failed => {
+                AgentRunContextCompactionCommandOutcome::Failed
+            }
+        },
+        runtime_session_id: result.runtime_session_id,
+        request_id: result.request_id,
+        turn_id: result.turn_id,
+        message: result.message,
     }
 }
 

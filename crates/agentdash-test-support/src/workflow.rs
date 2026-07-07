@@ -22,9 +22,12 @@ use agentdash_domain::workflow::{
     AgentRunDeliveryBindingRepository, AgentRunLineage, AgentRunLineageRepository,
     DeliveryBindingStatus, GateWaitPolicyEnvelope, LifecycleAgent, LifecycleAgentRepository,
     LifecycleGate, LifecycleGateRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository, NewAgentRunCommandReceipt,
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository, SubjectRef,
-    WaitProducerRef, WorkflowGraph, WorkflowGraphRepository,
+    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
+    ManualContextCompactionRequest, ManualContextCompactionRequestRepository,
+    ManualContextCompactionRequestStatus, NewAgentRunCommandReceipt,
+    NewManualContextCompactionRequest, RuntimeSessionExecutionAnchor,
+    RuntimeSessionExecutionAnchorRepository, SubjectRef, WaitProducerRef, WorkflowGraph,
+    WorkflowGraphRepository,
 };
 use chrono::Utc;
 use tokio::sync::Mutex;
@@ -958,6 +961,181 @@ impl AgentRunCommandReceiptRepository for MemoryAgentRunCommandReceiptRepository
 impl MemoryAgentRunCommandReceiptRepository {
     pub async fn debug_list(&self) -> Vec<AgentRunCommandReceipt> {
         self.receipts.lock().await.clone()
+    }
+}
+
+#[derive(Default)]
+pub struct MemoryManualContextCompactionRequestRepository {
+    requests: Mutex<Vec<ManualContextCompactionRequest>>,
+}
+
+#[async_trait::async_trait]
+impl ManualContextCompactionRequestRepository for MemoryManualContextCompactionRequestRepository {
+    async fn create_requested(
+        &self,
+        request: NewManualContextCompactionRequest,
+    ) -> Result<ManualContextCompactionRequest, DomainError> {
+        let mut requests = self.requests.lock().await;
+        if let Some(existing) = requests
+            .iter()
+            .find(|item| item.command_receipt_id == request.command_receipt_id)
+        {
+            return Ok(existing.clone());
+        }
+        if requests.iter().any(|item| {
+            item.session_id == request.session_id
+                && item.status == ManualContextCompactionRequestStatus::Requested
+        }) {
+            return Err(DomainError::Conflict {
+                entity: "runtime_session_compaction_request",
+                constraint: "requested_session",
+                message: "runtime session already has a pending context compact request"
+                    .to_string(),
+            });
+        }
+
+        let now = Utc::now();
+        let record = ManualContextCompactionRequest {
+            id: Uuid::new_v4(),
+            session_id: request.session_id,
+            run_id: request.run_id,
+            agent_id: request.agent_id,
+            command_receipt_id: request.command_receipt_id,
+            status: ManualContextCompactionRequestStatus::Requested,
+            requested_mode: request.requested_mode,
+            keep_last_n: request.keep_last_n,
+            reserve_tokens: request.reserve_tokens,
+            request_metadata: request.request_metadata,
+            result_metadata: None,
+            requested_at: now,
+            updated_at: now,
+            consumed_turn_id: None,
+            completed_compaction_id: None,
+            compacted_until_ref: None,
+            first_kept_ref: None,
+        };
+        requests.push(record.clone());
+        Ok(record)
+    }
+
+    async fn get_by_command_receipt(
+        &self,
+        command_receipt_id: Uuid,
+    ) -> Result<Option<ManualContextCompactionRequest>, DomainError> {
+        Ok(self
+            .requests
+            .lock()
+            .await
+            .iter()
+            .find(|item| item.command_receipt_id == command_receipt_id)
+            .cloned())
+    }
+
+    async fn get_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<ManualContextCompactionRequest>, DomainError> {
+        Ok(self
+            .requests
+            .lock()
+            .await
+            .iter()
+            .find(|item| item.id == id)
+            .cloned())
+    }
+
+    async fn find_requested_by_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ManualContextCompactionRequest>, DomainError> {
+        Ok(self
+            .requests
+            .lock()
+            .await
+            .iter()
+            .find(|item| {
+                item.session_id == session_id
+                    && item.status == ManualContextCompactionRequestStatus::Requested
+            })
+            .cloned())
+    }
+
+    async fn mark_consumed(
+        &self,
+        id: Uuid,
+        turn_id: String,
+    ) -> Result<ManualContextCompactionRequest, DomainError> {
+        self.update(id, |request| {
+            request.status = ManualContextCompactionRequestStatus::Consumed;
+            request.consumed_turn_id = Some(turn_id);
+        })
+        .await
+    }
+
+    async fn mark_completed(
+        &self,
+        id: Uuid,
+        compaction_id: String,
+        compacted_until_ref: Option<serde_json::Value>,
+        first_kept_ref: Option<serde_json::Value>,
+        result_metadata: Option<serde_json::Value>,
+    ) -> Result<ManualContextCompactionRequest, DomainError> {
+        self.update(id, |request| {
+            request.status = ManualContextCompactionRequestStatus::Completed;
+            request.completed_compaction_id = Some(compaction_id);
+            request.compacted_until_ref = compacted_until_ref;
+            request.first_kept_ref = first_kept_ref;
+            request.result_metadata = result_metadata;
+        })
+        .await
+    }
+
+    async fn mark_noop(
+        &self,
+        id: Uuid,
+        result_metadata: Option<serde_json::Value>,
+    ) -> Result<ManualContextCompactionRequest, DomainError> {
+        self.update(id, |request| {
+            request.status = ManualContextCompactionRequestStatus::Noop;
+            request.result_metadata = result_metadata;
+        })
+        .await
+    }
+
+    async fn mark_failed(
+        &self,
+        id: Uuid,
+        result_metadata: Option<serde_json::Value>,
+    ) -> Result<ManualContextCompactionRequest, DomainError> {
+        self.update(id, |request| {
+            request.status = ManualContextCompactionRequestStatus::Failed;
+            request.result_metadata = result_metadata;
+        })
+        .await
+    }
+}
+
+impl MemoryManualContextCompactionRequestRepository {
+    async fn update(
+        &self,
+        id: Uuid,
+        apply: impl FnOnce(&mut ManualContextCompactionRequest),
+    ) -> Result<ManualContextCompactionRequest, DomainError> {
+        let mut requests = self.requests.lock().await;
+        let request = requests
+            .iter_mut()
+            .find(|item| item.id == id)
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "runtime_session_compaction_request",
+                id: id.to_string(),
+            })?;
+        apply(request);
+        request.updated_at = Utc::now();
+        Ok(request.clone())
+    }
+
+    pub async fn debug_list(&self) -> Vec<ManualContextCompactionRequest> {
+        self.requests.lock().await.clone()
     }
 }
 

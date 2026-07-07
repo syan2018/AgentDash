@@ -8,16 +8,17 @@ pub use agentdash_agent_types::{
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegateSet, AgentRuntimeError,
     AgentTool, AgentToolError, AgentToolResult, BeforeProviderRequestInput, BeforeStopInput,
     BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, CompactionFailureInput,
-    CompactionParams, CompactionResult, CompactionTriggerStats, ContentPart, DynAgentTool,
-    DynRuntimeCompactionDelegate, DynRuntimeContextTransformDelegate,
-    DynRuntimeProviderObserverDelegate, DynRuntimeToolPolicyDelegate,
-    DynRuntimeTurnBoundaryDelegate, EvaluateCompactionInput, MessageRef, ProjectedEntry,
-    ProjectedTranscript, ProjectionKind, ProviderVisibleContextStats, RuntimeCompactionDelegate,
-    RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate,
-    RuntimeTurnBoundaryDelegate, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
-    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolDefinition, ToolUpdateCallback,
-    TransformContextInput, TransformContextOutput, TurnControlDecision, estimate_message_tokens,
-    estimate_request_tokens, now_millis,
+    CompactionImplementation, CompactionMetadata, CompactionNoopInput, CompactionParams,
+    CompactionPhase, CompactionReason, CompactionResult, CompactionStrategy, CompactionTrigger,
+    CompactionTriggerStats, ContentPart, DynAgentTool, DynRuntimeCompactionDelegate,
+    DynRuntimeContextTransformDelegate, DynRuntimeProviderObserverDelegate,
+    DynRuntimeToolPolicyDelegate, DynRuntimeTurnBoundaryDelegate, EvaluateCompactionInput,
+    MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind, ProviderVisibleContextStats,
+    RuntimeCompactionDelegate, RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate,
+    RuntimeToolPolicyDelegate, RuntimeTurnBoundaryDelegate, StopDecision, StopReason, TokenUsage,
+    ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolDefinition,
+    ToolUpdateCallback, TransformContextInput, TransformContextOutput, TurnControlDecision,
+    estimate_message_tokens, estimate_request_tokens, now_millis,
 };
 pub use agentdash_domain::common::ThinkingLevel;
 
@@ -60,17 +61,25 @@ pub enum AgentEvent {
     ContextCompactionStarted {
         item_id: String,
     },
+    ContextCompactionNoop {
+        item_id: String,
+        reason: String,
+        metadata: CompactionMetadata,
+    },
     ContextCompacted {
         item_id: String,
         messages: Vec<AgentMessage>,
         message_refs: Vec<Option<MessageRef>>,
         compacted_until_ref: MessageRef,
         first_kept_ref: Option<MessageRef>,
+        metadata: CompactionMetadata,
         newly_compacted_messages: u32,
     },
     ContextCompactionFailed {
         item_id: String,
         error: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<CompactionMetadata>,
     },
     ProviderAttemptStatus {
         status: ProviderAttemptStatus,

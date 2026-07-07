@@ -1,22 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { SessionProjectionViewResponse } from "../../../generated/session-contracts";
+import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import { SessionProjectionViewPanel } from "./SessionProjectionView";
+import {
+  commandPrecondition,
+  contextCompactionOutcomeMessage,
+} from "./sessionProjectionCompactionAction";
 
 const mocks = vi.hoisted(() => ({
+  compactAgentRunContext: vi.fn(),
   fetchAgentRunRuntimeContextProjection: vi.fn(),
 }));
 
 vi.mock("../../../services/agentRunRuntime", () => ({
+  compactAgentRunContext: mocks.compactAgentRunContext,
   fetchAgentRunRuntimeContextProjection: mocks.fetchAgentRunRuntimeContextProjection,
 }));
 
 beforeEach(() => {
+  mocks.compactAgentRunContext.mockReset();
   mocks.fetchAgentRunRuntimeContextProjection.mockReset();
 });
 
 afterEach(() => {
   vi.doUnmock("react");
+  vi.unstubAllGlobals();
 });
 
 describe("SessionProjectionViewPanel", () => {
@@ -73,6 +82,101 @@ describe("SessionProjectionViewPanel", () => {
     expect(markup).toContain("166.5K");
     expect(markup).not.toContain("150.1K");
   });
+
+  it("按 generated command 状态渲染手动压缩按钮", () => {
+    const markup = renderToStaticMarkup(
+      <SessionProjectionViewPanel
+        projection={sampleProjection()}
+        agentRunTarget={{ runId: "run-1", agentId: "agent-1" }}
+        compactContextCommand={sampleCompactCommand({
+          enabled: false,
+          unavailable_reason: "缺少 runtime session",
+          disabled_code: "frame_missing",
+        })}
+      />,
+    );
+
+    expect(markup).toContain("手动压缩上下文");
+    expect(markup).toContain("缺少 runtime session");
+    expect(markup).toContain("disabled");
+  });
+
+  it("点击手动压缩只提交 command-only request", async () => {
+    vi.stubGlobal("crypto", { randomUUID: () => "command-compact-1" });
+    mocks.compactAgentRunContext.mockResolvedValue({
+      command_receipt: {
+        client_command_id: "command-compact-1",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "launched_compaction_turn",
+    });
+    const { SessionProjectionViewPanel: Panel } = await importProjectionViewWithImmediateEffects();
+    const element = Panel({
+      projection: sampleProjection(),
+      agentRunTarget: { runId: "run/1", agentId: "agent/1" },
+      compactContextCommand: sampleCompactCommand(),
+      embedded: true,
+    });
+    const button = findButtonByAriaLabel(element, "手动压缩上下文");
+    if (!button) {
+      throw new Error("compact context button should render");
+    }
+    const onClick = button.props.onClick;
+    if (typeof onClick !== "function") {
+      throw new Error("compact context button should have click handler");
+    }
+
+    onClick();
+    await flushPromises();
+
+    expect(mocks.compactAgentRunContext).toHaveBeenCalledWith(
+      "run/1",
+      "agent/1",
+      {
+        client_command_id: "command-compact-1",
+        command: commandPrecondition(sampleCompactCommand()),
+      },
+    );
+  });
+});
+
+describe("context compaction helpers", () => {
+  it("maps compact command outcomes to short UI status text", () => {
+    expect(contextCompactionOutcomeMessage({
+      command_receipt: {
+        client_command_id: "cmd-1",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "scheduled_next_turn",
+    })).toBe("已排队");
+    expect(contextCompactionOutcomeMessage({
+      command_receipt: {
+        client_command_id: "cmd-2",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "launched_compaction_turn",
+    })).toBe("已启动");
+    expect(contextCompactionOutcomeMessage({
+      command_receipt: {
+        client_command_id: "cmd-3",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "no_eligible_messages",
+    })).toBe("暂无可压缩内容");
+    expect(contextCompactionOutcomeMessage({
+      command_receipt: {
+        client_command_id: "cmd-4",
+        status: "accepted",
+        duplicate: false,
+      },
+      outcome: "failed",
+      message: "summary provider failed",
+    })).toBe("summary provider failed");
+  });
 });
 
 describe("fetchSessionProjectionForTarget", () => {
@@ -119,6 +223,62 @@ async function importProjectionViewWithImmediateEffects() {
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function elementProps(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const props = value.props;
+  return isRecord(props) ? props : null;
+}
+
+function childNodes(props: Record<string, unknown>): unknown[] {
+  const children = props.children;
+  if (Array.isArray(children)) return children;
+  return children == null ? [] : [children];
+}
+
+function findButtonByAriaLabel(
+  node: unknown,
+  label: string,
+): { props: Record<string, unknown> } | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findButtonByAriaLabel(child, label);
+      if (found) return found;
+    }
+    return null;
+  }
+  const props = elementProps(node);
+  if (!props) return null;
+  if (props["aria-label"] === label) return { props };
+  for (const child of childNodes(props)) {
+    const found = findButtonByAriaLabel(child, label);
+    if (found) return found;
+  }
+  return null;
+}
+
+function sampleCompactCommand(overrides: Partial<ConversationCommandView> = {}): ConversationCommandView {
+  return {
+    kind: "compact_context",
+    command_id: "compact_context",
+    enabled: true,
+    requires_input: false,
+    executor_config_policy: "forbidden",
+    placement: ["header"],
+    stale_guard: {
+      snapshot_id: "snapshot-1",
+      run_id: "run/1",
+      agent_id: "agent/1",
+      frame_id: "frame-1",
+      active_turn_id: "turn-1",
+    },
+    ...overrides,
+  };
 }
 
 function sampleProjection(): SessionProjectionViewResponse {

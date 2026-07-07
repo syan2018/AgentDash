@@ -9,6 +9,7 @@ use agentdash_application_ports::mcp_discovery::McpToolDiscovery;
 use agentdash_application_ports::runtime_session_live::RuntimeSessionMailboxRuntimePort;
 use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_domain::settings::SettingsRepository;
+use agentdash_domain::workflow::ManualContextCompactionRequestRepository;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{AgentConnector, ConnectorError};
 
@@ -50,6 +51,8 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
     pub(super) mailbox_runtime_port:
         Arc<tokio::sync::RwLock<Option<Arc<dyn RuntimeSessionMailboxRuntimePort>>>>,
+    manual_context_compaction_request_repo:
+        Option<Arc<dyn ManualContextCompactionRequestRepository>>,
     eventing: SessionEventingService,
     hooks: SessionHookService,
     runtime_transition: SessionRuntimeTransitionService,
@@ -75,6 +78,9 @@ impl SessionLaunchDeps {
             backend_execution_transport: inner.backend_execution_transport.clone(),
             backend_execution_lease_repo: inner.backend_execution_lease_repo.clone(),
             mailbox_runtime_port: inner.mailbox_runtime_port.clone(),
+            manual_context_compaction_request_repo: inner
+                .manual_context_compaction_request_repo
+                .clone(),
             eventing: inner.eventing_service(),
             hooks: inner.hook_service(),
             runtime_transition: inner.runtime_transition_service(),
@@ -99,6 +105,9 @@ impl SessionLaunchDeps {
             backend_execution_transport: self.backend_execution_transport.clone(),
             backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
             mailbox_runtime_port: self.mailbox_runtime_port.clone(),
+            manual_context_compaction_request_repo: self
+                .manual_context_compaction_request_repo
+                .clone(),
         }
     }
 
@@ -175,6 +184,8 @@ pub(super) struct LaunchPlanningDeps {
     pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
     mailbox_runtime_port:
         Arc<tokio::sync::RwLock<Option<Arc<dyn RuntimeSessionMailboxRuntimePort>>>>,
+    pub(super) manual_context_compaction_request_repo:
+        Option<Arc<dyn ManualContextCompactionRequestRepository>>,
 }
 
 impl LaunchPlanningDeps {

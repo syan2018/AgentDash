@@ -105,6 +105,8 @@ pub struct SessionRuntimeInner {
     /// LifecycleGate 仓储，用于 companion_wait durable 等待。
     pub(super) lifecycle_gate_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>>,
+    pub(super) manual_context_compaction_request_repo:
+        Option<Arc<dyn agentdash_domain::workflow::ManualContextCompactionRequestRepository>>,
     /// Workspace title port — writes title to LifecycleAgent (AgentRun scope).
     pub(super) workspace_title_port:
         Option<Arc<dyn agentdash_application_ports::workspace_title::WorkspaceTitlePort>>,

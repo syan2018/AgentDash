@@ -10,10 +10,10 @@ use crate::bridge::{
 };
 use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AgentRunError, AgentRunErrorKind,
-    AssistantStreamEvent, BeforeProviderRequestInput, CompactionFailureInput, ContentPart,
-    DynAgentTool, EvaluateCompactionInput, ProviderAttemptPhase, ProviderAttemptStatus,
-    ProviderVisibleContextStats, ToolCallInfo, TransformContextInput, estimate_request_tokens,
-    now_millis,
+    AssistantStreamEvent, BeforeProviderRequestInput, CompactionFailureInput, CompactionNoopInput,
+    ContentPart, DynAgentTool, EvaluateCompactionInput, MessageRef, ProviderAttemptPhase,
+    ProviderAttemptStatus, ProviderVisibleContextStats, ToolCallInfo, TransformContextInput,
+    estimate_request_tokens, now_millis,
 };
 
 use super::tool_call::refresh_context_tools;
@@ -119,7 +119,7 @@ pub(super) async fn stream_assistant_response(
     // pending steering/follow-up。字段名从 `messages` 改为 `steering_messages`
     // 以强调语义：静态任务语义应通过 ContextFrame 投递，此字段只承 per-turn
     // 动态 steering。
-    let mut messages_for_llm = if config.runtime_delegates.context_transform.is_some() {
+    let messages_for_llm = if config.runtime_delegates.context_transform.is_some() {
         let output = config
             .runtime_delegates
             .transform_context(
@@ -151,7 +151,7 @@ pub(super) async fn stream_assistant_response(
     } else {
         context.messages.clone()
     };
-    let message_refs_for_llm =
+    let mut message_refs_for_llm =
         align_message_refs(&context.messages, &context.message_refs, &messages_for_llm);
 
     let mut request = BridgeRequest {
@@ -159,110 +159,16 @@ pub(super) async fn stream_assistant_response(
         messages: messages_for_llm.clone(),
         tools: context.tools.clone(),
     };
-    let mut compaction_context_window = 0_u64;
-    let mut compaction_reserve_tokens = 0_u64;
-
-    {
-        let draft_stats = provider_visible_stats(&request);
-        let params = config
-            .runtime_delegates
-            .evaluate_compaction(
-                EvaluateCompactionInput {
-                    context: AgentContext {
-                        system_prompt: context.system_prompt.clone(),
-                        messages: messages_for_llm.clone(),
-                        message_refs: message_refs_for_llm.clone(),
-                        tools: context.tools.clone(),
-                    },
-                    provider_visible: Some(draft_stats.clone()),
-                },
-                cancel.clone(),
-            )
-            .await
-            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
-
-        if let Some(params) = params {
-            compaction_context_window = params.trigger_stats.context_window;
-            compaction_reserve_tokens = params.reserve_tokens;
-            if crate::compaction::should_execute_compaction(
-                &messages_for_llm,
-                &message_refs_for_llm,
-                &params,
-            ) {
-                let item_id = format!("context-compaction-{}", now_millis());
-                emit_event(
-                    emit,
-                    AgentEvent::ContextCompactionStarted {
-                        item_id: item_id.clone(),
-                    },
-                )
-                .await;
-
-                match crate::compaction::execute_compaction(
-                    &messages_for_llm,
-                    &message_refs_for_llm,
-                    &params,
-                    bridge,
-                    cancel,
-                )
-                .await
-                {
-                    Ok(Some(result)) => {
-                        messages_for_llm = result.messages.clone();
-                        context.messages = result.messages.clone();
-                        context.message_refs = result.message_refs.clone();
-                        request.messages = messages_for_llm.clone();
-                        emit_event(
-                            emit,
-                            AgentEvent::ContextCompacted {
-                                item_id,
-                                messages: result.messages.clone(),
-                                message_refs: result.message_refs.clone(),
-                                compacted_until_ref: result.compacted_until_ref.clone(),
-                                first_kept_ref: result.first_kept_ref.clone(),
-                                newly_compacted_messages: result.newly_compacted_messages,
-                            },
-                        )
-                        .await;
-                        config
-                            .runtime_delegates
-                            .after_compaction(result, cancel.clone())
-                            .await
-                            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        let is_cancelled = matches!(error, AgentError::Cancelled);
-                        let error_message = error.to_string();
-                        emit_event(
-                            emit,
-                            AgentEvent::ContextCompactionFailed {
-                                item_id: item_id.clone(),
-                                error: error_message.clone(),
-                            },
-                        )
-                        .await;
-                        if !is_cancelled {
-                            config
-                                .runtime_delegates
-                                .after_compaction_failed(
-                                    CompactionFailureInput {
-                                        item_id,
-                                        error: error_message,
-                                    },
-                                    cancel.clone(),
-                                )
-                                .await
-                                .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
-                        }
-                        if is_cancelled {
-                            return Err(error);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let (compaction_context_window, compaction_reserve_tokens) = run_compaction_preflight(
+        context,
+        &mut request,
+        &mut message_refs_for_llm,
+        config,
+        bridge,
+        emit,
+        cancel,
+    )
+    .await?;
 
     // BeforeProviderRequest 观测 hook
     {
@@ -272,7 +178,7 @@ pub(super) async fn stream_assistant_response(
             .on_before_provider_request(
                 BeforeProviderRequestInput {
                     system_prompt_len: context.system_prompt.len(),
-                    message_count: messages_for_llm.len(),
+                    message_count: request.messages.len(),
                     tool_count: context.tools.len(),
                     estimated_input_tokens: final_stats.estimated_input_tokens,
                     context_window: compaction_context_window,
@@ -805,6 +711,172 @@ pub(super) async fn stream_assistant_response(
     .await;
 
     Ok(assistant_message)
+}
+
+pub(super) async fn run_compaction_preflight(
+    context: &mut AgentContext,
+    request: &mut BridgeRequest,
+    message_refs_for_llm: &mut Vec<Option<MessageRef>>,
+    config: &AgentLoopConfig,
+    bridge: &dyn LlmBridge,
+    emit: &AgentEventSink,
+    cancel: &CancellationToken,
+) -> Result<(u64, u64), AgentError> {
+    let draft_stats = provider_visible_stats(request);
+    let params = config
+        .runtime_delegates
+        .evaluate_compaction(
+            EvaluateCompactionInput {
+                context: AgentContext {
+                    system_prompt: context.system_prompt.clone(),
+                    messages: request.messages.clone(),
+                    message_refs: message_refs_for_llm.clone(),
+                    tools: context.tools.clone(),
+                },
+                provider_visible: Some(draft_stats),
+            },
+            cancel.clone(),
+        )
+        .await
+        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+
+    let Some(params) = params else {
+        return Ok((0, 0));
+    };
+
+    let metadata = params.metadata.clone();
+    let compaction_context_window = params.trigger_stats.context_window;
+    let compaction_reserve_tokens = params.reserve_tokens;
+
+    if !crate::compaction::should_execute_compaction(
+        &request.messages,
+        message_refs_for_llm,
+        &params,
+    ) {
+        let item_id = format!("context-compaction-noop-{}", now_millis());
+        emit_event(
+            emit,
+            AgentEvent::ContextCompactionNoop {
+                item_id: item_id.clone(),
+                reason: "no_eligible_messages".to_string(),
+                metadata: metadata.clone(),
+            },
+        )
+        .await;
+        config
+            .runtime_delegates
+            .after_compaction_noop(
+                CompactionNoopInput {
+                    item_id,
+                    reason: "no_eligible_messages".to_string(),
+                    metadata,
+                },
+                cancel.clone(),
+            )
+            .await
+            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+        return Ok((compaction_context_window, compaction_reserve_tokens));
+    }
+
+    let item_id = format!("context-compaction-{}", now_millis());
+    emit_event(
+        emit,
+        AgentEvent::ContextCompactionStarted {
+            item_id: item_id.clone(),
+        },
+    )
+    .await;
+
+    match crate::compaction::execute_compaction(
+        &request.messages,
+        message_refs_for_llm,
+        &params,
+        metadata.clone(),
+        bridge,
+        cancel,
+    )
+    .await
+    {
+        Ok(Some(result)) => {
+            context.messages = result.messages.clone();
+            context.message_refs = result.message_refs.clone();
+            request.messages = result.messages.clone();
+            *message_refs_for_llm = result.message_refs.clone();
+            emit_event(
+                emit,
+                AgentEvent::ContextCompacted {
+                    item_id,
+                    messages: result.messages.clone(),
+                    message_refs: result.message_refs.clone(),
+                    compacted_until_ref: result.compacted_until_ref.clone(),
+                    first_kept_ref: result.first_kept_ref.clone(),
+                    metadata: result.metadata.clone(),
+                    newly_compacted_messages: result.newly_compacted_messages,
+                },
+            )
+            .await;
+            config
+                .runtime_delegates
+                .after_compaction(result, cancel.clone())
+                .await
+                .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+        }
+        Ok(None) => {
+            emit_event(
+                emit,
+                AgentEvent::ContextCompactionNoop {
+                    item_id: item_id.clone(),
+                    reason: "no_eligible_messages".to_string(),
+                    metadata: metadata.clone(),
+                },
+            )
+            .await;
+            config
+                .runtime_delegates
+                .after_compaction_noop(
+                    CompactionNoopInput {
+                        item_id,
+                        reason: "no_eligible_messages".to_string(),
+                        metadata,
+                    },
+                    cancel.clone(),
+                )
+                .await
+                .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+        }
+        Err(error) => {
+            let is_cancelled = matches!(error, AgentError::Cancelled);
+            let error_message = error.to_string();
+            emit_event(
+                emit,
+                AgentEvent::ContextCompactionFailed {
+                    item_id: item_id.clone(),
+                    error: error_message.clone(),
+                    metadata: Some(metadata.clone()),
+                },
+            )
+            .await;
+            if !is_cancelled {
+                config
+                    .runtime_delegates
+                    .after_compaction_failed(
+                        CompactionFailureInput {
+                            item_id,
+                            error: error_message,
+                            metadata: Some(metadata),
+                        },
+                        cancel.clone(),
+                    )
+                    .await
+                    .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+            }
+            if is_cancelled {
+                return Err(error);
+            }
+        }
+    }
+
+    Ok((compaction_context_window, compaction_reserve_tokens))
 }
 
 async fn ensure_partial_started(

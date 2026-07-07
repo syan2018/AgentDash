@@ -30,7 +30,8 @@ use agentdash_infrastructure::{
     PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
     PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
     PostgresLifecycleSubjectAssociationRepository, PostgresLlmProviderCredentialRepository,
-    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    PostgresLlmProviderRepository, PostgresManualContextCompactionRequestRepository,
+    PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository,
@@ -159,6 +160,9 @@ pub(crate) async fn build_repositories(
         Arc::new(PostgresAgentRunDeliveryBindingRepository::new(pool.clone()));
     let agent_run_command_receipt_repo =
         Arc::new(PostgresAgentRunCommandReceiptRepository::new(pool.clone()));
+    let manual_context_compaction_request_repo = Arc::new(
+        PostgresManualContextCompactionRequestRepository::new(pool.clone()),
+    );
     let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
     let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
         agent_frame_repo.clone(),
@@ -231,6 +235,7 @@ pub(crate) async fn build_repositories(
         execution_anchor_repo: execution_anchor_repo.clone(),
         agent_run_delivery_binding_repo: agent_run_delivery_binding_repo.clone(),
         agent_run_command_receipt_repo: agent_run_command_receipt_repo.clone(),
+        manual_context_compaction_request_repo: manual_context_compaction_request_repo.clone(),
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),
         agent_frame_construction,

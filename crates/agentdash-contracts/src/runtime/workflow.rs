@@ -994,6 +994,7 @@ pub enum ConversationCommandKind {
     MoveMailboxMessage,
     ResumeMailbox,
     Cancel,
+    CompactContext,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

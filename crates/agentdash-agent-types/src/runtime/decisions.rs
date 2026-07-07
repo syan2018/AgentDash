@@ -3,6 +3,7 @@ use crate::model::context::AgentContext;
 use crate::model::message::ToolCallInfo;
 use crate::model::message::{AgentMessage, MessageRef};
 use crate::runtime::tool::AgentToolResult;
+use serde::{Deserialize, Serialize};
 
 // ─── RuntimeDelegate 输入/输出 ─────────────────────────────
 
@@ -45,6 +46,14 @@ pub struct EvaluateCompactionInput {
 pub struct CompactionFailureInput {
     pub item_id: String,
     pub error: String,
+    pub metadata: Option<CompactionMetadata>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactionNoopInput {
+    pub item_id: String,
+    pub reason: String,
+    pub metadata: CompactionMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +165,8 @@ pub struct CompactionParams {
     pub custom_prompt: Option<String>,
     /// 触发压缩的 token 统计
     pub trigger_stats: CompactionTriggerStats,
+    /// 压缩来源、阶段和实现 provenance。
+    pub metadata: CompactionMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +174,72 @@ pub struct CompactionTriggerStats {
     pub input_tokens: u64,
     pub context_window: u64,
     pub reserve_tokens: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionTrigger {
+    Auto,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionReason {
+    TokenPressure,
+    UserRequested,
+    OverflowRetry,
+    ModelDownshift,
+    CompactionCompatibilityChanged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionPhase {
+    PreProvider,
+    StandaloneCompactTurn,
+    OverflowRetry,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionStrategy {
+    SummaryPrefix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionImplementation {
+    LocalSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionMetadata {
+    pub trigger: CompactionTrigger,
+    pub reason: CompactionReason,
+    pub phase: CompactionPhase,
+    pub strategy: CompactionStrategy,
+    pub implementation: CompactionImplementation,
+    pub request_id: Option<String>,
+}
+
+impl CompactionMetadata {
+    pub fn auto_token_pressure_pre_provider() -> Self {
+        Self {
+            trigger: CompactionTrigger::Auto,
+            reason: CompactionReason::TokenPressure,
+            phase: CompactionPhase::PreProvider,
+            strategy: CompactionStrategy::SummaryPrefix,
+            implementation: CompactionImplementation::LocalSummary,
+            request_id: None,
+        }
+    }
+}
+
+impl Default for CompactionMetadata {
+    fn default() -> Self {
+        Self::auto_token_pressure_pre_provider()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -179,6 +256,8 @@ pub struct CompactionResult {
     pub first_kept_ref: Option<MessageRef>,
     /// 压缩前的 token 触发统计
     pub trigger_stats: CompactionTriggerStats,
+    /// 压缩来源、阶段和实现 provenance。
+    pub metadata: CompactionMetadata,
     /// 本次新增压缩的原始消息数量
     pub newly_compacted_messages: u32,
     /// 本次是否直接使用了外部自定义摘要

@@ -22,10 +22,11 @@ pub use protocol::{
 
 pub use runtime::decisions::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeProviderRequestInput,
-    BeforeStopInput, BeforeToolCallInput, CompactionFailureInput, CompactionParams,
-    CompactionResult, CompactionTriggerStats, EvaluateCompactionInput, ProviderVisibleContextStats,
-    StopDecision, ToolCallDecision, TransformContextInput, TransformContextOutput,
-    TurnControlDecision,
+    BeforeStopInput, BeforeToolCallInput, CompactionFailureInput, CompactionImplementation,
+    CompactionMetadata, CompactionNoopInput, CompactionParams, CompactionPhase, CompactionReason,
+    CompactionResult, CompactionStrategy, CompactionTrigger, CompactionTriggerStats,
+    EvaluateCompactionInput, ProviderVisibleContextStats, StopDecision, ToolCallDecision,
+    TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 pub use runtime::delegate::{
     AgentRuntimeDelegateSet, AgentRuntimeError, DynRuntimeCompactionDelegate,

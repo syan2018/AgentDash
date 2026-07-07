@@ -4,6 +4,7 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 import { SessionProjectionView } from "./SessionProjectionView";
 
 import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type {
   useExecutorConfig,
@@ -91,10 +92,12 @@ function ContextUsageRing({
   usage,
   agentRunTarget,
   refreshKey,
+  compactContextCommand,
 }: {
   usage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey: number;
+  compactContextCommand?: ConversationCommandView;
 }) {
   const [hover, setHover] = useState(false);
   const [open, setOpen] = useState(false);
@@ -201,6 +204,7 @@ function ContextUsageRing({
             agentRunTarget={agentRunTarget}
             refreshKey={refreshKey}
             tokenUsage={usage}
+            compactContextCommand={compactContextCommand}
             embedded
           />
         </div>
@@ -587,6 +591,7 @@ export function SessionChatComposer({
   tokenUsage,
   agentRunTarget,
   projectionRefreshKey,
+  compactContextCommand,
   onAtTrigger,
   onFileSelected,
   onInputChange,
@@ -618,6 +623,7 @@ export function SessionChatComposer({
   tokenUsage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   projectionRefreshKey: number;
+  compactContextCommand?: ConversationCommandView;
   onAtTrigger: (query: string) => void;
   onFileSelected: (file: FileEntry) => void;
   onInputChange: (value: string) => void;
@@ -784,6 +790,7 @@ export function SessionChatComposer({
               usage={tokenUsage}
               agentRunTarget={agentRunTarget}
               refreshKey={projectionRefreshKey}
+              compactContextCommand={compactContextCommand}
             />
             {showExecutorSelector && (
               <InlineModelSelector

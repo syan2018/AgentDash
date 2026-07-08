@@ -193,12 +193,17 @@ fn producer_last_message_from_projection(
     let message_summary = item_summary_for_view(projection, SessionItemView::Messages);
     Some(ProducerLastMessageEvidence {
         summary,
-        message_path: message_summary.path,
-        messages_index_path: "session/messages".to_string(),
-        events_path: "session/events.json".to_string(),
+        message_path: child_message_uri(agent_id, &message_summary.path),
         journal_session_id: agent_run_journal_session_id(run_id, agent_id),
         source_event_seq,
     })
+}
+
+fn child_message_uri(agent_id: uuid::Uuid, session_message_path: &str) -> String {
+    let file_path = session_message_path
+        .strip_prefix("session/messages/")
+        .unwrap_or(session_message_path);
+    format!("lifecycle://agent-runs/{agent_id}/sessions/messages/{file_path}")
 }
 
 fn last_journal_event_for_item<'a>(
@@ -293,9 +298,9 @@ mod tests {
         let frame_id = Uuid::new_v4();
         let fallback_message = ProducerLastMessageEvidence {
             summary: "child agent final note".to_string(),
-            message_path: "session/messages/0002__agent.md".to_string(),
-            messages_index_path: "session/messages".to_string(),
-            events_path: "session/events.json".to_string(),
+            message_path: format!(
+                "lifecycle://agent-runs/{agent_id}/sessions/messages/0002__agent.md"
+            ),
             journal_session_id: format!("agentrun:{run_id}:{agent_id}"),
             source_event_seq: 12,
         };

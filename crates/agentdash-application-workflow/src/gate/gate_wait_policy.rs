@@ -658,23 +658,16 @@ mod tests {
         assert!(evidence.iter().any(|entry| {
             entry.get("kind") == Some(&json!("lifecycle_file"))
                 && entry.get("mount_id") == Some(&json!("lifecycle"))
-                && entry.get("path") == Some(&json!("session/events.json"))
+                && entry.get("uri")
+                    == Some(&json!(format!(
+                        "lifecycle://agent-runs/{child_agent_id}/sessions/messages"
+                    )))
                 && entry.get("delivery_runtime_session_id") == Some(&json!("child-session"))
         }));
         assert!(
-            evidence
-                .iter()
-                .any(|entry| entry.get("kind") == Some(&json!("agent_run_journal")))
-        );
-        assert!(
-            evidence
-                .iter()
-                .any(|entry| entry.get("kind") == Some(&json!("runtime_trace")))
-        );
-        assert!(
             !serde_json::to_string(&payload["result_refs"])
                 .expect("serialize refs")
-                .contains("lifecycle://session/")
+                .contains("session/events.json")
         );
         assert!(payload.get("wait_policy").is_some());
         assert!(matches!(
@@ -765,9 +758,9 @@ mod tests {
         let mut event = terminal_event(run_id, child_agent_id, child_frame_id, "completed");
         event.producer_last_message = Some(ProducerLastMessageEvidence {
             summary: "我已经完成 review，但忘记调用 companion_respond。".to_string(),
-            message_path: "session/messages/0002__msg-agent__agent__review.md".to_string(),
-            messages_index_path: "session/messages".to_string(),
-            events_path: "session/events.json".to_string(),
+            message_path: format!(
+                "lifecycle://agent-runs/{child_agent_id}/sessions/messages/0002__msg-agent__agent__review.md"
+            ),
             journal_session_id: format!("agentrun:{run_id}:{child_agent_id}"),
             source_event_seq: 42,
         });
@@ -792,7 +785,9 @@ mod tests {
         assert_eq!(payload["source"], json!("producer_terminal"));
         assert_eq!(
             payload["fallback_message"]["message_path"],
-            json!("session/messages/0002__msg-agent__agent__review.md")
+            json!(format!(
+                "lifecycle://agent-runs/{child_agent_id}/sessions/messages/0002__msg-agent__agent__review.md"
+            ))
         );
         assert_eq!(payload["fallback_message"]["source_event_seq"], json!(42));
     }
@@ -823,9 +818,9 @@ mod tests {
         });
         event.producer_last_message = Some(ProducerLastMessageEvidence {
             summary: "这条不应该成为顶层 summary。".to_string(),
-            message_path: "session/messages/0002__msg-agent__agent__ignored.md".to_string(),
-            messages_index_path: "session/messages".to_string(),
-            events_path: "session/events.json".to_string(),
+            message_path: format!(
+                "lifecycle://agent-runs/{child_agent_id}/sessions/messages/0002__msg-agent__agent__ignored.md"
+            ),
             journal_session_id: format!("agentrun:{run_id}:{child_agent_id}"),
             source_event_seq: 8,
         });

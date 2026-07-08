@@ -813,12 +813,15 @@ mod tests {
         assert!(evidence.iter().any(|entry| {
             entry.get("kind") == Some(&json!("lifecycle_file"))
                 && entry.get("mount_id") == Some(&json!("lifecycle"))
-                && entry.get("path") == Some(&json!("session/messages"))
+                && entry
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.starts_with("lifecycle://agent-runs/"))
         }));
         assert!(
             !serde_json::to_string(&payload["result_refs"])
                 .expect("serialize refs")
-                .contains("lifecycle://session/")
+                .contains("\"path\"")
         );
     }
 }

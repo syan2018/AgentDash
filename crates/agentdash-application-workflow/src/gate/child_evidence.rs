@@ -1,14 +1,6 @@
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const LIFECYCLE_EVIDENCE_PATHS: &[&str] = &[
-    "session/events.json",
-    "session/messages",
-    "session/tools",
-    "session/turns",
-    "session/terminal",
-];
-
 pub(crate) fn child_evidence_result_refs(
     gate_id: Uuid,
     child_run_id: Uuid,
@@ -21,36 +13,16 @@ pub(crate) fn child_evidence_result_refs(
     let evidence = delivery_runtime_session_id
         .as_deref()
         .map(|session_id| {
-            let mut refs = vec![json!({
-                "kind": "agent_run_journal",
-                "scope": "child_agent_run",
+            vec![json!({
+                "kind": "lifecycle_file",
+                "scope": "child_agent_run_messages",
                 "child_run_id": child_run_id.to_string(),
                 "child_agent_id": child_agent_id.to_string(),
-                "child_frame_id": child_frame_id,
+                "child_frame_id": child_frame_id.clone(),
                 "delivery_runtime_session_id": session_id,
-                "cursor": null,
-            })];
-            refs.extend(LIFECYCLE_EVIDENCE_PATHS.iter().map(|path| {
-                json!({
-                    "kind": "lifecycle_file",
-                    "scope": "child_delivery_session",
-                    "child_run_id": child_run_id.to_string(),
-                    "child_agent_id": child_agent_id.to_string(),
-                    "child_frame_id": child_frame_id,
-                    "delivery_runtime_session_id": session_id,
-                    "mount_id": "lifecycle",
-                    "path": path,
-                })
-            }));
-            refs.push(json!({
-                "kind": "runtime_trace",
-                "scope": "child_delivery_session",
-                "child_run_id": child_run_id.to_string(),
-                "child_agent_id": child_agent_id.to_string(),
-                "child_frame_id": child_frame_id,
-                "delivery_runtime_session_id": session_id,
-            }));
-            refs
+                "mount_id": "lifecycle",
+                "uri": child_messages_uri(child_agent_id),
+            })]
         })
         .unwrap_or_default();
 
@@ -65,6 +37,10 @@ pub(crate) fn child_evidence_result_refs(
         },
         "evidence": evidence,
     })
+}
+
+pub(crate) fn child_messages_uri(child_agent_id: Uuid) -> String {
+    format!("lifecycle://agent-runs/{child_agent_id}/sessions/messages")
 }
 
 #[cfg(test)]
@@ -86,23 +62,23 @@ mod tests {
             .and_then(Value::as_array)
             .expect("evidence refs");
         assert!(evidence.iter().any(|entry| {
-            entry.get("kind") == Some(&json!("agent_run_journal"))
-                && entry.get("delivery_runtime_session_id") == Some(&json!("child-session"))
-        }));
-        assert!(evidence.iter().any(|entry| {
             entry.get("kind") == Some(&json!("lifecycle_file"))
+                && entry.get("delivery_runtime_session_id") == Some(&json!("child-session"))
                 && entry.get("mount_id") == Some(&json!("lifecycle"))
-                && entry.get("path") == Some(&json!("session/events.json"))
+                && entry
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.starts_with("lifecycle://agent-runs/"))
         }));
         assert!(
-            evidence
-                .iter()
-                .any(|entry| entry.get("kind") == Some(&json!("runtime_trace")))
+            !serde_json::to_string(&refs)
+                .expect("serialize refs")
+                .contains("session/events.json")
         );
         assert!(
             !serde_json::to_string(&refs)
                 .expect("serialize refs")
-                .contains("lifecycle://session/")
+                .contains("\"path\"")
         );
     }
 }

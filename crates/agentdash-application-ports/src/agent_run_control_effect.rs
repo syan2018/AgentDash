@@ -120,8 +120,6 @@ pub struct AgentRunWaitProducerTerminalEvent {
 pub struct ProducerLastMessageEvidence {
     pub summary: String,
     pub message_path: String,
-    pub messages_index_path: String,
-    pub events_path: String,
     pub journal_session_id: String,
     pub source_event_seq: u64,
 }

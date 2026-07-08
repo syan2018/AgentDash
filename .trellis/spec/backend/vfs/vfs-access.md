@@ -291,13 +291,18 @@ Provider `agent_run_session` 路径：
 | `session/summaries` | 每轮上下文压缩摘要 |
 | `session/terminal` | terminal 输出聚合 |
 | `session/turns` | turn 列表与 turn-scoped events |
+| `agent-runs` | 当前 Lifecycle 下 AgentRun 证据入口索引 |
+| `agent-runs/{agent_id}/sessions` | 同一 Lifecycle 内指定 AgentRun 的 delivery session 投影入口，目录结构与根级 `session` 同构 |
+| `agent-runs/{agent_id}/sessions/messages` | 同一 Lifecycle 内指定 AgentRun 的用户与 Agent 消息索引 |
 | `node/state` | 有 node anchor 时的当前 runtime node 状态 |
 | `node/artifacts` | 有 node anchor 时的当前 runtime node port output 列表 |
 | `node/records` | 有 node anchor 时的当前 runtime node journey records |
 | `orchestration/state` | 有 node anchor 时的 orchestration 实例状态 |
 | `skills/{key}/...` | mount metadata 声明 projected skills 时暴露对应 Project SkillAsset 文件 |
 
-`agent_run_session` mount 的 path set 收口在当前 delivery session 证据面与 anchor node evidence。历史 run inventory 属于独立资源入口，因为 AgentRun workspace 的 lifecycle mount 需要表达当前 delivery session 的执行证据，而不是数据库层 run inventory。
+`agent_run_session` mount 的根级 `session/*` 收口在当前 delivery session 证据面与 anchor node evidence；
+`agent-runs/{agent_id}/sessions/*` 使用同一套 AgentRun journal/session 投影，让父 Agent 能在同一个
+Lifecycle 证据面下主动查询同属该 Lifecycle 的其它 AgentRun 消息与执行证据。
 AgentRun resource surface 从 frame typed VFS 叠加 session-scoped lifecycle mount 时，需要保留同 Project
 已有 lifecycle mount 上的 SkillAsset projection metadata；这样 plain ProjectAgent、plain companion
 child、workflow node 的 workspace browser 和执行器 baseline 能看到同一组 builtin skill 文件。

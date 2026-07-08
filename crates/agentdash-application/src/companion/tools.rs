@@ -490,6 +490,10 @@ fn merge_gate_result_refs(
     base_refs
 }
 
+fn child_messages_uri(child_agent_id: Uuid) -> String {
+    format!("lifecycle://agent-runs/{child_agent_id}/sessions/messages")
+}
+
 #[async_trait]
 impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
     async fn deliver_child_result_to_parent(
@@ -1414,6 +1418,7 @@ impl CompanionRequestTool {
             .accepted_refs
             .as_ref()
             .and_then(|refs| refs.agent_run_turn_id.clone());
+        let child_messages_uri = child_messages_uri(dispatch_result.agent_ref);
         let mailbox_message_id = mailbox_result
             .mailbox_message
             .as_ref()
@@ -1520,9 +1525,10 @@ impl CompanionRequestTool {
             if matches!(wait_outcome, CompanionGateWaitOutcome::TimedOut) {
                 return Ok(AgentToolResult {
                     content: vec![ContentPart::text(format!(
-                        "等待 companion `{companion_label}` 回传超时。\n- status: timed_out\n- gate_ref: {gate_id}\n- child_session_id: {}\n- child_turn_id: {}",
+                        "等待 companion `{companion_label}` 回传超时。\n- status: timed_out\n- gate_ref: {gate_id}\n- child_session_id: {}\n- child_turn_id: {}\n- child_messages: {}",
                         dispatch_result.delivery_runtime_session_id,
                         child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
+                        child_messages_uri,
                     ))],
                     is_error: false,
                     details: Some(serde_json::json!({
@@ -1541,6 +1547,7 @@ impl CompanionRequestTool {
                             "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
                             "child_turn_id": child_turn_id.clone(),
                             "mailbox_message_id": mailbox_message_id.clone(),
+                            "child_messages_uri": child_messages_uri,
                         },
                     })),
                 });
@@ -1581,14 +1588,16 @@ impl CompanionRequestTool {
                     "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
                     "child_turn_id": child_turn_id.clone(),
                     "mailbox_message_id": mailbox_message_id.clone(),
+                    "child_messages_uri": child_messages_uri.clone(),
                 }),
                 &result_payload,
             );
 
             let text = format!(
-                "Companion `{companion_label}` 已完成。\n- child_session_id: {}\n- child_turn_id: {}\n- mailbox_outcome: {}\n- status: {status}\n- summary: {summary}\n- gate_ref: {gate_id}",
+                "Companion `{companion_label}` 已完成。\n- child_session_id: {}\n- child_turn_id: {}\n- child_messages: {}\n- mailbox_outcome: {}\n- status: {status}\n- summary: {summary}\n- gate_ref: {gate_id}",
                 dispatch_result.delivery_runtime_session_id,
                 child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
+                child_messages_uri,
                 mailbox_outcome,
             );
 
@@ -1629,11 +1638,12 @@ impl CompanionRequestTool {
         // ─── Async dispatch (wait=false) ────────────────────────────────
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "已派发 companion agent（异步）。\n- dispatch_id: {}\n- label: {}\n- child_session_id: {}\n- child_turn_id: {}\n- agent_ref: {}\n- frame_ref: {}",
+                "已派发 companion agent（异步）。\n- dispatch_id: {}\n- label: {}\n- child_session_id: {}\n- child_turn_id: {}\n- child_messages: {}\n- agent_ref: {}\n- frame_ref: {}",
                 dispatch_plan.dispatch_id,
                 companion_label,
                 dispatch_result.delivery_runtime_session_id,
                 child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
+                child_messages_uri,
                 dispatch_result.agent_ref,
                 dispatch_result.frame_ref,
             ))],
@@ -1649,6 +1659,9 @@ impl CompanionRequestTool {
                 "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
                 "child_session_id": dispatch_result.delivery_runtime_session_id,
                 "child_turn_id": child_turn_id,
+                "result_refs": {
+                    "child_messages_uri": child_messages_uri,
+                },
                 "mailbox_message_id": mailbox_message_id,
                 "mailbox_outcome": mailbox_outcome,
                 "task_id": requested_task_id.map(|id| id.to_string()),
@@ -3472,13 +3485,13 @@ mod companion_tests {
                 "evidence": [
                     {
                         "kind": "lifecycle_file",
-                        "scope": "child_delivery_session",
+                        "scope": "child_agent_run_messages",
                         "child_run_id": "run-child",
                         "child_agent_id": "agent-child",
                         "child_frame_id": "frame-child",
                         "delivery_runtime_session_id": "child-session",
                         "mount_id": "lifecycle",
-                        "path": "session/events.json"
+                        "uri": "lifecycle://agent-runs/agent-child/sessions/messages"
                     }
                 ]
             }
@@ -3492,13 +3505,13 @@ mod companion_tests {
             serde_json::json!("child-session")
         );
         assert_eq!(
-            refs["evidence"][0]["path"],
-            serde_json::json!("session/events.json")
+            refs["evidence"][0]["uri"],
+            serde_json::json!("lifecycle://agent-runs/agent-child/sessions/messages")
         );
         assert!(
             !serde_json::to_string(&refs)
                 .expect("serialize refs")
-                .contains("lifecycle://session/")
+                .contains("session/events.json")
         );
     }
 

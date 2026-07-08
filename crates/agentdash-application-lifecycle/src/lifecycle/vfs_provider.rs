@@ -7,7 +7,8 @@ use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::workflow::{
-    ExecutorRunRef, LifecycleRun, LifecycleRunRepository, OrchestrationInstance, RuntimeNodeState,
+    ExecutorRunRef, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    OrchestrationInstance, RuntimeNodeState,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -39,6 +40,7 @@ use agentdash_spi::{SessionCompactionStore, SessionMetaStore};
 
 pub struct LifecycleMountProvider {
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     skill_asset_repo: Arc<dyn SkillAssetRepository>,
     journey: LifecycleJourneyProjection,
 }
@@ -46,6 +48,7 @@ pub struct LifecycleMountProvider {
 impl LifecycleMountProvider {
     pub fn new(
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
         session_meta_store: Arc<dyn SessionMetaStore>,
@@ -54,6 +57,7 @@ impl LifecycleMountProvider {
     ) -> Self {
         Self::new_with_tool_result_cache(
             lifecycle_run_repo,
+            lifecycle_agent_repo,
             inline_file_repo,
             skill_asset_repo,
             session_meta_store,
@@ -66,6 +70,7 @@ impl LifecycleMountProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_tool_result_cache(
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
         session_meta_store: Arc<dyn SessionMetaStore>,
@@ -75,6 +80,7 @@ impl LifecycleMountProvider {
     ) -> Self {
         Self {
             lifecycle_run_repo,
+            lifecycle_agent_repo,
             skill_asset_repo,
             journey: LifecycleJourneyProjection::new_with_tool_result_cache(
                 inline_file_repo,
@@ -170,111 +176,13 @@ impl LifecycleMountProvider {
                 lifecycle_mount_has_skill_asset_projection(mount),
                 mount,
             ),
-            ["session"] => {
-                if options.recursive {
-                    list_session_recursive_entries(&self.journey, &session_source, "session")
-                        .await?
-                } else {
-                    session_root_entries("session")
-                }
-            }
-            ["session", "items"] => {
-                list_session_item_entries(
+            ["session", rest @ ..] => {
+                list_session_projection_entries(
                     &self.journey,
                     &session_source,
-                    "session/items",
-                    SessionItemView::Items,
-                )
-                .await?
-            }
-            ["session", "messages"] => {
-                list_session_item_entries(
-                    &self.journey,
-                    &session_source,
-                    "session/messages",
-                    SessionItemView::Messages,
-                )
-                .await?
-            }
-            ["session", "tools"] => {
-                list_session_item_entries(
-                    &self.journey,
-                    &session_source,
-                    "session/tools",
-                    SessionItemView::Tools,
-                )
-                .await?
-            }
-            ["session", "tool-results"] => {
-                list_session_tool_result_entries(
-                    &self.journey,
-                    &session_source,
-                    "session/tool-results",
-                    ToolResultListScope::Root,
+                    "session",
+                    rest,
                     options.recursive,
-                )
-                .await?
-            }
-            ["session", "tool-results", turn_alias] => {
-                list_session_tool_result_entries(
-                    &self.journey,
-                    &session_source,
-                    "session/tool-results",
-                    ToolResultListScope::Turn { turn_alias },
-                    options.recursive,
-                )
-                .await?
-            }
-            ["session", "tool-results", turn_alias, body_alias] => {
-                list_session_tool_result_entries(
-                    &self.journey,
-                    &session_source,
-                    "session/tool-results",
-                    ToolResultListScope::Body {
-                        turn_alias,
-                        body_alias,
-                    },
-                    options.recursive,
-                )
-                .await?
-            }
-            ["session", "writes"] => {
-                list_session_item_entries(
-                    &self.journey,
-                    &session_source,
-                    "session/writes",
-                    SessionItemView::Writes,
-                )
-                .await?
-            }
-            ["session", "summaries"] => {
-                list_session_summary_entries(&self.journey, &session_source, "session/summaries")
-                    .await?
-            }
-            ["session", "terminal"] => {
-                list_session_terminal_entries(
-                    &self.journey,
-                    &session_source,
-                    "session/terminal",
-                    options.recursive,
-                )
-                .await?
-            }
-            ["session", "turns"] => {
-                list_session_turn_entries(
-                    &self.journey,
-                    &session_source,
-                    "session/turns",
-                    options.recursive,
-                )
-                .await?
-            }
-            ["session", "turns", turn_id] => {
-                list_session_turn_entries_for_turn(
-                    &self.journey,
-                    &session_source,
-                    "session/turns",
-                    turn_id,
                 )
                 .await?
             }
@@ -318,6 +226,144 @@ impl LifecycleMountProvider {
             entries.retain(|entry| entry.path.starts_with(path_norm));
         }
         Ok(entries)
+    }
+
+    async fn read_agent_runs_scope(
+        &self,
+        mount: &Mount,
+        segs: &[&str],
+    ) -> Result<String, MountError> {
+        let run_id = parse_run_id_from_metadata(mount)?;
+        let content = match segs {
+            ["agent-runs"] => {
+                let agents = self.list_lifecycle_agents(run_id).await?;
+                to_json_pretty(&serde_json::json!({
+                    "run_id": run_id.to_string(),
+                    "agents": agents
+                        .iter()
+                        .map(|agent| serde_json::json!({
+                            "agent_id": agent.id.to_string(),
+                            "path": format!("agent-runs/{}", agent.id),
+                            "sessions_path": agent_run_sessions_path(agent.id),
+                        }))
+                        .collect::<Vec<_>>()
+                }))
+                .map_err(map_journey_err)?
+            }
+            ["agent-runs", agent_id] => {
+                let source = self
+                    .agent_run_journal_ref_for_agent(mount, agent_id)
+                    .await?;
+                to_json_pretty(&serde_json::json!({
+                    "agent_id": source.agent_id.to_string(),
+                    "sessions_path": agent_run_sessions_path(source.agent_id),
+                }))
+                .map_err(map_journey_err)?
+            }
+            ["agent-runs", agent_id, "sessions"] => {
+                let source = self
+                    .agent_run_journal_ref_for_agent(mount, agent_id)
+                    .await?;
+                self.journey
+                    .read_session_projection(&source, &["meta"])
+                    .await
+                    .map_err(map_journey_err)?
+            }
+            ["agent-runs", agent_id, "sessions", rest @ ..] => {
+                let source = self
+                    .agent_run_journal_ref_for_agent(mount, agent_id)
+                    .await?;
+                self.journey
+                    .read_session_projection(&source, rest)
+                    .await
+                    .map_err(map_journey_err)?
+            }
+            _ => {
+                return Err(MountError::NotFound(format!(
+                    "lifecycle_vfs 不支持的 AgentRun 路径: `{}`",
+                    segs.join("/")
+                )));
+            }
+        };
+        Ok(content)
+    }
+
+    async fn list_agent_runs_scope(
+        &self,
+        mount: &Mount,
+        path_norm: &str,
+        options: &ListOptions,
+        segs: &[&str],
+    ) -> Result<Vec<RuntimeFileEntry>, MountError> {
+        let run_id = parse_run_id_from_metadata(mount)?;
+        let mut entries = match segs {
+            ["agent-runs"] => self
+                .list_lifecycle_agents(run_id)
+                .await?
+                .into_iter()
+                .map(|agent| RuntimeFileEntry::dir(format!("agent-runs/{}", agent.id)).as_virtual())
+                .collect(),
+            ["agent-runs", agent_id] => {
+                let source = self
+                    .agent_run_journal_ref_for_agent(mount, agent_id)
+                    .await?;
+                vec![RuntimeFileEntry::dir(agent_run_sessions_path(source.agent_id)).as_virtual()]
+            }
+            ["agent-runs", agent_id, "sessions", rest @ ..] => {
+                let source = self
+                    .agent_run_journal_ref_for_agent(mount, agent_id)
+                    .await?;
+                list_session_projection_entries(
+                    &self.journey,
+                    &source,
+                    &agent_run_sessions_path(source.agent_id),
+                    rest,
+                    options.recursive,
+                )
+                .await?
+            }
+            _ => Vec::new(),
+        };
+
+        retain_entries_matching_pattern(&mut entries, options.pattern.as_deref());
+        if !path_norm.is_empty() && options.recursive {
+            entries.retain(|entry| entry.path.starts_with(path_norm));
+        }
+        Ok(entries)
+    }
+
+    async fn list_lifecycle_agents(
+        &self,
+        run_id: Uuid,
+    ) -> Result<Vec<agentdash_domain::workflow::LifecycleAgent>, MountError> {
+        let mut agents = self
+            .lifecycle_agent_repo
+            .list_by_run(run_id)
+            .await
+            .map_err(map_domain_err)?;
+        agents.sort_by_key(|agent| agent.id);
+        Ok(agents)
+    }
+
+    async fn agent_run_journal_ref_for_agent(
+        &self,
+        mount: &Mount,
+        agent_id: &str,
+    ) -> Result<AgentRunJournalRef, MountError> {
+        let run_id = parse_run_id_from_metadata(mount)?;
+        let agent_id = Uuid::parse_str(agent_id)
+            .map_err(|_| MountError::NotFound(format!("Lifecycle AgentRun 不存在: {agent_id}")))?;
+        let belongs_to_run = self
+            .list_lifecycle_agents(run_id)
+            .await?
+            .into_iter()
+            .any(|agent| agent.id == agent_id);
+        if !belongs_to_run {
+            return Err(MountError::NotFound(format!(
+                "Lifecycle AgentRun 不属于当前 run: {agent_id}"
+            )));
+        }
+        Ok(AgentRunJournalRef::new(run_id, agent_id))
     }
 }
 
@@ -630,6 +676,7 @@ fn agent_run_session_root_entries(include_skills: bool, mount: &Mount) -> Vec<Ru
     let mut entries = vec![
         RuntimeFileEntry::file("state").as_virtual(),
         RuntimeFileEntry::dir("session").as_virtual(),
+        RuntimeFileEntry::dir("agent-runs").as_virtual(),
         RuntimeFileEntry::file("execution-log").as_virtual(),
     ];
     if mount_has_node_scope(mount) {
@@ -667,6 +714,124 @@ fn session_root_entries(prefix: &str) -> Vec<RuntimeFileEntry> {
     ]
 }
 
+fn agent_run_sessions_path(agent_id: Uuid) -> String {
+    format!("agent-runs/{agent_id}/sessions")
+}
+
+async fn list_session_projection_entries(
+    journey: &LifecycleJourneyProjection,
+    source: &AgentRunJournalRef,
+    display_root: &str,
+    rest: &[&str],
+    recursive: bool,
+) -> Result<Vec<RuntimeFileEntry>, MountError> {
+    match rest {
+        [] => {
+            if recursive {
+                list_session_recursive_entries(journey, source, display_root).await
+            } else {
+                Ok(session_root_entries(display_root))
+            }
+        }
+        ["items"] => {
+            list_session_item_entries(
+                journey,
+                source,
+                &format!("{display_root}/items"),
+                SessionItemView::Items,
+            )
+            .await
+        }
+        ["messages"] => {
+            list_session_item_entries(
+                journey,
+                source,
+                &format!("{display_root}/messages"),
+                SessionItemView::Messages,
+            )
+            .await
+        }
+        ["tools"] => {
+            list_session_item_entries(
+                journey,
+                source,
+                &format!("{display_root}/tools"),
+                SessionItemView::Tools,
+            )
+            .await
+        }
+        ["tool-results"] => {
+            list_session_tool_result_entries(
+                journey,
+                source,
+                &format!("{display_root}/tool-results"),
+                ToolResultListScope::Root,
+                recursive,
+            )
+            .await
+        }
+        ["tool-results", turn_alias] => {
+            list_session_tool_result_entries(
+                journey,
+                source,
+                &format!("{display_root}/tool-results"),
+                ToolResultListScope::Turn { turn_alias },
+                recursive,
+            )
+            .await
+        }
+        ["tool-results", turn_alias, body_alias] => {
+            list_session_tool_result_entries(
+                journey,
+                source,
+                &format!("{display_root}/tool-results"),
+                ToolResultListScope::Body {
+                    turn_alias,
+                    body_alias,
+                },
+                recursive,
+            )
+            .await
+        }
+        ["writes"] => {
+            list_session_item_entries(
+                journey,
+                source,
+                &format!("{display_root}/writes"),
+                SessionItemView::Writes,
+            )
+            .await
+        }
+        ["summaries"] => {
+            list_session_summary_entries(journey, source, &format!("{display_root}/summaries"))
+                .await
+        }
+        ["terminal"] => {
+            list_session_terminal_entries(
+                journey,
+                source,
+                &format!("{display_root}/terminal"),
+                recursive,
+            )
+            .await
+        }
+        ["turns"] => {
+            list_session_turn_entries(journey, source, &format!("{display_root}/turns"), recursive)
+                .await
+        }
+        ["turns", turn_id] => {
+            list_session_turn_entries_for_turn(
+                journey,
+                source,
+                &format!("{display_root}/turns"),
+                turn_id,
+            )
+            .await
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
 #[async_trait]
 impl MountProvider for LifecycleMountProvider {
     fn provider_id(&self) -> &str {
@@ -690,6 +855,11 @@ impl MountProvider for LifecycleMountProvider {
                 &path_norm,
             )
             .await;
+        }
+
+        if matches!(segs.as_slice(), ["agent-runs", ..]) {
+            let content = self.read_agent_runs_scope(mount, &segs).await?;
+            return Ok(ReadResult::new(path_norm, content));
         }
 
         if mount_is_agent_run_session_scope(mount) {
@@ -859,6 +1029,13 @@ impl MountProvider for LifecycleMountProvider {
             .await;
         }
         let segs = segments_from_path(&path_norm);
+        if matches!(segs.as_slice(), ["agent-runs", ..]) {
+            return Ok(ListResult {
+                entries: self
+                    .list_agent_runs_scope(mount, &path_norm, options, &segs)
+                    .await?,
+            });
+        }
         if mount_is_agent_run_session_scope(mount) {
             return Ok(ListResult {
                 entries: self
@@ -1333,13 +1510,25 @@ fn tool_result_recursive_entries_for_refs(
             "{display_root}/{}/{}",
             entry.turn_alias, entry.body_alias
         ));
-        entries.push(RuntimeFileEntry::file(entry.metadata_path.clone()).as_virtual());
-        entries.push(RuntimeFileEntry::file(entry.result_path.clone()).as_virtual());
+        entries.push(
+            RuntimeFileEntry::file(rebase_session_path(display_root, &entry.metadata_path))
+                .as_virtual(),
+        );
+        entries.push(
+            RuntimeFileEntry::file(rebase_session_path(display_root, &entry.result_path))
+                .as_virtual(),
+        );
     }
     dirs.into_iter()
         .map(|path| RuntimeFileEntry::dir(path).as_virtual())
         .chain(entries)
         .collect()
+}
+
+fn rebase_session_path(display_root: &str, path: &str) -> String {
+    path.strip_prefix("session/tool-results")
+        .map(|suffix| format!("{display_root}{suffix}"))
+        .unwrap_or_else(|| path.to_string())
 }
 
 async fn list_session_terminal_entries(
@@ -1447,5 +1636,428 @@ async fn list_session_turn_entries_for_turn(
         ])
     } else {
         Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lifecycle::surface::journey::{AgentRunJournalProjection, JourneyResult};
+    use agentdash_domain::common::MountCapability;
+    use agentdash_domain::common::error::DomainError;
+    use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
+    use agentdash_domain::skill_asset::SkillAsset;
+    use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
+    use agentdash_spi::session_persistence::{
+        SessionCompactionRecord, SessionMeta, SessionStoreResult,
+    };
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct FixtureRunRepo {
+        runs: Mutex<HashMap<Uuid, LifecycleRun>>,
+    }
+
+    #[async_trait]
+    impl LifecycleRunRepository for FixtureRunRepo {
+        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().insert(run.id, run.clone());
+            Ok(())
+        }
+
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
+            Ok(self.runs.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            let runs = self.runs.lock().unwrap();
+            Ok(ids.iter().filter_map(|id| runs.get(id).cloned()).collect())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|run| run.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().insert(run.id, run.clone());
+            Ok(())
+        }
+
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().remove(&id);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FixtureAgentRepo {
+        agents: Mutex<Vec<LifecycleAgent>>,
+    }
+
+    #[async_trait]
+    impl LifecycleAgentRepository for FixtureAgentRepo {
+        async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+            self.agents.lock().unwrap().push(agent.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
+            Ok(self
+                .agents
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|agent| agent.id == id)
+                .cloned())
+        }
+
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
+            Ok(self
+                .agents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|agent| agent.run_id == run_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+            let mut agents = self.agents.lock().unwrap();
+            if let Some(existing) = agents.iter_mut().find(|existing| existing.id == agent.id) {
+                *existing = agent.clone();
+            }
+            Ok(())
+        }
+    }
+
+    struct EmptyInlineRepo;
+
+    #[async_trait]
+    impl InlineFileRepository for EmptyInlineRepo {
+        async fn get_file(
+            &self,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: Uuid,
+            _container_id: &str,
+            _path: &str,
+        ) -> Result<Option<InlineFile>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_files(
+            &self,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: Uuid,
+            _container_id: &str,
+        ) -> Result<Vec<InlineFile>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn list_files_by_owner(
+            &self,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: Uuid,
+        ) -> Result<Vec<InlineFile>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn upsert_file(&self, _file: &InlineFile) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn upsert_files(&self, _files: &[InlineFile]) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete_file(
+            &self,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: Uuid,
+            _container_id: &str,
+            _path: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete_by_container(
+            &self,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: Uuid,
+            _container_id: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete_by_owner(
+            &self,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: Uuid,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn count_files(
+            &self,
+            _owner_kind: InlineFileOwnerKind,
+            _owner_id: Uuid,
+            _container_id: &str,
+        ) -> Result<i64, DomainError> {
+            Ok(0)
+        }
+    }
+
+    struct EmptySkillRepo;
+
+    #[async_trait]
+    impl SkillAssetRepository for EmptySkillRepo {
+        async fn create(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn get(&self, _id: Uuid) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            _project_id: Uuid,
+            _key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn get_by_project_and_builtin_key(
+            &self,
+            _project_id: Uuid,
+            _builtin_key: &str,
+        ) -> Result<Option<SkillAsset>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_by_project(&self, _project_id: Uuid) -> Result<Vec<SkillAsset>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn update(&self, _asset: &SkillAsset) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    struct EmptySessionMetaStore;
+
+    #[async_trait]
+    impl SessionMetaStore for EmptySessionMetaStore {
+        async fn create_session(&self, _meta: &SessionMeta) -> SessionStoreResult<()> {
+            Ok(())
+        }
+
+        async fn get_session_meta(
+            &self,
+            _session_id: &str,
+        ) -> SessionStoreResult<Option<SessionMeta>> {
+            Ok(None)
+        }
+
+        async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
+            Ok(Vec::new())
+        }
+
+        async fn save_session_meta(&self, _meta: &SessionMeta) -> SessionStoreResult<()> {
+            Ok(())
+        }
+
+        async fn delete_session(&self, _session_id: &str) -> SessionStoreResult<()> {
+            Ok(())
+        }
+    }
+
+    struct EmptySessionCompactionStore;
+
+    #[async_trait]
+    impl SessionCompactionStore for EmptySessionCompactionStore {
+        async fn get_compaction(
+            &self,
+            _session_id: &str,
+            _compaction_id: &str,
+        ) -> SessionStoreResult<Option<SessionCompactionRecord>> {
+            Ok(None)
+        }
+
+        async fn list_compactions(
+            &self,
+            _session_id: &str,
+            _projection_kind: &str,
+        ) -> SessionStoreResult<Vec<SessionCompactionRecord>> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct EmptyAgentRunJournalReader;
+
+    #[async_trait]
+    impl AgentRunJournalReader for EmptyAgentRunJournalReader {
+        async fn visible_journal(
+            &self,
+            _reference: AgentRunJournalRef,
+        ) -> JourneyResult<AgentRunJournalProjection> {
+            Err(LifecycleJourneyError::NotFound(
+                "no journal in fixture".to_string(),
+            ))
+        }
+    }
+
+    fn provider_fixture(
+        run: LifecycleRun,
+        agents: Vec<LifecycleAgent>,
+    ) -> (LifecycleMountProvider, Mount) {
+        let mount_agent_id = agents
+            .first()
+            .map(|agent| agent.id)
+            .unwrap_or_else(Uuid::new_v4);
+        let run_repo = Arc::new(FixtureRunRepo::default());
+        run_repo.runs.lock().unwrap().insert(run.id, run.clone());
+        let agent_repo = Arc::new(FixtureAgentRepo::default());
+        *agent_repo.agents.lock().unwrap() = agents;
+        let provider = LifecycleMountProvider::new(
+            run_repo,
+            agent_repo,
+            Arc::new(EmptyInlineRepo),
+            Arc::new(EmptySkillRepo),
+            Arc::new(EmptySessionMetaStore),
+            Arc::new(EmptySessionCompactionStore),
+            Arc::new(EmptyAgentRunJournalReader),
+        );
+        let mount = Mount {
+            id: "lifecycle".to_string(),
+            provider: PROVIDER_LIFECYCLE_VFS.to_string(),
+            backend_id: "backend".to_string(),
+            root_ref: format!("lifecycle://run/{}/session", run.id),
+            capabilities: vec![MountCapability::Read, MountCapability::List],
+            default_write: false,
+            display_name: "Lifecycle".to_string(),
+            metadata: serde_json::json!({
+                "scope": "agent_run_session",
+                "run_id": run.id.to_string(),
+                "agent_id": mount_agent_id.to_string(),
+                "runtime_session_id": "runtime-session",
+                "launch_frame_id": Uuid::new_v4().to_string(),
+            }),
+        };
+        (provider, mount)
+    }
+
+    #[tokio::test]
+    async fn lifecycle_mount_lists_agent_run_sessions_index() {
+        let project_id = Uuid::new_v4();
+        let run = LifecycleRun::new_plain(project_id);
+        let parent_agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        let child_agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::Subagent);
+        let child_agent_id = child_agent.id;
+        let (provider, mount) = provider_fixture(run, vec![parent_agent, child_agent]);
+
+        let root = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("root list");
+        assert!(root.entries.iter().any(|entry| entry.path == "session"));
+        assert!(root.entries.iter().any(|entry| entry.path == "agent-runs"));
+
+        let agent_runs = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "agent-runs".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("agent-runs list");
+        assert!(
+            agent_runs.entries.iter().any(|entry| {
+                entry.path == format!("agent-runs/{child_agent_id}") && entry.is_dir
+            })
+        );
+
+        let sessions = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: format!("agent-runs/{child_agent_id}/sessions"),
+                    pattern: None,
+                    recursive: false,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("agent sessions list");
+        let paths = sessions
+            .entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            paths
+                .iter()
+                .any(|path| *path == format!("agent-runs/{child_agent_id}/sessions/messages"))
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| *path == format!("agent-runs/{child_agent_id}/sessions/events.json"))
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| *path == format!("agent-runs/{child_agent_id}/sessions/tool-results"))
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_mount_rejects_agent_outside_current_run() {
+        let project_id = Uuid::new_v4();
+        let run = LifecycleRun::new_plain(project_id);
+        let parent_agent = LifecycleAgent::new_root(run.id, project_id, AgentSource::ProjectAgent);
+        let outside_agent_id = Uuid::new_v4();
+        let (provider, mount) = provider_fixture(run, vec![parent_agent]);
+
+        let result = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: format!("agent-runs/{outside_agent_id}/sessions"),
+                    pattern: None,
+                    recursive: false,
+                },
+                &MountOperationContext::default(),
+            )
+            .await;
+
+        assert!(matches!(result, Err(MountError::NotFound(_))));
     }
 }

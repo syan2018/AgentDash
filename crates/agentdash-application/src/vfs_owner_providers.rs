@@ -76,7 +76,7 @@ impl MountProviderRegistryBuilderOwnerExt for MountProviderRegistryBuilder {
     ) -> Self {
         let agent_run_journal_reader = Arc::new(ApplicationAgentRunJournalReader::new(
             lifecycle_run_repo.clone(),
-            lifecycle_agent_repo,
+            lifecycle_agent_repo.clone(),
             agent_frame_repo,
             execution_anchor_repo,
             agent_run_delivery_binding_repo,
@@ -89,6 +89,7 @@ impl MountProviderRegistryBuilderOwnerExt for MountProviderRegistryBuilder {
         .register(Arc::new(
             LifecycleMountProvider::new_with_tool_result_cache(
                 lifecycle_run_repo,
+                lifecycle_agent_repo,
                 inline_file_repo.clone(),
                 skill_asset_repo.clone(),
                 session_meta_store,

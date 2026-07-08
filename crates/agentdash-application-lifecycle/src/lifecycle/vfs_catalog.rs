@@ -132,6 +132,42 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
         virtual_entry: true,
     },
     LifecyclePathEntry {
+        path: "agent-runs",
+        description: "当前 Lifecycle 下 AgentRun 证据入口索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "agent-runs/{agent_id}",
+        description: "指定 AgentRun 的证据目录",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "agent-runs/{agent_id}/sessions",
+        description: "指定 AgentRun 的 delivery session 投影入口",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "agent-runs/{agent_id}/sessions/messages",
+        description: "指定 AgentRun 的用户与 Agent 消息索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "agent-runs/{agent_id}/sessions/messages/{message_file}",
+        description: "指定 AgentRun 的用户或 Agent 消息原文",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "agent-runs/{agent_id}/sessions/events.json",
+        description: "指定 AgentRun 的 delivery session 原始事件投影",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
         path: "node/state",
         description: "当前 anchored runtime node 状态（JSON）",
         kind: LifecyclePathKind::File,
@@ -180,6 +216,7 @@ pub fn lifecycle_root_entries(include_skills: bool) -> Vec<RuntimeFileEntry> {
     let mut entries = vec![
         RuntimeFileEntry::file("state").as_virtual(),
         RuntimeFileEntry::dir("session").as_virtual(),
+        RuntimeFileEntry::dir("agent-runs").as_virtual(),
         RuntimeFileEntry::dir("artifacts"),
         RuntimeFileEntry::dir("records"),
     ];
@@ -211,6 +248,8 @@ mod tests {
         assert!(paths.contains(&"session/summaries"));
         assert!(paths.contains(&"session/messages"));
         assert!(paths.contains(&"session/tools"));
+        assert!(paths.contains(&"agent-runs"));
+        assert!(paths.contains(&"agent-runs/{agent_id}/sessions/messages"));
         assert!(paths.contains(&"node/state"));
         assert!(paths.contains(&"node/artifacts/{port_key}"));
         assert!(!paths.contains(&"runs"));
@@ -226,6 +265,7 @@ mod tests {
 
         assert!(entries.contains(&"state".to_string()));
         assert!(entries.contains(&"session".to_string()));
+        assert!(entries.contains(&"agent-runs".to_string()));
         assert!(entries.contains(&"artifacts".to_string()));
         assert!(entries.contains(&"records".to_string()));
         assert!(entries.contains(&"skills".to_string()));

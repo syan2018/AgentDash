@@ -10,10 +10,12 @@ use agentdash_domain::workflow::{
     RuntimeSessionExecutionAnchorRepository, SubjectRef, WaitProducerRef,
 };
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::db_err;
+use super::json_document::{from_optional_jsonb, to_jsonb, to_optional_jsonb};
 
 fn parse_uuid(s: &str, ctx: &str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(s)
@@ -182,38 +184,24 @@ struct FrameRow {
     id: String,
     agent_id: String,
     revision: i32,
-    surface: Option<String>,
-    effective_capability_json: Option<String>,
-    context_slice_json: Option<String>,
-    vfs_surface_json: Option<String>,
-    mcp_surface_json: Option<String>,
-    execution_profile_json: Option<String>,
-    visible_canvas_mount_ids_json: Option<String>,
-    visible_workspace_module_refs_json: Option<String>,
+    surface: Option<Value>,
+    effective_capability_json: Option<Value>,
+    context_slice_json: Option<Value>,
+    vfs_surface_json: Option<Value>,
+    mcp_surface_json: Option<Value>,
+    execution_profile_json: Option<Value>,
+    visible_canvas_mount_ids_json: Option<Value>,
+    visible_workspace_module_refs_json: Option<Value>,
     created_by_kind: String,
     created_by_id: Option<String>,
     created_at: DateTime<Utc>,
 }
 
-fn parse_opt_json(s: Option<String>, ctx: &str) -> Result<Option<serde_json::Value>, DomainError> {
-    match s {
-        Some(val) => serde_json::from_str(&val)
-            .map(Some)
-            .map_err(|e| DomainError::InvalidConfig(format!("{ctx}: {e}"))),
-        None => Ok(None),
-    }
-}
-
 fn parse_opt_surface(
-    s: Option<String>,
+    s: Option<Value>,
     ctx: &str,
 ) -> Result<Option<AgentFrameSurfaceDocument>, DomainError> {
-    match s {
-        Some(val) => serde_json::from_str(&val)
-            .map(Some)
-            .map_err(|e| DomainError::InvalidConfig(format!("{ctx}: {e}"))),
-        None => Ok(None),
-    }
+    from_optional_jsonb(s, ctx)
 }
 
 impl TryFrom<FrameRow> for AgentFrame {
@@ -224,25 +212,13 @@ impl TryFrom<FrameRow> for AgentFrame {
             agent_id: parse_uuid(&row.agent_id, "agent_frames.agent_id")?,
             revision: row.revision,
             surface: parse_opt_surface(row.surface, "agent_frames.surface")?,
-            effective_capability_json: parse_opt_json(
-                row.effective_capability_json,
-                "effective_capability_json",
-            )?,
-            context_slice_json: parse_opt_json(row.context_slice_json, "context_slice_json")?,
-            vfs_surface_json: parse_opt_json(row.vfs_surface_json, "vfs_surface_json")?,
-            mcp_surface_json: parse_opt_json(row.mcp_surface_json, "mcp_surface_json")?,
-            execution_profile_json: parse_opt_json(
-                row.execution_profile_json,
-                "execution_profile_json",
-            )?,
-            visible_canvas_mount_ids_json: parse_opt_json(
-                row.visible_canvas_mount_ids_json,
-                "visible_canvas_mount_ids_json",
-            )?,
-            visible_workspace_module_refs_json: parse_opt_json(
-                row.visible_workspace_module_refs_json,
-                "visible_workspace_module_refs_json",
-            )?,
+            effective_capability_json: row.effective_capability_json,
+            context_slice_json: row.context_slice_json,
+            vfs_surface_json: row.vfs_surface_json,
+            mcp_surface_json: row.mcp_surface_json,
+            execution_profile_json: row.execution_profile_json,
+            visible_canvas_mount_ids_json: row.visible_canvas_mount_ids_json,
+            visible_workspace_module_refs_json: row.visible_workspace_module_refs_json,
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,
@@ -250,20 +226,6 @@ impl TryFrom<FrameRow> for AgentFrame {
         frame.apply_surface_projection();
         Ok(frame)
     }
-}
-
-fn opt_json_str(v: &Option<serde_json::Value>) -> Result<Option<String>, DomainError> {
-    match v {
-        Some(val) => serde_json::to_string(val)
-            .map(Some)
-            .map_err(|e| DomainError::InvalidConfig(format!("json serialize: {e}"))),
-        None => Ok(None),
-    }
-}
-
-fn surface_json_str(frame: &AgentFrame) -> Result<String, DomainError> {
-    serde_json::to_string(&frame.surface_document())
-        .map_err(|e| DomainError::InvalidConfig(format!("agent_frames.surface serialize: {e}")))
 }
 
 #[async_trait::async_trait]
@@ -284,14 +246,35 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
         .bind(frame.revision)
-        .bind(surface_json_str(frame)?)
-        .bind(opt_json_str(&surface.capability_state)?)
-        .bind(opt_json_str(&surface.context_slice)?)
-        .bind(opt_json_str(&surface.vfs_surface)?)
-        .bind(opt_json_str(&surface.mcp_surface)?)
-        .bind(opt_json_str(&surface.visible_canvas_mount_ids)?)
-        .bind(opt_json_str(&surface.visible_workspace_module_refs)?)
-        .bind(opt_json_str(&surface.execution_profile)?)
+        .bind(to_jsonb(&surface, "agent_frames.surface")?)
+        .bind(to_optional_jsonb(
+            surface.capability_state.as_ref(),
+            "agent_frames.effective_capability_json",
+        )?)
+        .bind(to_optional_jsonb(
+            surface.context_slice.as_ref(),
+            "agent_frames.context_slice_json",
+        )?)
+        .bind(to_optional_jsonb(
+            surface.vfs_surface.as_ref(),
+            "agent_frames.vfs_surface_json",
+        )?)
+        .bind(to_optional_jsonb(
+            surface.mcp_surface.as_ref(),
+            "agent_frames.mcp_surface_json",
+        )?)
+        .bind(to_optional_jsonb(
+            surface.visible_canvas_mount_ids.as_ref(),
+            "agent_frames.visible_canvas_mount_ids_json",
+        )?)
+        .bind(to_optional_jsonb(
+            surface.visible_workspace_module_refs.as_ref(),
+            "agent_frames.visible_workspace_module_refs_json",
+        )?)
+        .bind(to_optional_jsonb(
+            surface.execution_profile.as_ref(),
+            "agent_frames.execution_profile_json",
+        )?)
         .bind(&frame.created_by_kind)
         .bind(&frame.created_by_id)
         .bind(frame.created_at)
@@ -382,7 +365,7 @@ struct AssocRow {
     subject_kind: String,
     subject_id: String,
     role: String,
-    metadata_json: Option<String>,
+    metadata_json: Option<Value>,
     created_at: DateTime<Utc>,
 }
 
@@ -402,11 +385,7 @@ impl TryFrom<AssocRow> for LifecycleSubjectAssociation {
             subject_kind: row.subject_kind,
             subject_id: parse_uuid(&row.subject_id, "lifecycle_subject_associations.subject_id")?,
             role: row.role,
-            metadata_json: row
-                .metadata_json
-                .map(|s| serde_json::from_str(&s))
-                .transpose()
-                .map_err(|e| DomainError::InvalidConfig(format!("metadata_json: {e}")))?,
+            metadata_json: row.metadata_json,
             created_at: row.created_at,
         })
     }
@@ -415,12 +394,6 @@ impl TryFrom<AssocRow> for LifecycleSubjectAssociation {
 #[async_trait::async_trait]
 impl LifecycleSubjectAssociationRepository for PostgresLifecycleSubjectAssociationRepository {
     async fn create(&self, assoc: &LifecycleSubjectAssociation) -> Result<(), DomainError> {
-        let metadata = assoc
-            .metadata_json
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|e| DomainError::InvalidConfig(format!("metadata_json: {e}")))?;
         sqlx::query(
             r#"INSERT INTO lifecycle_subject_associations
                 (id, anchor_run_id, anchor_agent_id, subject_kind, subject_id, role, metadata_json, created_at)
@@ -432,7 +405,10 @@ impl LifecycleSubjectAssociationRepository for PostgresLifecycleSubjectAssociati
         .bind(&assoc.subject_kind)
         .bind(assoc.subject_id.to_string())
         .bind(&assoc.role)
-        .bind(metadata)
+        .bind(to_optional_jsonb(
+            assoc.metadata_json.as_ref(),
+            "lifecycle_subject_associations.metadata_json",
+        )?)
         .bind(assoc.created_at)
         .execute(&self.pool)
         .await
@@ -522,7 +498,7 @@ struct GateRow {
     gate_kind: String,
     correlation_id: String,
     status: String,
-    payload_json: Option<String>,
+    payload_json: Option<Value>,
     resolved_by: Option<String>,
     created_at: DateTime<Utc>,
     resolved_at: Option<DateTime<Utc>>,
@@ -539,11 +515,7 @@ impl TryFrom<GateRow> for LifecycleGate {
             gate_kind: row.gate_kind,
             correlation_id: row.correlation_id,
             status: row.status,
-            payload_json: row
-                .payload_json
-                .map(|s| serde_json::from_str(&s))
-                .transpose()
-                .map_err(|e| DomainError::InvalidConfig(format!("payload_json: {e}")))?,
+            payload_json: row.payload_json,
             resolved_by: row.resolved_by,
             created_at: row.created_at,
             resolved_at: row.resolved_at,
@@ -554,12 +526,6 @@ impl TryFrom<GateRow> for LifecycleGate {
 #[async_trait::async_trait]
 impl LifecycleGateRepository for PostgresLifecycleGateRepository {
     async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-        let payload = gate
-            .payload_json
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|e| DomainError::InvalidConfig(format!("payload_json: {e}")))?;
         sqlx::query(
             r#"INSERT INTO lifecycle_gates
                 (id, run_id, agent_id, frame_id, gate_kind, correlation_id, status, payload_json, resolved_by, created_at, resolved_at)
@@ -572,7 +538,10 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
         .bind(&gate.gate_kind)
         .bind(&gate.correlation_id)
         .bind(&gate.status)
-        .bind(payload)
+        .bind(to_optional_jsonb(
+            gate.payload_json.as_ref(),
+            "lifecycle_gates.payload_json",
+        )?)
         .bind(&gate.resolved_by)
         .bind(gate.created_at)
         .bind(gate.resolved_at)
@@ -623,12 +592,12 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
                FROM lifecycle_gates
                WHERE status='open'
                  AND payload_json IS NOT NULL
-                 AND payload_json::jsonb ->> '{schema_version}' = '1'
-                 AND payload_json::jsonb ? '{wait_policy}'
-                 AND payload_json::jsonb -> '{wait_policy}' ? '{source}'
-                 AND payload_json::jsonb -> '{wait_policy}' ? '{expected_result}'
-                 AND payload_json::jsonb -> '{wait_policy}' ? '{terminal_policy}'
-                 AND payload_json::jsonb -> '{wait_policy}' ? '{wake_target}'
+                 AND payload_json ->> '{schema_version}' = '1'
+                 AND payload_json ? '{wait_policy}'
+                 AND payload_json -> '{wait_policy}' ? '{source}'
+                 AND payload_json -> '{wait_policy}' ? '{expected_result}'
+                 AND payload_json -> '{wait_policy}' ? '{terminal_policy}'
+                 AND payload_json -> '{wait_policy}' ? '{wake_target}'
                ORDER BY created_at
                LIMIT $1"#,
             schema_version = paths.schema_version,
@@ -663,13 +632,13 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
                     r#"SELECT id,run_id,agent_id,frame_id,gate_kind,correlation_id,status,payload_json,resolved_by,created_at,resolved_at
                        FROM lifecycle_gates
                        WHERE payload_json IS NOT NULL
-                         AND payload_json::jsonb ->> '{schema_version}' = '1'
-                         AND payload_json::jsonb -> '{wait_policy}' -> '{source}' ->> '{kind}' = $4
-                         AND payload_json::jsonb -> '{wait_policy}' -> '{source}' ->> '{run_id}' = $1
-                         AND payload_json::jsonb -> '{wait_policy}' -> '{source}' ->> '{agent_id}' = $2
+                         AND payload_json ->> '{schema_version}' = '1'
+                         AND payload_json -> '{wait_policy}' -> '{source}' ->> '{kind}' = $4
+                         AND payload_json -> '{wait_policy}' -> '{source}' ->> '{run_id}' = $1
+                         AND payload_json -> '{wait_policy}' -> '{source}' ->> '{agent_id}' = $2
                          AND (
                             $3::text IS NULL
-                            OR payload_json::jsonb -> '{wait_policy}' -> '{source}' ->> '{frame_id}' = $3
+                            OR payload_json -> '{wait_policy}' -> '{source}' ->> '{frame_id}' = $3
                          )
                        ORDER BY created_at"#,
                     schema_version = paths.schema_version,
@@ -712,17 +681,14 @@ impl LifecycleGateRepository for PostgresLifecycleGateRepository {
     }
 
     async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
-        let payload = gate
-            .payload_json
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|e| DomainError::InvalidConfig(format!("payload_json: {e}")))?;
         sqlx::query(
             r#"UPDATE lifecycle_gates SET status=$1, payload_json=$2, resolved_by=$3, resolved_at=$4 WHERE id=$5"#,
         )
         .bind(&gate.status)
-        .bind(payload)
+        .bind(to_optional_jsonb(
+            gate.payload_json.as_ref(),
+            "lifecycle_gates.payload_json",
+        )?)
         .bind(&gate.resolved_by)
         .bind(gate.resolved_at)
         .bind(gate.id.to_string())
@@ -1062,7 +1028,7 @@ struct LineageRow {
     child_agent_id: String,
     relation_kind: String,
     source_frame_id: Option<String>,
-    metadata_json: Option<String>,
+    metadata_json: Option<Value>,
     created_at: DateTime<Utc>,
 }
 
@@ -1082,11 +1048,7 @@ impl TryFrom<LineageRow> for AgentLineage {
                 row.source_frame_id.as_ref(),
                 "agent_lineages.source_frame_id",
             )?,
-            metadata_json: row
-                .metadata_json
-                .map(|s| serde_json::from_str(&s))
-                .transpose()
-                .map_err(|e| DomainError::InvalidConfig(format!("metadata_json: {e}")))?,
+            metadata_json: row.metadata_json,
             created_at: row.created_at,
         })
     }
@@ -1095,12 +1057,6 @@ impl TryFrom<LineageRow> for AgentLineage {
 #[async_trait::async_trait]
 impl AgentLineageRepository for PostgresAgentLineageRepository {
     async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError> {
-        let metadata = lineage
-            .metadata_json
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|e| DomainError::InvalidConfig(format!("metadata_json: {e}")))?;
         sqlx::query(
             r#"INSERT INTO agent_lineages
                 (id, run_id, parent_agent_id, child_agent_id, relation_kind, source_frame_id, metadata_json, created_at)
@@ -1112,7 +1068,10 @@ impl AgentLineageRepository for PostgresAgentLineageRepository {
         .bind(lineage.child_agent_id.to_string())
         .bind(&lineage.relation_kind)
         .bind(lineage.source_frame_id.map(|id| id.to_string()))
-        .bind(metadata)
+        .bind(to_optional_jsonb(
+            lineage.metadata_json.as_ref(),
+            "agent_lineages.metadata_json",
+        )?)
         .bind(lineage.created_at)
         .execute(&self.pool)
         .await
@@ -1361,7 +1320,7 @@ mod tests {
             id: Uuid::new_v4().to_string(),
             agent_id: Uuid::new_v4().to_string(),
             revision: 3,
-            surface: surface.map(|value| value.to_string()),
+            surface,
             effective_capability_json: None,
             context_slice_json: None,
             vfs_surface_json: None,
@@ -1382,9 +1341,9 @@ mod tests {
             "vfs_surface": {"mounts": ["canonical"]},
             "visible_canvas_mount_ids": ["canvas:canonical"]
         })));
-        row.effective_capability_json = Some(json!({"stale": true}).to_string());
-        row.vfs_surface_json = Some(json!({"mounts": ["stale"]}).to_string());
-        row.visible_canvas_mount_ids_json = Some(json!(["canvas:stale"]).to_string());
+        row.effective_capability_json = Some(json!({"stale": true}));
+        row.vfs_surface_json = Some(json!({"mounts": ["stale"]}));
+        row.visible_canvas_mount_ids_json = Some(json!(["canvas:stale"]));
 
         let frame = AgentFrame::try_from(row).expect("frame row should map");
 
@@ -1405,8 +1364,8 @@ mod tests {
     #[test]
     fn frame_row_without_surface_derives_document_from_split_projection() {
         let mut row = frame_row_with_surface(None);
-        row.effective_capability_json = Some(json!({"from_split": true}).to_string());
-        row.context_slice_json = Some(json!({"slice": "launch"}).to_string());
+        row.effective_capability_json = Some(json!({"from_split": true}));
+        row.context_slice_json = Some(json!({"slice": "launch"}));
 
         let frame = AgentFrame::try_from(row).expect("frame row should map");
         let surface = frame
@@ -1429,10 +1388,10 @@ mod tests {
         .bind(Uuid::new_v4().to_string())
         .bind("fixture-user")
         .bind("plain")
-        .bind("[]")
-        .bind("[]")
-        .bind("\"ready\"")
-        .bind("[]")
+        .bind(json!([]))
+        .bind(json!([]))
+        .bind("ready")
+        .bind(json!([]))
         .bind(now)
         .execute(&repo.pool)
         .await

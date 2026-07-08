@@ -250,6 +250,7 @@ mod tests {
         AgentFrame, AgentSource, LifecycleAgent, LifecycleRun, RuntimeSessionExecutionAnchor,
         RuntimeSessionExecutionAnchorRepository,
     };
+    use serde_json::json;
 
     async fn seed_binding_prerequisites(
         pool: &PgPool,
@@ -268,10 +269,10 @@ mod tests {
         .bind(run.project_id.to_string())
         .bind(&run.created_by_user_id)
         .bind("plain")
-        .bind("[]")
-        .bind("[]")
-        .bind("\"ready\"")
-        .bind("[]")
+        .bind(json!([]))
+        .bind(json!([]))
+        .bind("ready")
+        .bind(json!([]))
         .bind(run.created_at)
         .bind(run.updated_at)
         .bind(run.last_activity_at)

@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "JSONB document column、migration ownership、baseline squash 和 Agent runtime fact storage 的主规范。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Repository 聚合边界、schema ownership 与 PostgreSQL migration 责任边界。"}
+{"file": ".trellis/tasks/07-07-channel-communication-capability-model/design.md", "reason": "Channel owner-local document 采用 jsonb typed registry 的直接上游需求。"}
+{"file": ".trellis/tasks/07-07-channel-communication-capability-model/research/channel-service-first-principles-realignment.md", "reason": "记录为什么新增 owner document 物理列要使用 jsonb 而不是 TEXT JSON。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/research/text-json-column-inventory.md", "reason": "本任务最终列级分类、迁移目标和 static grep 解释。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/workitems/WI-01-inventory.md", "reason": "派发盘点工作项状态。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/workitems/WI-02-migration.md", "reason": "migration 工作项状态。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/workitems/WI-03-product-config-repositories.md", "reason": "product/config repository 工作项状态。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/workitems/WI-04-workflow-runtime-repositories.md", "reason": "workflow/runtime repository 工作项状态。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/workitems/WI-05-session-auth-state-mailbox.md", "reason": "session/auth/state/mailbox 工作项状态。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/workitems/WI-06-validation-pr.md", "reason": "最终验证与 PR 工作项状态。"}

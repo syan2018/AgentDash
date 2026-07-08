@@ -8,6 +8,8 @@ use agentdash_domain::llm_provider::{
     WireProtocol,
 };
 
+use super::json_document::{from_jsonb, to_jsonb};
+
 pub struct PostgresLlmProviderRepository {
     pool: PgPool,
 }
@@ -55,8 +57,8 @@ struct LlmProviderRow {
     base_url: String,
     wire_api: String,
     default_model: String,
-    models: String,
-    blocked_models: String,
+    models: serde_json::Value,
+    blocked_models: serde_json::Value,
     env_api_key: String,
     discovery_url: String,
     sort_order: i32,
@@ -95,8 +97,8 @@ impl TryFrom<LlmProviderRow> for LlmProvider {
             base_url: row.base_url,
             wire_api: row.wire_api,
             default_model: row.default_model,
-            models: parse_json_column(&row.models, "llm_providers.models")?,
-            blocked_models: parse_json_column(&row.blocked_models, "llm_providers.blocked_models")?,
+            models: from_jsonb(row.models, "llm_providers.models")?,
+            blocked_models: from_jsonb(row.blocked_models, "llm_providers.blocked_models")?,
             env_api_key: row.env_api_key,
             discovery_url: row.discovery_url,
             sort_order: row.sort_order,
@@ -110,9 +112,6 @@ impl TryFrom<LlmProviderRow> for LlmProvider {
 #[async_trait::async_trait]
 impl LlmProviderRepository for PostgresLlmProviderRepository {
     async fn create(&self, provider: &LlmProvider) -> Result<(), DomainError> {
-        let models_json = serialize_json_column(&provider.models, "llm_providers.models")?;
-        let blocked_json =
-            serialize_json_column(&provider.blocked_models, "llm_providers.blocked_models")?;
         sqlx::query(&format!(
             "INSERT INTO llm_providers ({COLUMNS})
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
@@ -126,8 +125,11 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         .bind(&provider.base_url)
         .bind(&provider.wire_api)
         .bind(&provider.default_model)
-        .bind(models_json)
-        .bind(blocked_json)
+        .bind(to_jsonb(&provider.models, "llm_providers.models")?)
+        .bind(to_jsonb(
+            &provider.blocked_models,
+            "llm_providers.blocked_models",
+        )?)
         .bind(&provider.env_api_key)
         .bind(&provider.discovery_url)
         .bind(provider.sort_order)
@@ -171,9 +173,6 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
     }
 
     async fn update(&self, provider: &LlmProvider) -> Result<(), DomainError> {
-        let models_json = serialize_json_column(&provider.models, "llm_providers.models")?;
-        let blocked_json =
-            serialize_json_column(&provider.blocked_models, "llm_providers.blocked_models")?;
         sqlx::query(
             "UPDATE llm_providers SET
                 name = $1, slug = $2, protocol = $3, credential_mode = $4,
@@ -190,8 +189,11 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         .bind(&provider.base_url)
         .bind(&provider.wire_api)
         .bind(&provider.default_model)
-        .bind(models_json)
-        .bind(blocked_json)
+        .bind(to_jsonb(&provider.models, "llm_providers.models")?)
+        .bind(to_jsonb(
+            &provider.blocked_models,
+            "llm_providers.blocked_models",
+        )?)
         .bind(&provider.env_api_key)
         .bind(&provider.discovery_url)
         .bind(provider.sort_order)
@@ -356,20 +358,4 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
         .map_err(super::db_err)?;
         Ok(result.rows_affected() > 0)
     }
-}
-
-fn parse_json_column<T: serde::de::DeserializeOwned>(
-    raw: &str,
-    field: &str,
-) -> Result<T, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
-fn serialize_json_column<T: serde::Serialize>(
-    value: &T,
-    field: &str,
-) -> Result<String, DomainError> {
-    serde_json::to_string(value)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }

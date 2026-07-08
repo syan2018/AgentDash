@@ -6,6 +6,8 @@ use agentdash_domain::backend::{
 };
 use agentdash_domain::common::error::DomainError;
 
+use super::json_document::{from_jsonb, to_jsonb};
+
 pub struct PostgresBackendRepository {
     pool: PgPool,
 }
@@ -53,7 +55,7 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(&config.endpoint)
         .bind(&config.auth_token)
         .bind(config.enabled)
-        .bind(serde_json::to_string(&config.backend_type)?.trim_matches('"'))
+        .bind(backend_type_to_str(&config.backend_type))
         .bind(&config.owner_user_id)
         .bind(&config.profile_id)
         .bind(&config.device_id)
@@ -278,8 +280,8 @@ impl BackendRepository for PostgresBackendRepository {
         )
         .bind(&view.id)
         .bind(&view.name)
-        .bind(serde_json::to_string(&view.backend_ids)?)
-        .bind(view.filters.to_string())
+        .bind(to_jsonb(&view.backend_ids, "views.backend_ids")?)
+        .bind(to_jsonb(&view.filters, "views.filters")?)
         .bind(&view.sort_by)
         .execute(&self.pool)
         .await
@@ -342,8 +344,8 @@ impl TryFrom<BackendRow> for BackendConfig {
 struct ViewRow {
     id: String,
     name: String,
-    backend_ids: String,
-    filters: String,
+    backend_ids: serde_json::Value,
+    filters: serde_json::Value,
     sort_by: Option<String>,
 }
 
@@ -354,8 +356,8 @@ impl TryFrom<ViewRow> for ViewConfig {
         Ok(Self {
             id: row.id,
             name: row.name,
-            backend_ids: parse_json_column(&row.backend_ids, "views.backend_ids")?,
-            filters: parse_json_column(&row.filters, "views.filters")?,
+            backend_ids: from_jsonb(row.backend_ids, "views.backend_ids")?,
+            filters: from_jsonb(row.filters, "views.filters")?,
             sort_by: row.sort_by,
         })
     }
@@ -368,6 +370,13 @@ fn parse_backend_type(raw: &str) -> Result<BackendType, DomainError> {
         _ => Err(DomainError::InvalidConfig(format!(
             "backends.backend_type: 未知值 `{raw}`"
         ))),
+    }
+}
+
+fn backend_type_to_str(value: &BackendType) -> &'static str {
+    match value {
+        BackendType::Local => "local",
+        BackendType::Remote => "remote",
     }
 }
 
@@ -391,14 +400,6 @@ fn parse_backend_share_scope_kind(raw: &str) -> Result<BackendShareScopeKind, Do
             "backends.share_scope_kind: 未知值 `{raw}`"
         ))),
     }
-}
-
-fn parse_json_column<T: serde::de::DeserializeOwned>(
-    raw: &str,
-    field: &str,
-) -> Result<T, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 #[cfg(test)]

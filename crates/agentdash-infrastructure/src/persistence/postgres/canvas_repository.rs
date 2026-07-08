@@ -7,6 +7,8 @@ use agentdash_domain::canvas::{
     Canvas, CanvasFile, CanvasRepository, CanvasSandboxConfig, CanvasScope,
 };
 
+use super::json_document::{from_jsonb, to_jsonb};
+
 pub struct PostgresCanvasRepository {
     pool: PgPool,
 }
@@ -118,7 +120,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(&canvas.title)
         .bind(&canvas.description)
         .bind(&canvas.entry_file)
-        .bind(serde_json::to_string(&canvas.sandbox_config)?)
+        .bind(to_jsonb(&canvas.sandbox_config, "canvases.sandbox_config")?)
         .bind(published_from_canvas_id.as_deref())
         .bind(shared_canvas_id.as_deref())
         .bind(cloned_from_canvas_id.as_deref())
@@ -326,7 +328,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(&canvas.title)
         .bind(&canvas.description)
         .bind(&canvas.entry_file)
-        .bind(serde_json::to_string(&canvas.sandbox_config)?)
+        .bind(to_jsonb(&canvas.sandbox_config, "canvases.sandbox_config")?)
         .bind(published_from_canvas_id.as_deref())
         .bind(shared_canvas_id.as_deref())
         .bind(cloned_from_canvas_id.as_deref())
@@ -391,7 +393,7 @@ struct CanvasRow {
     title: String,
     description: String,
     entry_file: String,
-    sandbox_config: String,
+    sandbox_config: serde_json::Value,
     published_from_canvas_id: Option<String>,
     shared_canvas_id: Option<String>,
     cloned_from_canvas_id: Option<String>,
@@ -413,7 +415,7 @@ impl CanvasRow {
         self,
         files: BTreeMap<String, Vec<CanvasFile>>,
     ) -> Result<Canvas, DomainError> {
-        let sandbox_config = parse_canvas_sandbox_config(&self.sandbox_config)?;
+        let sandbox_config = parse_canvas_sandbox_config(self.sandbox_config)?;
         let files = files.get(&self.id).cloned().ok_or_else(|| {
             DomainError::InvalidConfig(format!("缺少 canvas_files 映射: {}", self.id))
         })?;
@@ -454,9 +456,8 @@ impl CanvasRow {
     }
 }
 
-fn parse_canvas_sandbox_config(raw: &str) -> Result<CanvasSandboxConfig, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("canvases.sandbox_config: {error}")))
+fn parse_canvas_sandbox_config(raw: serde_json::Value) -> Result<CanvasSandboxConfig, DomainError> {
+    from_jsonb(raw, "canvases.sandbox_config")
 }
 
 fn parse_optional_uuid(

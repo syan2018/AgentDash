@@ -3,6 +3,8 @@ use sqlx::{PgPool, Row};
 use agentdash_domain::auth_session::{AuthSession, AuthSessionRepository};
 use agentdash_domain::common::error::DomainError;
 
+use super::json_document::{from_jsonb, to_jsonb};
+
 pub struct PostgresAuthSessionRepository {
     pool: PgPool,
 }
@@ -36,7 +38,10 @@ impl AuthSessionRepository for PostgresAuthSessionRepository {
                 updated_at = excluded.updated_at",
         )
         .bind(&session.token_hash)
-        .bind(&session.identity_json)
+        .bind(to_jsonb(
+            &session.identity_json,
+            "auth_sessions.identity_json",
+        )?)
         .bind(session.expires_at)
         .bind(session.revoked_at)
         .bind(session.created_at)
@@ -70,7 +75,12 @@ impl AuthSessionRepository for PostgresAuthSessionRepository {
 
         Ok(Some(AuthSession {
             token_hash: row.try_get("token_hash").map_err(super::db_err)?,
-            identity_json: row.try_get("identity_json").map_err(super::db_err)?,
+            identity_json: {
+                let value = row
+                    .try_get::<serde_json::Value, _>("identity_json")
+                    .map_err(super::db_err)?;
+                from_jsonb::<serde_json::Value>(value, "auth_sessions.identity_json")?
+            },
             expires_at: row.try_get("expires_at").map_err(super::db_err)?,
             revoked_at,
             created_at: row.try_get("created_at").map_err(super::db_err)?,

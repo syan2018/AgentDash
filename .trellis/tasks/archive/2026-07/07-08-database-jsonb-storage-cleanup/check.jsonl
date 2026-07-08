@@ -2,3 +2,5 @@
 {"file": ".trellis/spec/backend/repository-pattern.md", "reason": "检查 repository 是否只做 typed persistence，不把 schema 变更或跨聚合行为塞进 repository。"}
 {"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/prd.md", "reason": "检查每个候选列分类、迁移目标和验收标准是否闭环。"}
 {"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/design.md", "reason": "检查 TEXT、jsonb、scalar 三类事实边界和 migration pattern 是否一致。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/research/text-json-column-inventory.md", "reason": "检查最终列级分类是否覆盖 static grep 和实际 migration。"}
+{"file": ".trellis/tasks/07-08-database-jsonb-storage-cleanup/workitems/WI-06-validation-pr.md", "reason": "检查最终验证进度和剩余风险。"}

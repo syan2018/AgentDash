@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 61
+- **Total Sessions**: 62
 - **Last Active**: 2026-07-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~244 | Active |
+| `journal-2.md` | ~267 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 62 | 2026-07-08 | 存量 JSON 文本列 JSONB 收敛 | `1dd7b043` | `codex/database-jsonb-storage-cleanup` |
 | 61 | 2026-07-08 | 完成 ChannelService 通信主干 | `f3755482`, `a5ab28c8`, `1ced2cb8`, `eab97226`, `769c526d`, `be31c14a` | `codex/companion-channel-convergence` |
 | 60 | 2026-07-07 | Companion 回流最小合同收束 | `aaff7f105`, `5560ec09d` | `codex/companion-channel-convergence` |
 | 59 | 2026-07-07 | 用户偏好工作状态 Project 选择 | `9fe340a6f` | `main` |

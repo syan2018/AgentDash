@@ -13,6 +13,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::json_document::{from_optional_jsonb, to_jsonb, to_optional_jsonb};
 use super::{db_err, sql_err_for};
 
 pub struct PostgresAgentRunLineageRepository {
@@ -294,9 +295,15 @@ async fn insert_agent_run_lineage(
         .bind(lineage.child_frame_id.map(|id| id.to_string()))
         .bind(lineage.child_frame_revision)
         .bind(option_u64_to_i64(lineage.fork_point_event_seq)?)
-        .bind(opt_json_str(&lineage.fork_point_ref_json)?)
+        .bind(to_optional_jsonb(
+            lineage.fork_point_ref_json.as_ref(),
+            "agent_run_lineages.fork_point_ref",
+        )?)
         .bind(&lineage.forked_by_user_id)
-        .bind(opt_json_str(&lineage.metadata_json)?)
+        .bind(to_optional_jsonb(
+            lineage.metadata_json.as_ref(),
+            "agent_run_lineages.metadata",
+        )?)
         .bind(lineage.created_at)
         .execute(pool)
         .await
@@ -320,9 +327,15 @@ async fn insert_agent_run_lineage_tx(
         .bind(lineage.child_frame_id.map(|id| id.to_string()))
         .bind(lineage.child_frame_revision)
         .bind(option_u64_to_i64(lineage.fork_point_event_seq)?)
-        .bind(opt_json_str(&lineage.fork_point_ref_json)?)
+        .bind(to_optional_jsonb(
+            lineage.fork_point_ref_json.as_ref(),
+            "agent_run_lineages.fork_point_ref",
+        )?)
         .bind(&lineage.forked_by_user_id)
-        .bind(opt_json_str(&lineage.metadata_json)?)
+        .bind(to_optional_jsonb(
+            lineage.metadata_json.as_ref(),
+            "agent_run_lineages.metadata",
+        )?)
         .bind(lineage.created_at)
         .execute(&mut **tx)
         .await
@@ -355,10 +368,16 @@ async fn insert_lifecycle_run_tx(
         agentdash_domain::workflow::LifecycleRunTopology::Plain => "plain",
         agentdash_domain::workflow::LifecycleRunTopology::WorkflowGraph => "workflow_graph",
     })
-    .bind(serde_json::to_string(&run.orchestrations)?)
-    .bind(serde_json::to_string(&run.tasks)?)
-    .bind(serde_json::to_string(&run.status)?)
-    .bind(serde_json::to_string(&run.execution_log)?)
+    .bind(to_jsonb(
+        &run.orchestrations,
+        "lifecycle_runs.orchestrations",
+    )?)
+    .bind(to_jsonb(&run.tasks, "lifecycle_runs.tasks")?)
+    .bind(lifecycle_run_status_to_db(run.status))
+    .bind(to_jsonb(
+        &run.execution_log,
+        "lifecycle_runs.execution_log",
+    )?)
     .bind(run.created_at)
     .bind(run.updated_at)
     .bind(run.last_activity_at)
@@ -453,14 +472,38 @@ async fn insert_agent_frame_tx(
     .bind(frame.id.to_string())
     .bind(frame.agent_id.to_string())
     .bind(frame.revision)
-    .bind(surface_json_str(frame)?)
-    .bind(opt_json_str(&surface.capability_state)?)
-    .bind(opt_json_str(&surface.context_slice)?)
-    .bind(opt_json_str(&surface.vfs_surface)?)
-    .bind(opt_json_str(&surface.mcp_surface)?)
-    .bind(opt_json_str(&surface.visible_canvas_mount_ids)?)
-    .bind(opt_json_str(&surface.visible_workspace_module_refs)?)
-    .bind(opt_json_str(&surface.execution_profile)?)
+    .bind(to_jsonb(
+        &frame.surface_document(),
+        "agent_frames.surface",
+    )?)
+    .bind(to_optional_jsonb(
+        surface.capability_state.as_ref(),
+        "agent_frames.effective_capability_json",
+    )?)
+    .bind(to_optional_jsonb(
+        surface.context_slice.as_ref(),
+        "agent_frames.context_slice_json",
+    )?)
+    .bind(to_optional_jsonb(
+        surface.vfs_surface.as_ref(),
+        "agent_frames.vfs_surface_json",
+    )?)
+    .bind(to_optional_jsonb(
+        surface.mcp_surface.as_ref(),
+        "agent_frames.mcp_surface_json",
+    )?)
+    .bind(to_optional_jsonb(
+        surface.visible_canvas_mount_ids.as_ref(),
+        "agent_frames.visible_canvas_mount_ids_json",
+    )?)
+    .bind(to_optional_jsonb(
+        surface.visible_workspace_module_refs.as_ref(),
+        "agent_frames.visible_workspace_module_refs_json",
+    )?)
+    .bind(to_optional_jsonb(
+        surface.execution_profile.as_ref(),
+        "agent_frames.execution_profile_json",
+    )?)
     .bind(&frame.created_by_kind)
     .bind(&frame.created_by_id)
     .bind(frame.created_at)
@@ -585,9 +628,9 @@ struct AgentRunLineageRow {
     child_frame_id: Option<String>,
     child_frame_revision: Option<i32>,
     fork_point_event_seq: Option<i64>,
-    fork_point_ref: Option<String>,
+    fork_point_ref: Option<Value>,
     forked_by_user_id: String,
-    metadata: Option<String>,
+    metadata: Option<Value>,
     created_at: DateTime<Utc>,
 }
 
@@ -616,9 +659,12 @@ impl TryFrom<AgentRunLineageRow> for AgentRunLineage {
             )?,
             child_frame_revision: row.child_frame_revision,
             fork_point_event_seq: option_i64_to_u64(row.fork_point_event_seq)?,
-            fork_point_ref_json: parse_optional_json(row.fork_point_ref, "fork_point_ref")?,
+            fork_point_ref_json: from_optional_jsonb(
+                row.fork_point_ref,
+                "agent_run_lineages.fork_point_ref",
+            )?,
             forked_by_user_id: row.forked_by_user_id,
-            metadata_json: parse_optional_json(row.metadata, "metadata")?,
+            metadata_json: from_optional_jsonb(row.metadata, "agent_run_lineages.metadata")?,
             created_at: row.created_at,
         })
     }
@@ -633,29 +679,6 @@ fn opt_uuid(raw: Option<&String>, ctx: &str) -> Result<Option<Uuid>, DomainError
     raw.map(|value| parse_uuid(value, ctx)).transpose()
 }
 
-fn opt_json_str(value: &Option<Value>) -> Result<Option<String>, DomainError> {
-    value
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(Into::into)
-}
-
-fn surface_json_str(frame: &AgentFrame) -> Result<String, DomainError> {
-    serde_json::to_string(&frame.surface_document()).map_err(|error| {
-        DomainError::InvalidConfig(format!("agent_frames.surface JSON 无效: {error}"))
-    })
-}
-
-fn parse_optional_json(raw: Option<String>, column: &str) -> Result<Option<Value>, DomainError> {
-    raw.map(|value| {
-        serde_json::from_str(&value).map_err(|error| {
-            DomainError::InvalidConfig(format!("agent_run_lineages.{column} JSON 无效: {error}"))
-        })
-    })
-    .transpose()
-}
-
 fn option_u64_to_i64(value: Option<u64>) -> Result<Option<i64>, DomainError> {
     value
         .map(|value| {
@@ -666,6 +689,20 @@ fn option_u64_to_i64(value: Option<u64>) -> Result<Option<i64>, DomainError> {
             })
         })
         .transpose()
+}
+
+fn lifecycle_run_status_to_db(
+    status: agentdash_domain::workflow::LifecycleRunStatus,
+) -> &'static str {
+    match status {
+        agentdash_domain::workflow::LifecycleRunStatus::Draft => "draft",
+        agentdash_domain::workflow::LifecycleRunStatus::Ready => "ready",
+        agentdash_domain::workflow::LifecycleRunStatus::Running => "running",
+        agentdash_domain::workflow::LifecycleRunStatus::Blocked => "blocked",
+        agentdash_domain::workflow::LifecycleRunStatus::Completed => "completed",
+        agentdash_domain::workflow::LifecycleRunStatus::Failed => "failed",
+        agentdash_domain::workflow::LifecycleRunStatus::Cancelled => "cancelled",
+    }
 }
 
 fn option_i64_to_u64(value: Option<i64>) -> Result<Option<u64>, DomainError> {
@@ -707,9 +744,9 @@ mod tests {
             child_frame_id: Some(child_frame_id.to_string()),
             child_frame_revision: Some(1),
             fork_point_event_seq: Some(42),
-            fork_point_ref: Some(json!({ "turn_id": "turn-1", "entry_index": 3 }).to_string()),
+            fork_point_ref: Some(json!({ "turn_id": "turn-1", "entry_index": 3 })),
             forked_by_user_id: "user-child".to_string(),
-            metadata: Some(json!({ "reason": "explore" }).to_string()),
+            metadata: Some(json!({ "reason": "explore" })),
             created_at,
         })
         .expect("lineage row should map");

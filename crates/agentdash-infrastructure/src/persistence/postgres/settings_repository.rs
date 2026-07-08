@@ -79,7 +79,6 @@ impl SettingsRepository for PostgresSettingsRepository {
         key: &str,
         value: serde_json::Value,
     ) -> Result<(), DomainError> {
-        let value_str = serde_json::to_string(&value)?;
         sqlx::query(
             "INSERT INTO settings (scope_kind, scope_id, key, value, updated_at)
              VALUES ($1, $2, $3, $4, now())
@@ -89,7 +88,7 @@ impl SettingsRepository for PostgresSettingsRepository {
         .bind(scope.kind.as_str())
         .bind(scope.storage_scope_id())
         .bind(key)
-        .bind(value_str)
+        .bind(value)
         .execute(&self.pool)
         .await
         .map_err(super::db_err)?;
@@ -128,7 +127,7 @@ struct SettingRow {
     scope_kind: String,
     scope_id: String,
     key: String,
-    value: String,
+    value: serde_json::Value,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -136,7 +135,6 @@ impl TryFrom<SettingRow> for Setting {
     type Error = DomainError;
 
     fn try_from(row: SettingRow) -> Result<Self, Self::Error> {
-        let value: serde_json::Value = serde_json::from_str(&row.value)?;
         let updated_at = row.updated_at;
         let scope_kind = parse_scope_kind(&row.scope_kind)?;
 
@@ -144,7 +142,7 @@ impl TryFrom<SettingRow> for Setting {
             scope_kind,
             scope_id: normalize_scope_id(scope_kind, row.scope_id)?,
             key: row.key,
-            value,
+            value: row.value,
             updated_at,
         })
     }

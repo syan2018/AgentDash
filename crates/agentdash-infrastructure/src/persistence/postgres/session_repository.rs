@@ -14,7 +14,7 @@ use sqlx::{PgPool, Row};
 
 use crate::persistence::session_core::{
     compaction_from_row, control_effect_from_row, encode_optional_u64_as_i64, encode_u64_as_i64,
-    json_string, lineage_from_row, map_meta_row, parse_non_negative_u64,
+    json_value, lineage_from_row, map_meta_row, parse_non_negative_u64,
     persisted_event_from_envelope, persisted_event_from_row, projection_from_envelope,
     projection_head_from_row, projection_segment_from_row, runtime_command_from_row,
     sqlx_to_session_store_error, validate_commit_session,
@@ -351,7 +351,7 @@ impl SessionEventStore for PostgresSessionRepository {
             committed_at_ms,
             envelope.clone(),
         );
-        let notification_json = json_string(&persisted.notification, "notification_json")?;
+        let notification_json = json_value(&persisted.notification, "notification_json")?;
         let event_seq_db = encode_u64_as_i64(event_seq, "runtime_session_events.event_seq")?;
 
         sqlx::query(
@@ -567,7 +567,7 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
             record.terminal_event_seq,
             "agent_run_control_effects.terminal_event_seq",
         )?;
-        let payload_json = json_string(&record.payload, "agent_run_control_effects.payload_json")?;
+        let payload_json = json_value(&record.payload, "agent_run_control_effects.payload_json")?;
         let row = sqlx::query(
             r#"
             INSERT INTO agent_run_control_effects (
@@ -811,11 +811,11 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         .await
         .map_err(sqlx_to_session_store_error)?;
 
-        let capability_keys_json = json_string(
+        let capability_keys_json = json_value(
             &frame_transition.capability_keys,
             "agent_frame_transitions.capability_keys_json",
         )?;
-        let transition_json = json_string(
+        let transition_json = json_value(
             &frame_transition.transition,
             "agent_frame_transitions.transition_json",
         )?;
@@ -863,7 +863,7 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
             failed_at_ms: None,
             last_error: None,
         };
-        let payload_json = json_string(
+        let payload_json = json_value(
             &record.delivery,
             "runtime_session_delivery_commands.payload_json",
         )?;
@@ -1167,7 +1167,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
             committed_at_ms,
             commit.completed_event.clone(),
         );
-        let notification_json = json_string(&persisted.notification, "notification_json")?;
+        let notification_json = json_value(&persisted.notification, "notification_json")?;
         let event_seq_db = encode_u64_as_i64(event_seq, "runtime_session_events.event_seq")?;
         sqlx::query(
             r#"
@@ -1280,11 +1280,11 @@ impl SessionLineageStore for PostgresSessionRepository {
             record.fork_point_event_seq,
             "runtime_session_lineage.fork_point_event_seq",
         )?;
-        let fork_point_ref_json = json_string(
+        let fork_point_ref_json = json_value(
             &record.fork_point_ref_json,
             "runtime_session_lineage.fork_point_ref_json",
         )?;
-        let metadata_json = json_string(
+        let metadata_json = json_value(
             &record.metadata_json,
             "runtime_session_lineage.metadata_json",
         )?;
@@ -1510,15 +1510,15 @@ async fn insert_compaction_row(
         record.first_kept_event_seq,
         "runtime_session_compactions.first_kept_event_seq",
     )?;
-    let replacement_projection_json = json_string(
+    let replacement_projection_json = json_value(
         &record.replacement_projection_json,
         "runtime_session_compactions.replacement_projection_json",
     )?;
-    let token_stats_json = json_string(
+    let token_stats_json = json_value(
         &record.token_stats_json,
         "runtime_session_compactions.token_stats_json",
     )?;
-    let diagnostics_json = json_string(
+    let diagnostics_json = json_value(
         &record.diagnostics_json,
         "runtime_session_compactions.diagnostics_json",
     )?;
@@ -1596,11 +1596,11 @@ async fn insert_projection_segment_row(
         segment.token_estimate,
         "runtime_session_projection_segments.token_estimate",
     )?;
-    let source_refs_json = json_string(
+    let source_refs_json = json_value(
         &segment.source_refs_json,
         "runtime_session_projection_segments.source_refs_json",
     )?;
-    let content_json = json_string(
+    let content_json = json_value(
         &segment.content_json,
         "runtime_session_projection_segments.content_json",
     )?;

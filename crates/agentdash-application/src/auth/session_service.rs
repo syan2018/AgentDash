@@ -41,7 +41,7 @@ impl AuthSessionService {
         let now = now_epoch_secs();
         let session = AuthSession {
             token_hash: hash_token(token),
-            identity_json: serde_json::to_string(identity)
+            identity_json: serde_json::to_value(identity)
                 .map_err(|e| AuthSessionServiceError::Serialize(e.to_string()))?,
             expires_at: extract_jwt_exp(token).and_then(|v| i64::try_from(v).ok()),
             revoked_at: None,
@@ -77,7 +77,7 @@ impl AuthSessionService {
             return Ok(None);
         }
 
-        let identity: AuthIdentity = serde_json::from_str(&session.identity_json)
+        let identity: AuthIdentity = serde_json::from_value(session.identity_json)
             .map_err(|e| AuthSessionServiceError::Deserialize(e.to_string()))?;
         Ok(Some(identity))
     }

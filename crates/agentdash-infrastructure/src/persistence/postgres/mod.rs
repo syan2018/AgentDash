@@ -10,6 +10,7 @@ mod canvas_repository;
 mod canvas_runtime_state_repository;
 mod extension_package_artifact_repository;
 mod inline_file_repository;
+mod json_document;
 mod lifecycle_anchor_repository;
 mod llm_provider_repository;
 mod mcp_preset_repository;

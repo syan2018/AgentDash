@@ -9,6 +9,8 @@ use agentdash_domain::workspace::{
     WorkspaceRepository, WorkspaceResolutionPolicy, WorkspaceStatus,
 };
 
+use super::json_document::to_jsonb;
+
 pub struct PostgresWorkspaceRepository {
     pool: PgPool,
 }
@@ -45,11 +47,7 @@ impl PostgresWorkspaceRepository {
             .iter()
             .map(|binding| {
                 let detected_facts =
-                    serde_json::to_string(&binding.detected_facts).map_err(|error| {
-                        DomainError::InvalidConfig(format!(
-                            "序列化 workspace binding 失败: {error}"
-                        ))
-                    })?;
+                    to_jsonb(&binding.detected_facts, "workspace_bindings.detected_facts")?;
                 Ok::<_, DomainError>((binding, detected_facts))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -100,12 +98,13 @@ impl PostgresWorkspaceRepository {
 #[async_trait::async_trait]
 impl WorkspaceRepository for PostgresWorkspaceRepository {
     async fn create(&self, workspace: &Workspace) -> Result<(), DomainError> {
-        let payload = serde_json::to_string(&workspace.identity_payload)
-            .map_err(DomainError::Serialization)?;
+        let payload = to_jsonb(&workspace.identity_payload, "workspaces.identity_payload")?;
         let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
-        let mount_caps = serde_json::to_string(&workspace.mount_capabilities)
-            .map_err(DomainError::Serialization)?;
+        let mount_caps = to_jsonb(
+            &workspace.mount_capabilities,
+            "workspaces.mount_capabilities",
+        )?;
         sqlx::query(
             "INSERT INTO workspaces (id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, mount_capabilities, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
@@ -198,12 +197,13 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
     }
 
     async fn update(&self, workspace: &Workspace) -> Result<(), DomainError> {
-        let payload = serde_json::to_string(&workspace.identity_payload)
-            .map_err(DomainError::Serialization)?;
+        let payload = to_jsonb(&workspace.identity_payload, "workspaces.identity_payload")?;
         let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
-        let mount_caps = serde_json::to_string(&workspace.mount_capabilities)
-            .map_err(DomainError::Serialization)?;
+        let mount_caps = to_jsonb(
+            &workspace.mount_capabilities,
+            "workspaces.mount_capabilities",
+        )?;
         let result = sqlx::query(
             "UPDATE workspaces
              SET name = $1, identity_kind = $2, identity_payload = $3, resolution_policy = $4, default_binding_id = $5, status = $6, mount_capabilities = $7, updated_at = $8
@@ -275,8 +275,8 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
     let identity_kind = row
         .try_get::<String, _>("identity_kind")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.identity_kind: {e}")))?;
-    let identity_payload_raw = row
-        .try_get::<String, _>("identity_payload")
+    let identity_payload = row
+        .try_get::<Value, _>("identity_payload")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.identity_payload: {e}")))?;
     let resolution_policy = row
         .try_get::<String, _>("resolution_policy")
@@ -300,20 +300,19 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
         })
         .transpose()?;
 
-    let mount_capabilities_raw = row
-        .try_get::<String, _>("mount_capabilities")
+    let mount_capabilities_value = row
+        .try_get::<Value, _>("mount_capabilities")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.mount_capabilities: {e}")))?;
-    let mount_capabilities: Vec<agentdash_domain::common::MountCapability> =
-        serde_json::from_str(&mount_capabilities_raw).map_err(|e| {
-            DomainError::InvalidConfig(format!("workspaces.mount_capabilities JSON: {e}"))
-        })?;
+    let mount_capabilities = serde_json::from_value(mount_capabilities_value).map_err(|e| {
+        DomainError::InvalidConfig(format!("workspaces.mount_capabilities JSON: {e}"))
+    })?;
 
     Ok(Workspace {
         id,
         project_id,
         name,
         identity_kind: str_to_identity_kind(&identity_kind)?,
-        identity_payload: parse_json_value(&identity_payload_raw, "workspaces.identity_payload")?,
+        identity_payload,
         resolution_policy: str_to_resolution_policy(&resolution_policy)?,
         default_binding_id,
         status: str_to_workspace_status(&status)?,
@@ -348,12 +347,9 @@ fn workspace_binding_from_row(
                 DomainError::InvalidConfig(format!("workspace_bindings.status: {e}"))
             })?,
         )?,
-        detected_facts: parse_json_value(
-            &row.try_get::<String, _>("detected_facts").map_err(|e| {
-                DomainError::InvalidConfig(format!("workspace_bindings.detected_facts: {e}"))
-            })?,
-            "workspace_bindings.detected_facts",
-        )?,
+        detected_facts: row.try_get::<Value, _>("detected_facts").map_err(|e| {
+            DomainError::InvalidConfig(format!("workspace_bindings.detected_facts: {e}"))
+        })?,
         last_verified_at: row
             .try_get::<Option<DateTime<Utc>>, _>("last_verified_at")
             .map_err(|e| {
@@ -373,11 +369,6 @@ fn workspace_binding_from_row(
 
 fn parse_uuid(value: String, entity: &'static str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(&value).map_err(move |_| DomainError::NotFound { entity, id: value })
-}
-
-fn parse_json_value(raw: &str, field: &str) -> Result<Value, DomainError> {
-    serde_json::from_str::<Value>(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 fn identity_kind_to_str(value: &WorkspaceIdentityKind) -> &'static str {

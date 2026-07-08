@@ -265,3 +265,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 62: 存量 JSON 文本列 JSONB 收敛
+
+**Date**: 2026-07-08
+**Task**: 存量 JSON 文本列 JSONB 收敛
+**Branch**: `codex/database-jsonb-storage-cleanup`
+
+### Summary
+
+完成 07-08 database-jsonb-storage-cleanup：盘点 live TEXT JSON 列，新增 JSONB 迁移，收束 PostgreSQL repository typed mapping，并通过 workspace check、migration guard、infrastructure tests 与独立 trellis-check。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1dd7b043` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

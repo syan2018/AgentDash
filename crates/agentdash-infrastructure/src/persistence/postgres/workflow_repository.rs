@@ -4,12 +4,13 @@ use agentdash_domain::channel::{ChannelRegistryDocument, ChannelRegistryMutation
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
-    AgentProcedure, AgentProcedureRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunTopology, LifecycleTaskPlanItem, OrchestrationInstance, WorkflowGraph,
-    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
-    WorkflowTemplateInstallResult,
+    AgentProcedure, AgentProcedureRepository, DefinitionSource, LifecycleRun,
+    LifecycleRunRepository, LifecycleRunStatus, LifecycleRunTopology, LifecycleTaskPlanItem,
+    OrchestrationInstance, WorkflowGraph, WorkflowGraphRepository, WorkflowTemplateInstallBundle,
+    WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
 };
 
+use super::json_document::{from_jsonb, to_jsonb};
 use super::owner_document::mutate_typed_jsonb_owner_document;
 
 pub struct PostgresWorkflowRepository {
@@ -41,8 +42,8 @@ impl AgentProcedureRepository for PostgresWorkflowRepository {
         sqlx::query(&format!("INSERT INTO agent_procedures ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"))
             .bind(procedure.id.to_string()).bind(procedure.project_id.to_string())
             .bind(&procedure.key).bind(&procedure.name).bind(&procedure.description)
-            .bind(serde_json::to_string(&procedure.source)?)
-            .bind(procedure.version).bind(serde_json::to_string(&procedure.contract)?)
+            .bind(definition_source_to_db(procedure.source))
+            .bind(procedure.version).bind(to_jsonb(&procedure.contract, "agent_procedures.contract")?)
             .bind(installed_library_asset_id(&procedure.installed_source))
             .bind(installed_source_ref(&procedure.installed_source))
             .bind(installed_source_version(&procedure.installed_source))
@@ -126,8 +127,8 @@ impl AgentProcedureRepository for PostgresWorkflowRepository {
         let result = sqlx::query("UPDATE agent_procedures SET project_id=$1,key=$2,name=$3,description=$4,source=$5,version=$6,contract=$7,library_asset_id=$8,source_ref=$9,source_version=$10,source_digest=$11,installed_at=$12,updated_at=$13 WHERE id=$14")
             .bind(procedure.project_id.to_string())
             .bind(&procedure.key).bind(&procedure.name).bind(&procedure.description)
-            .bind(serde_json::to_string(&procedure.source)?)
-            .bind(procedure.version).bind(serde_json::to_string(&procedure.contract)?)
+            .bind(definition_source_to_db(procedure.source))
+            .bind(procedure.version).bind(to_jsonb(&procedure.contract, "agent_procedures.contract")?)
             .bind(installed_library_asset_id(&procedure.installed_source))
             .bind(installed_source_ref(&procedure.installed_source))
             .bind(installed_source_version(&procedure.installed_source))
@@ -159,11 +160,11 @@ impl WorkflowGraphRepository for PostgresWorkflowRepository {
         .bind(&lifecycle.key)
         .bind(&lifecycle.name)
         .bind(&lifecycle.description)
-        .bind(serde_json::to_string(&lifecycle.source)?)
+        .bind(definition_source_to_db(lifecycle.source))
         .bind(lifecycle.version)
         .bind(&lifecycle.entry_activity_key)
-        .bind(serde_json::to_string(&lifecycle.activities)?)
-        .bind(serde_json::to_string(&lifecycle.transitions)?)
+        .bind(to_jsonb(&lifecycle.activities, "workflow_graphs.activities")?)
+        .bind(to_jsonb(&lifecycle.transitions, "workflow_graphs.transitions")?)
         .bind(installed_library_asset_id(&lifecycle.installed_source))
         .bind(installed_source_ref(&lifecycle.installed_source))
         .bind(installed_source_version(&lifecycle.installed_source))
@@ -228,11 +229,11 @@ impl WorkflowGraphRepository for PostgresWorkflowRepository {
             .bind(&lifecycle.key)
             .bind(&lifecycle.name)
             .bind(&lifecycle.description)
-            .bind(serde_json::to_string(&lifecycle.source)?)
+            .bind(definition_source_to_db(lifecycle.source))
             .bind(lifecycle.version)
             .bind(&lifecycle.entry_activity_key)
-            .bind(serde_json::to_string(&lifecycle.activities)?)
-            .bind(serde_json::to_string(&lifecycle.transitions)?)
+            .bind(to_jsonb(&lifecycle.activities, "workflow_graphs.activities")?)
+            .bind(to_jsonb(&lifecycle.transitions, "workflow_graphs.transitions")?)
             .bind(installed_library_asset_id(&lifecycle.installed_source))
             .bind(installed_source_ref(&lifecycle.installed_source))
             .bind(installed_source_version(&lifecycle.installed_source))
@@ -306,9 +307,9 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                     .bind(&procedure.key)
                     .bind(&procedure.name)
                     .bind(&procedure.description)
-                    .bind(serde_json::to_string(&procedure.source)?)
+                    .bind(definition_source_to_db(procedure.source))
                     .bind(procedure.version)
-                    .bind(serde_json::to_string(&procedure.contract)?)
+                    .bind(to_jsonb(&procedure.contract, "agent_procedures.contract")?)
                     .bind(installed_library_asset_id(&procedure.installed_source))
                     .bind(installed_source_ref(&procedure.installed_source))
                     .bind(installed_source_version(&procedure.installed_source))
@@ -326,9 +327,9 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                     .bind(&procedure.key)
                     .bind(&procedure.name)
                     .bind(&procedure.description)
-                    .bind(serde_json::to_string(&procedure.source)?)
+                    .bind(definition_source_to_db(procedure.source))
                     .bind(procedure.version)
-                    .bind(serde_json::to_string(&procedure.contract)?)
+                    .bind(to_jsonb(&procedure.contract, "agent_procedures.contract")?)
                     .bind(installed_library_asset_id(&procedure.installed_source))
                     .bind(installed_source_ref(&procedure.installed_source))
                     .bind(installed_source_version(&procedure.installed_source))
@@ -369,11 +370,11 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                 .bind(&lifecycle.key)
                 .bind(&lifecycle.name)
                 .bind(&lifecycle.description)
-                .bind(serde_json::to_string(&lifecycle.source)?)
+                .bind(definition_source_to_db(lifecycle.source))
                 .bind(lifecycle.version)
                 .bind(&lifecycle.entry_activity_key)
-                .bind(serde_json::to_string(&lifecycle.activities)?)
-                .bind(serde_json::to_string(&lifecycle.transitions)?)
+                .bind(to_jsonb(&lifecycle.activities, "workflow_graphs.activities")?)
+                .bind(to_jsonb(&lifecycle.transitions, "workflow_graphs.transitions")?)
                 .bind(installed_library_asset_id(&lifecycle.installed_source))
                 .bind(installed_source_ref(&lifecycle.installed_source))
                 .bind(installed_source_version(&lifecycle.installed_source))
@@ -393,11 +394,11 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
             .bind(&lifecycle.key)
             .bind(&lifecycle.name)
             .bind(&lifecycle.description)
-            .bind(serde_json::to_string(&lifecycle.source)?)
+            .bind(definition_source_to_db(lifecycle.source))
             .bind(lifecycle.version)
             .bind(&lifecycle.entry_activity_key)
-            .bind(serde_json::to_string(&lifecycle.activities)?)
-            .bind(serde_json::to_string(&lifecycle.transitions)?)
+            .bind(to_jsonb(&lifecycle.activities, "workflow_graphs.activities")?)
+            .bind(to_jsonb(&lifecycle.transitions, "workflow_graphs.transitions")?)
             .bind(installed_library_asset_id(&lifecycle.installed_source))
             .bind(installed_source_ref(&lifecycle.installed_source))
             .bind(installed_source_version(&lifecycle.installed_source))
@@ -428,10 +429,10 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .bind(run.project_id.to_string())
         .bind(&run.created_by_user_id)
         .bind(topology_to_db(run.topology))
-        .bind(serde_json::to_string(&run.orchestrations)?)
-        .bind(serde_json::to_string(&run.tasks)?)
-        .bind(serde_json::to_string(&run.status)?)
-        .bind(serde_json::to_string(&run.execution_log)?)
+        .bind(to_jsonb(&run.orchestrations, "lifecycle_runs.orchestrations")?)
+        .bind(to_jsonb(&run.tasks, "lifecycle_runs.tasks")?)
+        .bind(lifecycle_run_status_to_db(run.status))
+        .bind(to_jsonb(&run.execution_log, "lifecycle_runs.execution_log")?)
         .bind(serde_json::to_value(&run.channel_registry)?)
         .bind(run.created_at)
         .bind(run.updated_at)
@@ -501,10 +502,10 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
             .bind(run.project_id.to_string())
             .bind(&run.created_by_user_id)
             .bind(topology_to_db(run.topology))
-            .bind(serde_json::to_string(&run.orchestrations)?)
-            .bind(serde_json::to_string(&run.tasks)?)
-            .bind(serde_json::to_string(&run.status)?)
-            .bind(serde_json::to_string(&run.execution_log)?)
+            .bind(to_jsonb(&run.orchestrations, "lifecycle_runs.orchestrations")?)
+            .bind(to_jsonb(&run.tasks, "lifecycle_runs.tasks")?)
+            .bind(lifecycle_run_status_to_db(run.status))
+            .bind(to_jsonb(&run.execution_log, "lifecycle_runs.execution_log")?)
             .bind(chrono::Utc::now()).bind(run.last_activity_at).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
@@ -589,7 +590,7 @@ struct AgentProcedureRow {
     description: String,
     source: String,
     version: i32,
-    contract: String,
+    contract: serde_json::Value,
     library_asset_id: Option<String>,
     source_ref: Option<String>,
     source_version: Option<String>,
@@ -608,7 +609,7 @@ impl TryFrom<AgentProcedureRow> for AgentProcedure {
             key: row.key,
             name: row.name,
             description: row.description,
-            source: serde_json::from_str(&row.source)?,
+            source: parse_definition_source(&row.source, "agent_procedures.source")?,
             installed_source: parse_installed_source(
                 row.library_asset_id,
                 row.source_ref,
@@ -617,7 +618,7 @@ impl TryFrom<AgentProcedureRow> for AgentProcedure {
                 row.installed_at,
             )?,
             version: row.version,
-            contract: serde_json::from_str(&row.contract)?,
+            contract: from_jsonb(row.contract, "agent_procedures.contract")?,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -634,8 +635,8 @@ struct WorkflowGraphRow {
     source: String,
     version: i32,
     entry_activity_key: String,
-    activities: String,
-    transitions: String,
+    activities: serde_json::Value,
+    transitions: serde_json::Value,
     library_asset_id: Option<String>,
     source_ref: Option<String>,
     source_version: Option<String>,
@@ -654,7 +655,7 @@ impl TryFrom<WorkflowGraphRow> for WorkflowGraph {
             key: row.key,
             name: row.name,
             description: row.description,
-            source: serde_json::from_str(&row.source)?,
+            source: parse_definition_source(&row.source, "workflow_graphs.source")?,
             installed_source: parse_installed_source(
                 row.library_asset_id,
                 row.source_ref,
@@ -664,8 +665,8 @@ impl TryFrom<WorkflowGraphRow> for WorkflowGraph {
             )?,
             version: row.version,
             entry_activity_key: row.entry_activity_key,
-            activities: parse_json_column(&row.activities, "workflow_graphs.activities")?,
-            transitions: parse_json_column(&row.transitions, "workflow_graphs.transitions")?,
+            activities: from_jsonb(row.activities, "workflow_graphs.activities")?,
+            transitions: from_jsonb(row.transitions, "workflow_graphs.transitions")?,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -678,10 +679,10 @@ struct LifecycleRunRow {
     project_id: String,
     created_by_user_id: String,
     topology: String,
-    orchestrations: String,
-    tasks: String,
+    orchestrations: serde_json::Value,
+    tasks: serde_json::Value,
     status: String,
-    execution_log: String,
+    execution_log: serde_json::Value,
     channel_registry: serde_json::Value,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
@@ -696,16 +697,13 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             project_id: parse_uuid(&row.project_id, "project")?,
             created_by_user_id: row.created_by_user_id,
             topology: parse_topology(&row.topology)?,
-            orchestrations: parse_json_column::<Vec<OrchestrationInstance>>(
-                &row.orchestrations,
+            orchestrations: from_jsonb::<Vec<OrchestrationInstance>>(
+                row.orchestrations,
                 "lifecycle_runs.orchestrations",
             )?,
-            tasks: parse_json_column::<Vec<LifecycleTaskPlanItem>>(
-                &row.tasks,
-                "lifecycle_runs.tasks",
-            )?,
-            status: serde_json::from_str(&row.status)?,
-            execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
+            tasks: from_jsonb::<Vec<LifecycleTaskPlanItem>>(row.tasks, "lifecycle_runs.tasks")?,
+            status: parse_lifecycle_run_status(&row.status)?,
+            execution_log: from_jsonb(row.execution_log, "lifecycle_runs.execution_log")?,
             channel_registry: parse_json_value_column(
                 row.channel_registry,
                 "lifecycle_runs.channel_registry",
@@ -741,20 +739,56 @@ fn parse_topology(raw: &str) -> Result<LifecycleRunTopology, DomainError> {
     }
 }
 
-fn parse_json_column<T: serde::de::DeserializeOwned>(
-    raw: &str,
-    field: &str,
-) -> Result<T, DomainError> {
-    serde_json::from_str(raw)
-        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
 fn parse_json_value_column<T: serde::de::DeserializeOwned>(
     raw: serde_json::Value,
     field: &str,
 ) -> Result<T, DomainError> {
     serde_json::from_value(raw)
         .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn definition_source_to_db(source: DefinitionSource) -> &'static str {
+    match source {
+        DefinitionSource::BuiltinSeed => "builtin_seed",
+        DefinitionSource::UserAuthored => "user_authored",
+        DefinitionSource::Cloned => "cloned",
+    }
+}
+
+fn parse_definition_source(raw: &str, field: &str) -> Result<DefinitionSource, DomainError> {
+    match raw {
+        "builtin_seed" => Ok(DefinitionSource::BuiltinSeed),
+        "user_authored" => Ok(DefinitionSource::UserAuthored),
+        "cloned" => Ok(DefinitionSource::Cloned),
+        other => Err(DomainError::InvalidConfig(format!("{field} 无效: {other}"))),
+    }
+}
+
+fn lifecycle_run_status_to_db(status: LifecycleRunStatus) -> &'static str {
+    match status {
+        LifecycleRunStatus::Draft => "draft",
+        LifecycleRunStatus::Ready => "ready",
+        LifecycleRunStatus::Running => "running",
+        LifecycleRunStatus::Blocked => "blocked",
+        LifecycleRunStatus::Completed => "completed",
+        LifecycleRunStatus::Failed => "failed",
+        LifecycleRunStatus::Cancelled => "cancelled",
+    }
+}
+
+fn parse_lifecycle_run_status(raw: &str) -> Result<LifecycleRunStatus, DomainError> {
+    match raw {
+        "draft" => Ok(LifecycleRunStatus::Draft),
+        "ready" => Ok(LifecycleRunStatus::Ready),
+        "running" => Ok(LifecycleRunStatus::Running),
+        "blocked" => Ok(LifecycleRunStatus::Blocked),
+        "completed" => Ok(LifecycleRunStatus::Completed),
+        "failed" => Ok(LifecycleRunStatus::Failed),
+        "cancelled" | "canceled" => Ok(LifecycleRunStatus::Cancelled),
+        other => Err(DomainError::InvalidConfig(format!(
+            "lifecycle_runs.status 无效: {other}"
+        ))),
+    }
 }
 
 fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {
@@ -820,10 +854,10 @@ mod workflow_claim_tests {
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         AgentActivityExecutorSpec, AgentProcedureContract, AgentProcedureExecutionSpec,
         AgentReusePolicy, BashExecExecutorSpec, ExecutorSpec, FunctionActivityExecutorSpec,
-        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleRunStatus,
-        LifecycleTaskPlanItemDraft, OrchestrationInstance, OrchestrationPlanSnapshot,
-        OrchestrationSourceRef, PlanNode, PlanNodeKind, RuntimeSessionPolicy, TaskPlanStatus,
-        TaskPriority, WorkflowGraphDraft, WorkflowTemplateInstallBundle,
+        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, LifecycleTaskPlanItemDraft,
+        OrchestrationInstance, OrchestrationPlanSnapshot, OrchestrationSourceRef, PlanNode,
+        PlanNodeKind, RuntimeSessionPolicy, TaskPlanStatus, TaskPriority, WorkflowGraphDraft,
+        WorkflowTemplateInstallBundle,
     };
 
     fn lifecycle_run_row() -> LifecycleRunRow {
@@ -833,10 +867,10 @@ mod workflow_claim_tests {
             project_id: uuid::Uuid::new_v4().to_string(),
             created_by_user_id: "fixture-user".to_string(),
             topology: "plain".to_string(),
-            orchestrations: "[]".to_string(),
-            tasks: "[]".to_string(),
-            status: serde_json::to_string(&LifecycleRunStatus::Ready).expect("status json"),
-            execution_log: "[]".to_string(),
+            orchestrations: serde_json::json!([]),
+            tasks: serde_json::json!([]),
+            status: "ready".to_string(),
+            execution_log: serde_json::json!([]),
             channel_registry: serde_json::json!({}),
             created_at: now,
             updated_at: now,
@@ -856,7 +890,7 @@ mod workflow_claim_tests {
     #[test]
     fn workflow_repository_lifecycle_run_row_reports_bad_orchestration_column() {
         let mut row = lifecycle_run_row();
-        row.orchestrations = "not-json".to_string();
+        row.orchestrations = serde_json::json!({"not": "an array"});
 
         let error = LifecycleRun::try_from(row).expect_err("bad JSON should fail");
         assert!(
@@ -868,7 +902,7 @@ mod workflow_claim_tests {
     #[test]
     fn workflow_repository_lifecycle_run_row_reports_bad_tasks_column() {
         let mut row = lifecycle_run_row();
-        row.tasks = "not-json".to_string();
+        row.tasks = serde_json::json!({"not": "an array"});
 
         let error = LifecycleRun::try_from(row).expect_err("bad JSON should fail");
         assert!(

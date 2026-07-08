@@ -445,4 +445,54 @@ mod tests {
         assert_eq!(parts[0], ContentPart::text("看这张图"));
         assert_eq!(parts[1], ContentPart::image("image/gif", "R0lGOD"));
     }
+
+    #[test]
+    fn legacy_user_input_envelope_requires_migration_source_backfill() {
+        let envelope = crate::BackboneEnvelope::new(
+            crate::BackboneEvent::UserInputSubmitted(UserInputSubmittedNotification::new(
+                "thread-1",
+                "turn-1",
+                "item-1",
+                UserInputSubmissionKind::Prompt,
+                UserInputSource::core_composer(),
+                vec![codex::UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )),
+            "session-1",
+            crate::SourceInfo {
+                connector_id: "test".to_string(),
+                connector_type: "test".to_string(),
+                executor_id: None,
+            },
+        );
+        let mut legacy_json =
+            serde_json::to_value(&envelope).expect("envelope should serialize to json");
+        legacy_json["event"]["payload"]
+            .as_object_mut()
+            .expect("user_input_submitted payload should be an object")
+            .remove("source");
+
+        let error = serde_json::from_value::<crate::BackboneEnvelope>(legacy_json.clone())
+            .expect_err("missing source should keep protocol data invalid");
+        assert!(
+            error.to_string().contains("missing field `source`"),
+            "unexpected deserialization error: {error}"
+        );
+
+        legacy_json["event"]["payload"]["source"] = serde_json::json!({
+            "namespace": "core",
+            "kind": "composer",
+            "actor": "user",
+            "displayLabelKey": "mailbox.source.core.composer",
+        });
+        let migrated = serde_json::from_value::<crate::BackboneEnvelope>(legacy_json)
+            .expect("migration backfill should produce a valid user input envelope");
+        let crate::BackboneEvent::UserInputSubmitted(input) = migrated.event else {
+            panic!("expected user_input_submitted event");
+        };
+
+        assert_eq!(input.source, UserInputSource::core_composer());
+    }
 }

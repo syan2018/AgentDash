@@ -75,7 +75,7 @@ BEGIN
     ) THEN
         ALTER TABLE ONLY runtime_session_compaction_requests
             ADD CONSTRAINT runtime_session_compaction_requests_session_id_fkey
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE;
+            FOREIGN KEY (session_id) REFERENCES runtime_sessions(id) ON DELETE CASCADE;
     END IF;
 
     IF NOT EXISTS (

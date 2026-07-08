@@ -1,8 +1,8 @@
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, UserInputSource,
 };
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchCommitInput;
-use agentdash_application_ports::launch::LaunchSource;
+use agentdash_application_ports::launch::{LaunchInputSource, LaunchSource};
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_spi::{ConnectorError, McpServerReadinessSummary};
 use std::fmt::Display;
@@ -51,6 +51,7 @@ impl TurnCommitter {
                 turn_id,
                 &prepared.resolved_payload,
                 prepared.launch_source,
+                prepared.input_source.as_ref(),
                 prepared.started_at_ms,
             )
             .await
@@ -190,19 +191,20 @@ impl TurnCommitter {
         turn_id: &str,
         resolved_payload: &ResolvedPromptPayload,
         launch_source: LaunchSource,
+        input_source: Option<&LaunchInputSource>,
         started_at_ms: i64,
     ) -> Result<(), ConnectorError> {
         // 直接使用 resolve 阶段已转换好的 canonical 输入，不再二次 round-trip ContentBlock。
         if !resolved_payload.input.is_empty() {
             let envelope =
-                if should_persist_as_human_user_input(launch_source, &resolved_payload.text_prompt)
-                {
+                if should_emit_user_input_submitted(launch_source, &resolved_payload.text_prompt) {
                     build_user_input_submitted_envelope(
                         session_id,
                         source,
                         turn_id,
                         &format!("{turn_id}:user-input:0"),
                         agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                        user_input_source_for_launch(input_source, launch_source),
                         resolved_payload.input.clone(),
                     )
                 } else {
@@ -305,13 +307,57 @@ fn connector_commit_error(stage: &str, error: impl Display) -> ConnectorError {
     ConnectorError::Runtime(format!("{stage}: {error}"))
 }
 
-fn should_persist_as_human_user_input(launch_source: LaunchSource, text_prompt: &str) -> bool {
+fn should_emit_user_input_submitted(launch_source: LaunchSource, text_prompt: &str) -> bool {
     matches!(
         launch_source,
         LaunchSource::HttpPrompt
             | LaunchSource::LifecycleAgentUserMessage
+            | LaunchSource::CompanionDispatch
+            | LaunchSource::CompanionParentResume
             | LaunchSource::LocalRelayPrompt
     ) && !contains_project_subagent_notification_marker(text_prompt)
+}
+
+fn user_input_source_for_launch(
+    input_source: Option<&LaunchInputSource>,
+    launch_source: LaunchSource,
+) -> UserInputSource {
+    input_source
+        .map(user_input_source_from_launch_source)
+        .unwrap_or_else(|| default_user_input_source_for_launch(launch_source))
+}
+
+fn user_input_source_from_launch_source(source: &LaunchInputSource) -> UserInputSource {
+    UserInputSource {
+        namespace: source.namespace.clone(),
+        kind: source.kind.clone(),
+        source_ref: source.source_ref.clone(),
+        correlation_ref: source.correlation_ref.clone(),
+        actor: source.actor.clone(),
+        route: source.route.clone(),
+        display_label_key: source.display_label_key.clone(),
+        metadata: source.metadata.clone(),
+    }
+}
+
+fn default_user_input_source_for_launch(launch_source: LaunchSource) -> UserInputSource {
+    match launch_source {
+        LaunchSource::LocalRelayPrompt => UserInputSource::local_relay_prompt(),
+        LaunchSource::CompanionDispatch => {
+            UserInputSource::new("companion", "dispatch", "agent").with_route("sub")
+        }
+        LaunchSource::CompanionParentResume => UserInputSource::companion_parent_resume(),
+        LaunchSource::HttpPrompt | LaunchSource::LifecycleAgentUserMessage => {
+            UserInputSource::core_composer()
+        }
+        LaunchSource::HookAutoResume
+        | LaunchSource::SystemDelivery
+        | LaunchSource::WorkflowOrchestrator
+        | LaunchSource::RoutineExecutor
+        | LaunchSource::ContextCompaction => {
+            UserInputSource::new("runtime_launch", launch_source_tag(launch_source), "system")
+        }
+    }
 }
 
 fn contains_project_subagent_notification_marker(text: &str) -> bool {
@@ -495,10 +541,10 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn project_subagent_notification_marker_stays_out_of_human_input_boundary() {
+    fn project_subagent_notification_marker_stays_out_of_user_input_event() {
         let text = "<subagent_notification>{\"status\":\"completed\"}</subagent_notification>";
 
-        assert!(!should_persist_as_human_user_input(
+        assert!(!should_emit_user_input_submitted(
             LaunchSource::HttpPrompt,
             text
         ));
@@ -513,21 +559,18 @@ mod tests {
     }
 
     #[test]
-    fn companion_parent_resume_stays_out_of_human_input_boundary() {
+    fn companion_parent_resume_emits_source_aware_user_input() {
         let text = "Companion result delivery projection.\n- status: failed";
 
-        assert!(!should_persist_as_human_user_input(
+        assert!(should_emit_user_input_submitted(
             LaunchSource::CompanionParentResume,
             text
         ));
-        assert_eq!(
-            system_delivery_kind(LaunchSource::CompanionParentResume, text),
-            "companion_delivery"
-        );
-        assert_eq!(
-            system_delivery_actor(LaunchSource::CompanionParentResume, text),
-            "agent"
-        );
+        let source = default_user_input_source_for_launch(LaunchSource::CompanionParentResume);
+        assert_eq!(source.namespace, "companion");
+        assert_eq!(source.kind, "parent_resume");
+        assert_eq!(source.actor, "agent");
+        assert_eq!(source.route.as_deref(), Some("parent"));
     }
 
     #[tokio::test]

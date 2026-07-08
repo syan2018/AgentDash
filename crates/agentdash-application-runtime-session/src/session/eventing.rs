@@ -458,6 +458,7 @@ impl SessionEventingService {
         turn_id: &str,
         item_id: &str,
         submission_kind: agentdash_agent_protocol::UserInputSubmissionKind,
+        input_source: agentdash_agent_protocol::UserInputSource,
         input: Vec<UserInputBlock>,
     ) -> io::Result<PersistedSessionEvent> {
         let envelope = super::hub_support::build_user_input_submitted_envelope(
@@ -466,6 +467,7 @@ impl SessionEventingService {
             turn_id,
             item_id,
             submission_kind,
+            input_source,
             input,
         );
         self.persist_notification(session_id, envelope).await
@@ -2493,6 +2495,7 @@ mod tests {
                 "turn-stable",
                 "turn-stable:user-input:0",
                 agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                agentdash_agent_protocol::UserInputSource::core_composer(),
                 vec![codex::UserInput::Text {
                     text: "stable prompt".to_string(),
                     text_elements: Vec::new(),
@@ -2529,6 +2532,7 @@ mod tests {
                 "turn-failed",
                 "turn-failed:user-input:0",
                 agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                agentdash_agent_protocol::UserInputSource::core_composer(),
                 vec![codex::UserInput::Text {
                     text: "failed prompt".to_string(),
                     text_elements: Vec::new(),
@@ -2638,6 +2642,7 @@ mod tests {
                 "turn-stable",
                 "turn-stable:user-input:0",
                 agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                agentdash_agent_protocol::UserInputSource::core_composer(),
                 vec![codex::UserInput::Text {
                     text: "stable prompt".to_string(),
                     text_elements: Vec::new(),
@@ -2675,6 +2680,7 @@ mod tests {
                     failed_turn,
                     &format!("{failed_turn}:user-input:0"),
                     agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                    agentdash_agent_protocol::UserInputSource::core_composer(),
                     vec![codex::UserInput::Text {
                         text: format!("{failed_turn} prompt"),
                         text_elements: Vec::new(),

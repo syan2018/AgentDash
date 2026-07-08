@@ -1,6 +1,7 @@
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, RuntimeTerminalDiagnostic, SourceInfo,
-    TraceInfo, UserInputBlock, UserInputSubmissionKind, UserInputSubmittedNotification,
+    TraceInfo, UserInputBlock, UserInputSource, UserInputSubmissionKind,
+    UserInputSubmittedNotification,
 };
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_spi::{CapabilityState, ContextFragment, ExecutionSessionFrame};
@@ -18,6 +19,7 @@ pub(super) fn build_user_input_submitted_envelope(
     turn_id: &str,
     item_id: &str,
     submission_kind: UserInputSubmissionKind,
+    input_source: UserInputSource,
     input: Vec<UserInputBlock>,
 ) -> BackboneEnvelope {
     BackboneEnvelope::new(
@@ -26,6 +28,7 @@ pub(super) fn build_user_input_submitted_envelope(
             turn_id,
             item_id,
             submission_kind,
+            input_source,
             input,
         )),
         session_id,

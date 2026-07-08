@@ -38,6 +38,60 @@ impl LaunchPromptInput {
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct LaunchInputSource {
+    pub namespace: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_ref: Option<String>,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    pub display_label_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl LaunchInputSource {
+    pub fn new(
+        namespace: impl Into<String>,
+        kind: impl Into<String>,
+        actor: impl Into<String>,
+    ) -> Self {
+        let namespace = namespace.into();
+        let kind = kind.into();
+        Self {
+            display_label_key: format!("mailbox.source.{namespace}.{kind}"),
+            namespace,
+            kind,
+            source_ref: None,
+            correlation_ref: None,
+            actor: actor.into(),
+            route: None,
+            metadata: None,
+        }
+    }
+
+    pub fn with_route(mut self, route: impl Into<String>) -> Self {
+        self.route = Some(route.into());
+        self
+    }
+
+    pub fn core_composer() -> Self {
+        Self::new("core", "composer", "user")
+    }
+
+    pub fn local_relay_prompt() -> Self {
+        Self::new("core", "local_relay_prompt", "user")
+    }
+
+    pub fn companion_parent_resume() -> Self {
+        Self::new("companion", "parent_resume", "agent").with_route("parent")
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LaunchPlanningInput {
     pub backend_selection: Option<BackendSelectionInput>,
@@ -67,6 +121,7 @@ pub enum BackendSelectionInputMode {
 pub struct LaunchCommand {
     prompt: LaunchPromptInput,
     source: LaunchSource,
+    input_source: Option<LaunchInputSource>,
     follow_up_session_id: Option<String>,
     identity: Option<AuthIdentity>,
     modifiers: Vec<LaunchModifier>,
@@ -77,6 +132,7 @@ impl LaunchCommand {
         Self {
             prompt,
             source,
+            input_source: None,
             follow_up_session_id: None,
             identity: None,
             modifiers: Vec::new(),
@@ -88,8 +144,17 @@ impl LaunchCommand {
         self
     }
 
+    pub fn with_input_source(mut self, input_source: LaunchInputSource) -> Self {
+        self.input_source = Some(input_source);
+        self
+    }
+
     pub fn prompt(&self) -> &LaunchPromptInput {
         &self.prompt
+    }
+
+    pub fn input_source(&self) -> Option<&LaunchInputSource> {
+        self.input_source.as_ref()
     }
 
     pub fn identity(&self) -> Option<AuthIdentity> {
@@ -162,6 +227,7 @@ impl LaunchCommand {
 
     pub fn http_prompt_input(input: LaunchPromptInput, identity: Option<AuthIdentity>) -> Self {
         Self::command_with(input, identity, Vec::new(), LaunchSource::HttpPrompt)
+            .with_input_source(LaunchInputSource::core_composer())
     }
 
     pub fn lifecycle_agent_user_message_input(
@@ -174,6 +240,7 @@ impl LaunchCommand {
             Vec::new(),
             LaunchSource::LifecycleAgentUserMessage,
         )
+        .with_input_source(LaunchInputSource::core_composer())
     }
 
     pub fn hook_auto_resume_input(input: LaunchPromptInput) -> Self {
@@ -187,6 +254,7 @@ impl LaunchCommand {
 
     pub fn companion_parent_resume_input(input: LaunchPromptInput) -> Self {
         Self::source_input(input, LaunchSource::CompanionParentResume)
+            .with_input_source(LaunchInputSource::companion_parent_resume())
     }
 
     pub fn system_delivery_input(input: LaunchPromptInput) -> Self {
@@ -203,6 +271,9 @@ impl LaunchCommand {
             identity,
             vec![LaunchModifier::Companion(Box::new(companion))],
             LaunchSource::CompanionDispatch,
+        )
+        .with_input_source(
+            LaunchInputSource::new("companion", "dispatch", "agent").with_route("sub"),
         )
     }
 
@@ -237,6 +308,7 @@ impl LaunchCommand {
             })],
             LaunchSource::LocalRelayPrompt,
         )
+        .with_input_source(LaunchInputSource::local_relay_prompt())
     }
 
     pub fn context_compaction_input(input: LaunchPromptInput) -> Self {

@@ -6,6 +6,8 @@ use super::target::ensure_command_target;
 use super::*;
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPromptInput};
 
+use crate::agent_run::message_delivery::launch_input_source_from_mailbox_source;
+
 #[derive(Clone, Copy)]
 enum SteeringDeliveryMode {
     DelegateReturn,
@@ -109,6 +111,28 @@ fn mailbox_source_identity_value(source: &MailboxSourceIdentity) -> serde_json::
         "display_label_key": source.display_label_key.as_str(),
         "metadata": source.metadata.as_ref(),
     })
+}
+
+fn user_input_source_from_mailbox_source(
+    source: &MailboxSourceIdentity,
+) -> agentdash_agent_protocol::UserInputSource {
+    agentdash_agent_protocol::UserInputSource {
+        namespace: source.namespace.clone(),
+        kind: source.kind.clone(),
+        source_ref: source.source_ref.clone(),
+        correlation_ref: source.correlation_ref.clone(),
+        actor: source.actor.clone(),
+        route: source.route.clone(),
+        display_label_key: source.display_label_key.clone(),
+        metadata: source.metadata.clone(),
+    }
+}
+
+fn should_emit_user_input_projection(origin: MailboxMessageOrigin) -> bool {
+    matches!(
+        origin,
+        MailboxMessageOrigin::User | MailboxMessageOrigin::Companion
+    )
 }
 
 fn required_message_delivery_runtime_session_id(
@@ -512,6 +536,7 @@ impl<'a> AgentRunMailboxService<'a> {
             .deliver_user_message(AgentRunMessageDelivery {
                 delivery_runtime_session_id: runtime_session_id.clone(),
                 origin: message.origin,
+                input_source: Some(launch_input_source_from_mailbox_source(&message.source)),
                 input: input.clone(),
                 executor_config,
                 planning_input,
@@ -773,7 +798,7 @@ impl<'a> AgentRunMailboxService<'a> {
         agent: &LifecycleAgent,
         frame: &AgentFrame,
     ) -> Option<String> {
-        if message.origin == MailboxMessageOrigin::User {
+        if should_emit_user_input_projection(message.origin) {
             return match self
                 .session_eventing
                 .emit_user_input_submitted(
@@ -787,6 +812,7 @@ impl<'a> AgentRunMailboxService<'a> {
                         Uuid::new_v4()
                     ),
                     UserInputSubmissionKind::Steer,
+                    user_input_source_from_mailbox_source(&message.source),
                     input.to_vec(),
                 )
                 .await
@@ -833,7 +859,7 @@ impl<'a> AgentRunMailboxService<'a> {
         delivery_kind: &str,
         input: &[UserInputBlock],
     ) -> Option<String> {
-        if message.origin == MailboxMessageOrigin::User {
+        if should_emit_user_input_projection(message.origin) {
             return None;
         }
         let envelope = mailbox_delivery_projection_envelope(

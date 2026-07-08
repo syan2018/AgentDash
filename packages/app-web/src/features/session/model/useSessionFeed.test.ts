@@ -127,6 +127,12 @@ function mkUserInputEntry(id: string, text: string, eventSeq?: number): SessionD
       turnId: "u1",
       itemId: id,
       submissionKind: "prompt",
+      source: {
+        namespace: "core",
+        kind: "composer",
+        actor: "user",
+        displayLabelKey: "mailbox.source.core.composer",
+      },
       content: [{ type: "text", text, text_elements: [] }],
     },
   };

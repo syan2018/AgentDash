@@ -13,7 +13,7 @@ import type { UserMessageImage } from "../model/types";
 import { ST } from "./bodies/cardBodyTokens";
 
 export interface SessionMessageCardProps {
-  type: "user" | "agent" | "thinking";
+  type: "user" | "agent" | "thinking" | "companion" | "channel";
   content: string;
   isStreaming?: boolean;
   collapsible?: boolean;
@@ -71,7 +71,9 @@ export const SessionMessageCard = memo(function SessionMessageCard({
   images,
 }: SessionMessageCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed ?? type === "thinking");
-  const hasImages = type === "user" && Boolean(images && images.length > 0);
+  const hasImages =
+    (type === "user" || type === "companion" || type === "channel") &&
+    Boolean(images && images.length > 0);
   const hasText = content.trim().length > 0;
 
   if (type === "thinking") {
@@ -114,6 +116,31 @@ export const SessionMessageCard = memo(function SessionMessageCard({
               </p>
             )}
             {hasImages && <SessionUserImageBlock images={images!} />}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (type === "companion" || type === "channel") {
+    const label = _labelOverride ?? (type === "companion" ? "Companion" : "Channel");
+    const badge = _badgeOverride ?? (type === "companion" ? "COMPANION" : "CHANNEL");
+    return (
+      <div className="flex justify-start">
+        <div className="min-w-0 max-w-[85%] rounded-[8px] border border-border bg-secondary/35 px-3 py-2.5">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="inline-flex rounded-[4px] border border-border bg-card px-1.5 py-px text-[9px] font-semibold text-muted-foreground">
+              {badge}
+            </span>
+            <span className="text-[11px] text-muted-foreground">{label}</span>
+          </div>
+          <div className="space-y-2.5">
+            {hasText && (
+              <p className="whitespace-pre-wrap wrap-anywhere text-sm leading-7 text-foreground">
+                {renderTextWithFilePills(content)}
+              </p>
+            )}
+            {hasImages && <SessionUserImageBlock images={images ?? []} />}
           </div>
         </div>
       </div>

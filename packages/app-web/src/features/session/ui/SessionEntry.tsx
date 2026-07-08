@@ -23,6 +23,7 @@ import {
   isDisplayEntry,
   partitionUserInputs,
   getThreadItemStatus,
+  deriveSessionInputSourceView,
 } from "../model/types";
 import { resolveKind, KIND_REGISTRY, type ThreadItemKind } from "../model/threadItemKind";
 import type {
@@ -168,7 +169,19 @@ export function SingleEntry({
 
     case "user_input_submitted": {
       const { text, images } = partitionUserInputs(event.payload.content);
-      return <SessionMessageCard type="user" content={text} images={images} />;
+      const source = deriveSessionInputSourceView(event.payload.source);
+      if (source.presentation === "user") {
+        return <SessionMessageCard type="user" content={text} images={images} />;
+      }
+      return (
+        <SessionMessageCard
+          type={source.presentation}
+          content={text}
+          images={images}
+          labelOverride={source.label}
+          badgeOverride={source.presentation === "companion" ? "COMPANION" : "CHANNEL"}
+        />
+      );
     }
 
     case "platform": {

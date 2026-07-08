@@ -29,6 +29,12 @@ policy、prompt plan 或 follow-up plan；它不进入 connector-facing `Executi
 只消费本次 prompt 的闭包事实，原因是 connector 不应理解 ProjectAgent、Companion、Routine、
 Local relay 等 application 来源差异。
 
+`system_delivery` context frame 只承载平台或运行期控制事实。AgentRun-facing Companion 协作请求、结果、
+parent response、human response 和 parent resume 属于模型 user-role 输入，必须通过
+`PromptPayload::Input` 与 source-aware `UserInputSubmitted` 投递；其 `namespace/kind/actor/route`
+来源身份服务前端差分和审计，不提升为 system channel。原因是来源身份描述消息从哪里来，模型通道描述
+Agent 应如何消费，两者需要独立演进。
+
 ## `FrameLaunchEnvelope` 五段分层
 
 `FrameLaunchEnvelope` 是 frame construction 到 launch planner 的唯一传递物。顶层字段

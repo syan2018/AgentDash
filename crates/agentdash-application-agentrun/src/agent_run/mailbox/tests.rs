@@ -542,7 +542,7 @@ async fn mailbox_steering_event_projection_failure_is_consistent() {
 }
 
 #[tokio::test]
-async fn companion_steering_projects_system_event_instead_of_user_input() {
+async fn companion_steering_projects_source_aware_user_input() {
     let fixture = MailboxSteeringFixture::new(false).await;
     let gate_id = Uuid::new_v4();
     let message = fixture
@@ -577,32 +577,25 @@ async fn companion_steering_projects_system_event_instead_of_user_input() {
 
     assert_eq!(outcomes.len(), 1);
     assert_eq!(outcomes[0].outcome, AgentRunMailboxCommandOutcome::Steered);
-    assert_eq!(*fixture.eventing.emit_count.lock().await, 0);
+    assert_eq!(*fixture.eventing.emit_count.lock().await, 1);
+    let emitted_sources = fixture.eventing.emitted_sources.lock().await;
+    assert_eq!(emitted_sources.len(), 1);
+    assert_eq!(emitted_sources[0].namespace, "companion");
+    assert_eq!(emitted_sources[0].kind, "result");
+    assert_eq!(emitted_sources[0].actor, "agent");
+    let gate_id_text = gate_id.to_string();
+    assert_eq!(
+        emitted_sources[0].source_ref.as_deref(),
+        Some(gate_id_text.as_str())
+    );
+    assert_eq!(
+        emitted_sources[0].correlation_ref.as_deref(),
+        Some("dispatch-1")
+    );
+    assert_eq!(emitted_sources[0].route.as_deref(), Some("parent"));
+    drop(emitted_sources);
     let persisted = fixture.eventing.persisted.lock().await;
-    assert_eq!(persisted.len(), 2);
-    match &persisted[0].event {
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
-            assert_eq!(key, "system_message");
-            assert_eq!(
-                value.get("kind"),
-                Some(&serde_json::json!("companion_delivery"))
-            );
-            assert_eq!(value.get("origin"), Some(&serde_json::json!("companion")));
-            assert_eq!(
-                value.pointer("/source/source_ref"),
-                Some(&serde_json::json!(gate_id.to_string()))
-            );
-            assert_eq!(
-                value.pointer("/source/correlation_ref"),
-                Some(&serde_json::json!("dispatch-1"))
-            );
-            assert_eq!(
-                value.pointer("/refs/mailbox_message_id"),
-                Some(&serde_json::json!(message.id.to_string()))
-            );
-        }
-        other => panic!("expected platform system message, got {other:?}"),
-    }
+    assert_eq!(persisted.len(), 1);
     assert_mailbox_projection_changed(&persisted, message.id);
 }
 
@@ -800,6 +793,7 @@ impl MailboxSteeringFixture {
             eventing: Arc::new(TestEventingPort {
                 fail_events,
                 emit_count: Mutex::new(0),
+                emitted_sources: Mutex::new(Vec::new()),
                 persisted: Mutex::new(Vec::new()),
             }),
             launch: Arc::new(TestLaunchPort),
@@ -1472,6 +1466,7 @@ impl RuntimeSessionControlPort for TestControlPort {
 struct TestEventingPort {
     fail_events: bool,
     emit_count: Mutex<usize>,
+    emitted_sources: Mutex<Vec<agentdash_agent_protocol::UserInputSource>>,
     persisted: Mutex<Vec<BackboneEnvelope>>,
 }
 
@@ -1506,9 +1501,11 @@ impl RuntimeSessionEventingPort for TestEventingPort {
         _turn_id: &str,
         _event_id: &str,
         _kind: UserInputSubmissionKind,
+        source: agentdash_agent_protocol::UserInputSource,
         _input: Vec<UserInputBlock>,
     ) -> Result<(), WorkflowApplicationError> {
         *self.emit_count.lock().await += 1;
+        self.emitted_sources.lock().await.push(source);
         if self.fail_events {
             Err(WorkflowApplicationError::Internal(
                 "event projection failed".to_string(),

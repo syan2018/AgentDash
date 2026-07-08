@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 
 use agentdash_agent_protocol::UserInputBlock;
-use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput, LaunchPromptInput};
-use agentdash_domain::agent_run_mailbox::MailboxMessageOrigin;
+use agentdash_application_ports::launch::{
+    LaunchCommand, LaunchInputSource, LaunchPlanningInput, LaunchPromptInput,
+};
+use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{AgentConfig, PromptPayload};
 
@@ -14,6 +16,7 @@ pub struct AgentRunMessageDelivery {
     pub delivery_runtime_session_id: String,
     pub origin: MailboxMessageOrigin,
     pub input: Vec<UserInputBlock>,
+    pub input_source: Option<LaunchInputSource>,
     pub executor_config: Option<AgentConfig>,
     pub planning_input: LaunchPlanningInput,
     pub identity: Option<AuthIdentity>,
@@ -50,8 +53,12 @@ impl AgentRunMessageDeliveryPort for SessionTurnMessageDeliveryPort {
             executor_config: delivery.executor_config,
         };
         validate_launch_prompt_input(&user_input)?;
-        let command =
-            launch_command_for_mailbox_origin(delivery.origin, user_input, delivery.identity);
+        let command = launch_command_for_mailbox_origin(
+            delivery.origin,
+            user_input,
+            delivery.identity,
+            delivery.input_source,
+        );
         self.session_launch
             .launch_command_in_task(
                 delivery.delivery_runtime_session_id.clone(),
@@ -66,8 +73,9 @@ fn launch_command_for_mailbox_origin(
     origin: MailboxMessageOrigin,
     input: LaunchPromptInput,
     identity: Option<AuthIdentity>,
+    input_source: Option<LaunchInputSource>,
 ) -> LaunchCommand {
-    match origin {
+    let command = match origin {
         MailboxMessageOrigin::User => {
             LaunchCommand::lifecycle_agent_user_message_input(input, identity)
         }
@@ -75,6 +83,26 @@ fn launch_command_for_mailbox_origin(
         MailboxMessageOrigin::Hook => LaunchCommand::hook_auto_resume_input(input),
         MailboxMessageOrigin::Workflow => LaunchCommand::workflow_orchestrator_input(input),
         MailboxMessageOrigin::System => LaunchCommand::system_delivery_input(input),
+    };
+    if let Some(source) = input_source {
+        command.with_input_source(source)
+    } else {
+        command
+    }
+}
+
+pub(crate) fn launch_input_source_from_mailbox_source(
+    source: &MailboxSourceIdentity,
+) -> LaunchInputSource {
+    LaunchInputSource {
+        namespace: source.namespace.clone(),
+        kind: source.kind.clone(),
+        source_ref: source.source_ref.clone(),
+        correlation_ref: source.correlation_ref.clone(),
+        actor: source.actor.clone(),
+        route: source.route.clone(),
+        display_label_key: source.display_label_key.clone(),
+        metadata: source.metadata.clone(),
     }
 }
 

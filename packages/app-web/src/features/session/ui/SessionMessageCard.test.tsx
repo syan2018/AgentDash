@@ -46,3 +46,19 @@ describe("SessionMessageCard thinking", () => {
     expect(html).not.toContain("正在思考");
   });
 });
+
+describe("SessionMessageCard channel input", () => {
+  it("renders companion input with source label", () => {
+    const html = renderToStaticMarkup(
+      <SessionMessageCard
+        type="companion"
+        content="子任务完成了"
+        labelOverride="Companion 结果"
+      />,
+    );
+
+    expect(html).toContain("COMPANION");
+    expect(html).toContain("Companion 结果");
+    expect(html).toContain("子任务完成了");
+  });
+});

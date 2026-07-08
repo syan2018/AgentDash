@@ -41,6 +41,12 @@ mapper 不负责：
 
 前端把 `src/generated/*` 当作 wire DTO 事实源。Feature 可以定义 view model，但 view model 必须由 generated DTO 显式转换而来，原因是 UI 形态与 transport 形态有不同变化节奏。
 
+Session timeline 消费 `generated/backbone-protocol.ts` 中的 `UserInputSubmittedNotification.source`
+作为 input channel/source provenance。`features/session/model/types.ts` 可以把 generated
+`UserInputSource` 转成 UI view model（例如 user / companion / channel presentation），但不能
+手写另一套 wire DTO 或从 system event 文本反推来源，原因是模型投递通道与 UI 展示差分需要共享
+同一份 Backbone 事实。
+
 Canvas 资产 UI 消费 `generated/canvas-contracts.ts` 中的 `CanvasResponse`、`CanvasScopeDto`、`CanvasAccessDto`、`CanvasListScopeDto`、`PublishCanvasToProjectRequest`、`CopyCanvasToPersonalRequest` 和 `UnpublishCanvasResponse`。`services/canvas.ts` 只封装 endpoint 和 query/body 传递；Mine/Shared 分组、按钮可见性和 editor 只读状态全部读取 `canvas.scope` 与 `canvas.access`。
 
 Canvas access-driven UI contract:

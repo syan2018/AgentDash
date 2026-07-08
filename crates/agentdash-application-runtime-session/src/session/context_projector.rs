@@ -470,6 +470,7 @@ mod tests {
                 turn_id: turn_id.to_string(),
                 item_id: format!("{turn_id}:user-input:0"),
                 submission_kind: UserInputSubmissionKind::Prompt,
+                source: agentdash_agent_protocol::UserInputSource::core_composer(),
                 content: vec![codex::UserInput::Text {
                     text: text.to_string(),
                     text_elements: Vec::new(),

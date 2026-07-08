@@ -53,11 +53,13 @@ pub enum BackboneEvent {
 
 ## User Input Facts
 
-用户提交到 session 的输入使用 `BackboneEvent::UserInputSubmitted` 表达。payload 携带 Codex app-server protocol 的 `Vec<UserInput>`、`turn_id`、稳定 `item_id` 与 AgentDash 的 `submission_kind`（`prompt` / `steer`）。
+进入模型 user-role 通道的 session 输入使用 `BackboneEvent::UserInputSubmitted` 表达。payload 携带 Codex app-server protocol 的 `Vec<UserInput>`、`turn_id`、稳定 `item_id`、AgentDash 的 `submission_kind`（`prompt` / `steer`）以及 `source` channel provenance。
 
-这个事件是普通 prompt 与运行中 steer 的共同事实来源，原因是 Codex thread history 通过显式 turn boundary 和同 turn 内多个 user message 表达 mid-turn steering。AgentDash 在 Backbone 层保留同样的 `UserInput` 形态，projection、NDJSON、前端 feed 和 recall surface 才能用同一个 item 坐标区分“开启 turn 的输入”和“运行中 steer 输入”。
+这个事件是普通 prompt、运行中 steer 与 Agent-facing channel 输入的共同事实来源，原因是 Codex thread history 通过显式 turn boundary 和同 turn 内多个 user message 表达 mid-turn steering。AgentDash 在 Backbone 层保留同样的 `UserInput` 形态，projection、NDJSON、前端 feed 和 recall surface 才能用同一个 item 坐标区分“开启 turn 的输入”和“运行中 steer 输入”。
 
-ACP 或其他外部 adapter 进入主链路时需要先转换为 `UserInputSubmitted`。`PlatformEvent` 只承载 Codex 原生协议没有覆盖的平台能力；用户输入属于 turn/thread 语义，不属于 platform metadata。
+`source` 使用 `namespace/kind/sourceRef/correlationRef/actor/route/displayLabelKey/metadata` 表达消息从哪里来、谁发起、属于哪条 route；它不决定模型 authority。人类用户输入通常是 `namespace=core, kind=composer, actor=user`，Companion 协作输入通常是 `namespace=companion`，两者都可以是 user-role input。前端 timeline 基于 source 做视觉差分，模型恢复只根据 `UserInputSubmitted` 恢复为 user-role message，source metadata 不写入模型正文。
+
+ACP、Companion、channel binding 或其他外部 adapter 进入主链路时，凡是 Agent 需要作为本轮任务内容处理的输入都需要先转换为 source-aware `UserInputSubmitted`。`PlatformEvent` 只承载 Codex 原生协议没有覆盖的平台能力和运行期控制事实；user-role 输入属于 turn/thread 语义，不属于 platform metadata。
 
 ## Token Usage Semantics
 

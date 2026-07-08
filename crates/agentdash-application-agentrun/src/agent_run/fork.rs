@@ -1703,6 +1703,7 @@ mod tests {
             _turn_id: &str,
             _event_id: &str,
             _kind: UserInputSubmissionKind,
+            _source: agentdash_agent_protocol::UserInputSource,
             _input: Vec<UserInputBlock>,
         ) -> Result<(), WorkflowApplicationError> {
             Ok(())

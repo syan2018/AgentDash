@@ -22,6 +22,61 @@ pub enum UserInputSubmissionKind {
     Steer,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UserInputSource {
+    pub namespace: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_ref: Option<String>,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    pub display_label_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl UserInputSource {
+    pub fn new(
+        namespace: impl Into<String>,
+        kind: impl Into<String>,
+        actor: impl Into<String>,
+    ) -> Self {
+        let namespace = namespace.into();
+        let kind = kind.into();
+        Self {
+            display_label_key: format!("mailbox.source.{namespace}.{kind}"),
+            namespace,
+            kind,
+            source_ref: None,
+            correlation_ref: None,
+            actor: actor.into(),
+            route: None,
+            metadata: None,
+        }
+    }
+
+    pub fn with_route(mut self, route: impl Into<String>) -> Self {
+        self.route = Some(route.into());
+        self
+    }
+
+    pub fn core_composer() -> Self {
+        Self::new("core", "composer", "user")
+    }
+
+    pub fn local_relay_prompt() -> Self {
+        Self::new("core", "local_relay_prompt", "user")
+    }
+
+    pub fn companion_parent_resume() -> Self {
+        Self::new("companion", "parent_resume", "agent").with_route("parent")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInputSubmittedNotification {
@@ -29,6 +84,7 @@ pub struct UserInputSubmittedNotification {
     pub turn_id: String,
     pub item_id: String,
     pub submission_kind: UserInputSubmissionKind,
+    pub source: UserInputSource,
     pub content: Vec<codex::UserInput>,
 }
 
@@ -38,6 +94,7 @@ impl UserInputSubmittedNotification {
         turn_id: impl Into<String>,
         item_id: impl Into<String>,
         submission_kind: UserInputSubmissionKind,
+        source: UserInputSource,
         content: Vec<codex::UserInput>,
     ) -> Self {
         Self {
@@ -45,6 +102,7 @@ impl UserInputSubmittedNotification {
             turn_id: turn_id.into(),
             item_id: item_id.into(),
             submission_kind,
+            source,
             content,
         }
     }

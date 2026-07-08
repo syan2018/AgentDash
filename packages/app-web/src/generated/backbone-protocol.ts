@@ -483,8 +483,10 @@ export type UserInput = { "type": "text", text: string,
  */
 text_elements: Array<TextElement>, } | { "type": "image", detail?: ImageDetail, url: string, } | { "type": "localImage", detail?: ImageDetail, path: string, } | { "type": "skill", name: string, path: string, } | { "type": "mention", name: string, path: string, };
 
+export type UserInputSource = { namespace: string, kind: string, sourceRef?: string | null, correlationRef?: string | null, actor: string, route?: string | null, displayLabelKey: string, metadata?: JsonValue | null, };
+
 export type UserInputSubmissionKind = "prompt" | "steer";
 
-export type UserInputSubmittedNotification = { threadId: string, turnId: string, itemId: string, submissionKind: UserInputSubmissionKind, content: Array<UserInput>, };
+export type UserInputSubmittedNotification = { threadId: string, turnId: string, itemId: string, submissionKind: UserInputSubmissionKind, source: UserInputSource, content: Array<UserInput>, };
 
 export type WebSearchAction = { "type": "search", query: string | null, queries: Array<string> | null, } | { "type": "openPage", url: string | null, } | { "type": "findInPage", url: string | null, pattern: string | null, } | { "type": "other" };

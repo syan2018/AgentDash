@@ -22,7 +22,7 @@ use crate::session::types::{
 use agentdash_application_ports::frame_launch_envelope::{
     FrameLaunchEnvelope, FrameRuntimeSurface,
 };
-use agentdash_application_ports::launch::LaunchSource;
+use agentdash_application_ports::launch::{LaunchInputSource, LaunchSource};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
@@ -145,6 +145,7 @@ pub struct LaunchPlan {
     pub context: ExecutionContext,
     pub summary: LaunchSummary,
     pub source: LaunchSource,
+    pub input_source: Option<LaunchInputSource>,
 }
 
 pub struct LaunchPlanInput {
@@ -153,6 +154,7 @@ pub struct LaunchPlanInput {
     pub session_id: String,
     pub turn_id: String,
     pub source: LaunchSource,
+    pub input_source: Option<LaunchInputSource>,
     pub launch_path: PromptLaunchPath,
     pub restore_mode: LaunchRestoreMode,
     pub hook_snapshot_reload: HookSnapshotReloadTrigger,
@@ -355,6 +357,7 @@ impl LaunchPlan {
             context: ExecutionContext { session, turn },
             summary,
             source: input.source,
+            input_source: input.input_source,
         }
     }
 }
@@ -454,6 +457,7 @@ mod tests {
             session_id: "sess-launch".to_string(),
             turn_id: "t1".to_string(),
             source: LaunchSource::HttpPrompt,
+            input_source: Some(LaunchInputSource::core_composer()),
             launch_path,
             restore_mode: LaunchRestoreMode::None,
             hook_snapshot_reload: HookSnapshotReloadTrigger::Reload,

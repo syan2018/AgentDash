@@ -155,6 +155,7 @@ impl<'a> AgentRunSteeringService<'a> {
                 &active_turn_id,
                 &format!("{}:steer:{}", active_turn_id, Uuid::new_v4()),
                 agentdash_agent_protocol::UserInputSubmissionKind::Steer,
+                agentdash_agent_protocol::UserInputSource::core_composer(),
                 input,
             )
             .await

@@ -1,6 +1,6 @@
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_application_ports::frame_launch_envelope::FrameRuntimeSurface;
-use agentdash_application_ports::launch::LaunchSource;
+use agentdash_application_ports::launch::{LaunchInputSource, LaunchSource};
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use agentdash_domain::settings::SettingScope;
 use agentdash_domain::workflow::AgentFrame;
@@ -53,6 +53,7 @@ pub(in crate::session) struct PreparedTurn {
     pub resolved_follow_up_session_id: Option<String>,
     pub title_hint: String,
     pub launch_source: LaunchSource,
+    pub input_source: Option<LaunchInputSource>,
     pub source: SourceInfo,
     pub connector_context: Option<ExecutionContext>,
     pub context_delivery_record: Option<ContextDeliveryRecord>,
@@ -91,6 +92,7 @@ impl TurnPreparer {
         let mut resolved_payload = launch_plan.resolved_payload.clone();
         let title_hint = launch_plan.title_hint.clone();
         let launch_source = launch_plan.source;
+        let input_source = launch_plan.input_source.clone();
         let system_delivery_context_frame = build_system_delivery_context_frame(
             &session_id,
             &turn_id,
@@ -446,6 +448,7 @@ impl TurnPreparer {
             resolved_follow_up_session_id,
             title_hint,
             launch_source,
+            input_source,
             source,
             connector_context: Some(context),
             context_delivery_record,
@@ -599,6 +602,8 @@ fn should_remain_human_prompt(launch_source: LaunchSource, text_prompt: &str) ->
         launch_source,
         LaunchSource::HttpPrompt
             | LaunchSource::LifecycleAgentUserMessage
+            | LaunchSource::CompanionDispatch
+            | LaunchSource::CompanionParentResume
             | LaunchSource::LocalRelayPrompt
     ) && !contains_project_subagent_notification_marker(text_prompt)
 }

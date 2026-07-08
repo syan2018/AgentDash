@@ -50,6 +50,7 @@ export type {
   McpToolCallStatus,
   PatchApplyStatus,
   UserInput,
+  UserInputSource,
 } from "../../../generated/backbone-protocol";
 
 import type {
@@ -57,6 +58,7 @@ import type {
   AgentDashThreadItem,
   PlatformEvent,
   UserInput,
+  UserInputSource,
   ThreadTokenUsage,
   TokenUsageBreakdown,
   NormalizedContextUsage,
@@ -118,6 +120,77 @@ export type ContentBlock =
   | { type: "resource"; resource: EmbeddedResource }
   | { type: "image"; data: string; mimeType?: string | null }
   | { type: "audio"; data: string; mimeType?: string | null };
+
+export type SessionInputSourcePresentation = "user" | "companion" | "channel";
+
+export type SessionInputSourceView = {
+  namespace: string;
+  kind: string;
+  actor: string;
+  route?: string | null;
+  label: string;
+  presentation: SessionInputSourcePresentation;
+};
+
+const INPUT_SOURCE_LABELS: Record<string, string> = {
+  "mailbox.source.core.composer": "用户输入",
+  "mailbox.source.core.canvas_action": "Canvas",
+  "mailbox.source.core.draft_start": "草稿输入",
+  "mailbox.source.core.local_relay_prompt": "本机输入",
+  "mailbox.source.companion.dispatch": "Companion 派发",
+  "mailbox.source.companion.result": "Companion 结果",
+  "mailbox.source.companion.parent_request": "Parent 请求",
+  "mailbox.source.companion.parent_response": "Parent 回应",
+  "mailbox.source.companion.human_response": "用户回应",
+  "mailbox.source.companion.parent_resume": "Parent 续跑",
+  "mailbox.source.workflow.orchestrator": "Workflow",
+};
+
+export function deriveSessionInputSourceView(source: UserInputSource): SessionInputSourceView {
+  const explicitLabel = INPUT_SOURCE_LABELS[source.displayLabelKey];
+  const namespaceKindLabel = INPUT_SOURCE_LABELS[`mailbox.source.${source.namespace}.${source.kind}`];
+  const label =
+    explicitLabel ??
+    namespaceKindLabel ??
+    defaultInputSourceLabel(source.namespace, source.kind);
+  const presentation =
+    source.namespace === "companion"
+      ? "companion"
+      : source.namespace === "core" && source.actor === "user"
+        ? "user"
+        : "channel";
+  return {
+    namespace: source.namespace,
+    kind: source.kind,
+    actor: source.actor,
+    route: source.route,
+    label,
+    presentation,
+  };
+}
+
+function defaultInputSourceLabel(namespace: string, kind: string): string {
+  switch (namespace) {
+    case "companion":
+      return "Companion";
+    case "workflow":
+      return "Workflow";
+    case "routine":
+      return "Routine";
+    case "core":
+      return kind === "local_relay_prompt" ? "本机输入" : "用户输入";
+    default:
+      return formatInputSourceKind(kind || namespace);
+  }
+}
+
+function formatInputSourceKind(value: string): string {
+  return value
+    .split(/[_-]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
 /**
  * 把 platform.session_meta_update.value 解析为可渲染的输入块。

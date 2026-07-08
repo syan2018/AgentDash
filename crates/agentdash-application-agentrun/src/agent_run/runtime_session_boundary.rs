@@ -1,6 +1,8 @@
 use std::{io, sync::Arc};
 
-use agentdash_agent_protocol::{BackboneEnvelope, UserInputBlock, UserInputSubmissionKind};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, UserInputBlock, UserInputSource, UserInputSubmissionKind,
+};
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
 use agentdash_spi::ConnectorError;
 use agentdash_spi::context::capability::{
@@ -202,6 +204,7 @@ pub trait RuntimeSessionEventingPort: Send + Sync {
         turn_id: &str,
         event_id: &str,
         kind: UserInputSubmissionKind,
+        source: UserInputSource,
         input: Vec<UserInputBlock>,
     ) -> Result<(), WorkflowApplicationError>;
 
@@ -256,10 +259,11 @@ impl SessionEventingService {
         turn_id: &str,
         event_id: &str,
         kind: UserInputSubmissionKind,
+        source: UserInputSource,
         input: Vec<UserInputBlock>,
     ) -> Result<(), WorkflowApplicationError> {
         self.port
-            .emit_user_input_submitted(session_id, turn_id, event_id, kind, input)
+            .emit_user_input_submitted(session_id, turn_id, event_id, kind, source, input)
             .await
     }
 

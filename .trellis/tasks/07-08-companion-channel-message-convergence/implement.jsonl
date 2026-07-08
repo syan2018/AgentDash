@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "Backbone UserInputSubmitted 与 PlatformEvent 是本任务的跨层协议事实源。"}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Mailbox origin/source identity、scheduler projection 与 Companion delivery 旧契约需要修订。"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "ContextFrame system channel 边界决定 Companion 是否能进入 system frame。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端必须消费 generated Backbone 字段并避免手写并行 DTO。"}
+{"file": ".trellis/tasks/06-28-integration-channel-mailbox-convergence/design.md", "reason": "既有 mailbox source identity 与 channel/materialization 设计是本任务的前置依据。"}

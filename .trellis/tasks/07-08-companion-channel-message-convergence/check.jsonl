@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/cross-layer/backbone-protocol.md", "reason": "检查协议说明是否与 UserInputSubmitted source/channel provenance 一致。"}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "检查 non-user delivery 旧 system projection 结论是否已收束为 source-aware input 分类。"}
+{"file": ".trellis/spec/backend/session/execution-context-frames.md", "reason": "检查 system context frame 边界是否保持为规则/事实投影。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 generated 类型与 source-aware view model 是否符合规范。"}
+{"file": ".trellis/tasks/07-08-companion-channel-message-convergence/design.md", "reason": "检查实现结果是否符合本任务设计方案。"}

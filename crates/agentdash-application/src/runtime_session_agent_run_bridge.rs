@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::{BackboneEnvelope, UserInputBlock, UserInputSubmissionKind};
+use agentdash_agent_protocol::{
+    BackboneEnvelope, UserInputBlock, UserInputSource, UserInputSubmissionKind,
+};
 use agentdash_application_agentrun::WorkflowApplicationError;
 use agentdash_application_agentrun::agent_run as agent_run_boundary;
 use agentdash_application_ports::launch::{LaunchCommand, LaunchPlanningInput};
@@ -160,10 +162,11 @@ impl agent_run_boundary::RuntimeSessionEventingPort for SessionEventingBridge {
         turn_id: &str,
         event_id: &str,
         kind: UserInputSubmissionKind,
+        source: UserInputSource,
         input: Vec<UserInputBlock>,
     ) -> Result<(), WorkflowApplicationError> {
         self.service
-            .emit_user_input_submitted(session_id, turn_id, event_id, kind, input)
+            .emit_user_input_submitted(session_id, turn_id, event_id, kind, source, input)
             .await
             .map(|_| ())
             .map_err(|error| WorkflowApplicationError::Internal(error.to_string()))

@@ -165,8 +165,8 @@ AgentRunMailboxService::schedule(run_id, agent_id, trigger)
 - AgentRun Mailbox runtime adapter 在 Agent Loop 中只作为 `RuntimeTurnBoundaryDelegate` 参与组合。`after_turn` 负责把 hook steering / follow-up 归一为 mailbox envelope 并触发 AgentLoopTurnBoundary 调度，`before_stop` 负责 AgentRunTurnBoundary drain 并在有可消费 envelope 时继续当前 loop。压缩、上下文变换、工具策略与 provider request 观测分别由 hook runtime、admission 或对应 runtime facet 拥有，原因是 mailbox 的事实源是 durable delivery envelope 与 boundary drain state，而不是模型上下文、工具授权或 provider telemetry。
 - AgentRun conversation snapshot 的 waiting projection 读取 open `LifecycleGate` / lifecycle wait record，投影到 `ConversationMailboxSnapshotView.waiting_items`。mailbox message 只承载 wake/result envelope；等待事实由 gate/wait record 持有，原因是前端需要展示"正在等什么"，而 scheduler 需要消费"结果已经到达"。`companion_wait` gate 若 payload 含 `request_type`，投影为 `kind="human"`；companion follow-up / blocking review 投影为 `subagent`；`exec_*` gate 投影为 `exec`。
 - Terminal / exec wait projection 读取 `AgentRunTerminalRegistry` 的 terminal state 与 bounded output projection。`WaitActivityItem.cursor` 表达 wait activity 的更新时间游标，terminal output seq 只出现在 `result_refs.output_ref`、`result_refs.cursor` 和 `next` read continuation 中，原因是 Agent 继续等待和读取 terminal output 是两个不同 cursor 域。stdout/stderr/pty preview 只作为 bounded decision surface，完整输出仍由 terminal output owner 和 `shell_exec read` 提供。
-- Terminal / exec wait 若需要模型可见系统投影，使用与 non-user mailbox delivery 相同的 `system_message` family：`kind`、`origin`、`source`、`status`、`summary`、`result_refs` / `output_ref`。原因是 terminal 完成通知与 companion result wake 都是 system-origin projection，模型上下文应消费结构化来源和 refs，而不是从自然语言中恢复执行事实。
-- Companion / subagent / human result wake 使用 `namespace="companion"`、稳定 `source_ref=gate_id`、`correlation_ref=request_id|dispatch_id` 和 route metadata。wait 返回值只包含 `status`、`summary`、`timed_out`、`result_refs` 与 bounded preview；结果正文保留在 gate payload、mailbox message 或对应 projection 中，原因是 wait 是 activity watcher，不是大结果传输通道。
+- Terminal / exec wait 若需要模型可见系统投影，使用 `system_message` family：`kind`、`origin`、`source`、`status`、`summary`、`result_refs` / `output_ref`。原因是 terminal 完成通知是运行期事实投影，模型上下文应消费结构化来源和 refs，而不是从自然语言中恢复执行事实。
+- Companion / subagent / human result wake 使用 `namespace="companion"`、稳定 `source_ref=gate_id`、`correlation_ref=request_id|dispatch_id` 和 route metadata。AgentRun-facing Companion delivery 进入 source-aware `UserInputSubmitted`，原因是这些内容是 Agent 需要处理的 user-role 输入；wait 返回值只包含 `status`、`summary`、`timed_out`、`result_refs` 与 bounded preview，结果正文保留在 gate payload、mailbox message 或对应 projection 中，原因是 wait 是 activity watcher，不是大结果传输通道。
 - User-origin payload 可以在 queued/consuming 阶段短期持久以支持恢复；消费成功后按 retention policy 清理。preview、status、accepted refs 和 receipt result 继续保留用于投影与审计。
 - `Consuming` message 必须有 claim token、lease 和 attempt count。scheduler completion 必须比较 claim token 后才能写入 `Dispatched`、`Steered`、`Failed` 或恢复状态。
 - Scheduler 写入 `Dispatched` / `Steered` 等 mailbox projection 可见状态后，必须发布 `ControlPlaneProjectionChanged { projection=Mailbox, reason=MailboxStateChanged, mailbox_message_id, delivery_runtime_session_id }`。原因是 workspace mailbox row、composer outcome 和实时 runtime stream 都观察同一 durable mailbox 事实；状态写入和投影失效必须在 scheduler 边界收敛，前端才能从事件刷新而不是从 submit response 时序推断 queued / delivered 状态。
@@ -329,8 +329,8 @@ Gate result payload carries bounded result facts:
 - Blocking waiter 能 claim `delivered_to_waiter` 时，parent mailbox continuation 不再为同一 `gate_id + result_attempt` 创建第二条结果 delivery。
 - 无可 claim waiter、waiter 消失或 replay 发现 marker 未完成时，resolver 可以 claim `queued_for_parent_continuation`，然后由 mailbox 负责 durable envelope 和 scheduler delivery。
 - Later `wait(activity_refs=[gate_id])` 直接读取已 resolved gate payload。timeout/cancel 是 wait call 结果，不消费 gate result。
-- Companion / system parent continuation 的模型文本是 bounded projection。结构化 authority 留在 gate payload、`MailboxSourceIdentity`、source dedup key 和 result refs。
-- Non-user mailbox delivery 进入 `system_message` platform projection 或 `system_delivery` context frame；只有 `MailboxMessageOrigin::User` 会提交 `UserInputSubmitted`。
+- Companion parent continuation 的模型文本是 bounded user-role projection。结构化 authority 留在 gate payload、`MailboxSourceIdentity`、source dedup key 和 result refs；`UserInputSubmitted.source` 负责把 Companion route、actor 和 correlation 交给前端与审计面。
+- Mailbox delivery 的模型通道由消息语义决定。`MailboxMessageOrigin::User | Companion` 中需要 Agent 继续处理的输入提交 `UserInputSubmitted`；hook / workflow / system 中真正的运行期控制事实保留 `system_message` platform projection 或 `system_delivery` context frame。
 
 ### 4. Validation & Error Matrix
 
@@ -343,7 +343,8 @@ Gate result payload carries bounded result facts:
 | provider/runtime fatal caused terminal fallback | gate payload contains fallback summary plus bounded diagnostic fields |
 | terminal fallback races normal companion response | first resolved gate payload remains authoritative; later delivery only ensures convergence |
 | parent continuation text is generated from payload | text is clipped by length/item count; large result body remains behind gate payload / refs |
-| non-user mailbox steering is delivered | scheduler emits system projection instead of `UserInputSubmitted` |
+| Companion mailbox steering is delivered | scheduler emits source-aware `UserInputSubmitted` with companion source identity |
+| hook/workflow/system control mailbox steering is delivered | scheduler emits system projection instead of `UserInputSubmitted` |
 
 ### 5. Good/Base/Bad Cases
 
@@ -359,7 +360,7 @@ Gate result payload carries bounded result facts:
 - Marker repository tests cover waiter claim, parent continuation claim, replay of incomplete marker, and mutual exclusion for the same `gate_id + result_attempt`.
 - Companion tests cover duplicate child result idempotency, parent mailbox wake source identity, and bounded parent result delivery projection text.
 - Wait activity tests cover resolved gate diagnostic/result refs and timeout without consuming the gate.
-- Mailbox scheduler/runtime-session tests cover non-user delivery emitting system projection while user-origin delivery still emits `UserInputSubmitted`.
+- Mailbox scheduler/runtime-session tests cover Companion delivery emitting source-aware `UserInputSubmitted` while hook/workflow/system control delivery still emits system projection.
 - Frontend/project stream tests cover AgentRun list projection invalidation without depending on an open workspace stream.
 
 ### 7. Wrong vs Correct

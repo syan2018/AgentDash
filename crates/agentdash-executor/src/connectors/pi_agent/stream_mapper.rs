@@ -389,6 +389,13 @@ fn tool_result_details(value: &serde_json::Value) -> Option<&serde_json::Value> 
     value.get("details").filter(|details| !details.is_null())
 }
 
+fn is_companion_subagent_dispatch_result(value: &serde_json::Value) -> bool {
+    tool_result_details(value)
+        .and_then(|details| details.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        == Some("companion_subagent_dispatch")
+}
+
 fn shell_exit_code_from_result(value: &serde_json::Value) -> Option<i32> {
     tool_result_details(value)
         .and_then(|details| details.get("exit_code"))
@@ -1662,7 +1669,7 @@ fn decode_tool_result_to_content_items(
     value: &serde_json::Value,
 ) -> Option<Vec<codex::DynamicToolCallOutputContentItem>> {
     let result = decode_tool_result(value)?;
-    let items: Vec<codex::DynamicToolCallOutputContentItem> = result
+    let mut items: Vec<codex::DynamicToolCallOutputContentItem> = result
         .content
         .iter()
         .filter_map(|part| match part {
@@ -1677,6 +1684,15 @@ fn decode_tool_result_to_content_items(
             ContentPart::Reasoning { .. } => None,
         })
         .collect();
+
+    if is_companion_subagent_dispatch_result(value)
+        && let Some(details) = tool_result_details(value)
+    {
+        items.push(codex::DynamicToolCallOutputContentItem::InputText {
+            text: serde_json::json!({ "details": details }).to_string(),
+        });
+    }
+
     if items.is_empty() { None } else { Some(items) }
 }
 
@@ -1701,6 +1717,58 @@ mod tests {
                 assert_eq!(image_url, "data:image/png;base64,AAECAw==");
             }
             other => panic!("expected image item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn companion_subagent_dispatch_result_preserves_structured_details_for_ui() {
+        let value = serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Companion agent completed: 已完成检查"
+                }
+            ],
+            "is_error": false,
+            "details": {
+                "kind": "companion_subagent_dispatch",
+                "child": {
+                    "agent_id": "agent-child-1"
+                },
+                "journal": {
+                    "uri": "lifecycle://agent-runs/agent-child-1/sessions/messages"
+                },
+                "status": "completed",
+                "summary": "Child agent completed",
+                "result_preview": "已完成检查"
+            }
+        });
+
+        let items = decode_tool_result_to_content_items(&value).expect("content items");
+        assert_eq!(items.len(), 2);
+        match &items[1] {
+            codex::DynamicToolCallOutputContentItem::InputText { text } => {
+                let payload: serde_json::Value = serde_json::from_str(text).expect("json payload");
+                assert_eq!(
+                    payload
+                        .get("details")
+                        .and_then(|details| details.get("kind"))
+                        .and_then(serde_json::Value::as_str),
+                    Some("companion_subagent_dispatch")
+                );
+                assert_eq!(
+                    payload
+                        .get("details")
+                        .and_then(|details| details.get("result_preview"))
+                        .and_then(serde_json::Value::as_str),
+                    Some("已完成检查")
+                );
+                assert!(
+                    !text.contains("delivery_runtime_session_id"),
+                    "UI protocol payload must not expose delivery runtime session ids"
+                );
+            }
+            other => panic!("expected details text item, got {other:?}"),
         }
     }
 }

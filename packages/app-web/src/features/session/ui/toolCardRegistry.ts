@@ -26,14 +26,20 @@ import { WebSearchCardBody } from "./bodies/WebSearchCardBody";
 import { ImageCardBody } from "./bodies/ImageCardBody";
 import { CollabAgentCardBody } from "./bodies/CollabAgentCardBody";
 import { ContextCompactionCardBody } from "./bodies/ContextCompactionCardBody";
+import { CompanionSubagentDispatchCardBody } from "./bodies/CompanionSubagentDispatchCardBody";
 import { DynamicToolCallCardBody } from "./bodies/DynamicToolCallCardBody";
 import { GenericJsonBody } from "./bodies/GenericJsonBody";
 import { ReadCardBody } from "./bodies/ReadCardBody";
+import { parseCompanionSubagentDispatch } from "../model/companionSubagentDispatch";
+import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import { parseTerminalItemMeta } from "../model/terminalItemMeta";
+import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 
 export interface CardContext {
   sessionId?: string;
   outputText?: string;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
 }
 
 export interface CardRenderResult {
@@ -123,6 +129,26 @@ export function renderToolCallCard(
       };
 
     case "collabAgentToolCall":
+      {
+        const subagentDispatch = parseCompanionSubagentDispatch(item);
+        if (subagentDispatch) {
+          return {
+            kind,
+            header: {
+              primary: subagentDispatch.title,
+              secondary: subagentDispatch.childAgentId
+                ? `child agent: ${subagentDispatch.childAgentId}`
+                : "child agent pending",
+            },
+            body: createElement(CompanionSubagentDispatchCardBody, {
+              presentation: subagentDispatch,
+              agentRunTarget: ctx.agentRunTarget,
+              companionSubagents: ctx.companionSubagents,
+            }),
+            status,
+          };
+        }
+      }
       return {
         kind,
         header: { primary: item.tool, secondary: "协作 agent" },
@@ -139,6 +165,27 @@ export function renderToolCallCard(
       };
 
     case "dynamicToolCall":
+      {
+        const subagentDispatch = parseCompanionSubagentDispatch(item);
+        if (subagentDispatch) {
+          return {
+            kind,
+            header: {
+              primary: subagentDispatch.title,
+              secondary: subagentDispatch.childAgentId
+                ? `child agent: ${subagentDispatch.childAgentId}`
+                : "child agent pending",
+            },
+            body: createElement(CompanionSubagentDispatchCardBody, {
+              presentation: subagentDispatch,
+              agentRunTarget: ctx.agentRunTarget,
+              companionSubagents: ctx.companionSubagents,
+            }),
+            status,
+            durationMs: item.durationMs ?? undefined,
+          };
+        }
+      }
       return {
         kind,
         header: getDynamicToolHeader(item, resolveDynamicToolMeta(item.tool)),

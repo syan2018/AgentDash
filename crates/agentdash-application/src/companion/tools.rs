@@ -37,6 +37,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::dispatch::{CompanionChildDispatchRequest, CompanionChildDispatchService};
+use super::gate_control::CompanionParentRequestOpenResult;
 use super::model_preflight::{CompanionModelPreflightPort, CompanionModelPreflightRequest};
 use super::reply_contract::{
     COMPANION_ACTION_CHANNEL, COMPANION_CHILD_CHANNEL, COMPANION_PARENT_CHANNEL,
@@ -490,8 +491,299 @@ fn merge_gate_result_refs(
     base_refs
 }
 
+fn agent_visible_value_without_runtime_session_refs(
+    value: &serde_json::Value,
+) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .iter()
+                .filter_map(|(key, value)| {
+                    if is_agent_hidden_runtime_session_key(key) {
+                        None
+                    } else {
+                        Some((
+                            key.clone(),
+                            agent_visible_value_without_runtime_session_refs(value),
+                        ))
+                    }
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .map(agent_visible_value_without_runtime_session_refs)
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+fn is_agent_hidden_runtime_session_key(key: &str) -> bool {
+    matches!(
+        key,
+        "delivery_runtime_session_id"
+            | "runtime_session_id"
+            | "parent_session_id"
+            | "child_session_id"
+            | "parent_delivery_runtime_session_id"
+            | "child_delivery_runtime_session_id"
+    ) || key.ends_with("_runtime_session_id")
+}
+
+fn agent_visible_json_preview(payload: &serde_json::Value, max_chars: usize) -> String {
+    bounded_json_preview(
+        &agent_visible_value_without_runtime_session_refs(payload),
+        max_chars,
+    )
+}
+
 fn child_messages_uri(child_agent_id: Uuid) -> String {
     format!("lifecycle://agent-runs/{child_agent_id}/sessions/messages")
+}
+
+#[derive(Clone, Copy)]
+struct CompanionSubagentVisibleResult<'a> {
+    dispatch_id: &'a str,
+    wait: bool,
+    companion_label: &'a str,
+    child_agent_id: Uuid,
+    child_frame_id: Uuid,
+    gate_id: Option<Uuid>,
+    journal_uri: &'a str,
+    mailbox_message_id: Option<&'a str>,
+    mailbox_outcome: &'a str,
+    accepted_turn_id: Option<&'a str>,
+    task_id: Option<Uuid>,
+    selected_project_agent_id: Uuid,
+    selected_agent_key: &'a str,
+    slice_mode: &'a str,
+    adoption_mode: &'a str,
+    status: &'a str,
+    summary: &'a str,
+    timed_out: Option<bool>,
+    result_preview: Option<&'a str>,
+    result_refs: Option<&'a serde_json::Value>,
+    delivery_marker: Option<&'a serde_json::Value>,
+    matched_rule_keys: Option<&'a serde_json::Value>,
+}
+
+fn companion_subagent_agent_tool_result(
+    visible: CompanionSubagentVisibleResult<'_>,
+) -> AgentToolResult {
+    let content = match (visible.wait, visible.status) {
+        (false, _) => format!(
+            "已派发 companion agent（异步）。\n- dispatch_id: {}\n- label: {}\n- child_agent_id: {}\n- child_frame_id: {}\n- child_journal: {}\n- mailbox_outcome: {}\n- accepted_turn_id: {}",
+            visible.dispatch_id,
+            visible.companion_label,
+            visible.child_agent_id,
+            visible.child_frame_id,
+            visible.journal_uri,
+            visible.mailbox_outcome,
+            visible.accepted_turn_id.unwrap_or("(not accepted yet)"),
+        ),
+        (true, "timed_out") => format!(
+            "等待 companion `{}` 回传超时。\n- status: timed_out\n- gate_id: {}\n- child_agent_id: {}\n- child_journal: {}\n- mailbox_outcome: {}\n- accepted_turn_id: {}",
+            visible.companion_label,
+            visible
+                .gate_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            visible.child_agent_id,
+            visible.journal_uri,
+            visible.mailbox_outcome,
+            visible.accepted_turn_id.unwrap_or("(not accepted yet)"),
+        ),
+        _ => format!(
+            "Companion `{}` 已完成。\n- child_agent_id: {}\n- child_journal: {}\n- mailbox_outcome: {}\n- status: {}\n- summary: {}\n- gate_id: {}\n- accepted_turn_id: {}",
+            visible.companion_label,
+            visible.child_agent_id,
+            visible.journal_uri,
+            visible.mailbox_outcome,
+            visible.status,
+            visible.summary,
+            visible
+                .gate_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "(none)".to_string()),
+            visible.accepted_turn_id.unwrap_or("(not accepted yet)"),
+        ),
+    };
+
+    let mut details = serde_json::json!({
+        "kind": "companion_subagent_dispatch",
+        "dispatch_id": visible.dispatch_id,
+        "wait": visible.wait,
+        "companion_label": visible.companion_label,
+        "child": {
+            "agent_id": visible.child_agent_id.to_string(),
+            "frame_id": visible.child_frame_id.to_string(),
+            "gate_id": visible.gate_id.map(|id| id.to_string()),
+        },
+        "journal": {
+            "uri": visible.journal_uri,
+        },
+        "mailbox": {
+            "message_id": visible.mailbox_message_id,
+            "outcome": visible.mailbox_outcome,
+            "accepted_turn_id": visible.accepted_turn_id,
+        },
+        "status": visible.status,
+        "summary": visible.summary,
+        "timed_out": visible.timed_out,
+        "task": {
+            "task_id": visible.task_id.map(|id| id.to_string()),
+        },
+        "companion": {
+            "selected_project_agent_id": visible.selected_project_agent_id.to_string(),
+            "agent_key": visible.selected_agent_key,
+        },
+        "routing": {
+            "slice_mode": visible.slice_mode,
+            "adoption_mode": visible.adoption_mode,
+        },
+    });
+
+    if let Some(result_preview) = visible.result_preview {
+        details["result_preview"] = serde_json::Value::String(result_preview.to_string());
+    }
+    if let Some(result_refs) = visible.result_refs {
+        details["result_refs"] = agent_visible_value_without_runtime_session_refs(result_refs);
+    }
+    if let Some(delivery_marker) = visible.delivery_marker {
+        details["delivery_marker"] =
+            agent_visible_value_without_runtime_session_refs(delivery_marker);
+    }
+    if let Some(matched_rule_keys) = visible.matched_rule_keys {
+        details["hook"] = serde_json::json!({
+            "matched_rule_keys": matched_rule_keys,
+        });
+    }
+
+    AgentToolResult {
+        content: vec![ContentPart::text(content)],
+        is_error: false,
+        details: Some(details),
+    }
+}
+
+fn companion_parent_request_agent_tool_result(
+    opened: &CompanionParentRequestOpenResult,
+    wait: bool,
+) -> AgentToolResult {
+    AgentToolResult {
+        content: vec![ContentPart::text(format!(
+            "已向父 agent 提审。\n- request_id: {}\n- gate_id: {}\n- parent_agent_id: {}",
+            opened.request_id, opened.gate_id, opened.parent_agent_id,
+        ))],
+        is_error: false,
+        details: Some(serde_json::json!({
+            "kind": "companion_parent_request",
+            "request": {
+                "request_id": opened.request_id,
+                "wait": wait,
+            },
+            "gate": {
+                "gate_id": opened.gate_id.to_string(),
+            },
+            "parent": {
+                "agent_id": opened.parent_agent_id.to_string(),
+                "frame_id": opened.parent_frame_id.to_string(),
+                "journal": {
+                    "uri": child_messages_uri(opened.parent_agent_id),
+                },
+            },
+            "child": {
+                "agent_id": opened.child_agent_id.to_string(),
+                "frame_id": opened.child_frame_id.to_string(),
+                "journal": {
+                    "uri": child_messages_uri(opened.child_agent_id),
+                },
+            },
+            "mailbox": companion_parent_mailbox_delivery_details(&opened.parent_mailbox_delivery),
+        })),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CompanionHumanWaitVisibleResult<'a> {
+    request_id: &'a str,
+    gate_id: Uuid,
+    agent_id: Uuid,
+    frame_id: Uuid,
+    status: &'a str,
+    summary: &'a str,
+    timed_out: bool,
+    response_preview: Option<&'a str>,
+}
+
+fn companion_human_wait_agent_tool_result(
+    visible: CompanionHumanWaitVisibleResult<'_>,
+) -> AgentToolResult {
+    let content = if visible.timed_out {
+        format!(
+            "等待用户回应超时。\n- status: timed_out\n- request_id: {}\n- gate_id: {}",
+            visible.request_id, visible.gate_id,
+        )
+    } else {
+        format!(
+            "用户已回应。\n- request_id: {}\n- status: {}\n- summary: {}\n- gate_id: {}",
+            visible.request_id, visible.status, visible.summary, visible.gate_id,
+        )
+    };
+
+    let mut details = serde_json::json!({
+        "kind": "companion_human_request",
+        "request": {
+            "request_id": visible.request_id,
+            "wait": true,
+        },
+        "gate": {
+            "gate_id": visible.gate_id.to_string(),
+        },
+        "agent": {
+            "agent_id": visible.agent_id.to_string(),
+            "frame_id": visible.frame_id.to_string(),
+            "journal": {
+                "uri": child_messages_uri(visible.agent_id),
+            },
+        },
+        "status": visible.status,
+        "summary": visible.summary,
+        "timed_out": visible.timed_out,
+        "result_refs": {
+            "gate_id": visible.gate_id.to_string(),
+            "request_id": visible.request_id,
+            "agent_id": visible.agent_id.to_string(),
+            "frame_id": visible.frame_id.to_string(),
+            "journal_uri": child_messages_uri(visible.agent_id),
+        },
+    });
+    if let Some(response_preview) = visible.response_preview {
+        details["response_preview"] = serde_json::Value::String(response_preview.to_string());
+    }
+
+    AgentToolResult {
+        content: vec![ContentPart::text(content)],
+        is_error: false,
+        details: Some(details),
+    }
+}
+
+fn companion_parent_mailbox_delivery_details(
+    delivery: &CompanionParentMailboxDeliveryResult,
+) -> serde_json::Value {
+    serde_json::json!({
+        "mailbox_message_id": delivery.mailbox_message_id.map(|id| id.to_string()),
+        "command_receipt_id": delivery.command_receipt_id.map(|id| id.to_string()),
+        "command_receipt_client_command_id": delivery.command_receipt_client_command_id.clone(),
+        "command_receipt_status": delivery.command_receipt_status.clone(),
+        "command_receipt_duplicate": delivery.command_receipt_duplicate,
+        "outcome": delivery.outcome.clone(),
+        "accepted_agent_run_turn_id": delivery.accepted_agent_run_turn_id.clone(),
+        "accepted_protocol_turn_id": delivery.accepted_protocol_turn_id.clone(),
+    })
 }
 
 #[async_trait]
@@ -1185,7 +1477,7 @@ impl CompanionRequestTool {
         payload: &serde_json::Value,
         _tool_call_id: &str,
         cancel: CancellationToken,
-        _on_update: Option<ToolUpdateCallback>,
+        on_update: Option<ToolUpdateCallback>,
     ) -> Result<AgentToolResult, AgentToolError> {
         let prompt = payload
             .get("message")
@@ -1473,6 +1765,8 @@ impl CompanionRequestTool {
             .as_ref()
             .map(|message| message.id.to_string());
         let mailbox_outcome = mailbox_result.outcome.as_str();
+        let visible_slice_mode = companion_slice_mode_key(slice_mode);
+        let visible_adoption_mode = companion_adoption_mode_key(adoption_mode);
         if matches!(
             mailbox_result.outcome,
             AgentRunMailboxCommandOutcome::Failed | AgentRunMailboxCommandOutcome::Blocked
@@ -1545,6 +1839,44 @@ impl CompanionRequestTool {
             let gate_id = dispatch_result.gate_ref.ok_or_else(|| {
                 AgentToolError::ExecutionFailed("dispatch 未创建 gate（内部错误）".to_string())
             })?;
+            if let Some(on_update) = on_update.as_ref() {
+                let matched_rule_keys =
+                    serde_json::json!(after_resolution.matched_rule_keys.clone());
+                let result_refs = serde_json::json!({
+                    "gate_id": gate_id.to_string(),
+                    "child_agent_id": dispatch_result.agent_ref.to_string(),
+                    "child_frame_id": dispatch_result.frame_ref.to_string(),
+                    "accepted_turn_id": child_turn_id.clone(),
+                    "mailbox_message_id": mailbox_message_id.clone(),
+                    "journal_uri": child_messages_uri.clone(),
+                });
+                on_update(companion_subagent_agent_tool_result(
+                    CompanionSubagentVisibleResult {
+                        dispatch_id: &dispatch_plan.dispatch_id,
+                        wait: true,
+                        companion_label: &companion_label,
+                        child_agent_id: dispatch_result.agent_ref,
+                        child_frame_id: dispatch_result.frame_ref,
+                        gate_id: Some(gate_id),
+                        journal_uri: &child_messages_uri,
+                        mailbox_message_id: mailbox_message_id.as_deref(),
+                        mailbox_outcome,
+                        accepted_turn_id: child_turn_id.as_deref(),
+                        task_id: requested_task_id,
+                        selected_project_agent_id: selected_companion.project_agent.id,
+                        selected_agent_key: &selected_companion.agent_key,
+                        slice_mode: visible_slice_mode,
+                        adoption_mode: visible_adoption_mode,
+                        status: "running",
+                        summary: "已派发 companion agent，等待回传",
+                        timed_out: None,
+                        result_preview: None,
+                        result_refs: Some(&result_refs),
+                        delivery_marker: None,
+                        matched_rule_keys: Some(&matched_rule_keys),
+                    },
+                ));
+            }
             let waiter_ref = format!(
                 "companion_request:{}:{}:{}:{}",
                 parent_run_id,
@@ -1572,34 +1904,41 @@ impl CompanionRequestTool {
 
             let wait_outcome = self.poll_gate_until_resolved(gate_id, cancel).await?;
             if matches!(wait_outcome, CompanionGateWaitOutcome::TimedOut) {
-                return Ok(AgentToolResult {
-                    content: vec![ContentPart::text(format!(
-                        "等待 companion `{companion_label}` 回传超时。\n- status: timed_out\n- gate_ref: {gate_id}\n- child_session_id: {}\n- child_turn_id: {}\n- child_messages: {}",
-                        dispatch_result.delivery_runtime_session_id,
-                        child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
-                        child_messages_uri,
-                    ))],
-                    is_error: false,
-                    details: Some(serde_json::json!({
-                        "dispatch_id": dispatch_plan.dispatch_id,
-                        "wait": true,
-                        "timed_out": true,
-                        "status": "timed_out",
-                        "summary": "等待 companion result 超时",
-                        "companion_label": companion_label,
-                        "result_refs": {
-                            "gate_ref": gate_id.to_string(),
-                            "run_ref": dispatch_result.run_ref.to_string(),
-                            "agent_ref": dispatch_result.agent_ref.to_string(),
-                            "frame_ref": dispatch_result.frame_ref.to_string(),
-                            "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
-                            "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
-                            "child_turn_id": child_turn_id.clone(),
-                            "mailbox_message_id": mailbox_message_id.clone(),
-                            "child_messages_uri": child_messages_uri,
-                        },
-                    })),
+                let matched_rule_keys = serde_json::json!(after_resolution.matched_rule_keys);
+                let result_refs = serde_json::json!({
+                    "gate_id": gate_id.to_string(),
+                    "child_agent_id": dispatch_result.agent_ref.to_string(),
+                    "child_frame_id": dispatch_result.frame_ref.to_string(),
+                    "accepted_turn_id": child_turn_id.clone(),
+                    "mailbox_message_id": mailbox_message_id.clone(),
+                    "journal_uri": child_messages_uri.clone(),
                 });
+                return Ok(companion_subagent_agent_tool_result(
+                    CompanionSubagentVisibleResult {
+                        dispatch_id: &dispatch_plan.dispatch_id,
+                        wait: true,
+                        companion_label: &companion_label,
+                        child_agent_id: dispatch_result.agent_ref,
+                        child_frame_id: dispatch_result.frame_ref,
+                        gate_id: Some(gate_id),
+                        journal_uri: &child_messages_uri,
+                        mailbox_message_id: mailbox_message_id.as_deref(),
+                        mailbox_outcome,
+                        accepted_turn_id: child_turn_id.as_deref(),
+                        task_id: requested_task_id,
+                        selected_project_agent_id: selected_companion.project_agent.id,
+                        selected_agent_key: &selected_companion.agent_key,
+                        slice_mode: visible_slice_mode,
+                        adoption_mode: visible_adoption_mode,
+                        status: "timed_out",
+                        summary: "等待 companion result 超时",
+                        timed_out: Some(true),
+                        result_preview: None,
+                        result_refs: Some(&result_refs),
+                        delivery_marker: None,
+                        matched_rule_keys: Some(&matched_rule_keys),
+                    },
+                ));
             }
 
             let CompanionGateWaitOutcome::Resolved(result_payload) = wait_outcome else {
@@ -1626,101 +1965,90 @@ impl CompanionRequestTool {
             let summary = companion_wait_payload_summary(&result_payload);
             let status = companion_wait_payload_status(&result_payload, "unknown");
             let result_preview =
-                bounded_json_preview(&result_payload, COMPANION_WAIT_PREVIEW_CHARS);
+                agent_visible_json_preview(&result_payload, COMPANION_WAIT_PREVIEW_CHARS);
             let result_refs = merge_gate_result_refs(
                 serde_json::json!({
-                    "gate_ref": gate_id.to_string(),
-                    "run_ref": dispatch_result.run_ref.to_string(),
-                    "agent_ref": dispatch_result.agent_ref.to_string(),
-                    "frame_ref": dispatch_result.frame_ref.to_string(),
-                    "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
-                    "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
-                    "child_turn_id": child_turn_id.clone(),
+                    "gate_id": gate_id.to_string(),
+                    "child_agent_id": dispatch_result.agent_ref.to_string(),
+                    "child_frame_id": dispatch_result.frame_ref.to_string(),
+                    "accepted_turn_id": child_turn_id.clone(),
                     "mailbox_message_id": mailbox_message_id.clone(),
-                    "child_messages_uri": child_messages_uri.clone(),
+                    "journal_uri": child_messages_uri.clone(),
                 }),
                 &result_payload,
             );
-
-            let text = format!(
-                "Companion `{companion_label}` 已完成。\n- child_session_id: {}\n- child_turn_id: {}\n- child_messages: {}\n- mailbox_outcome: {}\n- status: {status}\n- summary: {summary}\n- gate_ref: {gate_id}",
-                dispatch_result.delivery_runtime_session_id,
-                child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
-                child_messages_uri,
-                mailbox_outcome,
-            );
-
-            return Ok(AgentToolResult {
-                content: vec![ContentPart::text(text)],
-                is_error: false,
-                details: Some(serde_json::json!({
-                    "dispatch_id": dispatch_plan.dispatch_id,
-                    "wait": true,
-                    "companion_label": companion_label,
-                    "agent_ref": dispatch_result.agent_ref.to_string(),
-                    "frame_ref": dispatch_result.frame_ref.to_string(),
-                    "run_ref": dispatch_result.run_ref.to_string(),
-                    "gate_ref": gate_id.to_string(),
-                    "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
-                    "child_session_id": dispatch_result.delivery_runtime_session_id.clone(),
-                    "child_turn_id": child_turn_id.clone(),
-                    "mailbox_message_id": mailbox_message_id.clone(),
-                    "mailbox_outcome": mailbox_outcome,
-                    "task_id": requested_task_id.map(|id| id.to_string()),
-                    "selected_project_agent_id": selected_companion.project_agent.id.to_string(),
-                    "selected_agent_key": selected_companion.agent_key,
-                    "status": status,
-                    "summary": summary,
-                    "timed_out": false,
-                    "delivery_marker": {
-                        "gate_id": gate_id.to_string(),
-                        "result_attempt": GATE_RESULT_DELIVERY_ATTEMPT,
-                        "status": waiter_delivery_status,
-                        "claimed_by_waiter": waiter_delivery_claimed,
-                    },
-                    "result_refs": result_refs,
-                    "result_preview": result_preview,
-                })),
+            let delivery_marker = serde_json::json!({
+                "gate_id": gate_id.to_string(),
+                "result_attempt": GATE_RESULT_DELIVERY_ATTEMPT,
+                "status": waiter_delivery_status,
+                "claimed_by_waiter": waiter_delivery_claimed,
             });
+            let matched_rule_keys = serde_json::json!(after_resolution.matched_rule_keys);
+
+            return Ok(companion_subagent_agent_tool_result(
+                CompanionSubagentVisibleResult {
+                    dispatch_id: &dispatch_plan.dispatch_id,
+                    wait: true,
+                    companion_label: &companion_label,
+                    child_agent_id: dispatch_result.agent_ref,
+                    child_frame_id: dispatch_result.frame_ref,
+                    gate_id: Some(gate_id),
+                    journal_uri: &child_messages_uri,
+                    mailbox_message_id: mailbox_message_id.as_deref(),
+                    mailbox_outcome,
+                    accepted_turn_id: child_turn_id.as_deref(),
+                    task_id: requested_task_id,
+                    selected_project_agent_id: selected_companion.project_agent.id,
+                    selected_agent_key: &selected_companion.agent_key,
+                    slice_mode: visible_slice_mode,
+                    adoption_mode: visible_adoption_mode,
+                    status: &status,
+                    summary: &summary,
+                    timed_out: Some(false),
+                    result_preview: Some(&result_preview),
+                    result_refs: Some(&result_refs),
+                    delivery_marker: Some(&delivery_marker),
+                    matched_rule_keys: Some(&matched_rule_keys),
+                },
+            ));
         }
 
         // ─── Async dispatch (wait=false) ────────────────────────────────
-        Ok(AgentToolResult {
-            content: vec![ContentPart::text(format!(
-                "已派发 companion agent（异步）。\n- dispatch_id: {}\n- label: {}\n- child_session_id: {}\n- child_turn_id: {}\n- child_messages: {}\n- agent_ref: {}\n- frame_ref: {}",
-                dispatch_plan.dispatch_id,
-                companion_label,
-                dispatch_result.delivery_runtime_session_id,
-                child_turn_id.as_deref().unwrap_or("(not accepted yet)"),
-                child_messages_uri,
-                dispatch_result.agent_ref,
-                dispatch_result.frame_ref,
-            ))],
-            is_error: false,
-            details: Some(serde_json::json!({
-                "dispatch_id": dispatch_plan.dispatch_id,
-                "wait": false,
-                "companion_label": companion_label,
-                "agent_ref": dispatch_result.agent_ref.to_string(),
-                "frame_ref": dispatch_result.frame_ref.to_string(),
-                "run_ref": dispatch_result.run_ref.to_string(),
-                "gate_ref": dispatch_result.gate_ref.map(|id| id.to_string()),
-                "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
-                "child_session_id": dispatch_result.delivery_runtime_session_id,
-                "child_turn_id": child_turn_id,
-                "result_refs": {
-                    "child_messages_uri": child_messages_uri,
-                },
-                "mailbox_message_id": mailbox_message_id,
-                "mailbox_outcome": mailbox_outcome,
-                "task_id": requested_task_id.map(|id| id.to_string()),
-                "selected_project_agent_id": selected_companion.project_agent.id.to_string(),
-                "selected_agent_key": selected_companion.agent_key,
-                "slice_mode": slice_mode,
-                "adoption_mode": adoption_mode,
-                "matched_rule_keys": after_resolution.matched_rule_keys,
-            })),
-        })
+        let matched_rule_keys = serde_json::json!(after_resolution.matched_rule_keys);
+        let result_refs = serde_json::json!({
+            "child_agent_id": dispatch_result.agent_ref.to_string(),
+            "child_frame_id": dispatch_result.frame_ref.to_string(),
+            "accepted_turn_id": child_turn_id.clone(),
+            "mailbox_message_id": mailbox_message_id.clone(),
+            "journal_uri": child_messages_uri.clone(),
+        });
+
+        Ok(companion_subagent_agent_tool_result(
+            CompanionSubagentVisibleResult {
+                dispatch_id: &dispatch_plan.dispatch_id,
+                wait: false,
+                companion_label: &companion_label,
+                child_agent_id: dispatch_result.agent_ref,
+                child_frame_id: dispatch_result.frame_ref,
+                gate_id: dispatch_result.gate_ref,
+                journal_uri: &child_messages_uri,
+                mailbox_message_id: mailbox_message_id.as_deref(),
+                mailbox_outcome,
+                accepted_turn_id: child_turn_id.as_deref(),
+                task_id: requested_task_id,
+                selected_project_agent_id: selected_companion.project_agent.id,
+                selected_agent_key: &selected_companion.agent_key,
+                slice_mode: visible_slice_mode,
+                adoption_mode: visible_adoption_mode,
+                status: "running",
+                summary: "已派发 companion agent，等待异步回流",
+                timed_out: None,
+                result_preview: None,
+                result_refs: Some(&result_refs),
+                delivery_marker: None,
+                matched_rule_keys: Some(&matched_rule_keys),
+            },
+        ))
     }
 
     /// 轮询 LifecycleGate 直到 resolved、timeout 或取消。
@@ -1826,35 +2154,7 @@ impl CompanionRequestTool {
             .await;
         }
 
-        Ok(AgentToolResult {
-            content: vec![ContentPart::text(format!(
-                "已向父 agent 提审。\n- request_id: {}\n- gate_id: {}\n- parent_agent_id: {}",
-                opened.request_id, opened.gate_id, opened.parent_agent_id,
-            ))],
-            is_error: false,
-            details: Some(serde_json::json!({
-                "request_id": opened.request_id,
-                "gate_id": opened.gate_id.to_string(),
-                "wait": wait,
-                "run_id": opened.run_id.to_string(),
-                "parent_agent_id": opened.parent_agent_id.to_string(),
-                "parent_frame_id": opened.parent_frame_id.to_string(),
-                "parent_session_id": opened.parent_delivery_runtime_session_id,
-                "child_agent_id": opened.child_agent_id.to_string(),
-                "child_frame_id": opened.child_frame_id.to_string(),
-                "child_session_id": opened.child_delivery_runtime_session_id,
-                "parent_mailbox_delivery": {
-                    "mailbox_message_id": opened.parent_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
-                    "command_receipt_id": opened.parent_mailbox_delivery.command_receipt_id.map(|id| id.to_string()),
-                    "command_receipt_client_command_id": opened.parent_mailbox_delivery.command_receipt_client_command_id,
-                    "command_receipt_status": opened.parent_mailbox_delivery.command_receipt_status,
-                    "command_receipt_duplicate": opened.parent_mailbox_delivery.command_receipt_duplicate,
-                    "outcome": opened.parent_mailbox_delivery.outcome,
-                    "accepted_agent_run_turn_id": opened.parent_mailbox_delivery.accepted_agent_run_turn_id,
-                    "accepted_protocol_turn_id": opened.parent_mailbox_delivery.accepted_protocol_turn_id,
-                },
-            })),
-        })
+        Ok(companion_parent_request_agent_tool_result(&opened, wait))
     }
 
     /// target=human：请求作为前端可回应事件展示；用户回应后通过 mailbox 投递给 requesting AgentRun。
@@ -1948,27 +2248,18 @@ impl CompanionRequestTool {
             let wait_outcome = self.poll_gate_until_resolved(gate_id, cancel).await?;
 
             if matches!(wait_outcome, CompanionGateWaitOutcome::TimedOut) {
-                return Ok(AgentToolResult {
-                    content: vec![ContentPart::text(format!(
-                        "等待用户回应超时。\n- status: timed_out\n- request_id: {request_id}\n- gate_ref: {gate_id}",
-                    ))],
-                    is_error: false,
-                    details: Some(serde_json::json!({
-                        "request_id": request_id,
-                        "wait": true,
-                        "timed_out": true,
-                        "status": "timed_out",
-                        "summary": "等待用户回应超时",
-                        "result_refs": {
-                            "gate_ref": gate_id.to_string(),
-                            "request_id": request_id.clone(),
-                            "run_ref": anchor.run_id.to_string(),
-                            "agent_ref": anchor.agent_id.to_string(),
-                            "frame_ref": anchor.frame_id.to_string(),
-                            "delivery_runtime_session_id": current_session_id,
-                        },
-                    })),
-                });
+                return Ok(companion_human_wait_agent_tool_result(
+                    CompanionHumanWaitVisibleResult {
+                        request_id: &request_id,
+                        gate_id,
+                        agent_id: anchor.agent_id,
+                        frame_id: anchor.frame_id,
+                        status: "timed_out",
+                        summary: "等待用户回应超时",
+                        timed_out: true,
+                        response_preview: None,
+                    },
+                ));
             }
 
             let CompanionGateWaitOutcome::Resolved(response_payload) = wait_outcome else {
@@ -1977,30 +2268,20 @@ impl CompanionRequestTool {
             let status = companion_wait_payload_status(&response_payload, "completed");
             let summary = companion_wait_payload_summary(&response_payload);
             let response_preview =
-                bounded_json_preview(&response_payload, COMPANION_WAIT_PREVIEW_CHARS);
+                agent_visible_json_preview(&response_payload, COMPANION_WAIT_PREVIEW_CHARS);
 
-            Ok(AgentToolResult {
-                content: vec![ContentPart::text(format!(
-                    "用户已回应。\n- request_id: {request_id}\n- status: {status}\n- summary: {summary}\n- gate_ref: {gate_id}",
-                ))],
-                is_error: false,
-                details: Some(serde_json::json!({
-                    "request_id": request_id,
-                    "wait": true,
-                    "timed_out": false,
-                    "status": status,
-                    "summary": summary,
-                    "result_refs": {
-                        "gate_ref": gate_id.to_string(),
-                        "request_id": request_id.clone(),
-                        "run_ref": anchor.run_id.to_string(),
-                        "agent_ref": anchor.agent_id.to_string(),
-                        "frame_ref": anchor.frame_id.to_string(),
-                        "delivery_runtime_session_id": current_session_id,
-                    },
-                    "response_preview": response_preview,
-                })),
-            })
+            Ok(companion_human_wait_agent_tool_result(
+                CompanionHumanWaitVisibleResult {
+                    request_id: &request_id,
+                    gate_id,
+                    agent_id: anchor.agent_id,
+                    frame_id: anchor.frame_id,
+                    status: &status,
+                    summary: &summary,
+                    timed_out: false,
+                    response_preview: Some(&response_preview),
+                },
+            ))
         } else {
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(format!(
@@ -2008,8 +2289,17 @@ impl CompanionRequestTool {
                 ))],
                 is_error: false,
                 details: Some(serde_json::json!({
+                    "kind": "companion_human_request",
                     "request_id": request_id,
                     "wait": false,
+                    "gate_id": gate_id.to_string(),
+                    "agent": {
+                        "agent_id": anchor.agent_id.to_string(),
+                        "frame_id": anchor.frame_id.to_string(),
+                        "journal": {
+                            "uri": child_messages_uri(anchor.agent_id),
+                        },
+                    },
                     "message": prompt,
                     "options": options,
                     "payload_type": payload_type,
@@ -2455,13 +2745,21 @@ impl CompanionRespondTool {
                 "mode": "resolve_parent_request_gate",
                 "request_id": request_id,
                 "gate_id": result.gate_id.to_string(),
-                "parent_agent_id": result.parent_agent_id.to_string(),
-                "parent_frame_id": result.parent_frame_id.to_string(),
-                "parent_delivery_runtime_session_id": result.parent_delivery_runtime_session_id,
-                "child_agent_id": result.child_agent_id.to_string(),
-                "child_frame_id": result.child_frame_id.to_string(),
-                "child_delivery_runtime_session_id": result.child_delivery_runtime_session_id,
-                "child_mailbox_delivery": {
+                "parent": {
+                    "agent_id": result.parent_agent_id.to_string(),
+                    "frame_id": result.parent_frame_id.to_string(),
+                    "journal": {
+                        "uri": child_messages_uri(result.parent_agent_id),
+                    },
+                },
+                "child": {
+                    "agent_id": result.child_agent_id.to_string(),
+                    "frame_id": result.child_frame_id.to_string(),
+                    "journal": {
+                        "uri": child_messages_uri(result.child_agent_id),
+                    },
+                },
+                "mailbox": {
                     "mailbox_message_id": result.child_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
                     "command_receipt_id": result.child_mailbox_delivery.command_receipt_id.map(|id| id.to_string()),
                     "command_receipt_client_command_id": result.child_mailbox_delivery.command_receipt_client_command_id,
@@ -2605,9 +2903,22 @@ impl CompanionRespondTool {
             details: Some(serde_json::json!({
                 "mode": "resolve_gate",
                 "gate_id": result.gate_id.to_string(),
-                "parent_agent_id": result.parent_agent_id.to_string(),
-                "parent_delivery_runtime_session_id": result.parent_delivery_runtime_session_id,
-                "child_delivery_runtime_session_id": result.child_delivery_runtime_session_id,
+                "parent": {
+                    "agent_id": result.parent_agent_id.to_string(),
+                    "journal": {
+                        "uri": child_messages_uri(result.parent_agent_id),
+                    },
+                },
+                "mailbox": {
+                    "mailbox_message_id": result.parent_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
+                    "command_receipt_id": result.parent_mailbox_delivery.command_receipt_id.map(|id| id.to_string()),
+                    "command_receipt_client_command_id": result.parent_mailbox_delivery.command_receipt_client_command_id,
+                    "command_receipt_status": result.parent_mailbox_delivery.command_receipt_status,
+                    "command_receipt_duplicate": result.parent_mailbox_delivery.command_receipt_duplicate,
+                    "outcome": result.parent_mailbox_delivery.outcome,
+                    "accepted_agent_run_turn_id": result.parent_mailbox_delivery.accepted_agent_run_turn_id,
+                    "accepted_protocol_turn_id": result.parent_mailbox_delivery.accepted_protocol_turn_id,
+                },
                 "payload": result.payload,
             })),
         }))
@@ -2632,6 +2943,23 @@ fn parse_slice_mode(value: &str) -> CompanionSliceMode {
         "workflow_only" => CompanionSliceMode::WorkflowOnly,
         "constraints_only" => CompanionSliceMode::ConstraintsOnly,
         _ => CompanionSliceMode::Compact,
+    }
+}
+
+fn companion_slice_mode_key(mode: CompanionSliceMode) -> &'static str {
+    match mode {
+        CompanionSliceMode::Full => "full",
+        CompanionSliceMode::Compact => "compact",
+        CompanionSliceMode::WorkflowOnly => "workflow_only",
+        CompanionSliceMode::ConstraintsOnly => "constraints_only",
+    }
+}
+
+fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
+    match mode {
+        CompanionAdoptionMode::Suggestion => "suggestion",
+        CompanionAdoptionMode::FollowUpRequired => at::FOLLOW_UP_REQUIRED,
+        CompanionAdoptionMode::BlockingReview => at::BLOCKING_REVIEW,
     }
 }
 
@@ -3332,10 +3660,12 @@ mod companion_tests {
     use super::super::reply_contract::ModelReplyInstruction;
     use super::{
         CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice,
-        CompanionGateWaitOutcome, CompanionRespondParams, CompanionSliceMode,
-        build_companion_dispatch_prompt, build_companion_dispatch_slice,
-        build_companion_execution_slice, build_subagent_pending_action, companion_owner_candidates,
-        companion_wake_source, merge_gate_result_refs,
+        CompanionGateWaitOutcome, CompanionHumanWaitVisibleResult, CompanionRespondParams,
+        CompanionSliceMode, CompanionSubagentVisibleResult, build_companion_dispatch_prompt,
+        build_companion_dispatch_slice, build_companion_execution_slice,
+        build_subagent_pending_action, child_messages_uri, companion_human_wait_agent_tool_result,
+        companion_owner_candidates, companion_parent_request_agent_tool_result,
+        companion_subagent_agent_tool_result, companion_wake_source, merge_gate_result_refs,
         platform_capability_grant_missing_broker_error, wait_for_lifecycle_gate_resolution,
     };
     use agentdash_application_agentrun::WorkflowApplicationError;
@@ -3659,6 +3989,326 @@ mod companion_tests {
             !serde_json::to_string(&refs)
                 .expect("serialize refs")
                 .contains("session/events.json")
+        );
+    }
+
+    fn visible_subagent_result_fixture<'a>(
+        status: &'a str,
+        wait: bool,
+        gate_id: Option<Uuid>,
+        journal_uri: &'a str,
+        result_preview: Option<&'a str>,
+        result_refs: Option<&'a serde_json::Value>,
+    ) -> CompanionSubagentVisibleResult<'a> {
+        CompanionSubagentVisibleResult {
+            dispatch_id: "dispatch-1",
+            wait,
+            companion_label: "reviewer",
+            child_agent_id: Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+                .expect("agent uuid"),
+            child_frame_id: Uuid::parse_str("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+                .expect("frame uuid"),
+            gate_id,
+            journal_uri,
+            mailbox_message_id: Some("mailbox-1"),
+            mailbox_outcome: "launched",
+            accepted_turn_id: Some("turn-child-1"),
+            task_id: None,
+            selected_project_agent_id: Uuid::parse_str("cccccccc-cccc-cccc-cccc-cccccccccccc")
+                .expect("project agent uuid"),
+            selected_agent_key: "reviewer",
+            slice_mode: "compact",
+            adoption_mode: "blocking_review",
+            status,
+            summary: "done",
+            timed_out: Some(status == "timed_out"),
+            result_preview,
+            result_refs,
+            delivery_marker: None,
+            matched_rule_keys: None,
+        }
+    }
+
+    fn assert_result_hides_runtime_session_refs(result: &agentdash_spi::AgentToolResult) {
+        let text = result
+            .content
+            .iter()
+            .filter_map(agentdash_spi::ContentPart::extract_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let details = serde_json::to_string(&result.details).expect("details json");
+        let visible = format!("{text}\n{details}");
+
+        for forbidden in [
+            "delivery_runtime_session_id",
+            "parent_delivery_runtime_session_id",
+            "child_delivery_runtime_session_id",
+            "child_session_id",
+            "parent_session_id",
+            "runtime-child-session",
+            "runtime-parent-session",
+            "parent-session",
+            "child-session",
+        ] {
+            assert!(
+                !visible.contains(forbidden),
+                "Agent-visible result leaked `{forbidden}`:\n{visible}"
+            );
+        }
+    }
+
+    fn assert_result_retains_child_agent_and_journal(
+        result: &agentdash_spi::AgentToolResult,
+        child_agent_id: &str,
+        journal_uri: &str,
+    ) {
+        let details = result.details.as_ref().expect("details");
+        assert_eq!(
+            details["kind"],
+            serde_json::json!("companion_subagent_dispatch")
+        );
+        assert_eq!(
+            details["child"]["agent_id"],
+            serde_json::json!(child_agent_id)
+        );
+        assert_eq!(details["journal"]["uri"], serde_json::json!(journal_uri));
+        let text = result
+            .content
+            .iter()
+            .filter_map(agentdash_spi::ContentPart::extract_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains(child_agent_id));
+        assert!(text.contains(journal_uri));
+    }
+
+    #[test]
+    fn companion_subagent_async_result_hides_runtime_session_refs() {
+        let child_agent_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let journal_uri =
+            "lifecycle://agent-runs/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/sessions/messages";
+        let result_refs = serde_json::json!({
+            "child_agent_id": child_agent_id,
+            "journal_uri": journal_uri,
+            "delivery_runtime_session_id": "runtime-child-session",
+            "child_session_id": "runtime-child-session",
+        });
+        let result = companion_subagent_agent_tool_result(visible_subagent_result_fixture(
+            "running",
+            false,
+            None,
+            journal_uri,
+            None,
+            Some(&result_refs),
+        ));
+
+        assert_result_hides_runtime_session_refs(&result);
+        assert_result_retains_child_agent_and_journal(&result, child_agent_id, journal_uri);
+        assert_eq!(result.details.as_ref().expect("details")["wait"], false);
+    }
+
+    fn mailbox_delivery_fixture() -> super::CompanionParentMailboxDeliveryResult {
+        super::CompanionParentMailboxDeliveryResult {
+            mailbox_message_id: Some(
+                Uuid::parse_str("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee").expect("mailbox uuid"),
+            ),
+            command_receipt_id: Some(
+                Uuid::parse_str("ffffffff-ffff-ffff-ffff-ffffffffffff").expect("receipt uuid"),
+            ),
+            command_receipt_client_command_id: "client-command-1".to_string(),
+            command_receipt_status: "accepted".to_string(),
+            command_receipt_duplicate: false,
+            outcome: "launched".to_string(),
+            accepted_agent_run_turn_id: Some("turn-parent-1".to_string()),
+            accepted_protocol_turn_id: Some("protocol-turn-parent-1".to_string()),
+        }
+    }
+
+    #[test]
+    fn companion_parent_request_result_hides_parent_and_child_session_refs() {
+        let parent_agent_id =
+            Uuid::parse_str("11111111-1111-1111-1111-111111111111").expect("parent agent uuid");
+        let parent_frame_id =
+            Uuid::parse_str("22222222-2222-2222-2222-222222222222").expect("parent frame uuid");
+        let child_agent_id =
+            Uuid::parse_str("33333333-3333-3333-3333-333333333333").expect("child agent uuid");
+        let child_frame_id =
+            Uuid::parse_str("44444444-4444-4444-4444-444444444444").expect("child frame uuid");
+        let opened = super::CompanionParentRequestOpenResult {
+            gate_id: Uuid::parse_str("55555555-5555-5555-5555-555555555555").expect("gate uuid"),
+            request_id: "request-parent-1".to_string(),
+            run_id: Uuid::parse_str("66666666-6666-6666-6666-666666666666").expect("run uuid"),
+            parent_agent_id,
+            parent_frame_id,
+            parent_delivery_runtime_session_id: "parent-session".to_string(),
+            child_agent_id,
+            child_frame_id,
+            child_delivery_runtime_session_id: "child-session".to_string(),
+            companion_label: "parent".to_string(),
+            parent_mailbox_delivery: mailbox_delivery_fixture(),
+            payload: serde_json::json!({ "status": "pending" }),
+        };
+
+        let result = companion_parent_request_agent_tool_result(&opened, true);
+
+        assert_result_hides_runtime_session_refs(&result);
+        let details = result.details.as_ref().expect("details");
+        assert_eq!(
+            details["kind"],
+            serde_json::json!("companion_parent_request")
+        );
+        assert_eq!(
+            details["parent"]["agent_id"],
+            serde_json::json!(parent_agent_id.to_string())
+        );
+        assert_eq!(
+            details["child"]["journal"]["uri"],
+            serde_json::json!(child_messages_uri(child_agent_id))
+        );
+        assert_eq!(
+            details["mailbox"]["accepted_agent_run_turn_id"],
+            serde_json::json!("turn-parent-1")
+        );
+    }
+
+    #[test]
+    fn companion_subagent_wait_completed_result_hides_runtime_session_refs() {
+        let child_agent_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let journal_uri =
+            "lifecycle://agent-runs/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/sessions/messages";
+        let gate_id = Uuid::parse_str("dddddddd-dddd-dddd-dddd-dddddddddddd").expect("gate uuid");
+        let result_refs = serde_json::json!({
+            "child": {
+                "agent_id": child_agent_id,
+                "delivery_runtime_session_id": "runtime-child-session"
+            },
+            "evidence": [{
+                "kind": "lifecycle_file",
+                "uri": journal_uri,
+                "child_delivery_runtime_session_id": "runtime-child-session"
+            }]
+        });
+        let raw_preview = serde_json::json!({
+            "status": "completed",
+            "summary": "done",
+            "result_refs": result_refs,
+            "child_session_id": "runtime-child-session"
+        });
+        let preview = super::agent_visible_json_preview(&raw_preview, 2_000);
+        let result = companion_subagent_agent_tool_result(visible_subagent_result_fixture(
+            "completed",
+            true,
+            Some(gate_id),
+            journal_uri,
+            Some(&preview),
+            Some(&result_refs),
+        ));
+
+        assert_result_hides_runtime_session_refs(&result);
+        assert_result_retains_child_agent_and_journal(&result, child_agent_id, journal_uri);
+        assert_eq!(
+            result.details.as_ref().expect("details")["status"],
+            serde_json::json!("completed")
+        );
+        assert_eq!(
+            result.details.as_ref().expect("details")["child"]["gate_id"],
+            serde_json::json!(gate_id.to_string())
+        );
+    }
+
+    #[test]
+    fn companion_subagent_wait_timeout_result_hides_runtime_session_refs() {
+        let child_agent_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let journal_uri =
+            "lifecycle://agent-runs/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/sessions/messages";
+        let gate_id = Uuid::parse_str("dddddddd-dddd-dddd-dddd-dddddddddddd").expect("gate uuid");
+        let result_refs = serde_json::json!({
+            "child_agent_id": child_agent_id,
+            "journal_uri": journal_uri,
+            "runtime_session_id": "runtime-child-session",
+            "delivery_runtime_session_id": "runtime-child-session",
+        });
+        let result = companion_subagent_agent_tool_result(visible_subagent_result_fixture(
+            "timed_out",
+            true,
+            Some(gate_id),
+            journal_uri,
+            None,
+            Some(&result_refs),
+        ));
+
+        assert_result_hides_runtime_session_refs(&result);
+        assert_result_retains_child_agent_and_journal(&result, child_agent_id, journal_uri);
+        assert_eq!(
+            result.details.as_ref().expect("details")["timed_out"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn companion_human_wait_timeout_result_hides_runtime_session_ref() {
+        let agent_id = Uuid::parse_str("77777777-7777-7777-7777-777777777777").expect("agent uuid");
+        let frame_id = Uuid::parse_str("88888888-8888-8888-8888-888888888888").expect("frame uuid");
+        let gate_id = Uuid::parse_str("99999999-9999-9999-9999-999999999999").expect("gate uuid");
+        let result = companion_human_wait_agent_tool_result(CompanionHumanWaitVisibleResult {
+            request_id: "human-request-1",
+            gate_id,
+            agent_id,
+            frame_id,
+            status: "timed_out",
+            summary: "等待用户回应超时",
+            timed_out: true,
+            response_preview: None,
+        });
+
+        assert_result_hides_runtime_session_refs(&result);
+        let details = result.details.as_ref().expect("details");
+        assert_eq!(
+            details["kind"],
+            serde_json::json!("companion_human_request")
+        );
+        assert_eq!(
+            details["agent"]["journal"]["uri"],
+            serde_json::json!(child_messages_uri(agent_id))
+        );
+        assert_eq!(details["timed_out"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn companion_human_wait_completed_result_hides_runtime_session_ref() {
+        let agent_id = Uuid::parse_str("77777777-7777-7777-7777-777777777777").expect("agent uuid");
+        let frame_id = Uuid::parse_str("88888888-8888-8888-8888-888888888888").expect("frame uuid");
+        let gate_id = Uuid::parse_str("99999999-9999-9999-9999-999999999999").expect("gate uuid");
+        let raw_response = serde_json::json!({
+            "status": "completed",
+            "summary": "approved",
+            "delivery_runtime_session_id": "runtime-child-session",
+            "parent_session_id": "parent-session",
+            "result_refs": {
+                "parent_delivery_runtime_session_id": "runtime-parent-session",
+                "child_session_id": "child-session"
+            }
+        });
+        let response_preview = super::agent_visible_json_preview(&raw_response, 2_000);
+        let result = companion_human_wait_agent_tool_result(CompanionHumanWaitVisibleResult {
+            request_id: "human-request-1",
+            gate_id,
+            agent_id,
+            frame_id,
+            status: "completed",
+            summary: "approved",
+            timed_out: false,
+            response_preview: Some(&response_preview),
+        });
+
+        assert_result_hides_runtime_session_refs(&result);
+        let details = result.details.as_ref().expect("details");
+        assert_eq!(details["status"], serde_json::json!("completed"));
+        assert!(
+            details["response_preview"]
+                .as_str()
+                .expect("response preview")
+                .contains("approved")
         );
     }
 

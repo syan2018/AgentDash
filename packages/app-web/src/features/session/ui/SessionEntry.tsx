@@ -51,10 +51,12 @@ import { projectDiagnosticDetails, projectDiagnosticText } from "./boundedDiagno
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CodexErrorInfo, ErrorNotification } from "../../../generated/backbone-protocol";
+import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 
 export interface SessionEntryProps {
   item: SessionDisplayItem;
   agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   isStreaming?: boolean;
   /** 该条目后面是否紧跟 agent message（用于 tool group 自动折叠） */
   followedByMessage?: boolean;
@@ -63,6 +65,7 @@ export interface SessionEntryProps {
 export const SessionEntry = memo(function SessionEntry({
   item,
   agentRunTarget,
+  companionSubagents,
   isStreaming,
   followedByMessage,
 }: SessionEntryProps) {
@@ -71,6 +74,7 @@ export const SessionEntry = memo(function SessionEntry({
       <AggregatedToolGroupEntry
         group={item}
         agentRunTarget={agentRunTarget}
+        companionSubagents={companionSubagents}
         followedByMessage={followedByMessage}
       />
     );
@@ -91,6 +95,7 @@ export const SessionEntry = memo(function SessionEntry({
         <AggregatedToolGroupEntry
           group={singleToolGroup(item)}
           agentRunTarget={agentRunTarget}
+          companionSubagents={companionSubagents}
           followedByMessage={followedByMessage}
         />
       );
@@ -99,6 +104,7 @@ export const SessionEntry = memo(function SessionEntry({
       <SingleEntry
         entry={item}
         agentRunTarget={agentRunTarget}
+        companionSubagents={companionSubagents}
         isStreaming={!!isStreaming}
       />
     );
@@ -110,10 +116,12 @@ export const SessionEntry = memo(function SessionEntry({
 export function SingleEntry({
   entry,
   agentRunTarget,
+  companionSubagents,
   isStreaming = false,
 }: {
   entry: SessionDisplayEntry;
   agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   isStreaming?: boolean;
 }) {
   const { event, isPendingApproval, accumulatedText } = entry;
@@ -147,6 +155,8 @@ export function SingleEntry({
       const card = renderToolCallCard(threadItem, {
         sessionId: entry.sessionId,
         outputText: accumulatedText,
+        agentRunTarget,
+        companionSubagents,
       });
       return (
         <ToolCallCardShell
@@ -335,10 +345,12 @@ function AggregatedContextFrameGroupEntry({
 function AggregatedToolGroupEntry({
   group,
   agentRunTarget,
+  companionSubagents,
   followedByMessage = false,
 }: {
   group: AggregatedEntryGroup;
   agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   /** 后续有 agent message 时自动折叠 */
   followedByMessage?: boolean;
 }) {
@@ -386,6 +398,7 @@ function AggregatedToolGroupEntry({
               key={entry.id}
               entry={entry}
               agentRunTarget={agentRunTarget}
+              companionSubagents={companionSubagents}
             />
           ))}
         </div>

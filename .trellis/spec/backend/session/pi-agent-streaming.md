@@ -41,6 +41,12 @@
 - `AgentEvent::ToolExecutionUpdate` 表示工具执行阶段的输出/进度更新，不能作为工具输入
   生成阶段的事实源。shell 输出继续映射为 `CommandOutputDelta`，普通工具输出继续更新
   同一 `dynamicToolCall.contentItems`。
+- `companion_request target=sub` 的 `AgentToolResult.details.kind="companion_subagent_dispatch"`
+  是前端 subagent 卡片的结构化状态来源。`stream_mapper` 在保留有界正文 content item 的同时，
+  需要追加一个机器可读 JSON `inputText` content item，形如
+  `{"details":{"kind":"companion_subagent_dispatch", ...}}`，原因是 child agent id、journal ref、
+  wait/completed/timed_out 状态和 `result_preview` 必须随 `ToolExecutionUpdate` 与
+  `ToolExecutionEnd` 同步进入 Backbone，卡片才能从 pending 衔接到可跳转、可展示结果的状态。
 - `ToolCallResult` 完成映射为 `BackboneEvent::ItemCompleted`；
 - `ToolCallEmitState` 追踪每个 `tool_call_id` 的 `entry_index` 和元数据。
 - PiAgent 进入 `ToolExecutionEnd`、`ToolExecutionUpdate` 和 `AgentMessage::ToolResult`

@@ -6,6 +6,7 @@ import { SessionProjectionView } from "./SessionProjectionView";
 import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import type {
   useExecutorConfig,
   useExecutorDiscoveredOptions,
@@ -235,6 +236,7 @@ export function SessionChatStream({
   displayItems,
   turnSegments,
   agentRunTarget,
+  companionSubagents,
   hasRuntimeStreamTarget,
   isLoading,
   streamingEntryId,
@@ -246,6 +248,7 @@ export function SessionChatStream({
   displayItems: SessionDisplayItem[];
   turnSegments?: TurnSegment[];
   agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   hasRuntimeStreamTarget: boolean;
   isLoading: boolean;
   streamingEntryId: string | null;
@@ -271,6 +274,7 @@ export function SessionChatStream({
                 key={segment.turnId ?? `gap-${idx}`}
                 segment={segment}
                 agentRunTarget={agentRunTarget}
+                companionSubagents={companionSubagents}
                 streamingEntryId={streamingEntryId}
                 onForkFromMessageRef={onForkFromMessageRef}
               />
@@ -284,6 +288,7 @@ export function SessionChatStream({
                   <SessionEntry
                     item={item}
                     agentRunTarget={agentRunTarget}
+                    companionSubagents={companionSubagents}
                     isStreaming={key === streamingEntryId}
                     followedByMessage={followed}
                   />
@@ -394,11 +399,13 @@ function useActiveTurnElapsedMs(startedAtMs: number | undefined, active: boolean
 function TurnSection({
   segment,
   agentRunTarget,
+  companionSubagents,
   streamingEntryId,
   onForkFromMessageRef,
 }: {
   segment: TurnSegment;
   agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   streamingEntryId: string | null;
   onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
@@ -442,6 +449,7 @@ function TurnSection({
               <SessionEntry
                 item={item}
                 agentRunTarget={agentRunTarget}
+                companionSubagents={companionSubagents}
                 isStreaming={key === streamingEntryId}
                 followedByMessage={followed}
               />
@@ -472,6 +480,7 @@ function TurnSection({
         <SessionEntry
           item={segment.finalOutput}
           agentRunTarget={agentRunTarget}
+          companionSubagents={companionSubagents}
           isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
         />
       )}

@@ -17,7 +17,11 @@ import { InlineBackendSelector, type InlineBackendOption } from "../features/ses
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
-import { refreshAgentRunListState } from "../features/agent/agent-run-list-state-store";
+import {
+  refreshAgentRunListState,
+  useAgentRunListState,
+} from "../features/agent/agent-run-list-state-store";
+import type { CompanionSubagentKnownAgentRef } from "../features/session/model/companionSubagentDispatch";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -39,6 +43,8 @@ import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
   AgentRunWorkspaceView,
+  AgentRunListChild,
+  AgentRunWorkspaceListEntry,
   SubjectRunContext,
   ProjectAgentSummary,
   ProjectAgentRunStartResult,
@@ -66,6 +72,36 @@ function backendDisplayLabel(backend: BackendConfig): string {
     || backend.machine_label?.trim()
     || machineLabelFromDevice(backend.device)
     || "未命名 Backend";
+}
+
+function collectCompanionSubagentRefs(
+  entries: AgentRunWorkspaceListEntry[],
+  currentRunId: string | null,
+): CompanionSubagentKnownAgentRef[] {
+  const refs: CompanionSubagentKnownAgentRef[] = [];
+  for (const entry of entries) {
+    if (currentRunId && entry.run_ref.run_id !== currentRunId) continue;
+    for (const child of entry.children) {
+      appendCompanionSubagentRef(refs, child);
+    }
+  }
+  return refs;
+}
+
+function appendCompanionSubagentRef(
+  refs: CompanionSubagentKnownAgentRef[],
+  child: AgentRunListChild,
+): void {
+  refs.push({
+    run_id: child.run_ref.run_id,
+    agent_id: child.agent_ref.agent_id,
+    display_title: child.shell.display_title,
+    delivery_status: child.shell.delivery_status,
+    last_activity_at: child.shell.last_activity_at,
+  });
+  for (const nested of child.children) {
+    appendCompanionSubagentRef(refs, nested);
+  }
 }
 
 export function AgentRunWorkspacePage({
@@ -259,6 +295,11 @@ export function AgentRunWorkspacePage({
       ? (ownerProject?.name?.trim() || "")
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
+  const agentRunListState = useAgentRunListState(ownerProjectId);
+  const companionSubagents = useMemo(
+    () => collectCompanionSubagentRefs(agentRunListState.entries, currentRunId),
+    [agentRunListState.entries, currentRunId],
+  );
   const refreshAgentRunList = useCallback((reason: string) => {
     refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, reason);
   }, [draftProjectIdValue, ownerProjectId]);
@@ -465,8 +506,9 @@ export function AgentRunWorkspacePage({
   const chatModel = useMemo(() => ({
     ...controlPlaneChatModel,
     agentRunTarget: agentRunRuntimeTarget,
+    companionSubagents,
     workspaceId: chatWorkspaceId,
-  }), [agentRunRuntimeTarget, chatWorkspaceId, controlPlaneChatModel]);
+  }), [agentRunRuntimeTarget, chatWorkspaceId, companionSubagents, controlPlaneChatModel]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;

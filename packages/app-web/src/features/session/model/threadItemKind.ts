@@ -10,6 +10,7 @@
  */
 import type { AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { isTerminalReadOperation } from "./terminalItemMeta";
+import { isCompanionSubagentDispatchItem } from "./companionSubagentDispatch";
 
 export type ThreadItemKind =
   | "execute"
@@ -80,6 +81,10 @@ export const KIND_REGISTRY: Record<ThreadItemKind, KindMeta> = {
  * ActionType 还原到对应 ThreadItem variant 时也能给出体面的 badge 与 label。
  */
 export function resolveKind(item: AgentDashThreadItem): KindMeta {
+  if (isCompanionSubagentDispatchItem(item)) {
+    return KIND_REGISTRY.collab;
+  }
+
   switch (item.type) {
     case "commandExecution": {
       const agg = item.aggregatedOutput;
@@ -148,6 +153,10 @@ export function resolveDynamicToolMeta(tool: string): DynamicToolMeta {
 }
 
 export function isToolBurstEligible(item: AgentDashThreadItem): boolean {
+  if (isCompanionSubagentDispatchItem(item)) {
+    return false;
+  }
+
   switch (item.type) {
     case "commandExecution":
     case "shellExec":

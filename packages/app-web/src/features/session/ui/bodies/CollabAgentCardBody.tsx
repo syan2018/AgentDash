@@ -3,11 +3,18 @@
  */
 
 import type { ThreadItem } from "../../../../generated/backbone-protocol";
+import { useDebugPrefs } from "../../../../hooks/use-debug-prefs";
 import { CB } from "./cardBodyTokens";
 
 type CollabItem = Extract<ThreadItem, { type: "collabAgentToolCall" }>;
 
 export function CollabAgentCardBody({ item }: { item: CollabItem }) {
+  const { prefs } = useDebugPrefs();
+  const rawProtocol = {
+    sender_thread_id: item.senderThreadId,
+    receiver_thread_ids: item.receiverThreadIds,
+  };
+
   return (
     <div className={`${CB.sectionGap} text-xs`}>
       <div className="flex gap-4">
@@ -32,16 +39,12 @@ export function CollabAgentCardBody({ item }: { item: CollabItem }) {
           <p className="font-mono text-foreground/80">{item.model}</p>
         </div>
       )}
-      {item.receiverThreadIds.length > 0 && (
+      {prefs.hookVerbose && item.receiverThreadIds.length > 0 && (
         <div>
-          <p className={`mb-0.5 ${CB.sectionTitle}`}>目标线程</p>
-          <div className="flex flex-wrap gap-1">
-            {item.receiverThreadIds.map((tid) => (
-              <span key={tid} className={`${CB.kindBadge} font-mono`}>
-                {tid.slice(0, 8)}
-              </span>
-            ))}
-          </div>
+          <p className={`mb-1 ${CB.sectionTitle}`}>Raw protocol</p>
+          <pre className={`${CB.codeBlock} max-h-40 overflow-auto whitespace-pre-wrap break-words`}>
+            {JSON.stringify(rawProtocol, null, 2)}
+          </pre>
         </div>
       )}
     </div>

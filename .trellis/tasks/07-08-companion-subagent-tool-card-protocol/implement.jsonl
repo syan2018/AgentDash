@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端解析 collabAgentToolCall 与 Companion dynamic tool 时必须以 generated wire DTO 为事实源，只在 UI view model 层做语义转换。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增 Companion subagent dispatch 卡片需要遵守 session tool card 组件分层和 UI primitive 约束。"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "卡片状态、按钮、badge、跳转操作需要沿用现有设计 token 和紧凑工具界面语言。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "工具结果、Backbone item、generated contract 与前端解析策略跨越后端和前端，需要保持 wire DTO 与 view model 分层。"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "delivery runtime session id 属于内部 runtime/delivery 状态坐标，工具结果收敛必须遵守 runtime execution state 边界。"}

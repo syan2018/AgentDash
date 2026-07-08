@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端没有手写或重声明 wire DTO，Companion parser 只输出 UI view model。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查新增卡片没有破坏 session entry / tool card 分层，也没有把 raw protocol 字段默认展示为业务字段。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查后端返回、generated DTO、前端消费和测试覆盖保持同一跨层合同。"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查 delivery runtime session id 没有进入 Agent 可见工具 result、普通 UI 或模型可消费 payload。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨后端、协议、前端、runtime projection 的数据流和事实源是否一致。"}

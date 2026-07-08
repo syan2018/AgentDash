@@ -34,6 +34,36 @@ describe("threadItemKind", () => {
     expect(isToolBurstEligible(item)).toBe(true);
   });
 
+  it("keeps Companion subagent dispatch visible outside tool burst", () => {
+    const item: AgentDashThreadItem = {
+      type: "dynamicToolCall",
+      id: "tool-subagent",
+      namespace: null,
+      tool: "companion_request",
+      arguments: {
+        target: "sub",
+        payload: { agent_key: "reviewer" },
+      },
+      status: "completed",
+      contentItems: [
+        {
+          type: "inputText",
+          text: JSON.stringify({
+            details: {
+              kind: "companion_subagent_dispatch",
+              child: { agent_id: "agent-child" },
+            },
+          }),
+        },
+      ],
+      success: true,
+      durationMs: null,
+    };
+
+    expect(resolveKind(item).kind).toBe("collab");
+    expect(isToolBurstEligible(item)).toBe(false);
+  });
+
   it("resolves dynamic tool families from one metadata source", () => {
     expect(resolveDynamicToolMeta("Read")).toMatchObject({
       kind: expect.objectContaining({ kind: "read" }),

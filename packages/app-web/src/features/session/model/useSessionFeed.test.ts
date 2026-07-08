@@ -130,6 +130,44 @@ function mkDynamicToolEntry(id: string, tool: string): SessionDisplayEntry {
   return asEntry(id, event);
 }
 
+function mkCompanionSubagentEntry(id: string): SessionDisplayEntry {
+  const item = {
+    type: "dynamicToolCall",
+    id,
+    tool: "companion_request",
+    status: "completed",
+    arguments: {
+      target: "sub",
+      payload: {
+        agent_key: "reviewer",
+        message: "Review this change",
+      },
+    },
+    contentItems: [
+      {
+        type: "inputText",
+        text: JSON.stringify({
+          details: {
+            kind: "companion_subagent_dispatch",
+            child: { agent_id: "agent-child" },
+            journal: { uri: "lifecycle://agent-runs/agent-child/sessions/messages" },
+            status: "running",
+            summary: "Reviewer launched",
+          },
+        }),
+      },
+    ],
+    durationMs: null,
+    success: true,
+    namespace: null,
+  } as unknown as ThreadItem;
+  const event: BackboneEvent = {
+    type: "item_completed",
+    payload: { item, threadId: "t1", turnId: "u1", completedAtMs: 0 },
+  };
+  return asEntry(id, event);
+}
+
 function mkMessageEntry(id: string, text: string): SessionDisplayEntry {
   const event: BackboneEvent = {
     type: "agent_message_delta",
@@ -479,6 +517,21 @@ describe("aggregateEntries — tool burst", () => {
     expect(result).toHaveLength(1);
     expect(isToolGroup(result[0])).toBe(true);
     expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["companion"]);
+  });
+
+  it("keeps Companion subagent dispatch out of ordinary tool bursts", () => {
+    const entries = [
+      mkCmdEntry("c1", "ls"),
+      mkCompanionSubagentEntry("subagent-1"),
+      mkCmdEntry("c2", "pwd"),
+    ];
+
+    const result = aggregateEntries(entries);
+
+    expect(result).toHaveLength(3);
+    expect(isToolGroup(result[0])).toBe(true);
+    expect((result[1] as SessionDisplayEntry).id).toBe("subagent-1");
+    expect(isToolGroup(result[2])).toBe(true);
   });
 
   it("T5: turn boundaries are neutral, so tool bursts can span provider turns", () => {

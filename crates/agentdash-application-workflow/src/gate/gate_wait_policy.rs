@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_control_effect::RuntimeTerminalDiagnostic;
+use agentdash_application_ports::agent_run_control_effect::{
+    ProducerLastMessageEvidence, RuntimeTerminalDiagnostic,
+};
 use agentdash_domain::workflow::{
     AgentRunDeliveryBindingRepository, GateWaitPolicyEnvelope, LifecycleGate,
     LifecycleGateRepository, WaitProducerRef,
@@ -21,6 +23,7 @@ pub struct GateProducerTerminalEvent {
     pub terminal_state: String,
     pub terminal_message: Option<String>,
     pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
+    pub producer_last_message: Option<ProducerLastMessageEvidence>,
     pub source_turn_id: Option<String>,
     pub trace_ref: Option<String>,
 }
@@ -224,6 +227,12 @@ fn producer_terminal_result_payload(
         .terminal_diagnostic
         .as_ref()
         .map(diagnostic_summary)
+        .or_else(|| {
+            event
+                .producer_last_message
+                .as_ref()
+                .map(|message| message.summary.clone())
+        })
         .unwrap_or_else(|| {
             "Producer reached terminal before the expected result was written.".to_string()
         });
@@ -247,6 +256,7 @@ fn producer_terminal_result_payload(
         "terminal_state": event.terminal_state,
         "terminal_message": event.terminal_message,
         "diagnostic": event.terminal_diagnostic,
+        "fallback_message": event.producer_last_message,
         "delivery_trace_ref": event.trace_ref,
         "resolved_turn_id": event.source_turn_id,
         "failure_kind": terminal_outcome.failure_kind,
@@ -586,6 +596,7 @@ mod tests {
             terminal_state: terminal_state.to_string(),
             terminal_message: None,
             terminal_diagnostic: None,
+            producer_last_message: None,
             source_turn_id: Some("child-turn".to_string()),
             trace_ref: Some("child-session".to_string()),
         }
@@ -735,6 +746,106 @@ mod tests {
         assert_eq!(payload["diagnostic"]["provider"], json!("Example LLM"));
         assert_eq!(payload["diagnostic"]["model"], json!("example-chat-large"));
         assert_eq!(payload["diagnostic"]["retryable"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn producer_terminal_payload_uses_last_agent_message_when_no_diagnostic() {
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
+        let gate = open_companion_gate(
+            run_id,
+            parent_agent_id,
+            child_agent_id,
+            child_frame_id,
+            json!({ "preview": "review requested" }),
+        );
+        let (gate_repo, service) = service_fixture(&gate, run_id, parent_agent_id).await;
+        let mut event = terminal_event(run_id, child_agent_id, child_frame_id, "completed");
+        event.producer_last_message = Some(ProducerLastMessageEvidence {
+            summary: "我已经完成 review，但忘记调用 companion_respond。".to_string(),
+            message_path: "session/messages/0002__msg-agent__agent__review.md".to_string(),
+            messages_index_path: "session/messages".to_string(),
+            events_path: "session/events.json".to_string(),
+            journal_session_id: format!("agentrun:{run_id}:{child_agent_id}"),
+            source_event_seq: 42,
+        });
+
+        let result = service
+            .observe_producer_terminal(event)
+            .await
+            .expect("terminal convergence");
+        assert_eq!(result.outcomes.len(), 1);
+
+        let stored = gate_repo
+            .get(gate.id)
+            .await
+            .expect("load gate")
+            .expect("gate");
+        let payload = stored.payload_json.as_ref().expect("payload");
+        assert_eq!(
+            payload["summary"],
+            json!("我已经完成 review，但忘记调用 companion_respond。")
+        );
+        assert_eq!(payload["failure_kind"], json!("missing_companion_respond"));
+        assert_eq!(payload["source"], json!("producer_terminal"));
+        assert_eq!(
+            payload["fallback_message"]["message_path"],
+            json!("session/messages/0002__msg-agent__agent__review.md")
+        );
+        assert_eq!(payload["fallback_message"]["source_event_seq"], json!(42));
+    }
+
+    #[tokio::test]
+    async fn producer_terminal_diagnostic_summary_wins_over_last_agent_message() {
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+        let child_frame_id = Uuid::new_v4();
+        let gate = open_companion_gate(
+            run_id,
+            parent_agent_id,
+            child_agent_id,
+            child_frame_id,
+            json!({ "preview": "review requested" }),
+        );
+        let (gate_repo, service) = service_fixture(&gate, run_id, parent_agent_id).await;
+        let mut event = terminal_event(run_id, child_agent_id, child_frame_id, "failed");
+        event.terminal_diagnostic = Some(RuntimeTerminalDiagnostic {
+            kind: "provider".to_string(),
+            code: Some("rate_limit".to_string()),
+            http_status: Some(429),
+            provider: Some("Example LLM".to_string()),
+            model: None,
+            message: "too many requests".to_string(),
+            retryable: true,
+        });
+        event.producer_last_message = Some(ProducerLastMessageEvidence {
+            summary: "这条不应该成为顶层 summary。".to_string(),
+            message_path: "session/messages/0002__msg-agent__agent__ignored.md".to_string(),
+            messages_index_path: "session/messages".to_string(),
+            events_path: "session/events.json".to_string(),
+            journal_session_id: format!("agentrun:{run_id}:{child_agent_id}"),
+            source_event_seq: 8,
+        });
+
+        service
+            .observe_producer_terminal(event)
+            .await
+            .expect("terminal convergence");
+
+        let stored = gate_repo
+            .get(gate.id)
+            .await
+            .expect("load gate")
+            .expect("gate");
+        let payload = stored.payload_json.as_ref().expect("payload");
+        assert_eq!(
+            payload["summary"],
+            json!("Example LLM returned 429 rate_limit: too many requests")
+        );
+        assert_eq!(payload["fallback_message"]["source_event_seq"], json!(8));
     }
 
     #[tokio::test]

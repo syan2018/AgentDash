@@ -382,6 +382,7 @@ impl AgentRunControlEffectService {
             terminal_state: input.terminal_state.clone(),
             terminal_message: input.terminal_message.clone(),
             terminal_diagnostic: input.terminal_diagnostic.clone(),
+            producer_last_message: None,
             source_turn_id: Some(input.turn_id.clone()),
             delivery_trace_ref: Some(input.delivery_runtime_session_id.clone()),
         };

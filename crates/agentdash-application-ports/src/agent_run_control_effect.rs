@@ -110,8 +110,20 @@ pub struct AgentRunWaitProducerTerminalEvent {
     pub terminal_state: String,
     pub terminal_message: Option<String>,
     pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
+    pub producer_last_message: Option<ProducerLastMessageEvidence>,
     pub source_turn_id: Option<String>,
     pub delivery_trace_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProducerLastMessageEvidence {
+    pub summary: String,
+    pub message_path: String,
+    pub messages_index_path: String,
+    pub events_path: String,
+    pub journal_session_id: String,
+    pub source_event_seq: u64,
 }
 
 #[async_trait]

@@ -419,6 +419,7 @@ async fn producer_terminal_event_for_gate_wait_policy(
                     .terminal_diagnostic
                     .clone()
                     .and_then(|value| serde_json::from_value(value).ok()),
+                producer_last_message: None,
                 source_turn_id: binding.last_turn_id.clone(),
                 trace_ref: Some(binding.runtime_session_id.clone()),
             }))

@@ -548,6 +548,7 @@ pub struct ClaimAgentRunControlEffectsRequest {
     pub lease_duration_ms: i64,
     pub limit: u32,
     pub dedup_keys: Option<Vec<String>>,
+    pub effect_kinds: Option<Vec<AgentRunControlEffectKind>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

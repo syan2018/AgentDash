@@ -35,6 +35,9 @@ use super::transcript_restore::build_raw_projected_transcript_from_events;
 
 const SESSION_EVENT_APPEND_GUARD_MAX_BYTES: usize = 256 * 1024;
 const SESSION_EVENT_APPEND_GUARD_FIELD_REPLACEMENT_MAX_BYTES: usize = 16 * 1024;
+const SESSION_EVENT_APPEND_GUARD_MAX_JSON_DEPTH: usize = 64;
+const SESSION_EVENT_APPEND_GUARD_MAX_JSON_NODES: usize = 4096;
+const SESSION_EVENT_APPEND_GUARD_MAX_FIELD_PATH_KEY_CHARS: usize = 96;
 const SESSION_EVENT_APPEND_GUARD_POLICY: &str = "drop_known_output_fields_v1";
 
 /// 进程级 ephemeral epoch：本进程启动时确定一次（启动毫秒）。
@@ -1688,6 +1691,29 @@ fn replace_json_string_leaves(
     envelope_original_bytes: usize,
     field_path: &str,
 ) -> usize {
+    let mut remaining_nodes = SESSION_EVENT_APPEND_GUARD_MAX_JSON_NODES;
+    replace_json_string_leaves_bounded(
+        value,
+        envelope_original_bytes,
+        field_path,
+        0,
+        &mut remaining_nodes,
+    )
+}
+
+fn replace_json_string_leaves_bounded(
+    value: &mut serde_json::Value,
+    envelope_original_bytes: usize,
+    field_path: &str,
+    depth: usize,
+    remaining_nodes: &mut usize,
+) -> usize {
+    if depth >= SESSION_EVENT_APPEND_GUARD_MAX_JSON_DEPTH || *remaining_nodes == 0 {
+        *value = append_guard_diagnostic_value(field_path, envelope_original_bytes, 0);
+        return 1;
+    }
+    *remaining_nodes = remaining_nodes.saturating_sub(1);
+
     match value {
         serde_json::Value::String(text) => {
             replace_if_large(text, envelope_original_bytes, field_path)
@@ -1696,24 +1722,41 @@ fn replace_json_string_leaves(
             .iter_mut()
             .enumerate()
             .map(|(index, item)| {
-                replace_json_string_leaves(
+                replace_json_string_leaves_bounded(
                     item,
                     envelope_original_bytes,
                     &format!("{field_path}[{index}]"),
+                    depth + 1,
+                    remaining_nodes,
                 )
             })
             .sum(),
         serde_json::Value::Object(map) => map
             .iter_mut()
             .map(|(key, item)| {
-                replace_json_string_leaves(
+                replace_json_string_leaves_bounded(
                     item,
                     envelope_original_bytes,
-                    &format!("{field_path}.{key}"),
+                    &format!("{field_path}.{}", bounded_append_guard_field_path_key(key)),
+                    depth + 1,
+                    remaining_nodes,
                 )
             })
             .sum(),
         _ => 0,
+    }
+}
+
+fn bounded_append_guard_field_path_key(key: &str) -> String {
+    let mut chars = key.chars();
+    let preview = chars
+        .by_ref()
+        .take(SESSION_EVENT_APPEND_GUARD_MAX_FIELD_PATH_KEY_CHARS)
+        .collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        key.to_string()
     }
 }
 
@@ -2861,6 +2904,21 @@ mod tests {
             serde_json::to_string(&backlog.backlog[0].notification).expect("serialize backlog");
         assert!(!backlog_json.contains(sentinel));
         assert!(backlog_json.contains("session_eventing_append_guard"));
+    }
+
+    #[test]
+    fn append_guard_json_leaf_scan_is_depth_bounded() {
+        let mut deep = serde_json::json!("leaf");
+        for _ in 0..128 {
+            deep = serde_json::json!([deep]);
+        }
+
+        let truncated = replace_json_string_leaves(&mut deep, 512, "root");
+        let rendered = serde_json::to_string(&deep).expect("serialize bounded json");
+
+        assert_eq!(truncated, 1);
+        assert!(rendered.contains("session_eventing_append_guard"));
+        assert!(rendered.contains("root"));
     }
 
     #[tokio::test]

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "检查修复是否仍满足 terminal event 先持久化、control-effect outbox 负责副作用和重试的契约。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查启动恢复、mailbox wake 与 session launch 是否保持清晰阶段边界。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查任何 outbox claim、lease 或 schema 修改是否有正确 migration 与 repository 测试。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端错误处理、诊断字段、测试覆盖和代码质量是否符合项目要求。"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "检查启动恢复与 replay 诊断日志是否有足够定位字段且不泄漏敏感信息。"}

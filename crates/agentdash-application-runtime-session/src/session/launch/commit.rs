@@ -285,6 +285,7 @@ impl TurnCommitter {
                 terminal_kind: TurnTerminalKind::Failed,
                 terminal_message: Some(error_message.clone()),
                 terminal_diagnostic: None,
+                effect_mode: agentdash_application_ports::agent_run_control_effect::AgentRunTerminalControlEffectMode::ImmediateAll,
                 hook_runtime: prepared.hook_runtime.clone(),
                 post_turn_handler: prepared.post_turn_handler.clone(),
             },

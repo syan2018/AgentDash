@@ -386,6 +386,7 @@ impl AppState {
             ));
             let deps = agentdash_application::reconcile::boot::BootReconcileDeps {
                 session_runtime: session_runtime.clone(),
+                agent_run_control_effect_replay: Arc::new(agent_run_control_effects.clone()),
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),

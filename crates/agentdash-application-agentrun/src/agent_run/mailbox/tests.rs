@@ -463,6 +463,35 @@ async fn hook_auto_resume_effect_uses_terminal_effect_identity_for_wake_dedup() 
 }
 
 #[tokio::test]
+async fn hook_auto_resume_rejects_stale_running_binding_for_terminal_runtime_session() {
+    let fixture = MailboxSteeringFixture::new(false).await;
+    *fixture.core.state.lock().await = SessionExecutionState::Interrupted {
+        turn_id: Some(fixture.active_turn_id.clone()),
+        message: Some("startup recovery".to_string()),
+    };
+
+    let error = fixture
+        .service()
+        .accept_hook_auto_resume_effect(
+            &fixture.delivery_runtime_session_id,
+            Uuid::new_v4(),
+            "terminal-turn-1".to_string(),
+            42,
+            text_user_input_blocks("resume after exec completion"),
+        )
+        .await
+        .expect_err("stale running binding must not wake terminal runtime");
+
+    assert!(matches!(error, WorkflowApplicationError::Conflict(_)));
+    let messages = fixture
+        .mailbox
+        .list_messages(fixture.run.id, fixture.agent.id)
+        .await
+        .expect("list messages");
+    assert!(messages.is_empty());
+}
+
+#[tokio::test]
 async fn mailbox_steering_event_projection_failure_is_consistent() {
     let delegate = MailboxSteeringFixture::new(true).await;
     let delegate_message = delegate

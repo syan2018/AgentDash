@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "定义 RuntimeSession terminal boundary、AgentRun control-effect outbox 与启动恢复补偿的事实源契约。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "定义 session launch / terminal pipeline 与启动主线边界，修复 replay 与 launch 交错时必须保持该 pipeline 的事实顺序。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "定义 RuntimeSession 与 AgentRun delivery/control-plane 的职责分离，避免将 RuntimeSession meta 重新作为用户可见运行态事实源。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "如 control-effect outbox claim/schema 需要调整，必须遵守 migration 与 PostgreSQL repository 契约。"}
+{"file": ".trellis/tasks/archive/2026-06/06-15-agentrun-startup-architecture-convergence/research/startup-failure-evidence.md", "reason": "历史启动栈溢出事故证据，记录 AgentRun mailbox / launch / runtime tools 交错导致半成品状态的先例。"}

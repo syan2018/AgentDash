@@ -2,11 +2,15 @@ use super::payload::{
     agent_message_to_user_input_blocks, build_input_preview, input_has_images, serialization_error,
 };
 use super::policy::user_message_policy;
-use super::target::{ResolvedAgentRunMailboxCommandTarget, base_refs};
+use super::target::{
+    ResolvedAgentRunMailboxCommandTarget, base_refs, workflow_error_from_delivery_selection_error,
+};
 use super::*;
+use crate::agent_run::DeliveryRuntimeSelection;
 use agentdash_application_ports::launch::{
     BackendSelectionInput, BackendSelectionInputMode, LaunchPlanningInput,
 };
+use agentdash_domain::workflow::DeliveryBindingStatus;
 
 impl<'a> AgentRunMailboxService<'a> {
     pub async fn accept_user_message(
@@ -346,6 +350,17 @@ impl<'a> AgentRunMailboxService<'a> {
         let (run, agent, _) = self
             .resolve_control_plane_for_delivery(runtime_session_id)
             .await?;
+        let delivery = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
+            lifecycle_runs: self.lifecycle_run_repo,
+            lifecycle_agents: self.lifecycle_agent_repo,
+            agent_frames: self.agent_frame_repo,
+            execution_anchors: self.execution_anchor_repo,
+            delivery_bindings: self.delivery_binding_repo,
+        })
+        .select_current_delivery(run.id, agent.id)
+        .await
+        .map_err(workflow_error_from_delivery_selection_error)?;
+        guard_mailbox_target_runtime_state(&self.session_core, &delivery).await?;
         let payload_json =
             serde_json::to_value(&input).map_err(serialization_error("hook auto-resume input"))?;
         let correlation_ref = format!("{runtime_session_id}:{source_turn_id}:{terminal_event_seq}");
@@ -628,5 +643,33 @@ impl<'a> AgentRunMailboxService<'a> {
                     })
             }
         }
+    }
+}
+
+async fn guard_mailbox_target_runtime_state(
+    session_core: &SessionCoreService,
+    delivery: &DeliveryRuntimeSelection,
+) -> Result<(), WorkflowApplicationError> {
+    let execution_state = session_core
+        .inspect_session_execution_state(&delivery.runtime_session_id)
+        .await?;
+
+    match (delivery.status, execution_state) {
+        (DeliveryBindingStatus::Running, SessionExecutionState::Running { .. })
+        | (DeliveryBindingStatus::Running, SessionExecutionState::Cancelling { .. }) => Ok(()),
+        (DeliveryBindingStatus::Running, state) => {
+            Err(WorkflowApplicationError::Conflict(format!(
+                "mailbox wake target binding is running but RuntimeSession is not active: run_id={}, agent_id={}, runtime_session_id={}, runtime_state={state:?}",
+                delivery.run_id, delivery.agent_id, delivery.runtime_session_id
+            )))
+        }
+        (DeliveryBindingStatus::Terminal, state) if state.is_terminal() => Ok(()),
+        (DeliveryBindingStatus::Terminal, state) => {
+            Err(WorkflowApplicationError::Conflict(format!(
+                "mailbox wake target binding is terminal but RuntimeSession is not terminal: run_id={}, agent_id={}, runtime_session_id={}, runtime_state={state:?}",
+                delivery.run_id, delivery.agent_id, delivery.runtime_session_id
+            )))
+        }
+        (_, _) => Ok(()),
     }
 }

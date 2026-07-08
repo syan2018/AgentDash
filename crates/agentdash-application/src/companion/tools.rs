@@ -16,8 +16,8 @@ use agentdash_domain::channel::{
 use agentdash_domain::workflow::LifecycleGateRepository;
 use agentdash_domain::workflow::{
     ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
-    CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
-    LifecycleTaskPlanItem, RegisterGateResultWaiterRequest,
+    CompleteGateResultParentContinuationRequest, DeliveryBindingStatus, GateResultDeliveryClaim,
+    GateResultDeliveryMarker, LifecycleTaskPlanItem, RegisterGateResultWaiterRequest,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
@@ -58,8 +58,8 @@ use super::{
 use crate::agent_run::{
     AgentFrameRuntimeTarget, AgentRunMailboxCommandOutcome, AgentRunMailboxIntakeCommand,
     AgentRunMailboxService, DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
-    SessionControlService, SessionCoreService, SessionEventingService, SessionLaunchService,
-    mailbox_source_identity_dedup_key,
+    SessionControlService, SessionCoreService, SessionEventingService, SessionExecutionState,
+    SessionLaunchService, mailbox_source_identity_dedup_key,
 };
 use crate::channel::{
     ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
@@ -792,6 +792,11 @@ async fn deliver_companion_mailbox_message(
             input.run_id, input.agent_id, input.runtime_session_id, delivery.runtime_session_id
         )));
     }
+    if let Some(skipped) =
+        guard_companion_mailbox_target_runtime_state(&session_core, &delivery).await?
+    {
+        return Ok(skipped);
+    }
     let channel_intent = companion_channel_delivery_intent(
         input.channel_id,
         input.run_id,
@@ -891,6 +896,50 @@ async fn deliver_companion_mailbox_message(
         accepted_agent_run_turn_id,
         accepted_protocol_turn_id,
     })
+}
+
+async fn guard_companion_mailbox_target_runtime_state(
+    session_core: &SessionCoreService,
+    delivery: &crate::agent_run::DeliveryRuntimeSelection,
+) -> Result<Option<CompanionParentMailboxDeliveryResult>, crate::ApplicationError> {
+    let execution_state = session_core
+        .inspect_session_execution_state(&delivery.runtime_session_id)
+        .await
+        .map_err(|error| crate::ApplicationError::Internal(error.to_string()))?;
+
+    match (delivery.status, execution_state) {
+        (DeliveryBindingStatus::Running, SessionExecutionState::Running { .. })
+        | (DeliveryBindingStatus::Running, SessionExecutionState::Cancelling { .. }) => Ok(None),
+        (DeliveryBindingStatus::Running, state) => Err(crate::ApplicationError::Conflict(format!(
+            "companion mailbox delivery target binding is running but RuntimeSession is not active: run_id={}, agent_id={}, runtime_session_id={}, runtime_state={state:?}",
+            delivery.run_id, delivery.agent_id, delivery.runtime_session_id
+        ))),
+        (DeliveryBindingStatus::Terminal, state) if state.is_terminal() => Ok(Some(
+            skipped_companion_mailbox_delivery_result("skipped_terminal_target"),
+        )),
+        (DeliveryBindingStatus::Terminal, state) => {
+            Err(crate::ApplicationError::Conflict(format!(
+                "companion mailbox delivery target binding is terminal but RuntimeSession is not terminal: run_id={}, agent_id={}, runtime_session_id={}, runtime_state={state:?}",
+                delivery.run_id, delivery.agent_id, delivery.runtime_session_id
+            )))
+        }
+        (_, _) => Ok(None),
+    }
+}
+
+fn skipped_companion_mailbox_delivery_result(
+    outcome: &'static str,
+) -> CompanionParentMailboxDeliveryResult {
+    CompanionParentMailboxDeliveryResult {
+        mailbox_message_id: None,
+        command_receipt_id: None,
+        command_receipt_client_command_id: outcome.to_string(),
+        command_receipt_status: "skipped".to_string(),
+        command_receipt_duplicate: false,
+        outcome: outcome.to_string(),
+        accepted_agent_run_turn_id: None,
+        accepted_protocol_turn_id: None,
+    }
 }
 
 fn marker_delivery_replay_result(
@@ -3289,18 +3338,29 @@ mod companion_tests {
         companion_wake_source, merge_gate_result_refs,
         platform_capability_grant_missing_broker_error, wait_for_lifecycle_gate_resolution,
     };
+    use agentdash_application_agentrun::WorkflowApplicationError;
+    use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
+    use agentdash_application_ports::lifecycle_surface_projection::{
+        MessageStreamProjectionRef, MessageStreamTraceKind,
+    };
     use agentdash_domain::workflow::{
-        GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
+        DeliveryBindingStatus, GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository,
+        RuntimeSessionExecutionAnchor, WaitProducerRef,
     };
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
     use agentdash_spi::context::tool_schema_sanitizer::schema_value;
+    use agentdash_spi::session_persistence::SessionMeta;
     use agentdash_spi::{McpTransportConfig, MountCapability, RuntimeMcpServer, Vfs};
+    use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Mutex;
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
+    use crate::agent_run::{
+        DeliveryRuntimeSelection, RuntimeSessionCorePort, SessionCoreService, SessionExecutionState,
+    };
     use crate::runtime_tools::SharedSessionToolServicesHandle;
     #[derive(Default)]
     struct FixtureGateRepo {
@@ -3396,6 +3456,93 @@ mod companion_tests {
             self.gates.lock().unwrap().insert(gate.id, gate.clone());
             Ok(())
         }
+    }
+
+    struct FixedSessionCorePort {
+        state: SessionExecutionState,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeSessionCorePort for FixedSessionCorePort {
+        async fn inspect_session_execution_state(
+            &self,
+            _session_id: &str,
+        ) -> Result<SessionExecutionState, WorkflowApplicationError> {
+            Ok(self.state.clone())
+        }
+
+        async fn get_session_meta(
+            &self,
+            _session_id: &str,
+        ) -> Result<Option<SessionMeta>, WorkflowApplicationError> {
+            Ok(None)
+        }
+
+        async fn delete_session(&self, _session_id: &str) -> Result<(), WorkflowApplicationError> {
+            Ok(())
+        }
+    }
+
+    fn delivery_selection(status: DeliveryBindingStatus) -> DeliveryRuntimeSelection {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let current_frame_id = Uuid::new_v4();
+        let launch_frame_id = Uuid::new_v4();
+        let runtime_session_id = "runtime-terminal-target".to_string();
+        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+            runtime_session_id.clone(),
+            run_id,
+            launch_frame_id,
+            agent_id,
+        );
+        DeliveryRuntimeSelection {
+            run_id,
+            agent_id,
+            current_frame_id,
+            launch_frame_id,
+            runtime_session_id: runtime_session_id.clone(),
+            orchestration_id: None,
+            node_path: None,
+            node_attempt: None,
+            status,
+            active_turn_id: None,
+            last_turn_id: Some("turn-terminal".to_string()),
+            terminal_state: Some("interrupted".to_string()),
+            terminal_message: Some("startup recovery".to_string()),
+            observed_at: Utc::now(),
+            address: AgentRunRuntimeAddress {
+                run_id,
+                agent_id,
+                frame_id: current_frame_id,
+            },
+            message_stream: MessageStreamProjectionRef {
+                runtime_session_id,
+                trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
+            },
+            anchor,
+        }
+    }
+
+    #[tokio::test]
+    async fn companion_mailbox_guard_skips_terminal_target() {
+        let session_core = SessionCoreService::new(std::sync::Arc::new(FixedSessionCorePort {
+            state: SessionExecutionState::Interrupted {
+                turn_id: Some("turn-terminal".to_string()),
+                message: Some("startup recovery".to_string()),
+            },
+        }));
+        let result = super::guard_companion_mailbox_target_runtime_state(
+            &session_core,
+            &delivery_selection(DeliveryBindingStatus::Terminal),
+        )
+        .await
+        .expect("terminal target should be a no-op, not an error")
+        .expect("terminal target should return a skipped result");
+
+        assert_eq!(result.outcome, "skipped_terminal_target");
+        assert_eq!(result.command_receipt_status, "skipped");
+        assert!(result.mailbox_message_id.is_none());
+        assert!(result.accepted_agent_run_turn_id.is_none());
     }
 
     #[test]

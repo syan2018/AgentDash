@@ -1,6 +1,7 @@
 use agentdash_agent_protocol::{RuntimeTerminalDiagnostic, SourceInfo};
 use agentdash_application_ports::agent_run_control_effect::{
-    AgentRunControlEffectPort, AgentRunTerminalControlInput, AgentRunTerminalHookContext,
+    AgentRunControlEffectPort, AgentRunTerminalControlEffectMode, AgentRunTerminalControlInput,
+    AgentRunTerminalHookContext,
 };
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag_error};
 use agentdash_spi::hooks::SharedHookRuntime;
@@ -17,6 +18,7 @@ pub(crate) struct RuntimeTerminalBoundaryEvidence {
     pub terminal_kind: TurnTerminalKind,
     pub terminal_message: Option<String>,
     pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
+    pub effect_mode: AgentRunTerminalControlEffectMode,
     pub source: SourceInfo,
     pub hook_runtime: Option<SharedHookRuntime>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
@@ -74,6 +76,7 @@ impl RuntimeTerminalBoundaryService {
                 terminal_message: input.terminal_message.clone(),
                 terminal_diagnostic: input.terminal_diagnostic.clone(),
                 terminal_hook_context,
+                effect_mode: input.effect_mode,
             })
             .await
         {

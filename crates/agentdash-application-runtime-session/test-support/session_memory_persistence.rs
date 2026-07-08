@@ -296,6 +296,12 @@ impl AgentRunControlEffectStore for FixtureRuntimeTraceStore {
                     .is_none_or(|keys| keys.contains(&effect.dedup_key))
             })
             .filter(|effect| {
+                request
+                    .effect_kinds
+                    .as_ref()
+                    .is_none_or(|kinds| kinds.contains(&effect.effect_kind))
+            })
+            .filter(|effect| {
                 matches!(
                     effect.status,
                     AgentRunControlEffectStatus::Pending | AgentRunControlEffectStatus::Failed
@@ -1260,6 +1266,7 @@ mod tests {
                 lease_duration_ms: 60_000,
                 limit: 10,
                 dedup_keys: None,
+                effect_kinds: None,
             })
             .await
             .expect("应能 claim pending outbox");
@@ -1276,6 +1283,7 @@ mod tests {
                 lease_duration_ms: 60_000,
                 limit: 10,
                 dedup_keys: None,
+                effect_kinds: None,
             })
             .await
             .expect("未过期 running row 不应被重复 claim");
@@ -1291,6 +1299,7 @@ mod tests {
                 lease_duration_ms: 60_000,
                 limit: 10,
                 dedup_keys: Some(vec![record.dedup_key.clone()]),
+                effect_kinds: None,
             })
             .await
             .expect("failed row 应可重新 claim");
@@ -1309,6 +1318,7 @@ mod tests {
                 lease_duration_ms: 60_000,
                 limit: 10,
                 dedup_keys: None,
+                effect_kinds: None,
             })
             .await
             .expect("succeeded row 不应被 replay claim");
@@ -1335,6 +1345,7 @@ mod tests {
                 lease_duration_ms: 60_000,
                 limit: 10,
                 dedup_keys: Some(vec![dead_letter.dedup_key.clone()]),
+                effect_kinds: None,
             })
             .await
             .expect("应能 claim dead-letter fixture");
@@ -1360,10 +1371,83 @@ mod tests {
                 lease_duration_ms: 60_000,
                 limit: 10,
                 dedup_keys: None,
+                effect_kinds: None,
             })
             .await
             .expect("应能查询 outbox");
         assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    async fn control_effect_outbox_claim_filters_effect_kind() {
+        let persistence = FixtureRuntimeTraceStore::default();
+        let meta = SessionMeta {
+            id: "sess-effects".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_delivery_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_session_id: None,
+        };
+        persistence
+            .create_session(&meta)
+            .await
+            .expect("create session");
+        let make_record = |dedup_key: &str, effect_kind: AgentRunControlEffectKind| {
+            NewAgentRunControlEffectRecord {
+                dedup_key: dedup_key.to_string(),
+                run_id: None,
+                agent_id: None,
+                frame_id: None,
+                delivery_runtime_session_id: Some("sess-effects".to_string()),
+                turn_id: "turn-1".to_string(),
+                terminal_event_seq: 1,
+                effect_kind,
+                payload: serde_json::json!({ "reason": "test" }),
+            }
+        };
+        let delivery = persistence
+            .insert_or_get_control_effect(make_record(
+                "runtime_terminal:sess-effects:turn-1:1:agent_run_delivery_convergence:test",
+                AgentRunControlEffectKind::AgentRunDeliveryConvergence,
+            ))
+            .await
+            .expect("insert delivery effect");
+        let side_effect = persistence
+            .insert_or_get_control_effect(make_record(
+                "runtime_terminal:sess-effects:turn-1:1:hook_auto_resume_delivery:test",
+                AgentRunControlEffectKind::HookAutoResumeDelivery,
+            ))
+            .await
+            .expect("insert side effect");
+
+        let claimed = persistence
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: "delivery-worker".to_string(),
+                lease_duration_ms: 60_000,
+                limit: 10,
+                dedup_keys: None,
+                effect_kinds: Some(vec![AgentRunControlEffectKind::AgentRunDeliveryConvergence]),
+            })
+            .await
+            .expect("claim delivery effects");
+
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, delivery.id);
+        let side_claim = persistence
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: "side-worker".to_string(),
+                lease_duration_ms: 60_000,
+                limit: 10,
+                dedup_keys: Some(vec![side_effect.dedup_key]),
+                effect_kinds: Some(vec![AgentRunControlEffectKind::HookAutoResumeDelivery]),
+            })
+            .await
+            .expect("claim side effect");
+        assert_eq!(side_claim.len(), 1);
+        assert_eq!(side_claim[0].id, side_effect.id);
     }
 
     #[tokio::test]

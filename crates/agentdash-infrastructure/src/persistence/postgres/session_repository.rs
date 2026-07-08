@@ -628,11 +628,26 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
         {
             return Ok(Vec::new());
         }
+        if let Some(effect_kinds) = request.effect_kinds.as_ref()
+            && effect_kinds.is_empty()
+        {
+            return Ok(Vec::new());
+        }
         let now = chrono::Utc::now().timestamp_millis();
         let claim_token = uuid::Uuid::new_v4();
         let claim_expires_at_ms = now.saturating_add(request.lease_duration_ms);
         let limit = i64::from(request.limit);
-        let rows = if let Some(dedup_keys) = request.dedup_keys {
+        let effect_kinds = request.effect_kinds.map(|kinds| {
+            kinds
+                .into_iter()
+                .map(|kind| kind.as_str().to_string())
+                .collect::<Vec<_>>()
+        });
+        let rows = if request.dedup_keys.is_some() || effect_kinds.is_some() {
+            let dedup_keys = request.dedup_keys.unwrap_or_default();
+            let filter_dedup_keys = !dedup_keys.is_empty();
+            let effect_kinds = effect_kinds.unwrap_or_default();
+            let filter_effect_kinds = !effect_kinds.is_empty();
             sqlx::query(
                 r#"
                 WITH candidates AS (
@@ -645,7 +660,8 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
                             AND (claim_expires_at_ms IS NULL OR claim_expires_at_ms <= $1)
                         )
                     )
-                    AND dedup_key = ANY($6)
+                    AND ($6 = FALSE OR dedup_key = ANY($7))
+                    AND ($8 = FALSE OR effect_kind = ANY($9))
                     ORDER BY updated_at_ms ASC, created_at_ms ASC
                     LIMIT $5
                     FOR UPDATE SKIP LOCKED
@@ -673,7 +689,10 @@ impl AgentRunControlEffectStore for PostgresSessionRepository {
             .bind(&request.claim_owner)
             .bind(claim_expires_at_ms)
             .bind(limit)
+            .bind(filter_dedup_keys)
             .bind(&dedup_keys)
+            .bind(filter_effect_kinds)
+            .bind(&effect_kinds)
             .fetch_all(&self.pool)
             .await
             .map_err(sqlx_to_session_store_error)?

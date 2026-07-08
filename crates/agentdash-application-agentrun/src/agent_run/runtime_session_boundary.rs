@@ -42,6 +42,18 @@ pub enum SessionExecutionState {
     },
 }
 
+impl SessionExecutionState {
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Completed { .. }
+                | Self::Failed { .. }
+                | Self::Interrupted { .. }
+                | Self::Lost { .. }
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionRepositoryRehydrateMode {
     SystemContext,

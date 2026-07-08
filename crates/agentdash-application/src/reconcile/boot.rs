@@ -15,6 +15,9 @@ use crate::ApplicationError;
 use crate::gate_wait_policy::GateProducerTerminalConvergencePort;
 use crate::session::SessionRuntimeService;
 use crate::task::view_projector::project_task_views_on_boot;
+use agentdash_application_ports::agent_run_control_effect::{
+    AgentRunControlEffectReplayPhase, AgentRunControlEffectReplayPort,
+};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
@@ -25,6 +28,8 @@ use agentdash_domain::workflow::{
 };
 
 const GATE_WAIT_POLICY_RECONCILE_LIMIT: usize = 500;
+const CONTROL_EFFECT_REPLAY_BATCH_LIMIT: u32 = 100;
+const CONTROL_EFFECT_REPLAY_MAX_BATCHES: usize = 20;
 
 /// 启动对账管线的依赖集合
 ///
@@ -32,6 +37,7 @@ const GATE_WAIT_POLICY_RECONCILE_LIMIT: usize = 500;
 /// projector 通过 `LifecycleSubjectAssociation(kind=Task)` 定位 Task。
 pub struct BootReconcileDeps {
     pub session_runtime: SessionRuntimeService,
+    pub agent_run_control_effect_replay: Arc<dyn AgentRunControlEffectReplayPort>,
     pub project_repo: Arc<dyn ProjectRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
@@ -77,25 +83,32 @@ impl BootReconcileReport {
 ///
 /// 阶段执行顺序固定且不可跳过：
 /// 1. **Session 恢复** — 将残留 running 状态的 session 标记为 interrupted
-/// 2. **Gate wait policy 收束** — 用已 terminal 的 producer 修复 open gate wait policy
-/// 3. **Task view 投影** — 根据 LifecycleRun/step state 反投影 Task view
-/// 4. **Infrastructure 恢复** — 预留（定时触发器重建等）
+/// 2. **AgentRun delivery 收敛** — 只 replay delivery convergence control effects
+/// 3. **Gate wait policy 收束** — 用已 terminal 的 producer 修复 open gate wait policy
+/// 4. **Task view 投影** — 根据 LifecycleRun/step state 反投影 Task view
+/// 5. **Infrastructure 恢复** — 预留（定时触发器重建等）
 pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport {
-    let mut phases = Vec::with_capacity(4);
+    let mut phases = Vec::with_capacity(5);
 
     // ── Phase 1: Session Reconcile ──────────────────────────
     let session_report = run_session_reconcile(&deps.session_runtime).await;
     phases.push(session_report);
 
-    // ── Phase 2: Gate Wait Policy Terminal Fallback ─────────
+    // ── Phase 2: AgentRun Delivery Convergence ──────────────
+    let delivery_report =
+        run_control_effect_delivery_convergence(deps.agent_run_control_effect_replay.as_ref())
+            .await;
+    phases.push(delivery_report);
+
+    // ── Phase 3: Gate Wait Policy Terminal Fallback ─────────
     let gate_wait_policy_report = run_gate_wait_policy_reconcile(deps).await;
     phases.push(gate_wait_policy_report);
 
-    // ── Phase 3: Task View Projection ───────────────────────
+    // ── Phase 4: Task View Projection ───────────────────────
     let task_report = run_task_view_projection(deps).await;
     phases.push(task_report);
 
-    // ── Phase 4: Infrastructure Restore ─────────────────────
+    // ── Phase 5: Infrastructure Restore ─────────────────────
     // 目前仅占位，后续 tick-loop 触发器重建等逻辑在此扩展
     phases.push(PhaseReport {
         phase: "infrastructure_restore",
@@ -153,6 +166,65 @@ async fn run_session_reconcile(session_runtime: &SessionRuntimeService) -> Phase
                 errors: vec![err.to_string()],
             }
         }
+    }
+}
+
+async fn run_control_effect_delivery_convergence(
+    replay: &dyn AgentRunControlEffectReplayPort,
+) -> PhaseReport {
+    let phase = "agent_run_delivery_convergence";
+    let mut reconciled = 0usize;
+    let mut errors = Vec::new();
+
+    for _ in 0..CONTROL_EFFECT_REPLAY_MAX_BATCHES {
+        match replay
+            .replay_control_effect_outbox_phase(
+                AgentRunControlEffectReplayPhase::DeliveryConvergence,
+                CONTROL_EFFECT_REPLAY_BATCH_LIMIT,
+            )
+            .await
+        {
+            Ok(0) => break,
+            Ok(count) => {
+                reconciled = reconciled.saturating_add(count);
+                if count < CONTROL_EFFECT_REPLAY_BATCH_LIMIT as usize {
+                    break;
+                }
+            }
+            Err(error) => {
+                let context =
+                    DiagnosticErrorContext::new("reconcile.boot", "agent_run_delivery_convergence")
+                        .with_field("phase", phase)
+                        .with_field("fatal", false);
+                diag_error!(
+                    Warn,
+                    Subsystem::Reconcile,
+                    context = &context,
+                    error = &std::io::Error::other(error.clone()),
+                    phase = phase,
+                    fatal = false,
+                    "Phase 2 (AgentRun Delivery Convergence) 出错（非致命）"
+                );
+                errors.push(error);
+                break;
+            }
+        }
+    }
+
+    diag!(
+        Info,
+        Subsystem::Reconcile,
+        phase = phase,
+        reconciled = reconciled,
+        error_count = errors.len(),
+        "Phase 2 (AgentRun Delivery Convergence) 完成"
+    );
+
+    PhaseReport {
+        phase,
+        reconciled,
+        skipped: 0,
+        errors,
     }
 }
 

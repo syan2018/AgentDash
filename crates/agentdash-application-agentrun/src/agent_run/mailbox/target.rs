@@ -205,7 +205,7 @@ pub(super) fn ensure_message_owner(
     Ok(())
 }
 
-fn workflow_error_from_delivery_selection_error(
+pub(super) fn workflow_error_from_delivery_selection_error(
     error: DeliveryRuntimeSelectionError,
 ) -> WorkflowApplicationError {
     match error {

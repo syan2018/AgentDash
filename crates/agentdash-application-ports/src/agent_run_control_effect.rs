@@ -7,6 +7,18 @@ use agentdash_spi::hooks::{HookControlTarget, HookEffect, HookRuntimeAccess, Sha
 use async_trait::async_trait;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunControlEffectReplayPhase {
+    DeliveryConvergence,
+    TerminalSideEffects,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunTerminalControlEffectMode {
+    ImmediateAll,
+    DeliveryConvergenceOnly,
+}
+
 #[async_trait]
 pub trait AgentRunPostTurnHandler: Send + Sync + 'static {
     async fn on_event(&self, session_id: &str, envelope: &BackboneEnvelope);
@@ -81,6 +93,7 @@ pub struct AgentRunTerminalControlInput {
     pub terminal_message: Option<String>,
     pub terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
     pub terminal_hook_context: Option<AgentRunTerminalHookContext>,
+    pub effect_mode: AgentRunTerminalControlEffectMode,
 }
 
 pub struct AgentRunTerminalHookTriggerInput {
@@ -151,5 +164,11 @@ pub trait AgentRunControlEffectPort: Send + Sync {
 
 #[async_trait]
 pub trait AgentRunControlEffectReplayPort: Send + Sync {
+    async fn replay_control_effect_outbox_phase(
+        &self,
+        phase: AgentRunControlEffectReplayPhase,
+        limit: u32,
+    ) -> Result<usize, String>;
+
     async fn replay_control_effect_outbox(&self, limit: u32) -> Result<usize, String>;
 }

@@ -592,6 +592,42 @@ RuntimeSession 的 turn terminal 只有一条处理路径：正常 stream 收到
 intake 和 event broadcast。原因是 RuntimeSession terminal 是 AgentRun 状态机输入；任何 runtime
 终态只写 trace 而不触发控制面 intake，都会留下已失败但 AgentRun 仍 running 的不一致状态。
 
+启动恢复补偿使用同一条 terminal processor，但 control-effect 执行模式只允许
+`agent_run_delivery_convergence` 在恢复扫描内同步执行。mailbox wake、lifecycle terminal、
+hook effects 与 hook auto-resume 由后续分相 replay worker 执行，且每轮 worker 先把 delivery
+convergence 批次收敛到空或达到启动保护上限。这样做的原因是进程重启时 parent/child delivery
+binding 可能同时停留在 stale running；先收敛用户可见 delivery binding，可以让 terminal
+follow-up 只在 target delivery binding 与 RuntimeSession terminal fact 一致后进入 mailbox /
+lifecycle / hook 副作用。
+
+启动恢复分相契约：
+
+- `AgentRunTerminalControlEffectMode::DeliveryConvergenceOnly` 只用于启动恢复扫描；正常 terminal、
+  cancel fallback、connector start 失败和 accepted launch boundary 失败继续使用
+  `ImmediateAll`。
+- `AgentRunControlEffectReplayPhase::DeliveryConvergence` 只 claim
+  `agent_run_delivery_convergence`；`TerminalSideEffects` claim wait producer、lifecycle、hook 与
+  hook auto-resume effect。兼容入口 `replay_control_effect_outbox(limit)` 仍按同一顺序执行，并把
+  `limit` 作为总批次边界；delivery 批次打满时，本轮不 claim terminal side effects。
+- 启动对账顺序是 session recovery -> delivery convergence -> gate wait policy fallback -> task
+  projection。post-AppState worker 在后台循环中也先 drain delivery convergence，再执行 terminal
+  side effects。
+- companion parent mailbox wake 的 target delivery binding 必须仍是 active delivery：`Running`
+  binding 只接受 RuntimeSession `Running/Cancelling`；`Terminal` binding 与 terminal RuntimeSession
+  表示 stale wake，返回 `skipped_terminal_target` 并让 outbox 收敛，不创建 mailbox message。
+- hook auto-resume 使用独立 hook wake 语义；它仍必须校验 delivery binding 与 RuntimeSession
+  状态一致，原因是 hook effect durability 由 terminal effect identity 去重，而 companion gate wake
+  的语义是把仍在等待的 parent turn 唤醒。
+
+测试要求：
+
+- control-effect phased replay 测试必须断言 delivery phase 不 claim wait/lifecycle/hook，并断言
+  delivery backlog 打满时兼容入口不会提前 claim side effects。
+- mailbox target guard 测试必须覆盖 stale running binding + terminal RuntimeSession 被拒绝，以及
+  companion terminal target 返回 `skipped_terminal_target` 且不产生 mailbox message。
+- 启动烟测至少使用 embedded PostgreSQL 跑 `agentdash-server serve` 或 `pnpm dev` 等价路径，确认
+  recovery 后 `/api/health` 可达且 background replay 不会再次进入 launch 递归。
+
 Task hook terminal effect 从 runtime trace callback 进入后构造 task runtime coordinate，并在持久化
 artifact 或 status context 时记录 `orchestration_id + node_path + attempt`。这样任务投影、artifact
 审计和 lifecycle node runtime facts 能共享同一定位方式。

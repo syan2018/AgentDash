@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use agentdash_agent_protocol::text_user_input_blocks;
 use agentdash_application_ports::agent_run_control_effect::{
-    AgentRunControlEffectPort, AgentRunControlEffectReplayPort,
+    AgentRunControlEffectPort, AgentRunControlEffectReplayPhase, AgentRunControlEffectReplayPort,
     AgentRunLifecycleTerminalConvergencePort, AgentRunPostTurnHandler,
-    AgentRunTerminalControlInput, AgentRunTerminalHookEffects, AgentRunTerminalHookTriggerInput,
-    AgentRunTerminalHookTriggerPort, AgentRunWaitProducerTerminalConvergencePort,
-    AgentRunWaitProducerTerminalEvent, DynAgentRunHookEffectHandlerRegistry,
+    AgentRunTerminalControlEffectMode, AgentRunTerminalControlInput, AgentRunTerminalHookEffects,
+    AgentRunTerminalHookTriggerInput, AgentRunTerminalHookTriggerPort,
+    AgentRunWaitProducerTerminalConvergencePort, AgentRunWaitProducerTerminalEvent,
+    DynAgentRunHookEffectHandlerRegistry,
 };
 use agentdash_application_ports::frame_launch_envelope::TerminalHookEffectBinding;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
@@ -649,6 +650,74 @@ impl AgentRunControlEffectService {
             }
         }
     }
+
+    fn phase_effect_kinds(
+        phase: AgentRunControlEffectReplayPhase,
+    ) -> Vec<AgentRunControlEffectKind> {
+        match phase {
+            AgentRunControlEffectReplayPhase::DeliveryConvergence => {
+                vec![AgentRunControlEffectKind::AgentRunDeliveryConvergence]
+            }
+            AgentRunControlEffectReplayPhase::TerminalSideEffects => vec![
+                AgentRunControlEffectKind::WaitProducerTerminalConvergence,
+                AgentRunControlEffectKind::LifecycleTerminalConvergence,
+                AgentRunControlEffectKind::HookEffects,
+                AgentRunControlEffectKind::HookAutoResumeDelivery,
+            ],
+        }
+    }
+
+    fn phase_claim_owner(phase: AgentRunControlEffectReplayPhase) -> &'static str {
+        match phase {
+            AgentRunControlEffectReplayPhase::DeliveryConvergence => {
+                "replay_control_effect_outbox.delivery_convergence"
+            }
+            AgentRunControlEffectReplayPhase::TerminalSideEffects => {
+                "replay_control_effect_outbox.terminal_side_effects"
+            }
+        }
+    }
+
+    async fn claim_materialized_phase(
+        &self,
+        dedup_keys: &[String],
+        phase: AgentRunControlEffectReplayPhase,
+    ) -> Result<Vec<AgentRunControlEffectRecord>, String> {
+        if dedup_keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.deps
+            .control_effect_store
+            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
+                claim_owner: format!("observe_runtime_terminal.{:?}", phase),
+                lease_duration_ms: AGENT_RUN_CONTROL_EFFECT_LEASE_MS,
+                limit: u32::try_from(dedup_keys.len()).unwrap_or(u32::MAX),
+                dedup_keys: Some(dedup_keys.to_vec()),
+                effect_kinds: Some(Self::phase_effect_kinds(phase)),
+            })
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn execute_claimed_records(
+        &self,
+        records: Vec<AgentRunControlEffectRecord>,
+        terminal_hook_outputs: Option<&AgentRunTerminalHookEffects>,
+    ) -> Vec<String> {
+        let mut execute_errors = Vec::new();
+        for record in records {
+            let executor = match record.effect_kind {
+                AgentRunControlEffectKind::HookEffects => ControlEffectExecutor::HookEffects {
+                    handler: terminal_hook_outputs.and_then(|effects| effects.handler.clone()),
+                },
+                _ => self.executor_for_replay(&record),
+            };
+            if let Err(error) = self.execute_record(record, executor).await {
+                execute_errors.push(error);
+            }
+        }
+        execute_errors
+    }
 }
 
 #[async_trait]
@@ -711,19 +780,25 @@ impl AgentRunControlEffectPort for AgentRunControlEffectService {
             .iter()
             .map(|record| record.dedup_key.clone())
             .collect::<Vec<_>>();
-        let claimed = self
-            .deps
-            .control_effect_store
-            .claim_control_effects(ClaimAgentRunControlEffectsRequest {
-                claim_owner: "observe_runtime_terminal".to_string(),
-                lease_duration_ms: AGENT_RUN_CONTROL_EFFECT_LEASE_MS,
-                limit: u32::try_from(dedup_keys.len()).unwrap_or(u32::MAX),
-                dedup_keys: Some(dedup_keys),
-            })
-            .await
-            .map_err(|error| error.to_string())?;
-
         let mut execute_errors = Vec::new();
+        let delivery_records = self
+            .claim_materialized_phase(
+                &dedup_keys,
+                AgentRunControlEffectReplayPhase::DeliveryConvergence,
+            )
+            .await?;
+        execute_errors.extend(
+            self.execute_claimed_records(delivery_records, terminal_hook_outputs.as_ref())
+                .await,
+        );
+
+        if input.effect_mode == AgentRunTerminalControlEffectMode::DeliveryConvergenceOnly {
+            if !execute_errors.is_empty() {
+                return Err(execute_errors.join("; "));
+            }
+            return Ok(());
+        }
+
         if let Some(hook_effects) = terminal_hook_outputs.as_ref()
             && hook_effects.durable_binding.is_none()
             && let Err(error) = self
@@ -732,19 +807,16 @@ impl AgentRunControlEffectPort for AgentRunControlEffectService {
         {
             execute_errors.push(error);
         }
-        for record in claimed {
-            let executor = match record.effect_kind {
-                AgentRunControlEffectKind::HookEffects => ControlEffectExecutor::HookEffects {
-                    handler: terminal_hook_outputs
-                        .as_ref()
-                        .and_then(|effects| effects.handler.clone()),
-                },
-                _ => self.executor_for_replay(&record),
-            };
-            if let Err(error) = self.execute_record(record, executor).await {
-                execute_errors.push(error);
-            }
-        }
+        let side_effect_records = self
+            .claim_materialized_phase(
+                &dedup_keys,
+                AgentRunControlEffectReplayPhase::TerminalSideEffects,
+            )
+            .await?;
+        execute_errors.extend(
+            self.execute_claimed_records(side_effect_records, terminal_hook_outputs.as_ref())
+                .await,
+        );
 
         if !execute_errors.is_empty() {
             return Err(execute_errors.join("; "));
@@ -756,15 +828,20 @@ impl AgentRunControlEffectPort for AgentRunControlEffectService {
 
 #[async_trait]
 impl AgentRunControlEffectReplayPort for AgentRunControlEffectService {
-    async fn replay_control_effect_outbox(&self, limit: u32) -> Result<usize, String> {
+    async fn replay_control_effect_outbox_phase(
+        &self,
+        phase: AgentRunControlEffectReplayPhase,
+        limit: u32,
+    ) -> Result<usize, String> {
         let records = self
             .deps
             .control_effect_store
             .claim_control_effects(ClaimAgentRunControlEffectsRequest {
-                claim_owner: "replay_control_effect_outbox".to_string(),
+                claim_owner: Self::phase_claim_owner(phase).to_string(),
                 lease_duration_ms: AGENT_RUN_CONTROL_EFFECT_LEASE_MS,
                 limit,
                 dedup_keys: None,
+                effect_kinds: Some(Self::phase_effect_kinds(phase)),
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -800,6 +877,29 @@ impl AgentRunControlEffectReplayPort for AgentRunControlEffectService {
             }
         }
         Ok(attempted)
+    }
+
+    async fn replay_control_effect_outbox(&self, limit: u32) -> Result<usize, String> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        let delivery = self
+            .replay_control_effect_outbox_phase(
+                AgentRunControlEffectReplayPhase::DeliveryConvergence,
+                limit,
+            )
+            .await?;
+        if delivery >= limit as usize {
+            return Ok(delivery);
+        }
+        let remaining = limit.saturating_sub(delivery as u32);
+        let side_effects = self
+            .replay_control_effect_outbox_phase(
+                AgentRunControlEffectReplayPhase::TerminalSideEffects,
+                remaining,
+            )
+            .await?;
+        Ok(delivery + side_effects)
     }
 }
 
@@ -959,6 +1059,13 @@ mod tests {
                     .dedup_keys
                     .as_ref()
                     .is_some_and(|keys| !keys.contains(&record.dedup_key))
+                {
+                    continue;
+                }
+                if request
+                    .effect_kinds
+                    .as_ref()
+                    .is_some_and(|kinds| !kinds.contains(&record.effect_kind))
                 {
                     continue;
                 }
@@ -1438,6 +1545,7 @@ mod tests {
                     executor_id: None,
                 },
             }),
+            effect_mode: AgentRunTerminalControlEffectMode::ImmediateAll,
         }
     }
 
@@ -1516,6 +1624,31 @@ mod tests {
             })
             .await
             .expect("insert hook effect row")
+    }
+
+    async fn insert_control_effect_row(
+        store: &RecordingControlEffectStore,
+        effect_kind: AgentRunControlEffectKind,
+        discriminator: &str,
+        payload: serde_json::Value,
+    ) -> AgentRunControlEffectRecord {
+        store
+            .insert_or_get_control_effect(NewAgentRunControlEffectRecord {
+                dedup_key: format!(
+                    "runtime_terminal:session-phase:turn-1:42:{}:{discriminator}",
+                    effect_kind.as_str()
+                ),
+                run_id: None,
+                agent_id: None,
+                frame_id: None,
+                delivery_runtime_session_id: Some("session-phase".to_string()),
+                turn_id: "turn-1".to_string(),
+                terminal_event_seq: 42,
+                effect_kind,
+                payload,
+            })
+            .await
+            .expect("insert control effect row")
     }
 
     #[tokio::test]
@@ -1623,5 +1756,158 @@ mod tests {
             .await;
         assert!(hook_records.is_empty());
         assert_eq!(*handler.executed.lock().await, 1);
+    }
+
+    #[tokio::test]
+    async fn phased_replay_claims_delivery_before_terminal_side_effects() {
+        let fixture =
+            ControlEffectFixture::new(Vec::new(), Arc::new(EmptyAgentRunHookEffectHandlerRegistry));
+        let delivery = insert_control_effect_row(
+            &fixture.store,
+            AgentRunControlEffectKind::AgentRunDeliveryConvergence,
+            "delivery",
+            serde_json::json!({
+                "terminal_state": "interrupted",
+                "terminal_message": "startup recovery",
+                "terminal_diagnostic": null,
+            }),
+        )
+        .await;
+        let wait = insert_control_effect_row(
+            &fixture.store,
+            AgentRunControlEffectKind::WaitProducerTerminalConvergence,
+            "wait",
+            serde_json::json!({
+                "run_id": Uuid::new_v4(),
+                "agent_id": Uuid::new_v4(),
+                "frame_id": null,
+                "terminal_state": "interrupted",
+                "terminal_message": "startup recovery",
+                "terminal_diagnostic": null,
+                "producer_last_message": null,
+                "source_turn_id": "turn-1",
+                "delivery_trace_ref": "session-phase",
+            }),
+        )
+        .await;
+
+        let delivery_count = fixture
+            .service
+            .replay_control_effect_outbox_phase(
+                AgentRunControlEffectReplayPhase::DeliveryConvergence,
+                10,
+            )
+            .await
+            .expect("delivery phase replay");
+        assert_eq!(delivery_count, 1);
+
+        let records = fixture.store.records().await;
+        let delivery_record = records
+            .iter()
+            .find(|record| record.id == delivery.id)
+            .expect("delivery record");
+        let wait_record = records
+            .iter()
+            .find(|record| record.id == wait.id)
+            .expect("wait record");
+        assert_eq!(
+            delivery_record.status,
+            AgentRunControlEffectStatus::Succeeded
+        );
+        assert_eq!(wait_record.status, AgentRunControlEffectStatus::Pending);
+
+        let side_effect_count = fixture
+            .service
+            .replay_control_effect_outbox_phase(
+                AgentRunControlEffectReplayPhase::TerminalSideEffects,
+                10,
+            )
+            .await
+            .expect("side-effect phase replay");
+        assert_eq!(side_effect_count, 1);
+        let wait_record = fixture
+            .store
+            .records_by_kind(AgentRunControlEffectKind::WaitProducerTerminalConvergence)
+            .await
+            .into_iter()
+            .next()
+            .expect("wait record");
+        assert_eq!(wait_record.status, AgentRunControlEffectStatus::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn unphased_replay_does_not_claim_side_effects_when_delivery_batch_is_full() {
+        let fixture =
+            ControlEffectFixture::new(Vec::new(), Arc::new(EmptyAgentRunHookEffectHandlerRegistry));
+        let first_delivery = insert_control_effect_row(
+            &fixture.store,
+            AgentRunControlEffectKind::AgentRunDeliveryConvergence,
+            "delivery-1",
+            serde_json::json!({
+                "terminal_state": "interrupted",
+                "terminal_message": "startup recovery",
+                "terminal_diagnostic": null,
+            }),
+        )
+        .await;
+        let second_delivery = insert_control_effect_row(
+            &fixture.store,
+            AgentRunControlEffectKind::AgentRunDeliveryConvergence,
+            "delivery-2",
+            serde_json::json!({
+                "terminal_state": "interrupted",
+                "terminal_message": "startup recovery",
+                "terminal_diagnostic": null,
+            }),
+        )
+        .await;
+        let wait = insert_control_effect_row(
+            &fixture.store,
+            AgentRunControlEffectKind::WaitProducerTerminalConvergence,
+            "wait",
+            serde_json::json!({
+                "run_id": Uuid::new_v4(),
+                "agent_id": Uuid::new_v4(),
+                "frame_id": null,
+                "terminal_state": "interrupted",
+                "terminal_message": "startup recovery",
+                "terminal_diagnostic": null,
+                "producer_last_message": null,
+                "source_turn_id": "turn-1",
+                "delivery_trace_ref": "session-phase",
+            }),
+        )
+        .await;
+
+        let attempted = fixture
+            .service
+            .replay_control_effect_outbox(1)
+            .await
+            .expect("unphased replay");
+
+        assert_eq!(attempted, 1);
+        let records = fixture.store.records().await;
+        let first_delivery_status = records
+            .iter()
+            .find(|record| record.id == first_delivery.id)
+            .map(|record| record.status)
+            .expect("first delivery");
+        let second_delivery_status = records
+            .iter()
+            .find(|record| record.id == second_delivery.id)
+            .map(|record| record.status)
+            .expect("second delivery");
+        let wait_status = records
+            .iter()
+            .find(|record| record.id == wait.id)
+            .map(|record| record.status)
+            .expect("wait");
+
+        assert_eq!(
+            first_delivery_status,
+            AgentRunControlEffectStatus::Succeeded
+        );
+        assert_eq!(second_delivery_status, AgentRunControlEffectStatus::Pending);
+        assert_eq!(wait_status, AgentRunControlEffectStatus::Pending);
     }
 }

@@ -794,12 +794,81 @@ fn parse_data_image_url(image_url: &str) -> Option<ContentPart> {
 
 fn json_preview(value: &serde_json::Value) -> String {
     const MAX_LEN: usize = 320;
-    let rendered = value.to_string();
+    let bounded = bounded_json_preview_value(value, 0);
+    let rendered = bounded.to_string();
     if rendered.len() <= MAX_LEN {
         rendered
     } else {
         let shortened: String = rendered.chars().take(MAX_LEN).collect();
         format!("{shortened}...")
+    }
+}
+
+fn bounded_json_preview_value(value: &serde_json::Value, depth: usize) -> serde_json::Value {
+    const MAX_DEPTH: usize = 8;
+    const MAX_ARRAY_ITEMS: usize = 16;
+    const MAX_OBJECT_FIELDS: usize = 32;
+    const MAX_OBJECT_KEY_CHARS: usize = 96;
+    const MAX_STRING_CHARS: usize = 240;
+
+    if depth >= MAX_DEPTH {
+        return serde_json::json!({
+            "preview": "json_payload_too_deep",
+            "max_depth": MAX_DEPTH,
+        });
+    }
+
+    match value {
+        serde_json::Value::Array(items) => {
+            let mut bounded = items
+                .iter()
+                .take(MAX_ARRAY_ITEMS)
+                .map(|item| bounded_json_preview_value(item, depth + 1))
+                .collect::<Vec<_>>();
+            if items.len() > MAX_ARRAY_ITEMS {
+                bounded.push(serde_json::json!({
+                    "preview": "json_array_truncated",
+                    "omitted_items": items.len() - MAX_ARRAY_ITEMS,
+                }));
+            }
+            serde_json::Value::Array(bounded)
+        }
+        serde_json::Value::Object(map) => {
+            let mut bounded = serde_json::Map::new();
+            for (key, item) in map.iter().take(MAX_OBJECT_FIELDS) {
+                bounded.insert(
+                    bounded_json_preview_key(key, MAX_OBJECT_KEY_CHARS),
+                    bounded_json_preview_value(item, depth + 1),
+                );
+            }
+            if map.len() > MAX_OBJECT_FIELDS {
+                bounded.insert(
+                    "__preview_truncated_fields".to_string(),
+                    serde_json::json!(map.len() - MAX_OBJECT_FIELDS),
+                );
+            }
+            serde_json::Value::Object(bounded)
+        }
+        serde_json::Value::String(text) => {
+            let mut chars = text.chars();
+            let preview = chars.by_ref().take(MAX_STRING_CHARS).collect::<String>();
+            if chars.next().is_some() {
+                serde_json::Value::String(format!("{preview}..."))
+            } else {
+                value.clone()
+            }
+        }
+        _ => value.clone(),
+    }
+}
+
+fn bounded_json_preview_key(key: &str, max_chars: usize) -> String {
+    let mut chars = key.chars();
+    let preview = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        key.to_string()
     }
 }
 
@@ -1106,6 +1175,44 @@ mod tests {
                 _ => None,
             })
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn json_preview_bounds_deep_and_large_payloads() {
+        let mut deep = serde_json::json!("leaf");
+        for _ in 0..64 {
+            deep = serde_json::json!({ "next": deep });
+        }
+        let preview = json_preview(&serde_json::json!({
+            "deep": deep,
+            "wide": (0..64).map(|index| serde_json::json!({ "index": index })).collect::<Vec<_>>(),
+            "long": "x".repeat(1024),
+        }));
+        let bounded = bounded_json_preview_value(
+            &serde_json::json!(
+                (0..64)
+                    .map(|index| serde_json::json!({ "index": index }))
+                    .collect::<Vec<_>>()
+            ),
+            0,
+        );
+        let bounded_rendered = bounded.to_string();
+
+        assert!(preview.len() <= 323);
+        assert!(preview.contains("json_payload_too_deep"));
+        assert!(bounded_rendered.contains("json_array_truncated"));
+    }
+
+    #[test]
+    fn json_preview_bounds_object_keys() {
+        let long_key = format!("{}-tail", "k".repeat(1024));
+        let preview = json_preview(&serde_json::json!({
+            long_key: "value",
+        }));
+
+        assert!(preview.len() <= 323);
+        assert!(preview.contains("..."));
+        assert!(!preview.contains("tail"));
     }
 
     #[test]

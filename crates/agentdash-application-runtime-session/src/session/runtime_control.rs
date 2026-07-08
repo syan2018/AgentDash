@@ -2,6 +2,7 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use std::{collections::HashMap, io, sync::Arc};
 
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_application_ports::agent_run_control_effect::AgentRunTerminalControlEffectMode;
 use agentdash_spi::ConnectorError;
 
 use super::eventing::SessionEventingService;
@@ -83,6 +84,7 @@ impl SessionRuntimeService {
                             self.connector_source(None),
                             TurnTerminalKind::Interrupted,
                             Some("执行已取消".to_string()),
+                            AgentRunTerminalControlEffectMode::ImmediateAll,
                         )
                         .await;
                     }
@@ -103,6 +105,7 @@ impl SessionRuntimeService {
                         self.connector_source(None),
                         TurnTerminalKind::Interrupted,
                         Some("执行已取消".to_string()),
+                        AgentRunTerminalControlEffectMode::ImmediateAll,
                     )
                     .await;
                 }
@@ -147,6 +150,7 @@ impl SessionRuntimeService {
             self.connector_source(None),
             TurnTerminalKind::Interrupted,
             Some("检测到未收尾的旧执行，已手动标记为 interrupted".to_string()),
+            AgentRunTerminalControlEffectMode::ImmediateAll,
         )
         .await;
         Ok(())
@@ -180,6 +184,7 @@ impl SessionRuntimeService {
                 },
                 TurnTerminalKind::Interrupted,
                 Some("检测到进程重启，已将上次未完成执行标记为 interrupted".to_string()),
+                AgentRunTerminalControlEffectMode::DeliveryConvergenceOnly,
             )
             .await;
         }
@@ -211,6 +216,7 @@ impl SessionRuntimeService {
         source: SourceInfo,
         terminal_kind: TurnTerminalKind,
         terminal_message: Option<String>,
+        effect_mode: AgentRunTerminalControlEffectMode,
     ) {
         process_turn_terminal(
             &SessionTurnProcessorDeps {
@@ -225,6 +231,7 @@ impl SessionRuntimeService {
                 terminal_kind,
                 terminal_message,
                 terminal_diagnostic: None,
+                effect_mode,
                 hook_runtime: None,
                 post_turn_handler: None,
             },

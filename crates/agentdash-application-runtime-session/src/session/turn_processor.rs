@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::RuntimeTerminalDiagnostic;
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_application_ports::agent_run_control_effect::AgentRunTerminalControlEffectMode;
 use agentdash_spi::hooks::SharedHookRuntime;
 
 use super::eventing::SessionEventingService;
@@ -54,6 +55,7 @@ pub(in crate::session) struct TurnTerminalDispatch {
     pub(in crate::session) terminal_kind: TurnTerminalKind,
     pub(in crate::session) terminal_message: Option<String>,
     pub(in crate::session) terminal_diagnostic: Option<RuntimeTerminalDiagnostic>,
+    pub(in crate::session) effect_mode: AgentRunTerminalControlEffectMode,
     pub(in crate::session) hook_runtime: Option<SharedHookRuntime>,
     pub(in crate::session) post_turn_handler: Option<DynPostTurnHandler>,
 }
@@ -153,6 +155,7 @@ impl SessionTurnProcessor {
                 terminal_kind,
                 terminal_message,
                 terminal_diagnostic,
+                effect_mode: AgentRunTerminalControlEffectMode::ImmediateAll,
                 hook_runtime,
                 post_turn_handler,
             },
@@ -246,6 +249,7 @@ pub(in crate::session) async fn process_turn_terminal(
         terminal_kind,
         terminal_message,
         terminal_diagnostic,
+        effect_mode,
         hook_runtime,
         post_turn_handler,
     } = input;
@@ -339,6 +343,7 @@ pub(in crate::session) async fn process_turn_terminal(
         terminal_kind,
         terminal_message: terminal_message.clone(),
         terminal_diagnostic: terminal_diagnostic.clone(),
+        effect_mode,
         source,
         hook_runtime,
         post_turn_handler,
@@ -702,6 +707,7 @@ mod tests {
                     message: "request rejected by provider".to_string(),
                     retryable: false,
                 }),
+                effect_mode: AgentRunTerminalControlEffectMode::ImmediateAll,
                 hook_runtime: None,
                 post_turn_handler: None,
             },

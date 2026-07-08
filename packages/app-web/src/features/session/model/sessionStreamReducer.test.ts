@@ -43,20 +43,6 @@ function streamEvent(event_seq: number, event: BackboneEvent): SessionEventEnvel
   };
 }
 
-function withEntryIndex(event: SessionEventEnvelope, entryIndex: number): SessionEventEnvelope {
-  return {
-    ...event,
-    entry_index: entryIndex,
-    notification: {
-      ...event.notification,
-      trace: {
-        ...event.notification.trace,
-        entryIndex,
-      },
-    },
-  };
-}
-
 function agentDelta(event_seq: number, delta: string): SessionEventEnvelope {
   return streamEvent(event_seq, {
     type: "agent_message_delta",
@@ -668,32 +654,6 @@ describe("sessionStreamReducer", () => {
     expect(afterEphemeral.rawEvents).toHaveLength(1);
     expect(afterEphemeral.lastAppliedSeq).toBe(5);
     expect(afterEphemeral.lastEphemeralSeq).toBe(1);
-  });
-
-  it("后到的 assistant delta 仍按同 turn entry_index 排在工具调用前", () => {
-    const afterTool = reduceStreamState(createInitialStreamState([]), [
-      withEntryIndex(itemStarted(10, commandItem("companion-call", null, "inProgress")), 0),
-    ]);
-
-    const afterDelta = reduceStreamState(afterTool, [
-      withEntryIndex(ephemeralAgentDelta(1, "我会派发 companion request。"), 0),
-    ]);
-
-    expect(afterDelta.entries.map((entry) => entry.id)).toEqual([
-      "item:item-1",
-      "item:companion-call",
-    ]);
-
-    const afterFinal = reduceStreamState(afterDelta, [
-      withEntryIndex(itemCompleted(11, agentMessageItem("item-1", "我会派发 companion request。")), 0),
-    ]);
-
-    expect(afterFinal.entries.map((entry) => entry.id)).toEqual([
-      "item:item-1",
-      "item:companion-call",
-    ]);
-    expect(afterFinal.entries[0]?.accumulatedText).toBe("我会派发 companion request。");
-    expect(afterFinal.entries[0]?.isStreaming).toBe(false);
   });
 
   it("整页刷新：lastEphemeralSeq=0 回放服务端 buffer 全部累积 delta", () => {

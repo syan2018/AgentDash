@@ -158,100 +158,6 @@ function withEntryMetadata(
   };
 }
 
-function hasKnownTurnPosition(entry: SessionDisplayEntry): entry is SessionDisplayEntry & {
-  turnId: string;
-  entryIndex: number;
-} {
-  return typeof entry.turnId === "string" && typeof entry.entryIndex === "number";
-}
-
-function displayEntryOrderRank(entry: SessionDisplayEntry): number {
-  switch (entry.event.type) {
-    case "reasoning_text_delta":
-    case "reasoning_summary_delta":
-      return 10;
-    case "agent_message_delta":
-      return 20;
-    case "item_started":
-    case "item_updated":
-    case "item_completed":
-    case "command_output_delta":
-    case "file_change_delta":
-    case "mcp_tool_call_progress":
-      return 30;
-    default:
-      return 40;
-  }
-}
-
-function insertDisplayEntry(
-  entries: SessionDisplayEntry[],
-  entry: SessionDisplayEntry,
-  preferredIndex = entries.length,
-): SessionDisplayEntry[] {
-  const next = [...entries];
-  let insertIndex = Math.max(0, Math.min(preferredIndex, next.length));
-
-  if (hasKnownTurnPosition(entry)) {
-    let firstGreaterIndex: number | null = null;
-    let lastLessIndex: number | null = null;
-    let firstGreaterRankIndex: number | null = null;
-    let lastLowerOrEqualRankIndex: number | null = null;
-    const entryRank = displayEntryOrderRank(entry);
-
-    for (let i = 0; i < next.length; i += 1) {
-      const existing = next[i];
-      if (!existing || !hasKnownTurnPosition(existing) || existing.turnId !== entry.turnId) {
-        continue;
-      }
-      if (existing.entryIndex > entry.entryIndex) {
-        firstGreaterIndex = i;
-        break;
-      }
-      if (existing.entryIndex < entry.entryIndex) {
-        lastLessIndex = i;
-        continue;
-      }
-      const existingRank = displayEntryOrderRank(existing);
-      if (existingRank > entryRank && firstGreaterRankIndex == null) {
-        firstGreaterRankIndex = i;
-      }
-      if (existingRank <= entryRank) {
-        lastLowerOrEqualRankIndex = i;
-      }
-    }
-
-    if (firstGreaterIndex != null) {
-      insertIndex = firstGreaterIndex;
-    } else if (firstGreaterRankIndex != null) {
-      insertIndex = firstGreaterRankIndex;
-    } else if (lastLowerOrEqualRankIndex != null) {
-      insertIndex = lastLowerOrEqualRankIndex + 1;
-    } else if (lastLessIndex != null) {
-      insertIndex = lastLessIndex + 1;
-    }
-  }
-
-  next.splice(insertIndex, 0, entry);
-  return next;
-}
-
-function appendDisplayEntry(
-  entries: SessionDisplayEntry[],
-  entry: SessionDisplayEntry,
-): SessionDisplayEntry[] {
-  return insertDisplayEntry(entries, entry);
-}
-
-function replaceDisplayEntry(
-  entries: SessionDisplayEntry[],
-  index: number,
-  entry: SessionDisplayEntry,
-): SessionDisplayEntry[] {
-  const withoutEntry = entries.filter((_, i) => i !== index);
-  return insertDisplayEntry(withoutEntry, entry, Math.min(index, withoutEntry.length));
-}
-
 function getCommandAggregatedOutput(item: AgentDashThreadItem): string | null {
   if (item.type !== "commandExecution" && item.type !== "shellExec") {
     return null;
@@ -445,16 +351,18 @@ function finalizeAssistantDelta(
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const existing = entries[i];
     if (existing && existing.id === targetId) {
+      const next = [...entries];
       const merged = mergeEntryMetadata(existing, event, event.notification.event, "completed");
       // 保留既有 delta event（渲染分发依赖 event.type），仅 finalize 文本与流式标记。
-      return replaceDisplayEntry(entries, i, { ...merged, accumulatedText: text, isStreaming: false });
+      next[i] = { ...merged, accumulatedText: text, isStreaming: false };
+      return next;
     }
   }
 
   // hydrate：无 delta 气泡，合成同 id 的 delta 条目以渲染助手 / 思考卡。
   const syntheticEvent = synthesizeAssistantDeltaEvent(kind, event, itemId, text);
-  return appendDisplayEntry(
-    entries,
+  return [
+    ...entries,
     withEntryMetadata({
       id: targetId,
       sessionId: event.notification.sessionId,
@@ -466,7 +374,7 @@ function finalizeAssistantDelta(
       accumulatedText: text,
       isStreaming: false,
     }, event, event.notification.event),
-  );
+  ];
 }
 
 function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnvelope): SessionDisplayEntry[] {
@@ -483,15 +391,17 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
           return prev;
         }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
-        return replaceDisplayEntry(prev, i, {
+        const next = [...prev];
+        next[i] = {
           ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
           event: bbEvent,
           accumulatedText: accumulated,
           isStreaming: true,
-        });
+        };
+        return next;
       }
     }
-    return appendDisplayEntry(prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta, isStreaming: true });
+    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta, isStreaming: true }];
   }
 
   if (bbEvent.type === "reasoning_text_delta") {
@@ -503,14 +413,16 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
           return prev;
         }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
-        return replaceDisplayEntry(prev, i, {
+        const next = [...prev];
+        next[i] = {
           ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
           event: bbEvent,
           accumulatedText: accumulated,
-        });
+        };
+        return next;
       }
     }
-    return appendDisplayEntry(prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta });
+    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta }];
   }
 
   if (bbEvent.type === "reasoning_summary_delta") {
@@ -522,14 +434,16 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
           return prev;
         }
         const accumulated = (existing.accumulatedText ?? "") + bbEvent.payload.delta;
-        return replaceDisplayEntry(prev, i, {
+        const next = [...prev];
+        next[i] = {
           ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
           event: bbEvent,
           accumulatedText: accumulated,
-        });
+        };
+        return next;
       }
     }
-    return appendDisplayEntry(prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta });
+    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: bbEvent.payload.delta }];
   }
 
   if (bbEvent.type === "item_started" || bbEvent.type === "item_updated") {
@@ -538,14 +452,15 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
+        const next = [...prev];
         const merged = mergeEntryMetadata(existing, event, bbEvent, incomingFreshness);
-        const nextEntry = incomingFreshness && isFreshEnough(existing, incomingFreshness)
+        next[i] = incomingFreshness && isFreshEnough(existing, incomingFreshness)
           ? { ...merged, event: bbEvent }
           : merged;
-        return replaceDisplayEntry(prev, i, nextEntry);
+        return next;
       }
     }
-    return appendDisplayEntry(prev, makeDisplayEntry(event, bbEvent));
+    return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
   if (bbEvent.type === "item_completed") {
@@ -572,24 +487,26 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
+        const next = [...prev];
         const merged = mergeEntryMetadata(existing, event, bbEvent, "completed");
-        return replaceDisplayEntry(prev, i, {
+        next[i] = {
           ...merged,
           event: bbEvent,
           accumulatedText: finalCommandOutput ?? existing.accumulatedText,
           isStreaming: false,
           isPendingApproval: false,
-        });
+        };
+        return next;
       }
     }
-    return appendDisplayEntry(
-      prev,
+    return [
+      ...prev,
       {
         ...makeDisplayEntry(event, bbEvent),
         accumulatedText: finalCommandOutput ?? undefined,
         isStreaming: false,
       },
-    );
+    ];
   }
 
   if (bbEvent.type === "command_output_delta" || bbEvent.type === "file_change_delta" ||
@@ -606,10 +523,12 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
           ? bbEvent.payload.message
           : bbEvent.payload.delta;
         const accumulated = (existing.accumulatedText ?? "") + deltaText;
-        return replaceDisplayEntry(prev, i, {
+        const next = [...prev];
+        next[i] = {
           ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
           accumulatedText: accumulated,
-        });
+        };
+        return next;
       }
     }
     return prev;
@@ -620,7 +539,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   }
 
   if (bbEvent.type === "turn_plan_updated") {
-    return appendDisplayEntry(prev, makeDisplayEntry(event, bbEvent));
+    return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
   if (bbEvent.type === "plan_delta") {
@@ -632,7 +551,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   }
 
   if (bbEvent.type === "approval_request") {
-    return appendDisplayEntry(prev, { ...makeDisplayEntry(event, bbEvent), isPendingApproval: true });
+    return [...prev, { ...makeDisplayEntry(event, bbEvent), isPendingApproval: true }];
   }
 
   if (bbEvent.type === "user_input_submitted") {
@@ -641,21 +560,23 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     for (let i = prev.length - 1; i >= 0; i -= 1) {
       const existing = prev[i];
       if (existing && existing.id === entryId) {
-        return replaceDisplayEntry(prev, i, {
+        const next = [...prev];
+        next[i] = {
           ...mergeEntryMetadata(existing, event, bbEvent, undefined),
           event: bbEvent,
           accumulatedText: text,
-        });
+        };
+        return next;
       }
     }
-    return appendDisplayEntry(prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: text });
+    return [...prev, { ...makeDisplayEntry(event, bbEvent), accumulatedText: text }];
   }
 
   if (bbEvent.type === "error") {
     if (isWillRetryErrorEvent(bbEvent)) {
       return prev;
     }
-    return appendDisplayEntry(prev, makeDisplayEntry(event, bbEvent));
+    return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
   if (bbEvent.type === "platform") {
@@ -674,10 +595,10 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
       if (key === "session_meta_updated" || key === "acp_passthrough") {
         return prev;
       }
-      return appendDisplayEntry(prev, makeDisplayEntry(event, bbEvent));
+      return [...prev, makeDisplayEntry(event, bbEvent)];
     }
 
-    return appendDisplayEntry(prev, makeDisplayEntry(event, bbEvent));
+    return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
   if (bbEvent.type === "thread_status_changed" || bbEvent.type === "executor_context_compacted" ||
@@ -685,7 +606,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return prev;
   }
 
-  return appendDisplayEntry(prev, makeDisplayEntry(event, bbEvent));
+  return [...prev, makeDisplayEntry(event, bbEvent)];
 }
 
 function orderIncomingEvents(incomingEvents: SessionEventEnvelope[]): SessionEventEnvelope[] {

@@ -30,7 +30,7 @@ use agentdash_spi::hooks::trace::build_hook_trace_envelope;
 use agentdash_spi::hooks::{ContextAgentConsumptionMode, ContextFrame, ContextModelChannel};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
+    DiscoveryContext, ExecutionContext, ExecutionStream, ExecutionTurnMode, PromptPayload,
 };
 
 use super::session_item_identity::SessionItemIdentity;
@@ -674,10 +674,15 @@ impl AgentConnector for PiAgentConnector {
             tool_count = context.turn.assembled_tools.len(),
             "Pi Agent prompt entered"
         );
+        let compact_only = context.turn.mode == ExecutionTurnMode::ContextCompaction;
         // 统一映射：结构化 UserInput -> ContentPart（图片直达 ContentPart::Image，不再拍平成文本）。
         // `to_fallback_text` 仅供标题/trace 摘要，不作为投递路径。
-        let prompt_parts = prompt.to_content_parts();
-        if prompt_parts.is_empty() {
+        let prompt_parts = if compact_only {
+            Vec::new()
+        } else {
+            prompt.to_content_parts()
+        };
+        if !compact_only && prompt_parts.is_empty() {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
         }
         let restored_state = context.turn.restored_session_state.as_ref().cloned();
@@ -858,12 +863,16 @@ impl AgentConnector for PiAgentConnector {
             Debug,
             Subsystem::AgentRun,
             session_id,
+            compact_only,
             prompt_part_count = prompt_parts.len(),
             "Pi Agent prompt calling agent loop"
         );
-        let (event_rx, join_handle) = agent
-            .prompt(AgentMessage::user_parts(prompt_parts))
-            .map_err(|error| ConnectorError::Runtime(format!("Pi Agent 启动失败: {error}")))?;
+        let (event_rx, join_handle) = if compact_only {
+            agent.compact_context_only()
+        } else {
+            agent.prompt(AgentMessage::user_parts(prompt_parts))
+        }
+        .map_err(|error| ConnectorError::Runtime(format!("Pi Agent 启动失败: {error}")))?;
         diag!(
             Debug,
             Subsystem::AgentRun,

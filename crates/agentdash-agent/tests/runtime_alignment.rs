@@ -393,6 +393,7 @@ fn event_kind(event: &AgentEvent) -> &'static str {
         AgentEvent::MessageUpdate { .. } => "message_update",
         AgentEvent::MessageEnd { .. } => "message_end",
         AgentEvent::ContextCompactionStarted { .. } => "context_compaction_started",
+        AgentEvent::ContextCompactionNoop { .. } => "context_compaction_noop",
         AgentEvent::ContextCompacted { .. } => "context_compacted",
         AgentEvent::ContextCompactionFailed { .. } => "context_compaction_failed",
         AgentEvent::ProviderAttemptStatus { .. } => "provider_attempt_status",

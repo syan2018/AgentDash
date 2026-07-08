@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "约束 context_compacted 如何提交 compaction projection、segment、head 与 context frame。"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "约束 backend application/domain/infrastructure 分层与服务边界。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "约束 Rust contracts 与前端 generated DTO 的同步方式。"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "约束前端 service、view model、UI 组件的组织方式。"}
+{"file": ".trellis/tasks/07-07-manual-context-compaction-trigger/research/reference-synthesis.md", "reason": "综合 Codex、Claude Code、pi-mono 调研结论，约束本任务采纳和延后的 compaction 优化。"}

@@ -126,6 +126,7 @@ pub enum ConversationCommandKindModel {
     MoveMailboxMessage,
     ResumeMailbox,
     Cancel,
+    CompactContext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -693,6 +694,10 @@ fn conversation_commands(
     ) && model_ready;
     let running_active =
         status == ConversationExecutionStatusModel::RunningActive && active_turn_id.is_some();
+    let compact_context = model_ready
+        && input.frame_ref.is_some()
+        && input.delivery_runtime_session_id.is_some()
+        && (status == ConversationExecutionStatusModel::Ready || running_active);
     let cancel = matches!(
         status,
         ConversationExecutionStatusModel::StartingClaimed
@@ -780,6 +785,28 @@ fn conversation_commands(
             cancel,
             "当前 AgentRun 没有正在执行的 turn。",
             Some("command_unavailable"),
+            None,
+            false,
+            "ignored",
+            vec![ConversationCommandPlacementModel::Header],
+        ),
+        command_view(
+            input,
+            ConversationCommandKindModel::CompactContext,
+            snapshot_id,
+            compact_context,
+            unavailable_reason_for_compact_context(
+                status,
+                model_ready,
+                input.frame_ref.is_some(),
+                input.delivery_runtime_session_id.is_some(),
+            ),
+            Some(disabled_code_for_compact_context(
+                status,
+                model_ready,
+                input.frame_ref.is_some(),
+                input.delivery_runtime_session_id.is_some(),
+            )),
             None,
             false,
             "ignored",
@@ -884,6 +911,7 @@ pub fn conversation_command_id_for(kind: ConversationCommandKindModel) -> &'stat
         ConversationCommandKindModel::MoveMailboxMessage => "move_mailbox_message",
         ConversationCommandKindModel::ResumeMailbox => "resume_mailbox",
         ConversationCommandKindModel::Cancel => "cancel",
+        ConversationCommandKindModel::CompactContext => "compact_context",
     }
 }
 
@@ -929,6 +957,62 @@ fn unavailable_reason_for_submit(
         ConversationExecutionStatusModel::Draft | ConversationExecutionStatusModel::Ready => {
             "当前 AgentRun 暂不可提交消息。"
         }
+    }
+}
+
+fn disabled_code_for_compact_context(
+    status: ConversationExecutionStatusModel,
+    model_ready: bool,
+    has_frame: bool,
+    has_runtime_session: bool,
+) -> &'static str {
+    if !has_frame {
+        return "frame_missing";
+    }
+    if !model_ready {
+        return "model_required";
+    }
+    if !has_runtime_session {
+        return "runtime_session_missing";
+    }
+    match status {
+        ConversationExecutionStatusModel::Ready
+        | ConversationExecutionStatusModel::RunningActive => "command_unavailable",
+        ConversationExecutionStatusModel::Draft => "draft",
+        ConversationExecutionStatusModel::StartingClaimed => "starting_claimed",
+        ConversationExecutionStatusModel::Cancelling => "cancelling",
+        ConversationExecutionStatusModel::Terminal => "terminal",
+        ConversationExecutionStatusModel::FrameMissing => "frame_missing",
+        ConversationExecutionStatusModel::ModelRequired => "model_required",
+    }
+}
+
+fn unavailable_reason_for_compact_context(
+    status: ConversationExecutionStatusModel,
+    model_ready: bool,
+    has_frame: bool,
+    has_runtime_session: bool,
+) -> &'static str {
+    if !has_frame {
+        return "当前 AgentRun 缺少可用 frame。";
+    }
+    if !model_ready {
+        return "当前 AgentRun 缺少模型选择。";
+    }
+    if !has_runtime_session {
+        return "当前 AgentRun 缺少可压缩的 runtime session。";
+    }
+    match status {
+        ConversationExecutionStatusModel::StartingClaimed => {
+            "当前 AgentRun 正在启动中，等待 active turn 建立。"
+        }
+        ConversationExecutionStatusModel::Cancelling => "当前 AgentRun 正在取消中。",
+        ConversationExecutionStatusModel::Terminal => "当前 AgentRun 已结束。",
+        ConversationExecutionStatusModel::FrameMissing => "当前 AgentRun 缺少可用 frame。",
+        ConversationExecutionStatusModel::ModelRequired => "当前 AgentRun 缺少模型选择。",
+        ConversationExecutionStatusModel::Draft => "当前 AgentRun 尚未启动。",
+        ConversationExecutionStatusModel::Ready
+        | ConversationExecutionStatusModel::RunningActive => "当前 AgentRun 不可压缩上下文。",
     }
 }
 
@@ -1012,6 +1096,18 @@ mod tests {
                 Some("owner-user"),
             ),
         }
+    }
+
+    fn command(
+        snapshot: &AgentConversationSnapshotModel,
+        kind: ConversationCommandKindModel,
+    ) -> &ConversationCommandModel {
+        snapshot
+            .commands
+            .commands
+            .iter()
+            .find(|command| command.kind == kind)
+            .expect("command exists")
     }
 
     #[test]
@@ -1187,6 +1283,91 @@ mod tests {
         assert!(snapshot.commands.commands.iter().any(|command| command.kind
             == ConversationCommandKindModel::PromoteMailboxMessage
             && command.enabled));
+    }
+
+    #[test]
+    fn compact_context_is_available_when_ready_or_running_active() {
+        let ready = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            AgentRunExecutionState::Idle,
+        ));
+        let running = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            AgentRunExecutionState::Running {
+                turn_id: Some("turn-1".to_string()),
+            },
+        ));
+
+        let ready_compact = command(&ready, ConversationCommandKindModel::CompactContext);
+        assert!(ready_compact.enabled);
+        assert_eq!(ready_compact.command_id, "compact_context");
+        assert_eq!(ready_compact.stale_guard.active_turn_id, None);
+
+        let running_compact = command(&running, ConversationCommandKindModel::CompactContext);
+        assert!(running_compact.enabled);
+        assert_eq!(
+            running_compact.stale_guard.active_turn_id.as_deref(),
+            Some("turn-1")
+        );
+    }
+
+    #[test]
+    fn compact_context_disabled_states_explain_current_blocker() {
+        let starting = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            AgentRunExecutionState::Running { turn_id: None },
+        ));
+        assert_eq!(
+            command(&starting, ConversationCommandKindModel::CompactContext)
+                .disabled_code
+                .as_deref(),
+            Some("starting_claimed")
+        );
+
+        let cancelling = AgentConversationSnapshotResolver::resolve(snapshot_input(
+            AgentRunExecutionState::Cancelling {
+                turn_id: Some("turn-1".to_string()),
+            },
+        ));
+        assert_eq!(
+            command(&cancelling, ConversationCommandKindModel::CompactContext)
+                .disabled_code
+                .as_deref(),
+            Some("cancelling")
+        );
+
+        let mut model_required = snapshot_input(AgentRunExecutionState::Idle);
+        model_required.model_config.status = ConversationModelConfigStatusModel::ModelRequired;
+        let model_required = AgentConversationSnapshotResolver::resolve(model_required);
+        assert_eq!(
+            command(
+                &model_required,
+                ConversationCommandKindModel::CompactContext
+            )
+            .disabled_code
+            .as_deref(),
+            Some("model_required")
+        );
+
+        let mut frame_missing = snapshot_input(AgentRunExecutionState::Idle);
+        frame_missing.frame_ref = None;
+        let frame_missing = AgentConversationSnapshotResolver::resolve(frame_missing);
+        assert_eq!(
+            command(&frame_missing, ConversationCommandKindModel::CompactContext)
+                .disabled_code
+                .as_deref(),
+            Some("frame_missing")
+        );
+
+        let mut runtime_missing = snapshot_input(AgentRunExecutionState::Idle);
+        runtime_missing.delivery_runtime_session_id = None;
+        let runtime_missing = AgentConversationSnapshotResolver::resolve(runtime_missing);
+        assert_eq!(
+            command(
+                &runtime_missing,
+                ConversationCommandKindModel::CompactContext
+            )
+            .disabled_code
+            .as_deref(),
+            Some("runtime_session_missing")
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use agentdash_agent::{
 };
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEvent, PlatformEvent, SourceInfo};
-use agentdash_agent_types::AgentDashThreadItem;
+use agentdash_agent_types::{AgentDashThreadItem, CompactionMetadata};
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
 use agentdash_spi::{Mount, MountCapability};
@@ -589,6 +589,55 @@ fn context_compaction_started_maps_to_context_compaction_item() {
 }
 
 #[test]
+fn context_compaction_noop_maps_diagnostic_metadata() {
+    let event = AgentEvent::ContextCompactionNoop {
+        item_id: "compact-noop-1".to_string(),
+        reason: "no_eligible_messages".to_string(),
+        metadata: CompactionMetadata {
+            trigger: agentdash_agent_types::CompactionTrigger::Manual,
+            reason: agentdash_agent_types::CompactionReason::UserRequested,
+            phase: agentdash_agent_types::CompactionPhase::PreProvider,
+            strategy: agentdash_agent_types::CompactionStrategy::SummaryPrefix,
+            implementation: agentdash_agent_types::CompactionImplementation::LocalSummary,
+            request_id: Some("request-1".to_string()),
+        },
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+            key,
+            value,
+        }) => {
+            assert_eq!(key, "context_compaction_noop");
+            assert_eq!(value["lifecycle_item_id"], "compact-noop-1");
+            assert_eq!(value["status"], "noop");
+            assert_eq!(value["noop_reason"], "no_eligible_messages");
+            assert_eq!(value["trigger"], "manual");
+            assert_eq!(value["reason"], "user_requested");
+            assert_eq!(value["phase"], "pre_provider");
+            assert_eq!(value["strategy"], "summary_prefix");
+            assert_eq!(value["implementation"], "local_summary");
+            assert_eq!(value["request_id"], "request-1");
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
 fn context_compaction_completed_maps_lifecycle_and_metadata() {
     let event = AgentEvent::ContextCompacted {
         item_id: "compact-1".to_string(),
@@ -612,6 +661,7 @@ fn context_compaction_completed_maps_lifecycle_and_metadata() {
             turn_id: "turn-1".to_string(),
             entry_index: 3,
         }),
+        metadata: CompactionMetadata::auto_token_pressure_pre_provider(),
         newly_compacted_messages: 3,
     };
 
@@ -640,6 +690,12 @@ fn context_compaction_completed_maps_lifecycle_and_metadata() {
             assert_eq!(value["compacted_until_ref"]["turn_id"], "turn-1");
             assert_eq!(value["first_kept_ref"]["entry_index"], 3);
             assert_eq!(value["newly_compacted_messages"], 3);
+            assert_eq!(value["trigger"], "auto");
+            assert_eq!(value["reason"], "token_pressure");
+            assert_eq!(value["phase"], "pre_provider");
+            assert_eq!(value["strategy"], "summary_prefix");
+            assert_eq!(value["implementation"], "local_summary");
+            assert!(value["request_id"].is_null());
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }
@@ -660,6 +716,7 @@ fn context_compaction_failure_maps_diagnostic_and_error() {
     let event = AgentEvent::ContextCompactionFailed {
         item_id: "compact-1".to_string(),
         error: "summary_empty".to_string(),
+        metadata: None,
     };
 
     let mut entry_index = 0;

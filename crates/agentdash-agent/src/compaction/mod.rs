@@ -7,22 +7,27 @@ use tokio_util::sync::CancellationToken;
 
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
 use crate::types::{
-    AgentError, AgentMessage, CompactionParams, CompactionResult, ContentPart, MessageRef,
-    estimate_message_tokens,
+    AgentError, AgentMessage, CompactionMetadata, CompactionParams, CompactionResult, ContentPart,
+    MessageRef, estimate_message_tokens,
 };
 
 /// 默认摘要 system prompt
 const SUMMARIZATION_SYSTEM_PROMPT: &str = "\
-你是一个会话交接摘要助手。请为 AI 编程助手与用户的对话历史生成一份可延续工作的结构化摘要。
+你是一个会话交接摘要助手。你只能总结上下文，不能继续对话、回答用户、执行任务、提出新的问题或声称已经完成后续动作。请为 AI 编程助手与用户的对话历史生成一份可交接给下一次模型请求继续工作的结构化摘要。
 
 摘要必须包含：
-- 已完成的主要工作
-- 做出的关键决策和原因
-- 当前状态和待处理事项
+- 当前目标 / 用户主要意图
+- 已完成的主要工作和当前进展
+- 做出的关键决策、原因和仍需遵守的约束
+- 文件、工具、外部产物或 Lifecycle context 的使用状态
+- 遇到的错误、失败尝试和已经应用的修复
+- 待办事项和最直接的下一步
 - 重要的技术发现（文件路径、函数名等具体信息）
 - 原文回看索引：列出 3-8 个最值得回看的 Lifecycle session 文件或 message 区间
 
 要求：
+- 摘要是 continuation handoff，不是用户可见回复
+- 不要要求用户确认摘要，不要继续当前对话
 - 保留所有具体的文件路径、函数名、变量名
 - 保留所有未完成的工作和待办事项
 - 原文回看索引只能引用用户提供的 Lifecycle 文件列表、item id 或 message 区间
@@ -32,7 +37,7 @@ const SUMMARIZATION_SYSTEM_PROMPT: &str = "\
 
 /// 迭代式摘要更新 prompt（与前次摘要合并）
 const UPDATE_SUMMARIZATION_PROMPT: &str = "\
-你是一个会话摘要助手。你将收到一份已有摘要和一段新的对话历史。
+你是一个会话交接摘要助手。你只能总结上下文，不能继续对话、回答用户、执行任务、提出新的问题或声称已经完成后续动作。你将收到一份已有摘要和一段新的对话历史。
 
 请将新对话中的信息合并到已有摘要中：
 - 保留已有摘要中仍然相关的信息
@@ -40,15 +45,21 @@ const UPDATE_SUMMARIZATION_PROMPT: &str = "\
 - 更新已变更的状态
 - 删除已过时的信息
 - 保留、更新或删除过时的“原文回看索引”
+- 覆盖当前目标、进展、关键决策、约束、文件/工具状态、错误修复、待办和下一步
 - 原文回看索引只能引用用户提供的 Lifecycle 文件列表、item id 或 message 区间
 
-输出更新后的完整摘要（markdown 格式）。";
+输出更新后的完整摘要（markdown 格式）。摘要是 continuation handoff，不是用户可见回复；不要要求用户确认摘要，不要继续当前对话。";
+
+pub fn default_auto_compaction_metadata() -> CompactionMetadata {
+    CompactionMetadata::auto_token_pressure_pre_provider()
+}
 
 /// 执行压缩：cut point -> 摘要生成 -> 消息替换
 pub async fn execute_compaction(
     messages: &[AgentMessage],
     message_refs: &[Option<MessageRef>],
     params: &CompactionParams,
+    metadata: CompactionMetadata,
     bridge: &dyn LlmBridge,
     cancel: &CancellationToken,
 ) -> Result<Option<CompactionResult>, AgentError> {
@@ -125,6 +136,7 @@ pub async fn execute_compaction(
         compacted_until_ref,
         first_kept_ref,
         trigger_stats: params.trigger_stats.clone(),
+        metadata,
         newly_compacted_messages,
         used_custom_summary,
     }))
@@ -570,6 +582,7 @@ mod tests {
             custom_summary: Some("merged summary".to_string()),
             custom_prompt: None,
             trigger_stats: trigger_stats(),
+            metadata: default_auto_compaction_metadata(),
         }
     }
 
@@ -598,6 +611,7 @@ mod tests {
             &messages,
             &message_refs(messages.len()),
             &compaction_params(1, 16_384),
+            default_auto_compaction_metadata(),
             &bridge,
             &CancellationToken::new(),
         )
@@ -660,6 +674,7 @@ mod tests {
                 custom_summary: None,
                 ..compaction_params(1, 16_384)
             },
+            default_auto_compaction_metadata(),
             &bridge,
             &CancellationToken::new(),
         )
@@ -694,6 +709,24 @@ mod tests {
         let instruction = request.messages[3].first_text().expect("instruction");
         assert!(instruction.contains("Lifecycle 文件列表索引"));
         assert!(instruction.contains("session/messages/0000_0002"));
+        let system_prompt = request.system_prompt.as_deref().expect("system prompt");
+        for expected in [
+            "只能总结上下文",
+            "不能继续对话",
+            "当前目标",
+            "当前进展",
+            "关键决策",
+            "约束",
+            "文件、工具",
+            "错误",
+            "待办事项",
+            "下一步",
+        ] {
+            assert!(
+                system_prompt.contains(expected),
+                "summary prompt should mention {expected}"
+            );
+        }
         assert!(
             !instruction.contains("[User]:"),
             "summary request should not serialize history into transcript text"
@@ -717,6 +750,7 @@ mod tests {
                 custom_summary: None,
                 ..compaction_params(1, 16_384)
             },
+            default_auto_compaction_metadata(),
             &bridge,
             &CancellationToken::new(),
         )
@@ -777,6 +811,7 @@ mod tests {
                 custom_summary: None,
                 ..compaction_params(1, 16_384)
             },
+            default_auto_compaction_metadata(),
             &bridge,
             &CancellationToken::new(),
         )

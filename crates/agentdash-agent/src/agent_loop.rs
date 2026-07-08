@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::bridge::LlmBridge;
+use crate::bridge::{BridgeRequest, LlmBridge};
 use crate::tool_result_ref::ToolResultRefContext;
 use crate::types::{
     AfterToolCallContext, AfterToolCallResult, AfterTurnInput, AgentContext, AgentError,
@@ -17,8 +17,8 @@ mod streaming;
 mod tool_call;
 mod tool_result;
 
-use self::streaming::stream_assistant_response;
-use self::tool_call::execute_tool_calls;
+use self::streaming::{run_compaction_preflight, stream_assistant_response};
+use self::tool_call::{execute_tool_calls, refresh_context_tools};
 
 const MAX_CONSECUTIVE_EMPTY_CONTINUES: usize = 1;
 
@@ -203,6 +203,49 @@ pub async fn agent_loop_continue(
         &cancel,
     )
     .await
+}
+
+/// 执行一次只做上下文压缩的维护轮。
+///
+/// 该入口不追加 prompt、不请求 provider、不轮询 steering/follow-up，只消费 runtime
+/// delegate 在 pre-provider 边界暴露的 compaction 决策。
+pub async fn agent_loop_compact_only(
+    context: &mut AgentContext,
+    tool_instances: &[DynAgentTool],
+    config: &AgentLoopConfig,
+    bridge: &dyn LlmBridge,
+    emit: &AgentEventSink,
+    cancel: CancellationToken,
+) -> Result<Vec<AgentMessage>, AgentError> {
+    emit_event(emit, AgentEvent::AgentStart).await;
+    emit_event(emit, AgentEvent::TurnStart).await;
+
+    refresh_context_tools(context, tool_instances, config);
+    let mut request = BridgeRequest {
+        system_prompt: Some(context.system_prompt.clone()),
+        messages: context.messages.clone(),
+        tools: context.tools.clone(),
+    };
+    let mut message_refs_for_llm = context.message_refs.clone();
+    run_compaction_preflight(
+        context,
+        &mut request,
+        &mut message_refs_for_llm,
+        config,
+        bridge,
+        emit,
+        &cancel,
+    )
+    .await?;
+
+    emit_event(
+        emit,
+        AgentEvent::AgentEnd {
+            messages: Vec::new(),
+        },
+    )
+    .await;
+    Ok(Vec::new())
 }
 
 // ─── 主循环 ─────────────────────────────────────────────────

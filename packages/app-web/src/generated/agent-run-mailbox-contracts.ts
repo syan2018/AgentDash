@@ -22,6 +22,10 @@ input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPrec
  */
 delivery_intent?: string, };
 
+export type AgentRunContextCompactionCommandOutcome = "scheduled_next_turn" | "launched_compaction_turn" | "no_eligible_messages" | "blocked" | "failed";
+
+export type AgentRunContextCompactionCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunContextCompactionCommandOutcome, runtime_session_id?: string, request_id?: string, turn_id?: string, message?: string, };
+
 export type AgentRunForkLineageView = { id: string, parent: AgentRunMessageAcceptedRefs, child: AgentRunMessageAcceptedRefs, relation_kind: string, fork_point_event_seq?: bigint, fork_point_ref?: SessionMessageRefDto, forked_by_user_id: string, created_at: string, };
 
 export type AgentRunForkOutcomeView = { outcome: string, parent_refs: AgentRunMessageAcceptedRefs, child_refs: AgentRunMessageAcceptedRefs, lineage: AgentRunForkLineageView, redirect: AgentRunRefDto, };
@@ -56,7 +60,7 @@ export type BackendSelectionRequestDto = { mode: BackendSelectionModeDto, backen
 
 export type ConsumptionBarrier = "immediate_if_idle" | "agent_loop_turn_boundary" | "agent_run_turn_boundary" | "manual_resume";
 
-export type ConversationCommandKind = "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "move_mailbox_message" | "resume_mailbox" | "cancel";
+export type ConversationCommandKind = "submit_message" | "promote_mailbox_message" | "delete_mailbox_message" | "move_mailbox_message" | "resume_mailbox" | "cancel" | "compact_context";
 
 export type ConversationCommandStaleGuardView = { snapshot_id: string, run_id: string, agent_id: string, frame_id?: string, active_turn_id?: string, };
 

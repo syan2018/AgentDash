@@ -47,8 +47,8 @@ use agentdash_domain::workflow::{
     AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, AgentRunLineageRepository,
     GateResultDeliveryMarkerRepository, LifecycleAgentRepository, LifecycleGateRepository,
     LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    RuntimeSessionExecutionAnchorRepository, WorkflowGraphRepository,
-    WorkflowTemplateInstallRepository,
+    ManualContextCompactionRequestRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 use async_trait::async_trait;
@@ -101,6 +101,7 @@ pub struct RepositorySet {
     pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub agent_run_delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
     pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
+    pub manual_context_compaction_request_repo: Arc<dyn ManualContextCompactionRequestRepository>,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreationPort>,
     pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,

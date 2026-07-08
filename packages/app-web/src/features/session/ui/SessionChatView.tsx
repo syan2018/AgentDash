@@ -54,6 +54,10 @@ function isSilentCommandRefreshError(error: unknown): boolean {
   );
 }
 
+function deferStateUpdate(update: () => void): void {
+  queueMicrotask(update);
+}
+
 export function SessionChatView({
   model,
   intents,
@@ -78,6 +82,7 @@ export function SessionChatView({
     executorStateKey,
     showExecutorSelector = true,
     commandState,
+    compactContextCommand,
     mailbox,
     statusBarRunId,
     statusBarAgentId,
@@ -120,7 +125,9 @@ export function SessionChatView({
     if (initialInputValue && !initialValueAppliedRef.current) {
       initialValueAppliedRef.current = true;
       richInputRef.current?.setValue(initialInputValue);
-      setInputValue(initialInputValue);
+      deferStateUpdate(() => {
+        setInputValue(initialInputValue);
+      });
     }
   }, [initialInputValue]);
 
@@ -128,8 +135,10 @@ export function SessionChatView({
   useEffect(() => {
     if (injectedInputValue != null && injectedInputValue !== "") {
       richInputRef.current?.setValue(injectedInputValue);
-      setInputValue(injectedInputValue);
-      injectedInputConsumed?.();
+      deferStateUpdate(() => {
+        setInputValue(injectedInputValue);
+        injectedInputConsumed?.();
+      });
     }
   }, [injectedInputConsumed, injectedInputValue]);
 
@@ -139,9 +148,11 @@ export function SessionChatView({
 
   // runtime stream target 变更时重置内部状态
   useEffect(() => {
-    setSendError(null);
-    setIsCancelling(false);
     cancelInFlightRef.current = false;
+    deferStateUpdate(() => {
+      setSendError(null);
+      setIsCancelling(false);
+    });
   }, [agentRunTargetKey]);
 
   // ─── 执行器配置 ──────────────────────────────────────
@@ -666,6 +677,7 @@ export function SessionChatView({
           tokenUsage={tokenUsage}
           agentRunTarget={agentRunTarget}
           projectionRefreshKey={projectionRefreshKey}
+          compactContextCommand={compactContextCommand}
           onAtTrigger={handleAtTrigger}
           onFileSelected={handleFileSelected}
           onInputChange={setInputValue}

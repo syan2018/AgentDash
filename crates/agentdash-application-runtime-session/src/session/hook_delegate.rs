@@ -3,10 +3,11 @@ use std::sync::Arc;
 use agentdash_agent_types::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeError,
     BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput, CompactionFailureInput,
-    CompactionParams, CompactionResult, CompactionTriggerStats, EvaluateCompactionInput,
-    RuntimeCompactionDelegate, RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate,
-    RuntimeToolPolicyDelegate, RuntimeTurnBoundaryDelegate, StopDecision, StopReason,
-    ToolCallDecision, TransformContextInput, TransformContextOutput, TurnControlDecision,
+    CompactionMetadata, CompactionParams, CompactionResult, CompactionTriggerStats,
+    EvaluateCompactionInput, RuntimeCompactionDelegate, RuntimeContextTransformDelegate,
+    RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate, RuntimeTurnBoundaryDelegate,
+    StopDecision, StopReason, ToolCallDecision, TransformContextInput, TransformContextOutput,
+    TurnControlDecision,
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -384,6 +385,7 @@ impl RuntimeCompactionDelegate for HookRuntimeDelegate {
                         context_window: live_token_stats.effective_context_window,
                         reserve_tokens: compaction.reserve_tokens.unwrap_or(default_reserve_tokens),
                     },
+                    metadata: CompactionMetadata::auto_token_pressure_pre_provider(),
                 })
             }
             None => {
@@ -1923,6 +1925,7 @@ mod tests {
                         context_window: 64_000,
                         reserve_tokens: 16_384,
                     },
+                    metadata: agentdash_spi::CompactionMetadata::auto_token_pressure_pre_provider(),
                     newly_compacted_messages: 3,
                     used_custom_summary: true,
                 },
@@ -1987,6 +1990,7 @@ mod tests {
                     CompactionFailureInput {
                         item_id: format!("compact-{index}"),
                         error: "summary_empty".to_string(),
+                        metadata: None,
                     },
                     CancellationToken::new(),
                 )
@@ -2048,6 +2052,7 @@ mod tests {
                         context_window: 64_000,
                         reserve_tokens: 16_384,
                     },
+                    metadata: agentdash_spi::CompactionMetadata::auto_token_pressure_pre_provider(),
                     newly_compacted_messages: 3,
                     used_custom_summary: true,
                 },

@@ -47,6 +47,7 @@ pub enum AgentRunCommandKind {
     MailboxMove,
     MailboxResume,
     Cancel,
+    ContextCompact,
 }
 
 impl AgentRunCommandKind {
@@ -61,6 +62,7 @@ impl AgentRunCommandKind {
             Self::MailboxMove => "mailbox_move",
             Self::MailboxResume => "mailbox_resume",
             Self::Cancel => "cancel",
+            Self::ContextCompact => "context_compact",
         }
     }
 }
@@ -79,6 +81,7 @@ impl TryFrom<&str> for AgentRunCommandKind {
             "mailbox_move" => Ok(Self::MailboxMove),
             "mailbox_resume" => Ok(Self::MailboxResume),
             "cancel" => Ok(Self::Cancel),
+            "context_compact" => Ok(Self::ContextCompact),
             other => Err(DomainError::InvalidConfig(format!(
                 "agent_run_command_receipts.command_kind 无效: {other}"
             ))),
@@ -187,6 +190,18 @@ mod tests {
         assert_eq!(
             AgentRunCommandKind::try_from("mailbox_move").expect("mailbox_move command kind"),
             AgentRunCommandKind::MailboxMove
+        );
+    }
+
+    #[test]
+    fn context_compact_command_kind_round_trips() {
+        assert_eq!(
+            AgentRunCommandKind::ContextCompact.as_str(),
+            "context_compact"
+        );
+        assert_eq!(
+            AgentRunCommandKind::try_from("context_compact").expect("context_compact command kind"),
+            AgentRunCommandKind::ContextCompact
         );
     }
 }

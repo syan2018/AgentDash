@@ -94,7 +94,8 @@ impl<'a> AgentRunWorkspaceCommandPolicyService<'a> {
             | AgentRunWorkspaceCommandPrecondition::MoveMailboxMessage { .. }
             | AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { .. }
             | AgentRunWorkspaceCommandPrecondition::ResumeMailbox { .. }
-            | AgentRunWorkspaceCommandPrecondition::Cancel { .. } => {
+            | AgentRunWorkspaceCommandPrecondition::Cancel { .. }
+            | AgentRunWorkspaceCommandPrecondition::ContextCompact { .. } => {
                 ensure_availability_command_enabled(&availability, expected_kind, detail)
             }
         }
@@ -314,6 +315,9 @@ pub enum AgentRunWorkspaceCommandPrecondition {
     Cancel {
         command: AgentRunCommandPreconditionModel,
     },
+    ContextCompact {
+        command: AgentRunCommandPreconditionModel,
+    },
 }
 
 impl AgentRunWorkspaceCommandPrecondition {
@@ -334,6 +338,9 @@ impl AgentRunWorkspaceCommandPrecondition {
             AgentRunWorkspaceCommandPrecondition::Cancel { .. } => {
                 ConversationCommandKindModel::Cancel
             }
+            AgentRunWorkspaceCommandPrecondition::ContextCompact { .. } => {
+                ConversationCommandKindModel::CompactContext
+            }
         }
     }
 
@@ -343,7 +350,8 @@ impl AgentRunWorkspaceCommandPrecondition {
             | AgentRunWorkspaceCommandPrecondition::MoveMailboxMessage { command }
             | AgentRunWorkspaceCommandPrecondition::PromoteMailboxMessage { command }
             | AgentRunWorkspaceCommandPrecondition::ResumeMailbox { command }
-            | AgentRunWorkspaceCommandPrecondition::Cancel { command } => command,
+            | AgentRunWorkspaceCommandPrecondition::Cancel { command }
+            | AgentRunWorkspaceCommandPrecondition::ContextCompact { command } => command,
         }
     }
 }

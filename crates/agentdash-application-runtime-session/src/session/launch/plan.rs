@@ -7,8 +7,9 @@ use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
-    ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, MemoryDiscoveryOutput,
-    RestoredSessionState, RuntimeMcpServer, RuntimeVfsAccessPolicy, SessionContextBundle,
+    ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, ExecutionTurnMode,
+    MemoryDiscoveryOutput, RestoredSessionState, RuntimeMcpServer, RuntimeVfsAccessPolicy,
+    SessionContextBundle,
 };
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
@@ -320,6 +321,11 @@ impl LaunchPlan {
             identity,
         };
         let turn = ExecutionTurnFrame {
+            mode: if input.source == LaunchSource::ContextCompaction {
+                ExecutionTurnMode::ContextCompaction
+            } else {
+                ExecutionTurnMode::AssistantResponse
+            },
             hook_runtime: input.hook_runtime,
             capability_state: input.capability_state,
             runtime_delegates: input.runtime_delegates,

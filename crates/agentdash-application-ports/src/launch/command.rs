@@ -18,6 +18,7 @@ pub enum LaunchSource {
     WorkflowOrchestrator,
     RoutineExecutor,
     LocalRelayPrompt,
+    ContextCompaction,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -139,6 +140,7 @@ impl LaunchCommand {
             LaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
             LaunchSource::RoutineExecutor => "routine_executor",
             LaunchSource::LocalRelayPrompt => "local_relay_prompt",
+            LaunchSource::ContextCompaction => "context_compaction",
         }
     }
 
@@ -235,6 +237,10 @@ impl LaunchCommand {
             })],
             LaunchSource::LocalRelayPrompt,
         )
+    }
+
+    pub fn context_compaction_input(input: LaunchPromptInput) -> Self {
+        Self::source_input(input, LaunchSource::ContextCompaction)
     }
 }
 

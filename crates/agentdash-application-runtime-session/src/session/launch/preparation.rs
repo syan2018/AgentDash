@@ -620,6 +620,7 @@ fn system_delivery_kind(launch_source: LaunchSource, text_prompt: &str) -> &'sta
         LaunchSource::HookAutoResume => "hook_auto_resume",
         LaunchSource::WorkflowOrchestrator => "workflow_delivery",
         LaunchSource::RoutineExecutor => "routine_delivery",
+        LaunchSource::ContextCompaction => "context_compaction",
         LaunchSource::HttpPrompt
         | LaunchSource::LifecycleAgentUserMessage
         | LaunchSource::LocalRelayPrompt => "system_delivery",
@@ -653,6 +654,7 @@ fn launch_source_tag(launch_source: LaunchSource) -> &'static str {
         LaunchSource::WorkflowOrchestrator => "workflow_orchestrator",
         LaunchSource::RoutineExecutor => "routine_executor",
         LaunchSource::LocalRelayPrompt => "local_relay_prompt",
+        LaunchSource::ContextCompaction => "context_compaction",
     }
 }
 

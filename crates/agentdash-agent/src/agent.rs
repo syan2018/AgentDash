@@ -396,6 +396,7 @@ impl Agent {
                     Some(queued_steering),
                     RunLoopOptions {
                         skip_initial_steering_poll: true,
+                        ..Default::default()
                     },
                 );
             }
@@ -412,6 +413,17 @@ impl Agent {
         }
 
         self.run_loop(None, RunLoopOptions::default())
+    }
+
+    /// 执行一次只做上下文压缩的维护轮。
+    pub fn compact_context_only(&mut self) -> Result<LoopHandle, AgentError> {
+        self.run_loop(
+            None,
+            RunLoopOptions {
+                compact_only: true,
+                ..Default::default()
+            },
+        )
     }
 
     fn run_loop(
@@ -506,36 +518,51 @@ impl Agent {
             })),
         };
 
+        let compact_only = options.compact_only;
         let handle = tokio::spawn(async move {
-            let loop_kind = if prompts.is_some() {
+            let loop_kind = if compact_only {
+                "compact_only"
+            } else if prompts.is_some() {
                 "prompt"
             } else {
                 "continue"
             };
             let tool_count = tool_instances.len();
-            let result = match prompts {
-                Some(prompts) => {
-                    agent_loop::agent_loop(
-                        prompts,
-                        &mut context,
-                        &tool_instances,
-                        &config,
-                        bridge.as_ref(),
-                        &event_sink,
-                        cancel.clone(),
-                    )
-                    .await
-                }
-                None => {
-                    agent_loop::agent_loop_continue(
-                        &mut context,
-                        &tool_instances,
-                        &config,
-                        bridge.as_ref(),
-                        &event_sink,
-                        cancel.clone(),
-                    )
-                    .await
+            let result = if compact_only {
+                agent_loop::agent_loop_compact_only(
+                    &mut context,
+                    &tool_instances,
+                    &config,
+                    bridge.as_ref(),
+                    &event_sink,
+                    cancel.clone(),
+                )
+                .await
+            } else {
+                match prompts {
+                    Some(prompts) => {
+                        agent_loop::agent_loop(
+                            prompts,
+                            &mut context,
+                            &tool_instances,
+                            &config,
+                            bridge.as_ref(),
+                            &event_sink,
+                            cancel.clone(),
+                        )
+                        .await
+                    }
+                    None => {
+                        agent_loop::agent_loop_continue(
+                            &mut context,
+                            &tool_instances,
+                            &config,
+                            bridge.as_ref(),
+                            &event_sink,
+                            cancel.clone(),
+                        )
+                        .await
+                    }
                 }
             };
 
@@ -622,6 +649,7 @@ fn build_tool_approval_waiter(
 #[derive(Debug, Clone, Copy, Default)]
 struct RunLoopOptions {
     skip_initial_steering_poll: bool,
+    compact_only: bool,
 }
 
 fn build_event_sink(
@@ -692,7 +720,7 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
                 s.message_refs.push(None);
             }
         }
-        AgentEvent::ContextCompactionStarted { .. } => {}
+        AgentEvent::ContextCompactionStarted { .. } | AgentEvent::ContextCompactionNoop { .. } => {}
         AgentEvent::ContextCompacted {
             messages,
             message_refs,

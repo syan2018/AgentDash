@@ -459,7 +459,9 @@ export function isAggregatedDiffGroup(
 export function isDisplayEntry(
   entry: SessionDisplayItem,
 ): entry is SessionDisplayEntry {
-  return !isAggregatedGroup(entry) && !isAggregatedThinkingGroup(entry);
+  return !isAggregatedGroup(entry) &&
+    !isAggregatedThinkingGroup(entry) &&
+    !isAggregatedContextFrameGroup(entry);
 }
 
 // ==================== 工具函数 ====================

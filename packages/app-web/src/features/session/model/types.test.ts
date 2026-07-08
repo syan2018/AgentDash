@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractTokenUsageFromEvent } from "./types";
+import type { AggregatedContextFrameGroup } from "./types";
+import { extractTokenUsageFromEvent, isDisplayEntry } from "./types";
 
 describe("extractTokenUsageFromEvent", () => {
   it("区分当前上下文、pending estimate 和累计用量", () => {
@@ -48,5 +49,18 @@ describe("extractTokenUsageFromEvent", () => {
     expect(usage?.effectiveContextWindow).toBe(180_000);
     expect(usage?.last.totalTokens).toBe(12_600);
     expect(usage?.total.totalTokens).toBe(126_000);
+  });
+});
+
+describe("isDisplayEntry", () => {
+  it("不会把 context frame 聚合组误判成普通 entry", () => {
+    const group: AggregatedContextFrameGroup = {
+      type: "aggregated_context_frames",
+      id: "ctx-group",
+      groupKey: "context-frame-ctx-group",
+      entries: [],
+    };
+
+    expect(isDisplayEntry(group)).toBe(false);
   });
 });

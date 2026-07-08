@@ -146,24 +146,32 @@ const INPUT_SOURCE_LABELS: Record<string, string> = {
   "mailbox.source.workflow.orchestrator": "Workflow",
 };
 
-export function deriveSessionInputSourceView(source: UserInputSource): SessionInputSourceView {
-  const explicitLabel = INPUT_SOURCE_LABELS[source.displayLabelKey];
-  const namespaceKindLabel = INPUT_SOURCE_LABELS[`mailbox.source.${source.namespace}.${source.kind}`];
+export function deriveSessionInputSourceView(
+  source: Partial<UserInputSource> | null | undefined,
+): SessionInputSourceView {
+  const namespace = source?.namespace?.trim() || "core";
+  const kind = source?.kind?.trim() || "composer";
+  const actor = source?.actor?.trim() || "user";
+  const route = source?.route ?? null;
+  const displayLabelKey =
+    source?.displayLabelKey?.trim() || `mailbox.source.${namespace}.${kind}`;
+  const explicitLabel = INPUT_SOURCE_LABELS[displayLabelKey];
+  const namespaceKindLabel = INPUT_SOURCE_LABELS[`mailbox.source.${namespace}.${kind}`];
   const label =
     explicitLabel ??
     namespaceKindLabel ??
-    defaultInputSourceLabel(source.namespace, source.kind);
+    defaultInputSourceLabel(namespace, kind);
   const presentation =
-    source.namespace === "companion"
+    namespace === "companion"
       ? "companion"
-      : source.namespace === "core" && source.actor === "user"
+      : namespace === "core" && actor === "user"
         ? "user"
         : "channel";
   return {
-    namespace: source.namespace,
-    kind: source.kind,
-    actor: source.actor,
-    route: source.route,
+    namespace,
+    kind,
+    actor,
+    route,
     label,
     presentation,
   };

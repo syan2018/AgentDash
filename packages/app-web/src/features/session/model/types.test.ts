@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { AggregatedContextFrameGroup } from "./types";
-import { extractTokenUsageFromEvent, isDisplayEntry } from "./types";
+import {
+  deriveSessionInputSourceView,
+  extractTokenUsageFromEvent,
+  isDisplayEntry,
+} from "./types";
 
 describe("extractTokenUsageFromEvent", () => {
   it("区分当前上下文、pending estimate 和累计用量", () => {
@@ -62,5 +66,34 @@ describe("isDisplayEntry", () => {
     };
 
     expect(isDisplayEntry(group)).toBe(false);
+  });
+});
+
+describe("deriveSessionInputSourceView", () => {
+  it("缺少 source 的历史输入事件按普通用户输入展示", () => {
+    const source = deriveSessionInputSourceView(undefined);
+
+    expect(source).toEqual({
+      namespace: "core",
+      kind: "composer",
+      actor: "user",
+      route: null,
+      label: "用户输入",
+      presentation: "user",
+    });
+  });
+
+  it("Companion source 按 channel 输入展示", () => {
+    const source = deriveSessionInputSourceView({
+      namespace: "companion",
+      kind: "result",
+      actor: "agent",
+      route: "parent",
+      displayLabelKey: "mailbox.source.companion.result",
+    });
+
+    expect(source.presentation).toBe("companion");
+    expect(source.label).toBe("Companion 结果");
+    expect(source.route).toBe("parent");
   });
 });

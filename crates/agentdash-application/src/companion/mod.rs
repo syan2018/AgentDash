@@ -2,6 +2,7 @@ pub(crate) mod dispatch;
 pub mod gate_control;
 pub mod model_preflight;
 pub mod payload_types;
+pub(crate) mod reply_contract;
 pub mod runtime_tool_provider;
 pub(crate) mod skill_projection;
 pub(crate) mod tool_context;

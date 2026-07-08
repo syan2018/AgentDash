@@ -27,10 +27,18 @@ use crate::gate_wait_policy::GateProducerTerminalConvergencePort;
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 
 const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
-const COMPANION_CHILD_WAIT_GATE_KIND: &str = "companion_wait_follow_up";
+const COMPANION_CHILD_WAIT_GATE_KIND: &str = "companion_wait";
+const COMPANION_CHILD_BLOCKING_WAIT_GATE_KIND: &str = "companion_wait_blocking";
+const COMPANION_CHILD_FOLLOW_UP_WAIT_GATE_KIND: &str = "companion_wait_follow_up";
 
-fn is_companion_child_wait_gate(gate_kind: &str) -> bool {
-    gate_kind == COMPANION_CHILD_WAIT_GATE_KIND
+fn is_companion_child_wait_gate(gate_kind: &str, payload: Option<&serde_json::Value>) -> bool {
+    match gate_kind {
+        COMPANION_CHILD_BLOCKING_WAIT_GATE_KIND | COMPANION_CHILD_FOLLOW_UP_WAIT_GATE_KIND => true,
+        COMPANION_CHILD_WAIT_GATE_KIND => payload
+            .and_then(|payload| payload.get("request_type"))
+            .is_none(),
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -562,8 +570,9 @@ impl CompanionGateControlService {
             .gate_repo
             .find_by_agent_and_correlation(child_frame.agent_id, &command.request_id)
             .await?
-            .filter(|gate| is_companion_child_wait_gate(&gate.gate_kind))
-        {
+            .filter(|gate| {
+                is_companion_child_wait_gate(&gate.gate_kind, gate.payload_json.as_ref())
+            }) {
             Some(gate) => gate,
             None => return Ok(None),
         };

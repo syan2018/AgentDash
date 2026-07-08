@@ -15,6 +15,7 @@ use agentdash_domain::agent_run_mailbox::{
 use agentdash_domain::backend::{
     ProjectBackendAccess, ProjectBackendAccessRepository, ProjectBackendAccessStatus,
 };
+use agentdash_domain::channel::{ChannelRegistryDocument, ChannelRegistryMutation};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentLineage, AgentLineageRepository, AgentProcedure,
     AgentProcedureRepository, AgentRunCommandClaim, AgentRunCommandReceipt,
@@ -77,9 +78,40 @@ impl LifecycleRunRepository for MemoryLifecycleRunRepository {
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         let mut runs = self.runs.lock().await;
         if let Some(existing) = runs.iter_mut().find(|item| item.id == run.id) {
+            let channel_registry = existing.channel_registry.clone();
             *existing = run.clone();
+            existing.channel_registry = channel_registry;
         }
         Ok(())
+    }
+
+    async fn load_channel_registry(
+        &self,
+        run_id: Uuid,
+    ) -> Result<ChannelRegistryDocument, DomainError> {
+        let Some(run) = self.get_by_id(run_id).await? else {
+            return Err(DomainError::NotFound {
+                entity: "lifecycle_run",
+                id: run_id.to_string(),
+            });
+        };
+        Ok(run.channel_registry)
+    }
+
+    async fn mutate_channel_registry(
+        &self,
+        run_id: Uuid,
+        mutation: ChannelRegistryMutation,
+    ) -> Result<ChannelRegistryDocument, DomainError> {
+        let mut runs = self.runs.lock().await;
+        let Some(run) = runs.iter_mut().find(|item| item.id == run_id) else {
+            return Err(DomainError::NotFound {
+                entity: "lifecycle_run",
+                id: run_id.to_string(),
+            });
+        };
+        run.channel_registry.apply(mutation)?;
+        Ok(run.channel_registry.clone())
     }
 
     async fn delete(&self, id: Uuid) -> Result<(), DomainError> {

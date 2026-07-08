@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/architecture.md","reason":"后端分层与 bootstrap 边界；companion reply contract 创建/渲染/解析不能落到宿主装配层。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"Companion launch source、FrameLaunchEnvelope 与派发上下文生成边界。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"RuntimeSession 与 AgentRun/gate/mailbox owner 边界，避免把 runtime session 提升为 reply owner。"}
+{"file":".trellis/spec/backend/domain-payload-typing.md","reason":"开放 payload object 与注册类型语义校验的设计依据。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"LifecycleGateResolver 与 dispatch facade 的 owner 边界，用于 companion gate/result 集成。"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"mailbox 是 durable intake，不是 channel broker；本任务只保持 companion result delivery 边界。"}
+{"file":".trellis/tasks/05-26-companion-interaction-persistence-model/prd.md","reason":"Companion request/response/gate/result 的长期事实拆分背景。"}
+{"file":".trellis/tasks/07-07-terminal-wait-io-contract/design.md","reason":"terminal wait 与 companion 回流同属 bounded/minimal model-visible output 的参考。"}
+{"file":".trellis/tasks/06-28-agent-custom-channel-draft/design.md","reason":"长期 Channel broker/fan-out 边界参考；本任务不实现该抽象。"}

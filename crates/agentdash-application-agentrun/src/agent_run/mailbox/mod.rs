@@ -19,6 +19,10 @@ use agentdash_domain::agent_run_mailbox::{
     NewAgentRunMailboxMessage, SteeringStopEffect,
 };
 use agentdash_domain::backend::ProjectBackendAccessRepository;
+use agentdash_domain::channel::{
+    ChannelAddress, ChannelDeliveryIntent, ChannelDeliveryTarget, ChannelMessage,
+    ChannelParticipantRef, ChannelPayload, channel_address_to_mailbox_source_identity,
+};
 use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, AgentRunAcceptedRefs, AgentRunCommandKind,
     AgentRunCommandReceiptRepository, AgentRunDeliveryBindingRepository, LifecycleAgent,

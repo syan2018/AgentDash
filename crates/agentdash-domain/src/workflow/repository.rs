@@ -10,6 +10,7 @@ use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
 use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 use super::runtime_session_anchor::RuntimeSessionExecutionAnchor;
+use crate::channel::{ChannelRegistryDocument, ChannelRegistryMutation};
 use crate::common::error::DomainError;
 
 #[async_trait::async_trait]
@@ -70,6 +71,28 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
+    async fn load_channel_registry(
+        &self,
+        run_id: Uuid,
+    ) -> Result<ChannelRegistryDocument, DomainError> {
+        let Some(run) = self.get_by_id(run_id).await? else {
+            return Err(DomainError::NotFound {
+                entity: "lifecycle_run",
+                id: run_id.to_string(),
+            });
+        };
+        Ok(run.channel_registry)
+    }
+    async fn mutate_channel_registry(
+        &self,
+        _run_id: Uuid,
+        _mutation: ChannelRegistryMutation,
+    ) -> Result<ChannelRegistryDocument, DomainError> {
+        Err(DomainError::InvalidConfig(
+            "lifecycle_run.channel_registry mutation is not implemented for this repository"
+                .to_string(),
+        ))
+    }
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
 

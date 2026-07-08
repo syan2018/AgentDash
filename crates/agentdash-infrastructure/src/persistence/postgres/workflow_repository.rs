@@ -1,5 +1,6 @@
 use sqlx::PgPool;
 
+use agentdash_domain::channel::{ChannelRegistryDocument, ChannelRegistryMutation};
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
@@ -8,6 +9,8 @@ use agentdash_domain::workflow::{
     WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
+
+use super::owner_document::mutate_typed_jsonb_owner_document;
 
 pub struct PostgresWorkflowRepository {
     pool: PgPool,
@@ -29,8 +32,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,channel_registry,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,created_by_user_id,topology,orchestrations,tasks,status,execution_log,channel_registry,created_at,updated_at,last_activity_at";
 
 #[async_trait::async_trait]
 impl AgentProcedureRepository for PostgresWorkflowRepository {
@@ -419,7 +422,7 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
@@ -429,6 +432,7 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .bind(serde_json::to_string(&run.tasks)?)
         .bind(serde_json::to_string(&run.status)?)
         .bind(serde_json::to_string(&run.execution_log)?)
+        .bind(serde_json::to_value(&run.channel_registry)?)
         .bind(run.created_at)
         .bind(run.updated_at)
         .bind(run.last_activity_at)
@@ -504,6 +508,42 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
             .bind(chrono::Utc::now()).bind(run.last_activity_at).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
+    }
+
+    async fn load_channel_registry(
+        &self,
+        run_id: uuid::Uuid,
+    ) -> Result<ChannelRegistryDocument, DomainError> {
+        let Some(raw_document) = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT channel_registry FROM lifecycle_runs WHERE id = $1",
+        )
+        .bind(run_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        else {
+            return Err(DomainError::NotFound {
+                entity: "lifecycle_run",
+                id: run_id.to_string(),
+            });
+        };
+        parse_json_value_column(raw_document, "lifecycle_runs.channel_registry")
+    }
+
+    async fn mutate_channel_registry(
+        &self,
+        run_id: uuid::Uuid,
+        mutation: ChannelRegistryMutation,
+    ) -> Result<ChannelRegistryDocument, DomainError> {
+        mutate_typed_jsonb_owner_document(
+            &self.pool,
+            run_id,
+            "lifecycle_runs.channel_registry",
+            "SELECT channel_registry FROM lifecycle_runs WHERE id = $1 FOR UPDATE",
+            "UPDATE lifecycle_runs SET channel_registry=$1,updated_at=$2 WHERE id=$3",
+            |document: &mut ChannelRegistryDocument| document.apply(mutation),
+        )
+        .await
     }
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
@@ -642,6 +682,7 @@ struct LifecycleRunRow {
     tasks: String,
     status: String,
     execution_log: String,
+    channel_registry: serde_json::Value,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
     last_activity_at: chrono::DateTime<chrono::Utc>,
@@ -665,6 +706,10 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             )?,
             status: serde_json::from_str(&row.status)?,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
+            channel_registry: parse_json_value_column(
+                row.channel_registry,
+                "lifecycle_runs.channel_registry",
+            )?,
             created_at: row.created_at,
             updated_at: row.updated_at,
             last_activity_at: row.last_activity_at,
@@ -701,6 +746,14 @@ fn parse_json_column<T: serde::de::DeserializeOwned>(
     field: &str,
 ) -> Result<T, DomainError> {
     serde_json::from_str(raw)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
+}
+
+fn parse_json_value_column<T: serde::de::DeserializeOwned>(
+    raw: serde_json::Value,
+    field: &str,
+) -> Result<T, DomainError> {
+    serde_json::from_value(raw)
         .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
@@ -759,6 +812,10 @@ fn parse_installed_source(
 mod workflow_claim_tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
+    use agentdash_domain::channel::{
+        Channel, ChannelMedium, ChannelOwner, ChannelRecord, ChannelRegistryMutation,
+        ChannelTopology,
+    };
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         AgentActivityExecutorSpec, AgentProcedureContract, AgentProcedureExecutionSpec,
@@ -780,6 +837,7 @@ mod workflow_claim_tests {
             tasks: "[]".to_string(),
             status: serde_json::to_string(&LifecycleRunStatus::Ready).expect("status json"),
             execution_log: "[]".to_string(),
+            channel_registry: serde_json::json!({}),
             created_at: now,
             updated_at: now,
             last_activity_at: now,
@@ -792,6 +850,7 @@ mod workflow_claim_tests {
 
         assert!(run.orchestrations.is_empty());
         assert!(run.tasks.is_empty());
+        assert!(run.channel_registry.channels.is_empty());
     }
 
     #[test]
@@ -814,6 +873,22 @@ mod workflow_claim_tests {
         let error = LifecycleRun::try_from(row).expect_err("bad JSON should fail");
         assert!(
             error.to_string().contains("lifecycle_runs.tasks"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn workflow_repository_lifecycle_run_row_reports_bad_channel_registry_shape() {
+        let mut row = lifecycle_run_row();
+        row.channel_registry = serde_json::json!({
+            "schema_version": "not-a-number"
+        });
+
+        let error = LifecycleRun::try_from(row).expect_err("bad channel registry should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("lifecycle_runs.channel_registry"),
             "unexpected error: {error}"
         );
     }
@@ -1086,5 +1161,94 @@ mod workflow_claim_tests {
                 .expect("human executor"),
             ExecutorSpec::Human { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn workflow_repository_channel_registry_mutation_preserves_broad_update() {
+        let Some(pool) = test_pg_pool("workflow_channel_registry").await else {
+            return;
+        };
+        let repo = PostgresWorkflowRepository::new(pool);
+        repo.initialize().await.expect("initialize");
+
+        let project_id = uuid::Uuid::new_v4();
+        let run = LifecycleRun::new_control(project_id);
+        let stale_run = run.clone();
+        LifecycleRunRepository::create(&repo, &run)
+            .await
+            .expect("create run");
+
+        let channel = Channel::new(
+            ChannelOwner::LifecycleRun { run_id: run.id },
+            ChannelMedium::Runtime,
+            ChannelTopology::Direct,
+        );
+        let channel_id = channel.id;
+        LifecycleRunRepository::mutate_channel_registry(
+            &repo,
+            run.id,
+            ChannelRegistryMutation::UpsertChannel(ChannelRecord::new(channel)),
+        )
+        .await
+        .expect("mutate registry");
+
+        LifecycleRunRepository::update(&repo, &stale_run)
+            .await
+            .expect("broad update");
+
+        let registry = LifecycleRunRepository::load_channel_registry(&repo, run.id)
+            .await
+            .expect("load registry");
+        assert_eq!(registry.channels.len(), 1);
+        assert_eq!(registry.channels[0].channel.id, channel_id);
+
+        let restored = LifecycleRunRepository::get_by_id(&repo, run.id)
+            .await
+            .expect("get run")
+            .expect("run exists");
+        assert_eq!(restored.channel_registry.channels.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn workflow_repository_channel_registry_consecutive_mutations_keep_existing_data() {
+        let Some(pool) = test_pg_pool("workflow_channel_registry_consecutive").await else {
+            return;
+        };
+        let repo = PostgresWorkflowRepository::new(pool);
+        repo.initialize().await.expect("initialize");
+
+        let project_id = uuid::Uuid::new_v4();
+        let run = LifecycleRun::new_control(project_id);
+        LifecycleRunRepository::create(&repo, &run)
+            .await
+            .expect("create run");
+
+        let first = Channel::new(
+            ChannelOwner::LifecycleRun { run_id: run.id },
+            ChannelMedium::Runtime,
+            ChannelTopology::Direct,
+        );
+        let second = Channel::new(
+            ChannelOwner::LifecycleRun { run_id: run.id },
+            ChannelMedium::Runtime,
+            ChannelTopology::Group,
+        );
+
+        LifecycleRunRepository::mutate_channel_registry(
+            &repo,
+            run.id,
+            ChannelRegistryMutation::UpsertChannel(ChannelRecord::new(first)),
+        )
+        .await
+        .expect("first mutation");
+        let registry = LifecycleRunRepository::mutate_channel_registry(
+            &repo,
+            run.id,
+            ChannelRegistryMutation::UpsertChannel(ChannelRecord::new(second)),
+        )
+        .await
+        .expect("second mutation");
+
+        assert_eq!(registry.channels.len(), 2);
     }
 }

@@ -13,6 +13,7 @@ mod inline_file_repository;
 mod lifecycle_anchor_repository;
 mod llm_provider_repository;
 mod mcp_preset_repository;
+mod owner_document;
 mod permission_grant_repository;
 mod project_backend_access_repository;
 mod project_extension_installation_repository;

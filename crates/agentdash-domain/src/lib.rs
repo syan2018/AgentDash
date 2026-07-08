@@ -3,6 +3,7 @@ pub mod agent_run_mailbox;
 pub mod auth_session;
 pub mod backend;
 pub mod canvas;
+pub mod channel;
 pub mod common;
 pub mod companion;
 pub mod context_container;

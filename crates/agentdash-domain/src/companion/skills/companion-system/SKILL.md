@@ -18,7 +18,7 @@ Use this skill when a session has companion tools and needs structured cross-sub
 ## Core Rules
 
 - `companion_request` is the active interaction entrypoint. It carries intent and routing metadata.
-- `companion_respond` returns a structured response to a known `request_id`.
+- `companion_respond` returns a structured response with `payload`; use `reply_to` only when the prompt lists multiple reply targets.
 - `payload` is always a JSON object. Use `payload.type` for registered protocols.
 - Request message bodies use `payload.message` for `task`, `review`, `approval`, and `notification`.
 - Companion events record interaction continuity. Permission, grant, and runtime capability state remain the authority for tool access.

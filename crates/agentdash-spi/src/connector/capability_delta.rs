@@ -86,6 +86,7 @@ pub struct CapabilityStateDelta {
     pub mcp_servers: NamedEntityDelta,
     pub mcp_server_readiness: Vec<McpServerReadinessSummary>,
     pub companion_agents: NamedEntityDelta,
+    pub channel_refs: NamedEntityDelta,
     pub vfs: VfsSurfaceDelta,
     pub skills: NamedEntityDelta,
     pub memory_sources: NamedEntityDelta,
@@ -100,6 +101,7 @@ impl CapabilityStateDelta {
             && self.mcp_servers.is_empty()
             && self.mcp_server_readiness.is_empty()
             && self.companion_agents.is_empty()
+            && self.channel_refs.is_empty()
             && self.vfs.is_empty()
             && self.skills.is_empty()
             && self.memory_sources.is_empty()
@@ -177,6 +179,19 @@ pub fn compute_capability_state_delta(
                 .unwrap_or(&[]),
             after.companion.agents.as_slice(),
             |agent| agent.name.clone(),
+        ),
+        channel_refs: named_entity_delta(
+            before
+                .map(|surface| surface.channel.visible_channels.as_slice())
+                .unwrap_or(&[]),
+            after.channel.visible_channels.as_slice(),
+            |channel| {
+                format!(
+                    "{}:{}",
+                    channel.channel_ref.owner.stable_key(),
+                    channel.channel_ref.channel_id
+                )
+            },
         ),
         vfs: vfs_surface_delta(
             before.and_then(|surface| surface.vfs.active.as_ref()),
@@ -262,4 +277,41 @@ fn vfs_surface_delta(before: Option<&Vfs>, after: Option<&Vfs>) -> VfsSurfaceDel
 
 fn link_key(link: &MountLink) -> String {
     format!("{}:{}", link.from_mount_id, link.from_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use agentdash_domain::channel::{
+        ChannelCapabilityRef, ChannelEgressPolicy, ChannelIngressPolicy, ChannelOperation,
+        ChannelOwner, ChannelReadiness, ChannelRef,
+    };
+    use uuid::Uuid;
+
+    use super::*;
+
+    #[test]
+    fn channel_refs_are_reported_in_capability_state_delta() {
+        let mut after = CapabilityState::default();
+        let channel_ref = ChannelRef {
+            owner: ChannelOwner::LifecycleRun {
+                run_id: Uuid::new_v4(),
+            },
+            channel_id: Uuid::new_v4(),
+        };
+        after.channel.visible_channels.push(ChannelCapabilityRef {
+            channel_ref,
+            aliases: vec!["review".to_string()],
+            operations: BTreeSet::from([ChannelOperation::Read, ChannelOperation::Reply]),
+            ingress_policy: ChannelIngressPolicy::ParticipantsOnly,
+            egress_policy: ChannelEgressPolicy::ParticipantsOnly,
+            readiness: ChannelReadiness::Ready,
+        });
+
+        let delta = compute_capability_state_delta(None, &after, &BTreeSet::new());
+
+        assert_eq!(delta.channel_refs.added.len(), 1);
+        assert!(!delta.is_empty());
+    }
 }

@@ -193,3 +193,75 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 60: Companion 回流最小合同收束
+
+**Date**: 2026-07-07
+**Task**: Companion 回流最小合同收束
+**Branch**: `codex/companion-channel-convergence`
+
+### Summary
+
+规划并实现 companion_respond payload + optional reply_to 最小模型合同，收敛 dispatch prompt、skill 文档、runtime resolver 与测试/spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aaff7f105` | (see git log) |
+| `5560ec09d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 61: 完成 ChannelService 通信主干
+
+**Date**: 2026-07-08
+**Task**: 完成 ChannelService 通信主干
+**Branch**: `codex/companion-channel-convergence`
+
+### Summary
+
+完成 Channel 领域模型、LifecycleRun owner-local registry、owner document mutation、ChannelService、channel capability projection、Mailbox/Gate materialization 与 Companion/runtime wake 收束；通过原生 check agent 和主会话集成验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f3755482` | (see git log) |
+| `a5ab28c8` | (see git log) |
+| `1ced2cb8` | (see git log) |
+| `eab97226` | (see git log) |
+| `769c526d` | (see git log) |
+| `be31c14a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/07-07-channel-communication-capability-model/research/channel-discussion-journal.md", "reason": "本任务最新讨论 journal，记录 ChannelAddress、CapabilityState.channel、Companion lifecycle temporary channel 与 Mailbox attribution 决策。"}
+{"file": ".trellis/tasks/07-07-channel-communication-capability-model/research/channel-service-first-principles-realignment.md", "reason": "最新 ChannelService-first realignment，推翻 lifecycle-only channel 决策并记录 Project/IM 驱动。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Agent runtime fact storage 第一性规范，定义 owner-local document 与独立 store 的判断边界。"}
+{"file": ".trellis/spec/backend/capability/architecture.md", "reason": "Channel capability 需要对齐 AgentRun effective capability/admission 与 ToolCapability 开放 key 的边界。"}
+{"file": ".trellis/spec/backend/capability/capability-dimension-pipeline.md", "reason": "评估 Channel 是否应成为新的 capability dimension 或 projection-only surface。"}
+{"file": ".trellis/spec/backend/capability/tool-capability-pipeline.md", "reason": "对齐 Workspace Module 作为通用能力面的投影和工具装配方式。"}
+{"file": ".trellis/spec/backend/session/agentrun-mailbox.md", "reason": "Channel delivery materialize 到 AgentRun Mailbox 时必须遵守 mailbox source identity、scheduler 和 wait/gate 边界。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Companion reply contract 与 extension runtime channel 的 cross-layer 合同是 Channel agent-facing 最小暴露的直接参照。"}
+{"file": ".trellis/tasks/06-28-agent-custom-channel-draft/design.md", "reason": "已有外部 IM / 自定义信道长期草案，需复用并修正为能力面模型。"}
+{"file": ".trellis/tasks/06-28-integration-channel-mailbox-convergence/design.md", "reason": "已有 Mailbox source identity 与 Companion/Routine 入站收束规划，是 Channel materializer 的前置上下文。"}

@@ -1,279 +1,369 @@
 # 数据库规范
 
-> PostgreSQL + SQLx（云端与本机嵌入式运行时）。
+PostgreSQL + SQLx 覆盖云端业务库与本机 embedded PostgreSQL。
+
+## 基础规则
+
+| 主题 | 规则 |
+| --- | --- |
+| 错误 | infrastructure 错误映射为 `DomainError`；PostgreSQL repository 使用 `persistence::postgres::db_err` / `sql_err_for`。 |
+| 命名 | 数据库列名和 JSON 字段使用 `snake_case`。 |
+| 文档列 | 新增结构化文档列使用 `jsonb`，列名表达业务语义，不追加 `_json` / `_jsonb`。 |
+| Typed mapping | Domain / repository 边界使用 typed value object；repository 使用 `sqlx::types::Json<T>` 或共享 codec。 |
+| 历史 TEXT JSON | 既有 `TEXT` JSON 是历史 schema 事实；批量转换只放进明确数据库整理任务。 |
+| Scalar 字段 | 高频过滤、排序、权限判断、claim/lease 状态使用 PostgreSQL scalar 列。 |
+| 时间 | 时间字段使用 PostgreSQL timestamp，repository 直接 bind/read `chrono::DateTime<Utc>`。 |
+| Repository | 实现模式见 [repository-pattern.md](./repository-pattern.md)。 |
+
+## 事务边界
+
+| 场景 | 边界 |
+| --- | --- |
+| 单一聚合 | 对应 Repository 管理事务。 |
+| 跨聚合 | Application command / Unit of Work 编排多个 explicit ports。 |
+| Story projection + LifecycleRun Task facts | Application 编排 `StoryRepository` 与 LifecycleRun task port。 |
+| Owner document mutation | Repository 在事务内锁 owner row，typed decode，应用 domain mutation，只写目标 document column 和 `updated_at`。 |
 
 ---
 
-## 存储分层
+## Scenario: Agent Runtime Fact Storage Boundary
 
-| 层 | 技术 | 职责 |
-|----|------|------|
-| 云端 | PostgreSQL + SQLx | 业务数据（Project/Story/Workspace/Session 等） |
-| 本机 | Embedded PostgreSQL + SQLx | 本机 session runtime 持久化与恢复 |
+### 1. Scope / Trigger
+
+新增 Agent / Lifecycle / Project runtime fact、通信关系、inbox/outbox、capability projection source、adapter binding、delivery planning 或 scheduler 状态。
+
+### 2. Signatures
+
+```sql
+ALTER TABLE lifecycle_runs
+    ADD COLUMN IF NOT EXISTS channel_registry jsonb DEFAULT '{}'::jsonb NOT NULL;
+```
+
+```rust
+pub struct LifecycleRun {
+    pub channel_registry: ChannelRegistryDocument,
+}
+
+pub trait ChannelOwnerStore {
+    async fn load_registry(
+        &self,
+        owner: ChannelOwner,
+    ) -> DomainResult<ChannelRegistryDocument>;
+
+    async fn mutate_registry(
+        &self,
+        owner: ChannelOwner,
+        mutation: ChannelRegistryMutation,
+    ) -> DomainResult<ChannelRegistryDocument>;
+}
+```
+
+```sql
+SELECT channel_registry
+FROM lifecycle_runs
+WHERE id = $1
+FOR UPDATE;
+
+UPDATE lifecycle_runs
+SET channel_registry = $2,
+    updated_at = NOW()
+WHERE id = $1;
+```
+
+### 3. Contracts
+
+- Owner-local、随 owner 生灭、owner-scoped 查询的事实保存为 typed owner document。
+- 独立 store 只承担明确执行语义：跨 owner scan、多 worker claim、独立 retention/audit、跨 owner 索引、数据库唯一约束保护的跨聚合不变量。
+- Capability projection 从 owner facts 派生，可重建。
+- Owner document 写入走语义 mutation port；business layer 不传 table / column 字符串。
+- Broad aggregate update 保留独立 document column 当前值。`LifecycleRunRepository::update` 更新 orchestration/task/status；`channel_registry` 由 `ChannelOwnerStore::mutate_registry` 写入。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 合同 |
+| --- | --- |
+| fact 随单个 owner 创建、恢复、删除 | owner document |
+| fact 只被 owner-scoped API / service 查询 | owner document |
+| fact 是 capability / prompt / UI 可见面的输入 | owner document -> projector |
+| fact 需要跨 owner 状态扫描、claim、retention、唯一约束或查询索引 | 独立 store candidate |
+| `jsonb` document 反序列化失败 | mapped `DomainError` 带 `table.column` context |
+| owner row 不存在 | NotFound |
+| mutation 违反 typed invariant | validation / conflict error，document 不写回 |
+| broad aggregate update 与 document mutation 交错 | aggregate update 保留独立 document column |
+| 需要 document 内字段过滤或排序 | `jsonb` operator / expression index，或提升为 scalar 列 |
+
+### 5. Cases
+
+- Runtime channel registry: `LifecycleRun.channel_registry` + `ChannelOwnerStore::mutate_registry`。
+- Project 公共 Channel: 当前只定义 owner store port；物理承载由 Project Assets 决定。
+- 跨 run scan / claim / recovery 队列: 独立表。
+- Boundary mismatch: load `LifecycleRun` -> 改 `run.channel_registry` -> `LifecycleRunRepository::update(run)`。
+
+### 6. Tests Required
+
+- Owner document repository roundtrip: default、非空、shape mismatch context。
+- Owner document mutation: 连续 mutation 不丢失、只更新目标 document column、broad aggregate update 保留独立 document column。
+- Migration: `pnpm run migration:guard` + 干净数据库初始化。
+- Application service: owner document 更新通过语义 mutation port。
+- Projection: 从 owner document 派生，不反写事实源。
+- 独立表: 覆盖其声明的 scan / claim / retention / unique / query 语义。
+
+### 7. Boundary / Canonical
+
+```text
+runtime relation scoped to one LifecycleRun
+  -> LifecycleRun document
+  -> typed owner document mutation
+```
+
+```text
+channel registry update
+  -> ChannelOwnerStore::mutate_registry(owner, mutation)
+  -> SELECT channel_registry FOR UPDATE
+  -> apply ChannelRegistryMutation
+  -> UPDATE channel_registry, updated_at
+```
+
+```text
+global worker queue
+  -> item store with status, claim_token, claim_expires_at
+  -> workers scan by status/lease/order across owners
+```
 
 ---
 
-## 核心约定
+## Scenario: Schema Source Of Truth
 
-- 基础设施层错误必须转换为 `DomainError`，不泄露 `sqlx::Error`
-- PostgreSQL repository 统一通过 `persistence::postgres::db_err` / `sql_err_for` 映射 SQLx 错误，保留 NotFound、Conflict、Database 三类可映射语义
-- 数据库列名和 JSON 序列化统一 `snake_case`
-- 复杂值对象以 JSON 文本存入 `TEXT`
-- 新增目标模型列不因为 JSON 文本存储而追加 `_json` / `_jsonb` 后缀；列名优先表达业务语义，例如 `lifecycle_runs.orchestrations`、`lifecycle_runs.tasks`、`lifecycle_runs.execution_log`
-- 时间字段使用 PostgreSQL 原生 timestamp 类型，repository 直接 bind/read `chrono::DateTime<Utc>`
-- Repository 实现模式详见 [repository-pattern.md](./repository-pattern.md)
-- 显式 `agentdash-server migrate` 入口负责运行 PostgreSQL migrations；API 长驻服务启动在 repository 装配前只执行 schema readiness 检查。这样发布流程可以把 schema 演进放进一次性部署步骤，并让长期服务只依赖运行期所需数据库权限。
+### 1. Scope / Trigger
+
+PostgreSQL schema、embedded PostgreSQL schema、migration runner、repository readiness、baseline squash / reset / merge。
+
+### 2. Signatures
+
+```text
+crates/agentdash-infrastructure/migrations/
+agentdash-server migrate
+agentdash-server serve
+pnpm run migration:guard
+```
+
+### 3. Contracts
+
+- `crates/agentdash-infrastructure/migrations/` 是 PostgreSQL schema 事实源。
+- 普通 schema 变更新增 migration 文件。
+- 已提交 migration 是历史事实；baseline squash / reset / merge 任务必须在任务文档写明授权范围、重建要求和验证命令。
+- Repository 只观察已迁移 schema。API bootstrap 执行 readiness check，不创建表、补列、建索引或迁移数据。
+- Embedded PostgreSQL 复用同一套 migrations 与 readiness check。
+- 初始化 migration 只放 schema、约束、索引、序列和必要扩展；seed / runtime data 由启动期 seed、API use case 或 runtime repository 写入。
+- 替换 baseline 后重建 embedded PostgreSQL data 目录；外部数据库只在调用方明确给出连接串和重建意图时处理。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 合同 |
+| --- | --- |
+| 功能任务 schema 变更 | 新增 migration |
+| 修改已提交 migration | 仅限授权 baseline 任务 |
+| API 服务启动 | readiness check 通过后装配 repository |
+| readiness 缺表 / 缺列 | 启动失败 |
+| 替换 baseline 后复用旧 data dir | `_sqlx_migrations` checksum 不匹配，重建 data dir |
+
+### 5. Cases
+
+- Feature: add `0002_<change>.sql`，更新 repository mapping 和 tests。
+- Baseline task: document approval -> edit baseline -> rebuild dev DB -> guard with override。
+- Seed data: builtin/plugin/library/provider/runtime facts 由 seed 或 repository 写入。
+
+### 6. Tests Required
+
+- `pnpm run migration:guard`。
+- 真实 PostgreSQL / embedded PostgreSQL 路径通过 migration runner 初始化。
+- 更新 INSERT / SELECT / UPSERT 和 `map_*_row` tests。
+- Baseline task 额外验证干净数据库初始化和 data dir 重建说明。
+
+### 7. Boundary / Canonical
+
+```text
+feature task -> add NNNN_<change>.sql
+```
+
+```text
+baseline task -> documented authorization -> edit existing migrations -> rebuild DB -> ALLOW_MIGRATION_BASELINE_REWRITE=1 pnpm run migration:guard
+```
 
 ---
-
-## 事务规则
-
-- **单一聚合**：事务边界由对应 Repository 负责（如 `WorkspaceRepository` 内部同事务写 `workspaces` + `workspace_bindings`，`LifecycleRunRepository` 整体写回 orchestrations / tasks / execution log）
-- **跨聚合**：使用显式 Command Port 或 Unit of Work，不要硬塞进单一 Repository trait
-- Story projection 与 LifecycleRun Task facts 同时变化时，使用应用层命令编排多个聚合；不要让 `StoryRepository` 承担 Task durable CRUD
-
----
-
-## Schema 事实源
-
-### PostgreSQL
-
-业务库的 schema 事实源是 `crates/agentdash-infrastructure/migrations/`。日常 schema 变更按正常 migration 链新增文件推进，原因是 migration 历史是仓库内可审计的结构演进事实，开发期本地库、测试库和 embedded PostgreSQL 都应观察同一条递进路径。
-
-已提交的 migration 文件是历史事实，日常 feature / bugfix / refactor 任务严禁修改、删除或重命名，包括当前 baseline `0001_init.sql`。预研期 schema 直接推进到正确目标，不表示可以重写历史 migration。只有明确授权的数据库 baseline squash / reset / merge 任务可以修改既有 migration；该任务必须在 `prd.md` / `design.md` 写明授权范围、重建数据库要求和验证命令。
-
-Repository 启动逻辑只观察已迁移 schema。API bootstrap 不调用 PostgreSQL repository schema 初始化；需要直接构造 `AppState` 或 repository 的测试路径也先运行 migrations，再执行 readiness 检查。Repository 可以保留无 DDL 的 readiness helper，但不能创建表、补列、建索引或执行 schema 数据迁移。
-
-预研期允许在明确的数据库 baseline squash / reset / merge 时间点压缩 PostgreSQL migration 基线。阶段性 squash 时整理 `0001_init.sql` 表达当前正确 schema，避免开发期重命名、回填和过往模型迁移长期分散当前事实。`0001_init.sql` 应保持为手工整理后的 schema baseline：只保留 DDL、约束、索引、序列和必要扩展，不保留 pg_dump header、object comments、`public.` 前缀噪音、回填默认值或历史约束命名。进入需要保留真实环境数据的阶段后，migration 历史转为增量审计事实，不再随意压缩。
-
-初始化 migration 只表达 schema、约束、索引和必要扩展。Builtin / Plugin Shared Library assets、LLM Provider、auth session、settings、backend registration、runtime health、session / lifecycle runtime facts 都由启动期 seed、API use case 或 runtime repository 写入，原因是这些数据随代码、插件、用户配置或运行状态变化，不属于 schema 基线。
-
-只有执行 migration squash 或替换基线后，embedded PostgreSQL 物理 data 目录需要重建。SQLx 通过 `_sqlx_migrations` 记录 migration version 和 checksum；替换 migration 文件后复用既有数据库会让 bookkeeping 与新基线不一致。外部 `DATABASE_URL` 指向的数据库只在调用方明确给出目标连接串和重建意图时处理。
-
-### 本机 Embedded PostgreSQL
-
-本机 session runtime 使用 embedded PostgreSQL，并复用同一套 migration 与 readiness 检查。这样本机恢复路径和云端 session persistence 观察同一份 schema contract，避免为本机维护第二套 schema 演进机制。
-
-### Checklist
-
-- [ ] PostgreSQL 新增 migration 文件
-- [ ] `pnpm run migration:guard` 通过；如果修改既有 migration，当前任务必须是明确授权的 baseline squash / reset / merge
-- [ ] PostgreSQL integration / bootstrap / local embedded runtime 路径通过 migration runner 初始化真实 schema
-- [ ] 更新 INSERT/SELECT/UPSERT 语句和 `map_*_row` 函数
-- [ ] 更新测试代码
-
-### 删除退役列
-
-- Repository 主线不再读写退役列
-- PostgreSQL 新增 migration 用 `DROP COLUMN IF EXISTS`
-- 阶段性 squash 后，基线 migration 与当前 schema 目标保持一致
 
 ## Scenario: Cloud Migration Command Boundary
 
 ### 1. Scope / Trigger
 
-- Trigger: 修改云端服务启动、部署命令、Compose / Kubernetes migration job、数据库连接权限或 schema readiness 行为。
-- Scope: `agentdash-server serve`、`agentdash-server migrate`、`agentdash-server doctor`、PostgreSQL migration runner、API repository bootstrap。
+修改 `agentdash-server serve` / `migrate` / `doctor`、部署命令、Compose / Kubernetes migration job、数据库权限或 readiness 行为。
 
 ### 2. Signatures
 
 ```text
-agentdash-server serve
 agentdash-server migrate
+agentdash-server serve
 agentdash-server doctor
+DATABASE_URL
 ```
 
 ### 3. Contracts
 
-- `migrate` 连接部署目标 PostgreSQL，运行 `crates/agentdash-infrastructure/migrations/` 中的 SQLx migrations，然后执行 schema readiness 检查。
-- `serve` 连接部署目标 PostgreSQL，只执行 schema readiness 检查；检查通过后再装配 repository 和 HTTP router。
-- `doctor` 连接部署目标 PostgreSQL，只执行 schema readiness 检查，并输出诊断报告。
-- `DATABASE_URL` 是部署期 PostgreSQL 连接串。需要最小权限部署时，`migrate` 可使用具备 DDL 权限的连接串，`serve` 使用业务运行权限连接串。
+- `migrate`: 连接目标 PostgreSQL，运行 migrations，执行 readiness check。
+- `serve`: 连接目标 PostgreSQL，只执行 readiness check；通过后装配 repository 和 HTTP router。
+- `doctor`: 只执行 readiness check 并输出诊断。
+- 最小权限部署可让 `migrate` 使用 DDL 账号，`serve` 使用业务运行账号。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| `migrate` 连接成功且 schema 可迁移 | 输出 `status = ok`、`schema_version` 和脱敏后的数据库描述 |
-| `serve` 发现 schema 缺表或未迁移 | 启动失败，不装配 repository |
-| `doctor` 发现 schema 未 ready | 命令失败并报告 readiness 错误 |
-| `DATABASE_URL` 非 PostgreSQL 协议 | 命令失败并报告配置错误 |
+| `migrate` 成功 | 输出 `status=ok`、`schema_version`、脱敏数据库描述 |
+| `serve` schema 未 ready | 启动失败，不装配 repository |
+| `doctor` schema 未 ready | 命令失败并报告 readiness 错误 |
+| `DATABASE_URL` 非 PostgreSQL | 配置错误 |
 
-### 5. Good/Base/Bad Cases
+### 5. Cases
 
-- Good: 发布流程先运行 `agentdash-server migrate`，成功后启动 `agentdash-server serve`。
-- Base: 开发启动脚本可以先显式调用 `agentdash-server migrate`，再启动 `agentdash-server serve`；外部 PostgreSQL 与 embedded PostgreSQL 仍复用同一套 migrations 与 readiness 检查。
-- Bad: 长驻服务启动时运行 migrations，使多副本部署和最小权限数据库账号无法形成清晰边界。
+- Deploy: `agentdash-server migrate` -> `agentdash-server serve`。
+- Dev script: 可显式 migrate 后 serve；外部和 embedded PostgreSQL 仍走同一 migration runner。
 
 ### 6. Tests Required
 
-- 修改 `agentdash-api` 启动路径时至少运行 `cargo check -p agentdash-api`。
-- 修改 migration 文件时运行 `pnpm run migration:guard`，并用真实 PostgreSQL 路径验证 migration runner。
-- 修改部署脚本或 Compose / Kubernetes 映射时验证 `migrate` 与 `serve` 命令分别使用预期 command。
+- 修改 API 启动路径: `cargo check -p agentdash-api`。
+- 修改 migration: `pnpm run migration:guard` + 真实 PostgreSQL migration runner。
+- 修改部署映射: 验证 `migrate` 与 `serve` command 分离。
 
-### 7. Wrong vs Correct
-
-#### Wrong
+### 7. Boundary / Canonical
 
 ```text
-agentdash-server serve -> run migrations -> start HTTP server
+agentdash-server migrate -> run migrations -> check readiness
+agentdash-server serve -> check readiness -> start HTTP server
 ```
 
-#### Correct
-
-```text
-agentdash-server migrate -> run migrations -> check schema readiness
-agentdash-server serve -> check schema readiness -> start HTTP server
-```
+---
 
 ## Scenario: Migration History Guard
 
 ### 1. Scope / Trigger
 
-- Trigger: 任意新增、删除、重命名或修改 `crates/agentdash-infrastructure/migrations/*.sql`。
-- Scope: PostgreSQL migration 历史、embedded PostgreSQL 初始化、repository readiness 和 CI / pre-commit guard。
+新增、删除、重命名或修改 `crates/agentdash-infrastructure/migrations/*.sql`。
 
 ### 2. Signatures
 
-- 新增 migration 文件命名：`NNNN_<description>.sql`，`NNNN` 必须大于当前最大已提交 migration version。
-- 守卫命令：
-
-```powershell
+```text
+NNNN_<description>.sql
 pnpm run migration:guard
-```
-
-- 授权 baseline rewrite 时才允许：
-
-```powershell
-$env:ALLOW_MIGRATION_BASELINE_REWRITE='1'; pnpm run migration:guard
+ALLOW_MIGRATION_BASELINE_REWRITE=1
 ```
 
 ### 3. Contracts
 
-- 普通任务只能新增 migration 文件；不能修改、删除或重命名已提交 migration。
-- 已提交 migration 的定义以 `HEAD` 中存在的 `crates/agentdash-infrastructure/migrations/*.sql` 为准。
-- baseline squash / reset / merge 任务必须在任务文档中写明：
-  - 修改哪些既有 migration。
-  - 为什么当前时间点需要重写 baseline。
-  - 哪些数据库目录或外部数据库需要重建。
-  - 允许使用 `ALLOW_MIGRATION_BASELINE_REWRITE=1` 的验证命令。
+- 新 migration 版本号 `NNNN` 大于当前最大已提交版本。
+- 普通任务新增 migration 文件。
+- Baseline rewrite 任务文档记录：修改范围、重写原因、数据库重建要求、override guard 命令。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| staged diff 新增 `crates/agentdash-infrastructure/migrations/0002_x.sql` | 允许 |
-| staged diff 修改 `crates/agentdash-infrastructure/migrations/0001_init.sql` | 拒绝 |
-| staged diff 删除已提交 migration | 拒绝 |
-| staged diff rename 已提交 migration | 拒绝 |
-| `ALLOW_MIGRATION_BASELINE_REWRITE=1` | 允许，但只用于已授权 baseline 任务 |
+| staged diff 新增 migration | 允许 |
+| staged diff 修改 / 删除 / rename 已提交 migration | 拒绝 |
+| `ALLOW_MIGRATION_BASELINE_REWRITE=1` | 仅用于授权 baseline 任务 |
 
-### 5. Good/Base/Bad Cases
+### 5. Cases
 
-- Good: `0002_add_runtime_session_anchor_fks.sql` 新增 FK，repository 和 tests 同步更新。
-- Base: 没有 migration diff，guard 直接通过。
-- Bad: 在功能任务中直接修改 `0001_init.sql` 增加 FK；这会让本地库、测试库和任务审计观察到不同历史。
+- Add schema: `0002_add_runtime_session_anchor_fks.sql`。
+- No migration diff: guard 通过。
+- Baseline squash: 授权任务内重写 `0001_init.sql`。
 
 ### 6. Tests Required
 
-- 任意数据库 schema 变更 PR 必须运行 `pnpm run migration:guard`。
-- 新 migration 必须由 migration runner 初始化真实 schema，并通过相关 repository integration 或 bootstrap readiness 测试。
-- baseline squash / reset / merge 任务必须额外验证干净数据库初始化，并记录既有 embedded PostgreSQL data 目录重建要求。
+- 任意 schema 变更运行 `pnpm run migration:guard`。
+- 新 migration 通过 migration runner 初始化真实 schema。
+- 相关 repository integration / bootstrap readiness 测试通过。
 
-### 7. Wrong vs Correct
-
-#### Wrong
+### 7. Boundary / Canonical
 
 ```text
-feature task -> edit crates/agentdash-infrastructure/migrations/0001_init.sql
+feature task -> add crates/agentdash-infrastructure/migrations/NNNN_<change>.sql
 ```
-
-#### Correct
 
 ```text
-feature task -> add crates/agentdash-infrastructure/migrations/0002_<change>.sql
+baseline task -> documented approval -> edit baseline -> rebuild DB -> guard override
 ```
 
-#### Correct Only In Authorized Baseline Task
+---
 
-```text
-database baseline squash task -> document approval -> edit 0001_init.sql -> rebuild dev DB -> run guard with ALLOW_MIGRATION_BASELINE_REWRITE=1
-```
-
-## Scenario: JSON Text Column Naming
+## Scenario: JSONB Document Column Naming
 
 ### 1. Scope / Trigger
 
-- Trigger: 新增 `TEXT` 列承载复杂值对象 JSON 序列化。
-- Scope: migration、repository row mapping、错误上下文和后续 spec / task 文档命名。
+新增结构化文档列：复杂 value object、owner aggregate document、adapter payload、capability surface、runtime registry。
 
 ### 2. Signatures
 
-新增目标列优先使用业务语义名：
-
 ```sql
 ALTER TABLE lifecycle_runs
-    ADD COLUMN IF NOT EXISTS orchestrations text DEFAULT '[]'::text NOT NULL,
-    ADD COLUMN IF NOT EXISTS tasks text DEFAULT '[]'::text NOT NULL,
-    ADD COLUMN IF NOT EXISTS execution_log text DEFAULT '[]'::text NOT NULL;
+    ADD COLUMN IF NOT EXISTS channel_registry jsonb DEFAULT '{}'::jsonb NOT NULL;
 ```
 
-Repository 仍用 JSON 序列化读写：
-
 ```rust
-serde_json::to_string(&run.orchestrations)?;
-parse_json_column::<Vec<OrchestrationInstance>>(
-    &row.orchestrations,
-    "lifecycle_runs.orchestrations",
-)?;
+use sqlx::types::Json;
+
+query.bind(Json(&run.channel_registry));
+
+let registry: Json<ChannelRegistryDocument> = row.try_get("channel_registry")?;
+let registry = registry.0;
 ```
 
 ### 3. Contracts
 
-- 列名表达业务合同，JSON 文本只是当前 PostgreSQL 存储方式。
-- 错误上下文使用真实列名，例如 `lifecycle_runs.orchestrations`。
-- 已存在的历史列名保持为迁移事实；新增目标列按当前命名规则落地。
+- 列名表达业务合同；`jsonb` 是存储基质。
+- Domain 层定义 typed struct / value object。
+- `serde_json::Value` 留在 provider 原始 payload、未知 schema ingress 或调试 envelope 的窄边界。
+- 反序列化错误包含真实 `table.column`。
+- 高频 predicate、排序、唯一性、claim/lease 字段提升为 scalar 列。
+- 需要 document 内查询时，使用明确 `jsonb` operator / expression index。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 | --- | --- |
-| 新增复杂值对象列 | 使用业务语义名和 `TEXT` 类型 |
-| repository 解析失败 | `DomainError` 包含真实 `table.column` |
-| 修改 migration 历史列名 | 只有明确 baseline squash / reset / merge 任务可以做 |
+| 新增复杂值对象列 | 业务语义名 + `jsonb` |
+| 历史 `TEXT` JSON 整理 | 迁移为 `jsonb` + typed codec |
+| 保留 key 顺序、重复 key 或字节级输入 | design 说明 `json` / `TEXT` 选择 |
+| repository 反序列化失败 | `DomainError` 包含 `table.column` |
+| document 内字段过滤 | `jsonb` index 或 scalar 列 |
 
-### 5. Good/Base/Bad Cases
+### 5. Cases
 
-- Good: `lifecycle_runs.orchestrations text DEFAULT '[]'::text NOT NULL`。
-- Base: 既有 schema 中已有 `activity_state_json`，作为历史事实保留。
-- Bad: 新目标列写成 `orchestrations_json`，会把存储方式伪装成领域概念。
+- Canonical: `lifecycle_runs.channel_registry jsonb DEFAULT '{}'::jsonb NOT NULL` -> `ChannelRegistryDocument`。
+- Historical: `execution_log text` / `activity_state_json text` 留给数据库整理任务。
+- Boundary mismatch: `channel_registry text DEFAULT '{}'::text NOT NULL`。
+- Boundary mismatch: `channel_registry_jsonb`。
 
 ### 6. Tests Required
 
-- Repository row mapping 测试覆盖默认 JSON 文本和坏 JSON 错误上下文。
-- Repository roundtrip 测试覆盖 create / update / select。
-- 任意新增 migration 运行 `pnpm run migration:guard`。
+- Row mapping: default、非空、shape mismatch context。
+- Roundtrip: create / update / select。
+- Migration: `pnpm run migration:guard`。
+- Document query: 覆盖对应 index 查询路径。
 
-### 7. Wrong vs Correct
+### 7. Boundary / Canonical
 
-#### Wrong
-
-```sql
-ADD COLUMN orchestrations_json text DEFAULT '[]'::text NOT NULL;
+```rust
+let registry: Json<ChannelRegistryDocument> = row.try_get("channel_registry")?;
+let registry = registry.0;
 ```
 
-#### Correct
-
-```sql
-ADD COLUMN orchestrations text DEFAULT '[]'::text NOT NULL;
-```
+---
 
 ## Scenario: AgentFrame Surface Document And Projection Columns
 
 ### 1. Scope / Trigger
 
-- Trigger: AgentFrame capability/context/VFS/MCP/execution/profile surface changes or schema changes around `agent_frames`.
-- Scope: `agent_frames.surface`, split projection columns, repository row mapping, migration backfill, AgentFrame repository tests.
+AgentFrame capability/context/VFS/MCP/execution/profile surface 或 `agent_frames` schema 变更。
 
 ### 2. Signatures
 
@@ -301,45 +391,36 @@ impl AgentFrame {
 ### 3. Contracts
 
 - `agent_frames.surface` 是 frame revision surface 的 canonical document。
-- split columns 是 repository projection columns；写入时从 `surface_document()` 派生，读取时只用于迁移物化和 projection 校验。
-- 新 AgentFrame 写入先填充 `surface`，再调用 projection 逻辑后 insert。
-- backfill migration 从既有 split columns 派生 `surface`，让历史 rows 仍可读取。
-- 没有 live repository query 的索引通过新 migration 删除；保留物理表需要有独立查询、独立更新或重建成本理由。
+- `agent_frames.surface` 当前是既有 `TEXT` JSON schema 事实；新增 adjacent document 按 JSONB 文档列规则设计。
+- Split columns 是 repository projection columns；写入从 `surface_document()` 派生，读取时用于迁移物化和 projection 校验。
+- 新 AgentFrame 写入先填 `surface`，再 `apply_surface_projection()`。
+- Backfill migration 从 split columns 物化 `surface`。
+- 无 live repository query 的索引用新 migration 删除。
 
 ### 4. Validation & Error Matrix
 
-| Condition | Required behavior |
+| 条件 | 结果 |
 | --- | --- |
-| row has `surface` and stale split columns | mapper 返回 `surface` document，并用它重新投影 split fields |
-| row has no `surface` but has split columns | mapper 从 split columns 物化 `surface`，用于验证迁移 backfill 覆盖 |
-| `surface` JSON is invalid | repository 返回带 `agent_frames.surface` context 的 mapped `DomainError` |
-| split projection serialization fails | repository 在 insert 前返回 mapped `DomainError` |
-| index has no live query path | 通过新 migration 删除，并在工作项 ledger 记录理由 |
+| row 有 `surface` 和 stale split columns | mapper 返回 `surface`，并重新投影 split fields |
+| row 无 `surface` 但有 split columns | mapper 从 split columns 物化 `surface` |
+| `surface` JSON invalid | mapped `DomainError` 带 `agent_frames.surface` context |
+| split projection serialization fails | insert 前返回 mapped `DomainError` |
+| index 无 live query path | 新 migration 删除，并记录理由 |
 
-### 5. Good/Base/Boundary Cases
+### 5. Cases
 
-- Good: frame construction builds `FrameSurfaceDraft`, writes `AgentFrame.surface`, and repository projects split columns for existing read helpers.
-- Base: migration backfill row materializes a complete `AgentFrameSurfaceDocument` from split columns.
-- Boundary mismatch: code writes only `vfs_surface_json` and leaves `surface` absent, causing launch/query/context delivery to read different surface facts.
+- Canonical: build `FrameSurfaceDraft` -> write `AgentFrame.surface` -> project split columns。
+- Backfill: split columns -> complete `AgentFrameSurfaceDocument`。
+- Boundary mismatch: 只写 `vfs_surface_json`，让 frame surface facts 分裂。
 
 ### 6. Tests Required
 
-- Domain tests cover `surface_document()` split-column materialization and `apply_surface_projection()`.
-- PostgreSQL mapper tests cover surface-overrides-split and split-to-surface materialization.
-- Migration guard runs for any `agent_frames` schema change.
-- Repository roundtrip tests assert insert/select preserves canonical surface and projected fields.
+- Domain: `surface_document()` 与 `apply_surface_projection()`。
+- Mapper: surface-overrides-split、split-to-surface materialization。
+- Migration guard for `agent_frames` schema change。
+- Repository roundtrip preserves canonical surface and projected fields。
 
 ### 7. Boundary / Canonical
-
-#### Boundary
-
-```rust
-frame.vfs_surface_json = Some(vfs_json);
-frame.mcp_surface_json = Some(mcp_json);
-repo.insert_frame(&frame).await?;
-```
-
-#### Canonical
 
 ```rust
 frame.surface = Some(surface_document);
@@ -351,7 +432,7 @@ repo.insert_frame(&frame).await?;
 
 ## PL/pgSQL 迁移脚本要点
 
-- `RAISE` 占位符是单个 `%`（不是 `%%`），参数数量必须与占位符数量一致
-- `SELECT ... INTO` 后必须检查 `FOUND`
-- JSONB 数组遍历用 `jsonb_array_elements()`，不用 `FOREACH ... IN ARRAY`
-- 迁移脚本必须幂等：`ADD COLUMN IF NOT EXISTS`、`ON CONFLICT DO NOTHING`
+- `RAISE` 占位符是单个 `%`，参数数量匹配。
+- `SELECT ... INTO` 后检查 `FOUND`。
+- JSONB 数组遍历使用 `jsonb_array_elements()`。
+- 迁移脚本保持幂等：`ADD COLUMN IF NOT EXISTS`、`ON CONFLICT DO NOTHING`。

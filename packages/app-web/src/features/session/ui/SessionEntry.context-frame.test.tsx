@@ -27,6 +27,43 @@ describe("SessionEntry ContextFrame 聚合", () => {
   });
 });
 
+describe("SessionEntry 工具聚合", () => {
+  it("raw dynamicToolCall entry 也通过 TOOLS group 渲染", () => {
+    const entry: SessionDisplayEntry = {
+      id: "item:turn_001:tool_001",
+      sessionId: "session-1",
+      timestamp: 1,
+      eventSeq: 1,
+      turnId: "turn-1",
+      event: {
+        type: "item_completed",
+        payload: {
+          threadId: "session-1",
+          turnId: "turn-1",
+          completedAtMs: 1,
+          item: {
+            type: "dynamicToolCall",
+            id: "turn_001:tool_001",
+            tool: "companion_respond",
+            arguments: {},
+            status: "completed",
+            contentItems: null,
+            durationMs: null,
+            success: true,
+            namespace: null,
+          },
+        },
+      },
+    };
+
+    const html = renderToStaticMarkup(<SessionEntry item={entry} followedByMessage />);
+
+    expect(html).toContain("TOOLS");
+    expect(html).toContain("调用 1 个");
+    expect(html).not.toContain("companion_respond");
+  });
+});
+
 describe("SessionEntry 错误事件", () => {
   it("把 PiAgent fatal error 渲染为独立错误块", () => {
     const entry: SessionDisplayEntry = {

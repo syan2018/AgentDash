@@ -111,6 +111,25 @@ function mkMcpEntry(id: string): SessionDisplayEntry {
   return asEntry(id, event);
 }
 
+function mkDynamicToolEntry(id: string, tool: string): SessionDisplayEntry {
+  const item = {
+    type: "dynamicToolCall",
+    id,
+    tool,
+    status: "completed",
+    arguments: {},
+    contentItems: null,
+    durationMs: null,
+    success: true,
+    namespace: null,
+  } as unknown as ThreadItem;
+  const event: BackboneEvent = {
+    type: "item_completed",
+    payload: { item, threadId: "t1", turnId: "u1", completedAtMs: 0 },
+  };
+  return asEntry(id, event);
+}
+
 function mkMessageEntry(id: string, text: string): SessionDisplayEntry {
   const event: BackboneEvent = {
     type: "agent_message_delta",
@@ -446,12 +465,20 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[2] as AggregatedEntryGroup).entries).toHaveLength(2);
   });
 
-  it("T4: single tool entry not folded — flattened to entry", () => {
+  it("T4: single tool entry is represented as a one-item tool group", () => {
     const entries = [mkCmdEntry("c1", "ls")];
     const result = aggregateEntries(entries);
     expect(result).toHaveLength(1);
-    expect(isToolGroup(result[0])).toBe(false);
-    expect((result[0] as SessionDisplayEntry).id).toBe("c1");
+    expect(isToolGroup(result[0])).toBe(true);
+    expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1"]);
+  });
+
+  it("T4b: single dynamic tool entry is represented as a one-item tool group", () => {
+    const entries = [mkDynamicToolEntry("companion", "companion_respond")];
+    const result = aggregateEntries(entries);
+    expect(result).toHaveLength(1);
+    expect(isToolGroup(result[0])).toBe(true);
+    expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["companion"]);
   });
 
   it("T5: turn boundaries are neutral, so tool bursts can span provider turns", () => {
@@ -592,9 +619,11 @@ describe("aggregateEntries — tool burst", () => {
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
-    // CTX 截断工具 burst，单 CTX 被扁平化为单 entry（不成 group）
+    // CTX 截断工具 burst；两侧单工具也保持统一的 tool group 外壳。
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
-    expect(toolGroups).toHaveLength(0);
+    expect(toolGroups).toHaveLength(2);
+    expect(toolGroups[0]!.entries.map((entry) => entry.id)).toEqual(["c1"]);
+    expect(toolGroups[1]!.entries.map((entry) => entry.id)).toEqual(["c2"]);
     expect(
       result.some((item) => (item as SessionDisplayEntry)?.id === "ctx1"),
     ).toBe(true);
@@ -609,13 +638,10 @@ describe("aggregateEntries — tool burst", () => {
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
-    // 非空 agent message 是 hard boundary，c1 和 c2 必须分裂
-    const toolGroups = result.filter(isToolGroup);
-    expect(toolGroups).toHaveLength(0);  // 各 1 条工具不会折成 group
-    const cmdEntries = result.filter(
-      (item) => (item as SessionDisplayEntry)?.id === "c1" || (item as SessionDisplayEntry)?.id === "c2"
-    );
-    expect(cmdEntries).toHaveLength(2);
+    // 非空 agent message 是 hard boundary，c1 和 c2 必须分裂为两个单项 tool group。
+    const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
+    expect(toolGroups).toHaveLength(2);
+    expect(toolGroups.map((group) => group.entries.map((entry) => entry.id))).toEqual([["c1"], ["c2"]]);
   });
 
   it("T17: consecutive context_frames fold into one CTX group and split surrounding tool bursts", () => {
@@ -630,8 +656,9 @@ describe("aggregateEntries — tool burst", () => {
     const result = aggregateEntries(entries);
     // CTX 内部合并为一个 group；CTX 前后的工具不能跨上下文合并
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
-    expect(toolGroups).toHaveLength(1);
-    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c2", "c3"]);
+    expect(toolGroups).toHaveLength(2);
+    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1"]);
+    expect(toolGroups[1]!.entries.map((e) => e.id)).toEqual(["c2", "c3"]);
     const ctxGroups = result.filter(isContextFrameGroup);
     expect(ctxGroups).toHaveLength(1);
     expect((result[0] as SessionDisplayEntry).id).toBe("c1");
@@ -649,8 +676,9 @@ describe("aggregateEntries — tool burst", () => {
     ];
     const result = aggregateEntries(entries);
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
-    expect(toolGroups).toHaveLength(1);
-    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual([
+    expect(toolGroups).toHaveLength(2);
+    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["mounts_list"]);
+    expect(toolGroups[1]!.entries.map((e) => e.id)).toEqual([
       "read",
       "workspace_module_operate",
     ]);
@@ -750,7 +778,7 @@ describe("aggregateEntries — tool burst", () => {
     expect(runningItem.aggregatedOutput).toBe("running from item_updated");
   });
 
-  it("T22: bounded output tools stay as single cards so truncation state remains visible", () => {
+  it("T22: bounded output tools stay isolated while using the tool group shell", () => {
     const entries = [
       mkCmdEntry("c0", "whoami"),
       mkCmdEntry("c00", "hostname"),
@@ -766,8 +794,8 @@ describe("aggregateEntries — tool burst", () => {
     expect(result).toHaveLength(3);
     expect(isToolGroup(result[0])).toBe(true);
     expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c0", "c00"]);
-    expect(isToolGroup(result[1])).toBe(false);
-    expect((result[1] as SessionDisplayEntry).id).toBe("c1");
+    expect(isToolGroup(result[1])).toBe(true);
+    expect((result[1] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1"]);
     expect(isToolGroup(result[2])).toBe(true);
     expect((result[2] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c2", "c3"]);
   });

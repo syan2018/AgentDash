@@ -174,6 +174,20 @@ function fileChangeItem(id: string, diff: string): Extract<ThreadItem, { type: "
   };
 }
 
+function dynamicToolItem(id: string, tool = "companion_respond"): Extract<ThreadItem, { type: "dynamicToolCall" }> {
+  return {
+    type: "dynamicToolCall",
+    id,
+    tool,
+    status: "inProgress",
+    arguments: {},
+    contentItems: null,
+    durationMs: null,
+    success: null,
+    namespace: null,
+  };
+}
+
 function agentMessageItem(id: string, text: string): Extract<ThreadItem, { type: "agentMessage" }> {
   return { type: "agentMessage", id, text, phase: null, memoryCitation: null };
 }
@@ -574,6 +588,24 @@ describe("sessionStreamReducer", () => {
     expect(state.entries).toHaveLength(1);
     expect(state.entries[0]?.accumulatedText).toBe("ONLY FINAL");
     expect(state.entries[0]?.event.type).toBe("agent_message_delta");
+  });
+
+  it("hydrate 终态 reasoning 和 agentMessage 插回同 entryIndex 工具活动前", () => {
+    const state = reduceStreamState(createInitialStreamState([]), [
+      itemStarted(1, dynamicToolItem("turn_001:tool_001")),
+      itemCompleted(2, agentMessageItem("turn-1:0:msg", "好的。")),
+      itemCompleted(3, reasoningItem("turn-1:0:reason", ["思考"])),
+    ]);
+
+    expect(state.entries).toHaveLength(3);
+    expect(state.entries.map((entry) => entry.event.type)).toEqual([
+      "reasoning_text_delta",
+      "agent_message_delta",
+      "item_started",
+    ]);
+    expect(state.entries[0]?.accumulatedText).toBe("思考");
+    expect(state.entries[1]?.accumulatedText).toBe("好的。");
+    expect(state.entries[2]?.id).toBe("item:turn_001:tool_001");
   });
 
   it("P1-b：终态 finalize 后再来同 item_id 的 ephemeral delta 不脏化已 final 气泡", () => {

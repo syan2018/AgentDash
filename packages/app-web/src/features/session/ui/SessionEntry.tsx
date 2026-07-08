@@ -25,7 +25,12 @@ import {
   getThreadItemStatus,
   deriveSessionInputSourceView,
 } from "../model/types";
-import { resolveKind, KIND_REGISTRY, type ThreadItemKind } from "../model/threadItemKind";
+import {
+  isToolBurstEligible,
+  resolveKind,
+  KIND_REGISTRY,
+  type ThreadItemKind,
+} from "../model/threadItemKind";
 import type {
   SessionDisplayItem,
   SessionDisplayEntry,
@@ -80,6 +85,16 @@ export const SessionEntry = memo(function SessionEntry({
   }
 
   if (isDisplayEntry(item)) {
+    const threadItem = extractThreadItem(item);
+    if (threadItem && isToolBurstEligible(threadItem)) {
+      return (
+        <AggregatedToolGroupEntry
+          group={singleToolGroup(item)}
+          agentRunTarget={agentRunTarget}
+          followedByMessage={followedByMessage}
+        />
+      );
+    }
     return (
       <SingleEntry
         entry={item}
@@ -377,6 +392,16 @@ function AggregatedToolGroupEntry({
       )}
     </div>
   );
+}
+
+function singleToolGroup(entry: SessionDisplayEntry): AggregatedEntryGroup {
+  return {
+    type: "aggregated_group",
+    aggregationType: "tool_burst",
+    entries: [entry],
+    id: entry.id,
+    groupKey: `tool-${entry.id}`,
+  };
 }
 
 function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGroup }) {

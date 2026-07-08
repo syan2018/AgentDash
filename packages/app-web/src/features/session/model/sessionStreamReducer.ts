@@ -328,6 +328,50 @@ function synthesizeAssistantDeltaEvent(
   return { type: kind, payload: base };
 }
 
+function isThreadItemEntry(entry: SessionDisplayEntry): boolean {
+  return (
+    entry.event.type === "item_started" ||
+    entry.event.type === "item_updated" ||
+    entry.event.type === "item_completed"
+  );
+}
+
+function sameTimelineSlot(entry: SessionDisplayEntry, event: SessionEventEnvelope): boolean {
+  const turnId = event.turn_id ?? event.notification.trace.turnId ?? undefined;
+  const entryIndex = event.entry_index ?? event.notification.trace.entryIndex ?? undefined;
+  return (
+    turnId != null &&
+    entryIndex != null &&
+    entry.turnId === turnId &&
+    entry.entryIndex === entryIndex
+  );
+}
+
+function insertHydratedAssistantEntry(
+  entries: SessionDisplayEntry[],
+  entry: SessionDisplayEntry,
+  event: SessionEventEnvelope,
+  kind: AssistantDeltaKind,
+): SessionDisplayEntry[] {
+  const insertIndex = entries.findIndex((existing) => {
+    if (!sameTimelineSlot(existing, event)) {
+      return false;
+    }
+    if (kind === "reasoning_text_delta" || kind === "reasoning_summary_delta") {
+      return existing.event.type === "agent_message_delta" || isThreadItemEntry(existing);
+    }
+    return isThreadItemEntry(existing);
+  });
+  if (insertIndex < 0) {
+    return [...entries, entry];
+  }
+  return [
+    ...entries.slice(0, insertIndex),
+    entry,
+    ...entries.slice(insertIndex),
+  ];
+}
+
 /**
  * 终态助手正文 / reasoning（来自 turn 收尾 ItemCompleted(AgentMessage|Reasoning)）并入对应 delta 气泡。
  * - live：命中已存在的 delta 条目，用终态文本 finalize（权威覆盖累积），isStreaming=false。
@@ -361,20 +405,18 @@ function finalizeAssistantDelta(
 
   // hydrate：无 delta 气泡，合成同 id 的 delta 条目以渲染助手 / 思考卡。
   const syntheticEvent = synthesizeAssistantDeltaEvent(kind, event, itemId, text);
-  return [
-    ...entries,
-    withEntryMetadata({
-      id: targetId,
-      sessionId: event.notification.sessionId,
-      timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
-      eventSeq: event.event_seq,
-      event: syntheticEvent,
-      turnId: event.turn_id ?? undefined,
-      entryIndex: event.entry_index ?? undefined,
-      accumulatedText: text,
-      isStreaming: false,
-    }, event, event.notification.event),
-  ];
+  const syntheticEntry = withEntryMetadata({
+    id: targetId,
+    sessionId: event.notification.sessionId,
+    timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
+    eventSeq: event.event_seq,
+    event: syntheticEvent,
+    turnId: event.turn_id ?? undefined,
+    entryIndex: event.entry_index ?? undefined,
+    accumulatedText: text,
+    isStreaming: false,
+  }, event, event.notification.event);
+  return insertHydratedAssistantEntry(entries, syntheticEntry, event, kind);
 }
 
 function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnvelope): SessionDisplayEntry[] {

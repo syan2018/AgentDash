@@ -219,11 +219,6 @@ function pushToolGroup(
   group: AggregatedEntryGroup | null,
 ): null {
   if (!group) return null;
-  if (group.entries.length === 1) {
-    const only = group.entries[0];
-    if (only) result.push(only);
-    return null;
-  }
   result.push(group);
   return null;
 }
@@ -497,7 +492,7 @@ function aggregateEntries(
       case "tool_single": {
         flushToolGroup();
         flushCtxGroup();
-        result.push(entry);
+        result.push(createToolGroup(entry));
         break;
       }
 

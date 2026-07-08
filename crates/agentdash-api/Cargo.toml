@@ -50,22 +50,22 @@ uuid = { workspace = true }
 futures = { workspace = true }
 zip = { workspace = true }
 async-stream = "0.3"
-async-trait = "0.1"
-tokio-util = { version = "0.7", features = ["io", "rt"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
+async-trait = { workspace = true }
+tokio-util = { workspace = true, features = ["io"] }
+tokio-stream = { workspace = true }
 walkdir = "2.5"
 schemars = { workspace = true }
 bcrypt = "0.16"
-base64 = "0.22"
-reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "form", "json"] }
-sha2 = "0.10"
+base64 = { workspace = true }
+reqwest = { workspace = true, features = ["form", "json"] }
+sha2 = { workspace = true }
 url = "2.5"
 
 # Agent 类型（RuntimeToolProvider 使用 AgentTool trait）
 agentdash-agent = { workspace = true }
 
 agentdash-agent-protocol = { workspace = true }
-json-patch = "2.0"
+json-patch = { workspace = true }
 regex.workspace = true
 postgresql_embedded = { workspace = true }
 

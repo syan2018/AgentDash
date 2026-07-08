@@ -7,9 +7,9 @@ license.workspace = true
 build = "build.rs"
 
 [dependencies]
-agentdash-contracts = { path = "../agentdash-contracts" }
-agentdash-local = { path = "../agentdash-local", default-features = false }
-agentdash-relay = { path = "../agentdash-relay" }
+agentdash-contracts = { workspace = true }
+agentdash-local = { workspace = true }
+agentdash-relay = { workspace = true }
 agentdash-process = { workspace = true }
 
 anyhow.workspace = true
@@ -21,9 +21,9 @@ agentdash-diagnostics = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
-base64 = "0.22"
-reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json"] }
-sha2 = "0.10"
+base64 = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+sha2 = { workspace = true }
 open = "5.3.3"
 
 tauri = { version = "2", features = ["tray-icon"] }

@@ -37,3 +37,4 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 - 通过 PowerShell 把包含中文的 inline Node/Playwright 脚本直接管道给 `node -` 时，中文内容可能在进入浏览器前就被降成 `?`，会让会话输入框和 session 历史里都出现 `????`。如果要做中文端到端浏览器调试，优先使用 UTF-8 文件脚本、Unicode escape，或避免经由当前 PowerShell 管道直接注入中文字符串。
 - 小规模迭代时不要过度、为了不会有影响的修改重复测试，这只会浪费时间，不会带来任何真实的安全性
 - 任何时候禁止为了完成自己的任务碰工作区存在的修改，即使这些修改导致测试失败。不要摧毁并行会话的工作成果
+- VS Code / rust-analyzer 可能自动运行 `cargo check --workspace --all-targets` 并长时间占用 Cargo build directory 锁；手动 Cargo 命令看似卡住时，先观察当前 `cargo` / `rustc` / `rust-analyzer` 进程，因为等待锁通常比强行终止更能保留 IDE 与并行会话的缓存状态

@@ -136,9 +136,7 @@ export function renderToolCallCard(
             kind,
             header: {
               primary: subagentDispatch.title,
-              secondary: subagentDispatch.childAgentId
-                ? `child agent: ${subagentDispatch.childAgentId}`
-                : "child agent pending",
+              secondary: subagentDispatch.childAgentId ? "子 Agent" : "等待子 Agent",
             },
             body: createElement(CompanionSubagentDispatchCardBody, {
               presentation: subagentDispatch,
@@ -172,9 +170,7 @@ export function renderToolCallCard(
             kind,
             header: {
               primary: subagentDispatch.title,
-              secondary: subagentDispatch.childAgentId
-                ? `child agent: ${subagentDispatch.childAgentId}`
-                : "child agent pending",
+              secondary: subagentDispatch.childAgentId ? "子 Agent" : "等待子 Agent",
             },
             body: createElement(CompanionSubagentDispatchCardBody, {
               presentation: subagentDispatch,

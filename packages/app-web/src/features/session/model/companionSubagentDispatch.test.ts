@@ -62,15 +62,22 @@ describe("companion subagent dispatch presentation", () => {
               companion_label: "Reviewer",
               child: {
                 agent_id: "agent-child-1",
-                frame_id: "frame-1",
-                gate_id: "gate-1",
               },
-              journal: {
-                uri: "lifecycle://agent-runs/agent-child-1/sessions/messages",
+              wait_activity: {
+                tool: "wait",
+                activity_ref: "gate-1",
+                activity_refs: ["gate-1"],
               },
-              status: "running",
+              status: "completed",
               summary: "Reviewer launched",
-              result_preview: "Review completed cleanly",
+              result_preview: JSON.stringify({
+                status: "completed",
+                payload: {
+                  type: "completion",
+                  summary: "Review completed cleanly",
+                  confidence: "high",
+                },
+              }),
             },
           }),
         },
@@ -85,12 +92,74 @@ describe("companion subagent dispatch presentation", () => {
       source: "companion_request",
       title: "Reviewer",
       childAgentId: "agent-child-1",
-      status: "running",
+      status: "completed",
       summary: "Reviewer launched",
-      resultPreview: "Review completed cleanly",
+      resultSummary: "Review completed cleanly",
+      resultDetails: {
+        status: "completed",
+        payload: {
+          type: "completion",
+          confidence: "high",
+        },
+      },
       journalUri: "lifecycle://agent-runs/agent-child-1/sessions/messages",
-      frameId: "frame-1",
-      gateId: "gate-1",
+      waitActivityRef: "gate-1",
+    });
+  });
+
+  it("deduplicates completed result summary from dispatch summary", () => {
+    const item: AgentDashThreadItem = {
+      type: "dynamicToolCall",
+      id: "tool-dedup-summary",
+      namespace: null,
+      tool: "companion_request",
+      arguments: {
+        target: "sub",
+        payload: {
+          agent_key: "reviewer",
+          message: "Review the latest patch",
+        },
+      },
+      status: "completed",
+      contentItems: [
+        {
+          type: "inputText",
+          text: JSON.stringify({
+            details: {
+              kind: "companion_subagent_dispatch",
+              child: {
+                agent_id: "agent-child-dedup",
+              },
+              status: "completed",
+              summary: "已完成 5 次只读工具调用：task_read、fs_glob。",
+              result_preview: JSON.stringify({
+                status: "completed",
+                payload: {
+                  type: "completion",
+                  summary: " 已完成 5 次只读工具调用：task_read、fs_glob。 ",
+                  notes: ["链路通畅"],
+                },
+              }),
+            },
+          }),
+        },
+      ],
+      success: true,
+      durationMs: null,
+    };
+
+    const presentation = parseCompanionSubagentDispatch(item);
+
+    expect(presentation).toMatchObject({
+      summary: null,
+      resultSummary: "已完成 5 次只读工具调用：task_read、fs_glob。",
+      resultDetails: {
+        status: "completed",
+        payload: {
+          type: "completion",
+          notes: ["链路通畅"],
+        },
+      },
     });
   });
 
@@ -204,7 +273,8 @@ describe("companion subagent dispatch presentation", () => {
     });
 
     expect(card.header.primary).toBe("Write focused tests");
-    expect(card.header.secondary).toBe("child agent: agent-child-3");
+    expect(card.header.secondary).toBe("子 Agent");
+    expect(card.header.secondary).not.toContain("agent-child-3");
     expect(card.header.secondary).not.toContain("receiverThreadIds");
     expect(card.header.secondary).not.toContain("目标线程");
   });

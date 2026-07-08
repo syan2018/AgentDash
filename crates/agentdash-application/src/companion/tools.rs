@@ -545,120 +545,70 @@ fn child_messages_uri(child_agent_id: Uuid) -> String {
 
 #[derive(Clone, Copy)]
 struct CompanionSubagentVisibleResult<'a> {
-    dispatch_id: &'a str,
-    wait: bool,
     companion_label: &'a str,
     child_agent_id: Uuid,
-    child_frame_id: Uuid,
     gate_id: Option<Uuid>,
-    journal_uri: &'a str,
-    mailbox_message_id: Option<&'a str>,
-    mailbox_outcome: &'a str,
-    accepted_turn_id: Option<&'a str>,
-    task_id: Option<Uuid>,
-    selected_project_agent_id: Uuid,
-    selected_agent_key: &'a str,
-    slice_mode: &'a str,
-    adoption_mode: &'a str,
     status: &'a str,
     summary: &'a str,
     timed_out: Option<bool>,
     result_preview: Option<&'a str>,
-    result_refs: Option<&'a serde_json::Value>,
-    delivery_marker: Option<&'a serde_json::Value>,
-    matched_rule_keys: Option<&'a serde_json::Value>,
 }
 
 fn companion_subagent_agent_tool_result(
     visible: CompanionSubagentVisibleResult<'_>,
 ) -> AgentToolResult {
-    let content = match (visible.wait, visible.status) {
-        (false, _) => format!(
-            "已派发 companion agent（异步）。\n- dispatch_id: {}\n- label: {}\n- child_agent_id: {}\n- child_frame_id: {}\n- child_journal: {}\n- mailbox_outcome: {}\n- accepted_turn_id: {}",
-            visible.dispatch_id,
+    let journal_template = "lifecycle://agent-runs/{child_agent_id}/sessions/messages";
+    let wait_hint = visible.gate_id.map(|gate_id| {
+        format!(
+            "\n- wait_activity_ref: {}\n- wait_tool_args: {{\"activity_refs\":[\"{}\"]}}",
+            gate_id, gate_id
+        )
+    });
+    let content = match visible.status {
+        "running" => format!(
+            "已派发 companion agent。\n- label: {}\n- child_agent_id: {}\n- journal_template: {}{}",
             visible.companion_label,
             visible.child_agent_id,
-            visible.child_frame_id,
-            visible.journal_uri,
-            visible.mailbox_outcome,
-            visible.accepted_turn_id.unwrap_or("(not accepted yet)"),
+            journal_template,
+            wait_hint.as_deref().unwrap_or(""),
         ),
-        (true, "timed_out") => format!(
-            "等待 companion `{}` 回传超时。\n- status: timed_out\n- gate_id: {}\n- child_agent_id: {}\n- child_journal: {}\n- mailbox_outcome: {}\n- accepted_turn_id: {}",
+        "timed_out" => format!(
+            "等待 companion `{}` 回传超时。\n- status: timed_out\n- child_agent_id: {}\n- journal_template: {}{}",
             visible.companion_label,
-            visible
-                .gate_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "(none)".to_string()),
             visible.child_agent_id,
-            visible.journal_uri,
-            visible.mailbox_outcome,
-            visible.accepted_turn_id.unwrap_or("(not accepted yet)"),
+            journal_template,
+            wait_hint.as_deref().unwrap_or(""),
         ),
         _ => format!(
-            "Companion `{}` 已完成。\n- child_agent_id: {}\n- child_journal: {}\n- mailbox_outcome: {}\n- status: {}\n- summary: {}\n- gate_id: {}\n- accepted_turn_id: {}",
+            "Companion `{}` 已完成。\n- child_agent_id: {}\n- journal_template: {}\n- status: {}\n- summary: {}",
             visible.companion_label,
             visible.child_agent_id,
-            visible.journal_uri,
-            visible.mailbox_outcome,
+            journal_template,
             visible.status,
             visible.summary,
-            visible
-                .gate_id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "(none)".to_string()),
-            visible.accepted_turn_id.unwrap_or("(not accepted yet)"),
         ),
     };
 
     let mut details = serde_json::json!({
         "kind": "companion_subagent_dispatch",
-        "dispatch_id": visible.dispatch_id,
-        "wait": visible.wait,
         "companion_label": visible.companion_label,
         "child": {
             "agent_id": visible.child_agent_id.to_string(),
-            "frame_id": visible.child_frame_id.to_string(),
-            "gate_id": visible.gate_id.map(|id| id.to_string()),
-        },
-        "journal": {
-            "uri": visible.journal_uri,
-        },
-        "mailbox": {
-            "message_id": visible.mailbox_message_id,
-            "outcome": visible.mailbox_outcome,
-            "accepted_turn_id": visible.accepted_turn_id,
         },
         "status": visible.status,
         "summary": visible.summary,
         "timed_out": visible.timed_out,
-        "task": {
-            "task_id": visible.task_id.map(|id| id.to_string()),
-        },
-        "companion": {
-            "selected_project_agent_id": visible.selected_project_agent_id.to_string(),
-            "agent_key": visible.selected_agent_key,
-        },
-        "routing": {
-            "slice_mode": visible.slice_mode,
-            "adoption_mode": visible.adoption_mode,
-        },
     });
 
+    if let Some(gate_id) = visible.gate_id {
+        details["wait_activity"] = serde_json::json!({
+            "tool": "wait",
+            "activity_ref": gate_id.to_string(),
+            "activity_refs": [gate_id.to_string()],
+        });
+    }
     if let Some(result_preview) = visible.result_preview {
         details["result_preview"] = serde_json::Value::String(result_preview.to_string());
-    }
-    if let Some(result_refs) = visible.result_refs {
-        details["result_refs"] = agent_visible_value_without_runtime_session_refs(result_refs);
-    }
-    if let Some(delivery_marker) = visible.delivery_marker {
-        details["delivery_marker"] =
-            agent_visible_value_without_runtime_session_refs(delivery_marker);
-    }
-    if let Some(matched_rule_keys) = visible.matched_rule_keys {
-        details["hook"] = serde_json::json!({
-            "matched_rule_keys": matched_rule_keys,
-        });
     }
 
     AgentToolResult {
@@ -1500,11 +1450,6 @@ impl CompanionRequestTool {
             .tool_context
             .require_hook_runtime("生成 companion request 上下文")?;
 
-        let companion_label = payload
-            .get("label")
-            .and_then(|v| v.as_str())
-            .unwrap_or("companion")
-            .to_string();
         let slice_mode = parse_slice_mode(
             payload
                 .get("context_mode")
@@ -1552,6 +1497,13 @@ impl CompanionRequestTool {
         let parent_frame_id = anchor.frame_id;
 
         let selected_companion = self.resolve_companion_agent(project_id, agent_key).await?;
+        let companion_label = payload
+            .get("label")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&selected_companion.project_agent.name)
+            .to_string();
         let companion_executor_config = selected_companion.executor_config.clone();
         self.preflight_selected_companion_model(
             project_id,
@@ -1759,14 +1711,11 @@ impl CompanionRequestTool {
             .accepted_refs
             .as_ref()
             .and_then(|refs| refs.agent_run_turn_id.clone());
-        let child_messages_uri = child_messages_uri(dispatch_result.agent_ref);
         let mailbox_message_id = mailbox_result
             .mailbox_message
             .as_ref()
             .map(|message| message.id.to_string());
         let mailbox_outcome = mailbox_result.outcome.as_str();
-        let visible_slice_mode = companion_slice_mode_key(slice_mode);
-        let visible_adoption_mode = companion_adoption_mode_key(adoption_mode);
         if matches!(
             mailbox_result.outcome,
             AgentRunMailboxCommandOutcome::Failed | AgentRunMailboxCommandOutcome::Blocked
@@ -1840,40 +1789,15 @@ impl CompanionRequestTool {
                 AgentToolError::ExecutionFailed("dispatch 未创建 gate（内部错误）".to_string())
             })?;
             if let Some(on_update) = on_update.as_ref() {
-                let matched_rule_keys =
-                    serde_json::json!(after_resolution.matched_rule_keys.clone());
-                let result_refs = serde_json::json!({
-                    "gate_id": gate_id.to_string(),
-                    "child_agent_id": dispatch_result.agent_ref.to_string(),
-                    "child_frame_id": dispatch_result.frame_ref.to_string(),
-                    "accepted_turn_id": child_turn_id.clone(),
-                    "mailbox_message_id": mailbox_message_id.clone(),
-                    "journal_uri": child_messages_uri.clone(),
-                });
                 on_update(companion_subagent_agent_tool_result(
                     CompanionSubagentVisibleResult {
-                        dispatch_id: &dispatch_plan.dispatch_id,
-                        wait: true,
                         companion_label: &companion_label,
                         child_agent_id: dispatch_result.agent_ref,
-                        child_frame_id: dispatch_result.frame_ref,
                         gate_id: Some(gate_id),
-                        journal_uri: &child_messages_uri,
-                        mailbox_message_id: mailbox_message_id.as_deref(),
-                        mailbox_outcome,
-                        accepted_turn_id: child_turn_id.as_deref(),
-                        task_id: requested_task_id,
-                        selected_project_agent_id: selected_companion.project_agent.id,
-                        selected_agent_key: &selected_companion.agent_key,
-                        slice_mode: visible_slice_mode,
-                        adoption_mode: visible_adoption_mode,
                         status: "running",
                         summary: "已派发 companion agent，等待回传",
                         timed_out: None,
                         result_preview: None,
-                        result_refs: Some(&result_refs),
-                        delivery_marker: None,
-                        matched_rule_keys: Some(&matched_rule_keys),
                     },
                 ));
             }
@@ -1904,39 +1828,15 @@ impl CompanionRequestTool {
 
             let wait_outcome = self.poll_gate_until_resolved(gate_id, cancel).await?;
             if matches!(wait_outcome, CompanionGateWaitOutcome::TimedOut) {
-                let matched_rule_keys = serde_json::json!(after_resolution.matched_rule_keys);
-                let result_refs = serde_json::json!({
-                    "gate_id": gate_id.to_string(),
-                    "child_agent_id": dispatch_result.agent_ref.to_string(),
-                    "child_frame_id": dispatch_result.frame_ref.to_string(),
-                    "accepted_turn_id": child_turn_id.clone(),
-                    "mailbox_message_id": mailbox_message_id.clone(),
-                    "journal_uri": child_messages_uri.clone(),
-                });
                 return Ok(companion_subagent_agent_tool_result(
                     CompanionSubagentVisibleResult {
-                        dispatch_id: &dispatch_plan.dispatch_id,
-                        wait: true,
                         companion_label: &companion_label,
                         child_agent_id: dispatch_result.agent_ref,
-                        child_frame_id: dispatch_result.frame_ref,
                         gate_id: Some(gate_id),
-                        journal_uri: &child_messages_uri,
-                        mailbox_message_id: mailbox_message_id.as_deref(),
-                        mailbox_outcome,
-                        accepted_turn_id: child_turn_id.as_deref(),
-                        task_id: requested_task_id,
-                        selected_project_agent_id: selected_companion.project_agent.id,
-                        selected_agent_key: &selected_companion.agent_key,
-                        slice_mode: visible_slice_mode,
-                        adoption_mode: visible_adoption_mode,
                         status: "timed_out",
                         summary: "等待 companion result 超时",
                         timed_out: Some(true),
                         result_preview: None,
-                        result_refs: Some(&result_refs),
-                        delivery_marker: None,
-                        matched_rule_keys: Some(&matched_rule_keys),
                     },
                 ));
             }
@@ -1944,7 +1844,7 @@ impl CompanionRequestTool {
             let CompanionGateWaitOutcome::Resolved(result_payload) = wait_outcome else {
                 unreachable!("timed_out handled above");
             };
-            let waiter_delivery_claim = self
+            let _waiter_delivery_claim = self
                 .repos
                 .gate_result_delivery_marker_repo
                 .claim_waiter_delivery(ClaimGateResultWaiterRequest {
@@ -1960,93 +1860,34 @@ impl CompanionRequestTool {
                         "claim companion wait delivery marker 失败: {error}"
                     ))
                 })?;
-            let waiter_delivery_status = waiter_delivery_claim.marker().status.as_str();
-            let waiter_delivery_claimed = waiter_delivery_claim.claimed();
             let summary = companion_wait_payload_summary(&result_payload);
             let status = companion_wait_payload_status(&result_payload, "unknown");
             let result_preview =
                 agent_visible_json_preview(&result_payload, COMPANION_WAIT_PREVIEW_CHARS);
-            let result_refs = merge_gate_result_refs(
-                serde_json::json!({
-                    "gate_id": gate_id.to_string(),
-                    "child_agent_id": dispatch_result.agent_ref.to_string(),
-                    "child_frame_id": dispatch_result.frame_ref.to_string(),
-                    "accepted_turn_id": child_turn_id.clone(),
-                    "mailbox_message_id": mailbox_message_id.clone(),
-                    "journal_uri": child_messages_uri.clone(),
-                }),
-                &result_payload,
-            );
-            let delivery_marker = serde_json::json!({
-                "gate_id": gate_id.to_string(),
-                "result_attempt": GATE_RESULT_DELIVERY_ATTEMPT,
-                "status": waiter_delivery_status,
-                "claimed_by_waiter": waiter_delivery_claimed,
-            });
-            let matched_rule_keys = serde_json::json!(after_resolution.matched_rule_keys);
 
             return Ok(companion_subagent_agent_tool_result(
                 CompanionSubagentVisibleResult {
-                    dispatch_id: &dispatch_plan.dispatch_id,
-                    wait: true,
                     companion_label: &companion_label,
                     child_agent_id: dispatch_result.agent_ref,
-                    child_frame_id: dispatch_result.frame_ref,
                     gate_id: Some(gate_id),
-                    journal_uri: &child_messages_uri,
-                    mailbox_message_id: mailbox_message_id.as_deref(),
-                    mailbox_outcome,
-                    accepted_turn_id: child_turn_id.as_deref(),
-                    task_id: requested_task_id,
-                    selected_project_agent_id: selected_companion.project_agent.id,
-                    selected_agent_key: &selected_companion.agent_key,
-                    slice_mode: visible_slice_mode,
-                    adoption_mode: visible_adoption_mode,
                     status: &status,
                     summary: &summary,
                     timed_out: Some(false),
                     result_preview: Some(&result_preview),
-                    result_refs: Some(&result_refs),
-                    delivery_marker: Some(&delivery_marker),
-                    matched_rule_keys: Some(&matched_rule_keys),
                 },
             ));
         }
 
         // ─── Async dispatch (wait=false) ────────────────────────────────
-        let matched_rule_keys = serde_json::json!(after_resolution.matched_rule_keys);
-        let result_refs = serde_json::json!({
-            "child_agent_id": dispatch_result.agent_ref.to_string(),
-            "child_frame_id": dispatch_result.frame_ref.to_string(),
-            "accepted_turn_id": child_turn_id.clone(),
-            "mailbox_message_id": mailbox_message_id.clone(),
-            "journal_uri": child_messages_uri.clone(),
-        });
-
         Ok(companion_subagent_agent_tool_result(
             CompanionSubagentVisibleResult {
-                dispatch_id: &dispatch_plan.dispatch_id,
-                wait: false,
                 companion_label: &companion_label,
                 child_agent_id: dispatch_result.agent_ref,
-                child_frame_id: dispatch_result.frame_ref,
                 gate_id: dispatch_result.gate_ref,
-                journal_uri: &child_messages_uri,
-                mailbox_message_id: mailbox_message_id.as_deref(),
-                mailbox_outcome,
-                accepted_turn_id: child_turn_id.as_deref(),
-                task_id: requested_task_id,
-                selected_project_agent_id: selected_companion.project_agent.id,
-                selected_agent_key: &selected_companion.agent_key,
-                slice_mode: visible_slice_mode,
-                adoption_mode: visible_adoption_mode,
                 status: "running",
                 summary: "已派发 companion agent，等待异步回流",
                 timed_out: None,
                 result_preview: None,
-                result_refs: Some(&result_refs),
-                delivery_marker: None,
-                matched_rule_keys: Some(&matched_rule_keys),
             },
         ))
     }
@@ -2943,23 +2784,6 @@ fn parse_slice_mode(value: &str) -> CompanionSliceMode {
         "workflow_only" => CompanionSliceMode::WorkflowOnly,
         "constraints_only" => CompanionSliceMode::ConstraintsOnly,
         _ => CompanionSliceMode::Compact,
-    }
-}
-
-fn companion_slice_mode_key(mode: CompanionSliceMode) -> &'static str {
-    match mode {
-        CompanionSliceMode::Full => "full",
-        CompanionSliceMode::Compact => "compact",
-        CompanionSliceMode::WorkflowOnly => "workflow_only",
-        CompanionSliceMode::ConstraintsOnly => "constraints_only",
-    }
-}
-
-fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
-    match mode {
-        CompanionAdoptionMode::Suggestion => "suggestion",
-        CompanionAdoptionMode::FollowUpRequired => at::FOLLOW_UP_REQUIRED,
-        CompanionAdoptionMode::BlockingReview => at::BLOCKING_REVIEW,
     }
 }
 
@@ -3994,38 +3818,18 @@ mod companion_tests {
 
     fn visible_subagent_result_fixture<'a>(
         status: &'a str,
-        wait: bool,
         gate_id: Option<Uuid>,
-        journal_uri: &'a str,
         result_preview: Option<&'a str>,
-        result_refs: Option<&'a serde_json::Value>,
     ) -> CompanionSubagentVisibleResult<'a> {
         CompanionSubagentVisibleResult {
-            dispatch_id: "dispatch-1",
-            wait,
             companion_label: "reviewer",
             child_agent_id: Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
                 .expect("agent uuid"),
-            child_frame_id: Uuid::parse_str("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-                .expect("frame uuid"),
             gate_id,
-            journal_uri,
-            mailbox_message_id: Some("mailbox-1"),
-            mailbox_outcome: "launched",
-            accepted_turn_id: Some("turn-child-1"),
-            task_id: None,
-            selected_project_agent_id: Uuid::parse_str("cccccccc-cccc-cccc-cccc-cccccccccccc")
-                .expect("project agent uuid"),
-            selected_agent_key: "reviewer",
-            slice_mode: "compact",
-            adoption_mode: "blocking_review",
             status,
             summary: "done",
             timed_out: Some(status == "timed_out"),
             result_preview,
-            result_refs,
-            delivery_marker: None,
-            matched_rule_keys: None,
         }
     }
 
@@ -4057,10 +3861,9 @@ mod companion_tests {
         }
     }
 
-    fn assert_result_retains_child_agent_and_journal(
+    fn assert_result_retains_child_agent_only(
         result: &agentdash_spi::AgentToolResult,
         child_agent_id: &str,
-        journal_uri: &str,
     ) {
         let details = result.details.as_ref().expect("details");
         assert_eq!(
@@ -4071,7 +3874,8 @@ mod companion_tests {
             details["child"]["agent_id"],
             serde_json::json!(child_agent_id)
         );
-        assert_eq!(details["journal"]["uri"], serde_json::json!(journal_uri));
+        assert_eq!(details["companion_label"], serde_json::json!("reviewer"));
+        assert!(details.get("journal").is_none());
         let text = result
             .content
             .iter()
@@ -4079,32 +3883,26 @@ mod companion_tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains(child_agent_id));
-        assert!(text.contains(journal_uri));
+        assert!(text.contains("lifecycle://agent-runs/{child_agent_id}/sessions/messages"));
     }
 
     #[test]
     fn companion_subagent_async_result_hides_runtime_session_refs() {
         let child_agent_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        let journal_uri =
-            "lifecycle://agent-runs/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/sessions/messages";
-        let result_refs = serde_json::json!({
-            "child_agent_id": child_agent_id,
-            "journal_uri": journal_uri,
-            "delivery_runtime_session_id": "runtime-child-session",
-            "child_session_id": "runtime-child-session",
-        });
         let result = companion_subagent_agent_tool_result(visible_subagent_result_fixture(
-            "running",
-            false,
-            None,
-            journal_uri,
-            None,
-            Some(&result_refs),
+            "running", None, None,
         ));
 
         assert_result_hides_runtime_session_refs(&result);
-        assert_result_retains_child_agent_and_journal(&result, child_agent_id, journal_uri);
-        assert_eq!(result.details.as_ref().expect("details")["wait"], false);
+        assert_result_retains_child_agent_only(&result, child_agent_id);
+        assert!(
+            result
+                .details
+                .as_ref()
+                .expect("details")
+                .get("wait_activity")
+                .is_none()
+        );
     }
 
     fn mailbox_delivery_fixture() -> super::CompanionParentMailboxDeliveryResult {
@@ -4174,8 +3972,6 @@ mod companion_tests {
     #[test]
     fn companion_subagent_wait_completed_result_hides_runtime_session_refs() {
         let child_agent_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        let journal_uri =
-            "lifecycle://agent-runs/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/sessions/messages";
         let gate_id = Uuid::parse_str("dddddddd-dddd-dddd-dddd-dddddddddddd").expect("gate uuid");
         let result_refs = serde_json::json!({
             "child": {
@@ -4184,7 +3980,6 @@ mod companion_tests {
             },
             "evidence": [{
                 "kind": "lifecycle_file",
-                "uri": journal_uri,
                 "child_delivery_runtime_session_id": "runtime-child-session"
             }]
         });
@@ -4197,21 +3992,18 @@ mod companion_tests {
         let preview = super::agent_visible_json_preview(&raw_preview, 2_000);
         let result = companion_subagent_agent_tool_result(visible_subagent_result_fixture(
             "completed",
-            true,
             Some(gate_id),
-            journal_uri,
             Some(&preview),
-            Some(&result_refs),
         ));
 
         assert_result_hides_runtime_session_refs(&result);
-        assert_result_retains_child_agent_and_journal(&result, child_agent_id, journal_uri);
+        assert_result_retains_child_agent_only(&result, child_agent_id);
         assert_eq!(
             result.details.as_ref().expect("details")["status"],
             serde_json::json!("completed")
         );
         assert_eq!(
-            result.details.as_ref().expect("details")["child"]["gate_id"],
+            result.details.as_ref().expect("details")["wait_activity"]["activity_ref"],
             serde_json::json!(gate_id.to_string())
         );
     }
@@ -4219,29 +4011,22 @@ mod companion_tests {
     #[test]
     fn companion_subagent_wait_timeout_result_hides_runtime_session_refs() {
         let child_agent_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        let journal_uri =
-            "lifecycle://agent-runs/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/sessions/messages";
         let gate_id = Uuid::parse_str("dddddddd-dddd-dddd-dddd-dddddddddddd").expect("gate uuid");
-        let result_refs = serde_json::json!({
-            "child_agent_id": child_agent_id,
-            "journal_uri": journal_uri,
-            "runtime_session_id": "runtime-child-session",
-            "delivery_runtime_session_id": "runtime-child-session",
-        });
         let result = companion_subagent_agent_tool_result(visible_subagent_result_fixture(
             "timed_out",
-            true,
             Some(gate_id),
-            journal_uri,
             None,
-            Some(&result_refs),
         ));
 
         assert_result_hides_runtime_session_refs(&result);
-        assert_result_retains_child_agent_and_journal(&result, child_agent_id, journal_uri);
+        assert_result_retains_child_agent_only(&result, child_agent_id);
         assert_eq!(
             result.details.as_ref().expect("details")["timed_out"],
             serde_json::json!(true)
+        );
+        assert_eq!(
+            result.details.as_ref().expect("details")["wait_activity"]["activity_refs"],
+            serde_json::json!([gate_id.to_string()])
         );
     }
 

@@ -25,6 +25,7 @@ export interface CompanionSubagentRawProtocolRefs {
   dynamic_target?: string;
   details_kind?: string;
   dispatch_id?: string;
+  wait_activity_ref?: string;
 }
 
 export interface CompanionSubagentDispatchPresentation {
@@ -34,9 +35,10 @@ export interface CompanionSubagentDispatchPresentation {
   status: CompanionSubagentDispatchStatus;
   summary: string | null;
   resultPreview: string | null;
+  resultSummary: string | null;
+  resultDetails: unknown | null;
   journalUri: string | null;
-  frameId: string | null;
-  gateId: string | null;
+  waitActivityRef: string | null;
   rawProtocolRefs: CompanionSubagentRawProtocolRefs;
 }
 
@@ -129,29 +131,42 @@ function parseDynamicCompanionRequest(
     readString(child, "agent_id") ??
     readString(details, "agent_id");
   const journal = readRecord(details, "journal");
+  const waitActivity = readRecord(details, "wait_activity") ?? readRecord(details, "wait");
+  const waitActivityRef =
+    readString(waitActivity, "activity_ref") ??
+    readFirstString(waitActivity, "activity_refs") ??
+    readString(child, "gate_id") ??
+    readString(details, "gate_id");
   const payload = readRecord(args, "payload");
   const title =
     readString(details, "companion_label") ??
     readString(payload, "agent_key") ??
     "Companion subagent";
+  const status = normalizeDynamicStatus(item, details);
+  const resultPreview =
+    readString(details, "result_preview") ?? readString(details, "response_preview");
+  const resultValue = resultPreview ? parseJsonValue(resultPreview) : null;
+  const summary = readString(details, "summary") ?? readString(payload, "message");
+  const resultSummary = resolveResultSummary(status, details, resultValue, resultPreview);
 
   return {
     source: "companion_request",
     title,
     childAgentId,
-    status: normalizeDynamicStatus(item, details),
-    summary: readString(details, "summary") ?? readString(payload, "message"),
-    resultPreview:
-      readString(details, "result_preview") ?? readString(details, "response_preview"),
-    journalUri: readString(journal, "uri"),
-    frameId: readString(child, "frame_id") ?? readString(details, "frame_id"),
-    gateId: readString(child, "gate_id") ?? readString(details, "gate_id"),
+    status,
+    summary: displayTextEquals(summary, resultSummary) ? null : summary,
+    resultPreview,
+    resultSummary,
+    resultDetails: resolveResultDetails(resultValue),
+    journalUri: readString(journal, "uri") ?? childAgentJournalUri(childAgentId),
+    waitActivityRef,
     rawProtocolRefs: {
       item_id: item.id,
       source_tool: item.tool,
       dynamic_target: target ?? undefined,
       details_kind: detailsKind ?? undefined,
       dispatch_id: readString(details, "dispatch_id") ?? undefined,
+      wait_activity_ref: waitActivityRef ?? undefined,
     },
   };
 }
@@ -174,11 +189,12 @@ function parseCollabSpawnAgent(
     status: normalizeCollabStatus(item, childState?.status),
     summary: childState?.message ?? item.prompt,
     resultPreview: null,
+    resultSummary: null,
+    resultDetails: null,
     journalUri: childAgentId
       ? `lifecycle://agent-runs/${childAgentId}/sessions/messages`
       : null,
-    frameId: null,
-    gateId: null,
+    waitActivityRef: null,
     rawProtocolRefs: {
       item_id: item.id,
       source_tool: item.tool,
@@ -272,6 +288,15 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
   }
 }
 
+function parseJsonValue(text: string): unknown | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -293,8 +318,98 @@ function readString(
   return normalizeString(record[key]);
 }
 
+function readFirstString(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  if (!record) return null;
+  const value = record[key];
+  if (!Array.isArray(value)) return null;
+  for (const item of value) {
+    const normalized = normalizeString(item);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
 function normalizeString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function displayTextEquals(left: string | null, right: string | null): boolean {
+  if (!left || !right) return false;
+  return normalizeDisplayText(left) === normalizeDisplayText(right);
+}
+
+function normalizeDisplayText(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function childAgentJournalUri(childAgentId: string | null): string | null {
+  return childAgentId
+    ? `lifecycle://agent-runs/${childAgentId}/sessions/messages`
+    : null;
+}
+
+function resolveResultSummary(
+  status: CompanionSubagentDispatchStatus,
+  details: Record<string, unknown> | null,
+  resultValue: unknown | null,
+  resultPreview: string | null,
+): string | null {
+  if (status !== "completed" && status !== "failed" && status !== "interrupted") {
+    return null;
+  }
+
+  const resultRecord = isJsonRecord(resultValue) ? resultValue : null;
+  const payload = readRecord(resultRecord, "payload");
+  const resultText = normalizeString(resultValue);
+  return (
+    readString(payload, "summary") ??
+    readString(payload, "message") ??
+    readString(resultRecord, "summary") ??
+    readString(resultRecord, "message") ??
+    resultText ??
+    readString(details, "summary") ??
+    (resultValue == null ? resultPreview : null)
+  );
+}
+
+function resolveResultDetails(resultValue: unknown | null): unknown | null {
+  if (resultValue == null) return null;
+  if (normalizeString(resultValue)) return null;
+  const withoutSummary = omitResultSummaryFields(resultValue);
+  return isEmptyJsonValue(withoutSummary) ? null : withoutSummary;
+}
+
+function omitResultSummaryFields(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(omitResultSummaryFields);
+  }
+  if (!isJsonRecord(value)) {
+    return value;
+  }
+
+  const entries: Array<[string, unknown]> = [];
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "summary" || key === "message") continue;
+    if (key === "payload" && isJsonRecord(entry)) {
+      const cleanedPayload = omitResultSummaryFields(entry);
+      if (!isEmptyJsonValue(cleanedPayload)) {
+        entries.push([key, cleanedPayload]);
+      }
+      continue;
+    }
+    entries.push([key, omitResultSummaryFields(entry)]);
+  }
+
+  return Object.fromEntries(entries);
+}
+
+function isEmptyJsonValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length === 0;
+  if (isJsonRecord(value)) return Object.keys(value).length === 0;
+  return false;
 }

@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type { AgentRunRuntimeTarget } from "../../../../services/agentRunRuntime";
 import type {
   CompanionSubagentDispatchPresentation,
@@ -11,6 +12,7 @@ import {
 import { normalizeAgentRunDeliveryStatus } from "../../../agent/agent-run-delivery-status";
 import { useDebugPrefs } from "../../../../hooks/use-debug-prefs";
 import { CB } from "./cardBodyTokens";
+import { JsonTree } from "./JsonTree";
 
 export interface CompanionSubagentDispatchCardBodyProps {
   presentation: CompanionSubagentDispatchPresentation;
@@ -36,6 +38,7 @@ export function CompanionSubagentDispatchCardBody({
   const status = statusLabel(effectiveStatus);
   const projectedTitle = projectedRef?.display_title?.trim();
   const title = projectedTitle || presentation.title;
+  const resultSummary = presentation.resultSummary;
   const hasRawProtocolRefs = Object.keys(presentation.rawProtocolRefs).length > 0;
 
   return (
@@ -43,7 +46,7 @@ export function CompanionSubagentDispatchCardBody({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-foreground">{title}</p>
-          <p className="text-[10px] text-muted-foreground/60">AgentDash subagent dispatch</p>
+          <p className="text-[10px] text-muted-foreground/60">Companion 子 Agent</p>
         </div>
         <span className={`rounded-[4px] bg-secondary/40 px-1.5 py-0.5 text-[10px] font-medium ${status.className}`}>
           {status.label}
@@ -57,38 +60,39 @@ export function CompanionSubagentDispatchCardBody({
         </div>
       )}
 
-      {presentation.resultPreview && (
+      {resultSummary && (
         <div>
-          <p className={`mb-0.5 ${CB.sectionTitle}`}>结果</p>
-          <p className="whitespace-pre-wrap text-foreground/80">{presentation.resultPreview}</p>
+          <p className={`mb-0.5 ${CB.sectionTitle}`}>结果摘要</p>
+          <p className="whitespace-pre-wrap text-foreground/80">{resultSummary}</p>
         </div>
       )}
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <InfoBlock label="Child agent" value={presentation.childAgentId ?? "等待解析"} mono />
-        <InfoBlock label="Journal" value={presentation.journalUri ?? "等待 journal ref"} mono />
-        {projectedRef?.last_activity_at && (
-          <InfoBlock label="Last activity" value={projectedRef.last_activity_at} mono />
-        )}
-        {presentation.frameId && <InfoBlock label="Frame" value={presentation.frameId} mono />}
-        {presentation.gateId && <InfoBlock label="Gate" value={presentation.gateId} mono />}
-      </div>
+      {presentation.resultDetails != null && (
+        <details className="rounded-[6px] bg-secondary/10 px-2 py-1.5">
+          <summary className="cursor-pointer text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/60">
+            结果详情
+          </summary>
+          <div className="mt-1 max-h-48 overflow-auto">
+            <JsonTree data={presentation.resultDetails} defaultDepth={1} />
+          </div>
+        </details>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {openTarget.enabled ? (
-          <a
+          <Link
             className="inline-flex min-h-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground/30 hover:bg-secondary"
-            href={openTarget.path}
+            to={openTarget.path}
           >
-            打开 child workspace
-          </a>
+            查看子 Agent
+          </Link>
         ) : (
           <button
             className="inline-flex min-h-8 shrink-0 items-center justify-center rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-muted-foreground opacity-60"
             disabled
             type="button"
           >
-            {openTarget.reason}
+            {openTarget.reason === "等待 child agent id" ? "等待子 Agent" : openTarget.reason}
           </button>
         )}
       </div>
@@ -121,25 +125,6 @@ function statusFromDeliveryStatus(status: string): CompanionSubagentDispatchStat
     case "interrupted":
       return "interrupted";
   }
-}
-
-function InfoBlock({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="min-w-0">
-      <p className={CB.sectionTitle}>{label}</p>
-      <p className={`truncate text-foreground/80 ${mono ? "font-mono" : ""}`} title={value}>
-        {value}
-      </p>
-    </div>
-  );
 }
 
 function statusLabel(status: CompanionSubagentDispatchPresentation["status"]): {

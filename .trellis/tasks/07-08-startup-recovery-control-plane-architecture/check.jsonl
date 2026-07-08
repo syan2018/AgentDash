@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Check that refactor preserves terminal/control-effect/recovery contracts."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Check launch and source adapter semantics remain canonical after admission refactor."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Check persistence interface changes do not imply accidental migration or schema drift."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "General backend quality and verification expectations."}
+{"file": ".trellis/tasks/07-08-startup-recovery-control-plane-architecture/research/coupling-inventory.md", "reason": "Check implementation did not exceed or miss the documented coupling scope."}

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Defines RuntimeSession terminal, AgentRun control-effect, startup recovery phase, and mailbox wake target contracts that this architecture task must preserve."}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "Defines launch pipeline stages and source adapter contracts relevant to launch/wake admission deepening."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Provides session architecture invariants and module ownership context."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Required if control-effect persistence adapter interfaces change while preserving schema and migration rules."}
+{"file": ".trellis/tasks/07-08-startup-recovery-control-plane-architecture/research/coupling-inventory.md", "reason": "Primary coupling inventory and scope inclusion rules for the refactor."}
+{"file": ".trellis/tasks/07-08-startup-recovery-control-effect-replay/verification.md", "reason": "Evidence from the bugfix smoke tests that the architecture refactor must keep green."}

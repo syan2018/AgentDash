@@ -26,6 +26,7 @@ Request message bodies use `payload.message`. `payload.prompt` is not part of th
 | `human` | `approval` | `message` | `decision` | Ask the user for a blocking choice or missing information. |
 | `human` | `notification` | `message` | none | Notify the user without requiring a response. |
 | `platform` | `capability_grant_request` | `requested_paths`, `reason`, `scope` | `capability_grant_result` | Ask the platform permission broker for temporary capability. |
+| `platform` | `workflow_script_preflight` | `source_text` | none | Validate and preview a restricted Rhai workflow builder script. |
 
 ## Request Types
 
@@ -77,6 +78,18 @@ Request message bodies use `payload.message`. `payload.prompt` is not part of th
   "reason": "需要写入本轮实现文件",
   "scope": "turn",
   "ttl_seconds": 600
+}
+```
+
+`workflow_script_preflight`:
+
+```json
+{
+  "type": "workflow_script_preflight",
+  "source_text": "workflow(#{ body: [] })",
+  "args": { "topic": "orchestration" },
+  "ctx": { "workspace": "demo" },
+  "runtime_session_id": "optional-session-id"
 }
 ```
 

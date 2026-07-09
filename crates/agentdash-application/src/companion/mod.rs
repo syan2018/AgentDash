@@ -7,6 +7,7 @@ pub mod runtime_tool_provider;
 pub(crate) mod skill_projection;
 pub(crate) mod tool_context;
 pub mod tools;
+pub mod workflow_script_preflight;
 
 pub use gate_control::{
     CompanionGateControlDeps, CompanionGateControlRepos, CompanionGateControlService,
@@ -25,4 +26,8 @@ pub use runtime_tool_provider::CollaborationRuntimeToolProvider;
 pub use tools::{
     AgentRunCompanionMailboxDelivery, CompanionRequestTool, CompanionRespondTool,
     build_hook_action_resolved_notification,
+};
+pub use workflow_script_preflight::{
+    ApplicationWorkflowScriptPreflightAdapter, CompanionWorkflowScriptPreflightPort,
+    CompanionWorkflowScriptPreflightRequest,
 };

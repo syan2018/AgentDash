@@ -996,12 +996,8 @@ fn workflow_script_eval_context(project_id: Uuid, user_id: &str, ctx: Option<Val
         }
         None => Map::new(),
     };
-    object
-        .entry("project_id".to_string())
-        .or_insert_with(|| json!(project_id));
-    object
-        .entry("user_id".to_string())
-        .or_insert_with(|| json!(user_id));
+    object.insert("project_id".to_string(), json!(project_id));
+    object.insert("user_id".to_string(), json!(user_id));
     Value::Object(object)
 }
 

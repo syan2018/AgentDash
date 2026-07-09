@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use crate::companion::model_preflight::CompanionModelPreflightPort;
 use crate::companion::tool_context::CompanionToolContext;
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
+use crate::companion::workflow_script_preflight::CompanionWorkflowScriptPreflightPort;
 use crate::runtime_tools::provider::SharedSessionToolServicesHandle;
 use crate::wait_activity::WaitActivityService;
 
@@ -17,6 +18,7 @@ pub struct CollaborationRuntimeToolProvider {
     session_services_handle: SharedSessionToolServicesHandle,
     wait_service: Option<WaitActivityService>,
     model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
+    workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
 }
 
 impl CollaborationRuntimeToolProvider {
@@ -29,6 +31,7 @@ impl CollaborationRuntimeToolProvider {
             session_services_handle,
             wait_service: None,
             model_preflight: None,
+            workflow_script_preflight: None,
         }
     }
 
@@ -42,6 +45,14 @@ impl CollaborationRuntimeToolProvider {
         model_preflight: Arc<dyn CompanionModelPreflightPort>,
     ) -> Self {
         self.model_preflight = Some(model_preflight);
+        self
+    }
+
+    pub fn with_workflow_script_preflight(
+        mut self,
+        workflow_script_preflight: Arc<dyn CompanionWorkflowScriptPreflightPort>,
+    ) -> Self {
+        self.workflow_script_preflight = Some(workflow_script_preflight);
         self
     }
 }
@@ -81,6 +92,7 @@ impl RuntimeToolProvider for CollaborationRuntimeToolProvider {
                 flow.companion.agents.clone(),
                 wait_service,
                 self.model_preflight.clone(),
+                self.workflow_script_preflight.clone(),
             )));
         }
         if flow.is_capability_tool_enabled(

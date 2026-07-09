@@ -43,6 +43,7 @@ Use registered payload types when the intent matches a known protocol:
 - `approval` expects `decision`.
 - `notification` expects no response.
 - `capability_grant_request` expects `capability_grant_result`.
+- `workflow_script_preflight` expects no response and returns a platform preflight result directly.
 
 For the target/type/required-field matrix and examples, read `references/payload-envelope.md`.
 
@@ -62,6 +63,7 @@ Task tool artifacts should be reported as `artifact_refs` or SubjectExecution-li
 
 Use workflow script preflight when a model or companion drafts a dynamic orchestration script for a multi-agent workflow, such as research fanout, review/approval pipelines, local capability effects, or generated runbooks that need inspection before runtime execution.
 
+- Call `companion_request` with `target: "platform"` and `payload.type: "workflow_script_preflight"`.
 - Treat workflow scripts as restricted Rhai builder scripts that produce a builder document.
 - Inspect diagnostics, plan preview, and capability summary before asking for approval.
 - Keep approval, launch, and saved-definition work on the dedicated platform commands when those commands are available.

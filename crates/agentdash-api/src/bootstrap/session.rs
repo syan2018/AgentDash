@@ -5,7 +5,8 @@ use crate::agent_run_terminal_control::{
     ApiLifecycleTerminalConvergenceAdapter, ApiWaitProducerTerminalConvergenceAdapter,
 };
 use agentdash_application::companion::{
-    CompanionModelPreflightError, CompanionModelPreflightPort, CompanionModelPreflightRequest,
+    ApplicationWorkflowScriptPreflightAdapter, CompanionModelPreflightError,
+    CompanionModelPreflightPort, CompanionModelPreflightRequest,
 };
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
@@ -689,6 +690,9 @@ fn build_session_runtime_tool_composer(
     .with_model_preflight(Arc::new(EffectiveProviderCompanionModelPreflight::new(
         deps.repos.clone(),
         deps.llm_provider_secret.clone(),
+    )))
+    .with_workflow_script_preflight(Arc::new(ApplicationWorkflowScriptPreflightAdapter::new(
+        Arc::new(agentdash_infrastructure::RhaiWorkflowScriptEvaluator::new()),
     )));
     let task_provider = TaskRuntimeToolProvider::new(deps.repos.clone());
     let wait_provider = WaitRuntimeToolProvider::from_service(wait_service);

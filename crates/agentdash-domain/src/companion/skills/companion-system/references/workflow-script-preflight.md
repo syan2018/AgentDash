@@ -16,7 +16,7 @@ Request:
 
 ```json
 {
-  "project_id": "project-uuid",
+  "type": "workflow_script_preflight",
   "source_text": "workflow(#{ body: [] })",
   "args": { "topic": "orchestration" },
   "ctx": { "workspace": "demo" },

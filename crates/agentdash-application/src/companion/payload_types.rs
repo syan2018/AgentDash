@@ -92,6 +92,15 @@ impl PayloadTypeRegistry {
             ui_hint: "capability_grant_card",
             validator: Some(validate_capability_grant_request),
         });
+        registry.register(PayloadTypeDefinition {
+            name: "workflow_script_preflight",
+            is_request: true,
+            is_response: false,
+            required_fields: &["source_text"],
+            response_type: None,
+            ui_hint: "workflow_script_preflight_preview",
+            validator: Some(validate_workflow_script_preflight),
+        });
 
         // ─── Response types ──────────────────────────────────
         registry.register(PayloadTypeDefinition {
@@ -305,6 +314,30 @@ fn validate_capability_grant_request(payload: &serde_json::Value) -> Option<Stri
     None
 }
 
+fn validate_workflow_script_preflight(payload: &serde_json::Value) -> Option<String> {
+    let source_text = payload
+        .get("source_text")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim();
+    if source_text.is_empty() {
+        return Some(
+            "payload.type=`workflow_script_preflight` 要求 source_text 为非空字符串".to_string(),
+        );
+    }
+
+    if let Some(value) = payload.get("runtime_session_id")
+        && !value.is_string()
+    {
+        return Some(
+            "payload.type=`workflow_script_preflight` 的 runtime_session_id 必须是字符串"
+                .to_string(),
+        );
+    }
+
+    None
+}
+
 fn validate_capability_grant_result(payload: &serde_json::Value) -> Option<String> {
     match payload.get("status").and_then(|value| value.as_str()) {
         Some(
@@ -334,6 +367,7 @@ mod tests {
         assert!(registry.get("notification").is_some());
         assert!(registry.get("capability_grant_request").is_some());
         assert!(registry.get("capability_grant_result").is_some());
+        assert!(registry.get("workflow_script_preflight").is_some());
     }
 
     #[test]
@@ -451,6 +485,33 @@ mod tests {
         });
         let error = registry.validate_request(&payload).unwrap();
         assert!(error.contains("requested_paths"));
+    }
+
+    #[test]
+    fn validate_request_passes_for_workflow_script_preflight() {
+        let registry = PayloadTypeRegistry::with_builtins();
+        let payload = serde_json::json!({
+            "type": "workflow_script_preflight",
+            "source_text": "workflow(#{ body: [] })",
+            "args": { "topic": "runtime" }
+        });
+        assert!(registry.validate_request(&payload).is_none());
+        assert_eq!(
+            registry.expected_response_type("workflow_script_preflight"),
+            None
+        );
+    }
+
+    #[test]
+    fn validate_request_rejects_non_string_workflow_script_runtime_session_id() {
+        let registry = PayloadTypeRegistry::with_builtins();
+        let payload = serde_json::json!({
+            "type": "workflow_script_preflight",
+            "source_text": "workflow(#{ body: [] })",
+            "runtime_session_id": 123
+        });
+        let error = registry.validate_request(&payload).unwrap();
+        assert!(error.contains("runtime_session_id"));
     }
 
     #[test]

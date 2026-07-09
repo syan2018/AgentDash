@@ -48,6 +48,9 @@ use super::reply_contract::{
 use super::tool_context::{
     CompanionHookProvenance, CompanionHookProvenanceSource, CompanionToolContext,
 };
+use super::workflow_script_preflight::{
+    CompanionWorkflowScriptPreflightPort, CompanionWorkflowScriptPreflightRequest,
+};
 use super::{
     CompanionGateControlRepos, CompanionGateControlService, CompanionHumanResponseMailboxDelivery,
     CompanionHumanResponseMailboxDeliveryCommand, CompanionParentMailboxDelivery,
@@ -72,6 +75,7 @@ use crate::runtime_session_agent_run_bridge::{
 };
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::wait_activity::{WaitActivityService, WaitToolContext};
+use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 
 pub use agentdash_spi::CompanionSliceMode;
@@ -1331,6 +1335,7 @@ pub struct CompanionRequestTool {
     companion_agents: Vec<CompanionAgentEntry>,
     wait_service: WaitActivityService,
     model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
+    workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
 }
 
 impl CompanionRequestTool {
@@ -1342,6 +1347,7 @@ impl CompanionRequestTool {
         companion_agents: Vec<CompanionAgentEntry>,
         wait_service: WaitActivityService,
         model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
+        workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
     ) -> Self {
         Self {
             project_agent_repo,
@@ -1351,6 +1357,7 @@ impl CompanionRequestTool {
             companion_agents,
             wait_service,
             model_preflight,
+            workflow_script_preflight,
         }
     }
 }
@@ -2163,6 +2170,9 @@ impl CompanionRequestTool {
             Some("capability_grant_request") => {
                 Err(platform_capability_grant_missing_broker_error())
             }
+            Some("workflow_script_preflight") => {
+                self.execute_workflow_script_preflight(payload).await
+            }
             Some(type_name) => Err(AgentToolError::InvalidArguments(format!(
                 "target=platform 暂不支持 payload.type=`{type_name}`"
             ))),
@@ -2170,6 +2180,65 @@ impl CompanionRequestTool {
                 "target=platform 要求 payload.type".to_string(),
             )),
         }
+    }
+
+    async fn execute_workflow_script_preflight(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        let Some(preflight) = &self.workflow_script_preflight else {
+            return Err(AgentToolError::ExecutionFailed(
+                "target=platform payload.type=`workflow_script_preflight` 暂不可用：当前 Session 未注入 WorkflowScriptPreflight broker"
+                    .to_string(),
+            ));
+        };
+
+        let source_text = payload
+            .get("source_text")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if source_text.is_empty() {
+            return Err(AgentToolError::InvalidArguments(
+                "payload.source_text 不能为空".to_string(),
+            ));
+        }
+
+        let project_id = self
+            .tool_context
+            .require_lifecycle_anchor("执行 workflow script preflight", &self.repos)
+            .await?
+            .project_id;
+        let runtime_session_id = payload
+            .get("runtime_session_id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| {
+                self.tool_context
+                    .delivery_runtime_session_id()
+                    .map(ToString::to_string)
+            });
+        let user_id = self
+            .tool_context
+            .identity()
+            .map(|identity| identity.user_id.clone());
+
+        let output = preflight
+            .preflight_workflow_script(CompanionWorkflowScriptPreflightRequest {
+                project_id,
+                user_id,
+                source_text,
+                args: payload.get("args").cloned(),
+                ctx: payload.get("ctx").cloned(),
+                runtime_session_id,
+            })
+            .await
+            .map_err(AgentToolError::ExecutionFailed)?;
+
+        Ok(workflow_script_preflight_agent_tool_result(output)?)
     }
 
     async fn preflight_selected_companion_model(
@@ -2871,6 +2940,17 @@ fn companion_request_payload_schema(_: &mut schemars::SchemaGenerator) -> schema
                     },
                     "ttl_seconds": { "type": "integer", "minimum": 1 }
                 }
+            },
+            {
+                "type": "object",
+                "required": ["type", "source_text"],
+                "properties": {
+                    "type": { "const": "workflow_script_preflight" },
+                    "source_text": { "type": "string", "minLength": 1 },
+                    "args": {},
+                    "ctx": {},
+                    "runtime_session_id": { "type": "string" }
+                }
             }
         ]
     })
@@ -2889,6 +2969,88 @@ fn platform_capability_grant_missing_broker_error() -> AgentToolError {
         "target=platform payload.type=`capability_grant_request` 暂不支持：缺少 platform permission grant broker，当前 companion context 无法提供 PermissionGrantService::request 所需的 agent_auto_grantable / lifecycle_requestable policy inputs，也没有 live runtime capability update handoff。参见 ARCH-010 完成 broker 闭环后再启用。"
             .to_string(),
     )
+}
+
+fn workflow_script_preflight_agent_tool_result(
+    output: WorkflowScriptPreflightOutput,
+) -> Result<AgentToolResult, AgentToolError> {
+    let valid = !output.has_blocking_diagnostics();
+    let source_digest = match &output.source_ref {
+        agentdash_domain::workflow::OrchestrationSourceRef::Inline { source_digest } => {
+            source_digest.clone()
+        }
+        other => serde_json::to_value(other)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("source_digest")
+                    .and_then(|value| value.as_str())
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| "unknown".to_string()),
+    };
+    let source_ref = serde_json::to_value(&output.source_ref).map_err(|error| {
+        AgentToolError::ExecutionFailed(format!("序列化 workflow script source_ref 失败: {error}"))
+    })?;
+    let plan_snapshot = match &output.plan_snapshot {
+        Some(plan_snapshot) => Some(serde_json::to_value(plan_snapshot).map_err(|error| {
+            AgentToolError::ExecutionFailed(format!(
+                "序列化 workflow script plan_snapshot 失败: {error}"
+            ))
+        })?),
+        None => None,
+    };
+    let plan_preview = output.plan_preview.map(|preview| {
+        serde_json::json!({
+            "plan_digest": preview.plan_digest,
+            "node_count": preview.node_count,
+            "entry_node_ids": preview.entry_node_ids,
+            "nodes": preview.nodes.into_iter().map(|node| serde_json::json!({
+                "node_id": node.node_id,
+                "node_path": node.node_path,
+                "kind": node.kind,
+                "label": node.label,
+            })).collect::<Vec<_>>(),
+        })
+    });
+    let diagnostics = output
+        .diagnostics
+        .into_iter()
+        .map(|diagnostic| {
+            serde_json::json!({
+                "code": diagnostic.code,
+                "severity": format!("{:?}", diagnostic.severity).to_ascii_lowercase(),
+                "message": diagnostic.message,
+                "source_path": diagnostic.source_path,
+            })
+        })
+        .collect::<Vec<_>>();
+    let capability_summary = serde_json::to_value(output.capability_summary).map_err(|error| {
+        AgentToolError::ExecutionFailed(format!(
+            "序列化 workflow script capability_summary 失败: {error}"
+        ))
+    })?;
+    let details = serde_json::json!({
+        "kind": "workflow_script_preflight",
+        "valid": valid,
+        "source_digest": source_digest,
+        "source_ref": source_ref,
+        "raw_builder_document": output.raw_builder_document,
+        "plan_snapshot": plan_snapshot,
+        "plan_preview": plan_preview,
+        "capability_summary": capability_summary,
+        "diagnostics": diagnostics,
+    });
+    let summary = if valid {
+        format!("workflow script preflight 通过：source_digest={source_digest}")
+    } else {
+        format!("workflow script preflight 未通过：source_digest={source_digest}")
+    };
+    Ok(AgentToolResult {
+        content: vec![ContentPart::text(summary)],
+        is_error: false,
+        details: Some(details),
+    })
 }
 
 // ─── hook action 辅助（从 hook_action.rs 合并） ─────────────────────

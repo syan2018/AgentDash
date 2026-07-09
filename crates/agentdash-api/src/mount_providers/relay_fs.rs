@@ -11,10 +11,11 @@ use agentdash_application_vfs::{
     ShellSessionWriteRequest, ShellSessionWriteResult, normalize_mount_relative_path,
 };
 use agentdash_relay::{
-    RelayMessage, ShellOutputStream, TerminalResizePayload, ToolApplyPatchPayload,
-    ToolFileDeletePayload, ToolFileListPayload, ToolFileReadPayload, ToolFileRenamePayload,
-    ToolFileWritePayload, ToolSearchPayload, ToolShellExecPayload, ToolShellInputPayload,
-    ToolShellReadPayload, ToolShellReadResponse, ToolShellSessionState, ToolShellTerminatePayload,
+    DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS, DEFAULT_TOOL_SHELL_READ_WAIT_MS, RelayMessage,
+    ShellOutputStream, TerminalResizePayload, ToolApplyPatchPayload, ToolFileDeletePayload,
+    ToolFileListPayload, ToolFileReadPayload, ToolFileRenamePayload, ToolFileWritePayload,
+    ToolSearchPayload, ToolShellExecPayload, ToolShellInputPayload, ToolShellReadPayload,
+    ToolShellReadResponse, ToolShellSessionState, ToolShellTerminatePayload,
     ToolShellTerminateStatus,
 };
 use async_trait::async_trait;
@@ -23,15 +24,18 @@ use base64::Engine;
 use crate::relay::registry::{BackendCommandError, BackendRegistry};
 use crate::runtime_bridge::relay_file_entries_to_runtime;
 
-const DEFAULT_SHELL_EXEC_YIELD_MS: u64 = 1_000;
 const SHELL_EXEC_RPC_TIMEOUT_MS: u64 = 10_000;
 
 fn map_relay_err(e: BackendCommandError) -> MountError {
     MountError::OperationFailed(e.to_string())
 }
 
-fn shell_exec_relay_timeout(_timeout_ms: Option<u64>) -> std::time::Duration {
-    std::time::Duration::from_millis(SHELL_EXEC_RPC_TIMEOUT_MS)
+fn shell_exec_relay_timeout(yield_time_ms: Option<u64>) -> std::time::Duration {
+    std::time::Duration::from_millis(
+        yield_time_ms
+            .unwrap_or(DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS)
+            .saturating_add(SHELL_EXEC_RPC_TIMEOUT_MS),
+    )
 }
 
 fn shell_state_name(state: ToolShellSessionState) -> &'static str {
@@ -85,7 +89,7 @@ fn shell_snapshot_from_read(payload: ToolShellReadResponse) -> ShellSessionSnaps
 fn shell_control_relay_timeout(wait_ms: Option<u64>) -> std::time::Duration {
     std::time::Duration::from_millis(
         wait_ms
-            .unwrap_or(0)
+            .unwrap_or(DEFAULT_TOOL_SHELL_READ_WAIT_MS)
             .saturating_add(SHELL_EXEC_RPC_TIMEOUT_MS),
     )
 }
@@ -656,6 +660,9 @@ impl MountProvider for RelayFsMountProvider {
             command = %request.command,
             "relay_fs 下发 shell_exec"
         );
+        let yield_time_ms = request
+            .yield_time_ms
+            .or(Some(DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS));
         let response = self
             .backends
             .send_command_with_timeout(
@@ -669,14 +676,14 @@ impl MountProvider for RelayFsMountProvider {
                         mount_root_ref: mount.root_ref.clone(),
                         cwd: if cwd.is_empty() { None } else { Some(cwd) },
                         timeout_ms: request.timeout_ms,
-                        yield_time_ms: request.yield_time_ms.or(Some(DEFAULT_SHELL_EXEC_YIELD_MS)),
+                        yield_time_ms,
                         max_output_bytes: request.max_output_bytes,
                         tty: request.tty,
                         cols: request.cols,
                         rows: request.rows,
                     },
                 },
-                shell_exec_relay_timeout(request.timeout_ms),
+                shell_exec_relay_timeout(yield_time_ms),
             )
             .await
             .map_err(map_relay_err)?;
@@ -873,18 +880,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shell_exec_relay_timeout_outlives_default_process_timeout() {
+    fn shell_exec_relay_timeout_outlives_default_yield_window() {
         assert_eq!(
             shell_exec_relay_timeout(None),
-            std::time::Duration::from_millis(10_000)
+            std::time::Duration::from_millis(20_000)
         );
     }
 
     #[test]
-    fn shell_exec_relay_timeout_outlives_requested_process_timeout() {
+    fn shell_exec_relay_timeout_outlives_requested_yield_window() {
         assert_eq!(
-            shell_exec_relay_timeout(Some(120_000)),
-            std::time::Duration::from_millis(10_000)
+            shell_exec_relay_timeout(Some(1_500)),
+            std::time::Duration::from_millis(11_500)
+        );
+    }
+
+    #[test]
+    fn shell_control_relay_timeout_outlives_default_read_wait_window() {
+        assert_eq!(
+            shell_control_relay_timeout(None),
+            std::time::Duration::from_millis(20_000)
         );
     }
 }

@@ -811,12 +811,27 @@ pub async fn resolve_host_api(
     api_key: &str,
     params: &serde_json::Value,
 ) -> Result<serde_json::Value, LocalExtensionHostError>;
+
+pub const DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS: u64 = 10_000;
+pub const DEFAULT_TOOL_SHELL_READ_WAIT_MS: u64 = 10_000;
+
+pub struct ToolShellExecPayload {
+    pub yield_time_ms: Option<u64>,
+    pub timeout_ms: Option<u64>,
+}
+
+pub struct ToolShellReadPayload {
+    pub wait_ms: Option<u64>,
+}
 ```
 
 ### 3. Contracts
 
 - `LocalCommandRouter` 只匹配 `RelayMessage` envelope 并转发到 domain handler；prompt/session、workspace detect/browse、tool calls、materialization、MCP、extension 和 terminal 各自持有需要的依赖。
 - `CommandExtensionActionInvoke` 与 `CommandExtensionChannelInvoke` 由 extension handler 准备 package artifact cache、activation context 和 workspace context 后进入 `LocalExtensionHostManager`。
+- `CommandToolShellExec` 省略 `yield_time_ms`、`CommandToolShellRead` 省略 `wait_ms` 时使用 relay protocol 默认观察窗口，原因是模型发起的普通 shell 工具调用需要给短命令完成和输出落盘留出一次自然收口机会。
+- shell session 读取在观察窗口内以“终态、无新输出直到 deadline、或新输出后短 terminal grace”作为返回边界，原因是 stdout/stderr chunk 与进程退出事件可能跨 tokio 调度 tick 到达；短 grace 能把快速命令的输出和 exit code 合并到同一次工具结果，同时让长期运行命令在输出 ready 后及时返回。
+- 云端 `RelayFsMountProvider` 的 shell control RPC timeout 必须按有效观察窗口外加传输余量计算，原因是本机 runtime 合法等待期间不能被云端 relay request timeout 提前截断。
 - Extension Host workspace/process Host API 的默认 root 来自 activation/session workspace context；Host API 参数不接受调用方覆盖 raw workspace root。
 - Process Host API 运行态权限键是 `process.exec`、`process.shell`、`process.env.set` 与 `process.env.set:{KEY}`。
 - Schema validation 使用同一 JSON Schema 子集：`true/false` schema、`type`、`required`、`properties`、`additionalProperties: false`、`items`、`enum` 和 `const`。
@@ -826,6 +841,9 @@ pub async fn resolve_host_api(
 | Condition | Required behavior |
 | --- | --- |
 | Relay message 属于 prompt/workspace/tool/materialization/MCP/extension/terminal | Router 转交对应 handler |
+| shell start 省略 `yield_time_ms` | 本机使用 `DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS` 观察输出或终态 |
+| shell read 省略 `wait_ms` | 本机使用 `DEFAULT_TOOL_SHELL_READ_WAIT_MS` 长轮询新输出或终态 |
+| shell start/read 观察窗口扩大 | 云端 relay RPC timeout 同步扩大为观察窗口加传输余量 |
 | Extension Host API 缺少 active extension | 返回 host API 调用错误 |
 | Host API 调用缺少 action 或 channel invocation context | 返回 permission denied |
 | action/channel method 未声明 Host API permission | 返回 permission denied |
@@ -845,6 +863,8 @@ pub async fn resolve_host_api(
 ### 6. Tests Required
 
 - `agentdash-local` handler tests 覆盖 prompt/workspace/tool/materialization/MCP/extension/terminal 的 relay response 分发。
+- `agentdash-local` shell session tests 覆盖省略 `yield_time_ms` 的快速命令 completion 合并，以及省略 `wait_ms` 的 read 长轮询。
+- `agentdash-api` relay FS tests 覆盖 shell exec/read 的 RPC timeout 随有效观察窗口扩展。
 - `agentdash-local extensions::host` 测试 process permission、workspace root context、schema validation 和 action/channel output validation。
 - Extension runner tests 覆盖 `ctx.api.process.exec/shell` 和 `ctx.api.channels` 的 action/channel invocation context 透传。
 

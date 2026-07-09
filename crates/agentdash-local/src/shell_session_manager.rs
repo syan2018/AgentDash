@@ -15,11 +15,10 @@ use tokio::sync::{Mutex, Notify, mpsc};
 
 use crate::tool_executor::{ToolError, ToolExecutor};
 
-const DEFAULT_YIELD_TIME_MS: u64 = 1_000;
-const DEFAULT_READ_WAIT_MS: u64 = 0;
 const DEFAULT_WRITE_WAIT_MS: u64 = 250;
 const MAX_SHELL_SESSIONS: usize = 32;
 const EXIT_OUTPUT_GRACE_MS: u64 = 50;
+const OUTPUT_TERMINAL_GRACE_MS: u64 = 250;
 
 #[derive(Clone)]
 pub struct ShellSessionManager {
@@ -277,7 +276,11 @@ impl ShellSessionManager {
             .read_session(
                 &session_id,
                 None,
-                Some(payload.yield_time_ms.unwrap_or(DEFAULT_YIELD_TIME_MS)),
+                Some(
+                    payload
+                        .yield_time_ms
+                        .unwrap_or(DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS),
+                ),
                 payload.max_output_bytes,
             )
             .await
@@ -335,28 +338,39 @@ impl ShellSessionManager {
         wait_ms: Option<u64>,
         max_bytes: Option<usize>,
     ) -> Result<ToolShellReadResponse, String> {
-        let wait_ms = wait_ms.unwrap_or(DEFAULT_READ_WAIT_MS);
+        let wait_ms = wait_ms.unwrap_or(DEFAULT_TOOL_SHELL_READ_WAIT_MS);
         let deadline = Instant::now() + Duration::from_millis(wait_ms);
+        let mut output_grace_deadline: Option<Instant> = None;
 
         loop {
-            let (snapshot, should_wait, notify) = {
+            let (snapshot, notify) = {
                 let table = self.inner.lock().await;
                 let session = table
                     .sessions
                     .get(session_id)
                     .ok_or_else(|| format!("shell session not found: {session_id}"))?;
                 let snapshot = shell_read_snapshot(session, after_seq, max_bytes);
-                let should_wait = snapshot.chunks.is_empty()
-                    && !is_terminal_shell_state(snapshot.state)
-                    && Instant::now() < deadline;
-                (snapshot, should_wait, Arc::clone(&session.notify))
+                (snapshot, Arc::clone(&session.notify))
             };
 
+            let now = Instant::now();
+            let wait_until = if is_terminal_shell_state(snapshot.state) || now >= deadline {
+                None
+            } else if snapshot.chunks.is_empty() {
+                Some(deadline)
+            } else {
+                let grace_deadline = *output_grace_deadline
+                    .get_or_insert_with(|| now + Duration::from_millis(OUTPUT_TERMINAL_GRACE_MS));
+                (now < grace_deadline).then_some(grace_deadline.min(deadline))
+            };
+            let should_wait = wait_until.is_some();
             if !should_wait {
                 return Ok(snapshot);
             }
 
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining = wait_until
+                .expect("wait_until is present when should_wait")
+                .saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return self.snapshot_now(session_id, after_seq, max_bytes).await;
             }
@@ -914,6 +928,14 @@ mod tests {
         }
     }
 
+    fn command_finishes_within_default_yield() -> String {
+        if cfg!(windows) {
+            "Start-Sleep -Seconds 2; Write-Output done".to_string()
+        } else {
+            "sleep 2; printf 'done\\n'".to_string()
+        }
+    }
+
     async fn wait_until_terminal(
         manager: &ShellSessionManager,
         session_id: &str,
@@ -985,6 +1007,80 @@ mod tests {
         assert!(stdout.contains("ready"));
         assert!(stdout.contains("done"));
         assert_eq!(read.exit_code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn start_shell_default_yield_waits_for_quick_completion() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let manager = ShellSessionManager::new(
+            ToolExecutor::new(vec![workspace.path().to_path_buf()]),
+            event_tx,
+        );
+
+        let response = manager
+            .start_shell(ToolShellExecPayload {
+                call_id: "call-default-yield".to_string(),
+                command: command_finishes_within_default_yield(),
+                terminal_id: None,
+                mount_root_ref: workspace.path().to_string_lossy().to_string(),
+                cwd: None,
+                timeout_ms: None,
+                yield_time_ms: None,
+                max_output_bytes: Some(16 * 1024),
+                tty: false,
+                cols: None,
+                rows: None,
+            })
+            .await
+            .expect("start shell");
+
+        assert_eq!(response.state, ToolShellSessionState::Completed);
+        assert_eq!(response.exit_code, Some(0));
+        let (stdout, _, _) = split_output(&response.chunks);
+        assert!(stdout.contains("done"), "stdout={stdout:?}");
+    }
+
+    #[tokio::test]
+    async fn read_session_default_waits_for_new_output() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let manager = ShellSessionManager::new(
+            ToolExecutor::new(vec![workspace.path().to_path_buf()]),
+            event_tx,
+        );
+
+        let response = manager
+            .start_shell(ToolShellExecPayload {
+                call_id: "call-default-read".to_string(),
+                command: command_finishes_within_default_yield(),
+                terminal_id: None,
+                mount_root_ref: workspace.path().to_string_lossy().to_string(),
+                cwd: None,
+                timeout_ms: None,
+                yield_time_ms: Some(10),
+                max_output_bytes: Some(16 * 1024),
+                tty: false,
+                cols: None,
+                rows: None,
+            })
+            .await
+            .expect("start shell");
+
+        assert_eq!(response.state, ToolShellSessionState::Running);
+        let read = manager
+            .read_session(
+                &response.session_id,
+                response.next_seq.checked_sub(1),
+                None,
+                Some(16 * 1024),
+            )
+            .await
+            .expect("read shell session");
+
+        assert_eq!(read.state, ToolShellSessionState::Completed);
+        let (stdout, _, _) = split_output(&read.chunks);
+        assert!(stdout.contains("done"), "stdout={stdout:?}");
     }
 
     #[tokio::test]

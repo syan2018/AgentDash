@@ -314,7 +314,7 @@ pub struct ShellExecParams {
     pub terminal_id: Option<String>,
     /// For read/write: return chunks with seq greater than this value.
     pub after_seq: Option<u64>,
-    /// For start/read/write: wait window in milliseconds before returning current output/state.
+    /// start/read/write 返回当前输出或状态前的等待窗口，省略时使用 runtime 默认值。
     pub wait_ms: Option<u64>,
     /// For read/write: maximum bytes of retained output to return.
     pub max_bytes: Option<usize>,
@@ -346,6 +346,7 @@ impl AgentTool for ShellExecTool {
          - Use cwd=`platform://` to explicitly run the same platform shell.\n\
          - Use cwd=`mount_id://relative/path` to run the command in the real OS shell environment of an exec-capable mount.\n\
          - start returns terminal_id; pass that same terminal_id to read/write/status/resize/terminate. Do not look for a separate session id.\n\
+         - start and read default to a 10000 ms wait window so quick commands usually return completed output directly.\n\
          - read returns retained output chunks after after_seq and may wait up to wait_ms.\n\
          - write sends data to stdin, optionally close_stdin=true, then returns newly available output.\n\
          - status is a zero-output state snapshot for the terminal_id.\n\

@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use super::workspace::FileEntryRelay;
 
+/// shell_exec 启动后的默认首轮观察窗口，与 Codex code-mode 默认保持一致。
+pub const DEFAULT_TOOL_SHELL_EXEC_YIELD_TIME_MS: u64 = 10_000;
+/// shell_read 省略 wait_ms 时的默认长轮询窗口。
+pub const DEFAULT_TOOL_SHELL_READ_WAIT_MS: u64 = 10_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolFileReadPayload {

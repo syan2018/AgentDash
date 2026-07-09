@@ -36,6 +36,7 @@ pub struct AgentRunContextCompactionCommand {
 pub enum AgentRunContextCompactionOutcome {
     ScheduledNextTurn,
     LaunchedCompactionTurn,
+    Completed,
     NoEligibleMessages,
     Blocked,
     Failed,
@@ -151,9 +152,24 @@ pub struct AgentRunContextCompactionRuntimeLaunchCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentRunContextCompactionRuntimeLaunchOutcome {
-    Launched { turn_id: String },
-    NoEligibleMessages { message: Option<String> },
-    NotImplemented { message: String },
+    Launched {
+        turn_id: String,
+    },
+    Completed {
+        turn_id: String,
+        message: Option<String>,
+    },
+    NoEligibleMessages {
+        turn_id: String,
+        message: Option<String>,
+    },
+    Failed {
+        turn_id: String,
+        message: Option<String>,
+    },
+    NotImplemented {
+        message: String,
+    },
 }
 
 #[async_trait]
@@ -208,24 +224,31 @@ impl AgentRunContextCompactionRuntimePort for AgentRunContextCompactionSessionRu
                 .await?;
             if let Some(request) = request {
                 match request.status {
+                    ManualContextCompactionRequestStatus::Completed => {
+                        return Ok(AgentRunContextCompactionRuntimeLaunchOutcome::Completed {
+                            turn_id,
+                            message: request_result_message(&request)
+                                .or_else(|| Some("context compaction completed".to_string())),
+                        });
+                    }
                     ManualContextCompactionRequestStatus::Noop => {
-                        let message = request
-                            .result_metadata
-                            .as_ref()
-                            .and_then(|value| value.get("reason"))
-                            .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string)
-                            .or_else(|| Some("no_eligible_messages".to_string()));
                         return Ok(
                             AgentRunContextCompactionRuntimeLaunchOutcome::NoEligibleMessages {
-                                message,
+                                turn_id,
+                                message: request_result_message(&request)
+                                    .or_else(|| Some("no_eligible_messages".to_string())),
                             },
                         );
                     }
-                    ManualContextCompactionRequestStatus::Completed
-                    | ManualContextCompactionRequestStatus::Consumed
-                    | ManualContextCompactionRequestStatus::Failed => break,
-                    ManualContextCompactionRequestStatus::Requested => {}
+                    ManualContextCompactionRequestStatus::Failed => {
+                        return Ok(AgentRunContextCompactionRuntimeLaunchOutcome::Failed {
+                            turn_id,
+                            message: request_result_message(&request)
+                                .or_else(|| Some("context compaction failed".to_string())),
+                        });
+                    }
+                    ManualContextCompactionRequestStatus::Requested
+                    | ManualContextCompactionRequestStatus::Consumed => {}
                 }
             }
             if Instant::now() >= deadline {
@@ -467,17 +490,56 @@ impl<'a> AgentRunContextCompactionCommandService<'a> {
                     .await?;
                 self.result_from_stored_record(stored, false)
             }
-            AgentRunContextCompactionRuntimeLaunchOutcome::NoEligibleMessages { message } => {
+            AgentRunContextCompactionRuntimeLaunchOutcome::Completed { turn_id, message } => {
                 let stored = self
                     .accept_and_store_result(
                         receipt_id,
                         &selection,
-                        None,
+                        Some(turn_id.clone()),
+                        StoredContextCompactionResult {
+                            outcome: AgentRunContextCompactionOutcome::Completed,
+                            runtime_session_id: Some(selection.runtime_session_id.clone()),
+                            request_id: Some(request.id.to_string()),
+                            turn_id: Some(turn_id),
+                            message,
+                            disabled_code: None,
+                        },
+                    )
+                    .await?;
+                self.result_from_stored_record(stored, false)
+            }
+            AgentRunContextCompactionRuntimeLaunchOutcome::NoEligibleMessages {
+                turn_id,
+                message,
+            } => {
+                let stored = self
+                    .accept_and_store_result(
+                        receipt_id,
+                        &selection,
+                        Some(turn_id.clone()),
                         StoredContextCompactionResult {
                             outcome: AgentRunContextCompactionOutcome::NoEligibleMessages,
                             runtime_session_id: Some(selection.runtime_session_id.clone()),
                             request_id: Some(request.id.to_string()),
-                            turn_id: None,
+                            turn_id: Some(turn_id),
+                            message,
+                            disabled_code: None,
+                        },
+                    )
+                    .await?;
+                self.result_from_stored_record(stored, false)
+            }
+            AgentRunContextCompactionRuntimeLaunchOutcome::Failed { turn_id, message } => {
+                let stored = self
+                    .accept_and_store_result(
+                        receipt_id,
+                        &selection,
+                        Some(turn_id.clone()),
+                        StoredContextCompactionResult {
+                            outcome: AgentRunContextCompactionOutcome::Failed,
+                            runtime_session_id: Some(selection.runtime_session_id.clone()),
+                            request_id: Some(request.id.to_string()),
+                            turn_id: Some(turn_id),
                             message,
                             disabled_code: None,
                         },
@@ -689,6 +751,23 @@ struct StoredContextCompactionResult {
     disabled_code: Option<String>,
 }
 
+fn request_result_message(
+    request: &agentdash_domain::workflow::ManualContextCompactionRequest,
+) -> Option<String> {
+    let metadata = request.result_metadata.as_ref()?;
+    for key in ["reason", "message", "error"] {
+        if let Some(value) = metadata
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
 fn workflow_error_from_selection_error(
     error: DeliveryRuntimeSelectionError,
 ) -> WorkflowApplicationError {
@@ -729,9 +808,22 @@ mod tests {
 
     use super::*;
 
-    #[derive(Default)]
     struct CountingRuntime {
         calls: AtomicUsize,
+        outcome: tokio::sync::Mutex<AgentRunContextCompactionRuntimeLaunchOutcome>,
+    }
+
+    impl Default for CountingRuntime {
+        fn default() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                outcome: tokio::sync::Mutex::new(
+                    AgentRunContextCompactionRuntimeLaunchOutcome::Launched {
+                        turn_id: "maintenance-turn-1".to_string(),
+                    },
+                ),
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -742,9 +834,7 @@ mod tests {
         ) -> Result<AgentRunContextCompactionRuntimeLaunchOutcome, WorkflowApplicationError>
         {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(AgentRunContextCompactionRuntimeLaunchOutcome::Launched {
-                turn_id: "maintenance-turn-1".to_string(),
-            })
+            Ok(self.outcome.lock().await.clone())
         }
     }
 
@@ -908,6 +998,105 @@ mod tests {
             requests[0].status,
             ManualContextCompactionRequestStatus::Requested
         );
+    }
+
+    #[tokio::test]
+    async fn compact_only_noop_result_preserves_maintenance_turn_id() {
+        let fixture = Fixture::new();
+        *fixture.runtime.outcome.lock().await =
+            AgentRunContextCompactionRuntimeLaunchOutcome::NoEligibleMessages {
+                turn_id: "maintenance-turn-noop".to_string(),
+                message: Some("no_eligible_messages".to_string()),
+            };
+        let (run, agent) = fixture
+            .seed_delivery(|anchor, _| {
+                AgentRunDeliveryBinding::from_anchor(
+                    &anchor,
+                    DeliveryBindingStatus::Ready,
+                    Utc::now(),
+                )
+            })
+            .await;
+
+        let result = fixture
+            .service()
+            .compact_context(Fixture::command(&run, &agent, "compact-noop"))
+            .await
+            .expect("compact context");
+
+        assert_eq!(
+            result.outcome,
+            AgentRunContextCompactionOutcome::NoEligibleMessages
+        );
+        assert_eq!(result.turn_id.as_deref(), Some("maintenance-turn-noop"));
+        assert_eq!(result.message.as_deref(), Some("no_eligible_messages"));
+        assert_eq!(result.command_receipt.status, "accepted");
+    }
+
+    #[tokio::test]
+    async fn compact_only_completed_result_preserves_maintenance_turn_id() {
+        let fixture = Fixture::new();
+        *fixture.runtime.outcome.lock().await =
+            AgentRunContextCompactionRuntimeLaunchOutcome::Completed {
+                turn_id: "maintenance-turn-completed".to_string(),
+                message: Some("context compaction completed".to_string()),
+            };
+        let (run, agent) = fixture
+            .seed_delivery(|anchor, _| {
+                AgentRunDeliveryBinding::from_anchor(
+                    &anchor,
+                    DeliveryBindingStatus::Ready,
+                    Utc::now(),
+                )
+            })
+            .await;
+
+        let result = fixture
+            .service()
+            .compact_context(Fixture::command(&run, &agent, "compact-completed"))
+            .await
+            .expect("compact context");
+
+        assert_eq!(result.outcome, AgentRunContextCompactionOutcome::Completed);
+        assert_eq!(
+            result.turn_id.as_deref(),
+            Some("maintenance-turn-completed")
+        );
+        assert_eq!(
+            result.message.as_deref(),
+            Some("context compaction completed")
+        );
+        assert_eq!(result.command_receipt.status, "accepted");
+    }
+
+    #[tokio::test]
+    async fn compact_only_failed_result_is_stored_with_maintenance_turn_id() {
+        let fixture = Fixture::new();
+        *fixture.runtime.outcome.lock().await =
+            AgentRunContextCompactionRuntimeLaunchOutcome::Failed {
+                turn_id: "maintenance-turn-failed".to_string(),
+                message: Some("compaction_context_empty".to_string()),
+            };
+        let (run, agent) = fixture
+            .seed_delivery(|anchor, _| {
+                AgentRunDeliveryBinding::from_anchor(
+                    &anchor,
+                    DeliveryBindingStatus::Ready,
+                    Utc::now(),
+                )
+            })
+            .await;
+
+        let result = fixture
+            .service()
+            .compact_context(Fixture::command(&run, &agent, "compact-failed"))
+            .await
+            .expect("compact context");
+
+        assert_eq!(result.outcome, AgentRunContextCompactionOutcome::Failed);
+        assert_eq!(result.turn_id.as_deref(), Some("maintenance-turn-failed"));
+        assert_eq!(result.message.as_deref(), Some("compaction_context_empty"));
+        assert_eq!(result.command_receipt.status, "accepted");
     }
 
     #[tokio::test]

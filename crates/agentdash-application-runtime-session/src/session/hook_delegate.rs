@@ -1989,7 +1989,9 @@ mod tests {
                 .after_compaction_failed(
                     CompactionFailureInput {
                         item_id: format!("compact-{index}"),
+                        reason: "summary_failed".to_string(),
                         error: "summary_empty".to_string(),
+                        details: None,
                         metadata: None,
                     },
                     CancellationToken::new(),

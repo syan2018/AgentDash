@@ -25,5 +25,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+agentdash-test-support = { workspace = true }
 json-patch = "2.0"
 tokio-stream = { version = "0.1", features = ["sync"] }

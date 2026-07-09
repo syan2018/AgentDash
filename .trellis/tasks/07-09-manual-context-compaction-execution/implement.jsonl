@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/prd.md", "reason": "Defines the manual context compaction behavior, failure semantics, and acceptance criteria for implementation."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/design.md", "reason": "Captures the technical design for compact-only restore, eligibility diagnostics, request finalization, and receipt semantics."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/implement.md", "reason": "Provides the ordered implementation plan and validation commands."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/research/compaction-lifecycle-reference-notes.md", "reason": "Summarizes Codex and Claude Code compaction lifecycle patterns and the intentionally scoped AgentDash adaptation."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/research/codex-compaction-lifecycle.md", "reason": "Detailed Codex reference research for compact as a managed turn/task/item lifecycle and replacement checkpoint."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/research/claude-code-compaction-lifecycle.md", "reason": "Detailed Claude Code reference research for compact command/action lifecycle, boundary messages, failure handling, and resume semantics."}
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "Canonical contract for durable model context projection, MessageRef boundaries, compaction records, segments, and projection heads."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Session-layer architecture needed when touching launch planning, eventing, delegates, and runtime session persistence."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Backend architectural guidance for application/domain/infrastructure boundary changes."}

@@ -45,7 +45,9 @@ pub struct EvaluateCompactionInput {
 #[derive(Debug, Clone)]
 pub struct CompactionFailureInput {
     pub item_id: String,
+    pub reason: String,
     pub error: String,
+    pub details: Option<serde_json::Value>,
     pub metadata: Option<CompactionMetadata>,
 }
 

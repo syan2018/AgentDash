@@ -56,6 +56,90 @@ ContextCompactionFailed
 
 `context_compaction_failed` 是结构化 diagnostic。失败不会生成 `session_compactions(status = projection_committed)`，也不会替换 active projection head。Hook runtime 会记录连续失败次数，达到阈值后暂停后续自动压缩尝试；成功 compact 会复位该计数。
 
+## Scenario: Manual Compact-Only Maintenance Turn
+
+### 1. Scope / Trigger
+
+手动 context compaction 在当前 AgentRun 没有 live running turn 时会启动 compact-only maintenance turn。该 turn 的执行目标只有结构性 compact，因此它的成功边界是 `session_compactions` / `session_projection_segments` / `session_projection_heads` 同步提交完成，而不是 maintenance prompt 被 accepted 或摘要文本生成完成。
+
+### 2. Signatures
+
+```rust
+pub enum AgentRunContextCompactionRuntimeLaunchOutcome {
+    Launched { turn_id: String },
+    Completed { turn_id: String, message: Option<String> },
+    NoEligibleMessages { turn_id: String, message: Option<String> },
+    Failed { turn_id: String, message: Option<String> },
+    NotImplemented { message: String },
+}
+
+pub enum CompactionPreflightOutcome {
+    NotRequested,
+    Noop { reason: String },
+    Completed,
+    Failed { reason: String },
+}
+```
+
+`runtime_session_compaction_requests` 继续作为命令级 lifecycle 记录：`requested -> consumed -> completed | noop | failed`。`completed` 必须携带 `completed_compaction_id`、`compacted_until_ref`、`first_kept_ref` 与 result metadata；`noop` 和 `failed` 必须携带稳定 reason。
+
+### 3. Contracts
+
+- compact-only launch source 是 `LaunchSource::ContextCompaction`，无 live runtime 且已有历史事件时必须走 `RepositoryRehydrate(ExecutorState)`，原因是 maintenance turn 要消费 AgentDash 自己的 durable model context 和 `MessageRef` 坐标。
+- `no_eligible_messages` 只表示模型上下文已完整 materialize，但 keep-last / token budget / cut point 判断没有可压缩前缀。
+- `messages.len() == 0`、`message_refs.len() != messages.len()`、`compacted_until_ref` 缺失、`first_kept_ref` 缺失属于结构性失败，进入 `ContextCompactionFailed` 与 request `failed`。
+- command receipt 在 `Launched`、`Completed`、`NoEligibleMessages`、`Failed` 中都保留 maintenance `turn_id`，原因是用户和诊断工具要能从命令结果追到同一条 session lifecycle。
+- projection commit 完成后再把 manual request 标记为 `completed`，原因是 request 终态必须代表可恢复 checkpoint 已经落库。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| 已恢复完整 transcript 且 cut point 不存在 | emit `context_compaction_noop`，request `noop(reason=no_eligible_messages)`，不写 projection head |
+| 恢复上下文为空 | emit `context_compaction_failed`，request `failed(reason=compaction_context_empty)` |
+| `messages` 与 `message_refs` 长度不一致 | emit `context_compaction_failed`，request `failed(reason=compaction_message_ref_len_mismatch)` |
+| cut boundary ref 缺失 | emit `context_compaction_failed`，request `failed(reason=compaction_boundary_ref_missing)` |
+| first-kept ref 缺失 | emit `context_compaction_failed`，request `failed(reason=compaction_first_kept_ref_missing)` |
+| summary provider / projection commit / cancel 失败 | request `failed`，result metadata 保留 reason、lifecycle item id 与 diagnostic details |
+| projection checkpoint 成功提交 | request `completed`，写入 compaction id、boundary refs 和 projection metadata |
+
+### 5. Good / Base / Bad Cases
+
+- Good: idle/completed AgentRun 触发 compact-only，runtime-session 冷启动恢复 projected transcript，preflight 判定 eligible，summary 生成后提交 projection checkpoint，manual request 进入 `completed`，command receipt 保留 maintenance `turn_id`。
+- Base: 当前 transcript 完整但只有少量消息，preflight 进入 `NoEligibleMessages`，request 为 `noop`，timeline 只出现 noop diagnostic。
+- Bad: model context 没有被恢复出任何历史消息时返回 `no_eligible_messages`，因为这会让 command receipt 看起来成功处理了业务 noop，却没有暴露恢复链路的结构性问题。
+
+### 6. Tests Required
+
+- Agent loop eligibility 单元测试覆盖真实 noop、空上下文、message/ref 长度不一致、boundary ref 缺失和 first-kept ref 缺失。
+- Compact-only agent loop 测试断言结构性失败会发 `ContextCompactionFailed`，不会发 `ContextCompactionNoop`。
+- Runtime-session launch path 测试断言 `LaunchSource::ContextCompaction` 冷启动使用 `RepositoryRehydrate(ExecutorState)`，即使 trace meta 存在 executor follow-up。
+- Manual delegate 测试断言 consumed request 的失败会写入 `failed` 和 diagnostic metadata。
+- Eventing/projection 测试断言 `context_compacted` projection commit 后 manual request 才进入 `completed`，并带有 compaction id 与 boundary refs。
+- AgentRun command 测试断言 compact-only 的 `completed` / `noop` / `failed` 都保留 maintenance `turn_id`。
+
+### 7. Boundary Mismatch / Canonical
+
+#### Boundary Mismatch
+
+```rust
+if !should_execute_compaction(messages, refs, params) {
+    return NoEligibleMessages;
+}
+```
+
+#### Canonical
+
+```rust
+match evaluate_compaction_eligibility(messages, refs, params) {
+    CompactionEligibility::Eligible => execute_compaction(...),
+    CompactionEligibility::NoEligibleMessages { .. } => mark_noop("no_eligible_messages"),
+    CompactionEligibility::InvalidInput { failure, .. } => mark_failed(failure.reason_code()),
+}
+```
+
+结构性 eligibility 分类放在 agent loop preflight 边界，原因是 running next-turn manual compact 与 compact-only maintenance turn 必须共享同一套 request lifecycle 语义。
+
 ## ContextProjector
 
 模型输入由 `ContextProjector` 从 durable facts 构建，而不是从 UI timeline message array 裁剪。读取顺序：

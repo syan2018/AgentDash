@@ -19,6 +19,31 @@ use crate::types::{
 use super::tool_call::refresh_context_tools;
 use super::{AgentEventSink, AgentLoopConfig, emit_event};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CompactionPreflightOutcome {
+    NotRequested,
+    Noop { reason: String },
+    Completed,
+    Failed { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct CompactionPreflightResult {
+    pub context_window: u64,
+    pub reserve_tokens: u64,
+    pub outcome: CompactionPreflightOutcome,
+}
+
+impl CompactionPreflightResult {
+    fn not_requested() -> Self {
+        Self {
+            context_window: 0,
+            reserve_tokens: 0,
+            outcome: CompactionPreflightOutcome::NotRequested,
+        }
+    }
+}
+
 pub(super) fn compute_suffix(existing: &str, incoming: &str) -> String {
     if incoming.is_empty() {
         return String::new();
@@ -159,7 +184,7 @@ pub(super) async fn stream_assistant_response(
         messages: messages_for_llm.clone(),
         tools: context.tools.clone(),
     };
-    let (compaction_context_window, compaction_reserve_tokens) = run_compaction_preflight(
+    let compaction_preflight = run_compaction_preflight(
         context,
         &mut request,
         &mut message_refs_for_llm,
@@ -181,8 +206,8 @@ pub(super) async fn stream_assistant_response(
                     message_count: request.messages.len(),
                     tool_count: context.tools.len(),
                     estimated_input_tokens: final_stats.estimated_input_tokens,
-                    context_window: compaction_context_window,
-                    reserve_tokens: compaction_reserve_tokens,
+                    context_window: compaction_preflight.context_window,
+                    reserve_tokens: compaction_preflight.reserve_tokens,
                 },
                 cancel.clone(),
             )
@@ -721,7 +746,7 @@ pub(super) async fn run_compaction_preflight(
     bridge: &dyn LlmBridge,
     emit: &AgentEventSink,
     cancel: &CancellationToken,
-) -> Result<(u64, u64), AgentError> {
+) -> Result<CompactionPreflightResult, AgentError> {
     let draft_stats = provider_visible_stats(request);
     let params = config
         .runtime_delegates
@@ -741,41 +766,57 @@ pub(super) async fn run_compaction_preflight(
         .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
 
     let Some(params) = params else {
-        return Ok((0, 0));
+        return Ok(CompactionPreflightResult::not_requested());
     };
 
     let metadata = params.metadata.clone();
     let compaction_context_window = params.trigger_stats.context_window;
     let compaction_reserve_tokens = params.reserve_tokens;
+    let preflight_result = |outcome| CompactionPreflightResult {
+        context_window: compaction_context_window,
+        reserve_tokens: compaction_reserve_tokens,
+        outcome,
+    };
 
-    if !crate::compaction::should_execute_compaction(
+    match crate::compaction::evaluate_compaction_eligibility(
         &request.messages,
         message_refs_for_llm,
         &params,
     ) {
-        let item_id = format!("context-compaction-noop-{}", now_millis());
-        emit_event(
-            emit,
-            AgentEvent::ContextCompactionNoop {
-                item_id: item_id.clone(),
-                reason: "no_eligible_messages".to_string(),
-                metadata: metadata.clone(),
-            },
-        )
-        .await;
-        config
-            .runtime_delegates
-            .after_compaction_noop(
-                CompactionNoopInput {
-                    item_id,
-                    reason: "no_eligible_messages".to_string(),
-                    metadata,
-                },
-                cancel.clone(),
+        crate::compaction::CompactionEligibility::Eligible => {}
+        crate::compaction::CompactionEligibility::NoEligibleMessages { .. } => {
+            let reason = "no_eligible_messages".to_string();
+            emit_compaction_noop(emit, config, reason.clone(), metadata, cancel).await?;
+            return Ok(preflight_result(CompactionPreflightOutcome::Noop {
+                reason,
+            }));
+        }
+        crate::compaction::CompactionEligibility::InvalidInput {
+            failure,
+            message_count,
+            ref_count,
+        } => {
+            let reason = failure.reason_code().to_string();
+            let item_id = format!("context-compaction-failed-{}", now_millis());
+            emit_compaction_failed(
+                emit,
+                config,
+                item_id,
+                reason.clone(),
+                reason.clone(),
+                Some(serde_json::json!({
+                    "reason": reason.clone(),
+                    "message_count": message_count,
+                    "ref_count": ref_count,
+                })),
+                Some(metadata),
+                cancel,
             )
-            .await
-            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
-        return Ok((compaction_context_window, compaction_reserve_tokens));
+            .await?;
+            return Ok(preflight_result(CompactionPreflightOutcome::Failed {
+                reason,
+            }));
+        }
     }
 
     let item_id = format!("context-compaction-{}", now_millis());
@@ -820,63 +861,137 @@ pub(super) async fn run_compaction_preflight(
                 .after_compaction(result, cancel.clone())
                 .await
                 .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+            Ok(preflight_result(CompactionPreflightOutcome::Completed))
         }
         Ok(None) => {
-            emit_event(
+            let reason = "no_eligible_messages".to_string();
+            emit_compaction_noop_with_item_id(
                 emit,
-                AgentEvent::ContextCompactionNoop {
-                    item_id: item_id.clone(),
-                    reason: "no_eligible_messages".to_string(),
-                    metadata: metadata.clone(),
-                },
+                config,
+                item_id,
+                reason.clone(),
+                metadata,
+                cancel,
             )
-            .await;
-            config
-                .runtime_delegates
-                .after_compaction_noop(
-                    CompactionNoopInput {
-                        item_id,
-                        reason: "no_eligible_messages".to_string(),
-                        metadata,
-                    },
-                    cancel.clone(),
-                )
-                .await
-                .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+            .await?;
+            Ok(preflight_result(CompactionPreflightOutcome::Noop {
+                reason,
+            }))
         }
         Err(error) => {
             let is_cancelled = matches!(error, AgentError::Cancelled);
             let error_message = error.to_string();
-            emit_event(
+            let reason = compaction_failure_reason(&error);
+            emit_compaction_failed(
                 emit,
-                AgentEvent::ContextCompactionFailed {
-                    item_id: item_id.clone(),
-                    error: error_message.clone(),
-                    metadata: Some(metadata.clone()),
-                },
+                config,
+                item_id,
+                reason.clone(),
+                error_message,
+                Some(serde_json::json!({
+                    "reason": reason.clone(),
+                    "cancelled": is_cancelled,
+                })),
+                Some(metadata),
+                cancel,
             )
-            .await;
-            if !is_cancelled {
-                config
-                    .runtime_delegates
-                    .after_compaction_failed(
-                        CompactionFailureInput {
-                            item_id,
-                            error: error_message,
-                            metadata: Some(metadata),
-                        },
-                        cancel.clone(),
-                    )
-                    .await
-                    .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
-            }
+            .await?;
             if is_cancelled {
                 return Err(error);
             }
+            Ok(preflight_result(CompactionPreflightOutcome::Failed {
+                reason,
+            }))
         }
     }
+}
 
-    Ok((compaction_context_window, compaction_reserve_tokens))
+async fn emit_compaction_noop(
+    emit: &AgentEventSink,
+    config: &AgentLoopConfig,
+    reason: String,
+    metadata: crate::types::CompactionMetadata,
+    cancel: &CancellationToken,
+) -> Result<(), AgentError> {
+    let item_id = format!("context-compaction-noop-{}", now_millis());
+    emit_compaction_noop_with_item_id(emit, config, item_id, reason, metadata, cancel).await
+}
+
+async fn emit_compaction_noop_with_item_id(
+    emit: &AgentEventSink,
+    config: &AgentLoopConfig,
+    item_id: String,
+    reason: String,
+    metadata: crate::types::CompactionMetadata,
+    cancel: &CancellationToken,
+) -> Result<(), AgentError> {
+    emit_event(
+        emit,
+        AgentEvent::ContextCompactionNoop {
+            item_id: item_id.clone(),
+            reason: reason.clone(),
+            metadata: metadata.clone(),
+        },
+    )
+    .await;
+    config
+        .runtime_delegates
+        .after_compaction_noop(
+            CompactionNoopInput {
+                item_id,
+                reason,
+                metadata,
+            },
+            cancel.clone(),
+        )
+        .await
+        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))
+}
+
+async fn emit_compaction_failed(
+    emit: &AgentEventSink,
+    config: &AgentLoopConfig,
+    item_id: String,
+    reason: String,
+    error: String,
+    details: Option<serde_json::Value>,
+    metadata: Option<crate::types::CompactionMetadata>,
+    cancel: &CancellationToken,
+) -> Result<(), AgentError> {
+    emit_event(
+        emit,
+        AgentEvent::ContextCompactionFailed {
+            item_id: item_id.clone(),
+            error: error.clone(),
+            metadata: metadata.clone(),
+        },
+    )
+    .await;
+    config
+        .runtime_delegates
+        .after_compaction_failed(
+            CompactionFailureInput {
+                item_id,
+                reason,
+                error,
+                details,
+                metadata,
+            },
+            cancel.clone(),
+        )
+        .await
+        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))
+}
+
+fn compaction_failure_reason(error: &AgentError) -> String {
+    match error {
+        AgentError::Cancelled => "cancelled".to_string(),
+        AgentError::InvalidState(code) if code.starts_with("compaction_") => code.clone(),
+        AgentError::InvalidState(code) if code == "summary_empty" => "summary_failed".to_string(),
+        AgentError::Bridge(_) => "summary_failed".to_string(),
+        AgentError::RuntimeDelegate(_) => "runtime_delegate_failed".to_string(),
+        _ => "compaction_failed".to_string(),
+    }
 }
 
 async fn ensure_partial_started(

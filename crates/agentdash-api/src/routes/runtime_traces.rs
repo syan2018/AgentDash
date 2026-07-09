@@ -293,6 +293,7 @@ pub(crate) async fn load_runtime_trace_context_audit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_application_ports::launch::LaunchSource;
     use agentdash_application_runtime_session::session::{
         ExecutionStatus, PromptLaunchPath, RuntimeTraceLaunchState,
         SessionAttachmentContextContribution, SessionContextUsageCategory, SessionContextUsageItem,
@@ -331,7 +332,13 @@ mod tests {
     fn prompt_launch_path_marks_pending_as_owner_bootstrap() {
         let meta = test_meta("sess-1", 0, None);
         assert_eq!(
-            resolve_prompt_launch_path(&trace_state(&meta), false, false, true),
+            resolve_prompt_launch_path(
+                &trace_state(&meta),
+                false,
+                false,
+                true,
+                LaunchSource::HttpPrompt,
+            ),
             PromptLaunchPath::OwnerBootstrap
         );
     }
@@ -340,11 +347,23 @@ mod tests {
     fn prompt_launch_path_requires_repository_rehydrate_after_cold_restart() {
         let meta = test_meta("sess-2", 12, None);
         assert_eq!(
-            resolve_prompt_launch_path(&trace_state(&meta), false, false, false),
+            resolve_prompt_launch_path(
+                &trace_state(&meta),
+                false,
+                false,
+                false,
+                LaunchSource::HttpPrompt,
+            ),
             PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::SystemContext,)
         );
         assert_eq!(
-            resolve_prompt_launch_path(&trace_state(&meta), true, false, false),
+            resolve_prompt_launch_path(
+                &trace_state(&meta),
+                true,
+                false,
+                false,
+                LaunchSource::HttpPrompt,
+            ),
             PromptLaunchPath::Plain
         );
     }
@@ -353,8 +372,29 @@ mod tests {
     fn prompt_launch_path_prefers_executor_follow_up_when_available() {
         let meta = test_meta("sess-3", 5, Some("exec-1"));
         assert_eq!(
-            resolve_prompt_launch_path(&trace_state(&meta), false, true, false),
+            resolve_prompt_launch_path(
+                &trace_state(&meta),
+                false,
+                true,
+                false,
+                LaunchSource::HttpPrompt,
+            ),
             PromptLaunchPath::Plain
+        );
+    }
+
+    #[test]
+    fn context_compaction_launch_path_ignores_executor_follow_up_for_cold_restore() {
+        let meta = test_meta("sess-compact", 5, Some("exec-1"));
+        assert_eq!(
+            resolve_prompt_launch_path(
+                &trace_state(&meta),
+                false,
+                false,
+                false,
+                LaunchSource::ContextCompaction,
+            ),
+            PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::ExecutorState,)
         );
     }
 
@@ -362,7 +402,13 @@ mod tests {
     fn prompt_launch_path_uses_executor_state_restore_when_supported() {
         let meta = test_meta("sess-4", 7, None);
         assert_eq!(
-            resolve_prompt_launch_path(&trace_state(&meta), false, true, false),
+            resolve_prompt_launch_path(
+                &trace_state(&meta),
+                false,
+                true,
+                false,
+                LaunchSource::HttpPrompt,
+            ),
             PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::ExecutorState,)
         );
     }

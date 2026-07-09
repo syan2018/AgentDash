@@ -167,9 +167,11 @@ impl RuntimeCompactionDelegate for ManualContextCompactionDelegate {
                     request_id,
                     Some(serde_json::json!({
                         "status": "failed",
-                        "reason": "compaction_failed",
+                        "reason": input.reason,
+                        "item_id": input.item_id.clone(),
                         "lifecycle_item_id": input.item_id,
                         "error": input.error,
+                        "details": input.details,
                         "metadata": input.metadata,
                     })),
                 )
@@ -486,5 +488,77 @@ mod tests {
             ManualContextCompactionRequestStatus::Consumed
         );
         assert_eq!(request.consumed_turn_id.as_deref(), Some("turn-next"));
+    }
+
+    #[tokio::test]
+    async fn consumed_manual_request_failure_marks_failed_with_diagnostic_metadata() {
+        let repo = Arc::new(ManualRequestFixtureRepo::default());
+        let request = seed_request(&repo, "turn-active").await;
+        let delegate = ManualContextCompactionDelegate {
+            session_id: "session-1".to_string(),
+            turn_id: "turn-next".to_string(),
+            repo: repo.clone(),
+            inner: None,
+        };
+        let params = delegate
+            .evaluate_compaction(evaluate_input(), CancellationToken::new())
+            .await
+            .expect("evaluate compaction")
+            .expect("manual compaction should be requested");
+
+        delegate
+            .after_compaction_failed(
+                CompactionFailureInput {
+                    item_id: "context-compaction-failed-1".to_string(),
+                    reason: "cancelled".to_string(),
+                    error: "Agent 已被取消".to_string(),
+                    details: Some(serde_json::json!({
+                        "cancelled": true,
+                    })),
+                    metadata: Some(params.metadata),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("manual failure should be recorded");
+
+        let stored = repo
+            .get_by_id(request.id)
+            .await
+            .expect("load request")
+            .expect("request should exist");
+        assert_eq!(stored.status, ManualContextCompactionRequestStatus::Failed);
+        let metadata = stored.result_metadata.expect("failed result metadata");
+        assert_eq!(
+            metadata.get("status").and_then(serde_json::Value::as_str),
+            Some("failed")
+        );
+        assert_eq!(
+            metadata.get("reason").and_then(serde_json::Value::as_str),
+            Some("cancelled")
+        );
+        assert_eq!(
+            metadata.get("item_id").and_then(serde_json::Value::as_str),
+            Some("context-compaction-failed-1")
+        );
+        assert_eq!(
+            metadata.get("error").and_then(serde_json::Value::as_str),
+            Some("Agent 已被取消")
+        );
+        assert_eq!(
+            metadata
+                .get("details")
+                .and_then(|details| details.get("cancelled"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        let request_id = request.id.to_string();
+        assert_eq!(
+            metadata
+                .get("metadata")
+                .and_then(|metadata| metadata.get("request_id"))
+                .and_then(serde_json::Value::as_str),
+            Some(request_id.as_str())
+        );
     }
 }

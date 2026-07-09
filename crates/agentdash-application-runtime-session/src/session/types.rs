@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use agentdash_agent_protocol::UserInputBlock;
 use agentdash_application_ports::launch::{
-    BackendSelectionInput, LaunchPlanningInput, LaunchPromptInput,
+    BackendSelectionInput, LaunchPlanningInput, LaunchPromptInput, LaunchSource,
 };
 use serde::{Deserialize, Serialize};
 
@@ -109,8 +109,9 @@ impl From<&SessionMeta> for RuntimeTraceLaunchState {
 ///
 /// 判定优先级：
 /// 1. Agent bootstrap 未完成 → **OwnerBootstrap**
-/// 2. 冷启动（无 live runtime + 有历史事件 + 无 executor follow-up） → **RepositoryRehydrate**
-/// 3. 其余（首轮 / 同进程续跑 / 有 executor follow-up） → **Plain**
+/// 2. compact-only 维护轮冷启动（无 live runtime + 有历史事件） → **RepositoryRehydrate(ExecutorState)**
+/// 3. 普通冷启动（无 live runtime + 有历史事件 + 无 executor follow-up） → **RepositoryRehydrate**
+/// 4. 其余（首轮 / 同进程续跑 / 有 executor follow-up） → **Plain**
 ///
 /// `agent_needs_bootstrap` 来自 `LifecycleAgent.needs_bootstrap()`，取代原
 /// `SessionMeta.bootstrap_state` 的判断。
@@ -119,10 +120,20 @@ pub fn resolve_prompt_launch_path(
     has_live_executor_session: bool,
     supports_repository_restore: bool,
     agent_needs_bootstrap: bool,
+    launch_source: LaunchSource,
 ) -> PromptLaunchPath {
     // P1: Agent 未完成首轮 bootstrap
     if agent_needs_bootstrap {
         return PromptLaunchPath::OwnerBootstrap;
+    }
+
+    if launch_source == LaunchSource::ContextCompaction
+        && !has_live_executor_session
+        && runtime_trace_state.last_event_seq > 0
+    {
+        return PromptLaunchPath::RepositoryRehydrate(
+            SessionRepositoryRehydrateMode::ExecutorState,
+        );
     }
 
     // P2: 冷启动恢复（三个条件同时满足）：
@@ -142,6 +153,30 @@ pub fn resolve_prompt_launch_path(
 
     // P3: 默认 — 普通对话轮
     PromptLaunchPath::Plain
+}
+
+#[cfg(test)]
+mod launch_path_tests {
+    use super::*;
+
+    #[test]
+    fn context_compaction_cold_launch_uses_executor_restore_even_with_follow_up_metadata() {
+        let trace_state = RuntimeTraceLaunchState {
+            executor_session_id: Some("executor-follow-up".to_string()),
+            last_event_seq: 7,
+        };
+
+        assert_eq!(
+            resolve_prompt_launch_path(
+                &trace_state,
+                false,
+                false,
+                false,
+                LaunchSource::ContextCompaction,
+            ),
+            PromptLaunchPath::RepositoryRehydrate(SessionRepositoryRehydrateMode::ExecutorState)
+        );
+    }
 }
 
 #[derive(Debug, Clone)]

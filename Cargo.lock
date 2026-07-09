@@ -380,6 +380,7 @@ dependencies = [
  "agentdash-domain",
  "agentdash-relay",
  "agentdash-spi",
+ "agentdash-test-support",
  "async-trait",
  "base64 0.22.1",
  "chrono",

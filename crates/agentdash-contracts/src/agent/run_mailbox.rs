@@ -195,6 +195,7 @@ pub struct AgentRunCommandReceipt {
 pub enum AgentRunContextCompactionCommandOutcome {
     ScheduledNextTurn,
     LaunchedCompactionTurn,
+    Completed,
     NoEligibleMessages,
     Blocked,
     Failed,

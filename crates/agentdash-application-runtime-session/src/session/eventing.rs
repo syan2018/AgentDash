@@ -2010,12 +2010,18 @@ mod tests {
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
     use agentdash_agent_protocol::backbone::item::ItemCompletedNotification;
+    use agentdash_domain::workflow::{
+        ManualContextCompactionRequestRepository, ManualContextCompactionRequestStatus,
+        ManualContextCompactionRequestedMode, NewManualContextCompactionRequest,
+    };
     use agentdash_spi::{
         AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
         ExecutionContext, ExecutionStream, HookTraceEntry, HookTraceTrigger, PromptPayload,
     };
+    use agentdash_test_support::workflow::MemoryManualContextCompactionRequestRepository;
     use tokio::sync::Mutex;
     use tokio_stream::wrappers::ReceiverStream;
+    use uuid::Uuid;
 
     use super::*;
     use crate::session::{
@@ -2476,6 +2482,133 @@ mod tests {
             "local_summary"
         );
         assert!(compaction.diagnostics_json["request_id"].is_null());
+    }
+
+    #[tokio::test]
+    async fn manual_context_compacted_commit_marks_request_completed_with_projection_refs() {
+        let session_id = "sess-manual-context-compaction-completed";
+        let persistence = Arc::new(FixtureRuntimeTraceStore::default());
+        let stores = SessionStoreSet::from_runtime_trace_test_store(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id))
+            .await
+            .expect("create session");
+        let manual_requests = Arc::new(MemoryManualContextCompactionRequestRepository::default());
+        let request = manual_requests
+            .create_requested(NewManualContextCompactionRequest {
+                session_id: session_id.to_string(),
+                run_id: Uuid::new_v4(),
+                agent_id: Uuid::new_v4(),
+                command_receipt_id: Uuid::new_v4(),
+                requested_mode: ManualContextCompactionRequestedMode::CompactOnly,
+                keep_last_n: Some(1),
+                reserve_tokens: Some(16_384),
+                request_metadata: Some(serde_json::json!({
+                    "source": "test",
+                })),
+            })
+            .await
+            .expect("create manual request");
+        manual_requests
+            .mark_consumed(request.id, "turn-compact".to_string())
+            .await
+            .expect("mark consumed");
+        let service = test_eventing_service(stores.clone())
+            .with_manual_context_compaction_request_repo(Some(manual_requests.clone()));
+
+        service
+            .persist_notification(
+                session_id,
+                final_assistant_message_envelope_at_entry(
+                    session_id,
+                    "turn-1",
+                    0,
+                    "answer before manual compaction",
+                ),
+            )
+            .await
+            .expect("persist assistant");
+
+        service
+            .persist_notification(
+                session_id,
+                context_compacted_envelope(
+                    session_id,
+                    serde_json::json!({
+                        "lifecycle_item_id": "compact-manual",
+                        "summary": "手动压缩摘要",
+                        "tokens_before": 48_000,
+                        "messages_compacted": 1,
+                        "newly_compacted_messages": 1,
+                        "compacted_until_ref": { "turn_id": "turn-1", "entry_index": 0 },
+                        "first_kept_ref": null,
+                        "trigger": "manual",
+                        "reason": "user_requested",
+                        "phase": "standalone_compact_turn",
+                        "strategy": "summary_prefix",
+                        "implementation": "local_summary",
+                        "request_id": request.id.to_string(),
+                    }),
+                ),
+            )
+            .await
+            .expect("persist context compacted");
+
+        let stored_request = manual_requests
+            .get_by_id(request.id)
+            .await
+            .expect("load manual request")
+            .expect("manual request should exist");
+        assert_eq!(
+            stored_request.status,
+            ManualContextCompactionRequestStatus::Completed
+        );
+        assert_eq!(
+            stored_request.completed_compaction_id.as_deref(),
+            Some("compaction-compact-manual")
+        );
+        assert_eq!(
+            stored_request
+                .compacted_until_ref
+                .as_ref()
+                .and_then(|value| value.get("turn_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("turn-1")
+        );
+        assert!(
+            stored_request
+                .first_kept_ref
+                .as_ref()
+                .is_some_and(serde_json::Value::is_null)
+        );
+        assert_eq!(
+            stored_request
+                .result_metadata
+                .as_ref()
+                .and_then(|value| value.get("status"))
+                .and_then(serde_json::Value::as_str),
+            Some("completed")
+        );
+
+        let compactions = stores
+            .compactions
+            .list_compactions(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await
+            .expect("list compactions");
+        assert_eq!(compactions.len(), 1);
+        assert_eq!(compactions[0].id, "compaction-compact-manual");
+        assert_eq!(compactions[0].trigger, "manual");
+        let head = stores
+            .projections
+            .read_projection_head(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await
+            .expect("read projection head")
+            .expect("projection head should be committed");
+        assert_eq!(
+            head.active_compaction_id.as_deref(),
+            Some("compaction-compact-manual")
+        );
     }
 
     #[tokio::test]

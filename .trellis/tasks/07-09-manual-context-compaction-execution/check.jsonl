@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/prd.md", "reason": "Check must verify every acceptance criterion and the stated out-of-scope boundaries."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/design.md", "reason": "Check must validate the implementation matches the planned restore, eligibility, request lifecycle, and receipt semantics."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/research/compaction-lifecycle-reference-notes.md", "reason": "Check must verify the implementation keeps compaction as a managed lifecycle boundary without importing unnecessary reference complexity."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/research/codex-compaction-lifecycle.md", "reason": "Check must compare the implementation against the Codex managed compaction lifecycle lessons without copying incompatible storage details."}
+{"file": ".trellis/tasks/07-09-manual-context-compaction-execution/research/claude-code-compaction-lifecycle.md", "reason": "Check must compare the implementation against Claude Code boundary/failure/resume lessons without importing unnecessary compact variants."}
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "Check must ensure successful compaction commits records, segments, and active projection head according to the projection contract."}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Check must verify session launch/eventing/delegate changes respect the session architecture."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "Check must verify backend layering and repository/domain boundary consistency."}

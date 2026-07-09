@@ -2661,6 +2661,9 @@ fn agent_run_context_compaction_command_response(
             AgentRunContextCompactionOutcome::LaunchedCompactionTurn => {
                 AgentRunContextCompactionCommandOutcome::LaunchedCompactionTurn
             }
+            AgentRunContextCompactionOutcome::Completed => {
+                AgentRunContextCompactionCommandOutcome::Completed
+            }
             AgentRunContextCompactionOutcome::NoEligibleMessages => {
                 AgentRunContextCompactionCommandOutcome::NoEligibleMessages
             }

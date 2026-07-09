@@ -22,7 +22,7 @@ input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPrec
  */
 delivery_intent?: string, };
 
-export type AgentRunContextCompactionCommandOutcome = "scheduled_next_turn" | "launched_compaction_turn" | "no_eligible_messages" | "blocked" | "failed";
+export type AgentRunContextCompactionCommandOutcome = "scheduled_next_turn" | "launched_compaction_turn" | "completed" | "no_eligible_messages" | "blocked" | "failed";
 
 export type AgentRunContextCompactionCommandResponse = { command_receipt: AgentRunCommandReceipt, outcome: AgentRunContextCompactionCommandOutcome, runtime_session_id?: string, request_id?: string, turn_id?: string, message?: string, };
 

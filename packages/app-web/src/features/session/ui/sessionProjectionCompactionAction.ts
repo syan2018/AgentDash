@@ -24,6 +24,8 @@ export function contextCompactionOutcomeMessage(
       return "已排队";
     case "launched_compaction_turn":
       return "已启动";
+    case "completed":
+      return response.message ?? "压缩完成";
     case "no_eligible_messages":
       return response.message ?? "暂无可压缩内容";
     case "blocked":

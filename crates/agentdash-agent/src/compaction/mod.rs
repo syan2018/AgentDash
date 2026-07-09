@@ -54,6 +54,93 @@ pub fn default_auto_compaction_metadata() -> CompactionMetadata {
     CompactionMetadata::auto_token_pressure_pre_provider()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionEligibility {
+    Eligible,
+    NoEligibleMessages {
+        message_count: usize,
+        keep_last_n: u32,
+    },
+    InvalidInput {
+        failure: CompactionEligibilityFailure,
+        message_count: usize,
+        ref_count: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionEligibilityFailure {
+    ContextEmpty,
+    MessageRefLengthMismatch,
+    CompactedUntilRefMissing,
+    FirstKeptRefMissing,
+}
+
+impl CompactionEligibilityFailure {
+    pub fn reason_code(self) -> &'static str {
+        match self {
+            Self::ContextEmpty => "compaction_context_empty",
+            Self::MessageRefLengthMismatch => "compaction_message_ref_len_mismatch",
+            Self::CompactedUntilRefMissing => "compaction_boundary_ref_missing",
+            Self::FirstKeptRefMissing => "compaction_first_kept_ref_missing",
+        }
+    }
+}
+
+pub fn evaluate_compaction_eligibility(
+    messages: &[AgentMessage],
+    message_refs: &[Option<MessageRef>],
+    params: &CompactionParams,
+) -> CompactionEligibility {
+    let message_count = messages.len();
+    let ref_count = message_refs.len();
+    if message_count == 0 {
+        return CompactionEligibility::InvalidInput {
+            failure: CompactionEligibilityFailure::ContextEmpty,
+            message_count,
+            ref_count,
+        };
+    }
+    if ref_count != message_count {
+        return CompactionEligibility::InvalidInput {
+            failure: CompactionEligibilityFailure::MessageRefLengthMismatch,
+            message_count,
+            ref_count,
+        };
+    }
+
+    let start_index = first_uncompacted_message_index(messages);
+    let cut = find_cut_point(messages, start_index, params);
+    if cut == 0 {
+        return CompactionEligibility::NoEligibleMessages {
+            message_count,
+            keep_last_n: params.keep_last_n,
+        };
+    }
+
+    if message_refs
+        .get(cut.saturating_sub(1))
+        .and_then(Option::as_ref)
+        .is_none()
+    {
+        return CompactionEligibility::InvalidInput {
+            failure: CompactionEligibilityFailure::CompactedUntilRefMissing,
+            message_count,
+            ref_count,
+        };
+    }
+
+    if cut < messages.len() && message_refs.get(cut).and_then(Option::as_ref).is_none() {
+        return CompactionEligibility::InvalidInput {
+            failure: CompactionEligibilityFailure::FirstKeptRefMissing,
+            message_count,
+            ref_count,
+        };
+    }
+
+    CompactionEligibility::Eligible
+}
+
 /// 执行压缩：cut point -> 摘要生成 -> 消息替换
 pub async fn execute_compaction(
     messages: &[AgentMessage],
@@ -147,16 +234,10 @@ pub fn should_execute_compaction(
     message_refs: &[Option<MessageRef>],
     params: &CompactionParams,
 ) -> bool {
-    if message_refs.len() != messages.len() {
-        return false;
-    }
-    let start_index = first_uncompacted_message_index(messages);
-    let cut = find_cut_point(messages, start_index, params);
-    cut > 0
-        && message_refs
-            .get(cut.saturating_sub(1))
-            .is_some_and(Option::is_some)
-        && (cut >= messages.len() || message_refs.get(cut).is_some_and(Option::is_some))
+    matches!(
+        evaluate_compaction_eligibility(messages, message_refs, params),
+        CompactionEligibility::Eligible
+    )
 }
 
 /// 确定 cut point（按 token budget 保留尾部，并用 keep_last_n 作为最低保护）。
@@ -595,6 +676,97 @@ mod tests {
                 })
             })
             .collect()
+    }
+
+    #[test]
+    fn eligibility_reports_true_no_eligible_messages() {
+        let messages = vec![AgentMessage::user("u1"), AgentMessage::assistant("a1")];
+
+        assert_eq!(
+            evaluate_compaction_eligibility(
+                &messages,
+                &message_refs(messages.len()),
+                &compaction_params(20, 16_384),
+            ),
+            CompactionEligibility::NoEligibleMessages {
+                message_count: 2,
+                keep_last_n: 20,
+            }
+        );
+    }
+
+    #[test]
+    fn eligibility_rejects_empty_context() {
+        assert_eq!(
+            evaluate_compaction_eligibility(&[], &[], &compaction_params(1, 16_384)),
+            CompactionEligibility::InvalidInput {
+                failure: CompactionEligibilityFailure::ContextEmpty,
+                message_count: 0,
+                ref_count: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn eligibility_rejects_message_ref_length_mismatch() {
+        let messages = vec![
+            AgentMessage::user("u1"),
+            AgentMessage::assistant("a1"),
+            AgentMessage::user("u2"),
+        ];
+
+        assert_eq!(
+            evaluate_compaction_eligibility(
+                &messages,
+                &message_refs(messages.len() - 1),
+                &compaction_params(1, 16_384),
+            ),
+            CompactionEligibility::InvalidInput {
+                failure: CompactionEligibilityFailure::MessageRefLengthMismatch,
+                message_count: 3,
+                ref_count: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn eligibility_rejects_missing_compacted_until_ref() {
+        let messages = vec![
+            AgentMessage::user("u1"),
+            AgentMessage::assistant("a1"),
+            AgentMessage::user("u2"),
+        ];
+        let mut refs = message_refs(messages.len());
+        refs[1] = None;
+
+        assert_eq!(
+            evaluate_compaction_eligibility(&messages, &refs, &compaction_params(1, 16_384)),
+            CompactionEligibility::InvalidInput {
+                failure: CompactionEligibilityFailure::CompactedUntilRefMissing,
+                message_count: 3,
+                ref_count: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn eligibility_rejects_missing_first_kept_ref() {
+        let messages = vec![
+            AgentMessage::user("u1"),
+            AgentMessage::assistant("a1"),
+            AgentMessage::user("u2"),
+        ];
+        let mut refs = message_refs(messages.len());
+        refs[2] = None;
+
+        assert_eq!(
+            evaluate_compaction_eligibility(&messages, &refs, &compaction_params(1, 16_384)),
+            CompactionEligibility::InvalidInput {
+                failure: CompactionEligibilityFailure::FirstKeptRefMissing,
+                message_count: 3,
+                ref_count: 3,
+            }
+        );
     }
 
     #[tokio::test]

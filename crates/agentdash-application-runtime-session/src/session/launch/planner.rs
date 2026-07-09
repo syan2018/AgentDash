@@ -114,6 +114,7 @@ impl<'a> LaunchPlanner<'a> {
             input.had_existing_runtime,
             supports_repository_restore,
             input.agent_needs_bootstrap,
+            command.source(),
         );
         let hook_snapshot_reload = if matches!(prompt_launch_path, PromptLaunchPath::OwnerBootstrap)
         {
@@ -217,15 +218,13 @@ impl<'a> LaunchPlanner<'a> {
                             input.session_id
                         ))
                     })?;
-                (!transcript.is_empty()).then(|| {
-                    let entries = transcript.entries;
-                    RestoredSessionState {
-                        messages: entries.iter().map(|entry| entry.message.clone()).collect(),
-                        message_refs: entries
-                            .iter()
-                            .map(|entry| Some(entry.message_ref.clone()))
-                            .collect(),
-                    }
+                let entries = transcript.entries;
+                Some(RestoredSessionState {
+                    messages: entries.iter().map(|entry| entry.message.clone()).collect(),
+                    message_refs: entries
+                        .iter()
+                        .map(|entry| Some(entry.message_ref.clone()))
+                        .collect(),
                 })
             }
             _ => None,

@@ -1004,7 +1004,7 @@ mod tests {
                 extension_id: "local-hello".to_string(),
                 action_key: "local-hello.profile".to_string(),
                 project_id: "project-1".to_string(),
-                session_id: "session-1".to_string(),
+                execution_id: "execution-1".to_string(),
                 input: serde_json::json!({ "verbose": true }),
                 package_artifact: Some(ExtensionPackageArtifactRelay {
                     artifact_id: "artifact-1".to_string(),
@@ -1069,7 +1069,7 @@ mod tests {
                 protocol_version: "1.0.0".to_string(),
                 method: "echo".to_string(),
                 project_id: "project-1".to_string(),
-                session_id: "session-1".to_string(),
+                execution_id: "execution-1".to_string(),
                 input: serde_json::json!({ "text": "hello" }),
                 package_artifact: ExtensionPackageArtifactRelay {
                     artifact_id: "artifact-1".to_string(),
@@ -1149,7 +1149,7 @@ mod tests {
                     trace_id: "trace-1".to_string(),
                     invocation_id: "bsinv-1".to_string(),
                 },
-                session_id: "session-1".to_string(),
+                execution_id: "execution-1".to_string(),
                 method: "POST".to_string(),
                 headers: std::collections::BTreeMap::from([(
                     "content-type".to_string(),

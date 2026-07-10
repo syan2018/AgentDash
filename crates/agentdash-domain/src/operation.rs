@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OperationProviderRef {
@@ -12,6 +13,170 @@ pub struct OperationRef {
     pub provider: OperationProviderRef,
     pub operation_key: String,
     pub contract_version: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OperationPrincipalRef {
+    User { user_id: String },
+    AgentRunAgent { run_id: Uuid, agent_id: Uuid },
+    WorkflowNode { run_id: Uuid, node_key: String },
+    ExtensionInstallation { installation_id: Uuid },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OperationScopeRef {
+    EnvironmentSetup {
+        project_id: Option<Uuid>,
+        workspace_id: Option<Uuid>,
+        backend_id: Option<String>,
+    },
+    Project {
+        project_id: Uuid,
+    },
+    InteractionInstance {
+        instance_id: Uuid,
+    },
+    WorkspaceBinding {
+        project_id: Uuid,
+        workspace_id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OperationOriginRef {
+    EnvironmentSetup,
+    AgentTool,
+    UserWorkshop,
+    Canvas {
+        definition_id: Uuid,
+    },
+    Interaction {
+        instance_id: Uuid,
+    },
+    ComponentEvent {
+        instance_id: Uuid,
+        component_key: String,
+    },
+    Workflow,
+    OperationScriptNested {
+        script_invocation_id: String,
+    },
+    EffectReplay {
+        effect_id: Uuid,
+    },
+    ExtensionService,
+}
+
+impl OperationPrincipalRef {
+    pub fn validate(&self) -> Result<(), OperationContextRefError> {
+        match self {
+            Self::User { user_id } => validate_non_empty("principal.user_id", user_id),
+            Self::AgentRunAgent { run_id, agent_id } => {
+                validate_uuid("principal.run_id", *run_id)?;
+                validate_uuid("principal.agent_id", *agent_id)
+            }
+            Self::WorkflowNode { run_id, node_key } => {
+                validate_uuid("principal.run_id", *run_id)?;
+                validate_non_empty("principal.node_key", node_key)
+            }
+            Self::ExtensionInstallation { installation_id } => {
+                validate_uuid("principal.installation_id", *installation_id)
+            }
+        }
+    }
+}
+
+impl OperationScopeRef {
+    pub fn validate(&self) -> Result<(), OperationContextRefError> {
+        match self {
+            Self::EnvironmentSetup {
+                project_id,
+                workspace_id,
+                backend_id,
+            } => {
+                if let Some(project_id) = project_id {
+                    validate_uuid("scope.project_id", *project_id)?;
+                }
+                if let Some(workspace_id) = workspace_id {
+                    validate_uuid("scope.workspace_id", *workspace_id)?;
+                    if project_id.is_none() {
+                        return Err(OperationContextRefError::InvalidCombination {
+                            reason: "EnvironmentSetup workspace scope 必须同时携带 project_id",
+                        });
+                    }
+                }
+                if let Some(backend_id) = backend_id {
+                    validate_non_empty("scope.backend_id", backend_id)?;
+                }
+                Ok(())
+            }
+            Self::Project { project_id } => validate_uuid("scope.project_id", *project_id),
+            Self::InteractionInstance { instance_id } => {
+                validate_uuid("scope.instance_id", *instance_id)
+            }
+            Self::WorkspaceBinding {
+                project_id,
+                workspace_id,
+            } => {
+                validate_uuid("scope.project_id", *project_id)?;
+                validate_uuid("scope.workspace_id", *workspace_id)
+            }
+        }
+    }
+}
+
+impl OperationOriginRef {
+    pub fn validate(&self) -> Result<(), OperationContextRefError> {
+        match self {
+            Self::EnvironmentSetup
+            | Self::AgentTool
+            | Self::UserWorkshop
+            | Self::Workflow
+            | Self::ExtensionService => Ok(()),
+            Self::Canvas { definition_id } => validate_uuid("origin.definition_id", *definition_id),
+            Self::Interaction { instance_id }
+            | Self::EffectReplay {
+                effect_id: instance_id,
+            } => validate_uuid("origin.object_id", *instance_id),
+            Self::ComponentEvent {
+                instance_id,
+                component_key,
+            } => {
+                validate_uuid("origin.instance_id", *instance_id)?;
+                validate_non_empty("origin.component_key", component_key)
+            }
+            Self::OperationScriptNested {
+                script_invocation_id,
+            } => validate_non_empty("origin.script_invocation_id", script_invocation_id),
+        }
+    }
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum OperationContextRefError {
+    #[error("Operation context ref 字段无效: {field}")]
+    InvalidField { field: &'static str },
+    #[error("Operation context ref 组合无效: {reason}")]
+    InvalidCombination { reason: &'static str },
+}
+
+fn validate_non_empty(field: &'static str, value: &str) -> Result<(), OperationContextRefError> {
+    if value.trim().is_empty() || value.trim() != value {
+        Err(OperationContextRefError::InvalidField { field })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_uuid(field: &'static str, value: Uuid) -> Result<(), OperationContextRefError> {
+    if value.is_nil() {
+        Err(OperationContextRefError::InvalidField { field })
+    } else {
+        Ok(())
+    }
 }
 
 impl OperationRef {
@@ -83,5 +248,32 @@ mod tests {
             OperationRef::new("extension", "bad provider", "forecast", 1),
             Err(OperationRefError::InvalidSegment { .. })
         ));
+    }
+
+    #[test]
+    fn context_refs_reject_empty_and_ambiguous_authority() {
+        assert!(
+            OperationPrincipalRef::User {
+                user_id: " ".to_string()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            OperationScopeRef::EnvironmentSetup {
+                project_id: None,
+                workspace_id: Some(Uuid::new_v4()),
+                backend_id: None,
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            OperationOriginRef::OperationScriptNested {
+                script_invocation_id: String::new()
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

@@ -338,16 +338,16 @@ Action invoke：
 }
 ```
 
-Channel invoke：
+Protocol invoke：
 
 ```json
 {
-  "type": "command.extension_channel_invoke",
-  "id": "ext-channel-1",
+  "type": "command.extension_protocol_invoke",
+  "id": "ext-protocol-1",
   "payload": {
     "provider_extension_key": "protocol-demo",
     "provider_extension_id": "protocol-demo",
-    "channel_key": "protocol-demo.api",
+    "protocol_key": "protocol-demo.api",
     "method": "echo",
     "project_id": "project-1",
     "session_id": "session-1",
@@ -372,7 +372,7 @@ Channel invoke：
 }
 ```
 
-Action response returns `extension_key`、`extension_id`、`action_key`、`output`、`metadata`。Channel response returns provider identity、`channel_key`、`method`、`output`、`metadata`。
+Action response returns `extension_key`、`extension_id`、`action_key`、`output`、`metadata`。Protocol response returns provider identity、`protocol_key`、`method`、`output`、`metadata`。
 
 ## Discovery And Workspace Detection
 

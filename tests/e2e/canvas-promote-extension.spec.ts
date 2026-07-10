@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 import { cleanupE2eProjects, trackE2eProject } from "./_helpers/project-cleanup";
 
@@ -42,13 +43,20 @@ interface ProjectAgentLaunchResult {
   };
 }
 
-interface CanvasEntity {
-  id: string;
+interface CanvasDefinitionEntity {
+  definition_id: string;
+  current_revision_id: string;
   title: string;
-  mount_id: string;
+  source_bundle: {
+    digest: string;
+    entry_file: string;
+  };
 }
 
-interface PromoteCanvasResult {
+interface PromoteInteractionDefinitionResult {
+  definition_id: string;
+  definition_revision_id: string;
+  source_bundle_digest: string;
   extension_key: string;
   extension_id: string;
   archive_digest: string;
@@ -64,6 +72,32 @@ interface ExtensionRuntimeProjection {
       entry?: string;
     };
   }>;
+}
+
+interface SourceBundle {
+  format_version: number;
+  entry_file: string;
+  files: Array<{ path: string; content: string; media_type?: string }>;
+  sandbox: { libraries: string[]; import_map: Record<string, string> };
+  digest: string;
+}
+
+function canonicalSourceBundle(
+  input: Omit<SourceBundle, "digest">,
+): SourceBundle {
+  const files = [...input.files].sort((left, right) => left.path.localeCompare(right.path));
+  const libraries = [...new Set(input.sandbox.libraries.map((value) => value.trim()))].sort();
+  const importMap = Object.fromEntries(
+    Object.entries(input.sandbox.import_map).sort(([left], [right]) => left.localeCompare(right)),
+  );
+  const canonical = {
+    format_version: 1,
+    entry_file: input.entry_file,
+    files,
+    sandbox: { libraries, import_map: importMap },
+  };
+  const digest = createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+  return { ...canonical, digest: `sha256:${digest}` };
 }
 
 async function ensureBackend(request: APIRequestContext): Promise<void> {
@@ -185,43 +219,67 @@ async function createPromotableCanvas(
   request: APIRequestContext,
   projectId: string,
   suffix: string,
-): Promise<CanvasEntity> {
+): Promise<CanvasDefinitionEntity> {
   const title = `Promoted Canvas ${suffix}`;
-  const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/canvases`, {
+  const sourceBundle = canonicalSourceBundle({
+    format_version: 1,
+    entry_file: "index.html",
+    files: [{
+      path: "index.html",
+      content: [
+        "<!doctype html>",
+        "<html><body>",
+        `<main data-testid="promoted-canvas"><h1>Canvas Extension Ready ${suffix}</h1></main>`,
+        "</body></html>",
+      ].join("\n"),
+      media_type: "text/html",
+    }],
+    sandbox: {
+      libraries: [],
+      import_map: {},
+    },
+  });
+  const resp = await request.post(
+    `${API_ORIGIN}/projects/${projectId}/interaction-definitions/canvas`,
+    {
     data: {
-      mount_id: `promoted-canvas-${suffix}`,
       title,
       description: "E2E Canvas promoted extension",
-      entry_file: "src/main.tsx",
-      files: [{
-        path: "src/main.tsx",
-        content: [
-          "const root = document.getElementById('root');",
-          "if (root) {",
-          `  root.innerHTML = '<main data-testid="promoted-canvas"><h1>Canvas Extension Ready ${suffix}</h1></main>';`,
-          "}",
-        ].join("\n"),
-      }],
-      bindings: [],
+      source_bundle: sourceBundle,
+      initial_state: {},
+      state_schema: { type: "object" },
+      command_definitions: [],
+      component_bindings: [],
+      resource_slots: [],
     },
   });
   expect(resp.ok(), await resp.text()).toBeTruthy();
-  return (await resp.json()) as CanvasEntity;
+  return (await resp.json()) as CanvasDefinitionEntity;
 }
 
 async function promoteCanvas(
   request: APIRequestContext,
-  canvasId: string,
-): Promise<PromoteCanvasResult> {
-  const resp = await request.post(`${API_ORIGIN}/canvases/${canvasId}/promote-extension`, {
+  canvas: CanvasDefinitionEntity,
+): Promise<PromoteInteractionDefinitionResult> {
+  const resp = await request.post(
+    `${API_ORIGIN}/interaction-definitions/${canvas.definition_id}/promote-extension`,
+    {
     data: {
+      source_revision_id: canvas.current_revision_id,
+      package_version: "0.1.0",
+      asset_version: "0.1.0",
+      extension_key: null,
+      display_name: canvas.title,
       overwrite: true,
     },
   });
   const text = await resp.text();
   expect(resp.ok(), `status=${resp.status()} ${text}`).toBeTruthy();
-  const result = JSON.parse(text) as PromoteCanvasResult;
+  const result = JSON.parse(text) as PromoteInteractionDefinitionResult;
   expect(result.archive_digest).toMatch(/^sha256:/);
+  expect(result.definition_id).toBe(canvas.definition_id);
+  expect(result.definition_revision_id).toBe(canvas.current_revision_id);
+  expect(result.source_bundle_digest).toBe(canvas.source_bundle.digest);
   return result;
 }
 
@@ -240,8 +298,8 @@ async function waitForCanvasExtensionProjection(
         item.extension_key === extensionKey && item.label === title
       );
       if (
-        tab?.renderer?.kind === "canvas_panel"
-        && tab.renderer.entry === "dist/canvas/runtime-snapshot.json"
+        tab?.renderer?.kind === "webview"
+        && tab.renderer.entry === "dist/canvas/index.html"
       ) {
         return "ready";
       }
@@ -264,8 +322,8 @@ test("Canvas 可发布为 packaged extension 并作为 WorkspacePanel tab 运行
   const agent = await createProjectAgent(request, project.id, suffix);
   const sessionId = await launchProjectAgentRuntime(request, project.id, agent.id);
   const canvas = await createPromotableCanvas(request, project.id, suffix);
-  const promoted = await promoteCanvas(request, canvas.id);
-  expect(promoted.extension_id).toBe(`canvas-${canvas.mount_id}`);
+  const promoted = await promoteCanvas(request, canvas);
+  expect(promoted.extension_id).toBe(`canvas-${canvas.definition_id}`);
   await waitForCanvasExtensionProjection(request, project.id, promoted.extension_key, canvas.title);
 
   await page.goto(`/session/${sessionId}`);
@@ -274,12 +332,11 @@ test("Canvas 可发布为 packaged extension 并作为 WorkspacePanel tab 运行
   const addTabMenu = page.getByText("打开面板", { exact: true }).locator("..");
   await addTabMenu.getByRole("button", { name: canvas.title }).click();
 
-  const frame = page.frameLocator(`iframe[title="canvas-preview-${canvas.id}"]`);
+  const frame = page.frameLocator(`iframe[title="${canvas.title}"]`);
   await expect(frame.getByTestId("promoted-canvas")).toContainText(
     `Canvas Extension Ready ${suffix}`,
     { timeout: 30_000 },
   );
-  await expect(page.getByText("Canvas 预览已启动")).toBeVisible();
 });
 
 test.afterEach(async ({ request }) => {

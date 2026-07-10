@@ -32,4 +32,7 @@ Depends On: WI-01 至 WI-09
 - frontend lint 中本任务新增 Canvas 文件已 focused clean；仓库仍有 33 个既有 React effect lint。
 - critical Story E2E 到达 Task 创建界面后因既有 `Not Found` 失败；页面快照确认 Interaction/Canvas
   并非失败路径。
+- Canvas promotion E2E 已迁移到 exact Interaction revision、标准 webview 与 SourceBundle provenance；
+  Playwright discovery 通过，执行环境因 E2E backend 未暴露 `F:/Projects/AgentDash` workspace root 在
+  setup 阶段终止，尚未进入产品调用链。
 - canonical Operation、旧 Canvas/Session-bound gateway 与 Extension runtime identity 静态扫描完成。

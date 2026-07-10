@@ -553,22 +553,26 @@ async fn list_interaction_events(
             query.after_sequence,
         )
         .await?;
-    Ok(Json(
-        events
-            .into_iter()
-            .map(|event| InteractionEventDto {
+    let events = events
+        .into_iter()
+        .map(|event| {
+            let actor = serde_json::to_value(event.actor).map_err(|error| {
+                ApiError::Internal(format!("序列化 Interaction event actor 失败: {error}"))
+            })?;
+            Ok(InteractionEventDto {
                 id: event.id.to_string(),
                 instance_id: event.instance_id.to_string(),
                 sequence: event.sequence,
                 command_id: event.command_id.to_string(),
                 command_key: event.command_key,
-                actor: serde_json::to_value(event.actor).unwrap_or(serde_json::Value::Null),
+                actor,
                 payload: event.payload,
                 resulting_state_revision: event.resulting_state_revision,
                 created_at: event.created_at.to_rfc3339(),
             })
-            .collect(),
-    ))
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    Ok(Json(events))
 }
 
 async fn get_interaction_presentation(

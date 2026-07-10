@@ -430,11 +430,27 @@ impl agentdash_application::interaction::InteractionEffectDescriptorAdmissionPor
                 reason: "canonical OperationGateway 尚未装配".into(),
             }
         })?;
+        let origin = match self.principal.principal_ref() {
+            agentdash_domain::operation::OperationPrincipalRef::AgentRunAgent { .. } => {
+                agentdash_domain::operation::OperationOriginRef::AgentTool
+            }
+            agentdash_domain::operation::OperationPrincipalRef::User { .. } => {
+                agentdash_domain::operation::OperationOriginRef::UserWorkshop
+            }
+            agentdash_domain::operation::OperationPrincipalRef::WorkflowNode { .. } => {
+                agentdash_domain::operation::OperationOriginRef::Workflow
+            }
+            agentdash_domain::operation::OperationPrincipalRef::ExtensionInstallation {
+                installation_id,
+            } => agentdash_domain::operation::OperationOriginRef::ExtensionPanel {
+                installation_id: *installation_id,
+            },
+        };
         let surface = gateway
             .surface_current(
                 &self.principal,
                 &self.scope_ref,
-                &agentdash_domain::operation::OperationOriginRef::AgentTool,
+                &origin,
                 CancellationToken::new(),
             )
             .await

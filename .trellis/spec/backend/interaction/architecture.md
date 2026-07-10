@@ -171,3 +171,68 @@ OperationScript 不自动 replay；多步、可恢复、带 gate 的副作用进
 - Definition publish/copy/unpublish lineage、SourceBundle digest、VFS changeset 与 resource binding。
 - exact definition/artifact pin、artifact unavailable、explicit close/retention 与 renderer reload。
 - repository scan 确认旧 Canvas state authority 与 Session-bound Interaction authority 已清除。
+
+## Scenario: Exact Interaction Runtime And Promotion
+
+### 1. Scope / Trigger
+
+当 authoring SourceBundle 被固定为 Definition revision、创建运行 Instance、提交 command、订阅呈现状态，
+或把 revision 生成 Extension 时，使用本合同。
+
+### 2. Signatures
+
+```text
+create_revision(definition_id, source_bundle) -> immutable revision
+create_instance(definition_id, revision_id) -> instance
+submit_command(instance_id, command_id, payload, expected_state_revision) -> receipt
+list_events(instance_id, after_sequence) -> ordered events
+put_presentation(instance_id, expected_revision, state) -> presentation
+acquire_or_release_renderer_lease(instance_id, expected_revision, owner) -> lease
+promote_extension(definition_id, revision_id) -> standard Extension package
+```
+
+### 3. Contracts
+
+- Instance 固定 exact revision；command、schema、Component 与 promotion 均从该 revision 解析。
+- command receipt、event、state 与 effect intent 在同一事务提交。
+- presentation 与 renderer lease 是独立 CAS projection，不修改 canonical Interaction state。
+- Agent command 必须同时满足 descriptor visibility、current AgentFrame attachment 与
+  `can_submit_commands`。
+- dynamic provider 使用 `interaction/{definition_id}.{revision_id}` identity，并复用
+  `workspace_module_invoke` admission。
+- promotion 读取 immutable SourceBundle，生成标准 webview Extension package 和 exact provenance。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| revision/definition 不匹配 | `not_found` / `conflict` |
+| expected state revision 过期 | 返回 revision conflict |
+| command_id digest 冲突 | `conflict` |
+| Agent 缺少 attachment/capability | `forbidden` |
+| presentation/lease revision 过期 | 独立 CAS conflict |
+| SourceBundle digest 或 entry 无效 | promotion 拒绝 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：Agent 通过 exact Operation 提交 command，UI 用 cursor 读取 event 并刷新 canonical state。
+- Base：Human 提交普通 command 并持有单一 renderer lease。
+- Bad：从 iframe local state 反推 canonical state，或从 mutable Canvas workspace 直接打包。
+
+### 6. Tests Required
+
+- immutable revision、instance pin、command CAS/idempotency/actor policy。
+- event sequence、presentation state、renderer lease。
+- AgentFrame attachment 与 WorkspaceModule/Operation provider projection。
+- SourceBundle digest、exact revision promotion 与 Extension provenance。
+- PostgreSQL transaction、migration 与生成合同检查。
+
+### 7. Wrong vs Correct
+
+```text
+Boundary mismatch:
+mutable authoring state -> runtime/session snapshot -> packaged artifact
+
+Canonical:
+SourceBundle revision -> Interaction Instance / standard Extension package
+```

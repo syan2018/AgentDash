@@ -41,10 +41,10 @@
 - Extension authoring surface 使用单一 `packages/extension` 工作区包，原因是 App authoring、host SDK、webview bridge 与开发 CLI 必须共享同一套 manifest/projection 生成合同，避免作者在 sdk/ui/dev 三个入口之间拆心智。
 - WorkspacePanel 的插件 tab 由 `features/extension-runtime` 消费 Project scoped runtime projection 后注册，原因是插件 catalog 是 Project enabled installation 的全局视图，不应随单个 session 生命周期被创建或销毁。
 - Extension webview action 只提交 canonical OperationRef + input；宿主从 authenticated principal、Project installation/artifact、authorized workspace 与 backend readiness 解析 placement。AgentRun target 只在页面存在 attachment 时补充 origin/trace，不是 Extension panel 的运行前提。
-- `canvas_panel` 插件 tab 固定 exact definition revision/source bundle 与 package artifact digest，并复用隔离 renderer；Project extension installation 仍是 WorkspacePanel tab catalog 的事实源，runtime state 则只来自绑定的 InteractionInstance。
+- Canvas 生成的插件 tab 使用标准 `webview` renderer，并固定 exact definition revision、SourceBundle digest 与 package artifact digest；Project extension installation 是 WorkspacePanel tab catalog 的事实源，runtime state 只来自绑定的 InteractionInstance。
 - `@agentdash/extension/browser` 的 webview bridge 只让 panel 传递 versioned method/Operation identity 与 JSON params；principal、Project、backend placement、consumer extension、authorization scope 和 trace 由宿主解析，原因是 panel 运行在 iframe 中，不应成为 runtime authority。
-- Extension panel 的 bridge request surface 包含 `metadata.get_context`、`workspace.open_tab`、`runtime.invoke_action`、`extension.invoke_protocol`、`vfs.read` 和 `vfs.write`；`events` 是 panel-local event bus，原因是 workspace-level 或 extension-runtime-level event 需要后端路由和订阅模型，不能混入本地 helper。
-- Canvas runtime 如需消费 extension protocol，通过父页面注入的 `extensionProtocolBridge` 进入同一 Project extension protocol invocation service，原因是 Canvas 与 webview panel 都应依赖 Project runtime projection 和 Gateway admission，而不是在 iframe 里硬编码 provider extension key。
+- Extension panel 的 bridge request surface 包含 `metadata.get_context`、`workspace.open_tab`、canonical Operation invoke、`vfs.read` 和 `vfs.write`；`events` 是 panel-local event bus，原因是 workspace-level 或 extension-runtime-level event 需要后端路由和订阅模型，不能混入本地 helper。
+- Canvas runtime 如需消费 Extension protocol，通过父页面解析声明依赖为 exact OperationRef，并进入同一 Project Operation admission，原因是 Canvas 与 webview panel 应共享 provider identity 与权限裁决。
 - Assets Extension 类目消费 Project extension management API，原因是安装、来源状态、package mode 与卸载/下载动作的事实源是 `ProjectExtensionInstallation`，runtime projection 只服务 WorkspacePanel 与 Gateway admission。
 - Marketplace Extension 卡片和详情抽屉使用 `LibraryAssetDto.extension_package_artifact` 判断 packaged template 可安装性，原因是浏览、安装与发布后的 package 可用状态需要共享同一 Shared Library 合同。
 - WorkspacePanel 是 extension/canvas tab 的 composition root；extension-runtime 与 canvas-panel 不反向依赖 workspace-panel，原因是插件 tab 注册、Canvas 预览和 workspace runtime context 需要保持单向装配关系。

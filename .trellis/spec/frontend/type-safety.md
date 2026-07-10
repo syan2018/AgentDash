@@ -47,27 +47,16 @@ Session timeline 消费 `generated/backbone-protocol.ts` 中的 `UserInputSubmit
 手写另一套 wire DTO 或从 system event 文本反推来源，原因是模型投递通道与 UI 展示差分需要共享
 同一份 Backbone 事实。
 
-Canvas 资产 UI 消费 `generated/canvas-contracts.ts` 中的 `CanvasResponse`、`CanvasScopeDto`、`CanvasAccessDto`、`CanvasListScopeDto`、`PublishCanvasToProjectRequest`、`CopyCanvasToPersonalRequest` 和 `UnpublishCanvasResponse`。`services/canvas.ts` 只封装 endpoint 和 query/body 传递；Mine/Shared 分组、按钮可见性和 editor 只读状态全部读取 `canvas.scope` 与 `canvas.access`。
-
-Canvas access-driven UI contract:
-
-| `CanvasResponse.access` field | Frontend behavior |
-| --- | --- |
-| `can_edit_source` | 显示源文件/绑定保存入口，允许 `updateCanvas` |
-| `can_publish` | 显示“发布到项目共用”；“发布为插件”仍是独立 action |
-| `can_copy` | Shared 视图显示“复制为我的 Canvas” |
-| `can_manage_shared` | Shared 视图显示取消发布/删除共用源 |
-| `runtime_write_allowed=false` | runtime preview 保持可用，source editor 以只读状态展示或禁用 |
-
-Validation:
-
-- `handleBindingsSave`、source file save 等 mutation handler 在调用 `updateCanvas` 前检查 `canvas.access.can_edit_source`，原因是 UI disabled state 不是权限边界。
-- 复制 shared Canvas 成功后，UI 刷新列表、切到 Mine 并选中新 personal Canvas；后续编辑只作用于 clone。
-- 前端不从 `owner_user_id`、Project role 或当前用户缓存推导编辑权限；这些事实已经由后端合并为 `access`。
+Canvas/Interaction UI 消费 `generated/interaction-contracts.ts` 中的 Definition、Revision、Instance、
+Command、Event、PresentationState 与 RendererLease DTO。`services/interactions.ts` 只封装 endpoint 与生成
+DTO；state revision、event sequence、command actor policy 和 lease revision 均直接读取后端 projection，
+原因是 authoring local state 与 runtime canonical state 有不同生命周期。
 
 Project extension runtime surface 消费 `generated/extension-runtime-contracts.ts`，`services/extensionRuntime.ts` 只保留 endpoint 调用与 webview asset URL 拼装。`features/extension-runtime` 以 Project ID 为 key 缓存 runtime projection，并向 WorkspacePanel 输出 tab descriptor 与 webview bridge；installation 的 `installed_source` 与 `package_artifact` 是显式可空字段，用来区分 Shared Library 安装来源与 packaged artifact 安装来源；前端不从 Shared Library payload 或 Session Context 推断 extension runtime 声明。
 
-Extension webview bridge 的 `runtime.invoke_action` 与 `extension.invoke_protocol` 校验 Project、AgentRun target、backend 与 action/protocol key，并把 generated request DTO 交给 AgentRun scoped extension runtime service。后端从 AgentRun current delivery 推导内部 runtime context，原因是具体 action/protocol 是否在当前 actor/context 下可执行由 Gateway catalog / invoke 同源裁决，而产品执行身份属于 AgentRun workspace。Project extension runtime projection 的 `runtime_actions` 服务资产展示，不作为前端执行可用性 gate。
+Extension webview bridge 把声明内 action/protocol/backend intent 解析为 exact OperationRef，并把 generated
+request DTO 交给 Project-scoped OperationWorkshop service。后端从可信产品上下文推导 principal、scope、
+placement 与 trace，具体 Operation 是否可执行由 catalog/invoke 同源裁决；runtime projection 只服务资产展示。
 
 新增或修改跨层 DTO 时同步运行：
 

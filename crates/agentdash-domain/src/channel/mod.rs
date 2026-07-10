@@ -565,21 +565,12 @@ impl Default for ChannelBroadcastPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelDeliveryPolicy {
     #[serde(default)]
     pub require_ack: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dedup_key: Option<String>,
-}
-
-impl Default for ChannelDeliveryPolicy {
-    fn default() -> Self {
-        Self {
-            require_ack: false,
-            dedup_key: None,
-        }
-    }
 }
 
 impl ChannelDeliveryPolicy {

@@ -181,9 +181,6 @@ pub enum ChannelBindingResolution {
         binding: ChannelBinding,
     },
     Unresolved,
-    Unsupported {
-        provider: String,
-    },
 }
 
 #[async_trait]
@@ -194,21 +191,6 @@ pub trait ChannelBindingResolver: Send + Sync {
     ) -> Result<ChannelBindingResolution, ApplicationError>;
 }
 
-pub struct UnsupportedChannelBindingResolver;
-
-#[async_trait]
-impl ChannelBindingResolver for UnsupportedChannelBindingResolver {
-    async fn resolve_binding(
-        &self,
-        key: &ProviderEventKey,
-    ) -> Result<ChannelBindingResolution, ApplicationError> {
-        key.validate()?;
-        Ok(ChannelBindingResolution::Unsupported {
-            provider: key.provider.clone(),
-        })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChannelIngressOutcome {
     Resolved {
@@ -216,9 +198,6 @@ pub enum ChannelIngressOutcome {
         message: ChannelMessage,
     },
     Unresolved,
-    Unsupported {
-        provider: String,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,24 +215,29 @@ pub struct ChannelExternalDeliveryResult {
 
 pub struct ChannelService {
     owner_store: Arc<dyn ChannelOwnerStore>,
-    binding_resolver: Arc<dyn ChannelBindingResolver>,
+    binding_resolver: Option<Arc<dyn ChannelBindingResolver>>,
     provider_registry: Option<Arc<ChannelBindingProviderRegistry>>,
     binding_index: Option<Arc<dyn ChannelBindingIndex>>,
     binding_mutation_lock: tokio::sync::Mutex<()>,
 }
 
 impl ChannelService {
-    pub fn new(
-        owner_store: Arc<dyn ChannelOwnerStore>,
-        binding_resolver: Arc<dyn ChannelBindingResolver>,
-    ) -> Self {
+    pub fn new(owner_store: Arc<dyn ChannelOwnerStore>) -> Self {
         Self {
             owner_store,
-            binding_resolver,
+            binding_resolver: None,
             provider_registry: None,
             binding_index: None,
             binding_mutation_lock: tokio::sync::Mutex::new(()),
         }
+    }
+
+    pub fn with_binding_resolver(
+        mut self,
+        binding_resolver: Arc<dyn ChannelBindingResolver>,
+    ) -> Self {
+        self.binding_resolver = Some(binding_resolver);
+        self
     }
 
     pub fn with_provider_registry(
@@ -480,7 +464,10 @@ impl ChannelService {
     ) -> Result<ChannelIngressOutcome, ApplicationError> {
         envelope.key.validate()?;
         envelope.sender.validate().map_err(ApplicationError::from)?;
-        match self.binding_resolver.resolve_binding(&envelope.key).await? {
+        let binding_resolver = self.binding_resolver.as_ref().ok_or_else(|| {
+            ApplicationError::Unavailable("channel binding resolver is not configured".to_string())
+        })?;
+        match binding_resolver.resolve_binding(&envelope.key).await? {
             ChannelBindingResolution::Resolved {
                 owner,
                 channel_id,
@@ -532,9 +519,6 @@ impl ChannelService {
                 Ok(ChannelIngressOutcome::Resolved { owner, message })
             }
             ChannelBindingResolution::Unresolved => Ok(ChannelIngressOutcome::Unresolved),
-            ChannelBindingResolution::Unsupported { provider } => {
-                Ok(ChannelIngressOutcome::Unsupported { provider })
-            }
         }
     }
 
@@ -1071,12 +1055,10 @@ mod tests {
     #[tokio::test]
     async fn unresolved_binding_does_not_require_owner_scan() {
         let repo = Arc::new(MemoryLifecycleRunRepository::default());
-        let service = ChannelService::new(
-            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
-            Arc::new(StaticBindingResolver {
+        let service = ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(repo)))
+            .with_binding_resolver(Arc::new(StaticBindingResolver {
                 resolution: ChannelBindingResolution::Unresolved,
-            }),
-        );
+            }));
 
         let outcome = service
             .ingest_external_event(provider_envelope("slack"))
@@ -1086,23 +1068,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_binding_is_explicit() {
+    async fn missing_binding_runtime_is_explicitly_unavailable() {
         let repo = Arc::new(MemoryLifecycleRunRepository::default());
-        let service = ChannelService::new(
-            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
-            Arc::new(UnsupportedChannelBindingResolver),
-        );
+        let service = ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(repo)));
 
-        let outcome = service
+        let error = service
             .ingest_external_event(provider_envelope("feishu"))
             .await
-            .expect("ingest");
-        assert_eq!(
-            outcome,
-            ChannelIngressOutcome::Unsupported {
-                provider: "feishu".to_string()
-            }
-        );
+            .expect_err("binding runtime must be configured");
+        assert!(matches!(error, ApplicationError::Unavailable(_)));
     }
 
     #[tokio::test]
@@ -1363,12 +1337,10 @@ mod tests {
             ])
             .expect("provider registry"),
         );
-        let service = ChannelService::new(
-            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
-            Arc::new(IndexedChannelBindingResolver::new(index.clone())),
-        )
-        .with_provider_registry(provider_registry)
-        .with_binding_index(index.clone());
+        let service = ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(repo)))
+            .with_binding_resolver(Arc::new(IndexedChannelBindingResolver::new(index.clone())))
+            .with_provider_registry(provider_registry)
+            .with_binding_index(index.clone());
         let record = service
             .create_if_absent(locator(owner.clone(), "im:test:room-1"), vec![])
             .await
@@ -1527,11 +1499,12 @@ mod tests {
             .expect("create run");
         let owner = ChannelOwner::LifecycleRun { run_id: run.id };
         let first_index = Arc::new(InMemoryChannelBindingIndex::default());
-        let first_service = ChannelService::new(
-            Arc::new(LifecycleRunChannelOwnerStore::new(repo.clone())),
-            Arc::new(IndexedChannelBindingResolver::new(first_index.clone())),
-        )
-        .with_binding_index(first_index);
+        let first_service =
+            ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(repo.clone())))
+                .with_binding_resolver(Arc::new(IndexedChannelBindingResolver::new(
+                    first_index.clone(),
+                )))
+                .with_binding_index(first_index);
         let record = first_service
             .create_if_absent(locator(owner.clone(), "im:test:restart"), vec![])
             .await
@@ -1553,11 +1526,10 @@ mod tests {
         let restarted_index = Arc::new(InMemoryChannelBindingIndex::default());
         let restarted_resolver =
             Arc::new(IndexedChannelBindingResolver::new(restarted_index.clone()));
-        let restarted_service = ChannelService::new(
-            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
-            restarted_resolver.clone(),
-        )
-        .with_binding_index(restarted_index);
+        let restarted_service =
+            ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(repo)))
+                .with_binding_resolver(restarted_resolver.clone())
+                .with_binding_index(restarted_index);
         restarted_service
             .rebuild_binding_index()
             .await
@@ -1599,11 +1571,9 @@ mod tests {
                 .expect("create run");
         }
         let index = Arc::new(InMemoryChannelBindingIndex::default());
-        let service = ChannelService::new(
-            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
-            Arc::new(IndexedChannelBindingResolver::new(index.clone())),
-        )
-        .with_binding_index(index);
+        let service = ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(repo)))
+            .with_binding_resolver(Arc::new(IndexedChannelBindingResolver::new(index.clone())))
+            .with_binding_index(index);
         let first_owner = ChannelOwner::LifecycleRun {
             run_id: first_run.id,
         };
@@ -1651,8 +1621,9 @@ mod tests {
         let owner_store = Arc::new(FailingChannelOwnerStore::new(repo));
         let index = Arc::new(InMemoryChannelBindingIndex::default());
         let resolver = Arc::new(IndexedChannelBindingResolver::new(index.clone()));
-        let service =
-            ChannelService::new(owner_store.clone(), resolver.clone()).with_binding_index(index);
+        let service = ChannelService::new(owner_store.clone())
+            .with_binding_resolver(resolver.clone())
+            .with_binding_index(index);
         let record = service
             .create_if_absent(locator(owner.clone(), "im:test:persist-failure"), vec![])
             .await
@@ -1709,10 +1680,7 @@ mod tests {
 
     #[test]
     fn mailbox_materializer_outputs_message_command_without_queue_state() {
-        let service = ChannelService::new(
-            Arc::new(UnsupportedOwnerStore),
-            Arc::new(UnsupportedChannelBindingResolver),
-        );
+        let service = ChannelService::new(Arc::new(UnsupportedOwnerStore));
         let channel_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
@@ -1752,10 +1720,7 @@ mod tests {
 
     #[test]
     fn gate_materializer_returns_refs_without_gate_payload() {
-        let service = ChannelService::new(
-            Arc::new(UnsupportedOwnerStore),
-            Arc::new(UnsupportedChannelBindingResolver),
-        );
+        let service = ChannelService::new(Arc::new(UnsupportedOwnerStore));
         let gate_id = Uuid::new_v4();
         let mut message = ChannelMessage::new(
             Uuid::new_v4(),
@@ -1781,10 +1746,7 @@ mod tests {
     }
 
     fn test_service(repo: Arc<MemoryLifecycleRunRepository>) -> ChannelService {
-        ChannelService::new(
-            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
-            Arc::new(UnsupportedChannelBindingResolver),
-        )
+        ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(repo)))
     }
 
     fn locator(owner: ChannelOwner, key: &str) -> ChannelLocator {

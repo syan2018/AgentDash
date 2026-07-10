@@ -448,14 +448,12 @@ impl AppState {
         );
         let channel_binding_index = Arc::new(InMemoryChannelBindingIndex::default());
         let channel_service = Arc::new(
-            ChannelService::new(
-                Arc::new(LifecycleRunChannelOwnerStore::new(
-                    repos.lifecycle_run_repo.clone(),
-                )),
-                Arc::new(IndexedChannelBindingResolver::new(
-                    channel_binding_index.clone(),
-                )),
-            )
+            ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(
+                repos.lifecycle_run_repo.clone(),
+            )))
+            .with_binding_resolver(Arc::new(IndexedChannelBindingResolver::new(
+                channel_binding_index.clone(),
+            )))
             .with_provider_registry(channel_binding_provider_registry.clone())
             .with_binding_index(channel_binding_index.clone()),
         );

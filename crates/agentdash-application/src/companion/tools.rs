@@ -65,9 +65,7 @@ use crate::agent_run::{
     SessionControlService, SessionCoreService, SessionEventingService, SessionExecutionState,
     SessionLaunchService, mailbox_source_identity_dedup_key,
 };
-use crate::channel::{
-    ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
-};
+use crate::channel::{ChannelService, LifecycleRunChannelOwnerStore};
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_session_agent_run_bridge::{
     agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
@@ -261,12 +259,9 @@ fn companion_wake_source(
 }
 
 fn companion_channel_service(repos: &crate::repository_set::RepositorySet) -> ChannelService {
-    ChannelService::new(
-        Arc::new(LifecycleRunChannelOwnerStore::new(
-            repos.lifecycle_run_repo.clone(),
-        )),
-        Arc::new(UnsupportedChannelBindingResolver),
-    )
+    ChannelService::new(Arc::new(LifecycleRunChannelOwnerStore::new(
+        repos.lifecycle_run_repo.clone(),
+    )))
 }
 
 async fn ensure_companion_agent_channel(
@@ -450,6 +445,7 @@ fn bounded_json_preview(payload: &serde_json::Value, max_chars: usize) -> String
     preview
 }
 
+#[cfg(test)]
 fn merge_gate_result_refs(
     mut base_refs: serde_json::Value,
     gate_payload: &serde_json::Value,

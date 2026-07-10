@@ -4,7 +4,7 @@
 
 评估并收敛项目内两套 `Channel` 语言：Extension / Workspace Module 所消费的版本化 protocol 调用面，以及全局通信领域 `Channel`。形成可执行的重构建议，使“稳定调用契约”与“稳定通信空间”各自拥有清晰的身份、生命周期、权限和运行边界，并为后续 Workspace Module 通用交互系统提供无歧义的基础词汇。
 
-本任务在 planning 阶段完成现状审计、目标模型和实施工作项；用户完成最终评审并执行 `task.py start` 后，在同一个父任务内推进完整代码改造，并由 `work-items/` 统一跟踪依赖、状态、写入范围和验收证据。
+本任务已完成目标模型评审并进入正式实施；完整代码改造在同一个父任务内推进，由 `work-items/` 统一跟踪依赖、状态、写入范围和验收证据。
 
 ## Background
 
@@ -36,12 +36,12 @@
 - [ ] 全局 Channel 的稳定身份、生命周期和 transport 维度形成正交目标模型。
 - [ ] Extension provider API 与全局 Channel adapter 的关系可被具体数据流验证。
 - [ ] 重构计划覆盖 Rust、TS SDK、manifest/contracts、relay、Workspace Module、前端文案、文档与数据库 migration。
-- [ ] 规划产物经过用户评审后才允许进入实现。
+- [x] 规划产物经过用户评审并已进入实现。
 - [ ] 既有 owner-local persistence 决策与当前规范完成对账；任何推翻都明确记录新证据、被替代规范和 migration 影响。
 - [ ] `work-items/README.md` 能追踪全部实施项，并且每个工作项都有依赖、退出条件和验证方式。
 
 ## Out of Scope
 
-- 本任务不修改生产代码、数据库或生成契约。
-- 本任务不实现企业 IM provider。
-- 本任务不以历史兼容为约束保留重复概念。
+- 本任务不实现具体企业 IM provider。
+- Project Channel 的资产物理模型由 Project Assets 设计承接。
+- 完整 Channel message event log 与跨 owner 长期审计存储在出现真实查询和保留需求后单独设计。

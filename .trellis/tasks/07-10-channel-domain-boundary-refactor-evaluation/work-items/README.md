@@ -14,7 +14,7 @@ Parent task: `.trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation`
 
 | ID | File | Status | Depends On | Last Evidence |
 | --- | --- | --- | --- | --- |
-| WI-00 | `WI-00-decision-residual-reconciliation.md` | planned | 无 | 07-07 task/spec/current code 已对账 |
+| WI-00 | `WI-00-decision-residual-reconciliation.md` | done | 无 | residual matrix 与 owner evidence gate 已闭合 |
 | WI-01 | `WI-01-extension-protocol-rename.md` | planned | WI-00、canonical Operation contract | 36 files 使用 protocol_channels，10 files 使用 invoke_channel |
 | WI-02 | `WI-02-channel-domain-admission.md` | planned | WI-00 | 当前 broadcast 缺少完整 service admission |
 | WI-03 | `WI-03-owner-persistence-migration.md` | planned | WI-02 | owner-local persistence 已确认 |

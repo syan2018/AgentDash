@@ -19,6 +19,7 @@
 | [Diagnostics Guidelines](./diagnostics-guidelines.md) | 平台过程诊断 `diag!` facade、Subsystem、落地与查询 |
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别 / 字段 / 脱敏通用约定 |
 | [Runtime Gateway](./runtime-gateway.md) | runtime action 调用边界 |
+| [Channel Architecture](./channel.md) | 通信空间、owner-local registry、admission 与 binding provider 契约 |
 | [Embedded Skill Bundles](./embedded-skill-bundles.md) | 源码内嵌 skill bundle 契约 |
 
 ## 模块 Architecture

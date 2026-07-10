@@ -1,6 +1,6 @@
 # Implement · Channel 术语与领域边界收敛
 
-当前父任务仍处于 planning。用户完成最终评审并执行 `task.py start` 后，在本任务内完成全量改名、领域收敛、migration 和残留清理，并由父任务 `work-items/` 统一追踪。
+当前父任务已进入 implementation。在本任务内完成全量改名、领域收敛、migration 和残留清理，并由父任务 `work-items/` 统一追踪。
 
 ## 1. 工作项追踪
 
@@ -81,4 +81,4 @@
 - Channel 一词只属于通信领域；Extension authoring 使用 ExtensionProtocol，调用投影使用 Operation。
 - owner-local persistence 基线与当前规范一致，任何独立 aggregate 升级都有真实不变量和用户确认。
 - Workspace 双工交互只通过 refs/attention 与 Channel 连接，不把 command/event 并入 Channel。
-- `work-items/` 完整、JSONL context 有效、PRD/design/implement convergence 完成并经用户批准后，才允许 `task.py start`。
+- `work-items/` 完整、JSONL context 有效，PRD/design/implement 已完成 convergence 并获用户批准。

@@ -300,6 +300,29 @@ mod tests {
     }
 
     #[test]
+    fn digest_vector_matches_typescript_authoring_client() {
+        let bundle = SourceBundle::new(
+            "src/main.html",
+            vec![
+                SourceFile::new("src/z.js", "z", Some("text/javascript".into())).expect("z"),
+                SourceFile::new("src/main.html", "main", Some("text/html".into())).expect("main"),
+            ],
+            SourceSandboxConfig {
+                libraries: vec!["z".into(), "a".into(), "a".into()],
+                import_map: BTreeMap::from([
+                    ("z".into(), "/z.js".into()),
+                    ("a".into(), "/a.js".into()),
+                ]),
+            },
+        )
+        .expect("bundle");
+        assert_eq!(
+            bundle.digest,
+            "sha256:de61b4bc616be537a03401a067a32f90afa8840010d97c1354f71ef16d054b74"
+        );
+    }
+
+    #[test]
     fn bundle_rejects_paths_that_escape_the_source_root() {
         let error =
             SourceFile::new("../secret.txt", "secret", None).expect_err("escaping path must fail");

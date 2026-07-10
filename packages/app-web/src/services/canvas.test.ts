@@ -27,7 +27,7 @@ describe("Interaction Canvas source bundle", () => {
     });
     expect(first.files.map((file) => file.path)).toEqual(["src/main.html", "src/z.js"]);
     expect(first.digest).toBe(second.digest);
-    expect(first.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(first.digest).toBe("sha256:de61b4bc616be537a03401a067a32f90afa8840010d97c1354f71ef16d054b74");
   });
 
   it("默认 Canvas 从可直接预览的 immutable source bundle 开始", async () => {

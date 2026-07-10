@@ -3,7 +3,7 @@
   "name": "workspace-module-duplex-interaction-system",
   "title": "Workspace Module 通用双工交互系统",
   "description": "冻结 Canvas/Interaction V1：通过父任务 work-items 落实 async Rhai OperationScript、versioned InteractionInstance、Extension component ABI、SourceBundle/distribution/resource binding，以及 RuntimeGateway/Workspace projection 的完整收敛。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "cross-layer architecture research",
   "package": null,

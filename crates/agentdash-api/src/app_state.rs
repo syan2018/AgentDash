@@ -9,6 +9,10 @@ use crate::integrations::{builtin_integrations, collect_integration_registration
 use crate::project_projection_notification::ProjectProjectionNotificationPublisher;
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::auth::session_service::AuthSessionService;
+use agentdash_application::channel::provider::{
+    ChannelBindingProviderRegistry, InMemoryChannelBindingIndex, IndexedChannelBindingResolver,
+};
+use agentdash_application::channel::{ChannelService, LifecycleRunChannelOwnerStore};
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
@@ -103,6 +107,12 @@ pub struct ServiceSet {
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
     /// Host Integration 动态 memory discovery providers — 启动期统一聚合，供 frame construction 消费。
     pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
+    /// Host Integration 贡献的通信 provider registry；provider key 在启动期完成冲突校验。
+    pub channel_binding_provider_registry: Arc<ChannelBindingProviderRegistry>,
+    /// 可从 owner documents 重建的 external binding exact-key reverse index。
+    pub channel_binding_index: Arc<InMemoryChannelBindingIndex>,
+    /// 通信领域统一入口；provider ingress/outbound 均重新执行 registry admission。
+    pub channel_service: Arc<ChannelService>,
     /// Host Integration Marketplace Source providers — 后续 external marketplace API 统一从这里读取来源。
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
@@ -432,6 +442,22 @@ impl AppState {
         let vfs_registry = crate::bootstrap::vfs::build_vfs_discovery_registry(
             integration_registration.vfs_providers,
         );
+        let channel_binding_provider_registry = Arc::new(
+            ChannelBindingProviderRegistry::new(integration_registration.channel_binding_providers)
+                .map_err(|error| anyhow::anyhow!("Channel Binding Provider 注册失败: {error}"))?,
+        );
+        let channel_binding_index = Arc::new(InMemoryChannelBindingIndex::default());
+        let channel_service = Arc::new(
+            ChannelService::new(
+                Arc::new(LifecycleRunChannelOwnerStore::new(
+                    repos.lifecycle_run_repo.clone(),
+                )),
+                Arc::new(IndexedChannelBindingResolver::new(
+                    channel_binding_index.clone(),
+                )),
+            )
+            .with_provider_registry(channel_binding_provider_registry.clone()),
+        );
 
         let terminal_cancel_coordinator = Arc::new(
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
@@ -477,6 +503,9 @@ impl AppState {
                 extra_skill_dirs,
                 skill_discovery_providers,
                 memory_discovery_providers,
+                channel_binding_provider_registry,
+                channel_binding_index,
+                channel_service,
                 marketplace_source_providers: integration_registration.marketplace_source_providers,
                 backend_registry,
                 backend_runtime_events,

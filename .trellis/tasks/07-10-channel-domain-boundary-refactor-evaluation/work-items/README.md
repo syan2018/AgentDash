@@ -18,7 +18,7 @@ Parent task: `.trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation`
 | WI-01 | `WI-01-extension-protocol-rename.md` | done | WI-00、canonical Operation contract | 全链原子改名、qualified identity 与 contract version checks 通过 |
 | WI-02 | `WI-02-channel-domain-admission.md` | ready_for_integration | WI-00 | V2 identity、canonical participant、service admission 与 registry-derived capability projection targeted checks 通过 |
 | WI-03 | `WI-03-owner-persistence-migration.md` | ready_for_integration | WI-02 | V2 destructive reset、typed row-lock mutation 与并发 create-if-absent repository contract 已落地 |
-| WI-04 | `WI-04-binding-provider-delivery.md` | planned | WI-02、WI-03 | production resolver 仍为 unsupported |
+| WI-04 | `WI-04-binding-provider-delivery.md` | ready_for_integration | WI-02、WI-03 | SPI、provider registry、exact reverse index、production composition 与 ingress/outbound integration checks 已闭合 |
 | WI-05 | `WI-05-integration-spec-verification.md` | planned | WI-01 至 WI-04 | 父任务最终全量 gate |
 
 ## Decision Ledger

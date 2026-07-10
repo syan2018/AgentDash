@@ -11,6 +11,7 @@ use agentdash_integration_api::{
 };
 use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
+use agentdash_spi::channel_binding::ChannelBindingProvider;
 use agentdash_spi::platform::mount::MountProvider;
 use thiserror::Error;
 
@@ -31,6 +32,7 @@ pub(crate) struct HostIntegrationRegistration {
     pub marketplace_source_providers: Vec<Arc<dyn MarketplaceSourceProvider>>,
     pub skill_discovery_providers: Vec<Arc<dyn SkillDiscoveryProvider>>,
     pub memory_discovery_providers: Vec<Arc<dyn MemoryDiscoveryProvider>>,
+    pub channel_binding_providers: Vec<Arc<dyn ChannelBindingProvider>>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
 }
@@ -93,6 +95,16 @@ pub(crate) enum IntegrationRegistrationError {
     #[error("Host Integration `{integration_name}` 的 Memory Discovery Provider key 不能为空")]
     InvalidMemoryDiscoveryProviderKey { integration_name: String },
     #[error(
+        "Channel Binding Provider `{provider_key}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一 provider"
+    )]
+    DuplicateChannelBindingProviderKey {
+        provider_key: String,
+        first_owner: String,
+        second_owner: String,
+    },
+    #[error("Host Integration `{integration_name}` 的 Channel Binding Provider key 非法")]
+    InvalidChannelBindingProviderKey { integration_name: String },
+    #[error(
         "Host Integration `{integration_name}` 的 Marketplace Source descriptor 非法: {message}"
     )]
     InvalidMarketplaceSourceDescriptor {
@@ -118,6 +130,8 @@ pub(crate) fn collect_integration_registration(
     let mut skill_provider_owners: HashMap<String, String> = HashMap::new();
     let mut memory_discovery_providers = Vec::new();
     let mut memory_provider_owners: HashMap<String, String> = HashMap::new();
+    let mut channel_binding_providers = Vec::new();
+    let mut channel_binding_provider_owners: HashMap<String, String> = HashMap::new();
     let mut extra_skill_dirs = Vec::new();
     let mut library_asset_seeds = Vec::new();
 
@@ -229,6 +243,39 @@ pub(crate) fn collect_integration_registration(
             memory_discovery_providers.push(provider);
         }
 
+        let binding_providers = integration.channel_binding_providers();
+        if !binding_providers.is_empty() {
+            diag!(
+                Info,
+                Subsystem::Api,
+                "  Host Integration `{}` 注册了 {} 个 ChannelBindingProvider",
+                integration_name,
+                binding_providers.len()
+            );
+        }
+        for provider in binding_providers {
+            let provider_key = provider.provider_key();
+            if provider_key.is_empty() || provider_key.trim() != provider_key {
+                return Err(
+                    IntegrationRegistrationError::InvalidChannelBindingProviderKey {
+                        integration_name: integration_name.clone(),
+                    },
+                );
+            }
+            if let Some(first_owner) = channel_binding_provider_owners
+                .insert(provider_key.to_string(), integration_name.clone())
+            {
+                return Err(
+                    IntegrationRegistrationError::DuplicateChannelBindingProviderKey {
+                        provider_key: provider_key.to_string(),
+                        first_owner,
+                        second_owner: integration_name.clone(),
+                    },
+                );
+            }
+            channel_binding_providers.push(provider);
+        }
+
         let seeds = integration.library_asset_seeds();
         if !seeds.is_empty() {
             diag!(
@@ -323,6 +370,7 @@ pub(crate) fn collect_integration_registration(
         marketplace_source_providers,
         skill_discovery_providers,
         memory_discovery_providers,
+        channel_binding_providers,
         extra_skill_dirs,
         library_asset_seeds,
     })
@@ -413,6 +461,10 @@ mod tests {
         MemoryDiscoveryOutput, MemoryDiscoveryProvider, SkillDiscoveryContext,
         SkillDiscoveryOutput, SkillDiscoveryProvider,
     };
+    use agentdash_spi::channel_binding::{
+        ChannelBindingError, ChannelBindingProvider, ChannelOutboundRequest,
+        ChannelProviderInboundEvent, ChannelProviderReceipt, NormalizedChannelIngress,
+    };
     use agentdash_spi::{
         AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
         ExecutionContext, ExecutionStream, PromptPayload,
@@ -443,6 +495,11 @@ mod tests {
     }
 
     struct MemoryProviderIntegration {
+        name: &'static str,
+        provider_key: &'static str,
+    }
+
+    struct ChannelBindingProviderIntegration {
         name: &'static str,
         provider_key: &'static str,
     }
@@ -521,11 +578,27 @@ mod tests {
         }
     }
 
+    impl AgentDashIntegration for ChannelBindingProviderIntegration {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn channel_binding_providers(&self) -> Vec<Arc<dyn ChannelBindingProvider>> {
+            vec![Arc::new(TestChannelBindingProvider {
+                provider_key: self.provider_key,
+            })]
+        }
+    }
+
     struct TestSkillDiscoveryProvider {
         provider_key: &'static str,
     }
 
     struct TestMemoryDiscoveryProvider {
+        provider_key: &'static str,
+    }
+
+    struct TestChannelBindingProvider {
         provider_key: &'static str,
     }
 
@@ -554,6 +627,31 @@ mod tests {
             _context: MemoryDiscoveryContext,
         ) -> Result<MemoryDiscoveryOutput, agentdash_spi::MemoryDiscoveryError> {
             Ok(MemoryDiscoveryOutput::default())
+        }
+    }
+
+    #[async_trait]
+    impl ChannelBindingProvider for TestChannelBindingProvider {
+        fn provider_key(&self) -> &str {
+            self.provider_key
+        }
+
+        async fn normalize_inbound(
+            &self,
+            _event: ChannelProviderInboundEvent,
+        ) -> Result<NormalizedChannelIngress, ChannelBindingError> {
+            Err(ChannelBindingError::Failed(
+                "registration-only test provider".to_string(),
+            ))
+        }
+
+        async fn publish(
+            &self,
+            _request: ChannelOutboundRequest,
+        ) -> Result<ChannelProviderReceipt, ChannelBindingError> {
+            Err(ChannelBindingError::Failed(
+                "registration-only test provider".to_string(),
+            ))
         }
     }
 
@@ -864,6 +962,68 @@ mod tests {
             registration.memory_discovery_providers[0].provider_key(),
             "memory.a"
         );
+    }
+
+    #[test]
+    fn collects_channel_binding_provider() {
+        let registration =
+            collect_integration_registration(vec![Box::new(ChannelBindingProviderIntegration {
+                name: "channel-a",
+                provider_key: "corp.im",
+            })])
+            .expect("collect");
+
+        assert_eq!(registration.channel_binding_providers.len(), 1);
+        assert_eq!(
+            registration.channel_binding_providers[0].provider_key(),
+            "corp.im"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_channel_binding_provider_key() {
+        let err = match collect_integration_registration(vec![
+            Box::new(ChannelBindingProviderIntegration {
+                name: "channel-a",
+                provider_key: "corp.im",
+            }),
+            Box::new(ChannelBindingProviderIntegration {
+                name: "channel-b",
+                provider_key: "corp.im",
+            }),
+        ]) {
+            Ok(_) => panic!("重复 channel binding provider key 应失败"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::DuplicateChannelBindingProviderKey {
+                provider_key,
+                first_owner,
+                second_owner,
+            } if provider_key == "corp.im"
+                && first_owner == "channel-a"
+                && second_owner == "channel-b"
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_channel_binding_provider_key() {
+        let err = match collect_integration_registration(vec![Box::new(
+            ChannelBindingProviderIntegration {
+                name: "channel-a",
+                provider_key: " corp.im ",
+            },
+        )]) {
+            Ok(_) => panic!("非法 channel binding provider key 应失败"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err,
+            IntegrationRegistrationError::InvalidChannelBindingProviderKey { .. }
+        ));
     }
 
     #[test]

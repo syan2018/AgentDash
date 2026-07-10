@@ -27,6 +27,7 @@ pub mod integration;
 // 复用已有 trait，不重新定义
 pub use agentdash_domain::context_source::ContextSourceKind;
 pub use agentdash_spi::AgentConnector;
+pub use agentdash_spi::channel_binding::ChannelBindingProvider;
 pub use agentdash_spi::platform::marketplace_source;
 pub use agentdash_spi::platform::memory_discovery;
 pub use agentdash_spi::{

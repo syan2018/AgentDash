@@ -7,6 +7,7 @@ use agentdash_spi::MarketplaceSourceProvider;
 use agentdash_spi::MemoryDiscoveryProvider;
 use agentdash_spi::RoutineTriggerProvider;
 use agentdash_spi::SkillDiscoveryProvider;
+use agentdash_spi::channel_binding::ChannelBindingProvider;
 use agentdash_spi::platform::mount::MountProvider;
 use agentdash_spi::{SourceResolver, VfsDiscoveryProvider};
 
@@ -112,6 +113,14 @@ pub trait AgentDashIntegration: Send + Sync {
     ///
     /// 宿主会在运行时启动阶段完成 `provider_key` 冲突检测。
     fn routine_trigger_providers(&self) -> Vec<Arc<dyn RoutineTriggerProvider>> {
+        vec![]
+    }
+
+    /// 注册外部通信 binding provider。
+    ///
+    /// Provider 只负责 provider event normalization 与物理 publish；Channel registry、
+    /// participant admission、binding resolution 和 delivery state 仍由宿主 application service 持有。
+    fn channel_binding_providers(&self) -> Vec<Arc<dyn ChannelBindingProvider>> {
         vec![]
     }
 

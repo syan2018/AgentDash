@@ -1,6 +1,6 @@
 # WI-04 Binding Provider / Delivery
 
-Status: planned
+Status: ready_for_integration
 
 Depends On: WI-02、WI-03
 
@@ -24,3 +24,11 @@ Depends On: WI-02、WI-03
 - provider inbound/outbound integration tests。
 - mailbox/gate/outbox materialization tests。
 - duplicate/replay/binding unavailable tests。
+
+## Implementation Evidence
+
+- `ChannelBindingProvider` SPI 独立覆盖 provider event normalization、outbound publish 与 provider receipt；Host Integration 只贡献 provider，启动 composition 按 exact `provider_key` 冲突失败。
+- `ChannelBindingProviderRegistry`、可重建 exact-key reverse index 与 `IndexedChannelBindingResolver` 已进入 production `ServiceSet`，ingress 不扫描 owner documents。
+- `ChannelService` 对 provider ingress、publish/reply planning 和 physical dispatch 全部重新读取 registry 并 admission；dispatch receipt materialize 为 bounded delivery state，Mailbox/Gate/provider payload authority 不进入 Channel registry。
+- application Channel tests：12 passed，覆盖 ingress/reply 端到端、provider replay rejection、unavailable/stale binding、mailbox/gate materialization。
+- API integration registration tests：3 passed，覆盖 provider collect、duplicate key 与 invalid key；`cargo check -p agentdash-api --lib` passed。

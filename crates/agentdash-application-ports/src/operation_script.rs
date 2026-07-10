@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use agentdash_domain::operation::OperationRef;
@@ -22,6 +23,7 @@ pub struct OperationScriptExecutionContext {
     pub principal: OperationPrincipalRef,
     pub scope: OperationScopeRef,
     pub authority_revision: String,
+    pub granted_capabilities: BTreeSet<String>,
     pub origin: OperationOriginRef,
     pub trace_id: String,
     pub attachment_ref: Option<String>,
@@ -129,7 +131,7 @@ pub enum OperationScriptCallStatus {
     OutcomeUnknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OperationScriptCallEvidence {
     pub call_index: usize,
     pub operation_ref: OperationRef,
@@ -143,13 +145,31 @@ pub struct OperationScriptResultAccess {
     pub principal: OperationPrincipalRef,
     pub scope: OperationScopeRef,
     pub authority_revision: String,
+    pub required_capabilities: BTreeSet<String>,
     pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OperationScriptResultRef {
+    pub result_id: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OperationScriptResultValue {
+    Inline {
+        value: Value,
+    },
+    Ref {
+        result_ref: OperationScriptResultRef,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct OperationScriptRunOutcome {
     pub execution_id: Uuid,
-    pub value: Value,
+    pub plan_id: Uuid,
+    pub value: OperationScriptResultValue,
     pub calls: Vec<OperationScriptCallEvidence>,
     pub partial: bool,
     pub outcome_unknown: bool,
@@ -207,8 +227,33 @@ pub enum OperationScriptError {
     OutputLimitExceeded { actual: usize, maximum: usize },
     #[error("OperationScript nested Operation 失败: {code}")]
     NestedOperation { code: String, outcome_unknown: bool },
+    #[error(
+        "OperationScript 执行失败: {diagnostic}, partial={partial}, outcome_unknown={outcome_unknown}"
+    )]
+    ExecutionFailed {
+        diagnostic: String,
+        calls: Vec<OperationScriptCallEvidence>,
+        partial: bool,
+        outcome_unknown: bool,
+    },
     #[error("OperationScript 内部错误: {code}")]
     Internal { code: &'static str },
+}
+
+#[async_trait]
+pub trait OperationScriptResultStore: Send + Sync {
+    async fn put(
+        &self,
+        value: Value,
+        access: OperationScriptResultAccess,
+    ) -> Result<OperationScriptResultRef, OperationScriptError>;
+
+    async fn resolve(
+        &self,
+        result_ref: &OperationScriptResultRef,
+        current_context: &OperationScriptExecutionContext,
+        cancel: CancellationToken,
+    ) -> Result<Option<Value>, OperationScriptError>;
 }
 
 #[async_trait]
@@ -234,4 +279,12 @@ pub trait OperationScriptEngine: Send + Sync {
         operation_executor: Arc<dyn OperationScriptOperationExecutor>,
         cancel: CancellationToken,
     ) -> Result<OperationScriptRunOutcome, OperationScriptError>;
+
+    /// Resolves a scoped result after a trusted host rebuilds current authority.
+    async fn resolve_result(
+        &self,
+        result_ref: &OperationScriptResultRef,
+        current_context: &OperationScriptExecutionContext,
+        cancel: CancellationToken,
+    ) -> Result<Option<Value>, OperationScriptError>;
 }

@@ -1,20 +1,25 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use agentdash_application_ports::operation_script::{
-    OPERATION_SCRIPT_HOST_API_V1, OperationScriptEngine, OperationScriptError,
-    OperationScriptLimits, OperationScriptOperationExecutor, OperationScriptPreflightRequest,
+    OPERATION_SCRIPT_HOST_API_V1, OperationScriptAllowedOperation, OperationScriptCallEvidence,
+    OperationScriptCallStatus, OperationScriptEngine, OperationScriptError,
+    OperationScriptExecutionContext, OperationScriptLimits, OperationScriptOperationCall,
+    OperationScriptOperationExecutor, OperationScriptPreflightRequest,
     OperationScriptPreflightResult, OperationScriptPreflightToken, OperationScriptProgram,
-    OperationScriptResultAccess, OperationScriptRunOutcome, OperationScriptRunRequest,
+    OperationScriptResultAccess, OperationScriptResultRef, OperationScriptResultStore,
+    OperationScriptResultValue, OperationScriptRunOutcome, OperationScriptRunRequest,
     RHAI_V1_DIALECT,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use rhai::{AST, Dynamic, Engine, Scope};
+use futures::{StreamExt, stream};
+use rhai::{AST, Array, Dynamic, Engine, EvalAltResult, ImmutableString, Map, Scope};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::runtime::Handle;
+use tokio::sync::{OwnedSemaphorePermit, RwLock as AsyncRwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -26,6 +31,9 @@ pub struct RhaiOperationScriptConfig {
     pub preflight_ttl: Duration,
     pub cancellation_grace: Duration,
     pub result_ttl: Duration,
+    pub max_inline_result_bytes: usize,
+    pub max_ast_cache_entries: usize,
+    pub max_ast_cache_source_bytes: usize,
     pub maximum_limits: OperationScriptLimits,
 }
 
@@ -36,8 +44,122 @@ impl Default for RhaiOperationScriptConfig {
             preflight_ttl: Duration::minutes(5),
             cancellation_grace: Duration::seconds(2),
             result_ttl: Duration::minutes(10),
+            max_inline_result_bytes: 64 * 1024,
+            max_ast_cache_entries: 128,
+            max_ast_cache_source_bytes: 8 * 1024 * 1024,
             maximum_limits: OperationScriptLimits::default(),
         }
+    }
+}
+
+struct CachedAst {
+    ast: AST,
+    source_bytes: usize,
+    last_used: u64,
+}
+
+#[derive(Default)]
+struct AstCache {
+    entries: HashMap<String, CachedAst>,
+    source_bytes: usize,
+    clock: u64,
+}
+
+impl AstCache {
+    fn get(&mut self, digest: &str) -> Option<AST> {
+        self.clock = self.clock.wrapping_add(1);
+        let entry = self.entries.get_mut(digest)?;
+        entry.last_used = self.clock;
+        Some(entry.ast.clone())
+    }
+
+    fn insert(
+        &mut self,
+        digest: String,
+        ast: AST,
+        source_bytes: usize,
+        config: &RhaiOperationScriptConfig,
+    ) {
+        if source_bytes > config.max_ast_cache_source_bytes {
+            return;
+        }
+        if let Some(previous) = self.entries.remove(&digest) {
+            self.source_bytes -= previous.source_bytes;
+        }
+        self.clock = self.clock.wrapping_add(1);
+        self.source_bytes += source_bytes;
+        self.entries.insert(
+            digest,
+            CachedAst {
+                ast,
+                source_bytes,
+                last_used: self.clock,
+            },
+        );
+        while self.entries.len() > config.max_ast_cache_entries
+            || self.source_bytes > config.max_ast_cache_source_bytes
+        {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(digest, _)| digest.clone())
+            else {
+                break;
+            };
+            if let Some(removed) = self.entries.remove(&oldest) {
+                self.source_bytes -= removed.source_bytes;
+            }
+        }
+    }
+}
+
+struct StoredResult {
+    value: Value,
+    access: OperationScriptResultAccess,
+}
+
+#[derive(Default)]
+pub struct InMemoryOperationScriptResultStore {
+    results: AsyncRwLock<HashMap<Uuid, StoredResult>>,
+}
+
+#[async_trait]
+impl OperationScriptResultStore for InMemoryOperationScriptResultStore {
+    async fn put(
+        &self,
+        value: Value,
+        access: OperationScriptResultAccess,
+    ) -> Result<OperationScriptResultRef, OperationScriptError> {
+        let result_ref = OperationScriptResultRef {
+            result_id: Uuid::new_v4(),
+        };
+        let mut results = self.results.write().await;
+        results.retain(|_, item| item.access.expires_at > Utc::now());
+        results.insert(result_ref.result_id, StoredResult { value, access });
+        Ok(result_ref)
+    }
+
+    async fn resolve(
+        &self,
+        result_ref: &OperationScriptResultRef,
+        current: &OperationScriptExecutionContext,
+        cancel: CancellationToken,
+    ) -> Result<Option<Value>, OperationScriptError> {
+        if cancel.is_cancelled() {
+            return Err(OperationScriptError::Cancelled);
+        }
+        let results = self.results.read().await;
+        Ok(results.get(&result_ref.result_id).and_then(|item| {
+            (item.access.expires_at > Utc::now()
+                && item.access.principal == current.principal
+                && item.access.scope == current.scope
+                && item
+                    .access
+                    .required_capabilities
+                    .is_subset(&current.granted_capabilities))
+            .then(|| item.value.clone())
+        }))
     }
 }
 
@@ -45,13 +167,26 @@ pub struct RhaiOperationScriptEngine {
     config: RhaiOperationScriptConfig,
     signing_secret: Arc<[u8]>,
     permits: Arc<Semaphore>,
-    ast_cache: Arc<RwLock<HashMap<String, AST>>>,
+    ast_cache: Arc<RwLock<AstCache>>,
+    result_store: Arc<dyn OperationScriptResultStore>,
 }
 
 impl RhaiOperationScriptEngine {
     pub fn new(
         signing_secret: &[u8],
         config: RhaiOperationScriptConfig,
+    ) -> Result<Self, OperationScriptError> {
+        Self::with_result_store(
+            signing_secret,
+            config,
+            Arc::new(InMemoryOperationScriptResultStore::default()),
+        )
+    }
+
+    pub fn with_result_store(
+        signing_secret: &[u8],
+        config: RhaiOperationScriptConfig,
+        result_store: Arc<dyn OperationScriptResultStore>,
     ) -> Result<Self, OperationScriptError> {
         if signing_secret.len() < 32 {
             return Err(invalid("signing_secret", "至少需要 32 bytes"));
@@ -60,15 +195,34 @@ impl RhaiOperationScriptEngine {
             || config.preflight_ttl <= Duration::zero()
             || config.cancellation_grace <= Duration::zero()
             || config.result_ttl <= Duration::zero()
+            || config.max_inline_result_bytes == 0
+            || config.max_ast_cache_entries == 0
+            || config.max_ast_cache_source_bytes == 0
         {
-            return Err(invalid("engine_config", "并发数与 duration 必须大于 0"));
+            return Err(invalid(
+                "engine_config",
+                "capacity、cache 与 duration 必须大于 0",
+            ));
         }
         Ok(Self {
             permits: Arc::new(Semaphore::new(config.max_concurrent_scripts)),
             signing_secret: Arc::from(signing_secret),
-            ast_cache: Arc::new(RwLock::new(HashMap::new())),
+            ast_cache: Arc::new(RwLock::new(AstCache::default())),
+            result_store,
             config,
         })
+    }
+
+    pub async fn resolve_result(
+        &self,
+        result_ref: &OperationScriptResultRef,
+        current_context: &OperationScriptExecutionContext,
+        cancel: CancellationToken,
+    ) -> Result<Option<Value>, OperationScriptError> {
+        validate_context(current_context)?;
+        self.result_store
+            .resolve(result_ref, current_context, cancel)
+            .await
     }
 
     fn acquire(&self) -> Result<OwnedSemaphorePermit, OperationScriptError> {
@@ -102,6 +256,162 @@ impl RhaiOperationScriptEngine {
     }
 }
 
+#[derive(Clone)]
+struct RhaiOperationHost {
+    core: Arc<HostCore>,
+}
+
+struct HostCore {
+    runtime: Handle,
+    executor: Arc<dyn OperationScriptOperationExecutor>,
+    manifest: HashMap<String, OperationScriptAllowedOperation>,
+    context: OperationScriptExecutionContext,
+    execution_id: Uuid,
+    deadline: DateTime<Utc>,
+    cancel: CancellationToken,
+    max_calls: usize,
+    max_parallel: usize,
+    next_call: Mutex<usize>,
+    evidence: Arc<Mutex<Vec<OperationScriptCallEvidence>>>,
+}
+
+impl RhaiOperationHost {
+    fn invoke(
+        &mut self,
+        operation: ImmutableString,
+        input: Dynamic,
+    ) -> Result<Dynamic, Box<EvalAltResult>> {
+        let input: Value = rhai::serde::from_dynamic(&input).map_err(rhai_error)?;
+        let value = self
+            .core
+            .runtime
+            .block_on(self.core.invoke_one(operation.as_str().to_owned(), input))
+            .map_err(|error| rhai_error(error.to_string()))?;
+        Ok(crate::script_runtime::json_to_dynamic(&value))
+    }
+
+    fn invoke_all(&mut self, requests: Array) -> Result<Array, Box<EvalAltResult>> {
+        let mut parsed = Vec::with_capacity(requests.len());
+        for request in requests {
+            let map = request
+                .try_cast::<Map>()
+                .ok_or_else(|| rhai_error("invoke_all item must be a map"))?;
+            let operation = map
+                .get("operation")
+                .and_then(|value| value.clone().try_cast::<ImmutableString>())
+                .ok_or_else(|| rhai_error("invoke_all item.operation must be a string"))?;
+            let input = map
+                .get("input")
+                .ok_or_else(|| rhai_error("invoke_all item.input is required"))?;
+            let input: Value = rhai::serde::from_dynamic(input).map_err(rhai_error)?;
+            parsed.push((operation.to_string(), input));
+        }
+        let core = self.core.clone();
+        let values = self.core.runtime.block_on(async move {
+            stream::iter(
+                parsed
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (operation, input))| {
+                        let core = core.clone();
+                        async move { (index, core.invoke_one(operation, input).await) }
+                    }),
+            )
+            .buffer_unordered(core.max_parallel)
+            .collect::<Vec<_>>()
+            .await
+        });
+        let mut ordered = vec![Value::Null; values.len()];
+        for (index, result) in values {
+            ordered[index] = result.map_err(|error| rhai_error(error.to_string()))?;
+        }
+        Ok(ordered
+            .iter()
+            .map(crate::script_runtime::json_to_dynamic)
+            .collect())
+    }
+}
+
+impl HostCore {
+    async fn invoke_one(
+        &self,
+        script_key: String,
+        input: Value,
+    ) -> Result<Value, OperationScriptError> {
+        let allowed = self.manifest.get(&script_key).ok_or_else(|| {
+            OperationScriptError::OperationDenied {
+                operation_key: script_key.clone(),
+            }
+        })?;
+        let call_index = {
+            let mut next = self
+                .next_call
+                .lock()
+                .map_err(|_| OperationScriptError::Internal {
+                    code: "call_counter_poisoned",
+                })?;
+            if *next >= self.max_calls {
+                return Err(OperationScriptError::CallLimitExceeded {
+                    maximum: self.max_calls,
+                });
+            }
+            let index = *next;
+            *next += 1;
+            index
+        };
+        let child_trace_id = format!("{}:ops:{}", self.context.trace_id, call_index);
+        let call = OperationScriptOperationCall {
+            execution_id: self.execution_id,
+            call_index,
+            operation_ref: allowed.operation_ref.clone(),
+            input,
+            context: self.context.clone(),
+            parent_trace_id: self.context.trace_id.clone(),
+            child_trace_id: child_trace_id.clone(),
+            deadline: self.deadline,
+        };
+        let result = self.executor.execute(call, self.cancel.child_token()).await;
+        let (status, code, unknown) = match &result {
+            Ok(result) if result.outcome_unknown => {
+                (OperationScriptCallStatus::OutcomeUnknown, None, true)
+            }
+            Ok(_) => (OperationScriptCallStatus::Succeeded, None, false),
+            Err(error) => {
+                let unknown = error_outcome_unknown(error);
+                (
+                    if unknown {
+                        OperationScriptCallStatus::OutcomeUnknown
+                    } else {
+                        OperationScriptCallStatus::Failed
+                    },
+                    Some(error_code(error)),
+                    unknown,
+                )
+            }
+        };
+        self.evidence
+            .lock()
+            .map_err(|_| OperationScriptError::Internal {
+                code: "evidence_poisoned",
+            })?
+            .push(OperationScriptCallEvidence {
+                call_index,
+                operation_ref: allowed.operation_ref.clone(),
+                child_trace_id,
+                status,
+                error_code: code,
+            });
+        match result {
+            Ok(_result) if unknown => Err(OperationScriptError::NestedOperation {
+                code: "outcome_unknown".into(),
+                outcome_unknown: true,
+            }),
+            Ok(result) => Ok(result.value),
+            Err(error) => Err(error),
+        }
+    }
+}
+
 #[async_trait]
 impl OperationScriptEngine for RhaiOperationScriptEngine {
     async fn preflight(
@@ -114,9 +424,11 @@ impl OperationScriptEngine for RhaiOperationScriptEngine {
         let digests = plan_digests(&request.program, &request.context)?;
         let permit = self.acquire()?;
         let source = request.program.source.clone();
+        let source_bytes = source.len();
         let source_digest = digests.source_digest.clone();
         let limits = request.program.limits;
         let cache = self.ast_cache.clone();
+        let config = self.config.clone();
         let worker = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let mut engine = Engine::new();
@@ -131,7 +443,7 @@ impl OperationScriptEngine for RhaiOperationScriptEngine {
                 .map_err(|_| OperationScriptError::Internal {
                     code: "ast_cache_poisoned",
                 })?
-                .insert(source_digest, ast);
+                .insert(source_digest, ast, source_bytes, &config);
             Ok(())
         });
         await_worker(
@@ -143,7 +455,6 @@ impl OperationScriptEngine for RhaiOperationScriptEngine {
             false,
         )
         .await?;
-
         let issued_at = Utc::now();
         let mut token = OperationScriptPreflightToken {
             plan_id: Uuid::new_v4(),
@@ -163,7 +474,7 @@ impl OperationScriptEngine for RhaiOperationScriptEngine {
     async fn run(
         &self,
         request: OperationScriptRunRequest,
-        _operation_executor: Arc<dyn OperationScriptOperationExecutor>,
+        executor: Arc<dyn OperationScriptOperationExecutor>,
         cancel: CancellationToken,
     ) -> Result<OperationScriptRunOutcome, OperationScriptError> {
         validate_program(&request.program, &self.config.maximum_limits)?;
@@ -177,29 +488,52 @@ impl OperationScriptEngine for RhaiOperationScriptEngine {
             request.token.expires_at,
         );
         let permit = self.acquire()?;
+        let execution_id = Uuid::new_v4();
         let execution_cancel = cancel.child_token();
-        let worker_cancel = execution_cancel.clone();
+        let evidence = Arc::new(Mutex::new(Vec::new()));
+        let host = RhaiOperationHost {
+            core: Arc::new(HostCore {
+                runtime: Handle::current(),
+                executor,
+                manifest: request
+                    .program
+                    .allowed_operations
+                    .iter()
+                    .cloned()
+                    .map(|item| (item.script_key(), item))
+                    .collect(),
+                context: request.context.clone(),
+                execution_id,
+                deadline,
+                cancel: execution_cancel.clone(),
+                max_calls: request.program.limits.max_operation_calls,
+                max_parallel: request.program.limits.max_parallel_operations,
+                next_call: Mutex::new(0),
+                evidence: evidence.clone(),
+            }),
+        };
         let source = request.program.source.clone();
         let input = request.program.input.clone();
         let limits = request.program.limits;
         let source_digest = digests.source_digest;
         let cache = self.ast_cache.clone();
+        let worker_cancel = execution_cancel.clone();
         let worker = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let mut engine = Engine::new();
             RhaiScriptRuntime::apply_limits(&mut engine, rhai_limits(limits));
             let progress_cancel = worker_cancel.clone();
             engine.on_progress(move |_| {
-                if progress_cancel.is_cancelled() || Utc::now() >= deadline {
-                    Some(Dynamic::from("operation_script_interrupted"))
-                } else {
-                    None
-                }
+                (progress_cancel.is_cancelled() || Utc::now() >= deadline)
+                    .then(|| Dynamic::from("operation_script_interrupted"))
             });
+            engine.register_type_with_name::<RhaiOperationHost>("OperationHost");
+            engine.register_fn("invoke", RhaiOperationHost::invoke);
+            engine.register_fn("invoke_all", RhaiOperationHost::invoke_all);
             let ast = cache
-                .read()
+                .write()
                 .ok()
-                .and_then(|cache| cache.get(&source_digest).cloned())
+                .and_then(|mut cache| cache.get(&source_digest))
                 .map(Ok)
                 .unwrap_or_else(|| {
                     engine
@@ -210,6 +544,7 @@ impl OperationScriptEngine for RhaiOperationScriptEngine {
                 })?;
             let mut scope = Scope::new();
             scope.push_dynamic("input", crate::script_runtime::json_to_dynamic(&input));
+            scope.push("ops", host);
             let value: Dynamic = engine
                 .eval_ast_with_scope(&mut scope, &ast)
                 .map_err(|error| OperationScriptError::Runtime {
@@ -229,7 +564,7 @@ impl OperationScriptEngine for RhaiOperationScriptEngine {
                 })
             }
         });
-        let value = await_worker(
+        let value = match await_worker(
             worker,
             cancel,
             execution_cancel,
@@ -237,36 +572,133 @@ impl OperationScriptEngine for RhaiOperationScriptEngine {
             self.config.cancellation_grace,
             true,
         )
-        .await?;
+        .await
+        {
+            Ok(value) => value,
+            Err(error) => return Err(execution_failure(error, evidence_snapshot(&evidence))),
+        };
         let output_bytes = serde_json::to_vec(&value)
             .map_err(|_| OperationScriptError::Internal {
                 code: "output_serialize",
             })?
             .len();
         if output_bytes > request.program.limits.max_output_bytes {
-            return Err(OperationScriptError::OutputLimitExceeded {
-                actual: output_bytes,
-                maximum: request.program.limits.max_output_bytes,
-            });
+            return Err(execution_failure(
+                OperationScriptError::OutputLimitExceeded {
+                    actual: output_bytes,
+                    maximum: request.program.limits.max_output_bytes,
+                },
+                evidence_snapshot(&evidence),
+            ));
         }
         let expires_at = std::cmp::min(
             request.token.expires_at,
             Utc::now() + self.config.result_ttl,
         );
+        let result_access = OperationScriptResultAccess {
+            principal: request.context.principal,
+            scope: request.context.scope,
+            authority_revision: request.context.authority_revision,
+            required_capabilities: request.context.granted_capabilities,
+            expires_at,
+        };
+        let result = if output_bytes <= self.config.max_inline_result_bytes {
+            OperationScriptResultValue::Inline { value }
+        } else {
+            OperationScriptResultValue::Ref {
+                result_ref: match self.result_store.put(value, result_access.clone()).await {
+                    Ok(result_ref) => result_ref,
+                    Err(error) => {
+                        return Err(execution_failure(error, evidence_snapshot(&evidence)));
+                    }
+                },
+            }
+        };
+        let calls = evidence_snapshot(&evidence);
         Ok(OperationScriptRunOutcome {
-            execution_id: request.token.plan_id,
-            value,
-            calls: Vec::new(),
-            partial: false,
-            outcome_unknown: false,
-            result_access: OperationScriptResultAccess {
-                principal: request.context.principal,
-                scope: request.context.scope,
-                authority_revision: request.context.authority_revision,
-                expires_at,
-            },
+            execution_id,
+            plan_id: request.token.plan_id,
+            value: result,
+            partial: calls
+                .iter()
+                .any(|call| call.status == OperationScriptCallStatus::Succeeded),
+            outcome_unknown: calls
+                .iter()
+                .any(|call| call.status == OperationScriptCallStatus::OutcomeUnknown),
+            calls,
+            result_access,
         })
     }
+
+    async fn resolve_result(
+        &self,
+        result_ref: &OperationScriptResultRef,
+        current_context: &OperationScriptExecutionContext,
+        cancel: CancellationToken,
+    ) -> Result<Option<Value>, OperationScriptError> {
+        RhaiOperationScriptEngine::resolve_result(self, result_ref, current_context, cancel).await
+    }
+}
+
+fn evidence_snapshot(
+    evidence: &Mutex<Vec<OperationScriptCallEvidence>>,
+) -> Vec<OperationScriptCallEvidence> {
+    let mut calls = evidence
+        .lock()
+        .map(|calls| calls.clone())
+        .unwrap_or_default();
+    calls.sort_by_key(|call| call.call_index);
+    calls
+}
+
+fn execution_failure(
+    error: OperationScriptError,
+    calls: Vec<OperationScriptCallEvidence>,
+) -> OperationScriptError {
+    let partial = calls
+        .iter()
+        .any(|call| call.status == OperationScriptCallStatus::Succeeded);
+    let outcome_unknown = error_outcome_unknown(&error)
+        || calls
+            .iter()
+            .any(|call| call.status == OperationScriptCallStatus::OutcomeUnknown);
+    OperationScriptError::ExecutionFailed {
+        diagnostic: bounded_diagnostic(&error.to_string()),
+        calls,
+        partial,
+        outcome_unknown,
+    }
+}
+
+fn error_outcome_unknown(error: &OperationScriptError) -> bool {
+    matches!(
+        error,
+        OperationScriptError::ExecutionInterrupted {
+            outcome_unknown: true,
+            ..
+        } | OperationScriptError::NestedOperation {
+            outcome_unknown: true,
+            ..
+        } | OperationScriptError::ExecutionFailed {
+            outcome_unknown: true,
+            ..
+        }
+    )
+}
+
+fn error_code(error: &OperationScriptError) -> String {
+    match error {
+        OperationScriptError::NestedOperation { code, .. } => code.clone(),
+        OperationScriptError::Cancelled => "cancelled".into(),
+        OperationScriptError::DeadlineExceeded => "deadline_exceeded".into(),
+        OperationScriptError::OperationDenied { .. } => "operation_denied".into(),
+        OperationScriptError::CallLimitExceeded { .. } => "call_limit_exceeded".into(),
+        _ => "operation_failed".into(),
+    }
+}
+
+fn rhai_error(message: impl ToString) -> Box<EvalAltResult> {
+    message.to_string().into()
 }
 
 #[derive(Serialize)]
@@ -277,9 +709,8 @@ struct PlanBinding<'a> {
     input_digest: &'a str,
     manifest_digest: &'a str,
     limits: OperationScriptLimits,
-    context: &'a agentdash_application_ports::operation_script::OperationScriptExecutionContext,
+    context: &'a OperationScriptExecutionContext,
 }
-
 struct PlanDigests {
     source_digest: String,
     manifest_digest: String,
@@ -288,23 +719,25 @@ struct PlanDigests {
 
 fn plan_digests(
     program: &OperationScriptProgram,
-    context: &agentdash_application_ports::operation_script::OperationScriptExecutionContext,
+    context: &OperationScriptExecutionContext,
 ) -> Result<PlanDigests, OperationScriptError> {
     let source_digest = sha256(program.source.as_bytes());
     let input_digest = digest_json(&program.input, "input")?;
     let mut manifest = program.allowed_operations.clone();
-    manifest.sort_by_key(|entry| entry.script_key());
+    manifest.sort_by_key(OperationScriptAllowedOperation::script_key);
     let manifest_digest = digest_json(&manifest, "allowed_operations")?;
-    let binding = PlanBinding {
-        dialect: &program.dialect,
-        host_api_version: program.host_api_version,
-        source_digest: &source_digest,
-        input_digest: &input_digest,
-        manifest_digest: &manifest_digest,
-        limits: program.limits,
-        context,
-    };
-    let binding_digest = digest_json(&binding, "plan_binding")?;
+    let binding_digest = digest_json(
+        &PlanBinding {
+            dialect: &program.dialect,
+            host_api_version: program.host_api_version,
+            source_digest: &source_digest,
+            input_digest: &input_digest,
+            manifest_digest: &manifest_digest,
+            limits: program.limits,
+            context,
+        },
+        "plan_binding",
+    )?;
     Ok(PlanDigests {
         source_digest,
         manifest_digest,
@@ -325,12 +758,13 @@ fn validate_program(
     if program.source.is_empty() || program.source.len() > program.limits.max_source_bytes {
         return Err(invalid("source", "source 为空或超过请求限制"));
     }
-    let input_bytes = serde_json::to_vec(&program.input)
+    if serde_json::to_vec(&program.input)
         .map_err(|_| OperationScriptError::Internal {
             code: "input_serialize",
         })?
-        .len();
-    if input_bytes > program.limits.max_input_bytes {
+        .len()
+        > program.limits.max_input_bytes
+    {
         return Err(invalid("input", "input 超过请求限制"));
     }
     validate_limits(&program.limits, maximum)?;
@@ -359,9 +793,7 @@ fn validate_program(
     Ok(())
 }
 
-fn validate_context(
-    context: &agentdash_application_ports::operation_script::OperationScriptExecutionContext,
-) -> Result<(), OperationScriptError> {
+fn validate_context(context: &OperationScriptExecutionContext) -> Result<(), OperationScriptError> {
     context
         .principal
         .validate()
@@ -379,61 +811,60 @@ fn validate_context(
         || context.trace_id.trim().is_empty()
         || context.trace_id.trim() != context.trace_id
         || context
+            .granted_capabilities
+            .iter()
+            .any(|capability| capability.trim().is_empty() || capability.trim() != capability)
+        || context
             .attachment_ref
             .as_ref()
             .is_some_and(|value| value.trim().is_empty() || value.trim() != value)
     {
         return Err(invalid(
             "context",
-            "authority revision、trace 与 attachment ref 必须已规范化",
+            "authority、capabilities、trace 与 attachment ref 必须已规范化",
         ));
     }
     Ok(())
 }
 
 fn validate_limits(
-    limits: &OperationScriptLimits,
-    maximum: &OperationScriptLimits,
+    l: &OperationScriptLimits,
+    m: &OperationScriptLimits,
 ) -> Result<(), OperationScriptError> {
-    let valid = limits.timeout_ms > 0
-        && limits.max_source_bytes > 0
-        && limits.max_input_bytes > 0
-        && limits.max_output_bytes > 0
-        && limits.max_rhai_operations > 0
-        && limits.max_call_levels > 0
-        && limits.max_string_size > 0
-        && limits.max_array_size > 0
-        && limits.max_map_size > 0
-        && limits.max_operation_calls > 0
-        && limits.max_parallel_operations > 0
-        && limits.timeout_ms <= maximum.timeout_ms
-        && limits.max_source_bytes <= maximum.max_source_bytes
-        && limits.max_input_bytes <= maximum.max_input_bytes
-        && limits.max_output_bytes <= maximum.max_output_bytes
-        && limits.max_rhai_operations <= maximum.max_rhai_operations
-        && limits.max_call_levels <= maximum.max_call_levels
-        && limits.max_string_size <= maximum.max_string_size
-        && limits.max_array_size <= maximum.max_array_size
-        && limits.max_map_size <= maximum.max_map_size
-        && limits.max_operation_calls <= maximum.max_operation_calls
-        && limits.max_parallel_operations <= maximum.max_parallel_operations;
-    if valid {
-        Ok(())
-    } else {
-        Err(invalid(
-            "limits",
-            "所有 limits 必须大于 0 且不超过 engine maximum",
-        ))
-    }
+    let valid = l.timeout_ms > 0
+        && l.max_source_bytes > 0
+        && l.max_input_bytes > 0
+        && l.max_output_bytes > 0
+        && l.max_rhai_operations > 0
+        && l.max_call_levels > 0
+        && l.max_string_size > 0
+        && l.max_array_size > 0
+        && l.max_map_size > 0
+        && l.max_operation_calls > 0
+        && l.max_parallel_operations > 0
+        && l.timeout_ms <= m.timeout_ms
+        && l.max_source_bytes <= m.max_source_bytes
+        && l.max_input_bytes <= m.max_input_bytes
+        && l.max_output_bytes <= m.max_output_bytes
+        && l.max_rhai_operations <= m.max_rhai_operations
+        && l.max_call_levels <= m.max_call_levels
+        && l.max_string_size <= m.max_string_size
+        && l.max_array_size <= m.max_array_size
+        && l.max_map_size <= m.max_map_size
+        && l.max_operation_calls <= m.max_operation_calls
+        && l.max_parallel_operations <= m.max_parallel_operations;
+    valid
+        .then_some(())
+        .ok_or_else(|| invalid("limits", "所有 limits 必须大于 0 且不超过 engine maximum"))
 }
 
-fn rhai_limits(limits: OperationScriptLimits) -> RhaiScriptLimits {
+fn rhai_limits(l: OperationScriptLimits) -> RhaiScriptLimits {
     RhaiScriptLimits {
-        max_operations: limits.max_rhai_operations,
-        max_call_levels: limits.max_call_levels,
-        max_string_size: limits.max_string_size,
-        max_array_size: limits.max_array_size,
-        max_map_size: limits.max_map_size,
+        max_operations: l.max_rhai_operations,
+        max_call_levels: l.max_call_levels,
+        max_string_size: l.max_string_size,
+        max_array_size: l.max_array_size,
+        max_map_size: l.max_map_size,
     }
 }
 
@@ -445,17 +876,16 @@ async fn await_worker<T: Send + 'static>(
     grace: Duration,
     outcome_unknown: bool,
 ) -> Result<T, OperationScriptError> {
-    let until_deadline = (deadline - Utc::now()).to_std().unwrap_or_default();
-    let trigger = tokio::select! {
-        result = &mut worker => return join_worker(result),
-        _ = root_cancel.cancelled() => "cancelled",
-        _ = tokio::time::sleep(until_deadline) => "deadline",
-    };
+    let trigger = tokio::select! { result = &mut worker => return join_worker(result), _ = root_cancel.cancelled() => "cancelled", _ = tokio::time::sleep((deadline - Utc::now()).to_std().unwrap_or_default()) => "deadline" };
     execution_cancel.cancel();
-    let grace = grace
-        .to_std()
-        .map_err(|_| invalid("cancellation_grace", "duration 无效"))?;
-    match tokio::time::timeout(grace, &mut worker).await {
+    match tokio::time::timeout(
+        grace
+            .to_std()
+            .map_err(|_| invalid("cancellation_grace", "duration 无效"))?,
+        &mut worker,
+    )
+    .await
+    {
         Ok(result) => match join_worker(result) {
             Err(OperationScriptError::Runtime { .. }) if trigger == "cancelled" => {
                 Err(OperationScriptError::Cancelled)
@@ -471,7 +901,6 @@ async fn await_worker<T: Send + 'static>(
         }),
     }
 }
-
 fn join_worker<T>(
     result: Result<Result<T, OperationScriptError>, tokio::task::JoinError>,
 ) -> Result<T, OperationScriptError> {
@@ -479,21 +908,22 @@ fn join_worker<T>(
         code: "blocking_worker_join",
     })?
 }
-
 fn sign_token(
     secret: &[u8],
     token: &OperationScriptPreflightToken,
 ) -> Result<String, OperationScriptError> {
-    let payload = format!(
-        "{}|{}|{}|{}",
-        token.plan_id,
-        token.binding_digest,
-        token.issued_at.timestamp_millis(),
-        token.expires_at.timestamp_millis()
-    );
-    Ok(hex(&hmac_sha256(secret, payload.as_bytes())))
+    Ok(hex(&hmac_sha256(
+        secret,
+        format!(
+            "{}|{}|{}|{}",
+            token.plan_id,
+            token.binding_digest,
+            token.issued_at.timestamp_millis(),
+            token.expires_at.timestamp_millis()
+        )
+        .as_bytes(),
+    )))
 }
-
 fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     const BLOCK: usize = 64;
     let mut normalized = [0_u8; BLOCK];
@@ -511,13 +941,11 @@ fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     let mut inner = Sha256::new();
     inner.update(inner_pad);
     inner.update(message);
-    let inner = inner.finalize();
     let mut outer = Sha256::new();
     outer.update(outer_pad);
-    outer.update(inner);
+    outer.update(inner.finalize());
     outer.finalize().into()
 }
-
 fn constant_time_eq(expected: &[u8], actual: &[u8]) -> bool {
     let maximum = expected.len().max(actual.len());
     let mut difference = expected.len() ^ actual.len();
@@ -527,320 +955,35 @@ fn constant_time_eq(expected: &[u8], actual: &[u8]) -> bool {
     }
     difference == 0
 }
-
 fn digest_json(
     value: &impl Serialize,
     field: &'static str,
 ) -> Result<String, OperationScriptError> {
-    let bytes = serde_json::to_vec(value).map_err(|_| invalid(field, "无法序列化"))?;
-    Ok(sha256(&bytes))
+    serde_json::to_vec(value)
+        .map(|bytes| sha256(&bytes))
+        .map_err(|_| invalid(field, "无法序列化"))
 }
-
 fn sha256(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
-
 fn valid_sha256(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|hex| {
         hex.len() == 64 && hex.chars().all(|character| character.is_ascii_hexdigit())
     })
 }
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
-
 fn invalid(field: &'static str, reason: &str) -> OperationScriptError {
     OperationScriptError::InvalidRequest {
         field,
         reason: reason.to_string(),
     }
 }
-
 fn bounded_diagnostic(message: &str) -> String {
-    const MAX: usize = 2_048;
-    message.chars().take(MAX).collect()
+    message.chars().take(2_048).collect()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use agentdash_application_ports::operation_script::{
-        OperationOriginRef, OperationPrincipalRef, OperationScopeRef,
-        OperationScriptExecutionContext, OperationScriptOperationCall,
-        OperationScriptOperationResult,
-    };
-
-    struct RejectingExecutor;
-    #[async_trait]
-    impl OperationScriptOperationExecutor for RejectingExecutor {
-        async fn execute(
-            &self,
-            _call: OperationScriptOperationCall,
-            _cancel: CancellationToken,
-        ) -> Result<OperationScriptOperationResult, OperationScriptError> {
-            Err(OperationScriptError::Internal {
-                code: "unexpected_nested_call",
-            })
-        }
-    }
-
-    fn engine(secret: u8) -> RhaiOperationScriptEngine {
-        RhaiOperationScriptEngine::new(&[secret; 32], RhaiOperationScriptConfig::default())
-            .expect("engine")
-    }
-    fn context() -> OperationScriptExecutionContext {
-        OperationScriptExecutionContext {
-            principal: OperationPrincipalRef::User {
-                user_id: "u".into(),
-            },
-            scope: OperationScopeRef::Project {
-                project_id: Uuid::new_v4(),
-            },
-            authority_revision: "authority:1".into(),
-            origin: OperationOriginRef::UserWorkshop,
-            trace_id: "trace-1".into(),
-            attachment_ref: None,
-        }
-    }
-    fn program(source: &str) -> OperationScriptProgram {
-        OperationScriptProgram {
-            dialect: RHAI_V1_DIALECT.into(),
-            host_api_version: OPERATION_SCRIPT_HOST_API_V1,
-            source: source.into(),
-            input: serde_json::json!({"values":[1,2,3]}),
-            allowed_operations: vec![],
-            limits: OperationScriptLimits::default(),
-        }
-    }
-    async fn preflight(
-        engine: &RhaiOperationScriptEngine,
-        program: OperationScriptProgram,
-        context: OperationScriptExecutionContext,
-    ) -> OperationScriptPreflightResult {
-        engine
-            .preflight(
-                OperationScriptPreflightRequest { program, context },
-                CancellationToken::new(),
-            )
-            .await
-            .expect("preflight")
-    }
-
-    #[tokio::test]
-    async fn preflight_and_run_plain_rhai_on_blocking_worker() {
-        let engine = engine(7);
-        let context = context();
-        let program = program("input.values.filter(|value| value > 1)");
-        let plan = preflight(&engine, program.clone(), context.clone()).await;
-        let outcome = engine
-            .run(
-                OperationScriptRunRequest {
-                    program,
-                    context,
-                    token: plan.token,
-                },
-                Arc::new(RejectingExecutor),
-                CancellationToken::new(),
-            )
-            .await
-            .expect("run");
-        assert_eq!(outcome.value, serde_json::json!([2, 3]));
-        assert!(outcome.calls.is_empty());
-    }
-
-    #[tokio::test]
-    async fn secret_rotation_invalidates_ephemeral_plan() {
-        let first = engine(7);
-        let second = engine(8);
-        let context = context();
-        let program = program("input");
-        let plan = preflight(&first, program.clone(), context.clone()).await;
-        let error = second
-            .run(
-                OperationScriptRunRequest {
-                    program,
-                    context,
-                    token: plan.token,
-                },
-                Arc::new(RejectingExecutor),
-                CancellationToken::new(),
-            )
-            .await
-            .expect_err("rotated secret must reject");
-        assert!(matches!(
-            error,
-            OperationScriptError::InvalidPlan {
-                reason: "signature_mismatch"
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn token_binds_input_and_source() {
-        let engine = engine(7);
-        let context = context();
-        let program = program("input");
-        let plan = preflight(&engine, program.clone(), context.clone()).await;
-        let mut changed = program;
-        changed.input = serde_json::json!({"different":true});
-        let error = engine
-            .run(
-                OperationScriptRunRequest {
-                    program: changed,
-                    context,
-                    token: plan.token,
-                },
-                Arc::new(RejectingExecutor),
-                CancellationToken::new(),
-            )
-            .await
-            .expect_err("binding mismatch");
-        assert!(matches!(
-            error,
-            OperationScriptError::InvalidPlan {
-                reason: "binding_digest_mismatch"
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn pure_rhai_loop_observes_cancellation() {
-        let engine = engine(7);
-        let context = context();
-        let mut program = program("loop { }");
-        program.limits.max_rhai_operations = OperationScriptLimits::default().max_rhai_operations;
-        let plan = preflight(&engine, program.clone(), context.clone()).await;
-        let cancel = CancellationToken::new();
-        cancel.cancel();
-        let error = engine
-            .run(
-                OperationScriptRunRequest {
-                    program,
-                    context,
-                    token: plan.token,
-                },
-                Arc::new(RejectingExecutor),
-                cancel,
-            )
-            .await
-            .expect_err("cancelled");
-        assert!(matches!(
-            error,
-            OperationScriptError::Cancelled | OperationScriptError::ExecutionInterrupted { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn output_limit_is_enforced_after_json_bridge() {
-        let engine = engine(7);
-        let context = context();
-        let mut program = program(r#""too-large""#);
-        program.limits.max_output_bytes = 4;
-        let plan = preflight(&engine, program.clone(), context.clone()).await;
-        let error = engine
-            .run(
-                OperationScriptRunRequest {
-                    program,
-                    context,
-                    token: plan.token,
-                },
-                Arc::new(RejectingExecutor),
-                CancellationToken::new(),
-            )
-            .await
-            .expect_err("output limit");
-        assert!(matches!(
-            error,
-            OperationScriptError::OutputLimitExceeded { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn recursive_operation_script_manifest_is_rejected() {
-        let engine = engine(7);
-        let mut program = program("input");
-        program.allowed_operations.push(agentdash_application_ports::operation_script::OperationScriptAllowedOperation {
-            operation_ref: agentdash_domain::operation::OperationRef::new("agentdash", "operation_script", "run", 1).expect("operation ref"),
-            descriptor_digest: sha256(b"descriptor"),
-            effect: agentdash_application_ports::operation_script::OperationEffect::ExternalSideEffect,
-            replay_policy: agentdash_application_ports::operation_script::OperationReplayPolicy::NonReplayable,
-            recursive_operation_script: true,
-        });
-        let error = engine
-            .preflight(
-                OperationScriptPreflightRequest {
-                    program,
-                    context: context(),
-                },
-                CancellationToken::new(),
-            )
-            .await
-            .expect_err("recursive manifest");
-        assert!(matches!(
-            error,
-            OperationScriptError::InvalidRequest {
-                field: "allowed_operations",
-                ..
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn concurrent_script_admission_is_bounded() {
-        let mut config = RhaiOperationScriptConfig::default();
-        config.max_concurrent_scripts = 1;
-        config.maximum_limits.max_rhai_operations = u64::MAX;
-        let engine = Arc::new(RhaiOperationScriptEngine::new(&[7; 32], config).expect("engine"));
-        let context = context();
-        let mut program = program("loop { }");
-        program.limits.max_rhai_operations = u64::MAX;
-        let first_plan = preflight(&engine, program.clone(), context.clone()).await;
-        let second_plan = preflight(&engine, program.clone(), context.clone()).await;
-        let first_cancel = CancellationToken::new();
-        let first_task = {
-            let engine = engine.clone();
-            let program = program.clone();
-            let context = context.clone();
-            let cancel = first_cancel.clone();
-            tokio::spawn(async move {
-                engine
-                    .run(
-                        OperationScriptRunRequest {
-                            program,
-                            context,
-                            token: first_plan.token,
-                        },
-                        Arc::new(RejectingExecutor),
-                        cancel,
-                    )
-                    .await
-            })
-        };
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        let second = engine
-            .run(
-                OperationScriptRunRequest {
-                    program,
-                    context,
-                    token: second_plan.token,
-                },
-                Arc::new(RejectingExecutor),
-                CancellationToken::new(),
-            )
-            .await;
-        assert!(matches!(
-            second,
-            Err(OperationScriptError::CapacityExceeded)
-        ));
-        first_cancel.cancel();
-        let _ = first_task.await.expect("first task join");
-    }
-
-    #[test]
-    fn mac_comparison_checks_equal_and_mismatched_lengths() {
-        assert!(constant_time_eq(b"same", b"same"));
-        assert!(!constant_time_eq(b"same", b"diff"));
-        assert!(!constant_time_eq(b"same", b"same-longer"));
-    }
-}
+#[path = "tests.rs"]
+mod tests;

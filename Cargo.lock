@@ -589,6 +589,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dotenvy",
+ "futures",
  "postgresql_embedded",
  "reqwest 0.13.2",
  "rhai",

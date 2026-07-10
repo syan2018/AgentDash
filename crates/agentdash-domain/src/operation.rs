@@ -15,6 +15,22 @@ pub struct OperationRef {
     pub contract_version: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationEffect {
+    Read,
+    LocalMutation,
+    ExternalSideEffect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationReplayPolicy {
+    NonReplayable,
+    Idempotent,
+    ReplaySafe,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationPrincipalRef {

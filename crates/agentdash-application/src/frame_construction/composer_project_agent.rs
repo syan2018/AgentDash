@@ -71,7 +71,6 @@ pub(super) async fn compose(
     let launch_path =
         owner_prompt_launch_path(svc.prompt_launch_path(Some(&executor_config), input));
     let user_input = required_user_input(input.command.prompt())?;
-    let identity = input.command.identity();
     let active_workflow = resolve_active_workflow_projection_from_message_stream_trace(
         input.session_id.as_str(),
         &svc.repos,
@@ -92,7 +91,6 @@ pub(super) async fn compose(
                     agent_display_name: agent_context.display_name.clone(),
                     preset_name: agent_context.preset_name.clone(),
                 },
-                identity: identity.as_ref(),
                 subject_context_contributions,
                 subject_owner_ctx,
                 subject_workspace,

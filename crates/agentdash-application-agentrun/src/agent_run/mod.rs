@@ -90,11 +90,11 @@ pub use frame::{
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
     AgentRunHookTargetRuntimeAdapter, AgentRunRuntimeSurfaceUpdateAdapter,
     AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
-    AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
-    FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
-    FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
-    RuntimeSurfaceUpdateRequest, TerminalHookEffectBinding, accepted_launch_commit_port,
-    agent_frame_write_boundaries, hook_target_runtime_port,
+    AgentRunSurfaceProjectionContextSource, FrameConstructionCommand, FrameContextBundleSummary,
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, FrameSurfaceDraft,
+    RejectingFrameConstructionAdapter, RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest,
+    TerminalHookEffectBinding, accepted_launch_commit_port, agent_frame_write_boundaries,
+    hook_target_runtime_port,
 };
 pub use journal::{
     AgentRunJournalEvent, AgentRunJournalLiveEvent, AgentRunJournalPage, AgentRunJournalQuery,

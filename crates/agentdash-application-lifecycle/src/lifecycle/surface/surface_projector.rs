@@ -4,7 +4,6 @@ use agentdash_application_ports::agent_run_surface as agent_run_surface_port;
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_skill::asset::SkillAssetService;
 use agentdash_application_vfs::mount_skill_asset::refresh_lifecycle_skill_asset_projection;
-use agentdash_domain::canvas::CANVAS_SYSTEM_SKILL_NAME;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::{
     companion::COMPANION_SYSTEM_SKILL_NAME, routine::ROUTINE_MEMORY_SKILL_NAME,
@@ -138,7 +137,6 @@ impl From<lifecycle_surface_port::OrchestrationNodeProjectionInput>
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkill {
-    CanvasSystem,
     CompanionSystem,
     WorkspaceModuleSystem,
     RoutineMemory,
@@ -147,7 +145,6 @@ pub enum BuiltinLifecycleSkill {
 impl BuiltinLifecycleSkill {
     pub fn key(self) -> &'static str {
         match self {
-            Self::CanvasSystem => CANVAS_SYSTEM_SKILL_NAME,
             Self::CompanionSystem => COMPANION_SYSTEM_SKILL_NAME,
             Self::WorkspaceModuleSystem => WORKSPACE_MODULE_SYSTEM_SKILL_NAME,
             Self::RoutineMemory => ROUTINE_MEMORY_SKILL_NAME,
@@ -158,7 +155,6 @@ impl BuiltinLifecycleSkill {
 impl From<lifecycle_surface_port::BuiltinLifecycleSkill> for BuiltinLifecycleSkill {
     fn from(value: lifecycle_surface_port::BuiltinLifecycleSkill) -> Self {
         match value {
-            lifecycle_surface_port::BuiltinLifecycleSkill::CanvasSystem => Self::CanvasSystem,
             lifecycle_surface_port::BuiltinLifecycleSkill::CompanionSystem => Self::CompanionSystem,
             lifecycle_surface_port::BuiltinLifecycleSkill::WorkspaceModuleSystem => {
                 Self::WorkspaceModuleSystem
@@ -171,7 +167,6 @@ impl From<lifecycle_surface_port::BuiltinLifecycleSkill> for BuiltinLifecycleSki
 impl From<BuiltinLifecycleSkill> for lifecycle_surface_port::BuiltinLifecycleSkill {
     fn from(value: BuiltinLifecycleSkill) -> Self {
         match value {
-            BuiltinLifecycleSkill::CanvasSystem => Self::CanvasSystem,
             BuiltinLifecycleSkill::CompanionSystem => Self::CompanionSystem,
             BuiltinLifecycleSkill::WorkspaceModuleSystem => Self::WorkspaceModuleSystem,
             BuiltinLifecycleSkill::RoutineMemory => Self::RoutineMemory,
@@ -942,7 +937,6 @@ mod tests {
         let surface = projector
             .project(AgentRunLifecycleSurfaceInput {
                 builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
-                    BuiltinLifecycleSkill::CanvasSystem,
                     BuiltinLifecycleSkill::WorkspaceModuleSystem,
                     BuiltinLifecycleSkill::CompanionSystem,
                 ]),
@@ -1001,7 +995,6 @@ mod tests {
         let surface = projector
             .project(AgentRunLifecycleSurfaceInput {
                 builtin_skills: BuiltinLifecycleSkillPolicy::ensure([
-                    BuiltinLifecycleSkill::CanvasSystem,
                     BuiltinLifecycleSkill::WorkspaceModuleSystem,
                     BuiltinLifecycleSkill::CompanionSystem,
                 ]),

@@ -8,7 +8,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_domain::canvas::CanvasDataBinding;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeBackendAnchor, RuntimeMcpServer, Vfs};
 use thiserror::Error;
@@ -65,14 +64,6 @@ impl FrameConstructionCommand {
 /// identity only; AgentRun projection context must be resolved by the service.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeSurfaceUpdateRequest {
-    CanvasBindingChanged {
-        canvas_mount_id: String,
-        binding: CanvasDataBinding,
-    },
-    CanvasVisibilityRequested {
-        canvas_mount_id: String,
-        reason: CanvasVisibilityReason,
-    },
     PermissionGrantApplied {
         grant_id: Uuid,
     },
@@ -103,9 +94,6 @@ pub enum RuntimeSurfaceUpdateRequest {
 impl RuntimeSurfaceUpdateRequest {
     pub fn surface_kind(&self) -> RuntimeSurfaceKind {
         match self {
-            Self::CanvasBindingChanged { .. } | Self::CanvasVisibilityRequested { .. } => {
-                RuntimeSurfaceKind::Canvas
-            }
             Self::PermissionGrantApplied { .. } | Self::PermissionGrantRevoked { .. } => {
                 RuntimeSurfaceKind::Permission
             }
@@ -118,16 +106,8 @@ impl RuntimeSurfaceUpdateRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CanvasVisibilityReason {
-    Created,
-    Presented,
-    ExplicitRefresh,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSurfaceKind {
-    Canvas,
     Permission,
     Mcp,
     Vfs,
@@ -483,12 +463,8 @@ mod tests {
             runtime_session_id: "runtime-a".to_string(),
             created_by_id: None,
         };
-        let update = RuntimeSurfaceUpdateRequest::CanvasBindingChanged {
-            canvas_mount_id: "cvs-dashboard".to_string(),
-            binding: CanvasDataBinding::new(
-                "stats".to_string(),
-                "workspace://stats.json".to_string(),
-            ),
+        let update = RuntimeSurfaceUpdateRequest::PermissionGrantApplied {
+            grant_id: Uuid::new_v4(),
         };
 
         let construct_outcome = service

@@ -44,43 +44,6 @@ pub(crate) struct ApiTerminalLaunchTarget {
     pub target: AgentRunTerminalLaunchTarget,
 }
 
-pub(crate) async fn resolve_current_runtime_surface_for_api(
-    state: &Arc<AppState>,
-    current_user: &AuthIdentity,
-    session_id: &str,
-    purpose: RuntimeSurfaceQueryPurpose,
-) -> Result<ApiCurrentRuntimeSurface, ApiError> {
-    ensure_runtime_session_exists(state, session_id).await?;
-    let surface = state
-        .services
-        .runtime_surface_query
-        .current_runtime_surface(session_id, purpose)
-        .await
-        .map_err(runtime_surface_query_error_to_api)?;
-    load_project_with_permission(
-        state.as_ref(),
-        current_user,
-        surface.project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    Ok(ApiCurrentRuntimeSurface::from(surface))
-}
-
-pub(crate) async fn resolve_current_runtime_surface_for_project_for_api(
-    state: &Arc<AppState>,
-    current_user: &AuthIdentity,
-    session_id: &str,
-    expected_project_id: Uuid,
-    purpose: RuntimeSurfaceQueryPurpose,
-    subject: &str,
-) -> Result<ApiCurrentRuntimeSurface, ApiError> {
-    let surface =
-        resolve_current_runtime_surface_for_api(state, current_user, session_id, purpose).await?;
-    ensure_current_runtime_surface_project_matches(&surface, expected_project_id, subject)?;
-    Ok(surface)
-}
-
 pub(crate) async fn resolve_current_runtime_surface_with_backend_for_agent_run_for_api(
     state: &Arc<AppState>,
     current_user: &AuthIdentity,

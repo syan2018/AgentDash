@@ -26,7 +26,6 @@ use agentdash_domain::backend::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
     ProjectBackendAccessRepository, RunnerRegistrationTokenRepository, RuntimeHealthRepository,
 };
-use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::extension_package::ExtensionPackageArtifactRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
@@ -67,8 +66,6 @@ use crate::wait_activity::WaitActivityRepositories;
 #[derive(Clone)]
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
-    pub canvas_repo: Arc<dyn CanvasRepository>,
-    pub canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
     pub interaction_definition_repo: Arc<dyn InteractionDefinitionRepository>,
     pub interaction_instance_repo: Arc<dyn InteractionInstanceRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
@@ -234,16 +231,6 @@ impl RepositorySet {
             story_repo: self.story_repo.clone(),
             inline_file_repo: self.inline_file_repo.clone(),
         })
-    }
-}
-
-impl agentdash_workspace_module::canvas::CanvasRepositorySet for RepositorySet {
-    fn project_repo(&self) -> &dyn ProjectRepository {
-        self.project_repo.as_ref()
-    }
-
-    fn canvas_repo(&self) -> &dyn CanvasRepository {
-        self.canvas_repo.as_ref()
     }
 }
 

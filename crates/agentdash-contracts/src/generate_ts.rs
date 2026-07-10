@@ -40,20 +40,6 @@ use agentdash_contracts::backend::{
     RunnerRegistrationTokenRotateResponse, RunnerRegistrationTokenStatus, RuntimeHealthStatus,
     UpdateProjectBackendAccessRequest,
 };
-use agentdash_contracts::canvas::{
-    CanvasAccessDto, CanvasAgentInputSubmitRequest, CanvasAgentRunRuntimeSnapshotDto,
-    CanvasFileDto, CanvasImportMapDto, CanvasInteractionEventDto, CanvasInteractionSnapshot,
-    CanvasInteractionSnapshotUpsertRequest, CanvasListScopeDto, CanvasResponse,
-    CanvasRuntimeBindingDto, CanvasRuntimeBindingUpsertRequest, CanvasRuntimeBridgeSnapshotDto,
-    CanvasRuntimeDiagnosticDto, CanvasRuntimeDocumentStateDto, CanvasRuntimeFileDto,
-    CanvasRuntimeInvokeRequest, CanvasRuntimeObservation, CanvasRuntimeObservationStatusDto,
-    CanvasRuntimeObservationUpsertRequest, CanvasRuntimeSnapshotDto, CanvasRuntimeViewportDto,
-    CanvasSandboxConfigDto, CanvasScopeDto, CopyCanvasToPersonalRequest, CreateCanvasRequest,
-    DeleteCanvasResponse, ListCanvasesQuery, PublishCanvasToProjectRequest,
-    RuntimeActionDescriptorDto, RuntimeActionKindDto, RuntimeContextDto,
-    RuntimeInvocationOutputDto, RuntimeInvocationResultDto, RuntimePolicyDto, RuntimeSurfaceDto,
-    RuntimeTraceDto, UnpublishCanvasResponse, UpdateCanvasRequest,
-};
 use agentdash_contracts::common_response::{
     DeletedFlagResponse, DeletedIdResponse, PendingExecutionResponse, RevokedIdResponse,
     UpdatedIdResponse,
@@ -246,11 +232,13 @@ use agentdash_contracts::workspace::{
     WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
 };
 use agentdash_contracts::workspace_module::{
-    WorkspaceModuleCanvasHostAction, WorkspaceModuleDescriptor, WorkspaceModuleKind,
-    WorkspaceModuleOperation, WorkspaceModuleOperationDispatch, WorkspaceModuleOperationReadiness,
-    WorkspaceModuleOperationReadinessKind, WorkspaceModuleOperationVisibility,
-    WorkspaceModulePresentRequest, WorkspaceModulePresentation, WorkspaceModuleStatus,
-    WorkspaceModuleStatusKind, WorkspaceModuleSummary, WorkspaceModuleUiEntry,
+    WorkspaceModuleDescriptor, WorkspaceModuleKind, WorkspaceModuleOperation,
+    WorkspaceModuleOperationEffect, WorkspaceModuleOperationProvenance,
+    WorkspaceModuleOperationReadiness, WorkspaceModuleOperationReadinessKind,
+    WorkspaceModuleOperationRef, WorkspaceModuleOperationReplayPolicy,
+    WorkspaceModuleOperationVisibility, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
+    WorkspaceModuleStatus, WorkspaceModuleStatusKind, WorkspaceModuleSummary,
+    WorkspaceModuleUiEntry,
 };
 use ts_rs::TS;
 
@@ -856,55 +844,6 @@ fn main() {
         },
     );
 
-    // --- canvas-contracts.ts ---
-    emit_domain(
-        &generated_dir,
-        "canvas-contracts.ts",
-        &mut upstream,
-        check,
-        |dir| {
-            export_all::<CanvasFileDto>(dir);
-            export_all::<CanvasImportMapDto>(dir);
-            export_all::<CanvasSandboxConfigDto>(dir);
-            export_all::<CanvasScopeDto>(dir);
-            export_all::<CanvasListScopeDto>(dir);
-            export_all::<CanvasAccessDto>(dir);
-            export_all::<ListCanvasesQuery>(dir);
-            export_all::<CanvasResponse>(dir);
-            export_all::<CreateCanvasRequest>(dir);
-            export_all::<UpdateCanvasRequest>(dir);
-            export_all::<DeleteCanvasResponse>(dir);
-            export_all::<PublishCanvasToProjectRequest>(dir);
-            export_all::<CopyCanvasToPersonalRequest>(dir);
-            export_all::<UnpublishCanvasResponse>(dir);
-            export_all::<CanvasRuntimeFileDto>(dir);
-            export_all::<CanvasRuntimeBindingDto>(dir);
-            export_all::<CanvasRuntimeBindingUpsertRequest>(dir);
-            export_all::<RuntimeActionKindDto>(dir);
-            export_all::<RuntimePolicyDto>(dir);
-            export_all::<RuntimeActionDescriptorDto>(dir);
-            export_all::<RuntimeContextDto>(dir);
-            export_all::<RuntimeSurfaceDto>(dir);
-            export_all::<CanvasRuntimeBridgeSnapshotDto>(dir);
-            export_all::<CanvasRuntimeSnapshotDto>(dir);
-            export_all::<CanvasAgentRunRuntimeSnapshotDto>(dir);
-            export_all::<CanvasRuntimeInvokeRequest>(dir);
-            export_all::<CanvasRuntimeObservationStatusDto>(dir);
-            export_all::<CanvasRuntimeViewportDto>(dir);
-            export_all::<CanvasRuntimeDocumentStateDto>(dir);
-            export_all::<CanvasRuntimeDiagnosticDto>(dir);
-            export_all::<CanvasRuntimeObservationUpsertRequest>(dir);
-            export_all::<CanvasRuntimeObservation>(dir);
-            export_all::<CanvasInteractionEventDto>(dir);
-            export_all::<CanvasInteractionSnapshotUpsertRequest>(dir);
-            export_all::<CanvasInteractionSnapshot>(dir);
-            export_all::<CanvasAgentInputSubmitRequest>(dir);
-            export_all::<RuntimeTraceDto>(dir);
-            export_all::<RuntimeInvocationOutputDto>(dir);
-            export_all::<RuntimeInvocationResultDto>(dir);
-        },
-    );
-
     // --- interaction-contracts.ts ---
     emit_domain(
         &generated_dir,
@@ -1003,9 +942,11 @@ fn main() {
             export_all::<WorkspaceModuleStatus>(dir);
             export_all::<WorkspaceModuleSummary>(dir);
             export_all::<WorkspaceModuleUiEntry>(dir);
-            export_all::<WorkspaceModuleCanvasHostAction>(dir);
             export_all::<WorkspaceModuleOperationVisibility>(dir);
-            export_all::<WorkspaceModuleOperationDispatch>(dir);
+            export_all::<WorkspaceModuleOperationRef>(dir);
+            export_all::<WorkspaceModuleOperationProvenance>(dir);
+            export_all::<WorkspaceModuleOperationEffect>(dir);
+            export_all::<WorkspaceModuleOperationReplayPolicy>(dir);
             export_all::<WorkspaceModuleOperationReadinessKind>(dir);
             export_all::<WorkspaceModuleOperationReadiness>(dir);
             export_all::<WorkspaceModuleOperation>(dir);

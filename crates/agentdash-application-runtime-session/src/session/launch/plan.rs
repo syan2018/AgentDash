@@ -321,6 +321,7 @@ impl LaunchPlan {
                 .expect("backend_execution placement 必须已 claim lease"),
             runtime_backend_anchor,
             identity,
+            agent_run_execution: input.launch_envelope.agent_run_execution.clone(),
         };
         let turn = ExecutionTurnFrame {
             mode: if input.source == LaunchSource::ContextCompaction {

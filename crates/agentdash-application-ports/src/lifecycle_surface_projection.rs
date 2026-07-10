@@ -433,7 +433,6 @@ impl OrchestrationNodeProjectionInput {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinLifecycleSkill {
-    CanvasSystem,
     CompanionSystem,
     WorkspaceModuleSystem,
     RoutineMemory,

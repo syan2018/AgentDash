@@ -25,9 +25,8 @@ use agentdash_application::wait_activity::{
 use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
 use agentdash_application_agentrun::agent_run::AgentRunWorkspaceTitleAdapter;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunControlEffectDeps, AgentRunControlEffectService,
-    AgentRunEffectiveCapabilityView as ApplicationAgentRunEffectiveCapabilityView,
-    AgentRunMailboxRuntimeAdapter, AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
+    AgentRunControlEffectDeps, AgentRunControlEffectService, AgentRunMailboxRuntimeAdapter,
+    AgentRunMailboxRuntimeBoundaryDeps, AgentRunRuntimeSurfaceQuery,
     AgentRunRuntimeSurfaceQueryDeps,
     AgentRunRuntimeSurfaceQueryPort as ApplicationAgentRunRuntimeSurfaceQueryPort,
     AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
@@ -36,10 +35,7 @@ use agentdash_application_agentrun::agent_run::{
     runtime_session_effective_capability_port,
 };
 use agentdash_application_hooks::{AppExecutionHookProvider, AppExecutionHookProviderDeps};
-use agentdash_application_ports::agent_run_surface::{
-    AgentRunEffectiveCapabilityView as PortsAgentRunEffectiveCapabilityView,
-    AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort,
-};
+use agentdash_application_ports::agent_run_surface::AgentRunRuntimeSurfaceQueryPort as PortsAgentRunRuntimeSurfaceQueryPort;
 use agentdash_application_ports::frame_launch_envelope::AcceptedLaunchHookRuntimeSync;
 use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_application_runtime_session::session::{
@@ -48,14 +44,11 @@ use agentdash_application_runtime_session::session::{
     SessionRuntimeBuilder, SessionRuntimeService, SessionRuntimeTransitionService, SessionStoreSet,
     SessionTitleService, SessionToolResultCache, SessionToolResultCachePut,
 };
-use agentdash_application_vfs::tools::RuntimeVfsState;
 use agentdash_application_vfs::tools::{ShellTerminalRegistration, ShellTerminalRegistry};
 use agentdash_application_vfs::{VfsMaterializationService, VfsService};
-use agentdash_domain::canvas::Canvas;
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
 };
-use agentdash_domain::project::ProjectAuthorizationContext;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
@@ -63,9 +56,10 @@ use agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::{
     build_effective_profile_catalog_from_db, preflight_effective_model_selection,
 };
 use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_workspace_module::workspace_module::{
-    SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
-    WorkspaceModuleAgentRunBridge, WorkspaceModuleRuntimeToolProvider,
+use agentdash_workspace_module::runtime_tool_provider::{
+    SharedOperationGatewayHandle, WorkspaceModulePresentationPort,
+    WorkspaceModulePresentationRequest, WorkspaceModulePresentationTarget,
+    WorkspaceModuleRuntimeToolProvider,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -81,13 +75,91 @@ fn lifecycle_platform_config(
 use crate::relay::registry::BackendRegistry;
 
 #[derive(Clone)]
-struct ApplicationWorkspaceModuleAgentRunBridge {
-    inner: SharedSessionToolServicesHandle,
-}
-
-#[derive(Clone)]
 struct RuntimeShellTerminalRegistry {
     terminal_registry: Arc<AgentRunTerminalRegistry>,
+}
+
+struct ApiWorkspaceModulePresentationPort {
+    definitions: Arc<dyn agentdash_domain::interaction::InteractionDefinitionRepository>,
+    instances: Arc<dyn agentdash_domain::interaction::InteractionInstanceRepository>,
+}
+
+#[async_trait]
+impl WorkspaceModulePresentationPort for ApiWorkspaceModulePresentationPort {
+    async fn attach_for_presentation(
+        &self,
+        request: WorkspaceModulePresentationRequest,
+    ) -> Result<WorkspaceModulePresentationTarget, String> {
+        use agentdash_domain::interaction::{
+            AttachmentCapabilityProjection, AttachmentSubject, InteractionAttachment,
+            InteractionAttachmentRole, InteractionInstance, InteractionInstanceStatus,
+            InteractionOwner, InteractionRetention,
+        };
+
+        let definition = self
+            .definitions
+            .get(request.definition.definition_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "InteractionDefinition 不存在".to_string())?;
+        if definition.current_revision_id != request.definition.revision_id
+            || definition.project_id != request.execution.project_id
+        {
+            return Err("presentation definition revision 不属于当前 Project surface".to_string());
+        }
+        let owner = InteractionOwner::Project(request.execution.project_id);
+        let mut instance = self
+            .instances
+            .list_by_owner(&owner)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|instance| {
+                instance.status == InteractionInstanceStatus::Open
+                    && instance.definition_revision_id == request.definition.revision_id
+            });
+        if instance.is_none() {
+            let created = InteractionInstance::new_v1(
+                owner,
+                request.definition.definition_id,
+                request.definition.revision_id,
+                request.definition.initial_state.clone(),
+                InteractionRetention { retain_until: None },
+            )
+            .map_err(|error| error.to_string())?;
+            self.instances
+                .create(&created)
+                .await
+                .map_err(|error| error.to_string())?;
+            instance = Some(created);
+        }
+        let instance = instance.expect("instance 已创建或已找到");
+        let attachment = InteractionAttachment {
+            id: uuid::Uuid::new_v4(),
+            instance_id: instance.id,
+            subject: AttachmentSubject::AgentRun {
+                run_id: request.execution.run_id,
+            },
+            role: InteractionAttachmentRole::Renderer,
+            capabilities: AttachmentCapabilityProjection::for_role(
+                InteractionAttachmentRole::Renderer,
+            ),
+            created_at: chrono::Utc::now(),
+            detached_at: None,
+        };
+        attachment.validate().map_err(|error| error.to_string())?;
+        let attachment_id = match self.instances.attach(&attachment).await {
+            Ok(()) => Some(attachment.id),
+            Err(agentdash_domain::interaction::InteractionError::PersistenceConflict {
+                ..
+            }) => None,
+            Err(error) => return Err(error.to_string()),
+        };
+        Ok(WorkspaceModulePresentationTarget {
+            instance_id: instance.id,
+            attachment_id,
+        })
+    }
 }
 
 impl RuntimeShellTerminalRegistry {
@@ -164,71 +236,6 @@ impl ShellTerminalRegistry for RuntimeShellTerminalRegistry {
     }
 }
 
-#[async_trait]
-impl WorkspaceModuleAgentRunBridge for ApplicationWorkspaceModuleAgentRunBridge {
-    async fn effective_capability_view_for_agent_run_delivery(
-        &self,
-        delivery_runtime_session_id: &str,
-    ) -> Result<PortsAgentRunEffectiveCapabilityView, String> {
-        let services = self
-            .inner
-            .get()
-            .await
-            .ok_or_else(|| "AgentRun bridge adapter services 尚未完成初始化".to_string())?;
-        services
-            .runtime_surface_update
-            .effective_capability_view_for_delivery_runtime(delivery_runtime_session_id)
-            .await
-            .map(convert_effective_capability_view)
-    }
-
-    async fn apply_canvas_runtime_surface_update_to_agent_run(
-        &self,
-        delivery_runtime_session_id: &str,
-        canvas: &Canvas,
-        current_user: Option<&ProjectAuthorizationContext>,
-        request: agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest,
-    ) -> Result<RuntimeVfsState, String> {
-        let services = self
-            .inner
-            .get()
-            .await
-            .ok_or_else(|| "AgentRun bridge adapter services 尚未完成初始化".to_string())?;
-        services
-            .runtime_surface_update
-            .apply_canvas_runtime_surface_update(
-                delivery_runtime_session_id,
-                canvas,
-                current_user,
-                request,
-            )
-            .await
-    }
-
-    async fn inject_agent_run_notification(
-        &self,
-        delivery_runtime_session_id: &str,
-        notification: agentdash_agent_protocol::BackboneEnvelope,
-    ) -> Result<(), String> {
-        let services = self
-            .inner
-            .get()
-            .await
-            .ok_or_else(|| "AgentRun bridge adapter services 尚未完成初始化".to_string())?;
-        services
-            .eventing
-            .inject_notification(delivery_runtime_session_id, notification)
-            .await
-            .map_err(|error| error.to_string())
-    }
-}
-
-fn convert_effective_capability_view(
-    view: ApplicationAgentRunEffectiveCapabilityView,
-) -> PortsAgentRunEffectiveCapabilityView {
-    view.into()
-}
-
 pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
     pub session_stores: SessionStoreSet,
@@ -264,7 +271,7 @@ pub(crate) struct SessionBootstrapOutput {
     pub session_title: SessionTitleService,
     pub connector: Arc<dyn AgentConnector>,
     pub hook_provider: Arc<AppExecutionHookProvider>,
-    pub workspace_module_runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
+    pub workspace_module_operation_gateway: SharedOperationGatewayHandle,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
     pub memory_discovery_providers: Vec<Arc<dyn agentdash_spi::MemoryDiscoveryProvider>>,
@@ -325,10 +332,7 @@ pub(crate) async fn build_session_runtime(
 
     let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
     let session_services_handle = SharedSessionToolServicesHandle::default();
-    let workspace_module_agent_run_bridge_handle =
-        SharedWorkspaceModuleAgentRunBridgeHandle::default();
-    let workspace_module_runtime_gateway_handle =
-        SharedWorkspaceModuleRuntimeGatewayHandle::default();
+    let workspace_module_operation_gateway = SharedOperationGatewayHandle::default();
     let runtime_tool_provider =
         build_session_runtime_tool_composer(SessionRuntimeToolComposerDeps {
             repos: repos.clone(),
@@ -337,11 +341,7 @@ pub(crate) async fn build_session_runtime(
             shell_output_registry,
             terminal_registry,
             session_services_handle: session_services_handle.clone(),
-            workspace_module_agent_run_bridge_handle: workspace_module_agent_run_bridge_handle
-                .clone(),
-            workspace_module_runtime_gateway_handle: workspace_module_runtime_gateway_handle
-                .clone(),
-            backend_registry: backend_registry.clone(),
+            workspace_module_operation_gateway: workspace_module_operation_gateway.clone(),
             function_runner: function_runner.clone(),
             platform_config: platform_config.clone(),
             llm_provider_secret: llm_provider_secret.clone(),
@@ -537,12 +537,6 @@ pub(crate) async fn build_session_runtime(
             runtime_surface_update: runtime_surface_update.clone(),
         })
         .await;
-    workspace_module_agent_run_bridge_handle
-        .set(Arc::new(ApplicationWorkspaceModuleAgentRunBridge {
-            inner: session_services_handle.clone(),
-        }))
-        .await;
-
     Ok(SessionBootstrapOutput {
         session_runtime_builder,
         session_core,
@@ -558,7 +552,7 @@ pub(crate) async fn build_session_runtime(
         session_title,
         connector,
         hook_provider,
-        workspace_module_runtime_gateway_handle,
+        workspace_module_operation_gateway,
         extra_skill_dirs,
         skill_discovery_providers,
         memory_discovery_providers,
@@ -572,9 +566,7 @@ struct SessionRuntimeToolComposerDeps {
     shell_output_registry: Arc<agentdash_relay::ShellOutputRegistry>,
     terminal_registry: Arc<AgentRunTerminalRegistry>,
     session_services_handle: SharedSessionToolServicesHandle,
-    workspace_module_agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
-    workspace_module_runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
-    backend_registry: Arc<BackendRegistry>,
+    workspace_module_operation_gateway: SharedOperationGatewayHandle,
     function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     platform_config: SharedPlatformConfig,
     llm_provider_secret: Arc<dyn LlmSecretCodec>,
@@ -698,16 +690,13 @@ fn build_session_runtime_tool_composer(
     let wait_provider = WaitRuntimeToolProvider::from_service(wait_service);
     let workspace_module_provider = WorkspaceModuleRuntimeToolProvider::new(
         deps.repos.project_extension_installation_repo.clone(),
-        deps.repos.project_repo.clone(),
-        deps.repos.canvas_repo.clone(),
-        deps.repos.canvas_runtime_state_repo.clone(),
-        deps.repos.execution_anchor_repo.clone(),
-        deps.workspace_module_agent_run_bridge_handle,
-        deps.workspace_module_runtime_gateway_handle,
-    )
-    .with_extension_protocol_transport(deps.backend_registry.clone())
-    .with_extension_backend_service_transport(deps.backend_registry);
-
+        deps.repos.interaction_definition_repo.clone(),
+        deps.workspace_module_operation_gateway,
+        Arc::new(ApiWorkspaceModulePresentationPort {
+            definitions: deps.repos.interaction_definition_repo.clone(),
+            instances: deps.repos.interaction_instance_repo.clone(),
+        }),
+    );
     Arc::new(SessionRuntimeToolComposer::new(vec![
         Arc::new(vfs_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(workflow_provider) as Arc<dyn RuntimeToolProvider>,

@@ -297,8 +297,8 @@ impl AppState {
         let session_title = session_bootstrap.session_title;
         let connector = session_bootstrap.connector;
         let hook_provider = session_bootstrap.hook_provider;
-        let workspace_module_runtime_gateway_handle =
-            session_bootstrap.workspace_module_runtime_gateway_handle;
+        let workspace_module_operation_gateway =
+            session_bootstrap.workspace_module_operation_gateway;
         let extra_skill_dirs = session_bootstrap.extra_skill_dirs;
         let skill_discovery_providers = session_bootstrap.skill_discovery_providers;
         let memory_discovery_providers = session_bootstrap.memory_discovery_providers;
@@ -358,16 +358,14 @@ impl AppState {
             backend_registry.clone(),
             setup_action_transport,
         )?;
+        workspace_module_operation_gateway
+            .set(operation_gateway.clone())
+            .await;
         let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
             session_mcp_access,
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         );
-        // RuntimeGateway 装配序晚于 session runtime tool composer；此处把 gateway
-        // 回填进延迟句柄，供 workspace_module_invoke。
-        workspace_module_runtime_gateway_handle
-            .set(runtime_gateway.clone())
-            .await;
         let extension_runtime_protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),

@@ -2,7 +2,6 @@ mod agent_run_mailbox_contracts;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
-pub mod canvases;
 pub mod companion_gates;
 pub mod diagnostics;
 pub mod discovered_options;
@@ -84,7 +83,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(project_agents::router())
         .merge(routines::router())
         .merge(runner_registration_tokens::router())
-        .merge(canvases::router())
         .merge(interactions::router())
         .merge(companion_gates::router())
         .merge(mcp_presets::router())

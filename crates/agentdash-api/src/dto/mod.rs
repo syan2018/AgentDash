@@ -5,7 +5,6 @@
 mod auth;
 mod backend;
 mod backend_access;
-mod canvas;
 mod discovered_options;
 mod discovery;
 mod extension_management;
@@ -35,7 +34,6 @@ pub use agentdash_contracts::workspace::{WorkspaceBindingResponse, WorkspaceResp
 pub use auth::*;
 pub use backend::*;
 pub use backend_access::*;
-pub use canvas::*;
 pub use discovered_options::*;
 pub use discovery::*;
 pub use extension_management::*;

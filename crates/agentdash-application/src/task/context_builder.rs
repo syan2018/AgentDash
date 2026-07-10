@@ -2,7 +2,6 @@ use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::hooks::HookControlTarget;
 use uuid::Uuid;
 
-use crate::canvas::project_visible_canvas_mounts;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
     ContextContributions, McpCandidates, ToolContribution, load_available_presets,
@@ -10,7 +9,7 @@ use crate::capability::{
 };
 use crate::lifecycle::{
     ActiveWorkflowProjection, project_active_workflow_lifecycle_vfs,
-    resolve_active_workflow_projection_for_target, resolve_current_frame_from_delivery_trace_ref,
+    resolve_active_workflow_projection_for_target,
 };
 use crate::platform_config::PlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -47,7 +46,7 @@ pub async fn build_task_session_context(
     vfs_service: &VfsService,
     platform_config: &PlatformConfig,
     task_id: Uuid,
-    runtime_session_id: Option<&str>,
+    _runtime_session_id: Option<&str>,
 ) -> Option<BuiltTaskSessionContext> {
     let located = crate::task::plan::find_task_plan_item_by_subject(
         repos.lifecycle_run_repo.as_ref(),
@@ -140,23 +139,6 @@ pub async fn build_task_session_context(
         None
     };
     runtime_vfs = project_active_workflow_lifecycle_vfs(runtime_vfs, workflow.as_ref());
-
-    if let Some(space) = runtime_vfs.as_mut() {
-        let visible_canvas_mount_ids =
-            resolve_visible_canvas_definition_ids(repos, runtime_session_id).await;
-        if project_visible_canvas_mounts(
-            repos.canvas_repo.as_ref(),
-            run.project_id,
-            space,
-            &visible_canvas_mount_ids,
-            None,
-        )
-        .await
-        .is_err()
-        {
-            return None;
-        }
-    }
 
     let story_overrides = story
         .as_ref()
@@ -286,35 +268,4 @@ async fn find_active_workflow_for_task_target(
         }
     }
     None
-}
-
-async fn resolve_visible_canvas_definition_ids(
-    repos: &RepositorySet,
-    runtime_session_id: Option<&str>,
-) -> Vec<String> {
-    let Some(session_id) = runtime_session_id else {
-        return Vec::new();
-    };
-    let Ok(Some(anchor)) = repos
-        .execution_anchor_repo
-        .find_by_session(session_id)
-        .await
-    else {
-        return Vec::new();
-    };
-    match resolve_current_frame_from_delivery_trace_ref(
-        &anchor.runtime_session_id,
-        repos.execution_anchor_repo.as_ref(),
-        repos.lifecycle_agent_repo.as_ref(),
-        repos.agent_frame_repo.as_ref(),
-    )
-    .await
-    {
-        Ok(Some((_anchor, _agent, frame))) => frame
-            .visible_workspace_module_refs()
-            .into_iter()
-            .filter_map(|module_ref| module_ref.strip_prefix("canvas:").map(ToOwned::to_owned))
-            .collect(),
-        _ => Vec::new(),
-    }
 }

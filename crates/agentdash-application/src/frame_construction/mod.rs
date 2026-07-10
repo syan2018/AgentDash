@@ -174,7 +174,23 @@ impl FrameConstructionService {
                 ))
             })?;
 
-        classify::route_and_compose(self, frame, agent, run, input).await
+        let project_id = run.project_id;
+        let run_id = run.id;
+        let agent_id = agent.id;
+        let mut envelope = classify::route_and_compose(self, frame, agent, run, input).await?;
+        let frame_id = envelope
+            .frame
+            .pending_frame
+            .as_ref()
+            .map(|frame| frame.id)
+            .unwrap_or(envelope.frame.surface.frame_id);
+        envelope.agent_run_execution = Some(agentdash_spi::AgentRunExecutionRef {
+            project_id,
+            run_id,
+            agent_id,
+            frame_id,
+        });
+        Ok(envelope)
     }
 
     pub async fn construct_launch_envelope_from_request(
@@ -200,7 +216,6 @@ impl FrameConstructionService {
     pub(crate) fn owner_bootstrap_composer(&self) -> OwnerBootstrapComposer<'_> {
         OwnerBootstrapComposer::new(
             self.vfs_service.as_ref(),
-            self.repos.canvas_repo.as_ref(),
             self.availability.as_ref(),
             &self.repos,
             self.platform_config.as_ref(),
@@ -502,6 +517,7 @@ pub(crate) fn build_envelope_from_frame(
         .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
 
     Ok(FrameLaunchEnvelope {
+        agent_run_execution: None,
         frame: FrameLaunchFrameRef {
             surface,
             pending_frame: None,

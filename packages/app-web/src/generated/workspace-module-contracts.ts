@@ -4,11 +4,6 @@
 import type { JsonValue } from "./common-contracts";
 
 /**
- * 宿主拥有的 Canvas module operation。
- */
-export type WorkspaceModuleCanvasHostAction = "bind_data" | "inspect" | "get_interaction_state";
-
-/**
  * `describe` 返回的完整 descriptor。
  */
 export type WorkspaceModuleDescriptor = { summary: WorkspaceModuleSummary, ui_entries: Array<WorkspaceModuleUiEntry>, operations: Array<WorkspaceModuleOperation>,
@@ -25,40 +20,26 @@ export type WorkspaceModuleKind = "extension" | "canvas" | "builtin";
 /**
  * 单个 operation（extension action / protocol method / host canvas / builtin 同构呈现）。
  */
-export type WorkspaceModuleOperation = { operation_key: string,
-/**
- * "runtime_action" | "protocol_method" | "host_canvas" | "builtin"。
- */
-origin: string, description: string, input_schema?: JsonValue | null, output_schema?: JsonValue | null, permission_summary: Array<string>, visibility: WorkspaceModuleOperationVisibility,
-/**
- * Generated projection provenance, e.g. capability/exposure keys and source layer.
- */
-provenance?: JsonValue,
-/**
- * 来源专属路由分量，invoke 据此直接派发（不拆 operation_key）。
- */
-dispatch: WorkspaceModuleOperationDispatch, readiness: WorkspaceModuleOperationReadiness, };
+export type WorkspaceModuleOperation = { operation_ref: WorkspaceModuleOperationRef, operation_key: string, description: string, input_schema?: JsonValue | null, output_schema?: JsonValue | null, permission_summary: Array<string>, visibility: WorkspaceModuleOperationVisibility, effect: WorkspaceModuleOperationEffect, replay_policy: WorkspaceModuleOperationReplayPolicy, provenance: WorkspaceModuleOperationProvenance, readiness: WorkspaceModuleOperationReadiness, };
 
-/**
- * operation 的来源专属派发分量。
- *
- * `origin` 是给人/UI 看的扁平标签；`dispatch` 承载 invoke 元工具据以**直接路由**的
- * 结构化分量，由聚合层（`build_workspace_modules`）在构造 operation 时一并填好。
- * invoke 据 `dispatch` 派发，**不再字符串拆 `operation_key`**（避免 protocol method
- * 名含驼峰时的反解析脆弱）。
- */
-export type WorkspaceModuleOperationDispatch = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_method", provider_extension_key: string, provider_extension_id: string, protocol_key: string, protocol_version: string, method_name: string, } | { "kind": "backend_service", service_key: string, route: string, } | { "kind": "host_canvas", canvas_action: WorkspaceModuleCanvasHostAction, } | { "kind": "builtin", builtin_key: string, };
+export type WorkspaceModuleOperationEffect = "read" | "local_mutation" | "external_side_effect";
+
+export type WorkspaceModuleOperationProvenance = { source: string, artifact_digest?: string | null, };
 
 /**
  * 当前 runtime 中 operation 调用可用性的结构化诊断。
  */
-export type WorkspaceModuleOperationReadiness = { kind: WorkspaceModuleOperationReadinessKind, reason?: string | null, };
+export type WorkspaceModuleOperationReadiness = { kind: WorkspaceModuleOperationReadinessKind, code?: string | null, message?: string | null, };
 
 /**
  * Operation 调用就绪状态；它只描述当前 operation 是否可调用，
  * 与 module 可见性和 renderer loadability 分层。
  */
-export type WorkspaceModuleOperationReadinessKind = "ready" | "missing_runtime_gateway" | "missing_protocol_transport" | "missing_runtime_backend_anchor" | "backend_unavailable" | "runtime_action_unavailable" | "backend_service_unavailable";
+export type WorkspaceModuleOperationReadinessKind = "ready" | "unavailable";
+
+export type WorkspaceModuleOperationRef = { namespace: string, provider_key: string, operation_key: string, contract_version: number, };
+
+export type WorkspaceModuleOperationReplayPolicy = "non_replayable" | "idempotent" | "replay_safe";
 
 /**
  * Operation exposure target.

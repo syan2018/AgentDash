@@ -44,15 +44,16 @@ pub use agentdash_domain::backend::{
     RuntimeBackendAnchorSource,
 };
 pub use connector::{
-    AgentConnector, AgentInfo, CapabilityState, CapabilityStateDelta, ChannelDimension,
-    CompanionDimension, ConnectorCapabilities, ConnectorError, ConnectorType, DefaultMountDelta,
-    DiscoveredGuideline, DiscoveryContext, ExecutionBackendPlacement, ExecutionContext,
-    ExecutionSessionFrame, ExecutionStream, ExecutionTurnFrame, ExecutionTurnMode, McpEnvVar,
-    McpHttpHeader, McpServerReadinessSummary, McpTransportConfig, NamedEntityDelta, PromptPayload,
-    RestoredSessionState, RuntimeMcpServer, RuntimeMcpSourceReadiness, RuntimeVfsAccessPolicy,
-    RuntimeVfsAccessRule, RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern,
-    SetDelta, SkillClusterMeta, SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension,
-    VfsDimension, VfsSurfaceDelta, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
+    AgentConnector, AgentInfo, AgentRunExecutionRef, CapabilityState, CapabilityStateDelta,
+    ChannelDimension, CompanionDimension, ConnectorCapabilities, ConnectorError, ConnectorType,
+    DefaultMountDelta, DiscoveredGuideline, DiscoveryContext, ExecutionBackendPlacement,
+    ExecutionContext, ExecutionSessionFrame, ExecutionStream, ExecutionTurnFrame,
+    ExecutionTurnMode, McpEnvVar, McpHttpHeader, McpServerReadinessSummary, McpTransportConfig,
+    NamedEntityDelta, PromptPayload, RestoredSessionState, RuntimeMcpServer,
+    RuntimeMcpSourceReadiness, RuntimeVfsAccessPolicy, RuntimeVfsAccessRule,
+    RuntimeVfsAccessSource, RuntimeVfsOperation, RuntimeVfsPathPattern, SetDelta, SkillClusterMeta,
+    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
+    VfsSurfaceDelta, WorkspaceModuleDimension, WorkspaceModuleVisibilityMode,
     compute_capability_state_delta, partition_runtime_mcp_servers, workspace_path_from_context,
 };
 

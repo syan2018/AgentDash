@@ -9,7 +9,6 @@ use agentdash_application_lifecycle::lifecycle::surface::journey::{
     AgentRunJournalProjection, AgentRunJournalReader, AgentRunJournalRef, JourneyResult,
     LifecycleJourneyError, SessionToolResultCacheReadResult, SessionToolResultCacheReader,
 };
-use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::routine::RoutineExecutionRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
@@ -22,7 +21,6 @@ use agentdash_spi::session_persistence::{
 };
 use async_trait::async_trait;
 
-use crate::canvas::CanvasFsMountProvider;
 use crate::lifecycle::{
     LifecycleMountProvider, SessionToolResultCacheStatus as LifecycleToolResultCacheStatus,
     SessionToolResultCacheStatusKind as LifecycleToolResultCacheStatusKind,
@@ -39,7 +37,6 @@ pub trait MountProviderRegistryBuilderOwnerExt {
     fn with_application_builtins(
         self,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        canvas_repo: Arc<dyn CanvasRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
@@ -60,7 +57,6 @@ impl MountProviderRegistryBuilderOwnerExt for MountProviderRegistryBuilder {
     fn with_application_builtins(
         self,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        canvas_repo: Arc<dyn CanvasRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
         skill_asset_repo: Arc<dyn SkillAssetRepository>,
@@ -102,7 +98,6 @@ impl MountProviderRegistryBuilderOwnerExt for MountProviderRegistryBuilder {
             routine_execution_repo,
             inline_file_repo.clone(),
         )))
-        .register(Arc::new(CanvasFsMountProvider::new(canvas_repo)))
         .register(Arc::new(SkillAssetFsMountProvider::new(skill_asset_repo)))
     }
 }

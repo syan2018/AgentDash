@@ -347,6 +347,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 
@@ -594,10 +595,12 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tera",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]

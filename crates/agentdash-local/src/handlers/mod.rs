@@ -14,9 +14,11 @@ mod materialization;
 mod mcp_relay;
 mod prompt;
 pub(crate) mod relay_mcp_servers;
+mod runtime_wire;
 mod terminal;
 mod tool_calls;
 mod workspace;
+pub use runtime_wire::{RuntimeDriverEndpointResolver, RuntimeWireCommandHandler};
 pub use workspace::browse_directory;
 
 use agentdash_diagnostics::{Subsystem, diag};
@@ -78,6 +80,7 @@ pub struct LocalCommandRouter {
     mcp: McpCommandHandler,
     extension: ExtensionCommandHandler,
     terminal: TerminalCommandHandler,
+    runtime_wire: Option<Arc<RuntimeWireCommandHandler>>,
 }
 
 pub struct LocalCommandRouterConfig {
@@ -93,6 +96,7 @@ pub struct LocalCommandRouterConfig {
     pub extension_artifact_access_token: String,
     pub extension_artifact_cache_root: PathBuf,
     pub event_tx: mpsc::UnboundedSender<RelayMessage>,
+    pub runtime_wire: Option<Arc<RuntimeWireCommandHandler>>,
 }
 
 impl LocalCommandRouter {
@@ -136,6 +140,7 @@ impl LocalCommandRouter {
                 ),
             }),
             terminal: TerminalCommandHandler::new(config.tool_executor, shell_session_manager),
+            runtime_wire: config.runtime_wire,
         }
     }
 
@@ -151,6 +156,27 @@ impl LocalCommandRouter {
     /// 异步事件（如 SessionNotification）通过 event_tx 推送。
     pub async fn handle(&self, msg: RelayMessage) -> Vec<RelayMessage> {
         match msg {
+            RelayMessage::RuntimeWireOpen { id, payload } => match &self.runtime_wire {
+                Some(handler) => vec![handler.open(id, payload).await],
+                None => vec![RelayMessage::Error {
+                    id,
+                    error: RelayError::runtime_error("Runtime Wire endpoint is not configured"),
+                }],
+            },
+            RelayMessage::RuntimeWireFrame { id, payload } => match &self.runtime_wire {
+                Some(handler) => handler.frame(id, *payload).await,
+                None => vec![RelayMessage::Error {
+                    id,
+                    error: RelayError::runtime_error("Runtime Wire endpoint is not configured"),
+                }],
+            },
+            RelayMessage::RuntimeWireAck { id, payload } => match &self.runtime_wire {
+                Some(handler) => handler.acknowledge(id, payload).await.into_iter().collect(),
+                None => vec![RelayMessage::Error {
+                    id,
+                    error: RelayError::runtime_error("Runtime Wire endpoint is not configured"),
+                }],
+            },
             // ── 心跳 ──
             RelayMessage::Ping { id, payload } => {
                 vec![RelayMessage::Pong {

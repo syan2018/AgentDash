@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -6,8 +8,9 @@ use ts_rs::TS;
 
 use crate::{
     ContextCandidateId, ContextCheckpointId, DriverBindingId, DriverItemId, DriverRequestId,
-    DriverThreadId, DriverTurnId, ProfileDigest, RuntimeBindingId, RuntimeCommand, RuntimeEvent,
-    RuntimeProfile, RuntimeServiceInstanceId, SurfaceDigest, SurfaceRevision,
+    DriverThreadId, DriverTurnId, HookPlanDigest, HookPlanRevision, HookPoint, ProfileDigest,
+    RuntimeBindingId, RuntimeCommand, RuntimeEvent, RuntimeProfile, RuntimeServiceInstanceId,
+    SurfaceDigest, SurfaceRevision, ToolSetRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -32,6 +35,20 @@ pub struct DriverBindRequest {
     pub service_instance_id: RuntimeServiceInstanceId,
     pub surface_revision: SurfaceRevision,
     pub surface_digest: SurfaceDigest,
+    pub intent: DriverBindIntent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DriverBindIntent {
+    Start,
+    Resume {
+        source_thread_id: DriverThreadId,
+    },
+    Fork {
+        source_thread_id: DriverThreadId,
+        through_source_turn_id: Option<DriverTurnId>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -41,6 +58,19 @@ pub struct DriverBinding {
     pub source_thread_id: DriverThreadId,
     pub applied_surface_revision: SurfaceRevision,
     pub applied_surface_digest: SurfaceDigest,
+    pub applied_tool_set_revision: ToolSetRevision,
+    pub applied_tool_set_digest: String,
+    pub applied_hook_plan_revision: Option<HookPlanRevision>,
+    pub applied_hook_plan_digest: Option<HookPlanDigest>,
+    pub applied_hooks: Vec<DriverHookApplyStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverHookApplyStatus {
+    pub point: HookPoint,
+    pub acknowledged: bool,
+    pub artifact_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -58,6 +88,14 @@ pub struct DriverCommandEnvelope {
 pub struct DriverDispatchReceipt {
     pub request_id: DriverRequestId,
     pub duplicate: bool,
+    pub applied_tool_set: Option<DriverToolSetApplyReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverToolSetApplyReceipt {
+    pub revision: ToolSetRevision,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -77,6 +115,16 @@ pub enum DriverInspectionQuery {
     Binding { driver_binding_id: DriverBindingId },
     CompactionActivation { candidate_id: ContextCandidateId },
     Checkpoint { checkpoint_id: ContextCheckpointId },
+    ThreadProjection { source_thread_id: DriverThreadId },
+    ContextRead { source_thread_id: DriverThreadId },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverProjectedItem {
+    pub source_turn_id: DriverTurnId,
+    pub source_item_id: DriverItemId,
+    pub content: crate::RuntimeItemContent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -91,6 +139,16 @@ pub enum DriverInspection {
     },
     Checkpoint {
         available: bool,
+        digest: Option<String>,
+    },
+    ThreadProjection {
+        source_thread_id: DriverThreadId,
+        items: Vec<DriverProjectedItem>,
+        fidelity: crate::ContextFidelity,
+    },
+    ContextRead {
+        source_thread_id: DriverThreadId,
+        fidelity: crate::ContextFidelity,
         digest: Option<String>,
     },
 }
@@ -129,7 +187,7 @@ pub trait AgentRuntimeDriver: Send + Sync {
     async fn dispatch(
         &self,
         command: DriverCommandEnvelope,
-        sink: &dyn DriverEventSink,
+        sink: Arc<dyn DriverEventSink>,
     ) -> Result<DriverDispatchReceipt, DriverError>;
 
     async fn inspect(&self, query: DriverInspectionQuery) -> Result<DriverInspection, DriverError>;

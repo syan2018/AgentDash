@@ -98,6 +98,8 @@ pub struct ActivateAgentServiceInstance {
 pub struct BoundAgentSurfaceReference {
     pub revision: SurfaceRevision,
     pub digest: SurfaceDigest,
+    pub tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision,
+    pub tool_set_digest: String,
     pub hook_plan_revision: Option<HookPlanRevision>,
     pub hook_plan_digest: Option<HookPlanDigest>,
     pub hook_artifact_digest: Option<String>,
@@ -118,6 +120,8 @@ pub struct HookApplyStatus {
 pub struct AppliedSurface {
     pub revision: SurfaceRevision,
     pub digest: SurfaceDigest,
+    pub tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision,
+    pub tool_set_digest: String,
     pub hook_plan_revision: Option<HookPlanRevision>,
     pub hook_plan_digest: Option<HookPlanDigest>,
     pub hooks: Vec<HookApplyStatus>,
@@ -145,6 +149,7 @@ pub struct RuntimeBinding {
     pub driver_generation: RuntimeDriverGeneration,
     pub profile_digest: ProfileDigest,
     pub bound_surface: BoundAgentSurfaceReference,
+    pub bind_intent: agentdash_agent_runtime_contract::DriverBindIntent,
     pub applied_surface: Option<AppliedSurface>,
     pub driver_binding_id: Option<DriverBindingId>,
     pub source_thread_id: Option<DriverThreadId>,
@@ -162,6 +167,8 @@ impl RuntimeBinding {
         };
         if applied.revision != self.bound_surface.revision
             || applied.digest != self.bound_surface.digest
+            || applied.tool_set_revision != self.bound_surface.tool_set_revision
+            || applied.tool_set_digest != self.bound_surface.tool_set_digest
             || applied.hook_plan_revision != self.bound_surface.hook_plan_revision
             || applied.hook_plan_digest != self.bound_surface.hook_plan_digest
         {

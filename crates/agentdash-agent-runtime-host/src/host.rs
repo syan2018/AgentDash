@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeDriver, DriverBindRequest, DriverCommandEnvelope, DriverDispatchReceipt,
-    DriverError, DriverEventEnvelope, DriverEventSink, ProfileDigest, ProfileProvenance,
-    RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeProfile,
+    AgentRuntimeDriver, DriverBindIntent, DriverBindRequest, DriverCommandEnvelope,
+    DriverDispatchReceipt, DriverError, DriverEventEnvelope, DriverEventSink, ProfileDigest,
+    ProfileProvenance, RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeProfile,
     RuntimeServiceInstanceId, RuntimeThreadId, intersect_profile_layers,
 };
 use agentdash_integration_api::{
@@ -61,6 +61,7 @@ pub struct BindRuntimeRequest {
     pub thread_id: RuntimeThreadId,
     pub offer_id: AgentServiceOfferId,
     pub bound_surface: BoundAgentSurfaceReference,
+    pub intent: DriverBindIntent,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +131,7 @@ impl AgentRuntimeCredentialBroker for ScopedCredentialBroker {
 pub struct IntegrationDriverHost {
     registry: AgentServiceDefinitionRegistry,
     repository: Arc<dyn AgentRuntimeHostRepository>,
-    credentials: Arc<dyn AgentRuntimeCredentialBroker>,
+    ports: RuntimeDriverHostPorts,
     conformance: Arc<dyn DriverConformanceVerifier>,
     node_id: String,
     lease_duration: Duration,
@@ -143,14 +144,14 @@ impl IntegrationDriverHost {
     pub fn new(
         registry: AgentServiceDefinitionRegistry,
         repository: Arc<dyn AgentRuntimeHostRepository>,
-        credentials: Arc<dyn AgentRuntimeCredentialBroker>,
+        ports: RuntimeDriverHostPorts,
         conformance: Arc<dyn DriverConformanceVerifier>,
         node_id: impl Into<String>,
     ) -> Self {
         Self {
             registry,
             repository,
-            credentials,
+            ports,
             conformance,
             node_id: node_id.into(),
             lease_duration: Duration::from_secs(30),
@@ -257,7 +258,7 @@ impl IntegrationDriverHost {
         }
         let scoped_credentials: Arc<dyn AgentRuntimeCredentialBroker> =
             Arc::new(ScopedCredentialBroker::new(
-                self.credentials.clone(),
+                self.ports.credentials.clone(),
                 &definition.credential_slots,
                 &instance.credentials,
             ));
@@ -289,6 +290,10 @@ impl IntegrationDriverHost {
                 },
                 RuntimeDriverHostPorts {
                     credentials: scoped_credentials,
+                    surfaces: self.ports.surfaces.clone(),
+                    context: self.ports.context.clone(),
+                    tools: self.ports.tools.clone(),
+                    hooks: self.ports.hooks.clone(),
                 },
             )
             .await
@@ -443,7 +448,8 @@ impl IntegrationDriverHost {
         if let Some(binding) = &existing {
             let same_intent = binding.thread_id == request.thread_id
                 && binding.offer_id == request.offer_id
-                && binding.bound_surface == request.bound_surface;
+                && binding.bound_surface == request.bound_surface
+                && binding.bind_intent == request.intent;
             if !same_intent {
                 return Err(AgentRuntimeHostError::DispatchRejected {
                     reason: "binding id is already used by a different bind intent".to_string(),
@@ -529,6 +535,7 @@ impl IntegrationDriverHost {
             driver_generation: offer.generation,
             profile_digest: offer.profile_digest.clone(),
             bound_surface: request.bound_surface.clone(),
+            bind_intent: request.intent.clone(),
             applied_surface: None,
             driver_binding_id: None,
             source_thread_id: None,
@@ -545,6 +552,7 @@ impl IntegrationDriverHost {
                 service_instance_id: offer.service_instance_id,
                 surface_revision: request.bound_surface.revision,
                 surface_digest: request.bound_surface.digest.clone(),
+                intent: request.intent,
             })
             .await
         {
@@ -558,6 +566,10 @@ impl IntegrationDriverHost {
         };
         if driver_binding.applied_surface_revision != request.bound_surface.revision
             || driver_binding.applied_surface_digest != request.bound_surface.digest
+            || driver_binding.applied_tool_set_revision != request.bound_surface.tool_set_revision
+            || driver_binding.applied_tool_set_digest != request.bound_surface.tool_set_digest
+            || driver_binding.applied_hook_plan_revision != request.bound_surface.hook_plan_revision
+            || driver_binding.applied_hook_plan_digest != request.bound_surface.hook_plan_digest
         {
             self.repository
                 .fail_binding(&request.binding_id, offer.generation)
@@ -570,9 +582,19 @@ impl IntegrationDriverHost {
         let applied = AppliedSurface {
             revision: driver_binding.applied_surface_revision,
             digest: driver_binding.applied_surface_digest,
-            hook_plan_revision: request.bound_surface.hook_plan_revision,
-            hook_plan_digest: request.bound_surface.hook_plan_digest,
-            hooks: Vec::new(),
+            tool_set_revision: driver_binding.applied_tool_set_revision,
+            tool_set_digest: driver_binding.applied_tool_set_digest,
+            hook_plan_revision: driver_binding.applied_hook_plan_revision,
+            hook_plan_digest: driver_binding.applied_hook_plan_digest,
+            hooks: driver_binding
+                .applied_hooks
+                .into_iter()
+                .map(|status| HookApplyStatus {
+                    point: status.point,
+                    acknowledged: status.acknowledged,
+                    artifact_digest: status.artifact_digest,
+                })
+                .collect(),
         };
         let source = RuntimeSourceCoordinate {
             binding_id: request.binding_id.clone(),
@@ -654,7 +676,7 @@ impl IntegrationDriverHost {
     pub async fn dispatch(
         &self,
         command: RouteDriverCommand,
-        sink: &dyn DriverEventSink,
+        sink: Arc<dyn DriverEventSink>,
     ) -> Result<DriverDispatchReceipt, AgentRuntimeHostError> {
         let binding = self.binding(&command.envelope.binding_id).await?;
         if binding.driver_generation != command.envelope.generation {
@@ -696,7 +718,7 @@ impl IntegrationDriverHost {
             )
             .await?;
         let driver = self.driver_for_offer(&offer).await?;
-        let fenced_sink = GenerationFencedEventSink {
+        let fenced_sink = Arc::new(GenerationFencedEventSink {
             binding_id: binding.id,
             generation: binding.driver_generation,
             source_thread_id: source.source_thread_id,
@@ -704,9 +726,9 @@ impl IntegrationDriverHost {
             lease_token: command.lease_token,
             repository: self.repository.clone(),
             inner: sink,
-        };
+        });
         driver
-            .dispatch(command.envelope, &fenced_sink)
+            .dispatch(command.envelope, fenced_sink)
             .await
             .map_err(Into::into)
     }
@@ -727,6 +749,31 @@ impl IntegrationDriverHost {
             })
     }
 
+    /// Resolves the single activated driver endpoint owned by a durable service offer.
+    ///
+    /// Transport adapters use this method to terminate Runtime Wire at the Integration Host;
+    /// they must not construct an independent driver or bypass generation fencing.
+    pub async fn driver_endpoint(
+        &self,
+        service_instance_id: &RuntimeServiceInstanceId,
+        generation: RuntimeDriverGeneration,
+    ) -> Result<Arc<dyn AgentRuntimeDriver>, AgentRuntimeHostError> {
+        let offer = self
+            .offers()
+            .await?
+            .into_iter()
+            .find(|offer| {
+                &offer.service_instance_id == service_instance_id && offer.generation == generation
+            })
+            .ok_or_else(|| AgentRuntimeHostError::OfferUnavailable {
+                reason: format!(
+                    "service instance {service_instance_id} has no available offer for generation {}",
+                    generation.0
+                ),
+            })?;
+        self.driver_for_offer(&offer).await
+    }
+
     pub async fn recover_available_drivers(&self) -> Result<usize, AgentRuntimeHostError> {
         let offers = self.offers().await?;
         for offer in &offers {
@@ -744,6 +791,7 @@ impl IntegrationDriverHost {
                 thread_id: binding.thread_id,
                 offer_id: binding.offer_id,
                 bound_surface: binding.bound_surface,
+                intent: binding.bind_intent,
             })
             .await?;
             recovered += 1;
@@ -789,7 +837,7 @@ impl IntegrationDriverHost {
         validate_credentials(&definition.credential_slots, &instance.credentials)?;
         let scoped_credentials: Arc<dyn AgentRuntimeCredentialBroker> =
             Arc::new(ScopedCredentialBroker::new(
-                self.credentials.clone(),
+                self.ports.credentials.clone(),
                 &definition.credential_slots,
                 &instance.credentials,
             ));
@@ -817,6 +865,10 @@ impl IntegrationDriverHost {
                 },
                 RuntimeDriverHostPorts {
                     credentials: scoped_credentials,
+                    surfaces: self.ports.surfaces.clone(),
+                    context: self.ports.context.clone(),
+                    tools: self.ports.tools.clone(),
+                    hooks: self.ports.hooks.clone(),
                 },
             )
             .await
@@ -848,18 +900,18 @@ impl IntegrationDriverHost {
     }
 }
 
-struct GenerationFencedEventSink<'a> {
+struct GenerationFencedEventSink {
     binding_id: RuntimeBindingId,
     generation: RuntimeDriverGeneration,
     source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
     lease_owner: String,
     lease_token: String,
     repository: Arc<dyn AgentRuntimeHostRepository>,
-    inner: &'a dyn DriverEventSink,
+    inner: Arc<dyn DriverEventSink>,
 }
 
 #[async_trait]
-impl DriverEventSink for GenerationFencedEventSink<'_> {
+impl DriverEventSink for GenerationFencedEventSink {
     async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
         if event.binding_id != self.binding_id
             || event.generation != self.generation

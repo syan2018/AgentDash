@@ -1,7 +1,13 @@
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeDriver, RuntimeDriverGeneration, RuntimeProfile, RuntimeServiceInstanceId,
+    AgentRuntimeDriver, ConfigurationBoundary, ContextBlock, ContextCandidateId,
+    ContextCheckpointId, ContextCompactionId, ContextDigest, ContextFidelity, ContextRecipe,
+    ContextRevision, DriverItemId, DriverThreadId, DriverTurnId, HookAction, HookDefinitionId,
+    HookFailurePolicy, HookPlanDigest, HookPlanRevision, HookPoint, InstructionChannel,
+    MaterializedContext, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
+    RuntimeProfile, RuntimeServiceInstanceId, SemanticStrength, SurfaceDigest, SurfaceRevision,
+    ToolChannel, ToolSetRevision, WorkspaceCapability,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -146,9 +152,267 @@ pub trait AgentRuntimeCredentialBroker: Send + Sync {
     ) -> Result<CredentialLease, CredentialResolveError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverSurfaceRequest {
+    pub binding_id: RuntimeBindingId,
+    pub surface_revision: SurfaceRevision,
+    pub surface_digest: SurfaceDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverInstructionSet {
+    pub channel: InstructionChannel,
+    pub entries: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverContextSurface {
+    pub recipe: ContextRecipe,
+    pub instructions: Vec<DriverInstructionSet>,
+    pub blocks: Vec<ContextBlock>,
+    pub digest: ContextDigest,
+    pub fidelity: ContextFidelity,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters_schema: Value,
+    pub channels: Vec<ToolChannel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverToolSurface {
+    pub revision: ToolSetRevision,
+    pub digest: String,
+    pub tools: Vec<DriverToolDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverHookBinding {
+    pub definition_id: HookDefinitionId,
+    pub point: HookPoint,
+    pub actions: Vec<HookAction>,
+    pub strength: SemanticStrength,
+    pub failure_policy: HookFailurePolicy,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverHookSurface {
+    pub revision: HookPlanRevision,
+    pub digest: HookPlanDigest,
+    pub artifact_digest: Option<String>,
+    pub configuration_boundary: ConfigurationBoundary,
+    pub bindings: Vec<DriverHookBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverWorkspaceSurface {
+    pub capabilities: Vec<WorkspaceCapability>,
+    pub roots: Vec<String>,
+}
+
+/// Runtime-owned surface materialized for one immutable binding intent.
+///
+/// Drivers may cache this value, but must acknowledge exactly the revisions and digests they
+/// actually installed. The Integration host never treats a requested digest as proof of apply.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MaterializedDriverSurface {
+    pub revision: SurfaceRevision,
+    pub digest: SurfaceDigest,
+    pub context: DriverContextSurface,
+    pub tools: DriverToolSurface,
+    pub hooks: DriverHookSurface,
+    pub workspace: DriverWorkspaceSurface,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DriverSurfaceError {
+    #[error("driver surface is unavailable: {reason}")]
+    Unavailable { reason: String, retryable: bool },
+    #[error("driver surface request is stale")]
+    Stale,
+    #[error("driver surface materialization violated its digest contract: {reason}")]
+    InvalidMaterialization { reason: String },
+}
+
+#[async_trait]
+pub trait AgentRuntimeSurfaceBroker: Send + Sync {
+    async fn materialize(
+        &self,
+        request: DriverSurfaceRequest,
+    ) -> Result<MaterializedDriverSurface, DriverSurfaceError>;
+
+    async fn materialize_tool_set(
+        &self,
+        binding_id: RuntimeBindingId,
+        revision: ToolSetRevision,
+        digest: &str,
+    ) -> Result<DriverToolSurface, DriverSurfaceError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverContextCheckpointRequest {
+    pub binding_id: RuntimeBindingId,
+    pub generation: RuntimeDriverGeneration,
+    pub checkpoint_id: ContextCheckpointId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverCompactionActivationRequest {
+    pub binding_id: RuntimeBindingId,
+    pub generation: RuntimeDriverGeneration,
+    pub compaction_id: ContextCompactionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverContextActivation {
+    pub candidate_id: ContextCandidateId,
+    pub checkpoint_id: ContextCheckpointId,
+    pub context_revision: ContextRevision,
+    pub materialized: MaterializedContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DriverContextError {
+    #[error("driver context is unavailable: {reason}")]
+    Unavailable { reason: String, retryable: bool },
+    #[error("driver context request is stale")]
+    Stale,
+    #[error("driver context does not exist")]
+    NotFound,
+    #[error("driver context materialization violated its digest contract: {reason}")]
+    InvalidMaterialization { reason: String },
+}
+
+#[async_trait]
+pub trait AgentRuntimeContextBroker: Send + Sync {
+    async fn load_checkpoint(
+        &self,
+        request: DriverContextCheckpointRequest,
+    ) -> Result<DriverContextActivation, DriverContextError>;
+
+    async fn compaction_activation(
+        &self,
+        request: DriverCompactionActivationRequest,
+    ) -> Result<DriverContextActivation, DriverContextError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverToolInvocation {
+    pub binding_id: RuntimeBindingId,
+    pub generation: RuntimeDriverGeneration,
+    pub source_thread_id: DriverThreadId,
+    pub source_turn_id: DriverTurnId,
+    pub source_item_id: DriverItemId,
+    pub tool_set_revision: ToolSetRevision,
+    pub tool_name: String,
+    pub arguments: Value,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DriverToolOutcome {
+    Completed {
+        output: Value,
+        is_error: bool,
+    },
+    InteractionRequired {
+        interaction_id: RuntimeInteractionId,
+        reason: String,
+    },
+    Denied {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DriverToolCallbackError {
+    #[error("tool callback is unavailable: {reason}")]
+    Unavailable { reason: String, retryable: bool },
+    #[error("tool callback coordinates are stale")]
+    Stale,
+    #[error("tool callback protocol violation: {reason}")]
+    ProtocolViolation { reason: String },
+}
+
+#[async_trait]
+pub trait AgentRuntimeToolCallback: Send + Sync {
+    async fn invoke(
+        &self,
+        request: DriverToolInvocation,
+    ) -> Result<DriverToolOutcome, DriverToolCallbackError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverHookInvocation {
+    pub binding_id: RuntimeBindingId,
+    pub generation: RuntimeDriverGeneration,
+    pub source_thread_id: DriverThreadId,
+    pub source_turn_id: Option<DriverTurnId>,
+    pub source_item_id: Option<DriverItemId>,
+    pub definition_id: HookDefinitionId,
+    pub point: HookPoint,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DriverHookDecision {
+    Continue {
+        payload: Value,
+    },
+    Block {
+        reason: String,
+    },
+    InteractionRequired {
+        interaction_id: RuntimeInteractionId,
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DriverHookCallbackError {
+    #[error("hook callback is unavailable: {reason}")]
+    Unavailable { reason: String, retryable: bool },
+    #[error("hook callback coordinates are stale")]
+    Stale,
+    #[error("hook callback protocol violation: {reason}")]
+    ProtocolViolation { reason: String },
+}
+
+#[async_trait]
+pub trait AgentRuntimeHookCallback: Send + Sync {
+    async fn execute(
+        &self,
+        request: DriverHookInvocation,
+    ) -> Result<DriverHookDecision, DriverHookCallbackError>;
+}
+
 #[derive(Clone)]
 pub struct RuntimeDriverHostPorts {
     pub credentials: Arc<dyn AgentRuntimeCredentialBroker>,
+    pub surfaces: Arc<dyn AgentRuntimeSurfaceBroker>,
+    pub context: Arc<dyn AgentRuntimeContextBroker>,
+    pub tools: Arc<dyn AgentRuntimeToolCallback>,
+    pub hooks: Arc<dyn AgentRuntimeHookCallback>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

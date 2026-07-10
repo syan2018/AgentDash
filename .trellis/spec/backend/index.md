@@ -25,6 +25,8 @@
 | [Managed Agent Runtime Hook Orchestration](./agent-runtime-hooks.md) | immutable HookPlan、canonical HookRun、failure policy、effect与恢复合同 |
 | [Business Agent Surface and Platform Tool Broker](./agent-runtime-surface-tool-broker.md) | capability编译、profile binding与callable tool执行合同 |
 | [Integration Agent Runtime Driver Host](./agent-runtime-driver-host.md) | service contribution、offer、sticky binding、lease与source fencing合同 |
+| [Native Agent Runtime Adapter and Clean Agent Core](./agent-runtime-native-adapter.md) | Native driver、exact context、truthful profile与Clean Core合同 |
+| [Codex App Server Runtime Adapter](./agent-runtime-codex-adapter.md) | App Server lifecycle、typed input/interaction、opaque context与native Hook合同 |
 | [Embedded Skill Bundles](./embedded-skill-bundles.md) | 源码内嵌 skill bundle 契约 |
 
 ## 模块 Architecture

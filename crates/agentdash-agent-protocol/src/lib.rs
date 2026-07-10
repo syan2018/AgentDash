@@ -1,4 +1,5 @@
 pub mod backbone;
+pub mod thread_item;
 
 // ─── 集中 re-export（保持外部 API 不变）───────────────────
 
@@ -28,8 +29,10 @@ pub use backbone::user_input::{
 
 pub use codex_app_server_protocol;
 
-pub use agentdash_agent_types::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, ShellExecExecutionMode,
+pub use thread_item::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
+    DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,
+    ShellExecExecutionMode,
 };
 
 pub use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, TextContent};

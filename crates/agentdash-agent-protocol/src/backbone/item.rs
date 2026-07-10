@@ -1,4 +1,4 @@
-use agentdash_agent_types::AgentDashThreadItem;
+use crate::AgentDashThreadItem;
 use codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

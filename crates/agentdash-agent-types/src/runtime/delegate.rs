@@ -110,11 +110,10 @@ pub type DynRuntimeProviderObserverDelegate = std::sync::Arc<dyn RuntimeProvider
 /// Agent loop 消费的显式 runtime delegate facet 集合。
 ///
 /// 每个字段只代表一个生命周期 concern。缺失 facet 时，方法 helper 会使用
-/// agent loop 的默认行为：不压缩、保持上下文、允许工具、自然停止、provider
+/// agent loop 的默认行为：保持上下文、允许工具、自然停止、provider
 /// observer no-op。
 #[derive(Clone, Default)]
 pub struct AgentRuntimeDelegateSet {
-    pub compaction: Option<DynRuntimeCompactionDelegate>,
     pub context_transform: Option<DynRuntimeContextTransformDelegate>,
     pub tool_policy: Option<DynRuntimeToolPolicyDelegate>,
     pub turn_boundary: Option<DynRuntimeTurnBoundaryDelegate>,
@@ -128,25 +127,18 @@ impl AgentRuntimeDelegateSet {
 
     pub fn from_all_facets<T>(delegate: std::sync::Arc<T>) -> Self
     where
-        T: RuntimeCompactionDelegate
-            + RuntimeContextTransformDelegate
+        T: RuntimeContextTransformDelegate
             + RuntimeToolPolicyDelegate
             + RuntimeTurnBoundaryDelegate
             + RuntimeProviderObserverDelegate
             + 'static,
     {
         Self {
-            compaction: Some(delegate.clone()),
             context_transform: Some(delegate.clone()),
             tool_policy: Some(delegate.clone()),
             turn_boundary: Some(delegate.clone()),
             provider_observer: Some(delegate),
         }
-    }
-
-    pub fn with_compaction(mut self, delegate: Option<DynRuntimeCompactionDelegate>) -> Self {
-        self.compaction = delegate;
-        self
     }
 
     pub fn with_context_transform(
@@ -173,50 +165,6 @@ impl AgentRuntimeDelegateSet {
     ) -> Self {
         self.provider_observer = delegate;
         self
-    }
-
-    pub async fn evaluate_compaction(
-        &self,
-        input: EvaluateCompactionInput,
-        cancel: CancellationToken,
-    ) -> Result<Option<CompactionParams>, AgentRuntimeError> {
-        let Some(delegate) = self.compaction.as_ref() else {
-            return Ok(None);
-        };
-        delegate.evaluate_compaction(input, cancel).await
-    }
-
-    pub async fn after_compaction(
-        &self,
-        result: CompactionResult,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        let Some(delegate) = self.compaction.as_ref() else {
-            return Ok(());
-        };
-        delegate.after_compaction(result, cancel).await
-    }
-
-    pub async fn after_compaction_failed(
-        &self,
-        input: CompactionFailureInput,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        let Some(delegate) = self.compaction.as_ref() else {
-            return Ok(());
-        };
-        delegate.after_compaction_failed(input, cancel).await
-    }
-
-    pub async fn after_compaction_noop(
-        &self,
-        input: CompactionNoopInput,
-        cancel: CancellationToken,
-    ) -> Result<(), AgentRuntimeError> {
-        let Some(delegate) = self.compaction.as_ref() else {
-            return Ok(());
-        };
-        delegate.after_compaction_noop(input, cancel).await
     }
 
     pub async fn transform_context(

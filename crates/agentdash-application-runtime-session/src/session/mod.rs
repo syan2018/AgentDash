@@ -28,7 +28,6 @@ pub(crate) mod hub;
 mod hub_support;
 mod identity_context_frame;
 pub mod launch;
-mod manual_compaction_delegate;
 mod memory_context_frame;
 mod memory_inventory_entries;
 #[cfg(test)]

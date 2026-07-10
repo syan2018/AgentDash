@@ -7,9 +7,6 @@ edition.workspace = true
 [dependencies]
 # Agent 领域核心类型
 agentdash-agent-types = { workspace = true }
-# ThinkingLevel 等 domain 层枚举
-agentdash-domain = { workspace = true }
-
 # 异步运行时
 tokio = { workspace = true }
 futures = { workspace = true }

@@ -302,7 +302,6 @@ impl std::fmt::Debug for ExecutionContext {
             .field(
                 "runtime_delegates",
                 &[
-                    self.turn.runtime_delegates.compaction.is_some(),
                     self.turn.runtime_delegates.context_transform.is_some(),
                     self.turn.runtime_delegates.tool_policy.is_some(),
                     self.turn.runtime_delegates.turn_boundary.is_some(),

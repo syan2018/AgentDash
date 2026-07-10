@@ -10,39 +10,13 @@ use crate::bridge::{
 };
 use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AgentRunError, AgentRunErrorKind,
-    AssistantStreamEvent, BeforeProviderRequestInput, CompactionFailureInput, CompactionNoopInput,
-    ContentPart, DynAgentTool, EvaluateCompactionInput, MessageRef, ProviderAttemptPhase,
-    ProviderAttemptStatus, ProviderVisibleContextStats, ToolCallInfo, TransformContextInput,
-    estimate_request_tokens, now_millis,
+    AssistantStreamEvent, BeforeProviderRequestInput, ContentPart, DynAgentTool,
+    ProviderAttemptPhase, ProviderAttemptStatus, ProviderVisibleContextStats, ToolCallInfo,
+    TransformContextInput, estimate_request_tokens,
 };
 
 use super::tool_call::refresh_context_tools;
 use super::{AgentEventSink, AgentLoopConfig, emit_event};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum CompactionPreflightOutcome {
-    NotRequested,
-    Noop { reason: String },
-    Completed,
-    Failed { reason: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct CompactionPreflightResult {
-    pub context_window: u64,
-    pub reserve_tokens: u64,
-    pub outcome: CompactionPreflightOutcome,
-}
-
-impl CompactionPreflightResult {
-    fn not_requested() -> Self {
-        Self {
-            context_window: 0,
-            reserve_tokens: 0,
-            outcome: CompactionPreflightOutcome::NotRequested,
-        }
-    }
-}
 
 pub(super) fn compute_suffix(existing: &str, incoming: &str) -> String {
     if incoming.is_empty() {
@@ -60,9 +34,6 @@ pub(super) fn compute_suffix(existing: &str, incoming: &str) -> String {
     }
 }
 
-/// 对齐 Pi `streamAssistantResponse` (agent-loop.ts:238-331)
-///
-/// 流程：transformContext → convertToLlm → Bridge.stream_complete → 事件
 struct PartialAssistantState {
     message: AgentMessage,
     added_partial: bool,
@@ -176,29 +147,16 @@ pub(super) async fn stream_assistant_response(
     } else {
         context.messages.clone()
     };
-    let mut message_refs_for_llm =
-        align_message_refs(&context.messages, &context.message_refs, &messages_for_llm);
-
-    let mut request = BridgeRequest {
+    let request = BridgeRequest {
         system_prompt: Some(context.system_prompt.clone()),
         messages: messages_for_llm.clone(),
         tools: context.tools.clone(),
     };
-    let compaction_preflight = run_compaction_preflight(
-        context,
-        &mut request,
-        &mut message_refs_for_llm,
-        config,
-        bridge,
-        emit,
-        cancel,
-    )
-    .await?;
 
     // BeforeProviderRequest 观测 hook
     {
         let final_stats = provider_visible_stats(&request);
-        let _ = config
+        config
             .runtime_delegates
             .on_before_provider_request(
                 BeforeProviderRequestInput {
@@ -206,12 +164,13 @@ pub(super) async fn stream_assistant_response(
                     message_count: request.messages.len(),
                     tool_count: context.tools.len(),
                     estimated_input_tokens: final_stats.estimated_input_tokens,
-                    context_window: compaction_preflight.context_window,
-                    reserve_tokens: compaction_preflight.reserve_tokens,
+                    context_window: 0,
+                    reserve_tokens: 0,
                 },
                 cancel.clone(),
             )
-            .await;
+            .await
+            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
     }
 
     let retry_policy = ProviderRetryPolicy::default();
@@ -738,262 +697,6 @@ pub(super) async fn stream_assistant_response(
     Ok(assistant_message)
 }
 
-pub(super) async fn run_compaction_preflight(
-    context: &mut AgentContext,
-    request: &mut BridgeRequest,
-    message_refs_for_llm: &mut Vec<Option<MessageRef>>,
-    config: &AgentLoopConfig,
-    bridge: &dyn LlmBridge,
-    emit: &AgentEventSink,
-    cancel: &CancellationToken,
-) -> Result<CompactionPreflightResult, AgentError> {
-    let draft_stats = provider_visible_stats(request);
-    let params = config
-        .runtime_delegates
-        .evaluate_compaction(
-            EvaluateCompactionInput {
-                context: AgentContext {
-                    system_prompt: context.system_prompt.clone(),
-                    messages: request.messages.clone(),
-                    message_refs: message_refs_for_llm.clone(),
-                    tools: context.tools.clone(),
-                },
-                provider_visible: Some(draft_stats),
-            },
-            cancel.clone(),
-        )
-        .await
-        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
-
-    let Some(params) = params else {
-        return Ok(CompactionPreflightResult::not_requested());
-    };
-
-    let metadata = params.metadata.clone();
-    let compaction_context_window = params.trigger_stats.context_window;
-    let compaction_reserve_tokens = params.reserve_tokens;
-    let preflight_result = |outcome| CompactionPreflightResult {
-        context_window: compaction_context_window,
-        reserve_tokens: compaction_reserve_tokens,
-        outcome,
-    };
-
-    match crate::compaction::evaluate_compaction_eligibility(
-        &request.messages,
-        message_refs_for_llm,
-        &params,
-    ) {
-        crate::compaction::CompactionEligibility::Eligible => {}
-        crate::compaction::CompactionEligibility::NoEligibleMessages { .. } => {
-            let reason = "no_eligible_messages".to_string();
-            emit_compaction_noop(emit, config, reason.clone(), metadata, cancel).await?;
-            return Ok(preflight_result(CompactionPreflightOutcome::Noop {
-                reason,
-            }));
-        }
-        crate::compaction::CompactionEligibility::InvalidInput {
-            failure,
-            message_count,
-            ref_count,
-        } => {
-            let reason = failure.reason_code().to_string();
-            let item_id = format!("context-compaction-failed-{}", now_millis());
-            emit_compaction_failed(
-                emit,
-                config,
-                item_id,
-                reason.clone(),
-                reason.clone(),
-                Some(serde_json::json!({
-                    "reason": reason.clone(),
-                    "message_count": message_count,
-                    "ref_count": ref_count,
-                })),
-                Some(metadata),
-                cancel,
-            )
-            .await?;
-            return Ok(preflight_result(CompactionPreflightOutcome::Failed {
-                reason,
-            }));
-        }
-    }
-
-    let item_id = format!("context-compaction-{}", now_millis());
-    emit_event(
-        emit,
-        AgentEvent::ContextCompactionStarted {
-            item_id: item_id.clone(),
-        },
-    )
-    .await;
-
-    match crate::compaction::execute_compaction(
-        &request.messages,
-        message_refs_for_llm,
-        &params,
-        metadata.clone(),
-        bridge,
-        cancel,
-    )
-    .await
-    {
-        Ok(Some(result)) => {
-            context.messages = result.messages.clone();
-            context.message_refs = result.message_refs.clone();
-            request.messages = result.messages.clone();
-            *message_refs_for_llm = result.message_refs.clone();
-            emit_event(
-                emit,
-                AgentEvent::ContextCompacted {
-                    item_id,
-                    messages: result.messages.clone(),
-                    message_refs: result.message_refs.clone(),
-                    compacted_until_ref: result.compacted_until_ref.clone(),
-                    first_kept_ref: result.first_kept_ref.clone(),
-                    metadata: result.metadata.clone(),
-                    newly_compacted_messages: result.newly_compacted_messages,
-                },
-            )
-            .await;
-            config
-                .runtime_delegates
-                .after_compaction(result, cancel.clone())
-                .await
-                .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
-            Ok(preflight_result(CompactionPreflightOutcome::Completed))
-        }
-        Ok(None) => {
-            let reason = "no_eligible_messages".to_string();
-            emit_compaction_noop_with_item_id(
-                emit,
-                config,
-                item_id,
-                reason.clone(),
-                metadata,
-                cancel,
-            )
-            .await?;
-            Ok(preflight_result(CompactionPreflightOutcome::Noop {
-                reason,
-            }))
-        }
-        Err(error) => {
-            let is_cancelled = matches!(error, AgentError::Cancelled);
-            let error_message = error.to_string();
-            let reason = compaction_failure_reason(&error);
-            emit_compaction_failed(
-                emit,
-                config,
-                item_id,
-                reason.clone(),
-                error_message,
-                Some(serde_json::json!({
-                    "reason": reason.clone(),
-                    "cancelled": is_cancelled,
-                })),
-                Some(metadata),
-                cancel,
-            )
-            .await?;
-            if is_cancelled {
-                return Err(error);
-            }
-            Ok(preflight_result(CompactionPreflightOutcome::Failed {
-                reason,
-            }))
-        }
-    }
-}
-
-async fn emit_compaction_noop(
-    emit: &AgentEventSink,
-    config: &AgentLoopConfig,
-    reason: String,
-    metadata: crate::types::CompactionMetadata,
-    cancel: &CancellationToken,
-) -> Result<(), AgentError> {
-    let item_id = format!("context-compaction-noop-{}", now_millis());
-    emit_compaction_noop_with_item_id(emit, config, item_id, reason, metadata, cancel).await
-}
-
-async fn emit_compaction_noop_with_item_id(
-    emit: &AgentEventSink,
-    config: &AgentLoopConfig,
-    item_id: String,
-    reason: String,
-    metadata: crate::types::CompactionMetadata,
-    cancel: &CancellationToken,
-) -> Result<(), AgentError> {
-    emit_event(
-        emit,
-        AgentEvent::ContextCompactionNoop {
-            item_id: item_id.clone(),
-            reason: reason.clone(),
-            metadata: metadata.clone(),
-        },
-    )
-    .await;
-    config
-        .runtime_delegates
-        .after_compaction_noop(
-            CompactionNoopInput {
-                item_id,
-                reason,
-                metadata,
-            },
-            cancel.clone(),
-        )
-        .await
-        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))
-}
-
-async fn emit_compaction_failed(
-    emit: &AgentEventSink,
-    config: &AgentLoopConfig,
-    item_id: String,
-    reason: String,
-    error: String,
-    details: Option<serde_json::Value>,
-    metadata: Option<crate::types::CompactionMetadata>,
-    cancel: &CancellationToken,
-) -> Result<(), AgentError> {
-    emit_event(
-        emit,
-        AgentEvent::ContextCompactionFailed {
-            item_id: item_id.clone(),
-            error: error.clone(),
-            metadata: metadata.clone(),
-        },
-    )
-    .await;
-    config
-        .runtime_delegates
-        .after_compaction_failed(
-            CompactionFailureInput {
-                item_id,
-                reason,
-                error,
-                details,
-                metadata,
-            },
-            cancel.clone(),
-        )
-        .await
-        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))
-}
-
-fn compaction_failure_reason(error: &AgentError) -> String {
-    match error {
-        AgentError::Cancelled => "cancelled".to_string(),
-        AgentError::InvalidState(code) if code.starts_with("compaction_") => code.clone(),
-        AgentError::InvalidState(code) if code == "summary_empty" => "summary_failed".to_string(),
-        AgentError::Bridge(_) => "summary_failed".to_string(),
-        AgentError::RuntimeDelegate(_) => "runtime_delegate_failed".to_string(),
-        _ => "compaction_failed".to_string(),
-    }
-}
-
 async fn ensure_partial_started(
     context: &mut AgentContext,
     emit: &AgentEventSink,
@@ -1020,34 +723,6 @@ fn sync_partial(context: &mut AgentContext, partial: &PartialAssistantState) {
     {
         *last = partial.message.clone();
     }
-}
-
-fn align_message_refs(
-    base_messages: &[AgentMessage],
-    base_refs: &[Option<crate::types::MessageRef>],
-    projected_messages: &[AgentMessage],
-) -> Vec<Option<crate::types::MessageRef>> {
-    if base_messages.len() != base_refs.len() {
-        return vec![None; projected_messages.len()];
-    }
-    let mut next_base = 0_usize;
-    projected_messages
-        .iter()
-        .map(|message| {
-            let matched = base_messages
-                .iter()
-                .enumerate()
-                .skip(next_base)
-                .find(|(_, base_message)| *base_message == message)
-                .map(|(idx, _)| idx);
-            if let Some(idx) = matched {
-                next_base = idx.saturating_add(1);
-                base_refs[idx].clone()
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 fn provider_visible_stats(request: &BridgeRequest) -> ProviderVisibleContextStats {

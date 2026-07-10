@@ -5,6 +5,7 @@ members = [
     "crates/agentdash-agent-runtime-host",
     "crates/agentdash-agent-runtime-contract",
     "crates/agentdash-agent-runtime-wire",
+    "crates/agentdash-integration-remote-runtime",
     "crates/agentdash-agent-runtime-test-support",
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
@@ -27,6 +28,8 @@ members = [
     "crates/agentdash-executor",
     "crates/agentdash-first-party-integrations",
     "crates/agentdash-integration-api",
+    "crates/agentdash-integration-native-agent",
+    "crates/agentdash-integration-codex",
     "crates/agentdash-contracts",
     "crates/agentdash-api",
 
@@ -100,6 +103,7 @@ agentdash-agent-runtime = { path = "crates/agentdash-agent-runtime" }
 agentdash-agent-runtime-host = { path = "crates/agentdash-agent-runtime-host" }
 agentdash-agent-runtime-contract = { path = "crates/agentdash-agent-runtime-contract" }
 agentdash-agent-runtime-wire = { path = "crates/agentdash-agent-runtime-wire" }
+agentdash-integration-remote-runtime = { path = "crates/agentdash-integration-remote-runtime" }
 agentdash-agent-runtime-test-support = { path = "crates/agentdash-agent-runtime-test-support" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
 agentdash-application-runtime-gateway = { path = "crates/agentdash-application-runtime-gateway" }
@@ -127,6 +131,8 @@ agentdash-agent = { path = "crates/agentdash-agent" }
 agentdash-relay = { path = "crates/agentdash-relay" }
 agentdash-local = { path = "crates/agentdash-local", default-features = false }
 agentdash-integration-api = { path = "crates/agentdash-integration-api" }
+agentdash-integration-native-agent = { path = "crates/agentdash-integration-native-agent" }
+agentdash-integration-codex = { path = "crates/agentdash-integration-codex" }
 agentdash-contracts = { path = "crates/agentdash-contracts" }
 
 # Codex Rust crates

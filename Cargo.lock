@@ -90,7 +90,6 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-types",
  "agentdash-diagnostics",
- "agentdash-domain",
  "anyhow",
  "async-trait",
  "futures",
@@ -203,12 +202,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "codex-app-server-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio-util",
- "ts-rs",
 ]
 
 [[package]]
@@ -637,6 +634,7 @@ name = "agentdash-first-party-integrations"
 version = "0.1.0"
 dependencies = [
  "agentdash-integration-api",
+ "agentdash-integration-codex",
  "async-trait",
  "serde_json",
 ]
@@ -689,10 +687,61 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-integration-codex"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-runtime-contract",
+ "agentdash-integration-api",
+ "agentdash-process",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "agentdash-integration-native-agent"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent",
+ "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-test-support",
+ "agentdash-agent-types",
+ "agentdash-integration-api",
+ "async-trait",
+ "futures",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "agentdash-integration-remote-runtime"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-wire",
+ "agentdash-integration-api",
+ "async-trait",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "agentdash-local"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
+ "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-wire",
  "agentdash-application",
  "agentdash-application-ports",
  "agentdash-application-runtime-session",
@@ -702,11 +751,13 @@ dependencies = [
  "agentdash-domain",
  "agentdash-executor",
  "agentdash-infrastructure",
+ "agentdash-integration-remote-runtime",
  "agentdash-mcp",
  "agentdash-process",
  "agentdash-relay",
  "agentdash-spi",
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "clap",
@@ -800,6 +851,9 @@ name = "agentdash-relay"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
+ "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-wire",
+ "async-trait",
  "chrono",
  "serde",
  "serde_json",

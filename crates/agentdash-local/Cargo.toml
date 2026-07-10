@@ -19,6 +19,9 @@ agentdash-relay.workspace = true
 agentdash-contracts.workspace = true
 agentdash-spi.workspace = true
 agentdash-agent-protocol = { workspace = true }
+agentdash-agent-runtime-contract = { workspace = true }
+agentdash-agent-runtime-wire = { workspace = true }
+agentdash-integration-remote-runtime = { workspace = true }
 agentdash-executor = { workspace = true }
 agentdash-application.workspace = true
 agentdash-application-ports = { workspace = true }
@@ -44,6 +47,7 @@ serde_json.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 thiserror.workspace = true
 agentdash-diagnostics = { workspace = true }
 tracing.workspace = true

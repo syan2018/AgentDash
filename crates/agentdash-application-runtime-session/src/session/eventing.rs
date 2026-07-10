@@ -2,12 +2,11 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use std::{collections::HashMap, io, sync::Arc};
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SessionRewindReason, SessionRewound,
-    SourceInfo, TraceInfo, UserInputBlock, codex_app_server_protocol as codex,
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEnvelope, BackboneEvent, PlatformEvent,
+    SessionRewindReason, SessionRewound, SourceInfo, TraceInfo, UserInputBlock,
+    codex_app_server_protocol as codex,
 };
-use agentdash_agent_types::{
-    AgentContextEnvelope, AgentDashNativeThreadItem, AgentDashThreadItem, AgentMessage, MessageRef,
-};
+use agentdash_agent_types::{AgentContextEnvelope, AgentMessage, MessageRef};
 use agentdash_domain::workflow::ManualContextCompactionRequestRepository;
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::trace::{

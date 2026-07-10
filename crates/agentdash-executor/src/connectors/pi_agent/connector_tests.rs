@@ -7,9 +7,10 @@ use agentdash_agent::{
     AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, MessageRef, StopReason,
     TokenUsage, ToolResultAddressProvider,
 };
+use agentdash_agent_protocol::AgentDashThreadItem;
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEvent, PlatformEvent, SourceInfo};
-use agentdash_agent_types::{AgentDashThreadItem, CompactionMetadata};
+use agentdash_agent_types::CompactionMetadata;
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
 use agentdash_spi::{Mount, MountCapability};

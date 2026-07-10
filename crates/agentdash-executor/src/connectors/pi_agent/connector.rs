@@ -1,6 +1,6 @@
 /// PiAgentConnector — 基于 agentdash-agent 的进程内 Agent 连接器
 ///
-/// 与 `CodexBridgeConnector`（通过子进程执行）不同，
+/// 该 connector 是进程内 Clean Agent Core 的 legacy session adapter，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::collections::{BTreeSet, HashMap};
@@ -850,7 +850,22 @@ impl AgentConnector for PiAgentConnector {
         agent.set_runtime_delegates(context.turn.runtime_delegates.clone());
 
         if let Some(thinking_level) = context.session.executor_config.thinking_level {
-            agent.set_thinking_level(thinking_level);
+            agent.set_thinking_level(match thinking_level {
+                agentdash_domain::common::ThinkingLevel::Off => agentdash_agent::ThinkingLevel::Off,
+                agentdash_domain::common::ThinkingLevel::Minimal => {
+                    agentdash_agent::ThinkingLevel::Minimal
+                }
+                agentdash_domain::common::ThinkingLevel::Low => agentdash_agent::ThinkingLevel::Low,
+                agentdash_domain::common::ThinkingLevel::Medium => {
+                    agentdash_agent::ThinkingLevel::Medium
+                }
+                agentdash_domain::common::ThinkingLevel::High => {
+                    agentdash_agent::ThinkingLevel::High
+                }
+                agentdash_domain::common::ThinkingLevel::Xhigh => {
+                    agentdash_agent::ThinkingLevel::Xhigh
+                }
+            });
         }
         agent.set_tool_result_ref_context(Some(ToolResultRefContext {
             session_id: session_id.to_string(),

@@ -310,6 +310,7 @@ async fn run_session(
         extension_artifact_access_token: config.token.clone(),
         extension_artifact_cache_root: config.extension_artifact_cache_root.clone(),
         event_tx,
+        runtime_wire: None,
     });
 
     // 第一步：发送注册消息

@@ -1,7 +1,7 @@
-//! 上下文压缩引擎
+//! Provider-neutral summarization primitive.
 //!
-//! 纯函数 + LLM 调用编排。策略决策由 RuntimeCompactionDelegate 负责，
-//! 本模块只负责执行：cut point 检测、摘要生成、消息替换。
+//! The managed Runtime owns policy, checkpoint identity, persistence, and activation. This module
+//! only performs deterministic cut selection and an optional LLM summary request.
 
 use tokio_util::sync::CancellationToken;
 
@@ -13,25 +13,22 @@ use crate::types::{
 
 /// 默认摘要 system prompt
 const SUMMARIZATION_SYSTEM_PROMPT: &str = "\
-你是一个会话交接摘要助手。你只能总结上下文，不能继续对话、回答用户、执行任务、提出新的问题或声称已经完成后续动作。请为 AI 编程助手与用户的对话历史生成一份可交接给下一次模型请求继续工作的结构化摘要。
+你是一个会话摘要助手。你只能总结提供的消息，不能继续对话、回答用户、执行任务、提出新的问题或声称已经完成后续动作。请生成一份可供后续模型请求继续推理的结构化摘要。
 
 摘要必须包含：
 - 当前目标 / 用户主要意图
 - 已完成的主要工作和当前进展
 - 做出的关键决策、原因和仍需遵守的约束
-- 文件、工具、外部产物或 Lifecycle context 的使用状态
+- 文件、工具与外部产物的使用状态
 - 遇到的错误、失败尝试和已经应用的修复
 - 待办事项和最直接的下一步
 - 重要的技术发现（文件路径、函数名等具体信息）
-- 原文回看索引：列出 3-8 个最值得回看的 Lifecycle session 文件或 message 区间
 
 要求：
 - 摘要是 continuation handoff，不是用户可见回复
 - 不要要求用户确认摘要，不要继续当前对话
 - 保留所有具体的文件路径、函数名、变量名
 - 保留所有未完成的工作和待办事项
-- 原文回看索引只能引用用户提供的 Lifecycle 文件列表、item id 或 message 区间
-- 每个回看项说明为什么摘要不足以替代原文
 - 使用结构化的 markdown 格式
 - 简洁但不遗漏关键信息";
 
@@ -44,9 +41,7 @@ const UPDATE_SUMMARIZATION_PROMPT: &str = "\
 - 添加新对话中的新信息
 - 更新已变更的状态
 - 删除已过时的信息
-- 保留、更新或删除过时的“原文回看索引”
 - 覆盖当前目标、进展、关键决策、约束、文件/工具状态、错误修复、待办和下一步
-- 原文回看索引只能引用用户提供的 Lifecycle 文件列表、item id 或 message 区间
 
 输出更新后的完整摘要（markdown 格式）。摘要是 continuation handoff，不是用户可见回复；不要要求用户确认摘要，不要继续当前对话。";
 
@@ -354,10 +349,9 @@ fn previously_compacted_count(messages: &[AgentMessage]) -> u32 {
 
 fn build_summary_request_messages(
     messages_to_summarize: &[AgentMessage],
-    message_refs: &[Option<MessageRef>],
+    _message_refs: &[Option<MessageRef>],
     previous_summary: Option<&str>,
 ) -> Vec<AgentMessage> {
-    let lifecycle_index = build_lifecycle_summary_index(messages_to_summarize, message_refs);
     let instruction = if let Some(prev) = previous_summary {
         format!(
             "\
@@ -369,27 +363,18 @@ fn build_summary_request_messages(
 {prev}
 </summary>
 
-## Lifecycle 文件列表索引
-
-{lifecycle_index}
-
 ## 输出要求
 
-输出完整 markdown 摘要，必须包含 `## 原文回看索引` 章节。回看索引只能引用上面的文件名、item id 或 message 区间。不要把本说明当作对话历史内容。"
+输出完整 markdown 摘要。不要把本说明当作对话历史内容。"
         )
     } else {
-        format!(
-            "\
+        "\
 请基于以上对话历史生成交接摘要。
-
-## Lifecycle 文件列表索引
-
-{lifecycle_index}
 
 ## 输出要求
 
-输出完整 markdown 摘要，必须包含 `## 原文回看索引` 章节。回看索引只能引用上面的文件名、item id 或 message 区间。不要把本说明当作对话历史内容。"
-        )
+输出完整 markdown 摘要。不要把本说明当作对话历史内容。"
+            .to_string()
     };
 
     let mut messages = Vec::with_capacity(messages_to_summarize.len() + 1);
@@ -460,127 +445,6 @@ async fn generate_summary(
     }
 
     Ok(result_text)
-}
-
-fn build_lifecycle_summary_index(
-    messages: &[AgentMessage],
-    message_refs: &[Option<MessageRef>],
-) -> String {
-    let mut lines = Vec::new();
-    lines.push("### session/messages".to_string());
-    for start in (0..messages.len()).step_by(10) {
-        let end = (start + 9).min(messages.len().saturating_sub(1));
-        let Some(message) = messages.get(start) else {
-            continue;
-        };
-        let role = match message {
-            AgentMessage::User { .. } => "user",
-            AgentMessage::Assistant { .. } => "agent",
-            AgentMessage::ToolResult { .. } => "tool_result",
-            AgentMessage::CompactionSummary { .. } => "summary",
-        };
-        let ref_hint = message_refs
-            .get(start)
-            .and_then(|value| value.as_ref())
-            .map(message_ref_hint)
-            .unwrap_or_else(|| format!("message_{start}"));
-        let preview = message
-            .first_text()
-            .map(preview_text)
-            .unwrap_or_else(|| "empty".to_string());
-        lines.push(format!(
-            "- `session/messages/{start:04}_{end:04}__{role}__{}__{}.md`",
-            sanitize_path_part(&ref_hint, 48),
-            sanitize_path_part(&preview, 56)
-        ));
-    }
-
-    let mut tool_lines = Vec::new();
-    let mut write_lines = Vec::new();
-    for (idx, message) in messages.iter().enumerate() {
-        if let AgentMessage::Assistant { tool_calls, .. } = message {
-            for tool_call in tool_calls {
-                let target = value_target(&tool_call.arguments);
-                let file_name = format!(
-                    "{idx:04}__{}__{}__{}.json",
-                    sanitize_path_part(&tool_call.id, 48),
-                    sanitize_path_part(&tool_call.name, 48),
-                    sanitize_path_part(&target, 80)
-                );
-                tool_lines.push(format!("- `session/tools/{file_name}`"));
-                if is_write_tool_name(&tool_call.name) {
-                    write_lines.push(format!("- `session/writes/{file_name}`"));
-                }
-            }
-        }
-    }
-    if !tool_lines.is_empty() {
-        lines.push(String::new());
-        lines.push("### session/tools".to_string());
-        lines.extend(tool_lines);
-    }
-    if !write_lines.is_empty() {
-        lines.push(String::new());
-        lines.push("### session/writes".to_string());
-        lines.extend(write_lines);
-    }
-    lines.join("\n")
-}
-
-fn message_ref_hint(reference: &MessageRef) -> String {
-    format!("{}_{}", reference.turn_id, reference.entry_index)
-}
-
-fn value_target(value: &serde_json::Value) -> String {
-    for key in ["path", "file", "cwd", "query", "command", "pattern"] {
-        if let Some(text) = value.get(key).and_then(serde_json::Value::as_str)
-            && !text.trim().is_empty()
-        {
-            return text.to_string();
-        }
-    }
-    serde_json::to_string(value).unwrap_or_else(|_| "arguments".to_string())
-}
-
-fn is_write_tool_name(name: &str) -> bool {
-    let lowered = name.to_ascii_lowercase();
-    lowered.contains("write")
-        || lowered.contains("apply_patch")
-        || lowered.contains("patch")
-        || lowered.contains("edit")
-}
-
-fn preview_text(text: &str) -> String {
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        return "empty".to_string();
-    }
-    let words = collapsed.split_whitespace().take(10).collect::<Vec<_>>();
-    if words.len() > 1 {
-        return words.join("_");
-    }
-    collapsed.chars().take(32).collect()
-}
-
-fn sanitize_path_part(value: &str, max_chars: usize) -> String {
-    let mut output = String::new();
-    let mut last_was_sep = false;
-    for ch in value.chars().take(max_chars) {
-        let keep = ch.is_alphanumeric() || matches!(ch, '-' | '_');
-        if keep {
-            output.push(ch);
-            last_was_sep = false;
-        } else if !last_was_sep {
-            output.push('_');
-            last_was_sep = true;
-        }
-    }
-    let trimmed = output.trim_matches('_');
-    if trimmed.is_empty() {
-        "item".to_string()
-    } else {
-        trimmed.to_string()
-    }
 }
 
 #[cfg(test)]
@@ -879,11 +743,12 @@ mod tests {
         }
 
         let instruction = request.messages[3].first_text().expect("instruction");
-        assert!(instruction.contains("Lifecycle 文件列表索引"));
-        assert!(instruction.contains("session/messages/0000_0002"));
+        assert!(instruction.contains("生成交接摘要"));
+        assert!(!instruction.contains("Lifecycle"));
+        assert!(!instruction.contains("session/messages"));
         let system_prompt = request.system_prompt.as_deref().expect("system prompt");
         for expected in [
-            "只能总结上下文",
+            "只能总结提供的消息",
             "不能继续对话",
             "当前目标",
             "当前进展",
@@ -941,7 +806,7 @@ mod tests {
         assert_eq!(request.messages[1], messages[2]);
         let instruction = request.messages[2].first_text().expect("instruction");
         assert!(instruction.contains("<summary>\nold summary\n</summary>"));
-        assert!(instruction.contains("Lifecycle 文件列表索引"));
+        assert!(!instruction.contains("Lifecycle"));
         assert!(
             !request
                 .messages

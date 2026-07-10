@@ -1,0 +1,15 @@
+[package]
+name = "agentdash-integration-remote-runtime"
+description = "AgentDash Runtime Wire remote placement Integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-agent-runtime-contract = { workspace = true }
+agentdash-agent-runtime-wire = { workspace = true }
+agentdash-integration-api = { workspace = true }
+async-trait.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

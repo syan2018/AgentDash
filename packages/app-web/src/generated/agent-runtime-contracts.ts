@@ -49,9 +49,11 @@ export type ContextSnapshotConsistencyCode = "projection_head_revision_mismatch"
 
 export type DeliveryMechanism = "native" | "host_adapted_exact" | "host_adapted_boundary" | "observed" | "prompt_only";
 
-export type DriverBindRequest = { binding_id: RuntimeBindingId, service_instance_id: RuntimeServiceInstanceId, surface_revision: SurfaceRevision, surface_digest: SurfaceDigest, };
+export type DriverBindIntent = { "kind": "start" } | { "kind": "resume", source_thread_id: DriverThreadId, } | { "kind": "fork", source_thread_id: DriverThreadId, through_source_turn_id: DriverTurnId | null, };
 
-export type DriverBinding = { driver_binding_id: DriverBindingId, source_thread_id: DriverThreadId, applied_surface_revision: SurfaceRevision, applied_surface_digest: SurfaceDigest, };
+export type DriverBindRequest = { binding_id: RuntimeBindingId, service_instance_id: RuntimeServiceInstanceId, surface_revision: SurfaceRevision, surface_digest: SurfaceDigest, intent: DriverBindIntent, };
+
+export type DriverBinding = { driver_binding_id: DriverBindingId, source_thread_id: DriverThreadId, applied_surface_revision: SurfaceRevision, applied_surface_digest: SurfaceDigest, applied_tool_set_revision: ToolSetRevision, applied_tool_set_digest: string, applied_hook_plan_revision: HookPlanRevision | null, applied_hook_plan_digest: HookPlanDigest | null, applied_hooks: Array<DriverHookApplyStatus>, };
 
 export type DriverBindingId = string;
 
@@ -61,21 +63,27 @@ export type DriverContextRevision = string;
 
 export type DriverDescribeRequest = { service_instance_id: RuntimeServiceInstanceId, };
 
-export type DriverDispatchReceipt = { request_id: DriverRequestId, duplicate: boolean, };
+export type DriverDispatchReceipt = { request_id: DriverRequestId, duplicate: boolean, applied_tool_set: DriverToolSetApplyReceipt | null, };
 
 export type DriverError = { "kind": "unsupported", reason: string, } | { "kind": "rejected", reason: string, } | { "kind": "unavailable", reason: string, retryable: boolean, } | { "kind": "stale_generation" } | { "kind": "protocol_violation", reason: string, critical: boolean, } | { "kind": "lost", reason: string, retryable: boolean, };
 
 export type DriverEventEnvelope = { binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId, source_turn_id: DriverTurnId | null, source_item_id: DriverItemId | null, event: RuntimeEvent, };
 
-export type DriverInspection = { "kind": "binding", active: boolean, } | { "kind": "compaction_activation", applied: boolean, digest: string | null, } | { "kind": "checkpoint", available: boolean, digest: string | null, };
+export type DriverHookApplyStatus = { point: HookPoint, acknowledged: boolean, artifact_digest: string | null, };
 
-export type DriverInspectionQuery = { "kind": "binding", driver_binding_id: DriverBindingId, } | { "kind": "compaction_activation", candidate_id: ContextCandidateId, } | { "kind": "checkpoint", checkpoint_id: ContextCheckpointId, };
+export type DriverInspection = { "kind": "binding", active: boolean, } | { "kind": "compaction_activation", applied: boolean, digest: string | null, } | { "kind": "checkpoint", available: boolean, digest: string | null, } | { "kind": "thread_projection", source_thread_id: DriverThreadId, items: Array<DriverProjectedItem>, fidelity: ContextFidelity, } | { "kind": "context_read", source_thread_id: DriverThreadId, fidelity: ContextFidelity, digest: string | null, };
+
+export type DriverInspectionQuery = { "kind": "binding", driver_binding_id: DriverBindingId, } | { "kind": "compaction_activation", candidate_id: ContextCandidateId, } | { "kind": "checkpoint", checkpoint_id: ContextCheckpointId, } | { "kind": "thread_projection", source_thread_id: DriverThreadId, } | { "kind": "context_read", source_thread_id: DriverThreadId, };
 
 export type DriverItemId = string;
+
+export type DriverProjectedItem = { source_turn_id: DriverTurnId, source_item_id: DriverItemId, content: RuntimeItemContent, };
 
 export type DriverRequestId = string;
 
 export type DriverThreadId = string;
+
+export type DriverToolSetApplyReceipt = { revision: ToolSetRevision, digest: string, };
 
 export type DriverTurnId = string;
 

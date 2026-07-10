@@ -7,15 +7,14 @@ use agentdash_agent::{
     TokenUsage, ToolResultAddressProvider, stable_tool_result_item_id,
 };
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
-    ItemUpdatedNotification, PlatformEvent, ProviderAttemptPhase as ProtocolProviderAttemptPhase,
-    ProviderAttemptStatus as ProtocolProviderAttemptStatus, RuntimeTerminalDiagnostic, SourceInfo,
-    ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TraceInfo, backbone::thread_item,
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEnvelope, BackboneEvent,
+    ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification, PlatformEvent,
+    ProviderAttemptPhase as ProtocolProviderAttemptPhase,
+    ProviderAttemptStatus as ProtocolProviderAttemptStatus, RuntimeTerminalDiagnostic,
+    ShellExecExecutionMode, SourceInfo, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification,
+    TraceInfo, backbone::thread_item,
 };
 use agentdash_agent_protocol::{ContextUsageSource, NormalizedContextUsage, TokenUsageBreakdown};
-use agentdash_agent_types::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, ShellExecExecutionMode,
-};
 use codex_app_server_protocol as codex;
 
 use super::session_item_identity::SessionItemIdentity;

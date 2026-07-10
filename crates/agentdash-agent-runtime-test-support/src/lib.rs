@@ -1,6 +1,7 @@
 //! Shared executable behavior checks for runtime and driver implementations.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agentdash_agent_runtime_contract::{
@@ -335,8 +336,8 @@ where
     D: AgentRuntimeDriver + SideEffectProbe,
 {
     let before = driver.side_effect_count().await;
-    let sink = RecordingEventSink::default();
-    let result = driver.dispatch(command, &sink).await;
+    let sink = Arc::new(RecordingEventSink::default());
+    let result = driver.dispatch(command, sink).await;
     let after = driver.side_effect_count().await;
     if !matches!(result, Err(DriverError::Unsupported { .. })) {
         return Err(HarnessError::DidNotReturnUnsupported);
@@ -390,7 +391,7 @@ impl AgentRuntimeDriver for UnsupportedRecordingDriver {
     async fn dispatch(
         &self,
         _command: DriverCommandEnvelope,
-        _sink: &dyn DriverEventSink,
+        _sink: Arc<dyn DriverEventSink>,
     ) -> Result<DriverDispatchReceipt, DriverError> {
         Err(DriverError::Unsupported {
             reason: "command is unsupported".to_string(),

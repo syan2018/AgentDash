@@ -263,7 +263,6 @@ impl AppState {
             crate::bootstrap::session::SessionBootstrapInput {
                 repos: repos.clone(),
                 session_stores,
-                tool_result_cache: tool_result_cache.clone(),
                 backend_registry: backend_registry.clone(),
                 vfs_service: vfs_service.clone(),
                 vfs_materialization_service,

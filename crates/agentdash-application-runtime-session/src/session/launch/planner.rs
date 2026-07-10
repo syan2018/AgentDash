@@ -24,7 +24,6 @@ use crate::session::hook_delegate::HookRuntimeDelegate;
 use crate::session::hook_injection_sink::{
     DynRuntimeHookInjectionSink, SessionRuntimeHookInjectionSink,
 };
-use crate::session::manual_compaction_delegate::ManualContextCompactionDelegate;
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
@@ -184,14 +183,6 @@ impl<'a> LaunchPlanner<'a> {
             runtime_delegates.turn_boundary = Some(mailbox_port.turn_boundary_delegate(
                 input.session_id.to_string(),
                 runtime_delegates.turn_boundary.take(),
-            ));
-        }
-        if let Some(repo) = self.deps.manual_context_compaction_request_repo.as_ref() {
-            runtime_delegates.compaction = Some(ManualContextCompactionDelegate::wrap(
-                input.session_id.to_string(),
-                input.turn_id.to_string(),
-                repo.clone(),
-                runtime_delegates.compaction.take(),
             ));
         }
         let restore_mode = match prompt_launch_path {

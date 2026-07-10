@@ -154,6 +154,90 @@ impl AgentRuntimeCredentialBroker for CountingCredentialBroker {
     }
 }
 
+struct UnexpectedSurfaceBroker;
+
+#[async_trait]
+impl AgentRuntimeSurfaceBroker for UnexpectedSurfaceBroker {
+    async fn materialize(
+        &self,
+        _request: DriverSurfaceRequest,
+    ) -> Result<MaterializedDriverSurface, DriverSurfaceError> {
+        Err(DriverSurfaceError::Unavailable {
+            reason: "test driver does not request a materialized surface".to_string(),
+            retryable: false,
+        })
+    }
+
+    async fn materialize_tool_set(
+        &self,
+        _binding_id: RuntimeBindingId,
+        _revision: ToolSetRevision,
+        _digest: &str,
+    ) -> Result<DriverToolSurface, DriverSurfaceError> {
+        Err(DriverSurfaceError::Unavailable {
+            reason: "test driver does not request a tool surface".to_string(),
+            retryable: false,
+        })
+    }
+}
+
+struct UnexpectedToolCallback;
+
+struct UnexpectedContextBroker;
+
+#[async_trait]
+impl AgentRuntimeContextBroker for UnexpectedContextBroker {
+    async fn load_checkpoint(
+        &self,
+        _request: DriverContextCheckpointRequest,
+    ) -> Result<DriverContextActivation, DriverContextError> {
+        Err(DriverContextError::NotFound)
+    }
+
+    async fn compaction_activation(
+        &self,
+        _request: DriverCompactionActivationRequest,
+    ) -> Result<DriverContextActivation, DriverContextError> {
+        Err(DriverContextError::NotFound)
+    }
+}
+
+#[async_trait]
+impl AgentRuntimeToolCallback for UnexpectedToolCallback {
+    async fn invoke(
+        &self,
+        _request: DriverToolInvocation,
+    ) -> Result<DriverToolOutcome, DriverToolCallbackError> {
+        Err(DriverToolCallbackError::ProtocolViolation {
+            reason: "test driver does not invoke tools".to_string(),
+        })
+    }
+}
+
+struct UnexpectedHookCallback;
+
+#[async_trait]
+impl AgentRuntimeHookCallback for UnexpectedHookCallback {
+    async fn execute(
+        &self,
+        _request: DriverHookInvocation,
+    ) -> Result<DriverHookDecision, DriverHookCallbackError> {
+        Err(DriverHookCallbackError::ProtocolViolation {
+            reason: "test driver does not execute hooks".to_string(),
+        })
+    }
+}
+
+fn test_host_ports(credentials: Arc<dyn AgentRuntimeCredentialBroker>) -> RuntimeDriverHostPorts {
+    RuntimeDriverHostPorts {
+        credentials,
+        surfaces: Arc::new(UnexpectedSurfaceBroker),
+        context: Arc::new(UnexpectedContextBroker),
+        tools: Arc::new(UnexpectedToolCallback),
+        hooks: Arc::new(UnexpectedHookCallback),
+    }
+}
+
 struct AcceptingConformanceVerifier;
 
 #[async_trait]
@@ -191,13 +275,18 @@ impl AgentRuntimeDriver for TestDriver {
             source_thread_id: id(&format!("source-{}", request.binding_id)),
             applied_surface_revision: request.surface_revision,
             applied_surface_digest: request.surface_digest,
+            applied_tool_set_revision: ToolSetRevision(1),
+            applied_tool_set_digest: "sha256:tools".to_string(),
+            applied_hook_plan_revision: Some(HookPlanRevision(2)),
+            applied_hook_plan_digest: Some(id("sha256:hook-plan")),
+            applied_hooks: Vec::new(),
         })
     }
 
     async fn dispatch(
         &self,
         command: DriverCommandEnvelope,
-        sink: &dyn DriverEventSink,
+        sink: Arc<dyn DriverEventSink>,
     ) -> Result<DriverDispatchReceipt, DriverError> {
         self.dispatch_count.fetch_add(1, Ordering::SeqCst);
         if let Some((started, proceed)) = self.emit_barrier.lock().await.clone() {
@@ -218,6 +307,7 @@ impl AgentRuntimeDriver for TestDriver {
         Ok(DriverDispatchReceipt {
             request_id: command.request_id,
             duplicate: false,
+            applied_tool_set: None,
         })
     }
 
@@ -328,7 +418,7 @@ async fn fixture_with_broker_and_probe(
     let host = Arc::new(IntegrationDriverHost::new(
         registry.clone(),
         repository.clone(),
-        credential_broker,
+        test_host_ports(credential_broker),
         Arc::new(AcceptingConformanceVerifier),
         "host-a",
     ));
@@ -405,6 +495,8 @@ fn bound_surface(required: bool) -> BoundAgentSurfaceReference {
     BoundAgentSurfaceReference {
         revision: SurfaceRevision(3),
         digest: id("sha256:surface"),
+        tool_set_revision: ToolSetRevision(1),
+        tool_set_digest: "sha256:tools".to_string(),
         hook_plan_revision: Some(HookPlanRevision(2)),
         hook_plan_digest: Some(id("sha256:hook-plan")),
         hook_artifact_digest: Some("sha256:artifact".to_string()),
@@ -586,6 +678,7 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
             thread_id: id("thread-1"),
             offer_id: offer.id,
             bound_surface: bound_surface(true),
+            intent: DriverBindIntent::Start,
         })
         .await
         .expect("bind");
@@ -604,7 +697,7 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
             input: vec![],
         },
     };
-    let sink = RecordingSink(AtomicUsize::new(0));
+    let sink = Arc::new(RecordingSink(AtomicUsize::new(0)));
     let error = fixture
         .host
         .dispatch(
@@ -613,7 +706,7 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
                 lease_owner: lease.owner.clone(),
                 lease_token: lease.token.clone(),
             },
-            &sink,
+            sink.clone(),
         )
         .await
         .expect_err("required hook is not acked");
@@ -625,6 +718,8 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
     let applied = AppliedSurface {
         revision: binding.bound_surface.revision,
         digest: binding.bound_surface.digest.clone(),
+        tool_set_revision: binding.bound_surface.tool_set_revision,
+        tool_set_digest: binding.bound_surface.tool_set_digest.clone(),
         hook_plan_revision: binding.bound_surface.hook_plan_revision,
         hook_plan_digest: binding.bound_surface.hook_plan_digest.clone(),
         hooks: vec![HookApplyStatus {
@@ -648,7 +743,7 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
                 lease_owner: lease.owner.clone(),
                 lease_token: lease.token.clone(),
             },
-            &sink,
+            sink.clone(),
         )
         .await
         .expect_err("stale generation must be fenced before driver dispatch");
@@ -668,7 +763,7 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
                 lease_owner: lease.owner,
                 lease_token: lease.token,
             },
-            &sink,
+            sink.clone(),
         )
         .await
         .expect("dispatch");
@@ -686,6 +781,7 @@ async fn event_sink_revalidates_lease_after_takeover() {
             thread_id: id("thread-event-fence"),
             offer_id: offer.id,
             bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Start,
         })
         .await
         .expect("bind");
@@ -722,7 +818,7 @@ async fn event_sink_revalidates_lease_after_takeover() {
                 lease_owner,
                 lease_token,
             },
-            dispatch_sink.as_ref(),
+            dispatch_sink,
         )
         .await
     });
@@ -759,6 +855,7 @@ async fn thread_binding_is_sticky_and_source_generation_is_fenced() {
         thread_id: id("thread-1"),
         offer_id: offer.id.clone(),
         bound_surface: bound_surface(false),
+        intent: DriverBindIntent::Start,
     };
     let binding = fixture.host.bind(bind_request.clone()).await.expect("bind");
     assert_eq!(
@@ -785,6 +882,7 @@ async fn thread_binding_is_sticky_and_source_generation_is_fenced() {
             thread_id: binding.thread_id,
             offer_id: offer.id,
             bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Start,
         })
         .await
         .expect_err("sticky binding conflict");
@@ -872,7 +970,7 @@ async fn durable_offer_recovers_the_same_driver_generation_after_host_restart() 
     let restarted = IntegrationDriverHost::new(
         fixture.registry.clone(),
         fixture.repository.clone(),
-        Arc::new(TestCredentialBroker),
+        test_host_ports(Arc::new(TestCredentialBroker)),
         Arc::new(AcceptingConformanceVerifier),
         "host-b",
     );
@@ -900,6 +998,7 @@ async fn host_restart_recovers_orphaned_pending_binding_from_durable_intent() {
         driver_generation: offer.generation,
         profile_digest: offer.profile_digest,
         bound_surface: bound_surface(false),
+        bind_intent: DriverBindIntent::Start,
         applied_surface: None,
         driver_binding_id: None,
         source_thread_id: None,
@@ -927,7 +1026,7 @@ async fn host_restart_recovers_orphaned_pending_binding_from_durable_intent() {
     let restarted = IntegrationDriverHost::new(
         fixture.registry.clone(),
         fixture.repository.clone(),
-        Arc::new(TestCredentialBroker),
+        test_host_ports(Arc::new(TestCredentialBroker)),
         Arc::new(AcceptingConformanceVerifier),
         "host-b",
     );
@@ -955,6 +1054,7 @@ async fn old_binding_recovers_from_activation_snapshot_after_instance_config_upd
             thread_id: id("thread-snapshot"),
             offer_id: offer.id,
             bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Start,
         })
         .await
         .expect("bind");
@@ -980,6 +1080,7 @@ async fn old_binding_recovers_from_activation_snapshot_after_instance_config_upd
                 thread_id: id("thread-stale-offer"),
                 offer_id: binding.offer_id.clone(),
                 bound_surface: bound_surface(false),
+                intent: DriverBindIntent::Start,
             })
             .await,
         Err(AgentRuntimeHostError::OfferUnavailable { .. })
@@ -988,7 +1089,7 @@ async fn old_binding_recovers_from_activation_snapshot_after_instance_config_upd
     let restarted = IntegrationDriverHost::new(
         fixture.registry.clone(),
         fixture.repository.clone(),
-        Arc::new(TestCredentialBroker),
+        test_host_ports(Arc::new(TestCredentialBroker)),
         Arc::new(AcceptingConformanceVerifier),
         "host-b",
     );
@@ -1012,7 +1113,7 @@ async fn old_binding_recovers_from_activation_snapshot_after_instance_config_upd
                 lease_owner: lease.owner,
                 lease_token: lease.token,
             },
-            &RecordingSink(AtomicUsize::new(0)),
+            Arc::new(RecordingSink(AtomicUsize::new(0))),
         )
         .await
         .expect("old generation dispatch after restart");

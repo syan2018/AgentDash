@@ -46,17 +46,14 @@ use agentdash_application_runtime_session::session::{
     EmptyTerminalHookEffectHandlerRegistry, SessionBranchingService, SessionControlService,
     SessionCoreService, SessionEventingService, SessionHookService, SessionLaunchService,
     SessionRuntimeBuilder, SessionRuntimeService, SessionRuntimeTransitionService, SessionStoreSet,
-    SessionTitleService, SessionToolResultCache, SessionToolResultCachePut,
+    SessionTitleService,
 };
 use agentdash_application_vfs::tools::RuntimeVfsState;
 use agentdash_application_vfs::tools::{ShellTerminalRegistration, ShellTerminalRegistry};
 use agentdash_application_vfs::{VfsMaterializationService, VfsService};
 use agentdash_domain::canvas::Canvas;
-use agentdash_domain::llm_provider::{
-    LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
-};
+use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectAuthorizationContext;
-use agentdash_domain::settings::SettingsRepository;
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::{
@@ -232,7 +229,6 @@ fn convert_effective_capability_view(
 pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
     pub session_stores: SessionStoreSet,
-    pub tool_result_cache: Arc<SessionToolResultCache>,
     pub backend_registry: Arc<BackendRegistry>,
     pub vfs_service: Arc<VfsService>,
     pub vfs_materialization_service: Arc<VfsMaterializationService>,
@@ -275,7 +271,6 @@ pub(crate) async fn build_session_runtime(
     let SessionBootstrapInput {
         repos,
         session_stores,
-        tool_result_cache,
         backend_registry,
         vfs_service,
         vfs_materialization_service,
@@ -292,21 +287,6 @@ pub(crate) async fn build_session_runtime(
     } = input;
 
     let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
-    let mut base_system_prompt: Option<String> = None;
-
-    if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
-        settings_repo: repos.settings_repo.clone(),
-        llm_provider_repo: repos.llm_provider_repo.clone(),
-        llm_provider_credential_repo: repos.llm_provider_credential_repo.clone(),
-        llm_provider_secret: llm_provider_secret.clone(),
-        tool_result_cache: tool_result_cache.clone(),
-    })
-    .await
-    {
-        base_system_prompt = Some(result.connector.base_system_prompt().to_string());
-        sub_connectors.push(Arc::new(result.connector));
-    }
-
     let relay_transport: Arc<
         dyn agentdash_application_ports::backend_transport::RelayPromptTransport,
     > = backend_registry.clone();
@@ -378,7 +358,7 @@ pub(crate) async fn build_session_runtime(
     );
 
     let control_effect_store = session_stores.control_effects.clone();
-    let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_stores(
+    let session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_stores(
         connector.clone(),
         Some(hook_provider.clone()),
         session_stores,
@@ -409,10 +389,6 @@ pub(crate) async fn build_session_runtime(
         )
         .with_project_projection_notifications(project_projection_notifications.clone()),
     ));
-    if let Some(base_sp) = base_system_prompt {
-        session_runtime_builder = session_runtime_builder.with_system_prompt_config(base_sp);
-    }
-
     let session_core = session_runtime_builder.core_service();
     let session_branching = session_runtime_builder.branching_service();
     let session_eventing = session_runtime_builder.eventing_service();
@@ -713,51 +689,4 @@ fn build_session_runtime_tool_composer(
         Arc::new(wait_provider) as Arc<dyn RuntimeToolProvider>,
         Arc::new(workspace_module_provider) as Arc<dyn RuntimeToolProvider>,
     ]))
-}
-
-struct PiAgentConnectorDeps {
-    settings_repo: Arc<dyn SettingsRepository>,
-    llm_provider_repo: Arc<dyn LlmProviderRepository>,
-    llm_provider_credential_repo: Arc<dyn LlmProviderCredentialRepository>,
-    llm_provider_secret: Arc<dyn LlmSecretCodec>,
-    tool_result_cache: Arc<SessionToolResultCache>,
-}
-
-struct PiAgentConnectorBuildResult {
-    connector: agentdash_executor::connectors::pi_agent::PiAgentConnector,
-}
-
-async fn build_pi_agent_connector(
-    deps: PiAgentConnectorDeps,
-) -> Option<PiAgentConnectorBuildResult> {
-    let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
-        deps.settings_repo.as_ref(),
-        deps.llm_provider_repo.as_ref(),
-        deps.llm_provider_credential_repo.as_ref(),
-        deps.llm_provider_secret.as_ref(),
-    )
-    .await?;
-    connector.set_settings_repository(deps.settings_repo);
-    connector.set_llm_provider_repository(deps.llm_provider_repo);
-    connector.set_llm_provider_credential_repository(deps.llm_provider_credential_repo);
-    connector.set_llm_secret_codec(deps.llm_provider_secret);
-    let cache = deps.tool_result_cache;
-    connector.set_tool_result_cache_writer(Some(Arc::new(move |write| {
-        let expected_lifecycle_path = write.lifecycle_path.clone();
-        let metadata = cache.put_text_entry(SessionToolResultCachePut {
-            session_id: write.session_id,
-            item_id: write.item_id,
-            lifecycle_path: write.lifecycle_path,
-            turn_alias: write.turn_alias,
-            body_alias: write.body_alias,
-            body_kind: write.body_kind,
-            raw_turn_id: write.raw_turn_id,
-            raw_tool_call_id: write.raw_tool_call_id,
-            tool_name: write.tool_name,
-            text: write.text,
-            original_bytes: write.original_bytes,
-        });
-        debug_assert_eq!(metadata.lifecycle_path, expected_lifecycle_path);
-    })));
-    Some(PiAgentConnectorBuildResult { connector })
 }

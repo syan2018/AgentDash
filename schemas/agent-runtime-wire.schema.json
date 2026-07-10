@@ -845,13 +845,71 @@
         },
         "surface_digest": {
           "type": "string"
+        },
+        "intent": {
+          "$ref": "#/$defs/DriverBindIntent"
         }
       },
       "required": [
         "binding_id",
         "service_instance_id",
         "surface_revision",
-        "surface_digest"
+        "surface_digest",
+        "intent"
+      ]
+    },
+    "DriverBindIntent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "start"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_thread_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "resume"
+            }
+          },
+          "required": [
+            "kind",
+            "source_thread_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_thread_id": {
+              "type": "string"
+            },
+            "through_source_turn_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "fork"
+            }
+          },
+          "required": [
+            "kind",
+            "source_thread_id"
+          ]
+        }
       ]
     },
     "DriverCommandEnvelope": {
@@ -931,6 +989,38 @@
           "required": [
             "kind",
             "checkpoint_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_thread_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_projection"
+            }
+          },
+          "required": [
+            "kind",
+            "source_thread_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_thread_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_read"
+            }
+          },
+          "required": [
+            "kind",
+            "source_thread_id"
           ]
         }
       ]
@@ -2599,13 +2689,65 @@
         },
         "applied_surface_digest": {
           "type": "string"
+        },
+        "applied_tool_set_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "applied_tool_set_digest": {
+          "type": "string"
+        },
+        "applied_hook_plan_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "applied_hook_plan_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "applied_hooks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverHookApplyStatus"
+          }
         }
       },
       "required": [
         "driver_binding_id",
         "source_thread_id",
         "applied_surface_revision",
-        "applied_surface_digest"
+        "applied_surface_digest",
+        "applied_tool_set_revision",
+        "applied_tool_set_digest",
+        "applied_hooks"
+      ]
+    },
+    "DriverHookApplyStatus": {
+      "type": "object",
+      "properties": {
+        "point": {
+          "$ref": "#/$defs/HookPoint"
+        },
+        "acknowledged": {
+          "type": "boolean"
+        },
+        "artifact_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "point",
+        "acknowledged"
       ]
     },
     "DriverDispatchResult": {
@@ -2652,11 +2794,38 @@
         },
         "duplicate": {
           "type": "boolean"
+        },
+        "applied_tool_set": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriverToolSetApplyReceipt"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "request_id",
         "duplicate"
+      ]
+    },
+    "DriverToolSetApplyReceipt": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "revision",
+        "digest"
       ]
     },
     "DriverInspectResult": {
@@ -2756,7 +2925,79 @@
             "kind",
             "available"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_thread_id": {
+              "type": "string"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DriverProjectedItem"
+              }
+            },
+            "fidelity": {
+              "$ref": "#/$defs/ContextFidelity"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_projection"
+            }
+          },
+          "required": [
+            "kind",
+            "source_thread_id",
+            "items",
+            "fidelity"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source_thread_id": {
+              "type": "string"
+            },
+            "fidelity": {
+              "$ref": "#/$defs/ContextFidelity"
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_read"
+            }
+          },
+          "required": [
+            "kind",
+            "source_thread_id",
+            "fidelity"
+          ]
         }
+      ]
+    },
+    "DriverProjectedItem": {
+      "type": "object",
+      "properties": {
+        "source_turn_id": {
+          "type": "string"
+        },
+        "source_item_id": {
+          "type": "string"
+        },
+        "content": {
+          "$ref": "#/$defs/RuntimeItemContent"
+        }
+      },
+      "required": [
+        "source_turn_id",
+        "source_item_id",
+        "content"
       ]
     },
     "RuntimeWireNotification": {

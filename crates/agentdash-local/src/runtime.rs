@@ -9,7 +9,6 @@ use std::sync::Arc;
 use agentdash_application_runtime_session::session::{
     SessionExecutionState, SessionRuntimeServices, SessionStoreSet,
 };
-use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_infrastructure::PostgresSessionRepository;
 use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
@@ -564,8 +563,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
     )));
 
     let (session_runtime, connector, session_db_runtime) = if config.executor_enabled {
-        let sub_connectors: Vec<Arc<dyn AgentConnector>> =
-            vec![Arc::new(CodexBridgeConnector::new())];
+        let sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
         let db_runtime = Arc::new(
             PostgresRuntime::resolve_embedded_at_data_root(

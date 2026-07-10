@@ -9,7 +9,7 @@ mod desktop_settings;
 mod extensions;
 mod file_discovery_policy;
 mod handlers;
-pub use handlers::browse_directory;
+pub use handlers::{RuntimeDriverEndpointResolver, RuntimeWireCommandHandler, browse_directory};
 pub mod local_backend_config;
 mod machine_identity;
 mod materialization;

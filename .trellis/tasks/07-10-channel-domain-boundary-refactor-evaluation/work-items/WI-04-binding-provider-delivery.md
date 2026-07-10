@@ -1,6 +1,6 @@
 # WI-04 Binding Provider / Delivery
 
-Status: ready_for_integration
+Status: done
 
 Depends On: WI-02、WI-03
 

@@ -1,6 +1,6 @@
 # WI-02 Channel Domain / Admission
 
-Status: ready_for_integration
+Status: done
 
 Depends On: WI-00
 

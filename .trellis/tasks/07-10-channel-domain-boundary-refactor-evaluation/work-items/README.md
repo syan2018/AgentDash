@@ -16,10 +16,10 @@ Parent task: `.trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation`
 | --- | --- | --- | --- | --- |
 | WI-00 | `WI-00-decision-residual-reconciliation.md` | done | 无 | residual matrix 与 owner evidence gate 已闭合 |
 | WI-01 | `WI-01-extension-protocol-rename.md` | done | WI-00、canonical Operation contract | 全链原子改名、qualified identity 与 contract version checks 通过 |
-| WI-02 | `WI-02-channel-domain-admission.md` | ready_for_integration | WI-00 | V2 identity、canonical participant、service admission 与 registry-derived capability projection targeted checks 通过 |
-| WI-03 | `WI-03-owner-persistence-migration.md` | ready_for_integration | WI-02 | V2 destructive reset、typed row-lock mutation 与并发 create-if-absent repository contract 已落地 |
-| WI-04 | `WI-04-binding-provider-delivery.md` | ready_for_integration | WI-02、WI-03 | mutation 自动投影、startup rebuild、跨 owner consistency 与 persistence failure gates 已闭合 |
-| WI-05 | `WI-05-integration-spec-verification.md` | planned | WI-01 至 WI-04 | 父任务最终全量 gate |
+| WI-02 | `WI-02-channel-domain-admission.md` | done | WI-00 | V2 identity、canonical participant、service admission 与 registry-derived capability projection 全量 gate 通过 |
+| WI-03 | `WI-03-owner-persistence-migration.md` | done | WI-02 | V2 destructive reset、typed row-lock mutation、并发 create-if-absent 与 restart rebuild 通过 |
+| WI-04 | `WI-04-binding-provider-delivery.md` | done | WI-02、WI-03 | mutation 自动投影、startup rebuild、跨 owner consistency、provider delivery 与 persistence failure gates 通过 |
+| WI-05 | `WI-05-integration-spec-verification.md` | done | WI-01 至 WI-04 | Rust/TS/contracts/migration/static residual 全量 gate 通过 |
 
 ## Decision Ledger
 

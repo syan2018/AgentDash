@@ -1,6 +1,6 @@
 # WI-03 Owner Persistence / Migration
 
-Status: ready_for_integration
+Status: done
 
 Depends On: WI-02
 

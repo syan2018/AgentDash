@@ -1,6 +1,6 @@
 # Implement · Channel 术语与领域边界收敛
 
-当前父任务已进入 implementation。在本任务内完成全量改名、领域收敛、migration 和残留清理，并由父任务 `work-items/` 统一追踪。
+实施已完成。全量改名、领域收敛、migration 和残留清理由父任务 `work-items/` 统一追踪；最终提交按 decision/spec、ExtensionProtocol rename、Channel domain/admission、V2 persistence、binding provider、production composition、index consistency、residual cleanup 与 final evidence 分主题落地。
 
 ## 1. 工作项追踪
 

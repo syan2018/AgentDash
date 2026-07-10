@@ -1,6 +1,6 @@
 # WI-05 Integration / Spec Verification
 
-Status: planned
+Status: done
 
 Depends On: WI-01 至 WI-04
 
@@ -21,3 +21,10 @@ Depends On: WI-01 至 WI-04
 
 - 根 `implement.md` 第 3 节全部检查类别。
 - `task.py validate`、`git diff --check`。
+
+## Final Evidence
+
+- repository static scans：旧 Extension Channel vocabulary、旧 Channel domain variants、synthetic production Channel identity 与 unsupported production resolver 均为 0 hit；Mailbox/Gate materializer 只接受 `AdmittedChannelDelivery`。
+- Rust：9 个受影响 packages `cargo check` passed；domain Channel 11、application Channel 15、Companion 22、AgentRun projection 1、API provider registration 3 tests passed；relay/local/runtime-gateway/workspace-module test targets `--no-run` passed。
+- Quality：`cargo fmt --all -- --check` passed；受影响 backend packages strict clippy passed（仅放行 workspace 既有 large-enum/question-mark style lints）。
+- Cross-layer：Extension 37 tests + typecheck、app-web typecheck + 12 focused tests、generated contracts check、migration guard 与 Trellis context validate passed。

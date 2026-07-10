@@ -5,3 +5,4 @@
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/integration-runtime-baseline.md","reason":"现有Integration/connector装配缺口证据"}
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/design-option-extensible-integration.md","reason":"definition/instance/offer/binding模型依据"}
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"HookProfile求交、BoundHookPlan与apply ack"}
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"实现Integration contribution、instance/offer、sticky binding、lease与source fencing合同"}

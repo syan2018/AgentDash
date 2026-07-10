@@ -7,3 +7,4 @@
 {"file":".trellis/spec/backend/hooks/architecture.md","reason":"编译Hook source/requirement/plan并保留业务authority"}
 {"file":".trellis/spec/backend/hooks/hook-script-engine.md","reason":"复用Rhai规则语义并将执行机制留在infrastructure"}
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"HookPlanSnapshot与execution route设计"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"实现protocol-neutral Surface编译、profile binding与统一Tool Broker状态机"}

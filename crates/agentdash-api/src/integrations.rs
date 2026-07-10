@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use agentdash_application_shared_library::IntegrationEmbeddedLibraryAssetSeed;
 use agentdash_integration_api::{
-    AgentDashIntegration, AuthProvider, IdentityDirectoryProvider, LibraryAssetType,
-    MarketplaceSourceDescriptor, MarketplaceSourceProvider, MemoryDiscoveryProvider,
-    SkillDiscoveryProvider,
+    AgentDashIntegration, AgentRuntimeDriverContribution, AuthProvider, IdentityDirectoryProvider,
+    LibraryAssetType, MarketplaceSourceDescriptor, MarketplaceSourceProvider,
+    MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
 use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
@@ -24,7 +24,7 @@ pub fn builtin_integrations() -> Vec<Box<dyn AgentDashIntegration>> {
 /// 宿主先汇总所有集成注册，再基于此统一构建运行时，避免“先构建、后塞集成”的假扩展点。
 pub(crate) struct HostIntegrationRegistration {
     pub vfs_providers: Vec<Box<dyn VfsDiscoveryProvider>>,
-    pub connectors: Vec<Arc<dyn AgentConnector>>,
+    pub runtime_driver_contributions: Vec<AgentRuntimeDriverContribution>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
     pub identity_directory_provider: Option<Arc<dyn IdentityDirectoryProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
@@ -61,6 +61,14 @@ pub(crate) enum IntegrationRegistrationError {
     )]
     DuplicateExecutorId {
         executor_id: String,
+        first_owner: String,
+        second_owner: String,
+    },
+    #[error(
+        "Agent service definition `{definition_id}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一 definition"
+    )]
+    DuplicateAgentServiceDefinition {
+        definition_id: String,
         first_owner: String,
         second_owner: String,
     },
@@ -105,12 +113,12 @@ pub(crate) fn collect_integration_registration(
     integrations: Vec<Box<dyn AgentDashIntegration>>,
 ) -> Result<HostIntegrationRegistration, IntegrationRegistrationError> {
     let mut vfs_providers = Vec::new();
-    let mut connectors = Vec::new();
+    let mut runtime_driver_contributions = Vec::new();
+    let mut runtime_definition_owners: HashMap<String, String> = HashMap::new();
     let mut auth_provider: Option<Arc<dyn AuthProvider>> = None;
     let mut auth_provider_integration: Option<String> = None;
     let mut identity_directory_provider: Option<Arc<dyn IdentityDirectoryProvider>> = None;
     let mut identity_directory_provider_integration: Option<String> = None;
-    let mut executor_owners: HashMap<String, String> = HashMap::new();
     let mut mount_providers = Vec::new();
     let mut marketplace_source_providers = Vec::new();
     let mut marketplace_source_owners: HashMap<String, String> = HashMap::new();
@@ -138,6 +146,22 @@ pub(crate) fn collect_integration_registration(
             })?;
 
         vfs_providers.extend(integration.vfs_providers());
+
+        for contribution in integration.agent_runtime_drivers() {
+            let definition_id = contribution.definition.provenance.definition_id.to_string();
+            if let Some(first_owner) =
+                runtime_definition_owners.insert(definition_id.clone(), integration_name.clone())
+            {
+                return Err(
+                    IntegrationRegistrationError::DuplicateAgentServiceDefinition {
+                        definition_id,
+                        first_owner,
+                        second_owner: integration_name.clone(),
+                    },
+                );
+            }
+            runtime_driver_contributions.push(contribution);
+        }
 
         let mp = integration.mount_providers();
         if !mp.is_empty() {
@@ -274,21 +298,6 @@ pub(crate) fn collect_integration_registration(
             marketplace_source_providers.push(provider);
         }
 
-        for connector in integration.agent_connectors() {
-            for executor in connector.list_executors() {
-                if let Some(first_integration) =
-                    executor_owners.insert(executor.id.clone(), integration_name.clone())
-                {
-                    return Err(IntegrationRegistrationError::DuplicateExecutorId {
-                        executor_id: executor.id,
-                        first_owner: first_integration,
-                        second_owner: integration_name.clone(),
-                    });
-                }
-            }
-            connectors.push(connector);
-        }
-
         if let Some(provider) = integration.auth_provider() {
             if let Some(first_integration) = auth_provider_integration {
                 return Err(IntegrationRegistrationError::DuplicateAuthProvider {
@@ -316,7 +325,7 @@ pub(crate) fn collect_integration_registration(
 
     Ok(HostIntegrationRegistration {
         vfs_providers,
-        connectors,
+        runtime_driver_contributions,
         auth_provider,
         identity_directory_provider,
         mount_providers,
@@ -426,7 +435,6 @@ mod tests {
     struct TestIntegration {
         name: &'static str,
         auth: bool,
-        executor_ids: Vec<&'static str>,
     }
 
     struct SeedIntegration;
@@ -607,20 +615,6 @@ mod tests {
             self.auth
                 .then(|| Box::new(TestAuthProvider) as Box<dyn AuthProvider>)
         }
-
-        fn agent_connectors(&self) -> Vec<Arc<dyn AgentConnector>> {
-            if self.executor_ids.is_empty() {
-                return vec![];
-            }
-            vec![Arc::new(TestConnector {
-                id: self.name,
-                executors: self
-                    .executor_ids
-                    .iter()
-                    .map(|id| (*id).to_string())
-                    .collect(),
-            })]
-        }
     }
 
     struct TestAuthProvider;
@@ -730,12 +724,10 @@ mod tests {
             Box::new(TestIntegration {
                 name: "auth-a",
                 auth: true,
-                executor_ids: vec![],
             }),
             Box::new(TestIntegration {
                 name: "auth-b",
                 auth: true,
-                executor_ids: vec![],
             }),
         ]) {
             Ok(_) => panic!("重复 auth provider 应失败"),
@@ -749,48 +741,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_executor_id() {
-        let err = match collect_integration_registration(vec![
-            Box::new(TestIntegration {
-                name: "connector-a",
-                auth: false,
-                executor_ids: vec!["CODEX"],
-            }),
-            Box::new(TestIntegration {
-                name: "connector-b",
-                auth: false,
-                executor_ids: vec!["CODEX"],
-            }),
-        ]) {
-            Ok(_) => panic!("重复执行器 ID 应失败"),
-            Err(err) => err,
-        };
-
-        assert!(matches!(
-            err,
-            IntegrationRegistrationError::DuplicateExecutorId { .. }
-        ));
-    }
-
-    #[test]
-    fn collects_auth_and_connectors() {
-        let registration = collect_integration_registration(vec![
-            Box::new(TestIntegration {
-                name: "auth-only",
-                auth: true,
-                executor_ids: vec![],
-            }),
-            Box::new(TestIntegration {
-                name: "connector-only",
-                auth: false,
-                executor_ids: vec!["CODEX", "CLAUDE"],
-            }),
-        ])
+    fn collects_auth_provider() {
+        let registration = collect_integration_registration(vec![Box::new(TestIntegration {
+            name: "auth-only",
+            auth: true,
+        })])
         .expect("应成功聚合 Host Integration");
 
         assert!(registration.auth_provider.is_some());
-        assert_eq!(registration.connectors.len(), 1);
-        assert_eq!(registration.connectors[0].list_executors().len(), 2);
     }
 
     #[test]

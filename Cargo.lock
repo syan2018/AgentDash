@@ -136,8 +136,11 @@ dependencies = [
  "agentdash-agent-runtime-test-support",
  "async-trait",
  "serde",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -151,6 +154,23 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "ts-rs",
+]
+
+[[package]]
+name = "agentdash-agent-runtime-host"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-runtime-contract",
+ "agentdash-integration-api",
+ "async-trait",
+ "chrono",
+ "jsonschema",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -197,6 +217,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
+ "agentdash-agent-runtime-host",
  "agentdash-application",
  "agentdash-application-agentrun",
  "agentdash-application-hooks",
@@ -628,6 +649,7 @@ dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-host",
  "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",
@@ -656,6 +678,7 @@ dependencies = [
 name = "agentdash-integration-api"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-runtime-contract",
  "agentdash-domain",
  "agentdash-spi",
  "async-trait",

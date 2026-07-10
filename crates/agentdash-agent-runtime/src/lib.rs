@@ -5,12 +5,18 @@
 
 mod context;
 mod gateway;
+mod hook;
 mod memory;
 mod model;
 mod ports;
+mod surface;
+mod tool_broker;
 
 pub use context::*;
 pub use gateway::*;
+pub use hook::*;
 pub use memory::*;
 pub use model::*;
 pub use ports::*;
+pub use surface::*;
+pub use tool_broker::*;

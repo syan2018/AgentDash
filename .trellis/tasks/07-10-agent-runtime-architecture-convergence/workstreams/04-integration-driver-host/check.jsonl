@@ -2,3 +2,4 @@
 {"file":".trellis/spec/backend/runtime-gateway.md","reason":"复核sticky binding、generation fencing与routing"}
 {"file":".trellis/spec/cross-layer/deployment-runtime.md","reason":"复核Relay未成为service identity"}
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"复核Driver Host不解析业务Hook rule"}
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"复核revision history、offer交集、binding恢复、credential与event fencing"}

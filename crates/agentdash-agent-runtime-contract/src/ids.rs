@@ -87,6 +87,10 @@ runtime_id!(DriverBindingId);
 runtime_id!(IdempotencyKey);
 runtime_id!(ProfileDigest);
 runtime_id!(SurfaceDigest);
+runtime_id!(HookDefinitionId);
+runtime_id!(HookRunId);
+runtime_id!(HookEffectId);
+runtime_id!(HookPlanDigest);
 
 macro_rules! revision {
     ($name:ident) => {
@@ -118,6 +122,7 @@ revision!(ContextRecipeRevision);
 revision!(ThreadSettingsRevision);
 revision!(ToolSetRevision);
 revision!(SurfaceRevision);
+revision!(HookPlanRevision);
 revision!(EventSequence);
 revision!(OperationSequence);
 

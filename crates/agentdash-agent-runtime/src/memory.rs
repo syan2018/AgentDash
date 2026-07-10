@@ -37,6 +37,9 @@ struct MemoryState {
     context_activations:
         BTreeMap<agentdash_agent_runtime_contract::ContextActivationId, crate::ContextActivation>,
     context_heads: BTreeMap<RuntimeThreadId, crate::ActiveContextHead>,
+    hook_runs: BTreeMap<agentdash_agent_runtime_contract::HookRunId, crate::HookRun>,
+    hook_effects: BTreeMap<agentdash_agent_runtime_contract::HookEffectId, crate::HookEffect>,
+    hook_plans: BTreeMap<RuntimeThreadId, crate::RuntimeHookPlanBinding>,
     quarantine: Vec<QuarantinedDriverEvent>,
     transient: BTreeMap<RuntimeThreadId, Vec<RuntimeEventEnvelope>>,
 }
@@ -310,6 +313,47 @@ impl RuntimeRepository for InMemoryRuntimeStore {
             .cloned()
             .collect())
     }
+
+    async fn load_hook_run(
+        &self,
+        hook_run_id: &agentdash_agent_runtime_contract::HookRunId,
+    ) -> Result<Option<crate::HookRun>, RuntimeStoreError> {
+        Ok(self.state.lock().await.hook_runs.get(hook_run_id).cloned())
+    }
+
+    async fn recoverable_hook_runs(&self) -> Result<Vec<crate::HookRun>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .hook_runs
+            .values()
+            .filter(|run| !run.status.is_terminal())
+            .cloned()
+            .collect())
+    }
+
+    async fn load_hook_plan(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<Option<crate::RuntimeHookPlanBinding>, RuntimeStoreError> {
+        Ok(self.state.lock().await.hook_plans.get(thread_id).cloned())
+    }
+
+    async fn hook_effects(
+        &self,
+        hook_run_id: &agentdash_agent_runtime_contract::HookRunId,
+    ) -> Result<Vec<crate::HookEffect>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .hook_effects
+            .values()
+            .filter(|effect| effect.hook_run_id == *hook_run_id)
+            .cloned()
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -399,6 +443,92 @@ impl RuntimeUnitOfWork for InMemoryRuntimeStore {
                 .push(event);
         }
         self.inject_failure(CommitFailurePoint::AfterEvents)?;
+        if let Some(binding) = commit.hook_plan_binding {
+            if binding.thread_id != commit_thread_id
+                || staged.threads.get(&commit_thread_id).is_none_or(|thread| {
+                    thread.hook_plan_revision != Some(binding.plan.revision)
+                        || thread.hook_plan_digest.as_ref() != Some(&binding.plan.digest)
+                })
+            {
+                return Err(RuntimeStoreError::Unavailable(
+                    "hook plan binding does not match thread projection".to_string(),
+                ));
+            }
+            if let Some(existing) = staged.hook_plans.get(&binding.thread_id) {
+                let valid = existing == &binding
+                    || binding.plan.revision.0 == existing.plan.revision.0.saturating_add(1);
+                if !valid {
+                    return Err(RuntimeStoreError::Unavailable(
+                        "hook plan revision must advance exactly once".to_string(),
+                    ));
+                }
+            } else if binding.plan.revision.0 != 1 {
+                return Err(RuntimeStoreError::Unavailable(
+                    "first hook plan revision must be one".to_string(),
+                ));
+            }
+            staged.hook_plans.insert(binding.thread_id.clone(), binding);
+        }
+        for run in commit.hook_runs {
+            if let Some(existing) = staged.hook_runs.get(&run.hook_run_id) {
+                let immutable_matches = existing.thread_id == run.thread_id
+                    && existing.definition_id == run.definition_id
+                    && existing.point == run.point
+                    && existing.plan_revision == run.plan_revision
+                    && existing.plan_digest == run.plan_digest
+                    && existing.actions == run.actions
+                    && existing.delivered_strength == run.delivered_strength
+                    && existing.failure_policy == run.failure_policy
+                    && existing.site == run.site
+                    && existing.correlation == run.correlation
+                    && existing.input == run.input;
+                let valid_transition = immutable_matches
+                    && ((existing.status == crate::HookRunStatus::Accepted
+                        && run.status == crate::HookRunStatus::Running)
+                        || (existing.status == crate::HookRunStatus::Running
+                            && run.status.is_terminal()));
+                if !valid_transition && existing != &run {
+                    return Err(RuntimeStoreError::Unavailable(
+                        "invalid hook run transition".to_string(),
+                    ));
+                }
+            } else if run.status != crate::HookRunStatus::Accepted {
+                return Err(RuntimeStoreError::Unavailable(
+                    "new hook run must be accepted".to_string(),
+                ));
+            }
+            staged.hook_runs.insert(run.hook_run_id.clone(), run);
+        }
+        for effect in commit.hook_effects {
+            let run = staged.hook_runs.get(&effect.hook_run_id).ok_or_else(|| {
+                RuntimeStoreError::Unavailable("hook effect run was not found".to_string())
+            })?;
+            run.validate_effect(&effect).map_err(|error| {
+                RuntimeStoreError::Unavailable(format!("invalid hook effect: {error}"))
+            })?;
+            if !run.status.is_terminal() {
+                return Err(RuntimeStoreError::Unavailable(
+                    "hook effect requires a terminal hook run".to_string(),
+                ));
+            }
+            if let Some(existing) = staged.hook_effects.get(&effect.effect_id)
+                && existing != &effect
+            {
+                return Err(RuntimeStoreError::Unavailable(
+                    "hook effect identity was reused".to_string(),
+                ));
+            }
+            if staged.hook_effects.values().any(|existing| {
+                existing.hook_run_id == effect.hook_run_id
+                    && existing.idempotency_key == effect.idempotency_key
+                    && existing != &effect
+            }) {
+                return Err(RuntimeStoreError::Unavailable(
+                    "hook effect idempotency key was reused".to_string(),
+                ));
+            }
+            staged.hook_effects.insert(effect.effect_id.clone(), effect);
+        }
         staged.outbox.extend(commit.outbox);
         for entry in commit.context_activation_outbox {
             if let Some(existing) = staged.context_activation_outbox.get(&entry.activation_id)
@@ -653,6 +783,15 @@ impl RuntimeUnitOfWork for InMemoryRuntimeStore {
             return Err(RuntimeStoreError::ContextInvariant {
                 violation: crate::ContextStoreInvariant::HeadCheckpointMismatch,
             });
+        }
+        let durable_hook_plan = staged.hook_plans.get(&commit_thread_id);
+        if projection.hook_plan_revision != durable_hook_plan.map(|binding| binding.plan.revision)
+            || projection.hook_plan_digest.as_ref()
+                != durable_hook_plan.map(|binding| &binding.plan.digest)
+        {
+            return Err(RuntimeStoreError::Unavailable(
+                "thread hook plan projection does not match durable binding".to_string(),
+            ));
         }
         self.inject_failure(CommitFailurePoint::AfterContext)?;
         staged.quarantine.extend(commit.quarantine);

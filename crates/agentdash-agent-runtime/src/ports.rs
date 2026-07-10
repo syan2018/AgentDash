@@ -28,6 +28,8 @@ pub enum RuntimeWorkKind {
     ContextPreparation,
     ContextActivationDispatch,
     ContextActivationRecovery,
+    HookRunRecovery,
+    HookEffect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +37,8 @@ pub enum RuntimeWorkIdentity {
     Operation(RuntimeOperationId),
     Compaction(agentdash_agent_runtime_contract::ContextCompactionId),
     Activation(agentdash_agent_runtime_contract::ContextActivationId),
+    HookEffect(agentdash_agent_runtime_contract::HookEffectId),
+    HookRun(agentdash_agent_runtime_contract::HookRunId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +47,8 @@ pub enum RuntimeWorkPayload {
     ContextPreparation(ContextPreparationWorkItem),
     ContextActivationDispatch(ContextActivationOutboxEntry),
     ContextActivationRecovery(ContextActivation),
+    HookEffect(crate::HookEffect),
+    HookRunRecovery(crate::HookRun),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +111,7 @@ pub enum DriverEventQuarantineReason {
     },
     DriverOperationAcceptance,
     DriverRuntimeOwnedContextEvent,
+    DriverRuntimeOwnedHookEvent,
     InvalidTransition {
         error: crate::TransitionError,
     },
@@ -146,6 +153,9 @@ pub struct RuntimeCommit {
     pub context_candidates: Vec<ContextCandidate>,
     pub context_activations: Vec<ContextActivation>,
     pub context_head: Option<ContextHeadWrite>,
+    pub hook_plan_binding: Option<crate::RuntimeHookPlanBinding>,
+    pub hook_runs: Vec<crate::HookRun>,
+    pub hook_effects: Vec<crate::HookEffect>,
     pub quarantine: Vec<QuarantinedDriverEvent>,
 }
 
@@ -274,6 +284,23 @@ pub trait RuntimeRepository: Send + Sync {
     async fn recoverable_context_activations(
         &self,
     ) -> Result<Vec<ContextActivation>, RuntimeStoreError>;
+
+    async fn load_hook_run(
+        &self,
+        hook_run_id: &agentdash_agent_runtime_contract::HookRunId,
+    ) -> Result<Option<crate::HookRun>, RuntimeStoreError>;
+
+    async fn recoverable_hook_runs(&self) -> Result<Vec<crate::HookRun>, RuntimeStoreError>;
+
+    async fn load_hook_plan(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<Option<crate::RuntimeHookPlanBinding>, RuntimeStoreError>;
+
+    async fn hook_effects(
+        &self,
+        hook_run_id: &agentdash_agent_runtime_contract::HookRunId,
+    ) -> Result<Vec<crate::HookEffect>, RuntimeStoreError>;
 }
 
 /// Atomic unit-of-work boundary for journal + projection + operation + outbox.

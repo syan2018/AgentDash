@@ -75,7 +75,11 @@ pub enum ContextFidelity {
 pub enum InputModality {
     Text,
     Image,
+    Audio,
     FileReference,
+    Resource,
+    Skill,
+    Mention,
     Structured,
 }
 

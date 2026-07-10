@@ -241,7 +241,6 @@ pub(crate) struct SessionBootstrapInput {
     pub mcp_tool_discovery: Arc<dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery>,
     pub function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     pub platform_config: SharedPlatformConfig,
-    pub integration_connectors: Vec<Arc<dyn AgentConnector>>,
     pub extra_skill_dirs: Vec<PathBuf>,
     pub skill_discovery_providers: Vec<Arc<dyn agentdash_spi::SkillDiscoveryProvider>>,
     pub memory_discovery_providers: Vec<Arc<dyn agentdash_spi::MemoryDiscoveryProvider>>,
@@ -285,7 +284,6 @@ pub(crate) async fn build_session_runtime(
         mcp_tool_discovery,
         function_runner,
         platform_config,
-        integration_connectors,
         extra_skill_dirs,
         skill_discovery_providers,
         memory_discovery_providers,
@@ -319,7 +317,6 @@ pub(crate) async fn build_session_runtime(
         ),
     ));
 
-    sub_connectors.extend(integration_connectors);
     crate::integrations::validate_connector_executor_ids(&sub_connectors)
         .map_err(|err| anyhow::anyhow!("连接器注册失败: {err}"))?;
 

@@ -4,10 +4,29 @@ use ts_rs::TS;
 
 use crate::{
     ContextActivationId, ContextCandidateId, ContextCheckpointId, ContextCompactionId,
-    ContextDigest, ContextRevision, DriverContextRevision, EventSequence, RuntimeBindingId,
+    ContextDigest, ContextRevision, DriverContextRevision, EventSequence, HookDefinitionId,
+    HookEffectId, HookPlanDigest, HookPlanRevision, HookPoint, HookRunId, RuntimeBindingId,
     RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimeRevision, RuntimeThreadId,
     RuntimeTurnId,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum HookRunDecision {
+    Continue,
+    Block,
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum HookRunTerminal {
+    Completed,
+    Blocked,
+    Failed,
+    Stopped,
+    Cancelled,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -58,6 +77,7 @@ pub enum RuntimeItemTerminal {
 pub enum RuntimeProtocolViolationCode {
     DriverOperationAcceptance,
     DriverRuntimeOwnedContextEvent,
+    DriverRuntimeOwnedHookEvent,
     InvalidLifecycleTransition,
     DuplicateTerminal,
 }
@@ -201,6 +221,31 @@ pub enum RuntimeEvent {
         digest: ContextDigest,
     },
     DriverContextCompactedOpaque,
+    HookRunAccepted {
+        hook_run_id: HookRunId,
+        definition_id: HookDefinitionId,
+        point: HookPoint,
+        plan_revision: HookPlanRevision,
+        plan_digest: HookPlanDigest,
+        operation_id: Option<RuntimeOperationId>,
+        turn_id: Option<RuntimeTurnId>,
+        item_id: Option<RuntimeItemId>,
+        interaction_id: Option<RuntimeInteractionId>,
+    },
+    HookRunStarted {
+        hook_run_id: HookRunId,
+    },
+    HookRunTerminal {
+        hook_run_id: HookRunId,
+        terminal: HookRunTerminal,
+        decision: HookRunDecision,
+        message: Option<String>,
+        effect_ids: Vec<HookEffectId>,
+    },
+    HookPlanBound {
+        plan_revision: HookPlanRevision,
+        plan_digest: HookPlanDigest,
+    },
 }
 
 impl RuntimeEvent {

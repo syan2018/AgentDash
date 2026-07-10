@@ -85,7 +85,15 @@ export type EventSequence = bigint;
 
 export type HookAction = "observe" | "add_context" | "block" | "rewrite_input" | "rewrite_result" | "request_approval" | "continue_turn" | "refresh_surface" | "emit_effect";
 
+export type HookDefinitionId = string;
+
+export type HookEffectId = string;
+
 export type HookFailurePolicy = "fail_closed" | "fail_open_with_diagnostic" | "retry_durable_effect" | "observe_only";
+
+export type HookPlanDigest = string;
+
+export type HookPlanRevision = bigint;
 
 export type HookPoint = "before_thread_start" | "after_thread_start" | "before_turn" | "after_turn" | "before_provider_request" | "before_tool" | "after_tool" | "before_context_compact" | "after_context_compact" | "before_stop" | "after_item";
 
@@ -95,9 +103,15 @@ export type HookProfile = { points: Array<HookPointCapability>, configuration_bo
 
 export type HookRequirement = { point: HookPoint, actions: Array<HookAction>, minimum_strength: SemanticStrength, failure_policy: HookFailurePolicy, required: boolean, };
 
+export type HookRunDecision = "continue" | "block" | "stop";
+
+export type HookRunId = string;
+
+export type HookRunTerminal = "completed" | "blocked" | "failed" | "stopped" | "cancelled";
+
 export type IdempotencyKey = string;
 
-export type InputModality = "text" | "image" | "file_reference" | "structured";
+export type InputModality = "text" | "image" | "audio" | "file_reference" | "resource" | "skill" | "mention" | "structured";
 
 export type InputProfile = { modalities: Array<InputModality>, };
 
@@ -145,7 +159,7 @@ export type RuntimeDescriptor = { protocol_revision: number, service_instance_id
 
 export type RuntimeDriverGeneration = bigint;
 
-export type RuntimeEvent = { "kind": "operation_accepted", operation_id: RuntimeOperationId, } | { "kind": "operation_terminal", operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, } | { "kind": "binding_established", binding_id: RuntimeBindingId, } | { "kind": "binding_lost", binding_id: RuntimeBindingId, reason: string, } | { "kind": "protocol_violation", code: RuntimeProtocolViolationCode, message: string, critical: boolean, } | { "kind": "thread_status_changed", status: RuntimeThreadStatus, } | { "kind": "turn_started", turn_id: RuntimeTurnId, } | { "kind": "turn_terminal", turn_id: RuntimeTurnId, terminal: RuntimeTurnTerminal, message: string | null, } | { "kind": "item_started", turn_id: RuntimeTurnId, item_id: RuntimeItemId, } | { "kind": "item_delta", turn_id: RuntimeTurnId, item_id: RuntimeItemId, delta: string, } | { "kind": "item_terminal", turn_id: RuntimeTurnId, item_id: RuntimeItemId, terminal: RuntimeItemTerminal, } | { "kind": "interaction_requested", turn_id: RuntimeTurnId, item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId, interaction_kind: RuntimeInteractionKind, prompt: string, } | { "kind": "interaction_terminal", turn_id: RuntimeTurnId, interaction_id: RuntimeInteractionId, terminal: RuntimeInteractionTerminal, } | { "kind": "context_checkpoint_prepared", checkpoint_id: ContextCheckpointId, candidate_id: ContextCandidateId, compaction_id: ContextCompactionId, } | { "kind": "context_activation_applied", activation_id: ContextActivationId, candidate_id: ContextCandidateId, digest: ContextDigest, driver_context_revision: DriverContextRevision, } | { "kind": "context_compaction_terminal", compaction_id: ContextCompactionId, operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, context_revision: ContextRevision, } | { "kind": "context_checkpoint_activated", checkpoint_id: ContextCheckpointId, candidate_id: ContextCandidateId, activation_id: ContextActivationId, compaction_id: ContextCompactionId, context_revision: ContextRevision, digest: ContextDigest, } | { "kind": "driver_context_compacted_opaque" };
+export type RuntimeEvent = { "kind": "operation_accepted", operation_id: RuntimeOperationId, } | { "kind": "operation_terminal", operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, } | { "kind": "binding_established", binding_id: RuntimeBindingId, } | { "kind": "binding_lost", binding_id: RuntimeBindingId, reason: string, } | { "kind": "protocol_violation", code: RuntimeProtocolViolationCode, message: string, critical: boolean, } | { "kind": "thread_status_changed", status: RuntimeThreadStatus, } | { "kind": "turn_started", turn_id: RuntimeTurnId, } | { "kind": "turn_terminal", turn_id: RuntimeTurnId, terminal: RuntimeTurnTerminal, message: string | null, } | { "kind": "item_started", turn_id: RuntimeTurnId, item_id: RuntimeItemId, } | { "kind": "item_delta", turn_id: RuntimeTurnId, item_id: RuntimeItemId, delta: string, } | { "kind": "item_terminal", turn_id: RuntimeTurnId, item_id: RuntimeItemId, terminal: RuntimeItemTerminal, } | { "kind": "interaction_requested", turn_id: RuntimeTurnId, item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId, interaction_kind: RuntimeInteractionKind, prompt: string, } | { "kind": "interaction_terminal", turn_id: RuntimeTurnId, interaction_id: RuntimeInteractionId, terminal: RuntimeInteractionTerminal, } | { "kind": "context_checkpoint_prepared", checkpoint_id: ContextCheckpointId, candidate_id: ContextCandidateId, compaction_id: ContextCompactionId, } | { "kind": "context_activation_applied", activation_id: ContextActivationId, candidate_id: ContextCandidateId, digest: ContextDigest, driver_context_revision: DriverContextRevision, } | { "kind": "context_compaction_terminal", compaction_id: ContextCompactionId, operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, context_revision: ContextRevision, } | { "kind": "context_checkpoint_activated", checkpoint_id: ContextCheckpointId, candidate_id: ContextCandidateId, activation_id: ContextActivationId, compaction_id: ContextCompactionId, context_revision: ContextRevision, digest: ContextDigest, } | { "kind": "driver_context_compacted_opaque" } | { "kind": "hook_run_accepted", hook_run_id: HookRunId, definition_id: HookDefinitionId, point: HookPoint, plan_revision: HookPlanRevision, plan_digest: HookPlanDigest, operation_id: RuntimeOperationId | null, turn_id: RuntimeTurnId | null, item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId | null, } | { "kind": "hook_run_started", hook_run_id: HookRunId, } | { "kind": "hook_run_terminal", hook_run_id: HookRunId, terminal: HookRunTerminal, decision: HookRunDecision, message: string | null, effect_ids: Array<HookEffectId>, } | { "kind": "hook_plan_bound", plan_revision: HookPlanRevision, plan_digest: HookPlanDigest, };
 
 export type RuntimeEventEnvelope = { thread_id: RuntimeThreadId, sequence: EventSequence | null, revision: RuntimeRevision, event: RuntimeEvent, };
 
@@ -173,7 +187,7 @@ export type RuntimeOperationTerminal = { "kind": "succeeded" } | { "kind": "fail
 
 export type RuntimeProfile = { reference_class: ReferenceRuntimeClass, input: InputProfile, instruction: InstructionProfile, tools: ToolProfile, workspace: WorkspaceProfile, interactions: InteractionProfile, lifecycle: Array<LifecycleCapability>, hooks: HookProfile, context: ContextProfile, telemetry_config: Array<TelemetryCapability>, };
 
-export type RuntimeProtocolViolationCode = "driver_operation_acceptance" | "driver_runtime_owned_context_event" | "invalid_lifecycle_transition" | "duplicate_terminal";
+export type RuntimeProtocolViolationCode = "driver_operation_acceptance" | "driver_runtime_owned_context_event" | "driver_runtime_owned_hook_event" | "invalid_lifecycle_transition" | "duplicate_terminal";
 
 export type RuntimeRevision = bigint;
 

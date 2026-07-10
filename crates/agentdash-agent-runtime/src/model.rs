@@ -74,6 +74,8 @@ pub struct RuntimeThreadState {
     pub context_revision: ContextRevision,
     pub settings_revision: ThreadSettingsRevision,
     pub tool_set_revision: ToolSetRevision,
+    pub hook_plan_revision: Option<agentdash_agent_runtime_contract::HookPlanRevision>,
+    pub hook_plan_digest: Option<agentdash_agent_runtime_contract::HookPlanDigest>,
     pub operations: BTreeMap<RuntimeOperationId, EntityPhase<RuntimeOperationTerminal>>,
     pub turns: BTreeMap<RuntimeTurnId, RuntimeTurnState>,
     pub items: BTreeMap<RuntimeItemId, RuntimeItemState>,
@@ -350,7 +352,17 @@ impl RuntimeThreadState {
             | RuntimeEvent::ContextCheckpointPrepared { .. }
             | RuntimeEvent::ContextActivationApplied { .. }
             | RuntimeEvent::ContextCompactionTerminal { .. }
-            | RuntimeEvent::DriverContextCompactedOpaque => {}
+            | RuntimeEvent::DriverContextCompactedOpaque
+            | RuntimeEvent::HookRunAccepted { .. }
+            | RuntimeEvent::HookRunStarted { .. }
+            | RuntimeEvent::HookRunTerminal { .. } => {}
+            RuntimeEvent::HookPlanBound {
+                plan_revision,
+                plan_digest,
+            } => {
+                self.hook_plan_revision = Some(*plan_revision);
+                self.hook_plan_digest = Some(plan_digest.clone());
+            }
         }
         Ok(())
     }

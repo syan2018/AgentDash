@@ -552,6 +552,39 @@ async fn driver_cannot_emit_runtime_owned_context_transitions() {
 }
 
 #[tokio::test]
+async fn driver_cannot_forge_runtime_owned_hook_transitions() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    runtime
+        .ingest_driver_event(driver(RuntimeEvent::HookPlanBound {
+            plan_revision: HookPlanRevision(1),
+            plan_digest: id("forged-hook-plan"),
+        }))
+        .await
+        .expect("protocol violation persisted");
+    let projection = store
+        .load_thread(&thread_id)
+        .await
+        .expect("thread")
+        .expect("state");
+    assert_eq!(projection.status, RuntimeThreadStatus::Lost);
+    assert!(projection.hook_plan_revision.is_none());
+    assert!(matches!(
+        store.quarantined().await.as_slice(),
+        [agentdash_agent_runtime::QuarantinedDriverEvent {
+            reason:
+                agentdash_agent_runtime::DriverEventQuarantineReason::DriverRuntimeOwnedHookEvent,
+            ..
+        }]
+    ));
+}
+
+#[tokio::test]
 async fn transient_delta_has_no_durable_cursor() {
     let (store, runtime) = fixture();
     let thread_id = runtime

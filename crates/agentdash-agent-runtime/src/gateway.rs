@@ -105,6 +105,23 @@ where
                 )
                 .await;
         }
+        if matches!(
+            source.event,
+            RuntimeEvent::HookRunAccepted { .. }
+                | RuntimeEvent::HookRunStarted { .. }
+                | RuntimeEvent::HookRunTerminal { .. }
+                | RuntimeEvent::HookPlanBound { .. }
+        ) {
+            return self
+                .persist_protocol_violation(
+                    state,
+                    source,
+                    DriverEventQuarantineReason::DriverRuntimeOwnedHookEvent,
+                    RuntimeProtocolViolationCode::DriverRuntimeOwnedHookEvent,
+                    "driver attempted to emit a runtime-owned hook transition".to_string(),
+                )
+                .await;
+        }
 
         if source.event.is_transient() {
             if let Err(error) = state.apply_authoritative(&source.event) {
@@ -152,6 +169,9 @@ where
                 context_candidates: Vec::new(),
                 context_activations: Vec::new(),
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await
@@ -226,6 +246,9 @@ where
                 context_candidates: Vec::new(),
                 context_activations: Vec::new(),
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: vec![QuarantinedDriverEvent {
                     event: source,
                     reason: quarantine_reason,
@@ -407,6 +430,9 @@ where
                 context_candidates: Vec::new(),
                 context_activations: Vec::new(),
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await
@@ -551,6 +577,8 @@ impl<S> ManagedAgentRuntime<S> {
             context_revision: agentdash_agent_runtime_contract::ContextRevision(0),
             settings_revision: agentdash_agent_runtime_contract::ThreadSettingsRevision(0),
             tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision(0),
+            hook_plan_revision: None,
+            hook_plan_digest: None,
             operations: Default::default(),
             turns: Default::default(),
             items: Default::default(),

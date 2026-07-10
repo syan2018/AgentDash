@@ -3,17 +3,18 @@ use std::{collections::BTreeMap, sync::Arc};
 use agentdash_agent_runtime::{
     ActiveContextHead, ContextActivation, ContextActivationOutboxEntry, ContextActivationStatus,
     ContextCandidate, ContextCheckpoint, ContextHeadWrite, ContextPreparationStatus,
-    ContextPreparationWorkItem, ContextStoreInvariant, EntityPhase, QuarantinedDriverEvent,
-    RuntimeCommit, RuntimeEventBatch, RuntimeInteractionState, RuntimeItemState,
-    RuntimeOperationRecord, RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError,
-    RuntimeThreadState, RuntimeTransientEvents, RuntimeTurnState, RuntimeUnitOfWork,
-    RuntimeWorkClaim, RuntimeWorkClaimRequest, RuntimeWorkClaimToken, RuntimeWorkIdentity,
-    RuntimeWorkKind, RuntimeWorkPayload, RuntimeWorkQueue, RuntimeWorkerId,
+    ContextPreparationWorkItem, ContextStoreInvariant, EntityPhase, HookEffect, HookRun,
+    HookRunStatus, QuarantinedDriverEvent, RuntimeCommit, RuntimeEventBatch,
+    RuntimeHookPlanBinding, RuntimeInteractionState, RuntimeItemState, RuntimeOperationRecord,
+    RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError, RuntimeThreadState,
+    RuntimeTransientEvents, RuntimeTurnState, RuntimeUnitOfWork, RuntimeWorkClaim,
+    RuntimeWorkClaimRequest, RuntimeWorkClaimToken, RuntimeWorkIdentity, RuntimeWorkKind,
+    RuntimeWorkPayload, RuntimeWorkQueue, RuntimeWorkerId,
 };
 use agentdash_agent_runtime_contract::{
     ContextActivationId, ContextCheckpointId, ContextCompactionId, ContextFidelity, EventSequence,
-    IdempotencyKey, RuntimeBindingId, RuntimeEventEnvelope, RuntimeOperationId,
-    RuntimeOperationTerminal, RuntimeRevision, RuntimeThreadId,
+    HookEffectId, HookRunId, IdempotencyKey, RuntimeBindingId, RuntimeEventEnvelope,
+    RuntimeOperationId, RuntimeOperationTerminal, RuntimeRevision, RuntimeThreadId,
 };
 use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
@@ -175,6 +176,35 @@ fn trigger(value: agentdash_agent_runtime_contract::ContextCompactionTrigger) ->
     match value {
         agentdash_agent_runtime_contract::ContextCompactionTrigger::Manual => "manual",
         agentdash_agent_runtime_contract::ContextCompactionTrigger::Automatic => "automatic",
+    }
+}
+
+fn hook_point(value: agentdash_agent_runtime_contract::HookPoint) -> &'static str {
+    use agentdash_agent_runtime_contract::HookPoint::*;
+    match value {
+        BeforeThreadStart => "before_thread_start",
+        AfterThreadStart => "after_thread_start",
+        BeforeTurn => "before_turn",
+        AfterTurn => "after_turn",
+        BeforeProviderRequest => "before_provider_request",
+        BeforeTool => "before_tool",
+        AfterTool => "after_tool",
+        BeforeContextCompact => "before_context_compact",
+        AfterContextCompact => "after_context_compact",
+        BeforeStop => "before_stop",
+        AfterItem => "after_item",
+    }
+}
+
+fn hook_run_status(value: HookRunStatus) -> &'static str {
+    match value {
+        HookRunStatus::Accepted => "accepted",
+        HookRunStatus::Running => "running",
+        HookRunStatus::Completed => "completed",
+        HookRunStatus::Blocked => "blocked",
+        HookRunStatus::Failed => "failed",
+        HookRunStatus::Stopped => "stopped",
+        HookRunStatus::Cancelled => "cancelled",
     }
 }
 
@@ -402,6 +432,57 @@ impl RuntimeRepository for PostgresRuntimeRepository {
         )
         .await
     }
+
+    async fn load_hook_run(
+        &self,
+        hook_run_id: &HookRunId,
+    ) -> Result<Option<HookRun>, RuntimeStoreError> {
+        fetch_document(
+            &self.pool,
+            "SELECT record FROM agent_runtime_hook_run WHERE id=$1",
+            hook_run_id.as_str(),
+            "agent_runtime_hook_run.record",
+        )
+        .await
+    }
+
+    async fn recoverable_hook_runs(&self) -> Result<Vec<HookRun>, RuntimeStoreError> {
+        load_documents(
+            &self.pool,
+            "SELECT record FROM agent_runtime_hook_run WHERE status IN ('accepted','running') ORDER BY updated_at",
+            "agent_runtime_hook_run.record",
+        )
+        .await
+    }
+
+    async fn load_hook_plan(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<Option<RuntimeHookPlanBinding>, RuntimeStoreError> {
+        fetch_document(
+            &self.pool,
+            "SELECT binding FROM agent_runtime_hook_plan WHERE thread_id=$1 ORDER BY revision DESC LIMIT 1",
+            thread_id.as_str(),
+            "agent_runtime_hook_plan.binding",
+        )
+        .await
+    }
+
+    async fn hook_effects(
+        &self,
+        hook_run_id: &HookRunId,
+    ) -> Result<Vec<HookEffect>, RuntimeStoreError> {
+        let rows = sqlx::query(
+            "SELECT record FROM agent_runtime_hook_effect WHERE hook_run_id=$1 ORDER BY id",
+        )
+        .bind(hook_run_id.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sql_error)?;
+        rows.into_iter()
+            .map(|row| decode(row.get(0), "agent_runtime_hook_effect.record"))
+            .collect()
+    }
 }
 
 async fn load_documents<T: DeserializeOwned>(
@@ -476,6 +557,7 @@ impl RuntimeUnitOfWork for PostgresRuntimeRepository {
             return Err(error);
         }
         write_context(&mut tx, &commit).await?;
+        write_hook_state(&mut tx, &commit).await?;
         if let Err(error) = self.inject_failure(4) {
             tx.rollback().await.map_err(sql_error)?;
             return Err(error);
@@ -484,6 +566,7 @@ impl RuntimeUnitOfWork for PostgresRuntimeRepository {
         write_activation_outbox(&mut tx, &commit.context_activation_outbox).await?;
         write_quarantine(&mut tx, &commit.quarantine).await?;
         validate_head_projection(&mut tx, &commit.projection).await?;
+        validate_hook_plan_projection(&mut tx, &commit.projection).await?;
         if let Err(error) = self.inject_failure(5) {
             tx.rollback().await.map_err(sql_error)?;
             return Err(error);
@@ -605,6 +688,13 @@ impl RuntimeWorkQueue for PostgresRuntimeRepository {
             }
             RuntimeWorkKind::ContextActivationRecovery => {
                 claim_activation_recovery(&self.pool, &request.owner, &token, now, expires, limit)
+                    .await
+            }
+            RuntimeWorkKind::HookEffect => {
+                claim_hook_effect(&self.pool, &request.owner, &token, now, expires, limit).await
+            }
+            RuntimeWorkKind::HookRunRecovery => {
+                claim_hook_run_recovery(&self.pool, &request.owner, &token, now, expires, limit)
                     .await
             }
         }
@@ -812,6 +902,97 @@ async fn claim_activation_recovery(
         .collect()
 }
 
+async fn claim_hook_effect(
+    pool: &PgPool,
+    owner: &RuntimeWorkerId,
+    token: &RuntimeWorkClaimToken,
+    now: i64,
+    expires: i64,
+    limit: i64,
+) -> Result<Vec<RuntimeWorkClaim>, RuntimeStoreError> {
+    let rows = sqlx::query(
+        "WITH candidates AS (SELECT id FROM agent_runtime_hook_effect \
+         WHERE dispatched_at IS NULL AND attempt_count <= retry_limit \
+           AND (claim_token IS NULL OR claim_expires_at_ms <= $1) \
+         ORDER BY created_at LIMIT $5 FOR UPDATE SKIP LOCKED) \
+         UPDATE agent_runtime_hook_effect q SET claim_token=$2,claim_owner=$3,claim_expires_at_ms=$4,\
+         attempt_count=q.attempt_count+1,last_error=NULL,updated_at=now() FROM candidates c \
+         WHERE q.id=c.id RETURNING q.id,q.record,q.attempt_count",
+    )
+    .bind(now)
+    .bind(token.as_str())
+    .bind(owner.as_str())
+    .bind(expires)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(sql_error)?;
+    rows.into_iter()
+        .map(|row| {
+            let id: String = row.get(0);
+            let payload: HookEffect = decode(row.get(1), "agent_runtime_hook_effect.record")?;
+            claimed(
+                RuntimeWorkKind::HookEffect,
+                RuntimeWorkIdentity::HookEffect(hook_effect_id(id)?),
+                ClaimLease {
+                    token,
+                    owner,
+                    expires_at_ms: expires,
+                },
+                row.get(2),
+                payload,
+                RuntimeWorkPayload::HookEffect,
+            )
+        })
+        .collect()
+}
+
+async fn claim_hook_run_recovery(
+    pool: &PgPool,
+    owner: &RuntimeWorkerId,
+    token: &RuntimeWorkClaimToken,
+    now: i64,
+    expires: i64,
+    limit: i64,
+) -> Result<Vec<RuntimeWorkClaim>, RuntimeStoreError> {
+    let rows = sqlx::query(
+        "WITH candidates AS (SELECT id FROM agent_runtime_hook_run \
+         WHERE status IN ('accepted','running') \
+           AND (recovery_claim_token IS NULL OR recovery_claim_expires_at_ms <= $1) \
+         ORDER BY updated_at LIMIT $5 FOR UPDATE SKIP LOCKED) \
+         UPDATE agent_runtime_hook_run q SET recovery_claim_token=$2,recovery_claim_owner=$3,\
+         recovery_claim_expires_at_ms=$4,recovery_attempt_count=q.recovery_attempt_count+1,\
+         recovery_last_error=NULL,updated_at=now() FROM candidates c WHERE q.id=c.id \
+         RETURNING q.id,q.record,q.recovery_attempt_count",
+    )
+    .bind(now)
+    .bind(token.as_str())
+    .bind(owner.as_str())
+    .bind(expires)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(sql_error)?;
+    rows.into_iter()
+        .map(|row| {
+            let id: String = row.get(0);
+            let payload: HookRun = decode(row.get(1), "agent_runtime_hook_run.record")?;
+            claimed(
+                RuntimeWorkKind::HookRunRecovery,
+                RuntimeWorkIdentity::HookRun(hook_run_id(id)?),
+                ClaimLease {
+                    token,
+                    owner,
+                    expires_at_ms: expires,
+                },
+                row.get(2),
+                payload,
+                RuntimeWorkPayload::HookRunRecovery,
+            )
+        })
+        .collect()
+}
+
 async fn update_claim(
     pool: &PgPool,
     claim: &RuntimeWorkClaim,
@@ -855,6 +1036,24 @@ async fn update_claim(
             id.as_str(),
             "recovery_claim_expires_at_ms",
         ),
+        (RuntimeWorkKind::HookEffect, RuntimeWorkIdentity::HookEffect(id)) => (
+            if ack {
+                "UPDATE agent_runtime_hook_effect SET dispatched_at=now(),claim_token=NULL,claim_owner=NULL,claim_expires_at_ms=NULL,last_error=NULL,updated_at=now() WHERE id=$1 AND claim_owner=$2 AND claim_token=$3"
+            } else {
+                "UPDATE agent_runtime_hook_effect SET claim_token=NULL,claim_owner=NULL,claim_expires_at_ms=NULL,last_error=$4,updated_at=now() WHERE id=$1 AND claim_owner=$2 AND claim_token=$3"
+            },
+            id.as_str(),
+            "claim_expires_at_ms",
+        ),
+        (RuntimeWorkKind::HookRunRecovery, RuntimeWorkIdentity::HookRun(id)) => (
+            if ack {
+                "UPDATE agent_runtime_hook_run SET recovery_claim_token=NULL,recovery_claim_owner=NULL,recovery_claim_expires_at_ms=NULL,recovery_last_error=NULL,updated_at=now() WHERE id=$1 AND recovery_claim_owner=$2 AND recovery_claim_token=$3"
+            } else {
+                "UPDATE agent_runtime_hook_run SET recovery_claim_token=NULL,recovery_claim_owner=NULL,recovery_claim_expires_at_ms=NULL,recovery_last_error=$4,updated_at=now() WHERE id=$1 AND recovery_claim_owner=$2 AND recovery_claim_token=$3"
+            },
+            id.as_str(),
+            "recovery_claim_expires_at_ms",
+        ),
         _ => {
             return Err(RuntimeStoreError::InvalidWorkClaim(
                 "work kind and identity do not match".to_string(),
@@ -891,6 +1090,14 @@ fn context_compaction_id(value: String) -> Result<ContextCompactionId, RuntimeSt
 fn context_activation_id(value: String) -> Result<ContextActivationId, RuntimeStoreError> {
     ContextActivationId::new(value)
         .map_err(|error| RuntimeStoreError::Unavailable(error.to_string()))
+}
+
+fn hook_effect_id(value: String) -> Result<HookEffectId, RuntimeStoreError> {
+    HookEffectId::new(value).map_err(|error| RuntimeStoreError::Unavailable(error.to_string()))
+}
+
+fn hook_run_id(value: String) -> Result<HookRunId, RuntimeStoreError> {
+    HookRunId::new(value).map_err(|error| RuntimeStoreError::Unavailable(error.to_string()))
 }
 
 async fn write_thread(
@@ -1504,6 +1711,197 @@ async fn write_outbox(
     Ok(())
 }
 
+async fn write_hook_state(
+    tx: &mut Transaction<'_, Postgres>,
+    commit: &RuntimeCommit,
+) -> Result<(), RuntimeStoreError> {
+    if let Some(binding) = &commit.hook_plan_binding {
+        if binding.thread_id != commit.projection.thread_id
+            || commit.projection.hook_plan_revision != Some(binding.plan.revision)
+            || commit.projection.hook_plan_digest.as_ref() != Some(&binding.plan.digest)
+        {
+            return Err(RuntimeStoreError::Unavailable(
+                "hook plan binding does not match thread projection".to_string(),
+            ));
+        }
+        let current = sqlx::query(
+            "SELECT revision,digest,binding FROM agent_runtime_hook_plan WHERE thread_id=$1 ORDER BY revision DESC LIMIT 1",
+        )
+        .bind(binding.thread_id.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+        if let Some(row) = current {
+            let revision = i64_to_u64(row.get(0), "hook plan revision")?;
+            let digest: String = row.get(1);
+            let record: Value = row.get(2);
+            let encoded = encode(binding, "agent_runtime_hook_plan.binding")?;
+            if revision == binding.plan.revision.0
+                && digest == binding.plan.digest.as_str()
+                && record == encoded
+            {
+                // Exact replay is idempotent.
+            } else if binding.plan.revision.0 == revision.saturating_add(1) {
+                sqlx::query(
+                    "INSERT INTO agent_runtime_hook_plan (thread_id,revision,digest,binding) VALUES ($1,$2,$3,$4)",
+                )
+                .bind(binding.thread_id.as_str())
+                .bind(u64_to_i64(binding.plan.revision.0, "hook plan revision")?)
+                .bind(binding.plan.digest.as_str())
+                .bind(encoded)
+                .execute(&mut **tx)
+                .await
+                .map_err(sql_error)?;
+            } else {
+                return Err(RuntimeStoreError::Unavailable(
+                    "hook plan revision must advance exactly once".to_string(),
+                ));
+            }
+        } else {
+            if binding.plan.revision.0 != 1 {
+                return Err(RuntimeStoreError::Unavailable(
+                    "first hook plan revision must be one".to_string(),
+                ));
+            }
+            sqlx::query(
+                "INSERT INTO agent_runtime_hook_plan (thread_id,revision,digest,binding) VALUES ($1,$2,$3,$4)",
+            )
+            .bind(binding.thread_id.as_str())
+            .bind(u64_to_i64(binding.plan.revision.0, "hook plan revision")?)
+            .bind(binding.plan.digest.as_str())
+            .bind(encode(binding, "agent_runtime_hook_plan.binding")?)
+            .execute(&mut **tx)
+            .await
+            .map_err(sql_error)?;
+        }
+    }
+
+    for run in &commit.hook_runs {
+        let current =
+            sqlx::query("SELECT record FROM agent_runtime_hook_run WHERE id=$1 FOR UPDATE")
+                .bind(run.hook_run_id.as_str())
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(sql_error)?;
+        if let Some(row) = current {
+            let existing: HookRun = decode(row.get(0), "agent_runtime_hook_run.record")?;
+            let immutable_matches = existing.thread_id == run.thread_id
+                && existing.definition_id == run.definition_id
+                && existing.point == run.point
+                && existing.plan_revision == run.plan_revision
+                && existing.plan_digest == run.plan_digest
+                && existing.actions == run.actions
+                && existing.delivered_strength == run.delivered_strength
+                && existing.failure_policy == run.failure_policy
+                && existing.site == run.site
+                && existing.correlation == run.correlation
+                && existing.input == run.input;
+            if existing != *run
+                && !(immutable_matches
+                    && ((existing.status == HookRunStatus::Accepted
+                        && run.status == HookRunStatus::Running)
+                        || (existing.status == HookRunStatus::Running && run.status.is_terminal())))
+            {
+                return Err(RuntimeStoreError::Unavailable(
+                    "invalid hook run transition".to_string(),
+                ));
+            }
+            sqlx::query(
+                "UPDATE agent_runtime_hook_run SET status=$2,record=$3,updated_at=now() WHERE id=$1",
+            )
+            .bind(run.hook_run_id.as_str())
+            .bind(hook_run_status(run.status))
+            .bind(encode(run, "agent_runtime_hook_run.record")?)
+            .execute(&mut **tx)
+            .await
+            .map_err(sql_error)?;
+        } else {
+            if run.status != HookRunStatus::Accepted {
+                return Err(RuntimeStoreError::Unavailable(
+                    "new hook run must be accepted".to_string(),
+                ));
+            }
+            sqlx::query(
+                "INSERT INTO agent_runtime_hook_run (id,thread_id,definition_id,point,plan_revision,plan_digest,operation_id,turn_id,item_id,interaction_id,status,record) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+            )
+            .bind(run.hook_run_id.as_str())
+            .bind(run.thread_id.as_str())
+            .bind(run.definition_id.as_str())
+            .bind(hook_point(run.point))
+            .bind(u64_to_i64(run.plan_revision.0, "hook plan revision")?)
+            .bind(run.plan_digest.as_str())
+            .bind(run.correlation.operation_id.as_ref().map(|id| id.as_str()))
+            .bind(run.correlation.turn_id.as_ref().map(|id| id.as_str()))
+            .bind(run.correlation.item_id.as_ref().map(|id| id.as_str()))
+            .bind(run.correlation.interaction_id.as_ref().map(|id| id.as_str()))
+            .bind(hook_run_status(run.status))
+            .bind(encode(run, "agent_runtime_hook_run.record")?)
+            .execute(&mut **tx)
+            .await
+            .map_err(sql_error)?;
+        }
+    }
+
+    for effect in &commit.hook_effects {
+        let run_record: Option<Value> = sqlx::query_scalar(
+            "SELECT record FROM agent_runtime_hook_run WHERE id=$1 AND thread_id=$2",
+        )
+        .bind(effect.hook_run_id.as_str())
+        .bind(effect.thread_id.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+        let Some(run_record) = run_record else {
+            return Err(RuntimeStoreError::Unavailable(
+                "hook effect requires a terminal hook run".to_string(),
+            ));
+        };
+        let run: HookRun = decode(run_record, "agent_runtime_hook_run.record")?;
+        if !run.status.is_terminal() {
+            return Err(RuntimeStoreError::Unavailable(
+                "hook effect requires a terminal hook run".to_string(),
+            ));
+        }
+        run.validate_effect(effect).map_err(|error| {
+            RuntimeStoreError::Unavailable(format!("invalid hook effect: {error}"))
+        })?;
+        let encoded = encode(effect, "agent_runtime_hook_effect.record")?;
+        let result = sqlx::query(
+            "INSERT INTO agent_runtime_hook_effect (id,hook_run_id,thread_id,idempotency_key,effect_type,schema_version,target_authority,retry_limit,payload_digest,record) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING",
+        )
+        .bind(effect.effect_id.as_str())
+        .bind(effect.hook_run_id.as_str())
+        .bind(effect.thread_id.as_str())
+        .bind(&effect.idempotency_key)
+        .bind(&effect.descriptor.effect_type)
+        .bind(i32::try_from(effect.descriptor.schema_version).map_err(|_| RuntimeStoreError::Unavailable("hook effect schema version exceeds integer".to_string()))?)
+        .bind(&effect.descriptor.target_authority)
+        .bind(i32::try_from(effect.descriptor.retry_limit).map_err(|_| RuntimeStoreError::Unavailable("hook effect retry limit exceeds integer".to_string()))?)
+        .bind(&effect.descriptor.payload_digest)
+        .bind(encoded.clone())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+        if result.rows_affected() == 0 {
+            let current: Option<Value> = sqlx::query_scalar(
+                "SELECT record FROM agent_runtime_hook_effect WHERE id=$1 OR (hook_run_id=$2 AND idempotency_key=$3)",
+            )
+            .bind(effect.effect_id.as_str())
+            .bind(effect.hook_run_id.as_str())
+            .bind(&effect.idempotency_key)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(sql_error)?;
+            if current.as_ref() != Some(&encoded) {
+                return Err(RuntimeStoreError::Unavailable(
+                    "hook effect identity or idempotency key was reused".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn write_activation_outbox(
     tx: &mut Transaction<'_, Postgres>,
     entries: &[ContextActivationOutboxEntry],
@@ -1564,6 +1962,7 @@ fn quarantine_reason(entry: &QuarantinedDriverEvent) -> &'static str {
         StaleBinding { .. } => "stale_binding",
         DriverOperationAcceptance => "driver_operation_acceptance",
         DriverRuntimeOwnedContextEvent => "driver_runtime_owned_context_event",
+        DriverRuntimeOwnedHookEvent => "driver_runtime_owned_hook_event",
         InvalidTransition { .. } => "invalid_transition",
     }
 }
@@ -1595,6 +1994,37 @@ async fn validate_head_projection(
     Ok(())
 }
 
+async fn validate_hook_plan_projection(
+    tx: &mut Transaction<'_, Postgres>,
+    projection: &RuntimeThreadState,
+) -> Result<(), RuntimeStoreError> {
+    let current = sqlx::query(
+        "SELECT revision,digest FROM agent_runtime_hook_plan WHERE thread_id=$1 ORDER BY revision DESC LIMIT 1",
+    )
+    .bind(projection.thread_id.as_str())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(sql_error)?;
+    let durable_revision = current
+        .as_ref()
+        .map(|row| i64_to_u64(row.get(0), "hook plan revision"))
+        .transpose()?
+        .map(agentdash_agent_runtime_contract::HookPlanRevision);
+    let durable_digest = current.as_ref().map(|row| row.get::<String, _>(1));
+    if projection.hook_plan_revision != durable_revision
+        || projection
+            .hook_plan_digest
+            .as_ref()
+            .map(|value| value.as_str())
+            != durable_digest.as_deref()
+    {
+        return Err(RuntimeStoreError::Unavailable(
+            "thread hook plan projection does not match durable binding".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[repr(u8)]
 #[derive(Clone, Copy)]
@@ -1611,9 +2041,12 @@ mod tests {
     use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
     use agentdash_agent_runtime::{
-        CompactionPreparation, ManagedAgentRuntime, RuntimeKernelDefaults, RuntimeRepository,
-        RuntimeUnitOfWork, RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkQueue,
-        RuntimeWorkerId,
+        BoundRuntimeHookEntry, BoundRuntimeHookPlan, CompactionPreparation, HookAdmission,
+        HookCompletion, HookCorrelation, HookEffect, HookEffectDescriptor, HookExecutionSite,
+        HookGateDecision, HookRunStatus, ManagedAgentRuntime, RuntimeHookInvocation,
+        RuntimeHookPlanBinding, RuntimeKernelDefaults, RuntimeRepository, RuntimeStoreError,
+        RuntimeUnitOfWork, RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkPayload,
+        RuntimeWorkQueue, RuntimeWorkerId,
     };
     use agentdash_agent_runtime_contract::*;
 
@@ -1886,6 +2319,9 @@ mod tests {
             context_candidates: Vec::new(),
             context_activations: Vec::new(),
             context_head: None,
+            hook_plan_binding: None,
+            hook_runs: Vec::new(),
+            hook_effects: Vec::new(),
             quarantine: Vec::new(),
         };
         let (left, right) = tokio::join!(
@@ -1939,6 +2375,9 @@ mod tests {
                 context_candidates: Vec::new(),
                 context_activations: Vec::new(),
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await;
@@ -2016,6 +2455,9 @@ mod tests {
                 context_candidates: Vec::new(),
                 context_activations: Vec::new(),
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await;
@@ -2262,6 +2704,319 @@ mod tests {
                 ))
                 .await
                 .expect("terminal recovery scan")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn hook_plan_run_terminal_and_effect_lease_are_durable_in_postgres() {
+        let _guard = serial_test_guard().await;
+        let fixture = fixture("hook orchestration").await;
+        fixture
+            .runtime
+            .execute(start(&fixture))
+            .await
+            .expect("start runtime thread");
+        let plan = RuntimeHookPlanBinding {
+            thread_id: fixture.thread_id.clone(),
+            plan: BoundRuntimeHookPlan {
+                revision: HookPlanRevision(1),
+                digest: id(&format!("hook-plan-{}", fixture.suffix)),
+                entries: vec![BoundRuntimeHookEntry {
+                    definition_id: id(&format!("hook-definition-{}", fixture.suffix)),
+                    point: HookPoint::BeforeTurn,
+                    actions: [HookAction::Block, HookAction::EmitEffect]
+                        .into_iter()
+                        .collect(),
+                    delivered_strength: SemanticStrength::ExactDurableBoundary,
+                    failure_policy: HookFailurePolicy::FailClosed,
+                    required: true,
+                    site: HookExecutionSite::ManagedRuntime,
+                }],
+            },
+        };
+        fixture
+            .runtime
+            .bind_hook_plan(plan.clone())
+            .await
+            .expect("bind durable hook plan");
+        let run_id: HookRunId = id(&format!("hook-run-{}", fixture.suffix));
+        let HookAdmission::Durable(run) = fixture
+            .runtime
+            .accept_hook(RuntimeHookInvocation {
+                hook_run_id: run_id.clone(),
+                thread_id: fixture.thread_id.clone(),
+                definition_id: plan.plan.entries[0].definition_id.clone(),
+                point: HookPoint::BeforeTurn,
+                correlation: HookCorrelation {
+                    operation_id: Some(id(&format!("operation-{}", fixture.suffix))),
+                    turn_id: None,
+                    item_id: None,
+                    interaction_id: None,
+                },
+                input: serde_json::json!({"turn": "admission"}),
+            })
+            .await
+            .expect("accept durable hook")
+        else {
+            panic!("actionful hook is durable")
+        };
+        assert_eq!(run.status, HookRunStatus::Accepted);
+        assert_eq!(
+            fixture
+                .store
+                .recoverable_hook_runs()
+                .await
+                .expect("recoverable runs")
+                .len(),
+            1
+        );
+        let recovery_claim = fixture
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::HookRunRecovery,
+                owner: RuntimeWorkerId("hook-recovery-worker".to_string()),
+                lease_duration_ms: 30_000,
+                limit: 1,
+            })
+            .await
+            .expect("claim hook recovery")
+            .pop()
+            .expect("accepted hook recovery");
+        assert!(matches!(
+            &recovery_claim.payload,
+            RuntimeWorkPayload::HookRunRecovery(recovery) if recovery.hook_run_id == run_id
+        ));
+        assert!(
+            fixture
+                .store
+                .claim(RuntimeWorkClaimRequest {
+                    kind: RuntimeWorkKind::HookRunRecovery,
+                    owner: RuntimeWorkerId("other-recovery-worker".to_string()),
+                    lease_duration_ms: 30_000,
+                    limit: 1,
+                })
+                .await
+                .expect("competing recovery claim")
+                .is_empty()
+        );
+        sqlx::query("UPDATE agent_runtime_hook_run SET recovery_claim_expires_at_ms=0 WHERE id=$1")
+            .bind(run_id.as_str())
+            .execute(&fixture._database.pool)
+            .await
+            .expect("expire first hook recovery lease");
+        let recovery_takeover = fixture
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::HookRunRecovery,
+                owner: RuntimeWorkerId("hook-recovery-takeover".to_string()),
+                lease_duration_ms: 30_000,
+                limit: 1,
+            })
+            .await
+            .expect("take over expired hook recovery")
+            .pop()
+            .expect("expired recovery is claimable");
+        assert!(matches!(
+            fixture.store.ack(&recovery_claim).await,
+            Err(RuntimeStoreError::WorkClaimConflict)
+        ));
+        assert!(recovery_takeover.attempt > recovery_claim.attempt);
+
+        let run = fixture
+            .runtime
+            .start_hook(&run.hook_run_id)
+            .await
+            .expect("start durable hook");
+        assert_eq!(run.status, HookRunStatus::Running);
+        let mut next_plan = plan.clone();
+        next_plan.plan.revision = HookPlanRevision(2);
+        // Plan history is revisioned; a later business revision may intentionally reuse content.
+        next_plan.plan.digest = plan.plan.digest.clone();
+        let effect_payload = serde_json::json!({"message": "continue"});
+        fixture
+            .runtime
+            .bind_hook_plan(next_plan.clone())
+            .await
+            .expect("append next immutable hook plan revision");
+
+        let effect_id: HookEffectId = id(&format!("hook-effect-{}", fixture.suffix));
+        fixture
+            .runtime
+            .complete_hook(
+                &run_id,
+                HookCompletion {
+                    status: HookRunStatus::Blocked,
+                    decision: HookGateDecision::Block,
+                    message: Some("policy denied".to_string()),
+                },
+                vec![HookEffect {
+                    effect_id: effect_id.clone(),
+                    hook_run_id: run_id.clone(),
+                    thread_id: fixture.thread_id.clone(),
+                    idempotency_key: format!("mailbox:{}", fixture.suffix),
+                    descriptor: HookEffectDescriptor {
+                        effect_type: "mailbox.enqueue".to_string(),
+                        schema_version: 1,
+                        target_authority: "agent_run_mailbox".to_string(),
+                        retry_limit: 3,
+                        payload_digest: agentdash_agent_runtime::hook_effect_payload_digest(
+                            &effect_payload,
+                        ),
+                    },
+                    payload: effect_payload,
+                }],
+            )
+            .await
+            .expect("persist terminal and effect");
+        fixture
+            .store
+            .ack(&recovery_takeover)
+            .await
+            .expect("ack terminal recovery");
+        assert!(
+            fixture
+                .store
+                .recoverable_hook_runs()
+                .await
+                .expect("terminal scan")
+                .is_empty()
+        );
+
+        let conflicting_run_id: HookRunId =
+            id(&format!("hook-run-effect-conflict-{}", fixture.suffix));
+        let HookAdmission::Durable(conflicting_run) = fixture
+            .runtime
+            .accept_hook(RuntimeHookInvocation {
+                hook_run_id: conflicting_run_id.clone(),
+                thread_id: fixture.thread_id.clone(),
+                definition_id: next_plan.plan.entries[0].definition_id.clone(),
+                point: HookPoint::BeforeTurn,
+                correlation: HookCorrelation {
+                    operation_id: None,
+                    turn_id: None,
+                    item_id: None,
+                    interaction_id: None,
+                },
+                input: serde_json::json!({"turn": "effect-conflict"}),
+            })
+            .await
+            .expect("accept conflicting effect run")
+        else {
+            panic!("actionful hook is durable")
+        };
+        fixture
+            .runtime
+            .start_hook(&conflicting_run.hook_run_id)
+            .await
+            .expect("start conflicting effect run");
+        let before_conflict = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load thread")
+            .expect("thread")
+            .next_event_sequence;
+        let conflicting_payload = serde_json::json!({"message": "different"});
+        fixture
+            .runtime
+            .complete_hook(
+                &conflicting_run_id,
+                HookCompletion {
+                    status: HookRunStatus::Blocked,
+                    decision: HookGateDecision::Block,
+                    message: Some("different denial".to_string()),
+                },
+                vec![HookEffect {
+                    effect_id: effect_id.clone(),
+                    hook_run_id: conflicting_run_id.clone(),
+                    thread_id: fixture.thread_id.clone(),
+                    idempotency_key: format!("mailbox:conflict:{}", fixture.suffix),
+                    descriptor: HookEffectDescriptor {
+                        effect_type: "mailbox.enqueue".to_string(),
+                        schema_version: 1,
+                        target_authority: "agent_run_mailbox".to_string(),
+                        retry_limit: 3,
+                        payload_digest: agentdash_agent_runtime::hook_effect_payload_digest(
+                            &conflicting_payload,
+                        ),
+                    },
+                    payload: conflicting_payload,
+                }],
+            )
+            .await
+            .expect_err("effect identity conflict rolls back terminal transaction");
+        assert_eq!(
+            fixture
+                .store
+                .load_hook_run(&conflicting_run_id)
+                .await
+                .expect("load conflicting run")
+                .expect("conflicting run")
+                .status,
+            HookRunStatus::Running
+        );
+        assert_eq!(
+            fixture
+                .store
+                .load_thread(&fixture.thread_id)
+                .await
+                .expect("load thread")
+                .expect("thread")
+                .next_event_sequence,
+            before_conflict
+        );
+
+        let claim = fixture
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::HookEffect,
+                owner: RuntimeWorkerId("hook-worker".to_string()),
+                lease_duration_ms: 30_000,
+                limit: 1,
+            })
+            .await
+            .expect("claim effect")
+            .pop()
+            .expect("pending effect");
+        assert!(matches!(
+            &claim.payload,
+            RuntimeWorkPayload::HookEffect(effect) if effect.effect_id == effect_id
+        ));
+        sqlx::query("UPDATE agent_runtime_hook_effect SET claim_expires_at_ms=0 WHERE id=$1")
+            .bind(effect_id.as_str())
+            .execute(&fixture._database.pool)
+            .await
+            .expect("expire first hook effect lease");
+        let takeover = fixture
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::HookEffect,
+                owner: RuntimeWorkerId("hook-effect-takeover".to_string()),
+                lease_duration_ms: 30_000,
+                limit: 1,
+            })
+            .await
+            .expect("take over expired hook effect")
+            .pop()
+            .expect("expired hook effect is claimable");
+        assert!(matches!(
+            fixture.store.ack(&claim).await,
+            Err(RuntimeStoreError::WorkClaimConflict)
+        ));
+        assert!(takeover.attempt > claim.attempt);
+        fixture.store.ack(&takeover).await.expect("ack effect");
+        assert!(
+            fixture
+                .store
+                .claim(RuntimeWorkClaimRequest {
+                    kind: RuntimeWorkKind::HookEffect,
+                    owner: RuntimeWorkerId("other-worker".to_string()),
+                    lease_duration_ms: 30_000,
+                    limit: 1,
+                })
+                .await
+                .expect("claim after ack")
                 .is_empty()
         );
     }

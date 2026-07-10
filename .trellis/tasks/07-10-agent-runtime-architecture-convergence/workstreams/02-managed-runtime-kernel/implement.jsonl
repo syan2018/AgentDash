@@ -9,3 +9,4 @@
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"实现Host-owned triggers与durable Hook orchestration"}
 {"file":".trellis/spec/backend/agent-runtime-context.md","reason":"实现Context fidelity、checkpoint/head与managed compaction recovery合同"}
 {"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"实现Runtime PostgreSQL原子写集、Host坐标引用与durable work lease合同"}
+{"file":".trellis/spec/backend/agent-runtime-hooks.md","reason":"实现immutable HookPlan、canonical HookRun、failure policy与durable effect recovery合同"}

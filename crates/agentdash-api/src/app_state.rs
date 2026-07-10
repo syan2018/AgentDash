@@ -166,6 +166,9 @@ pub struct AppState {
     /// 身份目录提供者（由 Host Integration 注入，None 表示仅使用本地 projection）
     pub identity_directory_provider:
         Option<Arc<dyn agentdash_integration_api::IdentityDirectoryProvider>>,
+    /// 编译期受信 Agent service definition/factory 注册表。
+    pub runtime_definition_registry:
+        Arc<agentdash_agent_runtime_host::AgentServiceDefinitionRegistry>,
     /// 统一诊断环形缓冲句柄 — 供 `GET /api/diagnostics` 查询"近期"诊断。
     ///
     /// 仅 `agentdash-api` main 把它接进 tracing 订阅器（[`DiagnosticLayer`]）；
@@ -192,6 +195,14 @@ impl AppState {
     ) -> Result<Arc<Self>> {
         let integration_registration = collect_integration_registration(integrations)
             .map_err(|err| anyhow::anyhow!("Host Integration 注册失败: {err}"))?;
+        let runtime_definition_registry = Arc::new(
+            agentdash_agent_runtime_host::AgentServiceDefinitionRegistry::collect(
+                integration_registration
+                    .runtime_driver_contributions
+                    .clone(),
+            )
+            .map_err(|err| anyhow::anyhow!("Agent Runtime Integration 注册失败: {err}"))?,
+        );
 
         let (project_control_plane_events, _project_control_plane_rx) =
             broadcast::channel(PROJECT_CONTROL_PLANE_EVENT_CHANNEL_CAPACITY);
@@ -261,7 +272,6 @@ impl AppState {
                 mcp_tool_discovery: mcp_tool_discovery.clone(),
                 function_runner: function_runner.clone(),
                 platform_config: platform_config.clone(),
-                integration_connectors: integration_registration.connectors,
                 extra_skill_dirs: integration_registration.extra_skill_dirs,
                 skill_discovery_providers: integration_registration.skill_discovery_providers,
                 memory_discovery_providers: integration_registration.memory_discovery_providers,
@@ -500,6 +510,7 @@ impl AppState {
             },
             auth_provider: integration_registration.auth_provider,
             identity_directory_provider: integration_registration.identity_directory_provider,
+            runtime_definition_registry,
             diagnostics,
         };
 

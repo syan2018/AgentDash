@@ -706,6 +706,9 @@ async fn durable_activation_status_cannot_move_back_from_terminal_to_prepared() 
             context_candidates: Vec::new(),
             context_activations: vec![activation],
             context_head: None,
+            hook_plan_binding: None,
+            hook_runs: Vec::new(),
+            hook_effects: Vec::new(),
             quarantine: Vec::new(),
         })
         .await

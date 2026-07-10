@@ -167,7 +167,7 @@ mod tests {
             .await
             .expect_err("missing live child should fail");
 
-        assert!(error.to_string().contains("无法热更新工具"));
+        assert!(error.to_string().contains("live 连接器"));
     }
 
     #[tokio::test]
@@ -235,6 +235,43 @@ mod tests {
         assert_eq!(skipped_calls.load(Ordering::SeqCst), 0);
         assert_eq!(routed_calls.load(Ordering::SeqCst), 1);
     }
+
+    #[tokio::test]
+    async fn control_rejects_ambiguous_live_session_owner() {
+        let composite = CompositeConnector::new(vec![
+            Arc::new(StubConnector {
+                live_session: Some("session-1".to_string()),
+                ..Default::default()
+            }),
+            Arc::new(StubConnector {
+                live_session: Some("session-1".to_string()),
+                ..Default::default()
+            }),
+        ]);
+
+        let error = composite
+            .cancel("session-1")
+            .await
+            .expect_err("ambiguous owner must not broadcast cancel");
+        assert!(error.to_string().contains("多个连接器"));
+    }
+
+    #[test]
+    fn composite_does_not_or_child_capabilities() {
+        let composite = CompositeConnector::new(vec![Arc::new(StubConnector {
+            supports_steering: true,
+            ..Default::default()
+        })]);
+
+        let capabilities = composite.capabilities();
+        assert!(!capabilities.supports_cancel);
+        assert!(!capabilities.supports_steering);
+        assert!(!capabilities.supports_discovery);
+        assert!(!capabilities.supports_variants);
+        assert!(!capabilities.supports_model_override);
+        assert!(!capabilities.supports_permission_policy);
+        assert!(!capabilities.supports_source_session_title);
+    }
 }
 
 impl CompositeConnector {
@@ -280,6 +317,28 @@ impl CompositeConnector {
             .cloned()
     }
 
+    async fn resolve_live_session_owner(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<dyn AgentConnector>, ConnectorError> {
+        let mut owner = None;
+        for connector in &self.connectors {
+            if connector.has_live_session(session_id).await {
+                if owner.is_some() {
+                    return Err(ConnectorError::Runtime(format!(
+                        "session `{session_id}` 同时被多个连接器声明为 live owner"
+                    )));
+                }
+                owner = Some(connector.clone());
+            }
+        }
+        owner.ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "当前没有持有 session `{session_id}` 的 live 连接器"
+            ))
+        })
+    }
+
     pub fn sub_connectors(&self) -> &[Arc<dyn AgentConnector>] {
         &self.connectors
     }
@@ -296,21 +355,9 @@ impl AgentConnector for CompositeConnector {
     }
 
     fn capabilities(&self) -> ConnectorCapabilities {
-        let mut caps = ConnectorCapabilities::default();
-        for c in &self.connectors {
-            let sub = c.capabilities();
-            caps.supports_cancel = caps.supports_cancel || sub.supports_cancel;
-            caps.supports_steering = caps.supports_steering || sub.supports_steering;
-            caps.supports_discovery = caps.supports_discovery || sub.supports_discovery;
-            caps.supports_variants = caps.supports_variants || sub.supports_variants;
-            caps.supports_model_override =
-                caps.supports_model_override || sub.supports_model_override;
-            caps.supports_permission_policy =
-                caps.supports_permission_policy || sub.supports_permission_policy;
-            caps.supports_source_session_title =
-                caps.supports_source_session_title || sub.supports_source_session_title;
-        }
-        caps
+        // A composite has no globally bound executor, so child capabilities cannot be combined
+        // into a truthful session guarantee. Bound runtime capability comes from RuntimeOffer.
+        ConnectorCapabilities::default()
     }
 
     fn supports_repository_restore(&self, executor: &str) -> bool {
@@ -365,13 +412,11 @@ impl AgentConnector for CompositeConnector {
     }
 
     async fn supports_session_steering(&self, session_id: &str) -> bool {
-        for connector in &self.connectors {
-            if connector.has_live_session(session_id).await {
-                return connector.capabilities().supports_steering
-                    && connector.supports_session_steering(session_id).await;
-            }
-        }
-        false
+        let Ok(connector) = self.resolve_live_session_owner(session_id).await else {
+            return false;
+        };
+        connector.capabilities().supports_steering
+            && connector.supports_session_steering(session_id).await
     }
 
     async fn prompt(
@@ -393,20 +438,10 @@ impl AgentConnector for CompositeConnector {
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {
-        let mut any_success = false;
-        let mut last_error: Option<ConnectorError> = None;
-        for c in &self.connectors {
-            match c.cancel(session_id).await {
-                Ok(()) => any_success = true,
-                Err(error) => last_error = Some(error),
-            }
-        }
-        if any_success {
-            return Ok(());
-        }
-        Err(last_error.unwrap_or_else(|| {
-            ConnectorError::Runtime(format!("当前没有可取消 session `{session_id}` 的连接器"))
-        }))
+        self.resolve_live_session_owner(session_id)
+            .await?
+            .cancel(session_id)
+            .await
     }
 
     async fn approve_tool_call(
@@ -414,16 +449,10 @@ impl AgentConnector for CompositeConnector {
         session_id: &str,
         tool_call_id: &str,
     ) -> Result<(), ConnectorError> {
-        let mut last_error: Option<ConnectorError> = None;
-        for connector in &self.connectors {
-            match connector.approve_tool_call(session_id, tool_call_id).await {
-                Ok(()) => return Ok(()),
-                Err(error) => last_error = Some(error),
-            }
-        }
-        Err(last_error.unwrap_or_else(|| {
-            ConnectorError::Runtime("当前没有可处理工具审批的连接器".to_string())
-        }))
+        self.resolve_live_session_owner(session_id)
+            .await?
+            .approve_tool_call(session_id, tool_call_id)
+            .await
     }
 
     async fn reject_tool_call(
@@ -432,19 +461,10 @@ impl AgentConnector for CompositeConnector {
         tool_call_id: &str,
         reason: Option<String>,
     ) -> Result<(), ConnectorError> {
-        let mut last_error: Option<ConnectorError> = None;
-        for connector in &self.connectors {
-            match connector
-                .reject_tool_call(session_id, tool_call_id, reason.clone())
-                .await
-            {
-                Ok(()) => return Ok(()),
-                Err(error) => last_error = Some(error),
-            }
-        }
-        Err(last_error.unwrap_or_else(|| {
-            ConnectorError::Runtime("当前没有可处理工具审批的连接器".to_string())
-        }))
+        self.resolve_live_session_owner(session_id)
+            .await?
+            .reject_tool_call(session_id, tool_call_id, reason)
+            .await
     }
 
     async fn update_session_tools(
@@ -452,15 +472,10 @@ impl AgentConnector for CompositeConnector {
         session_id: &str,
         tools: Vec<DynAgentTool>,
     ) -> Result<(), ConnectorError> {
-        for connector in &self.connectors {
-            if connector.has_live_session(session_id).await {
-                return connector.update_session_tools(session_id, tools).await;
-            }
-        }
-
-        Err(ConnectorError::Runtime(format!(
-            "当前没有持有 session `{session_id}` 的连接器，无法热更新工具"
-        )))
+        self.resolve_live_session_owner(session_id)
+            .await?
+            .update_session_tools(session_id, tools)
+            .await
     }
 
     async fn push_session_notification(
@@ -468,17 +483,10 @@ impl AgentConnector for CompositeConnector {
         session_id: &str,
         message: String,
     ) -> Result<(), ConnectorError> {
-        for connector in &self.connectors {
-            if connector.has_live_session(session_id).await {
-                return connector
-                    .push_session_notification(session_id, message)
-                    .await;
-            }
-        }
-
-        Err(ConnectorError::Runtime(format!(
-            "当前没有持有 session `{session_id}` 的连接器，无法推送 steering notification"
-        )))
+        self.resolve_live_session_owner(session_id)
+            .await?
+            .push_session_notification(session_id, message)
+            .await
     }
 
     async fn steer_session(
@@ -487,16 +495,9 @@ impl AgentConnector for CompositeConnector {
         expected_turn_id: &str,
         input: Vec<agentdash_agent_protocol::UserInputBlock>,
     ) -> Result<(), ConnectorError> {
-        for connector in &self.connectors {
-            if connector.has_live_session(session_id).await {
-                return connector
-                    .steer_session(session_id, expected_turn_id, input.clone())
-                    .await;
-            }
-        }
-
-        Err(ConnectorError::Runtime(format!(
-            "当前没有持有 session `{session_id}` 的连接器，无法运行中 steer"
-        )))
+        self.resolve_live_session_owner(session_id)
+            .await?
+            .steer_session(session_id, expected_turn_id, input)
+            .await
     }
 }

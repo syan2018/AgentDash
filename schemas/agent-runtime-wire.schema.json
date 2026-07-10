@@ -1546,7 +1546,11 @@
       "enum": [
         "text",
         "image",
+        "audio",
         "file_reference",
+        "resource",
+        "skill",
+        "mention",
         "structured"
       ]
     },
@@ -3259,6 +3263,139 @@
           "required": [
             "kind"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hook_run_id": {
+              "type": "string"
+            },
+            "definition_id": {
+              "type": "string"
+            },
+            "point": {
+              "$ref": "#/$defs/HookPoint"
+            },
+            "plan_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "plan_digest": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "item_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "interaction_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "hook_run_accepted"
+            }
+          },
+          "required": [
+            "kind",
+            "hook_run_id",
+            "definition_id",
+            "point",
+            "plan_revision",
+            "plan_digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hook_run_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "hook_run_started"
+            }
+          },
+          "required": [
+            "kind",
+            "hook_run_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hook_run_id": {
+              "type": "string"
+            },
+            "terminal": {
+              "$ref": "#/$defs/HookRunTerminal"
+            },
+            "decision": {
+              "$ref": "#/$defs/HookRunDecision"
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "effect_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "hook_run_terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "hook_run_id",
+            "terminal",
+            "decision",
+            "effect_ids"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "plan_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "plan_digest": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "hook_plan_bound"
+            }
+          },
+          "required": [
+            "kind",
+            "plan_revision",
+            "plan_digest"
+          ]
         }
       ]
     },
@@ -3327,6 +3464,7 @@
       "enum": [
         "driver_operation_acceptance",
         "driver_runtime_owned_context_event",
+        "driver_runtime_owned_hook_event",
         "invalid_lifecycle_transition",
         "duplicate_terminal"
       ]
@@ -3424,6 +3562,24 @@
         "cancelled",
         "failed",
         "lost"
+      ]
+    },
+    "HookRunTerminal": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "blocked",
+        "failed",
+        "stopped",
+        "cancelled"
+      ]
+    },
+    "HookRunDecision": {
+      "type": "string",
+      "enum": [
+        "continue",
+        "block",
+        "stop"
       ]
     },
     "DriverEventEnvelope": {

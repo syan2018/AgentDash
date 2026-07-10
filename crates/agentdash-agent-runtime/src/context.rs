@@ -337,6 +337,9 @@ where
                 context_candidates: vec![candidate],
                 context_activations: vec![activation],
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await
@@ -400,6 +403,9 @@ where
                         context_candidates: Vec::new(),
                         context_activations: Vec::new(),
                         context_head: None,
+                        hook_plan_binding: None,
+                        hook_runs: Vec::new(),
+                        hook_effects: Vec::new(),
                         quarantine: Vec::new(),
                     })
                     .await
@@ -526,6 +532,9 @@ where
                 context_candidates: Vec::new(),
                 context_activations: vec![activation],
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await
@@ -654,6 +663,9 @@ where
                     expected_revision: head.map(|head| head.revision),
                     head: new_head,
                 }),
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await
@@ -730,6 +742,9 @@ where
                 context_candidates: Vec::new(),
                 context_activations: vec![activation],
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await
@@ -764,6 +779,9 @@ where
                 context_candidates: Vec::new(),
                 context_activations: Vec::new(),
                 context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
                 quarantine: Vec::new(),
             })
             .await

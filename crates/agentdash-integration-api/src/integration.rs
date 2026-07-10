@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_domain::context_source::ContextSourceKind;
-use agentdash_spi::AgentConnector;
 use agentdash_spi::MarketplaceSourceProvider;
 use agentdash_spi::MemoryDiscoveryProvider;
 use agentdash_spi::RoutineTriggerProvider;
@@ -52,6 +51,11 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 集成名称（用于日志和诊断）
     fn name(&self) -> &str;
 
+    /// 贡献受信、编译期绑定的 Agent service definition 与 driver factory。
+    fn agent_runtime_drivers(&self) -> Vec<crate::AgentRuntimeDriverContribution> {
+        vec![]
+    }
+
     /// 注册额外的寻址空间能力提供者。
     ///
     /// 注意：`VfsDiscoveryProvider` 仅负责 descriptor / discovery 层抽象，
@@ -65,13 +69,6 @@ pub trait AgentDashIntegration: Send + Sync {
     /// 返回 `(kind, resolver)` 对，注册到 `SourceResolverRegistry`。
     /// 当前该扩展点仍处于实验阶段，宿主尚未将其纳入稳定运行时闭环。
     fn source_resolvers(&self) -> Vec<(ContextSourceKind, Box<dyn SourceResolver>)> {
-        vec![]
-    }
-
-    /// 注册额外的 Agent 连接器。
-    ///
-    /// 宿主会在运行时构建前完成冲突检测；若多个集成声明同一执行器 ID，应启动失败。
-    fn agent_connectors(&self) -> Vec<Arc<dyn AgentConnector>> {
         vec![]
     }
 

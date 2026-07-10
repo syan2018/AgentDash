@@ -20,6 +20,7 @@ pub use persistence::postgres::PostgresAgentRunDeliveryBindingRepository;
 pub use persistence::postgres::PostgresAgentRunForkMaterialization;
 pub use persistence::postgres::PostgresAgentRunLineageRepository;
 pub use persistence::postgres::PostgresAgentRunMailboxRepository;
+pub use persistence::postgres::PostgresAgentRuntimeHostRepository;
 pub use persistence::postgres::PostgresAuthSessionRepository;
 pub use persistence::postgres::PostgresBackendExecutionLeaseRepository;
 pub use persistence::postgres::PostgresBackendRepository;

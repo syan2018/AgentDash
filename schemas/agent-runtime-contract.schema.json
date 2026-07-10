@@ -697,6 +697,26 @@
         {
           "type": "object",
           "properties": {
+            "existing_operation_id": {
+              "type": "string"
+            },
+            "conflict": {
+              "$ref": "#/$defs/OperationConflictKind"
+            },
+            "kind": {
+              "type": "string",
+              "const": "operation_conflict"
+            }
+          },
+          "required": [
+            "kind",
+            "existing_operation_id",
+            "conflict"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "reason": {
               "type": "string"
             },
@@ -761,6 +781,13 @@
         "interaction_respond",
         "context_compact",
         "tool_set_replace"
+      ]
+    },
+    "OperationConflictKind": {
+      "type": "string",
+      "enum": [
+        "operation_id_reused",
+        "idempotency_key_reused"
       ]
     },
     "RuntimeSnapshotQuery": {
@@ -889,7 +916,7 @@
           "type": "object",
           "properties": {
             "code": {
-              "type": "string"
+              "$ref": "#/$defs/RuntimeProtocolViolationCode"
             },
             "message": {
               "type": "string"
@@ -1023,9 +1050,6 @@
             "terminal": {
               "$ref": "#/$defs/RuntimeItemTerminal"
             },
-            "final_content": {
-              "$ref": "#/$defs/RuntimeItemContent"
-            },
             "kind": {
               "type": "string",
               "const": "item_terminal"
@@ -1035,8 +1059,7 @@
             "kind",
             "turn_id",
             "item_id",
-            "terminal",
-            "final_content"
+            "terminal"
           ]
         },
         {
@@ -1191,6 +1214,14 @@
         }
       ]
     },
+    "RuntimeProtocolViolationCode": {
+      "type": "string",
+      "enum": [
+        "driver_operation_acceptance",
+        "invalid_lifecycle_transition",
+        "duplicate_terminal"
+      ]
+    },
     "RuntimeThreadStatus": {
       "type": "string",
       "enum": [
@@ -1212,12 +1243,77 @@
       ]
     },
     "RuntimeItemTerminal": {
-      "type": "string",
-      "enum": [
-        "completed",
-        "failed",
-        "cancelled",
-        "lost"
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "final_content": {
+              "$ref": "#/$defs/RuntimeItemContent"
+            },
+            "kind": {
+              "type": "string",
+              "const": "completed"
+            }
+          },
+          "required": [
+            "kind",
+            "final_content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "lost"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
       ]
     },
     "RuntimeItemContent": {
@@ -2042,6 +2138,30 @@
         {
           "type": "object",
           "properties": {
+            "requested": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "current": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "revision_unavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "current"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "reason": {
               "type": "string"
             },
@@ -2081,6 +2201,36 @@
           },
           "required": [
             "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "requested": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "earliest_available": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "latest_available": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "cursor_gap"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "earliest_available",
+            "latest_available"
           ]
         },
         {

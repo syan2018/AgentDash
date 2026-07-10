@@ -89,6 +89,8 @@ export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in
 
 export type LifecycleCapability = "thread_start" | "thread_resume" | "thread_fork" | "thread_read" | "turn_start" | "turn_steer" | "turn_interrupt" | "tool_set_replace";
 
+export type OperationConflictKind = "operation_id_reused" | "idempotency_key_reused";
+
 export type OperationMeta = { operation_id: RuntimeOperationId, idempotency_key: IdempotencyKey, expected_thread_revision: RuntimeRevision | null, actor: RuntimeActor, };
 
 export type OperationReceipt = { operation_id: RuntimeOperationId, operation_sequence: OperationSequence, thread_id: RuntimeThreadId | null, accepted_revision: RuntimeRevision, duplicate: boolean, };
@@ -115,13 +117,13 @@ export type RuntimeDescriptor = { protocol_revision: number, service_instance_id
 
 export type RuntimeDriverGeneration = bigint;
 
-export type RuntimeEvent = { "kind": "operation_accepted", operation_id: RuntimeOperationId, } | { "kind": "operation_terminal", operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, } | { "kind": "binding_established", binding_id: RuntimeBindingId, } | { "kind": "binding_lost", binding_id: RuntimeBindingId, reason: string, } | { "kind": "protocol_violation", code: string, message: string, critical: boolean, } | { "kind": "thread_status_changed", status: RuntimeThreadStatus, } | { "kind": "turn_started", turn_id: RuntimeTurnId, } | { "kind": "turn_terminal", turn_id: RuntimeTurnId, terminal: RuntimeTurnTerminal, message: string | null, } | { "kind": "item_started", turn_id: RuntimeTurnId, item_id: RuntimeItemId, } | { "kind": "item_delta", turn_id: RuntimeTurnId, item_id: RuntimeItemId, delta: string, } | { "kind": "item_terminal", turn_id: RuntimeTurnId, item_id: RuntimeItemId, terminal: RuntimeItemTerminal, final_content: RuntimeItemContent, } | { "kind": "interaction_requested", turn_id: RuntimeTurnId, item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId, interaction_kind: RuntimeInteractionKind, prompt: string, } | { "kind": "interaction_terminal", turn_id: RuntimeTurnId, interaction_id: RuntimeInteractionId, terminal: RuntimeInteractionTerminal, } | { "kind": "context_checkpoint_prepared", checkpoint_id: ContextCheckpointId, } | { "kind": "context_checkpoint_activated", checkpoint_id: ContextCheckpointId, };
+export type RuntimeEvent = { "kind": "operation_accepted", operation_id: RuntimeOperationId, } | { "kind": "operation_terminal", operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, } | { "kind": "binding_established", binding_id: RuntimeBindingId, } | { "kind": "binding_lost", binding_id: RuntimeBindingId, reason: string, } | { "kind": "protocol_violation", code: RuntimeProtocolViolationCode, message: string, critical: boolean, } | { "kind": "thread_status_changed", status: RuntimeThreadStatus, } | { "kind": "turn_started", turn_id: RuntimeTurnId, } | { "kind": "turn_terminal", turn_id: RuntimeTurnId, terminal: RuntimeTurnTerminal, message: string | null, } | { "kind": "item_started", turn_id: RuntimeTurnId, item_id: RuntimeItemId, } | { "kind": "item_delta", turn_id: RuntimeTurnId, item_id: RuntimeItemId, delta: string, } | { "kind": "item_terminal", turn_id: RuntimeTurnId, item_id: RuntimeItemId, terminal: RuntimeItemTerminal, } | { "kind": "interaction_requested", turn_id: RuntimeTurnId, item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId, interaction_kind: RuntimeInteractionKind, prompt: string, } | { "kind": "interaction_terminal", turn_id: RuntimeTurnId, interaction_id: RuntimeInteractionId, terminal: RuntimeInteractionTerminal, } | { "kind": "context_checkpoint_prepared", checkpoint_id: ContextCheckpointId, } | { "kind": "context_checkpoint_activated", checkpoint_id: ContextCheckpointId, };
 
 export type RuntimeEventEnvelope = { thread_id: RuntimeThreadId, sequence: EventSequence | null, revision: RuntimeRevision, event: RuntimeEvent, };
 
 export type RuntimeEventSubscription = { thread_id: RuntimeThreadId, after: EventSequence | null, include_transient: boolean, };
 
-export type RuntimeExecuteError = { "kind": "unsupported", command: RuntimeCommandKind, reason: string, } | { "kind": "unavailable", reason: string, retryable: boolean, } | { "kind": "revision_conflict", expected: RuntimeRevision, actual: RuntimeRevision, } | { "kind": "invalid_command", reason: string, } | { "kind": "incompatible", reason: string, } | { "kind": "persistence", reason: string, retryable: boolean, };
+export type RuntimeExecuteError = { "kind": "unsupported", command: RuntimeCommandKind, reason: string, } | { "kind": "unavailable", reason: string, retryable: boolean, } | { "kind": "revision_conflict", expected: RuntimeRevision, actual: RuntimeRevision, } | { "kind": "operation_conflict", existing_operation_id: RuntimeOperationId, conflict: OperationConflictKind, } | { "kind": "invalid_command", reason: string, } | { "kind": "incompatible", reason: string, } | { "kind": "persistence", reason: string, retryable: boolean, };
 
 export type RuntimeInput = { "kind": "text", text: string, } | { "kind": "image", mime_type: string, data_url: string, } | { "kind": "file_reference", uri: string, media_type: string | null, } | { "kind": "structured", schema: string, value: JsonValue, };
 
@@ -135,7 +137,7 @@ export type RuntimeItemContent = { "kind": "user_message", input: Array<RuntimeI
 
 export type RuntimeItemId = string;
 
-export type RuntimeItemTerminal = "completed" | "failed" | "cancelled" | "lost";
+export type RuntimeItemTerminal = { "kind": "completed", final_content: RuntimeItemContent, } | { "kind": "failed", message: string | null, } | { "kind": "cancelled", message: string | null, } | { "kind": "lost", message: string | null, };
 
 export type RuntimeOperationId = string;
 
@@ -143,17 +145,19 @@ export type RuntimeOperationTerminal = { "kind": "succeeded" } | { "kind": "fail
 
 export type RuntimeProfile = { reference_class: ReferenceRuntimeClass, input: InputProfile, instruction: InstructionProfile, tools: ToolProfile, workspace: WorkspaceProfile, interactions: InteractionProfile, lifecycle: Array<LifecycleCapability>, hooks: HookProfile, context: ContextProfile, telemetry_config: Array<TelemetryCapability>, };
 
+export type RuntimeProtocolViolationCode = "driver_operation_acceptance" | "invalid_lifecycle_transition" | "duplicate_terminal";
+
 export type RuntimeRevision = bigint;
 
 export type RuntimeServiceInstanceId = string;
 
 export type RuntimeSnapshot = { thread_id: RuntimeThreadId, revision: RuntimeRevision, status: RuntimeThreadStatus, active_turn_id: RuntimeTurnId | null, binding_id: RuntimeBindingId, profile_digest: ProfileDigest, bound_profile: RuntimeProfile, active_checkpoint_id: ContextCheckpointId | null, context_revision: ContextRevision, settings_revision: ThreadSettingsRevision, tool_set_revision: ToolSetRevision, pending_interactions: Array<RuntimeInteractionId>, command_availability: { [key in RuntimeCommandKind]?: CommandAvailability }, };
 
-export type RuntimeSnapshotError = { "kind": "not_found" } | { "kind": "unavailable", reason: string, };
+export type RuntimeSnapshotError = { "kind": "not_found" } | { "kind": "revision_unavailable", requested: RuntimeRevision, current: RuntimeRevision, } | { "kind": "unavailable", reason: string, };
 
 export type RuntimeSnapshotQuery = { thread_id: RuntimeThreadId, at_revision: RuntimeRevision | null, };
 
-export type RuntimeSubscribeError = { "kind": "not_found" } | { "kind": "invalid_cursor" } | { "kind": "unavailable", reason: string, retryable: boolean, };
+export type RuntimeSubscribeError = { "kind": "not_found" } | { "kind": "invalid_cursor" } | { "kind": "cursor_gap", requested: EventSequence, earliest_available: EventSequence, latest_available: EventSequence, } | { "kind": "unavailable", reason: string, retryable: boolean, };
 
 export type RuntimeThreadId = string;
 

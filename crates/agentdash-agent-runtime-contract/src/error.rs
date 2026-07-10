@@ -3,7 +3,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-use crate::{RuntimeCommandKind, RuntimeRevision};
+use crate::{EventSequence, RuntimeCommandKind, RuntimeOperationId, RuntimeRevision};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationConflictKind {
+    OperationIdReused,
+    IdempotencyKeyReused,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS, Error)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -20,6 +27,11 @@ pub enum RuntimeExecuteError {
         expected: RuntimeRevision,
         actual: RuntimeRevision,
     },
+    #[error("operation identity conflicts with accepted operation {existing_operation_id}")]
+    OperationConflict {
+        existing_operation_id: RuntimeOperationId,
+        conflict: OperationConflictKind,
+    },
     #[error("command is invalid: {reason}")]
     InvalidCommand { reason: String },
     #[error("runtime binding is incompatible: {reason}")]
@@ -33,6 +45,11 @@ pub enum RuntimeExecuteError {
 pub enum RuntimeSnapshotError {
     #[error("thread was not found")]
     NotFound,
+    #[error("snapshot revision {requested:?} is unavailable; current revision is {current:?}")]
+    RevisionUnavailable {
+        requested: RuntimeRevision,
+        current: RuntimeRevision,
+    },
     #[error("snapshot is unavailable: {reason}")]
     Unavailable { reason: String },
 }
@@ -44,6 +61,14 @@ pub enum RuntimeSubscribeError {
     NotFound,
     #[error("event cursor is invalid")]
     InvalidCursor,
+    #[error(
+        "event cursor {requested:?} precedes the earliest retained event {earliest_available:?}"
+    )]
+    CursorGap {
+        requested: EventSequence,
+        earliest_available: EventSequence,
+        latest_available: EventSequence,
+    },
     #[error("event stream is unavailable: {reason}")]
     Unavailable { reason: String, retryable: bool },
 }

@@ -207,9 +207,10 @@ fn final_item_is_authoritative_and_delta_after_terminal_is_invalid() {
         .observe(&envelope(RuntimeEvent::ItemTerminal {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
-            terminal: agentdash_agent_runtime_contract::RuntimeItemTerminal::Completed,
-            final_content: agentdash_agent_runtime_contract::RuntimeItemContent::AgentMessage {
-                text: "authoritative final".to_string(),
+            terminal: agentdash_agent_runtime_contract::RuntimeItemTerminal::Completed {
+                final_content: agentdash_agent_runtime_contract::RuntimeItemContent::AgentMessage {
+                    text: "authoritative final".to_string(),
+                },
             },
         }))
         .expect("terminal item");
@@ -240,9 +241,8 @@ fn item_terminal_cannot_change_thread_or_turn_parent() {
             RuntimeEvent::ItemTerminal {
                 turn_id: id("turn-2"),
                 item_id: item_id.clone(),
-                terminal: agentdash_agent_runtime_contract::RuntimeItemTerminal::Lost,
-                final_content: agentdash_agent_runtime_contract::RuntimeItemContent::AgentMessage {
-                    text: "lost".to_string(),
+                terminal: agentdash_agent_runtime_contract::RuntimeItemTerminal::Lost {
+                    message: Some("lost".to_string()),
                 },
             },
         ))

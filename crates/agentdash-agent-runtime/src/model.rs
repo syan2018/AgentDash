@@ -1,0 +1,523 @@
+use std::collections::BTreeMap;
+
+use agentdash_agent_runtime_contract::{
+    ContextRevision, EventSequence, IdempotencyKey, OperationReceipt, OperationSequence,
+    ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand, RuntimeDriverGeneration,
+    RuntimeEvent, RuntimeEventEnvelope, RuntimeInteractionId, RuntimeItemId, RuntimeOperationId,
+    RuntimeOperationTerminal, RuntimeProfile, RuntimeRevision, RuntimeSnapshot, RuntimeThreadId,
+    RuntimeThreadStatus, RuntimeTurnId, ThreadSettingsRevision, ToolSetRevision,
+};
+use thiserror::Error;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntityPhase<T> {
+    Active,
+    Terminal(T),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeTurnState {
+    pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeTurnTerminal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeItemState {
+    pub turn_id: RuntimeTurnId,
+    pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeItemTerminal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeInteractionState {
+    pub turn_id: RuntimeTurnId,
+    pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeInteractionTerminal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeOperationRecord {
+    pub operation_id: RuntimeOperationId,
+    pub idempotency_key: IdempotencyKey,
+    pub actor: RuntimeActor,
+    pub thread_id: RuntimeThreadId,
+    pub operation_sequence: OperationSequence,
+    pub accepted_revision: RuntimeRevision,
+    pub command: RuntimeCommand,
+    pub terminal: Option<RuntimeOperationTerminal>,
+}
+
+impl RuntimeOperationRecord {
+    pub fn receipt(&self, duplicate: bool) -> OperationReceipt {
+        OperationReceipt {
+            operation_id: self.operation_id.clone(),
+            operation_sequence: self.operation_sequence,
+            thread_id: Some(self.thread_id.clone()),
+            accepted_revision: self.accepted_revision,
+            duplicate,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeThreadState {
+    pub thread_id: RuntimeThreadId,
+    pub revision: RuntimeRevision,
+    pub next_event_sequence: EventSequence,
+    pub next_operation_sequence: OperationSequence,
+    pub status: RuntimeThreadStatus,
+    pub active_turn_id: Option<RuntimeTurnId>,
+    pub binding_id: RuntimeBindingId,
+    pub driver_generation: RuntimeDriverGeneration,
+    pub source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
+    pub profile_digest: ProfileDigest,
+    pub bound_profile: RuntimeProfile,
+    pub active_checkpoint_id: Option<agentdash_agent_runtime_contract::ContextCheckpointId>,
+    pub context_revision: ContextRevision,
+    pub settings_revision: ThreadSettingsRevision,
+    pub tool_set_revision: ToolSetRevision,
+    pub operations: BTreeMap<RuntimeOperationId, EntityPhase<RuntimeOperationTerminal>>,
+    pub turns: BTreeMap<RuntimeTurnId, RuntimeTurnState>,
+    pub items: BTreeMap<RuntimeItemId, RuntimeItemState>,
+    pub interactions: BTreeMap<RuntimeInteractionId, RuntimeInteractionState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum TransitionError {
+    #[error("operation {operation_id} was already accepted")]
+    OperationAlreadyAccepted { operation_id: RuntimeOperationId },
+    #[error("operation {operation_id} was not accepted")]
+    OperationNotAccepted { operation_id: RuntimeOperationId },
+    #[error("operation {operation_id} already reached terminal")]
+    DuplicateOperationTerminal { operation_id: RuntimeOperationId },
+    #[error("turn {turn_id} cannot start while another turn is active")]
+    TurnCannotStart { turn_id: RuntimeTurnId },
+    #[error("turn {turn_id} was not started")]
+    TurnNotStarted { turn_id: RuntimeTurnId },
+    #[error("turn {turn_id} already reached terminal")]
+    DuplicateTurnTerminal { turn_id: RuntimeTurnId },
+    #[error("turn {turn_id} is not the active turn")]
+    TurnNotActive { turn_id: RuntimeTurnId },
+    #[error("turn {turn_id} cannot reach terminal while an item or interaction is active")]
+    TurnHasActiveChildren { turn_id: RuntimeTurnId },
+    #[error("item {item_id} was already started")]
+    ItemAlreadyStarted { item_id: RuntimeItemId },
+    #[error("item {item_id} was not started")]
+    ItemNotStarted { item_id: RuntimeItemId },
+    #[error("item {item_id} belongs to turn {expected_turn_id}, not {actual_turn_id}")]
+    ItemParentMismatch {
+        item_id: RuntimeItemId,
+        expected_turn_id: RuntimeTurnId,
+        actual_turn_id: RuntimeTurnId,
+    },
+    #[error("item {item_id} already reached terminal")]
+    DuplicateItemTerminal { item_id: RuntimeItemId },
+    #[error("item {item_id} received a delta after terminal")]
+    ItemDeltaAfterTerminal { item_id: RuntimeItemId },
+    #[error("interaction {interaction_id} was already requested")]
+    InteractionAlreadyRequested {
+        interaction_id: RuntimeInteractionId,
+    },
+    #[error("interaction {interaction_id} was not requested")]
+    InteractionNotRequested {
+        interaction_id: RuntimeInteractionId,
+    },
+    #[error(
+        "interaction {interaction_id} belongs to turn {expected_turn_id}, not {actual_turn_id}"
+    )]
+    InteractionParentMismatch {
+        interaction_id: RuntimeInteractionId,
+        expected_turn_id: RuntimeTurnId,
+        actual_turn_id: RuntimeTurnId,
+    },
+    #[error("interaction {interaction_id} already reached terminal")]
+    DuplicateInteractionTerminal {
+        interaction_id: RuntimeInteractionId,
+    },
+    #[error("binding event references {actual_binding_id}, expected {expected_binding_id}")]
+    BindingMismatch {
+        expected_binding_id: RuntimeBindingId,
+        actual_binding_id: RuntimeBindingId,
+    },
+}
+
+impl TransitionError {
+    pub fn is_duplicate_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::DuplicateOperationTerminal { .. }
+                | Self::DuplicateTurnTerminal { .. }
+                | Self::DuplicateItemTerminal { .. }
+                | Self::DuplicateInteractionTerminal { .. }
+        )
+    }
+}
+
+impl RuntimeThreadState {
+    pub fn apply_authoritative(&mut self, event: &RuntimeEvent) -> Result<(), TransitionError> {
+        match event {
+            RuntimeEvent::OperationAccepted { operation_id } => {
+                if self.operations.contains_key(operation_id) {
+                    return Err(TransitionError::OperationAlreadyAccepted {
+                        operation_id: operation_id.clone(),
+                    });
+                }
+                self.operations
+                    .insert(operation_id.clone(), EntityPhase::Active);
+            }
+            RuntimeEvent::OperationTerminal {
+                operation_id,
+                terminal,
+            } => match self.operations.get_mut(operation_id) {
+                Some(phase @ EntityPhase::Active) => {
+                    *phase = EntityPhase::Terminal(terminal.clone());
+                }
+                Some(EntityPhase::Terminal(_)) => {
+                    return Err(TransitionError::DuplicateOperationTerminal {
+                        operation_id: operation_id.clone(),
+                    });
+                }
+                None => {
+                    return Err(TransitionError::OperationNotAccepted {
+                        operation_id: operation_id.clone(),
+                    });
+                }
+            },
+            RuntimeEvent::ThreadStatusChanged { status } => self.status = *status,
+            RuntimeEvent::TurnStarted { turn_id } => {
+                if self.active_turn_id.is_some() || self.turns.contains_key(turn_id) {
+                    return Err(TransitionError::TurnCannotStart {
+                        turn_id: turn_id.clone(),
+                    });
+                }
+                self.active_turn_id = Some(turn_id.clone());
+                self.turns.insert(
+                    turn_id.clone(),
+                    RuntimeTurnState {
+                        phase: EntityPhase::Active,
+                    },
+                );
+            }
+            RuntimeEvent::TurnTerminal {
+                turn_id, terminal, ..
+            } => {
+                self.require_active_turn(turn_id)?;
+                let has_active_children = self.items.values().any(|item| {
+                    item.turn_id == *turn_id && matches!(item.phase, EntityPhase::Active)
+                }) || self.interactions.values().any(|interaction| {
+                    interaction.turn_id == *turn_id
+                        && matches!(interaction.phase, EntityPhase::Active)
+                });
+                if has_active_children {
+                    return Err(TransitionError::TurnHasActiveChildren {
+                        turn_id: turn_id.clone(),
+                    });
+                }
+                let state =
+                    self.turns
+                        .get_mut(turn_id)
+                        .ok_or_else(|| TransitionError::TurnNotStarted {
+                            turn_id: turn_id.clone(),
+                        })?;
+                if !matches!(state.phase, EntityPhase::Active) {
+                    return Err(TransitionError::DuplicateTurnTerminal {
+                        turn_id: turn_id.clone(),
+                    });
+                }
+                state.phase = EntityPhase::Terminal(*terminal);
+                if self.active_turn_id.as_ref() == Some(turn_id) {
+                    self.active_turn_id = None;
+                }
+            }
+            RuntimeEvent::ItemStarted { turn_id, item_id } => {
+                self.require_active_turn(turn_id)?;
+                if self.items.contains_key(item_id) {
+                    return Err(TransitionError::ItemAlreadyStarted {
+                        item_id: item_id.clone(),
+                    });
+                }
+                self.items.insert(
+                    item_id.clone(),
+                    RuntimeItemState {
+                        turn_id: turn_id.clone(),
+                        phase: EntityPhase::Active,
+                    },
+                );
+            }
+            RuntimeEvent::ItemDelta {
+                turn_id, item_id, ..
+            } => {
+                let state = self.require_item(turn_id, item_id)?;
+                if !matches!(state.phase, EntityPhase::Active) {
+                    return Err(TransitionError::ItemDeltaAfterTerminal {
+                        item_id: item_id.clone(),
+                    });
+                }
+            }
+            RuntimeEvent::ItemTerminal {
+                turn_id,
+                item_id,
+                terminal,
+            } => {
+                let state = self.require_item_mut(turn_id, item_id)?;
+                if !matches!(state.phase, EntityPhase::Active) {
+                    return Err(TransitionError::DuplicateItemTerminal {
+                        item_id: item_id.clone(),
+                    });
+                }
+                state.phase = EntityPhase::Terminal(terminal.clone());
+            }
+            RuntimeEvent::InteractionRequested {
+                turn_id,
+                item_id,
+                interaction_id,
+                ..
+            } => {
+                self.require_active_turn(turn_id)?;
+                if let Some(item_id) = item_id {
+                    self.require_item(turn_id, item_id)?;
+                }
+                if self.interactions.contains_key(interaction_id) {
+                    return Err(TransitionError::InteractionAlreadyRequested {
+                        interaction_id: interaction_id.clone(),
+                    });
+                }
+                self.interactions.insert(
+                    interaction_id.clone(),
+                    RuntimeInteractionState {
+                        turn_id: turn_id.clone(),
+                        phase: EntityPhase::Active,
+                    },
+                );
+            }
+            RuntimeEvent::InteractionTerminal {
+                turn_id,
+                interaction_id,
+                terminal,
+            } => {
+                let state = self.interactions.get_mut(interaction_id).ok_or_else(|| {
+                    TransitionError::InteractionNotRequested {
+                        interaction_id: interaction_id.clone(),
+                    }
+                })?;
+                if state.turn_id != *turn_id {
+                    return Err(TransitionError::InteractionParentMismatch {
+                        interaction_id: interaction_id.clone(),
+                        expected_turn_id: state.turn_id.clone(),
+                        actual_turn_id: turn_id.clone(),
+                    });
+                }
+                if !matches!(state.phase, EntityPhase::Active) {
+                    return Err(TransitionError::DuplicateInteractionTerminal {
+                        interaction_id: interaction_id.clone(),
+                    });
+                }
+                state.phase = EntityPhase::Terminal(*terminal);
+            }
+            RuntimeEvent::ContextCheckpointActivated { checkpoint_id } => {
+                self.active_checkpoint_id = Some(checkpoint_id.clone());
+                self.context_revision.0 += 1;
+            }
+            RuntimeEvent::BindingLost { binding_id, .. } => {
+                self.require_binding(binding_id)?;
+                self.status = RuntimeThreadStatus::Lost;
+            }
+            RuntimeEvent::ProtocolViolation { critical: true, .. } => {
+                self.status = RuntimeThreadStatus::Lost;
+            }
+            RuntimeEvent::BindingEstablished { binding_id } => self.require_binding(binding_id)?,
+            RuntimeEvent::ProtocolViolation {
+                critical: false, ..
+            }
+            | RuntimeEvent::ContextCheckpointPrepared { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn require_active_turn(&self, turn_id: &RuntimeTurnId) -> Result<(), TransitionError> {
+        if self.active_turn_id.as_ref() == Some(turn_id) {
+            Ok(())
+        } else {
+            Err(TransitionError::TurnNotActive {
+                turn_id: turn_id.clone(),
+            })
+        }
+    }
+
+    fn require_item(
+        &self,
+        turn_id: &RuntimeTurnId,
+        item_id: &RuntimeItemId,
+    ) -> Result<&RuntimeItemState, TransitionError> {
+        let state = self
+            .items
+            .get(item_id)
+            .ok_or_else(|| TransitionError::ItemNotStarted {
+                item_id: item_id.clone(),
+            })?;
+        if state.turn_id != *turn_id {
+            return Err(TransitionError::ItemParentMismatch {
+                item_id: item_id.clone(),
+                expected_turn_id: state.turn_id.clone(),
+                actual_turn_id: turn_id.clone(),
+            });
+        }
+        Ok(state)
+    }
+
+    fn require_item_mut(
+        &mut self,
+        turn_id: &RuntimeTurnId,
+        item_id: &RuntimeItemId,
+    ) -> Result<&mut RuntimeItemState, TransitionError> {
+        let state = self
+            .items
+            .get_mut(item_id)
+            .ok_or_else(|| TransitionError::ItemNotStarted {
+                item_id: item_id.clone(),
+            })?;
+        if state.turn_id != *turn_id {
+            return Err(TransitionError::ItemParentMismatch {
+                item_id: item_id.clone(),
+                expected_turn_id: state.turn_id.clone(),
+                actual_turn_id: turn_id.clone(),
+            });
+        }
+        Ok(state)
+    }
+
+    fn require_binding(&self, binding_id: &RuntimeBindingId) -> Result<(), TransitionError> {
+        if self.binding_id == *binding_id {
+            Ok(())
+        } else {
+            Err(TransitionError::BindingMismatch {
+                expected_binding_id: self.binding_id.clone(),
+                actual_binding_id: binding_id.clone(),
+            })
+        }
+    }
+
+    pub fn lost_terminal_events(&self, message: Option<String>) -> Vec<RuntimeEvent> {
+        let mut events = Vec::new();
+        for (item_id, item) in &self.items {
+            if matches!(item.phase, EntityPhase::Active) {
+                events.push(RuntimeEvent::ItemTerminal {
+                    turn_id: item.turn_id.clone(),
+                    item_id: item_id.clone(),
+                    terminal: agentdash_agent_runtime_contract::RuntimeItemTerminal::Lost {
+                        message: message.clone(),
+                    },
+                });
+            }
+        }
+        for (interaction_id, interaction) in &self.interactions {
+            if matches!(interaction.phase, EntityPhase::Active) {
+                events.push(RuntimeEvent::InteractionTerminal {
+                    turn_id: interaction.turn_id.clone(),
+                    interaction_id: interaction_id.clone(),
+                    terminal: agentdash_agent_runtime_contract::RuntimeInteractionTerminal::Lost,
+                });
+            }
+        }
+        if let Some(turn_id) = &self.active_turn_id {
+            events.push(RuntimeEvent::TurnTerminal {
+                turn_id: turn_id.clone(),
+                terminal: agentdash_agent_runtime_contract::RuntimeTurnTerminal::Lost,
+                message: message.clone(),
+            });
+        }
+        for (operation_id, operation) in &self.operations {
+            if matches!(operation, EntityPhase::Active) {
+                events.push(RuntimeEvent::OperationTerminal {
+                    operation_id: operation_id.clone(),
+                    terminal: RuntimeOperationTerminal::Lost {
+                        retryable: true,
+                        message: message.clone(),
+                    },
+                });
+            }
+        }
+        events
+    }
+
+    pub fn append_events(
+        &mut self,
+        events: impl IntoIterator<Item = RuntimeEvent>,
+    ) -> Result<Vec<RuntimeEventEnvelope>, TransitionError> {
+        let mut envelopes = Vec::new();
+        for event in events {
+            self.apply_authoritative(&event)?;
+            self.revision.0 += 1;
+            self.next_event_sequence.0 += 1;
+            envelopes.push(RuntimeEventEnvelope {
+                thread_id: self.thread_id.clone(),
+                sequence: Some(self.next_event_sequence),
+                revision: self.revision,
+                event,
+            });
+        }
+        Ok(envelopes)
+    }
+
+    pub fn snapshot(&self) -> RuntimeSnapshot {
+        let pending_interactions: Vec<_> = self
+            .interactions
+            .iter()
+            .filter_map(|(id, state)| {
+                matches!(state.phase, EntityPhase::Active).then_some(id.clone())
+            })
+            .collect();
+        let command_availability = agentdash_agent_runtime_contract::RuntimeCommandKind::all()
+            .into_iter()
+            .map(|kind| {
+                let state = agentdash_agent_runtime_contract::AvailabilityState {
+                    thread_status: self.status,
+                    has_active_turn: self.active_turn_id.is_some(),
+                    has_pending_interaction: !pending_interactions.is_empty(),
+                };
+                (
+                    kind,
+                    agentdash_agent_runtime_contract::command_availability(
+                        kind,
+                        &self.bound_profile,
+                        &state,
+                    ),
+                )
+            })
+            .collect();
+        RuntimeSnapshot {
+            thread_id: self.thread_id.clone(),
+            revision: self.revision,
+            status: self.status,
+            active_turn_id: self.active_turn_id.clone(),
+            binding_id: self.binding_id.clone(),
+            profile_digest: self.profile_digest.clone(),
+            bound_profile: self.bound_profile.clone(),
+            active_checkpoint_id: self.active_checkpoint_id.clone(),
+            context_revision: self.context_revision,
+            settings_revision: self.settings_revision,
+            tool_set_revision: self.tool_set_revision,
+            pending_interactions,
+            command_availability,
+        }
+    }
+}
+
+trait RuntimeCommandKinds {
+    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 10];
+}
+
+impl RuntimeCommandKinds for agentdash_agent_runtime_contract::RuntimeCommandKind {
+    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 10] {
+        use agentdash_agent_runtime_contract::RuntimeCommandKind::*;
+        [
+            ThreadStart,
+            ThreadResume,
+            ThreadFork,
+            ThreadSettingsUpdate,
+            TurnStart,
+            TurnSteer,
+            TurnInterrupt,
+            InteractionRespond,
+            ContextCompact,
+            ToolSetReplace,
+        ]
+    }
+}

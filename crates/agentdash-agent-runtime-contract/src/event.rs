@@ -41,13 +41,21 @@ pub enum RuntimeOperationTerminal {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeItemTerminal {
+    Completed { final_content: RuntimeItemContent },
+    Failed { message: Option<String> },
+    Cancelled { message: Option<String> },
+    Lost { message: Option<String> },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
-pub enum RuntimeItemTerminal {
-    Completed,
-    Failed,
-    Cancelled,
-    Lost,
+pub enum RuntimeProtocolViolationCode {
+    DriverOperationAcceptance,
+    InvalidLifecycleTransition,
+    DuplicateTerminal,
 }
 
 #[derive(
@@ -122,7 +130,7 @@ pub enum RuntimeEvent {
         reason: String,
     },
     ProtocolViolation {
-        code: String,
+        code: RuntimeProtocolViolationCode,
         message: String,
         critical: bool,
     },
@@ -150,7 +158,6 @@ pub enum RuntimeEvent {
         turn_id: RuntimeTurnId,
         item_id: RuntimeItemId,
         terminal: RuntimeItemTerminal,
-        final_content: RuntimeItemContent,
     },
     InteractionRequested {
         turn_id: RuntimeTurnId,

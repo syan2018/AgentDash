@@ -1,0 +1,17 @@
+[package]
+name = "agentdash-agent-runtime"
+description = "Managed Agent Runtime state kernel and persistence ports"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+agentdash-agent-runtime-contract = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+agentdash-agent-runtime-test-support = { workspace = true }

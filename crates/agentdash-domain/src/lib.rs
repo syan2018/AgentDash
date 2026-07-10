@@ -15,6 +15,7 @@ pub mod inline_file;
 pub mod interaction;
 pub mod llm_provider;
 pub mod mcp_preset;
+pub mod operation;
 pub mod permission;
 pub mod project;
 pub mod project_vfs_mount;

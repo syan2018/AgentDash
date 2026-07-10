@@ -66,6 +66,7 @@ impl SourceBundle {
         }
 
         let files = files_by_path.into_values().collect::<Vec<_>>();
+        let sandbox = canonicalize_sandbox(sandbox)?;
         let digest = source_bundle_digest(&entry_file, &files, &sandbox)?;
         Ok(Self {
             format_version: SOURCE_BUNDLE_FORMAT_V1,
@@ -83,7 +84,21 @@ impl SourceBundle {
                 reason: "只支持 V1 source bundle",
             });
         }
-        let expected = source_bundle_digest(&self.entry_file, &self.files, &self.sandbox)?;
+        let rebuilt = Self::new(
+            self.entry_file.clone(),
+            self.files.clone(),
+            self.sandbox.clone(),
+        )?;
+        if rebuilt.entry_file != self.entry_file
+            || rebuilt.files != self.files
+            || rebuilt.sandbox != self.sandbox
+        {
+            return Err(InteractionError::InvalidField {
+                field: "source_bundle",
+                reason: "source bundle 必须使用 canonical path/order/config",
+            });
+        }
+        let expected = rebuilt.digest;
         if self.digest == expected {
             Ok(())
         } else {
@@ -92,6 +107,35 @@ impl SourceBundle {
             })
         }
     }
+}
+
+fn canonicalize_sandbox(
+    mut sandbox: SourceSandboxConfig,
+) -> InteractionResult<SourceSandboxConfig> {
+    for library in &mut sandbox.libraries {
+        *library = library.trim().to_string();
+        if library.is_empty() {
+            return Err(InteractionError::InvalidField {
+                field: "source_bundle.sandbox.libraries",
+                reason: "library 不能为空",
+            });
+        }
+    }
+    sandbox.libraries.sort();
+    sandbox.libraries.dedup();
+    for (specifier, target) in &sandbox.import_map {
+        if specifier.trim() != specifier
+            || specifier.is_empty()
+            || target.trim() != target
+            || target.is_empty()
+        {
+            return Err(InteractionError::InvalidField {
+                field: "source_bundle.sandbox.import_map",
+                reason: "specifier/target 必须非空且已规范化",
+            });
+        }
+    }
+    Ok(sandbox)
 }
 
 pub fn normalize_source_path(raw: &str) -> InteractionResult<String> {
@@ -200,5 +244,30 @@ mod tests {
         let error =
             SourceFile::new("../secret.txt", "secret", None).expect_err("escaping path must fail");
         assert!(matches!(error, InteractionError::InvalidSourcePath { .. }));
+    }
+
+    #[test]
+    fn bundle_digest_normalizes_library_set() {
+        let files = vec![SourceFile::new("main.rhai", "42", None).expect("source")];
+        let first = SourceBundle::new(
+            "main.rhai",
+            files.clone(),
+            SourceSandboxConfig {
+                libraries: vec!["z".into(), " a ".into(), "z".into()],
+                import_map: BTreeMap::new(),
+            },
+        )
+        .expect("bundle");
+        let second = SourceBundle::new(
+            "main.rhai",
+            files,
+            SourceSandboxConfig {
+                libraries: vec!["a".into(), "z".into()],
+                import_map: BTreeMap::new(),
+            },
+        )
+        .expect("bundle");
+        assert_eq!(first.sandbox.libraries, vec!["a", "z"]);
+        assert_eq!(first.digest, second.digest);
     }
 }

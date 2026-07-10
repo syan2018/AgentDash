@@ -4,8 +4,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    DEFINITION_FORMAT_V1, INTERACTION_CONTRACT_V1, InteractionError, InteractionResult,
-    SourceBundle,
+    DEFINITION_FORMAT_V1, INTERACTION_CONTRACT_V1, InteractionCommandRequest, InteractionError,
+    InteractionResult, ResolvedInteractionCommand, SourceBundle,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -70,12 +70,11 @@ impl PlatformCommandHandler {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InteractionCommandDefinition {
-    pub command_type: String,
+    pub command_key: String,
     pub handler: PlatformCommandHandler,
     pub actor_policy: CommandActorPolicy,
     pub payload_schema: Value,
-    #[serde(default)]
-    pub allowed_state_paths: Vec<String>,
+    pub state_patch_v1: Option<super::StatePatchV1Contract>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,7 +91,7 @@ pub struct ComponentBinding {
 pub struct ComponentEventCommandBinding {
     pub event_type: String,
     pub payload_schema: Value,
-    pub command_type: String,
+    pub command_key: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,10 +218,10 @@ impl InteractionDefinitionRevision {
         require_non_empty("definition_revision.created_by", &self.created_by)?;
         self.source_bundle.verify_digest()?;
         validate_unique_keys(
-            "command_definitions.command_type",
+            "command_definitions.command_key",
             self.command_definitions
                 .iter()
-                .map(|definition| definition.command_type.as_str()),
+                .map(|definition| definition.command_key.as_str()),
         )?;
         validate_unique_keys(
             "component_bindings.binding_key",
@@ -235,7 +234,78 @@ impl InteractionDefinitionRevision {
             self.resource_slots
                 .iter()
                 .map(|slot| slot.slot_key.as_str()),
-        )
+        )?;
+        self.validate_nested_contracts()
+    }
+
+    fn validate_nested_contracts(&self) -> InteractionResult<()> {
+        let command_keys = self
+            .command_definitions
+            .iter()
+            .map(|definition| definition.command_key.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        for command in &self.command_definitions {
+            match (&command.handler, &command.state_patch_v1) {
+                (PlatformCommandHandler::StatePatchV1, Some(contract)) => {
+                    contract.validate_contract()?
+                }
+                (PlatformCommandHandler::StatePatchV1, None) => {
+                    return Err(InteractionError::InvalidField {
+                        field: "command_definitions.state_patch_v1",
+                        reason: "state_patch_v1 handler 必须声明 patch contract",
+                    });
+                }
+                (_, Some(_)) => {
+                    return Err(InteractionError::InvalidField {
+                        field: "command_definitions.state_patch_v1",
+                        reason: "非 state_patch_v1 handler 不能声明 patch contract",
+                    });
+                }
+                (_, None) => {}
+            }
+        }
+        for component in &self.component_bindings {
+            require_non_empty("component_bindings.component_ref", &component.component_ref)?;
+            if component.component_abi_version == 0 {
+                return Err(InteractionError::InvalidField {
+                    field: "component_bindings.component_abi_version",
+                    reason: "ABI version 必须大于 0",
+                });
+            }
+            validate_unique_keys(
+                "component_bindings.event_type",
+                component
+                    .event_commands
+                    .iter()
+                    .map(|event| event.event_type.as_str()),
+            )?;
+            if component
+                .event_commands
+                .iter()
+                .any(|event| !command_keys.contains(event.command_key.as_str()))
+            {
+                return Err(InteractionError::InvalidField {
+                    field: "component_bindings.command_key",
+                    reason: "event 必须引用同 revision 内存在的 command",
+                });
+            }
+        }
+        if let Some(lineage) = &self.lineage {
+            if lineage.source_definition_id.is_nil()
+                || lineage.source_revision_id.is_nil()
+                || lineage.source_definition_id == self.definition_id
+            {
+                return Err(InteractionError::InvalidField {
+                    field: "definition_revision.lineage",
+                    reason: "lineage 必须引用其它 definition 的 exact revision",
+                });
+            }
+            validate_sha256(
+                "definition_revision.lineage.source_bundle_digest",
+                &lineage.source_bundle_digest,
+            )?;
+        }
+        Ok(())
     }
 
     pub fn into_initial_definition(self) -> InteractionResult<(InteractionDefinition, Self)> {
@@ -256,6 +326,26 @@ impl InteractionDefinitionRevision {
             updated_at: now,
         };
         Ok((definition, self))
+    }
+
+    pub fn resolve_command(
+        &self,
+        request: InteractionCommandRequest,
+    ) -> InteractionResult<ResolvedInteractionCommand> {
+        let definition = self
+            .command_definitions
+            .iter()
+            .find(|definition| definition.command_key == request.command_key)
+            .ok_or_else(|| InteractionError::NotFound {
+                entity: "interaction_command_definition",
+                id: request.command_key.clone(),
+            })?;
+        request.enforce_actor_policy(definition.actor_policy)?;
+        Ok(ResolvedInteractionCommand {
+            request,
+            handler: definition.handler.clone(),
+            actor_policy: definition.actor_policy,
+        })
     }
 }
 
@@ -292,10 +382,21 @@ fn validate_unique_keys<'a>(
     Ok(())
 }
 
+fn validate_sha256(field: &'static str, value: &str) -> InteractionResult<()> {
+    let valid = value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64 && hex.chars().all(|character| character.is_ascii_hexdigit())
+    });
+    if valid {
+        Ok(())
+    } else {
+        Err(InteractionError::InvalidDigest { field })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interaction::{SourceBundle, SourceFile, SourceSandboxConfig};
+    use crate::interaction::{SourceBundle, SourceFile, SourceSandboxConfig, StatePatchV1Contract};
 
     fn source_bundle() -> SourceBundle {
         SourceBundle::new(
@@ -346,20 +447,64 @@ mod tests {
         )
         .expect("revision");
         let command = InteractionCommandDefinition {
-            command_type: "set_value".to_string(),
+            command_key: "set_value".to_string(),
             handler: PlatformCommandHandler::StatePatchV1,
             actor_policy: CommandActorPolicy::Direct,
             payload_schema: serde_json::json!({}),
-            allowed_state_paths: vec!["/value".to_string()],
+            state_patch_v1: Some(
+                StatePatchV1Contract::new(vec!["/value".to_string()], 10, 1024).expect("contract"),
+            ),
         };
         revision.command_definitions = vec![command.clone(), command];
 
         assert!(matches!(
             revision.validate(),
             Err(InteractionError::InvalidField {
-                field: "command_definitions.command_type",
+                field: "command_definitions.command_key",
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn command_handler_is_resolved_from_pinned_definition() {
+        let mut revision = InteractionDefinitionRevision::new_canvas_v1(
+            Uuid::new_v4(),
+            1,
+            InteractionOwner::User("user-1".into()),
+            "Personal",
+            "",
+            source_bundle(),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            "user-1",
+        )
+        .expect("revision");
+        revision
+            .command_definitions
+            .push(InteractionCommandDefinition {
+                command_key: "set_value".into(),
+                handler: PlatformCommandHandler::StatePatchV1,
+                actor_policy: CommandActorPolicy::Direct,
+                payload_schema: serde_json::json!({}),
+                state_patch_v1: Some(
+                    StatePatchV1Contract::new(vec!["/value".into()], 1, 1024).expect("contract"),
+                ),
+            });
+        let resolved = revision
+            .resolve_command(InteractionCommandRequest {
+                instance_id: Uuid::new_v4(),
+                command_id: Uuid::new_v4(),
+                command_key: "set_value".into(),
+                payload: serde_json::json!([]),
+                expected_state_revision: 0,
+                actor: crate::interaction::InteractionActor::Human {
+                    user_id: "user-1".into(),
+                },
+                origin: crate::interaction::InteractionCommandOrigin::UserWorkshop,
+                attachment_id: None,
+            })
+            .expect("resolved command");
+        assert_eq!(resolved.handler, PlatformCommandHandler::StatePatchV1);
     }
 }

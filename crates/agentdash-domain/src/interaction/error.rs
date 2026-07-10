@@ -57,6 +57,9 @@ pub enum InteractionError {
         path: String,
     },
 
+    #[error("state patch remove 禁止携带 value: path={path}")]
+    UnexpectedPatchValue { path: String },
+
     #[error("canonical state 大小超限: actual={actual_bytes}, maximum={maximum_bytes}")]
     StateSizeExceeded {
         actual_bytes: usize,
@@ -71,6 +74,9 @@ pub enum InteractionError {
 
     #[error("可靠副作用必须引用 replay-safe 或 idempotent Operation")]
     EffectNotReplaySafe,
+
+    #[error("OperationRef 无效: {reason}")]
+    InvalidOperationRef { reason: String },
 
     #[error("Interaction 序列化失败: {context}")]
     Serialization {

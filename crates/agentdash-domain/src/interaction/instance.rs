@@ -105,21 +105,120 @@ pub enum AttachmentSubject {
     WorkflowRun { run_id: Uuid },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionAttachmentRole {
+    Editor,
+    Observer,
+    Renderer,
+    Automation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentCapabilityProjection {
+    pub can_read_state: bool,
+    pub can_submit_commands: bool,
+    pub can_bind_resources: bool,
+    pub can_render: bool,
+}
+
+impl AttachmentCapabilityProjection {
+    pub fn for_role(role: InteractionAttachmentRole) -> Self {
+        match role {
+            InteractionAttachmentRole::Editor => Self {
+                can_read_state: true,
+                can_submit_commands: true,
+                can_bind_resources: true,
+                can_render: true,
+            },
+            InteractionAttachmentRole::Observer => Self {
+                can_read_state: true,
+                can_submit_commands: false,
+                can_bind_resources: false,
+                can_render: false,
+            },
+            InteractionAttachmentRole::Renderer => Self {
+                can_read_state: true,
+                can_submit_commands: true,
+                can_bind_resources: false,
+                can_render: true,
+            },
+            InteractionAttachmentRole::Automation => Self {
+                can_read_state: true,
+                can_submit_commands: true,
+                can_bind_resources: false,
+                can_render: false,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InteractionAttachment {
     pub id: Uuid,
     pub instance_id: Uuid,
     pub subject: AttachmentSubject,
+    pub role: InteractionAttachmentRole,
+    pub capabilities: AttachmentCapabilityProjection,
     pub created_at: DateTime<Utc>,
     pub detached_at: Option<DateTime<Utc>>,
 }
 
+impl InteractionAttachment {
+    pub fn validate(&self) -> InteractionResult<()> {
+        if self.id.is_nil() || self.instance_id.is_nil() {
+            return Err(InteractionError::InvalidField {
+                field: "interaction_attachment.identity",
+                reason: "attachment/instance id 不能为空",
+            });
+        }
+        if self.capabilities != AttachmentCapabilityProjection::for_role(self.role) {
+            return Err(InteractionError::InvalidField {
+                field: "interaction_attachment.capabilities",
+                reason: "capability projection 必须由 attachment role 派生",
+            });
+        }
+        match &self.subject {
+            AttachmentSubject::AgentRun { run_id } | AttachmentSubject::WorkflowRun { run_id }
+                if run_id.is_nil() =>
+            {
+                Err(InteractionError::InvalidField {
+                    field: "interaction_attachment.subject",
+                    reason: "run id 不能为空",
+                })
+            }
+            AttachmentSubject::UserWorkshop { user_id } if user_id.trim().is_empty() => {
+                Err(InteractionError::InvalidField {
+                    field: "interaction_attachment.subject",
+                    reason: "user id 不能为空",
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "reference", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeBindingTarget {
-    Resource(String),
-    Artifact(String),
-    Provider(String),
+    Resource {
+        resource_ref: String,
+        version_ref: String,
+    },
+    Artifact {
+        artifact_ref: String,
+        digest: String,
+    },
+    Provider {
+        provider_ref: String,
+        contract_version: u16,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeBindingAuthorizationRef {
+    pub grant_ref: String,
+    pub revision: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,8 +228,59 @@ pub struct InteractionRuntimeBinding {
     pub attachment_id: Option<Uuid>,
     pub slot_key: String,
     pub target: RuntimeBindingTarget,
-    pub authorization_ref: String,
+    pub authorization: RuntimeBindingAuthorizationRef,
     pub created_at: DateTime<Utc>,
+}
+
+impl InteractionRuntimeBinding {
+    pub fn validate(&self) -> InteractionResult<()> {
+        if self.instance_id.is_nil()
+            || self.slot_key.trim().is_empty()
+            || self.authorization.grant_ref.trim().is_empty()
+            || self.authorization.revision == 0
+        {
+            return Err(InteractionError::InvalidField {
+                field: "interaction_runtime_binding",
+                reason: "identity、slot 与 versioned authorization ref 必须有效",
+            });
+        }
+        match &self.target {
+            RuntimeBindingTarget::Resource {
+                resource_ref,
+                version_ref,
+            } if resource_ref.trim().is_empty() || version_ref.trim().is_empty() => {
+                Err(InteractionError::InvalidField {
+                    field: "runtime_binding.resource",
+                    reason: "resource/version ref 不能为空",
+                })
+            }
+            RuntimeBindingTarget::Artifact {
+                artifact_ref,
+                digest,
+            } if artifact_ref.trim().is_empty() || !valid_sha256(digest) => {
+                Err(InteractionError::InvalidField {
+                    field: "runtime_binding.artifact",
+                    reason: "artifact ref 与 sha256 digest 必须有效",
+                })
+            }
+            RuntimeBindingTarget::Provider {
+                provider_ref,
+                contract_version,
+            } if provider_ref.trim().is_empty() || *contract_version == 0 => {
+                Err(InteractionError::InvalidField {
+                    field: "runtime_binding.provider",
+                    reason: "provider ref 与 contract version 必须有效",
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64 && hex.chars().all(|character| character.is_ascii_hexdigit())
+    })
 }
 
 #[cfg(test)]
@@ -150,5 +300,13 @@ mod tests {
         instance.close(Utc::now()).expect("close");
         assert_eq!(instance.definition_revision_id, revision);
         assert_eq!(instance.status, InteractionInstanceStatus::Closed);
+    }
+
+    #[test]
+    fn attachment_role_has_explicit_capability_projection() {
+        let projection =
+            AttachmentCapabilityProjection::for_role(InteractionAttachmentRole::Observer);
+        assert!(projection.can_read_state);
+        assert!(!projection.can_submit_commands);
     }
 }

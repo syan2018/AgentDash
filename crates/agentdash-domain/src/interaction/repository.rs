@@ -2,9 +2,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    InteractionAttachment, InteractionCommandRequest, InteractionDefinition,
-    InteractionDefinitionRevision, InteractionError, InteractionEvent, InteractionInstance,
-    InteractionOwner, InteractionRuntimeBinding, OperationEffectIntent,
+    InteractionAttachment, InteractionDefinition, InteractionDefinitionRevision, InteractionError,
+    InteractionEvent, InteractionInstance, InteractionOwner, InteractionRuntimeBinding,
+    OperationEffectIntent, ResolvedInteractionCommand,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,7 +66,7 @@ pub trait InteractionInstanceRepository: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InteractionCommandTransaction {
-    pub request: InteractionCommandRequest,
+    pub command: ResolvedInteractionCommand,
     pub request_digest: String,
     pub previous_state_revision: u64,
     pub next_state: Value,

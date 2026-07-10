@@ -37,7 +37,8 @@ PostgreSQL + SQLx 覆盖云端业务库与本机 embedded PostgreSQL。
 
 ```sql
 ALTER TABLE lifecycle_runs
-    ADD COLUMN IF NOT EXISTS channel_registry jsonb DEFAULT '{}'::jsonb NOT NULL;
+    ADD COLUMN IF NOT EXISTS channel_registry jsonb
+    DEFAULT '{"schema_version":2,"channels":[]}'::jsonb NOT NULL;
 ```
 
 ```rust
@@ -73,7 +74,7 @@ WHERE id = $1;
 
 ### 3. Contracts
 
-- Owner-local、随 owner 生灭、owner-scoped 查询的事实保存为 typed owner document。
+- Owner-local、随 owner 生灭、owner-scoped 查询的事实保存为带显式 schema version 的 typed owner document。
 - 独立 store 只承担明确执行语义：跨 owner scan、多 worker claim、独立 retention/audit、跨 owner 索引、数据库唯一约束保护的跨聚合不变量。
 - Capability projection 从 owner facts 派生，可重建。
 - Owner document 写入走语义 mutation port；business layer 不传 table / column 字符串。
@@ -104,7 +105,7 @@ WHERE id = $1;
 
 - Owner document repository roundtrip: default、非空、shape mismatch context。
 - Owner document mutation: 连续 mutation 不丢失、只更新目标 document column、broad aggregate update 保留独立 document column。
-- Migration: `pnpm run migration:guard` + 干净数据库初始化。
+- Migration: `pnpm run migration:guard` + 干净数据库初始化；破坏性 owner-document schema 更新直接重建预发布数据并同步 column default。
 - Application service: owner document 更新通过语义 mutation port。
 - Projection: 从 owner document 派生，不反写事实源。
 - 独立表: 覆盖其声明的 scan / claim / retention / unique / query 语义。
@@ -306,7 +307,8 @@ baseline task -> documented approval -> edit baseline -> rebuild DB -> guard ove
 
 ```sql
 ALTER TABLE lifecycle_runs
-    ADD COLUMN IF NOT EXISTS channel_registry jsonb DEFAULT '{}'::jsonb NOT NULL;
+    ADD COLUMN IF NOT EXISTS channel_registry jsonb
+    DEFAULT '{"schema_version":2,"channels":[]}'::jsonb NOT NULL;
 ```
 
 ```rust
@@ -339,7 +341,7 @@ let registry = registry.0;
 
 ### 5. Cases
 
-- Canonical: `lifecycle_runs.channel_registry jsonb DEFAULT '{}'::jsonb NOT NULL` -> `ChannelRegistryDocument`。
+- Canonical: `lifecycle_runs.channel_registry jsonb DEFAULT '{"schema_version":2,"channels":[]}'::jsonb NOT NULL` -> `ChannelRegistryDocument`。
 - Historical: `execution_log text` / `activity_state_json text` 留给数据库整理任务。
 - Boundary mismatch: `channel_registry text DEFAULT '{}'::text NOT NULL`。
 - Boundary mismatch: `channel_registry_jsonb`。

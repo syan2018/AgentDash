@@ -847,8 +847,8 @@ mod workflow_claim_tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::channel::{
-        Channel, ChannelMedium, ChannelOwner, ChannelRecord, ChannelRegistryMutation,
-        ChannelTopology,
+        Channel, ChannelKey, ChannelOwner, ChannelRecord, ChannelRegistryDocument,
+        ChannelRegistryMutation,
     };
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
@@ -871,7 +871,7 @@ mod workflow_claim_tests {
             tasks: serde_json::json!([]),
             status: "ready".to_string(),
             execution_log: serde_json::json!([]),
-            channel_registry: serde_json::json!({}),
+            channel_registry: serde_json::to_value(ChannelRegistryDocument::default()).unwrap(),
             created_at: now,
             updated_at: now,
             last_activity_at: now,
@@ -1214,8 +1214,7 @@ mod workflow_claim_tests {
 
         let channel = Channel::new(
             ChannelOwner::LifecycleRun { run_id: run.id },
-            ChannelMedium::Runtime,
-            ChannelTopology::Direct,
+            ChannelKey::parse("runtime:first").unwrap(),
         );
         let channel_id = channel.id;
         LifecycleRunRepository::mutate_channel_registry(
@@ -1259,13 +1258,11 @@ mod workflow_claim_tests {
 
         let first = Channel::new(
             ChannelOwner::LifecycleRun { run_id: run.id },
-            ChannelMedium::Runtime,
-            ChannelTopology::Direct,
+            ChannelKey::parse("runtime:first").unwrap(),
         );
         let second = Channel::new(
             ChannelOwner::LifecycleRun { run_id: run.id },
-            ChannelMedium::Runtime,
-            ChannelTopology::Group,
+            ChannelKey::parse("runtime:second").unwrap(),
         );
 
         LifecycleRunRepository::mutate_channel_registry(
@@ -1284,5 +1281,58 @@ mod workflow_claim_tests {
         .expect("second mutation");
 
         assert_eq!(registry.channels.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn workflow_repository_channel_registry_create_if_absent_is_atomic() {
+        let Some(pool) = test_pg_pool("workflow_channel_registry_create_if_absent").await else {
+            return;
+        };
+        let repo = PostgresWorkflowRepository::new(pool.clone());
+        repo.initialize().await.expect("initialize");
+
+        let run = LifecycleRun::new_control(uuid::Uuid::new_v4());
+        LifecycleRunRepository::create(&repo, &run)
+            .await
+            .expect("create run");
+
+        let owner = ChannelOwner::LifecycleRun { run_id: run.id };
+        let first = ChannelRecord::new(Channel::new(
+            owner.clone(),
+            ChannelKey::parse("runtime:shared").unwrap(),
+        ));
+        let second = ChannelRecord::new(Channel::new(
+            owner,
+            ChannelKey::parse("runtime:shared").unwrap(),
+        ));
+        let first_id = first.channel.id;
+        let second_id = second.channel.id;
+        let first_repo = PostgresWorkflowRepository::new(pool.clone());
+        let second_repo = PostgresWorkflowRepository::new(pool);
+
+        let (first_result, second_result) = tokio::join!(
+            LifecycleRunRepository::mutate_channel_registry(
+                &first_repo,
+                run.id,
+                ChannelRegistryMutation::CreateChannelIfAbsent(first),
+            ),
+            LifecycleRunRepository::mutate_channel_registry(
+                &second_repo,
+                run.id,
+                ChannelRegistryMutation::CreateChannelIfAbsent(second),
+            ),
+        );
+        first_result.expect("first create-if-absent");
+        second_result.expect("second create-if-absent");
+
+        let registry = LifecycleRunRepository::load_channel_registry(&repo, run.id)
+            .await
+            .expect("load registry");
+        assert_eq!(registry.schema_version, 2);
+        assert_eq!(registry.channels.len(), 1);
+        assert!(matches!(
+            registry.channels[0].channel.id,
+            id if id == first_id || id == second_id
+        ));
     }
 }

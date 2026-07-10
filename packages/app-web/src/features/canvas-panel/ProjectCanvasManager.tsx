@@ -50,7 +50,11 @@ export function ProjectCanvasManager({
     }
   }, [projectId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    queueMicrotask(() => {
+      void load();
+    });
+  }, [load]);
 
   const visible = useMemo(() => definitions.filter((definition) => (
     view === "mine" ? definition.owner.kind === "user" : definition.owner.kind === "project"

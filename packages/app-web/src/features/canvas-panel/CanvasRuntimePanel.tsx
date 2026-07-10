@@ -72,7 +72,11 @@ export function CanvasRuntimePanel({
     }
   }, [definitionId, instanceId, projectId]);
 
-  useEffect(() => { void load(); }, [load, refreshRevision]);
+  useEffect(() => {
+    queueMicrotask(() => {
+      void load();
+    });
+  }, [load, refreshRevision]);
 
   const handleSave = useCallback(async () => {
     if (!definition || !definition.access.can_edit_source) return;

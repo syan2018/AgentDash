@@ -67,14 +67,17 @@ LifecycleRun runtime Channel 保存在 `lifecycle_runs.channel_registry` typed o
 ```rust
 #[async_trait]
 pub trait ChannelBindingProvider {
-    async fn normalize_inbound(&self, event: ProviderInboundEvent)
+    fn provider_key(&self) -> &str;
+    async fn normalize_inbound(&self, event: ChannelProviderInboundEvent)
         -> Result<NormalizedChannelIngress, ChannelBindingError>;
     async fn publish(&self, request: ChannelOutboundRequest)
         -> Result<ChannelProviderReceipt, ChannelBindingError>;
 }
 ```
 
-provider adapter 负责外部事件规范化和物理发送；`ChannelService` 负责 binding resolution、membership/policy admission、canonical message 与 delivery state。Extension package 可以同时贡献 `OperationProvider` 和 `ChannelBindingProvider`，两类 contribution 保持独立注册。
+provider adapter 负责外部事件规范化、provider event replay 识别和物理发送；`ChannelService` 负责 binding resolution、membership/policy admission、canonical message 与 bounded delivery state。provider registry 按唯一 `provider_key` 选择 adapter；reverse index 以 provider/workspace/room/thread exact key 映射 owner、channel 与 binding，可从 owner documents 重建，不能在 ingress 时扫描 owner documents。outbound planning 与 dispatch 都重新读取 registry 并 admission，原因是两阶段之间 binding、membership 或 Channel status 可能失效。
+
+Extension package 可以同时贡献 `OperationProvider` 和 `ChannelBindingProvider`，两类 contribution 保持独立注册。Extension protocol 若被 provider adapter 用于物理调用，也只属于 adapter 内部实现，不改变 ChannelService authority。
 
 ## Delivery Boundaries
 

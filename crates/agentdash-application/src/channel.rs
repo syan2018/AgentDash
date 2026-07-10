@@ -11,15 +11,21 @@ use agentdash_domain::channel::{
     ChannelIngressPolicy, ChannelLocator, ChannelMessage, ChannelMessageOrigin, ChannelOperation,
     ChannelOwner, ChannelParticipant, ChannelParticipantRef, ChannelPolicy, ChannelReadiness,
     ChannelRecord, ChannelRef, ChannelRegistryDocument, ChannelRegistryMutation, ChannelStatus,
-    channel_message_origin_to_mailbox_source_identity,
+    MaterializedDeliveryRef, channel_message_origin_to_mailbox_source_identity,
 };
 use agentdash_domain::workflow::LifecycleRunRepository;
+use agentdash_spi::channel_binding::{
+    ChannelOutboundRequest, ChannelProviderInboundEvent, ChannelProviderReceipt,
+};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::ApplicationError;
+use provider::{ChannelBindingProviderRegistry, map_provider_error};
+
+pub mod provider;
 
 #[async_trait]
 pub trait ChannelOwnerStore: Send + Sync {
@@ -130,18 +136,8 @@ pub struct ProviderNeutralInboundEnvelope {
     pub payload: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_ref: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProviderNeutralPublishIntent {
-    pub binding_id: ChannelBindingId,
-    pub provider: String,
-    pub external_workspace_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external_room_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub external_thread_ref: Option<String>,
-    pub message: ChannelMessage,
+    pub reply_target: Option<agentdash_domain::channel::ChannelReplyTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -208,9 +204,23 @@ pub enum ChannelIngressOutcome {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChannelExternalDeliveryPlan {
+    pub intent: ChannelDeliveryIntent,
+    pub operation: ChannelOperation,
+    pub binding: ChannelBinding,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChannelExternalDeliveryResult {
+    pub receipt: ChannelProviderReceipt,
+    pub state: ChannelDeliveryState,
+}
+
 pub struct ChannelService {
     owner_store: Arc<dyn ChannelOwnerStore>,
     binding_resolver: Arc<dyn ChannelBindingResolver>,
+    provider_registry: Option<Arc<ChannelBindingProviderRegistry>>,
 }
 
 impl ChannelService {
@@ -221,7 +231,16 @@ impl ChannelService {
         Self {
             owner_store,
             binding_resolver,
+            provider_registry: None,
         }
+    }
+
+    pub fn with_provider_registry(
+        mut self,
+        provider_registry: Arc<ChannelBindingProviderRegistry>,
+    ) -> Self {
+        self.provider_registry = Some(provider_registry);
+        self
     }
 
     pub async fn load_registry(
@@ -437,6 +456,7 @@ impl ChannelService {
                     .correlation_ref
                     .or_else(|| message.provider_event_ref.clone())
                     .or_else(|| Some(binding.binding_id.to_string()));
+                message.reply_target = envelope.reply_target;
                 let registry = self.owner_store.load_registry(&owner).await?;
                 let record = registry
                     .channel(channel_id)
@@ -458,6 +478,34 @@ impl ChannelService {
                 Ok(ChannelIngressOutcome::Unsupported { provider })
             }
         }
+    }
+
+    pub async fn ingest_provider_event(
+        &self,
+        event: ChannelProviderInboundEvent,
+    ) -> Result<ChannelIngressOutcome, ApplicationError> {
+        validate_non_empty("provider", &event.provider)?;
+        let provider = self.provider(&event.provider)?;
+        let provider_key = event.provider.clone();
+        let normalized = provider
+            .normalize_inbound(event)
+            .await
+            .map_err(map_provider_error)?;
+        self.ingest_external_event(ProviderNeutralInboundEnvelope {
+            key: ProviderEventKey {
+                provider: provider_key,
+                external_workspace_ref: normalized.external_workspace_ref,
+                external_room_ref: normalized.external_room_ref,
+                external_thread_ref: normalized.external_thread_ref,
+                provider_event_ref: Some(normalized.provider_event_ref),
+            },
+            sender: normalized.sender,
+            text: normalized.text,
+            payload: normalized.payload,
+            correlation_ref: normalized.correlation_ref,
+            reply_target: normalized.reply_target,
+        })
+        .await
     }
 
     pub async fn plan_broadcast_deliveries(
@@ -534,11 +582,46 @@ impl ChannelService {
         Ok(refs)
     }
 
-    pub fn publish_outbox_intent(
+    pub async fn plan_external_delivery(
         &self,
-        binding: &ChannelBinding,
+        owner: &ChannelOwner,
+        binding_id: ChannelBindingId,
+        operation: ChannelOperation,
         message: ChannelMessage,
-    ) -> Result<ProviderNeutralPublishIntent, ApplicationError> {
+    ) -> Result<ChannelExternalDeliveryPlan, ApplicationError> {
+        if !matches!(
+            operation,
+            ChannelOperation::Publish | ChannelOperation::Reply
+        ) {
+            return Err(ApplicationError::BadRequest(format!(
+                "external channel delivery does not support {operation:?}"
+            )));
+        }
+        if operation == ChannelOperation::Reply && message.reply_target.is_none() {
+            return Err(ApplicationError::BadRequest(
+                "channel reply requires a reply target".to_string(),
+            ));
+        }
+        let registry = self.owner_store.load_registry(owner).await?;
+        let record = registry
+            .channel(message.channel_id)
+            .map_err(ApplicationError::from)?;
+        if &record.channel.owner != owner {
+            return Err(ApplicationError::Conflict(format!(
+                "channel {} does not belong to owner {}",
+                message.channel_id,
+                owner.stable_key()
+            )));
+        }
+        validate_message_admission(record, &message, operation)?;
+        let binding = record
+            .bindings
+            .iter()
+            .find(|binding| binding.binding_id == binding_id)
+            .cloned()
+            .ok_or_else(|| {
+                ApplicationError::NotFound(format!("channel binding {binding_id} was not found"))
+            })?;
         binding.validate().map_err(ApplicationError::from)?;
         if binding.status != ChannelBindingStatus::Active {
             return Err(ApplicationError::Conflict(format!(
@@ -546,14 +629,110 @@ impl ChannelService {
                 binding.binding_id
             )));
         }
-        Ok(ProviderNeutralPublishIntent {
-            binding_id: binding.binding_id,
-            provider: binding.provider.clone(),
-            external_workspace_ref: binding.external_workspace_ref.clone(),
-            external_room_ref: binding.external_room_ref.clone(),
-            external_thread_ref: binding.external_thread_ref.clone(),
-            message,
+        self.provider(&binding.provider)?;
+        Ok(ChannelExternalDeliveryPlan {
+            intent: ChannelDeliveryIntent::new(
+                message,
+                ChannelDeliveryTarget::ExternalBinding { binding_id },
+            ),
+            operation,
+            binding,
         })
+    }
+
+    pub async fn dispatch_external_delivery(
+        &self,
+        owner: &ChannelOwner,
+        plan: ChannelExternalDeliveryPlan,
+    ) -> Result<ChannelExternalDeliveryResult, ApplicationError> {
+        let binding_id = match &plan.intent.target {
+            ChannelDeliveryTarget::ExternalBinding { binding_id } => *binding_id,
+            _ => {
+                return Err(ApplicationError::BadRequest(format!(
+                    "channel delivery {} target is not an external binding",
+                    plan.intent.id
+                )));
+            }
+        };
+        if binding_id != plan.binding.binding_id {
+            return Err(ApplicationError::Conflict(
+                "external delivery binding does not match its materialization plan".to_string(),
+            ));
+        }
+        let registry = self.owner_store.load_registry(owner).await?;
+        let record = registry
+            .channel(plan.intent.message.channel_id)
+            .map_err(ApplicationError::from)?;
+        if &record.channel.owner != owner {
+            return Err(ApplicationError::Conflict(format!(
+                "channel {} does not belong to owner {}",
+                plan.intent.message.channel_id,
+                owner.stable_key()
+            )));
+        }
+        validate_message_admission(record, &plan.intent.message, plan.operation)?;
+        let current_binding = record
+            .bindings
+            .iter()
+            .find(|binding| binding.binding_id == binding_id)
+            .cloned()
+            .ok_or_else(|| {
+                ApplicationError::NotFound(format!("channel binding {binding_id} was not found"))
+            })?;
+        if current_binding.status != ChannelBindingStatus::Active {
+            return Err(ApplicationError::Conflict(format!(
+                "channel binding {binding_id} is not active"
+            )));
+        }
+        let provider = self.provider(&current_binding.provider)?;
+        let receipt = provider
+            .publish(ChannelOutboundRequest {
+                binding: current_binding,
+                operation: plan.operation,
+                message: plan.intent.message.clone(),
+            })
+            .await
+            .map_err(map_provider_error)?;
+        validate_non_empty("provider_receipt.provider", &receipt.provider)?;
+        validate_non_empty(
+            "provider_receipt.provider_event_ref",
+            &receipt.provider_event_ref,
+        )?;
+        if receipt.provider != provider.provider_key() {
+            return Err(ApplicationError::Conflict(format!(
+                "provider receipt `{}` does not match selected provider `{}`",
+                receipt.provider,
+                provider.provider_key()
+            )));
+        }
+        let mut state = ChannelDeliveryState::new(
+            plan.intent.id,
+            plan.intent.message.id,
+            ChannelDeliveryTarget::ExternalBinding { binding_id },
+            agentdash_domain::channel::ChannelDeliveryStatus::Delivered,
+        );
+        state.materialized_ref = Some(MaterializedDeliveryRef::ProviderEvent {
+            provider: receipt.provider.clone(),
+            event_ref: receipt.provider_event_ref.clone(),
+        });
+        self.record_delivery_state(owner, plan.intent.message.channel_id, state.clone())
+            .await?;
+        Ok(ChannelExternalDeliveryResult { receipt, state })
+    }
+
+    fn provider(
+        &self,
+        provider_key: &str,
+    ) -> Result<Arc<dyn agentdash_spi::channel_binding::ChannelBindingProvider>, ApplicationError>
+    {
+        self.provider_registry
+            .as_ref()
+            .ok_or_else(|| {
+                ApplicationError::Unavailable(
+                    "channel binding provider registry is not configured".to_string(),
+                )
+            })?
+            .require(provider_key)
     }
 
     pub fn materialize_delivery_to_mailbox(
@@ -791,12 +970,21 @@ fn validate_non_empty(field: &'static str, value: &str) -> Result<(), Applicatio
 #[cfg(test)]
 mod tests {
     use agentdash_domain::channel::{
-        ChannelEgressPolicy, ChannelIngressPolicy, ChannelKey, ChannelOperation, ChannelPayload,
-        ChannelPolicy, ChannelRole,
+        ChannelAudience, ChannelEgressPolicy, ChannelIngressPolicy, ChannelOperation,
+        ChannelPayload, ChannelPolicy, ChannelReplyTarget, ChannelRole,
     };
     use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository};
+    use agentdash_spi::channel_binding::{
+        ChannelBindingError, ChannelBindingProvider, ChannelOutboundRequest,
+        ChannelProviderInboundEvent, ChannelProviderReceipt, NormalizedChannelIngress,
+    };
     use agentdash_test_support::workflow::MemoryLifecycleRunRepository;
+    use tokio::sync::Mutex;
 
+    use super::provider::{
+        ChannelBindingIndexEntry, ChannelBindingProviderRegistry, InMemoryChannelBindingIndex,
+        IndexedChannelBindingResolver,
+    };
     use super::*;
 
     #[tokio::test]
@@ -1101,35 +1289,164 @@ mod tests {
         assert!(registry.channels[0].participants.is_empty());
     }
 
-    #[test]
-    fn publish_outbox_intent_is_provider_neutral() {
+    #[tokio::test]
+    async fn indexed_provider_ingress_and_reply_share_service_admission() {
+        let repo = Arc::new(MemoryLifecycleRunRepository::default());
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        LifecycleRunRepository::create(repo.as_ref(), &run)
+            .await
+            .expect("create run");
+        let owner = ChannelOwner::LifecycleRun { run_id: run.id };
+        let index = Arc::new(InMemoryChannelBindingIndex::default());
+        let provider = Arc::new(TestChannelBindingProvider::default());
+        let provider_registry = Arc::new(
+            ChannelBindingProviderRegistry::new([
+                provider.clone() as Arc<dyn ChannelBindingProvider>
+            ])
+            .expect("provider registry"),
+        );
         let service = ChannelService::new(
-            Arc::new(UnsupportedOwnerStore),
-            Arc::new(UnsupportedChannelBindingResolver),
-        );
-        let mut binding = ChannelBinding::new("slack", "workspace-1");
+            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
+            Arc::new(IndexedChannelBindingResolver::new(index.clone())),
+        )
+        .with_provider_registry(provider_registry);
+        let record = service
+            .create_if_absent(locator(owner.clone(), "im:test:room-1"), vec![])
+            .await
+            .expect("create channel");
+        let external = ChannelParticipantRef::External {
+            provider: "test".to_string(),
+            external_user_ref: "external-user-1".to_string(),
+        };
+        let agent = ChannelParticipantRef::Agent {
+            run_id: run.id,
+            agent_id: Uuid::new_v4(),
+        };
+        for participant_ref in [external.clone(), agent.clone()] {
+            service
+                .add_participant(
+                    &owner,
+                    record.channel.id,
+                    ChannelParticipant::new(participant_ref, ChannelRole::Member),
+                )
+                .await
+                .expect("add participant");
+        }
+        let mut binding = ChannelBinding::new("test", "workspace-1");
         binding.external_room_ref = Some("room-1".to_string());
-        let channel = Channel::new(
-            ChannelOwner::Project {
-                project_id: Uuid::new_v4(),
-            },
-            ChannelKey::parse("im:slack:thread").unwrap(),
-        );
-        let message = ChannelMessage::new(
-            channel.id,
-            ChannelParticipantRef::Service {
-                key: "system".to_string(),
-            },
-            ChannelPayload::text("response", "ok"),
-            ChannelMessageOrigin::new("im.slack", "thread_reply", "agent"),
-        );
+        service
+            .bind_external_room(&owner, record.channel.id, binding.clone())
+            .await
+            .expect("bind room");
+        index
+            .index(ChannelBindingIndexEntry {
+                owner: owner.clone(),
+                channel_id: record.channel.id,
+                binding: binding.clone(),
+            })
+            .await
+            .expect("index binding");
 
-        let intent = service
-            .publish_outbox_intent(&binding, message)
-            .expect("publish intent");
+        let outcome = service
+            .ingest_provider_event(ChannelProviderInboundEvent {
+                provider: "test".to_string(),
+                payload: serde_json::json!({
+                    "workspace": "workspace-1",
+                    "room": "room-1",
+                    "event": "event-in-1",
+                    "user": "external-user-1",
+                    "text": "hello"
+                }),
+            })
+            .await
+            .expect("ingest provider event");
+        let ChannelIngressOutcome::Resolved { message, .. } = outcome else {
+            panic!("provider event must resolve");
+        };
+        assert_eq!(message.channel_id, record.channel.id);
+        assert_eq!(message.provider_event_ref.as_deref(), Some("event-in-1"));
 
-        assert_eq!(intent.provider, "slack");
-        assert_eq!(intent.external_room_ref.as_deref(), Some("room-1"));
+        let mut reply = ChannelMessage::new(
+            record.channel.id,
+            agent,
+            ChannelPayload::text("reply", "ack"),
+            ChannelMessageOrigin::new("agent", "reply", "agent"),
+        );
+        reply.audience = ChannelAudience::Participants {
+            participant_refs: vec![external],
+        };
+        reply.reply_target = Some(ChannelReplyTarget {
+            namespace: "test".to_string(),
+            route: "room-1".to_string(),
+            target_ref: Some("event-in-1".to_string()),
+            metadata: None,
+        });
+        let plan = service
+            .plan_external_delivery(&owner, binding.binding_id, ChannelOperation::Reply, reply)
+            .await
+            .expect("plan reply");
+        let mut disabled_binding = binding.clone();
+        disabled_binding.status = ChannelBindingStatus::Disabled;
+        service
+            .bind_external_room(&owner, record.channel.id, disabled_binding)
+            .await
+            .expect("disable binding");
+        assert!(matches!(
+            service
+                .dispatch_external_delivery(&owner, plan.clone())
+                .await,
+            Err(ApplicationError::Conflict(message)) if message.contains("not active")
+        ));
+        assert!(provider.published.lock().await.is_empty());
+        service
+            .bind_external_room(&owner, record.channel.id, binding.clone())
+            .await
+            .expect("restore binding");
+        let result = service
+            .dispatch_external_delivery(&owner, plan)
+            .await
+            .expect("dispatch reply");
+
+        assert_eq!(result.receipt.provider_event_ref, "event-out-1");
+        let registry = service.load_registry(&owner).await.expect("load registry");
+        assert_eq!(registry.channels[0].delivery_state, vec![result.state]);
+        assert_eq!(provider.published.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn provider_replay_and_unavailable_binding_are_explicit() {
+        let provider = TestChannelBindingProvider::default();
+        let event = ChannelProviderInboundEvent {
+            provider: "test".to_string(),
+            payload: serde_json::json!({
+                "workspace": "workspace-1",
+                "room": "room-1",
+                "event": "duplicate-event",
+                "user": "external-user-1"
+            }),
+        };
+        provider
+            .normalize_inbound(event.clone())
+            .await
+            .expect("first event");
+        assert!(matches!(
+            provider.normalize_inbound(event).await,
+            Err(ChannelBindingError::Rejected(message)) if message.contains("duplicate")
+        ));
+
+        let index = InMemoryChannelBindingIndex::default();
+        let mut binding = ChannelBinding::new("test", "workspace-1");
+        binding.status = ChannelBindingStatus::Disabled;
+        let result = index
+            .index(ChannelBindingIndexEntry {
+                owner: ChannelOwner::Project {
+                    project_id: Uuid::new_v4(),
+                },
+                channel_id: Uuid::new_v4(),
+                binding,
+            })
+            .await;
+        assert!(matches!(result, Err(ApplicationError::Conflict(_))));
     }
 
     #[test]
@@ -1252,6 +1569,87 @@ mod tests {
             text: Some("hello".to_string()),
             payload: None,
             correlation_ref: None,
+            reply_target: None,
+        }
+    }
+
+    #[derive(Default)]
+    struct TestChannelBindingProvider {
+        seen_events: Mutex<BTreeSet<String>>,
+        published: Mutex<Vec<ChannelOutboundRequest>>,
+    }
+
+    #[async_trait]
+    impl ChannelBindingProvider for TestChannelBindingProvider {
+        fn provider_key(&self) -> &str {
+            "test"
+        }
+
+        async fn normalize_inbound(
+            &self,
+            event: ChannelProviderInboundEvent,
+        ) -> Result<NormalizedChannelIngress, ChannelBindingError> {
+            if event.provider != self.provider_key() {
+                return Err(ChannelBindingError::Rejected(format!(
+                    "provider {} does not match {}",
+                    event.provider,
+                    self.provider_key()
+                )));
+            }
+            let required = |key: &str| {
+                event
+                    .payload
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .ok_or_else(|| ChannelBindingError::Rejected(format!("missing {key}")))
+            };
+            let provider_event_ref = required("event")?;
+            if !self
+                .seen_events
+                .lock()
+                .await
+                .insert(provider_event_ref.clone())
+            {
+                return Err(ChannelBindingError::Rejected(format!(
+                    "duplicate provider event {provider_event_ref}"
+                )));
+            }
+            Ok(NormalizedChannelIngress {
+                external_workspace_ref: required("workspace")?,
+                external_room_ref: Some(required("room")?),
+                external_thread_ref: None,
+                provider_event_ref,
+                sender: ChannelParticipantRef::External {
+                    provider: self.provider_key().to_string(),
+                    external_user_ref: required("user")?,
+                },
+                text: event
+                    .payload
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                payload: Some(event.payload),
+                correlation_ref: None,
+                reply_target: None,
+            })
+        }
+
+        async fn publish(
+            &self,
+            request: ChannelOutboundRequest,
+        ) -> Result<ChannelProviderReceipt, ChannelBindingError> {
+            if request.binding.status != ChannelBindingStatus::Active {
+                return Err(ChannelBindingError::Unavailable {
+                    provider: self.provider_key().to_string(),
+                });
+            }
+            self.published.lock().await.push(request);
+            Ok(ChannelProviderReceipt {
+                provider: self.provider_key().to_string(),
+                provider_event_ref: "event-out-1".to_string(),
+                metadata: None,
+            })
         }
     }
 

@@ -1,3 +1,4 @@
+pub mod channel_binding;
 pub mod connector;
 pub mod context;
 pub mod extension_package;

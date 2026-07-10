@@ -270,9 +270,6 @@ impl AgentFrameBuilder {
                 .as_ref()
                 .and_then(|frame| frame.execution_profile_json.clone())
         });
-        frame.visible_canvas_mount_ids_json = current
-            .as_ref()
-            .and_then(|frame| frame.visible_canvas_mount_ids_json.clone());
         frame.visible_workspace_module_refs_json = current
             .as_ref()
             .and_then(|frame| frame.visible_workspace_module_refs_json.clone());
@@ -426,7 +423,9 @@ mod tests {
             .build(&repo)
             .await
             .expect("frame1");
-        frame1.visible_canvas_mount_ids_json = Some(serde_json::json!(["cvs-demo"]));
+        frame1.visible_workspace_module_refs_json = Some(serde_json::json!([
+            "canvas:00000000-0000-0000-0000-000000000001"
+        ]));
         repo.items.lock().unwrap()[0] = frame1.clone();
 
         let frame2 = AgentFrameBuilder::new(agent_id)
@@ -441,8 +440,8 @@ mod tests {
             Some(serde_json::json!({"executor": "local"}))
         );
         assert_eq!(
-            frame2.visible_canvas_mount_ids(),
-            vec!["cvs-demo".to_string()]
+            frame2.visible_workspace_module_refs(),
+            vec!["canvas:00000000-0000-0000-0000-000000000001".to_string()]
         );
     }
 

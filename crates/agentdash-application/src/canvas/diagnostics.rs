@@ -210,10 +210,6 @@ fn ensure_canvas_visible_in_frame(
     canvas_mount_id: &str,
 ) -> Result<(), ApplicationError> {
     let module_ref = canvas_module_id(canvas_mount_id);
-    let listed_as_canvas = frame
-        .visible_canvas_mount_ids()
-        .iter()
-        .any(|mount_id| mount_id == canvas_mount_id);
     let listed_as_module = frame
         .visible_workspace_module_refs()
         .iter()
@@ -223,7 +219,7 @@ fn ensure_canvas_visible_in_frame(
             .iter()
             .any(|mount| mount.id == canvas_mount_id && mount.provider == PROVIDER_CANVAS_FS)
     });
-    if listed_as_canvas || listed_as_module || mounted_in_vfs {
+    if listed_as_module || mounted_in_vfs {
         return Ok(());
     }
     Err(ApplicationError::Forbidden(format!(

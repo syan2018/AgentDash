@@ -167,7 +167,6 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .build_uncommitted(self.frame_repo.as_ref())
             .await
             .map_err(|error| error.to_string())?;
-        materialize_visible_canvas_mount_projection(&mut next_frame, &canvas.mount_id);
         materialize_visible_workspace_module_ref_projection(&mut next_frame, &workspace_module_ref);
 
         if agent_frame_runtime_surface_unchanged(&current_frame, &next_frame) {
@@ -383,14 +382,6 @@ fn append_canvas_mount(vfs: &mut Vfs, canvas: &Canvas, access: CanvasMountAccess
     }
 }
 
-fn materialize_visible_canvas_mount_projection(
-    frame: &mut agentdash_domain::workflow::AgentFrame,
-    mount_id: &str,
-) {
-    frame.visible_canvas_mount_ids_json =
-        merge_string_projection(frame.visible_canvas_mount_ids_json.as_ref(), mount_id);
-}
-
 fn materialize_visible_workspace_module_ref_projection(
     frame: &mut agentdash_domain::workflow::AgentFrame,
     module_ref: &str,
@@ -506,7 +497,6 @@ fn agent_frame_runtime_surface_unchanged(
         && current_frame.vfs_surface_json == next_frame.vfs_surface_json
         && current_frame.mcp_surface_json == next_frame.mcp_surface_json
         && current_frame.execution_profile_json == next_frame.execution_profile_json
-        && current_frame.visible_canvas_mount_ids_json == next_frame.visible_canvas_mount_ids_json
         && current_frame.visible_workspace_module_refs_json
             == next_frame.visible_workspace_module_refs_json
 }
@@ -608,7 +598,6 @@ mod tests {
             Some(serde_json::to_value(Vec::<RuntimeMcpServer>::new()).unwrap());
         frame.execution_profile_json =
             Some(serde_json::to_value(AgentConfig::new("PI_AGENT")).unwrap());
-        materialize_visible_canvas_mount_projection(&mut frame, &canvas.mount_id);
         materialize_visible_workspace_module_ref_projection(
             &mut frame,
             &canvas_module_id(&canvas.mount_id),
@@ -1010,14 +999,16 @@ mod tests {
         let mut current = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
         current.effective_capability_json = Some(serde_json::json!({"tools": []}));
         current.vfs_surface_json = Some(serde_json::json!({"mounts": []}));
-        current.visible_canvas_mount_ids_json = Some(serde_json::json!(["cvs-dashboard-a"]));
+        current.visible_workspace_module_refs_json =
+            Some(serde_json::json!(["canvas:cvs-dashboard-a"]));
         current.visible_workspace_module_refs_json =
             Some(serde_json::json!(["canvas:cvs-dashboard-a"]));
 
         let mut candidate = AgentFrame::new_revision(agent_id, 2, "canvas_expose");
         candidate.effective_capability_json = current.effective_capability_json.clone();
         candidate.vfs_surface_json = current.vfs_surface_json.clone();
-        candidate.visible_canvas_mount_ids_json = current.visible_canvas_mount_ids_json.clone();
+        candidate.visible_workspace_module_refs_json =
+            current.visible_workspace_module_refs_json.clone();
         candidate.visible_workspace_module_refs_json =
             current.visible_workspace_module_refs_json.clone();
 

@@ -136,8 +136,6 @@ async fn materialize_forked_agent_run_tx(
     child_frame.vfs_surface_json = input.parent_frame.vfs_surface_json.clone();
     child_frame.mcp_surface_json = input.parent_frame.mcp_surface_json.clone();
     child_frame.execution_profile_json = input.parent_frame.execution_profile_json.clone();
-    child_frame.visible_canvas_mount_ids_json =
-        input.parent_frame.visible_canvas_mount_ids_json.clone();
     child_frame.visible_workspace_module_refs_json = input
         .parent_frame
         .visible_workspace_module_refs_json
@@ -465,9 +463,9 @@ async fn insert_agent_frame_tx(
     sqlx::query(
         r#"INSERT INTO agent_frames
             (id,agent_id,revision,surface,effective_capability_json,context_slice_json,vfs_surface_json,
-             mcp_surface_json,visible_canvas_mount_ids_json,visible_workspace_module_refs_json,
+             mcp_surface_json,visible_workspace_module_refs_json,
              execution_profile_json,created_by_kind,created_by_id,created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"#,
     )
     .bind(frame.id.to_string())
     .bind(frame.agent_id.to_string())
@@ -491,10 +489,6 @@ async fn insert_agent_frame_tx(
     .bind(to_optional_jsonb(
         surface.mcp_surface.as_ref(),
         "agent_frames.mcp_surface_json",
-    )?)
-    .bind(to_optional_jsonb(
-        surface.visible_canvas_mount_ids.as_ref(),
-        "agent_frames.visible_canvas_mount_ids_json",
     )?)
     .bind(to_optional_jsonb(
         surface.visible_workspace_module_refs.as_ref(),

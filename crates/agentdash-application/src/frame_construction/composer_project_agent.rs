@@ -119,7 +119,6 @@ pub(super) async fn compose(
                     .map(|payload| payload.mcp_servers.clone())
                     .unwrap_or_default(),
                 existing_vfs: frame.typed_vfs(),
-                visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
                 // 三态直达：None/空集 → base mode=All；非空 → Allowlist（不再 unwrap_or_default 抹平）。
                 visible_workspace_module_refs: agent_context
                     .preset_config

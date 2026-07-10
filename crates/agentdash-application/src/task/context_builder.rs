@@ -143,7 +143,7 @@ pub async fn build_task_session_context(
 
     if let Some(space) = runtime_vfs.as_mut() {
         let visible_canvas_mount_ids =
-            resolve_visible_canvas_mount_ids(repos, runtime_session_id).await;
+            resolve_visible_canvas_definition_ids(repos, runtime_session_id).await;
         if project_visible_canvas_mounts(
             repos.canvas_repo.as_ref(),
             run.project_id,
@@ -288,7 +288,7 @@ async fn find_active_workflow_for_task_target(
     None
 }
 
-async fn resolve_visible_canvas_mount_ids(
+async fn resolve_visible_canvas_definition_ids(
     repos: &RepositorySet,
     runtime_session_id: Option<&str>,
 ) -> Vec<String> {
@@ -310,7 +310,11 @@ async fn resolve_visible_canvas_mount_ids(
     )
     .await
     {
-        Ok(Some((_anchor, _agent, frame))) => frame.visible_canvas_mount_ids(),
+        Ok(Some((_anchor, _agent, frame))) => frame
+            .visible_workspace_module_refs()
+            .into_iter()
+            .filter_map(|module_ref| module_ref.strip_prefix("canvas:").map(ToOwned::to_owned))
+            .collect(),
         _ => Vec::new(),
     }
 }

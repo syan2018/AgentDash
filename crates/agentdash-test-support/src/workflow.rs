@@ -290,8 +290,6 @@ impl AgentRunForkMaterializationPort for MemoryAgentRunForkMaterialization {
         child_frame.vfs_surface_json = input.parent_frame.vfs_surface_json.clone();
         child_frame.mcp_surface_json = input.parent_frame.mcp_surface_json.clone();
         child_frame.execution_profile_json = input.parent_frame.execution_profile_json.clone();
-        child_frame.visible_canvas_mount_ids_json =
-            input.parent_frame.visible_canvas_mount_ids_json.clone();
         child_frame.visible_workspace_module_refs_json = input
             .parent_frame
             .visible_workspace_module_refs_json

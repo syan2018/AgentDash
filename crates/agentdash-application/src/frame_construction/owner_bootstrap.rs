@@ -120,7 +120,6 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub project_vfs_mount_exposure_grants: Vec<ProjectVfsMountExposureGrant>,
     pub request_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
     pub existing_vfs: Option<Vfs>,
-    pub visible_canvas_mount_ids: Vec<String>,
     /// ProjectAgent preset 声明的 workspace module 可见性白名单。
     ///
     /// `None` / `Some([])` 代表全集可见，非空列表代表 allowlist。
@@ -444,11 +443,19 @@ impl<'a> OwnerBootstrapComposer<'a> {
             ports_lifecycle_surface::project_active_workflow_lifecycle_vfs(vfs, active_workflow)
         };
         if let Some(space) = vfs.as_mut() {
+            let visible_canvas_mount_ids = spec
+                .visible_workspace_module_refs
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|module_ref| module_ref.strip_prefix("canvas:"))
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
             project_visible_canvas_mounts(
                 self.canvas_repo,
                 project_id,
                 space,
-                &spec.visible_canvas_mount_ids,
+                &visible_canvas_mount_ids,
                 spec.identity,
             )
             .await

@@ -100,7 +100,9 @@ pub struct InteractionRendererLease {
     pub instance_id: Uuid,
     pub renderer_key: String,
     pub user_id: String,
+    pub revision: u64,
     pub acquired_at: DateTime<Utc>,
+    pub renewed_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
 
@@ -117,7 +119,9 @@ impl InteractionRendererLease {
             instance_id,
             renderer_key: renderer_key.into(),
             user_id: user_id.into(),
+            revision: 1,
             acquired_at: now,
+            renewed_at: now,
             expires_at: now
                 .checked_add_signed(ttl)
                 .ok_or(InteractionError::InvalidField {
@@ -143,6 +147,14 @@ impl InteractionRendererLease {
                 reason: "TTL 超出可表示范围",
             })?;
         let mut next = self.clone();
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(InteractionError::InvalidField {
+                field: "interaction_renderer_lease.revision",
+                reason: "revision 已达上限",
+            })?;
+        next.renewed_at = now;
         next.expires_at = expires_at;
         next.validate(now)?;
         *self = next;
@@ -154,13 +166,16 @@ impl InteractionRendererLease {
     }
 
     pub fn validate(&self, now: DateTime<Utc>) -> InteractionResult<()> {
-        let ttl = self.expires_at - now;
+        let ttl = self.expires_at - self.renewed_at;
         if self.id.is_nil()
             || self.instance_id.is_nil()
+            || self.revision == 0
             || !valid_scoped_key(&self.renderer_key, &["renderer:"])
             || self.user_id.trim().is_empty()
             || ttl <= Duration::zero()
             || ttl > Duration::seconds(MAX_RENDERER_LEASE_SECONDS)
+            || self.renewed_at < self.acquired_at
+            || self.expires_at <= now
         {
             return Err(InteractionError::InvalidField {
                 field: "interaction_renderer_lease",
@@ -291,5 +306,36 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn renderer_renew_advances_fencing_revision_and_expired_reacquire_has_new_id() {
+        let now = Utc::now();
+        let mut lease = InteractionRendererLease::acquire(
+            Uuid::new_v4(),
+            "renderer:tab",
+            "u",
+            now,
+            Duration::seconds(10),
+        )
+        .expect("lease");
+        let original_id = lease.id;
+        lease
+            .renew(now + Duration::seconds(1), Duration::seconds(10))
+            .expect("renew");
+        assert_eq!(lease.id, original_id);
+        assert_eq!(lease.revision, 2);
+        assert_eq!(lease.renewed_at, now + Duration::seconds(1));
+
+        let replacement = InteractionRendererLease::acquire(
+            lease.instance_id,
+            "renderer:tab",
+            "u",
+            lease.expires_at,
+            Duration::seconds(10),
+        )
+        .expect("replacement");
+        assert_ne!(replacement.id, original_id);
+        assert_eq!(replacement.revision, 1);
     }
 }

@@ -1,6 +1,6 @@
 # WI-05 Canvas Interaction Replacement
 
-Status: planned
+Status: done
 
 Depends On: WI-02、WI-04
 

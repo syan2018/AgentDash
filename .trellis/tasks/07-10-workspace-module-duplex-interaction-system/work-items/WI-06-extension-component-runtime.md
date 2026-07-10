@@ -1,6 +1,6 @@
 # WI-06 Extension Component Runtime
 
-Status: planned
+Status: done
 
 Depends On: WI-02、WI-04、Channel task WI-01
 

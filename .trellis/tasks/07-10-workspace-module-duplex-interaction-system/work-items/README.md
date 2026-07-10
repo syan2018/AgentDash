@@ -14,17 +14,17 @@ Parent task: `.trellis/tasks/07-10-workspace-module-duplex-interaction-system`
 
 | ID | File | Status | Depends On | Last Evidence |
 | --- | --- | --- | --- | --- |
-| WI-00 | `WI-00-architecture-contract-gate.md` | ready_for_integration | 已确认产品决策 | 权威 specs 已固定 Interaction V1、OperationScript async bridge、identity、SourceBundle、state/effect 与 RuntimeSession removal 边界 |
-| WI-01 | `WI-01-runtime-gateway-operation-core.md` | implementing | WI-00 | canonical core 与 Setup caller 已迁移；Session-bound Agent/Canvas/Extension residual 等待 WI-02 host authority resolver |
-| WI-02 | `WI-02-user-workshop-canvas-standalone.md` | implementing | WI-01 | trusted host bridge 与 composite current-authority composition 已落地；等待 exact MCP/Extension providers、WI-03 caller 与 WI-05 frontend/URI integration |
-| WI-03 | `WI-03-operation-script.md` | implementing | WI-01 | async execution port、bounded Rhai worker、结构化 Operation 组合调用与 scoped result ref 已落地；等待 Agent/Canvas/Workflow caller parity |
-| WI-04 | `WI-04-interaction-domain.md` | planned | WI-00 | owner/lifetime、`state_patch_v1`、EffectIntent、SourceBundle/CAS 已确认 |
-| WI-05 | `WI-05-canvas-interaction-migration.md` | planned | WI-02、WI-04 | Canvas 无需旧数据 backfill；新模型完整承接 distribution/VFS/binding/promotion |
-| WI-06 | `WI-06-extension-component-runtime.md` | planned | WI-02、WI-04、Channel WI-01 | Component + Operation、exact artifact pin 已确认 |
-| WI-07 | `WI-07-workspace-module-convergence.md` | planned | WI-01、WI-03 至 WI-06 | Workspace Module 目标为 Agent projection |
-| WI-08 | `WI-08-workflow-channel-integration.md` | planned | WI-03、WI-04、WI-06、Channel ref/admission | Workflow 复用 executor；Channel 只承载 attention refs |
-| WI-09 | `WI-09-runtime-session-cleanup.md` | planned | WI-02、WI-05、WI-06、AgentRun adapter | 现有直接 Session context 使用需要分类并删除目标耦合 |
-| WI-10 | `WI-10-integration-spec-verification.md` | planned | WI-01 至 WI-09 | 父任务最终全量 gate |
+| WI-00 | `WI-00-architecture-contract-gate.md` | done | 已确认产品决策 | canonical Operation、Interaction V1、Rhai 与 Extension 最终合同已进入 specs |
+| WI-01 | `WI-01-runtime-gateway-operation-core.md` | done | WI-00 | exact provider catalog、可信 envelope、统一 execution core 与 MCP/Extension/Interaction provider |
+| WI-02 | `WI-02-user-workshop-canvas-standalone.md` | done | WI-01 | Project-scoped OperationWorkshop、standalone Canvas/Extension host 与 server-resolved authority |
+| WI-03 | `WI-03-operation-script.md` | done | WI-01 | bounded async Rhai、preflight/run、Agent/UserWorkshop/Workflow callers 与 scoped result ref |
+| WI-04 | `WI-04-interaction-domain.md` | done | WI-00 | immutable revision、Instance、CAS command/event、presentation/lease、attachment 与 effect admission |
+| WI-05 | `WI-05-canvas-interaction-migration.md` | done | WI-02、WI-04 | 0062 migration、旧 Canvas 删除、Interaction frontend、exact Extension promotion |
+| WI-06 | `WI-06-extension-component-runtime.md` | done | WI-02、WI-04、Channel WI-01 | Component ABI、隔离 host、exact artifact 与 canonical Operation bridge |
+| WI-07 | `WI-07-workspace-module-convergence.md` | done | WI-01、WI-03 至 WI-06 | Workspace Module 仅投影 AgentFrame attachment 与 exact Interaction Operations |
+| WI-08 | `WI-08-workflow-channel-integration.md` | done | WI-03、WI-04、WI-06、Channel ref/admission | Workflow OperationScript node 与 Channel typed attention/admission 完成 |
+| WI-09 | `WI-09-runtime-session-cleanup.md` | done | WI-02、WI-05、WI-06、AgentRun adapter | Session-bound action gateway 删除，RuntimeSession 仅保留 delivery/trace evidence |
+| WI-10 | `WI-10-integration-spec-verification.md` | done | WI-01 至 WI-09 | targeted/full gates、规范收敛、残留扫描与仓库既有失败分类完成 |
 
 ## Decision Ledger
 

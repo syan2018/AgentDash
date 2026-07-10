@@ -1,6 +1,6 @@
 # WI-01 RuntimeGateway Operation Core
 
-Status: implementing
+Status: done
 
 Depends On: WI-00
 

@@ -1,6 +1,6 @@
 # WI-04 Interaction Domain
 
-Status: in_progress
+Status: done
 
 Depends On: WI-00
 

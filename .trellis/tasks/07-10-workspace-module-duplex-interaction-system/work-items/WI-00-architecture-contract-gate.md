@@ -1,6 +1,6 @@
 # WI-00 Architecture / Contract Gate
 
-Status: ready_for_integration
+Status: done
 
 Depends On: 已确认产品决策与现状证据
 

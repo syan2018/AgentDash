@@ -1,6 +1,6 @@
 # WI-02 UserWorkshop And Canvas Standalone
 
-Status: implementing
+Status: done
 
 Depends On: WI-01
 

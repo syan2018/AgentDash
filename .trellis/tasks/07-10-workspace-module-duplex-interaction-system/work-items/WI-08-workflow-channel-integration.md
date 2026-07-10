@@ -1,6 +1,6 @@
 # WI-08 Workflow / Channel Integration
 
-Status: planned
+Status: done
 
 Depends On: WI-03、WI-04、WI-06、Channel ref/admission stable
 

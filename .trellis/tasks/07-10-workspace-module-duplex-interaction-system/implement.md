@@ -1,6 +1,7 @@
 # Implement · Workspace Module 通用双工交互系统
 
-当前父任务仍处于 planning。产品决策已经收敛；用户完成最终规划评审并执行 `task.py start` 后，按照本文件和 `work-items/` 在同一个父任务内推进完整替换。
+父任务已完成实现与任务范围验收。WI-00 至 WI-10 均在同一个父任务目录内闭环；最终代码以主题化
+commit 交付，规范、migration、generated contracts 与前端 consumer 同步收敛。
 
 ## 1. 工作项追踪
 
@@ -152,6 +153,8 @@
 
 ## 5. Review Gate
 
-- 产品决策已全部记录在 `work-items/decisions.md`，没有待用户确认的产品分支。
-- RuntimeGateway、OperationScript、Interaction、Extension、Canvas 替换和 Channel 边界在 PRD/design/implement 中使用同一合同。
-- `work-items/` 完整、JSONL context 有效、PRD/design/implement 完成 convergence，并由用户最终批准后，才允许 `task.py start`。
+- 产品决策已全部记录在 `work-items/decisions.md`，实现未重新打开产品分支。
+- RuntimeGateway、OperationScript、Interaction、Extension、Canvas 替换和 Channel 边界在代码与 specs
+  中使用同一合同。
+- migration、contracts、strict clippy、相关 Rust/TypeScript tests 与静态残留扫描通过；全仓门禁中
+  与任务无关的 Agent loop、React effect lint 和 Story E2E 基线失败记录在 WI-10，未通过越界修改掩盖。

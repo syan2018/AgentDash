@@ -1,6 +1,6 @@
 # WI-10 Integration / Spec Verification
 
-Status: planned
+Status: done
 
 Depends On: WI-01 至 WI-09
 
@@ -22,3 +22,14 @@ Depends On: WI-01 至 WI-09
 
 - 根 `implement.md` 第 3 节全部命令与检查类别。
 - `task.py validate`、`git diff --check`。
+
+## Final Evidence
+
+- migration guard、test-support guard、contracts check、workspace check、strict clippy、shared/frontend/
+  desktop typecheck、frontend 536 tests 与 Extension focused tests 通过。
+- Rust 全量测试完成编译，并定位到 `agentdash-agent/tests/runtime_alignment.rs` 的 6 个既有 provider
+  error-return 断言失败；本任务未修改 Agent loop。
+- frontend lint 中本任务新增 Canvas 文件已 focused clean；仓库仍有 33 个既有 React effect lint。
+- critical Story E2E 到达 Task 创建界面后因既有 `Not Found` 失败；页面快照确认 Interaction/Canvas
+  并非失败路径。
+- canonical Operation、旧 Canvas/Session-bound gateway 与 Extension runtime identity 静态扫描完成。

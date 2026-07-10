@@ -1,6 +1,6 @@
 # WI-07 Workspace Module Convergence
 
-Status: planned
+Status: done
 
 Depends On: WI-01、WI-03、WI-04、WI-05、WI-06
 

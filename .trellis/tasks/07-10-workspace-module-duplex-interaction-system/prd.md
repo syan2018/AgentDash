@@ -71,28 +71,28 @@ Canvas、Extension panel/component 和 Interaction renderer 不以 AgentRun、Ag
 
 ## Acceptance Criteria
 
-- [ ] Agent 可以提交一段 inline Rhai script，组合至少两个真实 Operations，并对中间结果执行筛选/清理后返回 bounded JSON/result ref。
-- [ ] 同一 Rhai source 可由 AgentRun、standalone Canvas/UserWorkshop 和 Workflow 调用同一 executor；Canvas 路径不要求 AgentRun、AgentFrame 或 RuntimeSession。
-- [ ] 每个 nested Operation 调用都重新 admission；未声明/撤销 capability、schema 错误、readiness 变化和 caller cancellation 能在调用点阻断。
-- [ ] OperationScript 没有独立持久化 asset/job/step records；Canvas 保存脚本时只把 source 当作 definition/source 文件。
-- [ ] OperationScript executor 对调用方是 async；Rhai V1 使用 `ops.invoke` 隐式等待与 `ops.invoke_all` structured concurrency，worker exhaustion、CPU loop cancellation、nested cancellation 和 timeout 均可验证。
-- [ ] preflight/run token 对 source/input/manifest/limits/principal/scope/dialect version 的任一不匹配都会失败；脚本不能递归调用 OperationScript。
-- [ ] Canvas 的资产、definition revision、runtime instance、Agent attachment、presentation 和 renderer lease 不再被视为同一对象。
-- [ ] Human/Agent 共享单一 canonical state；command actor policy 只有 direct/human-only，不存在 Interaction proposal lifecycle。
-- [ ] Interaction state transition 由平台服务端拥有；Extension 只能贡献 Component + Operation，不能直接运行 canonical reducer。
-- [ ] Definition revision 采用 CAS，无 durable draft/CRDT；instance 固定 definition revision 和 exact Extension artifact digest。
-- [ ] Definition/Interaction/OperationScript/component contracts 从 V1 起有显式 discriminator；既有 instance 不受未来 V2 handler/dialect 行为变化影响。
-- [ ] `state_patch_v1` 只修改 allowlisted paths，拒绝超限 patch、非法 op、schema violation 和 stale revision，并原子提交 event/state。
-- [ ] replay-safe command effect 与 state transaction 原子写入 OperationEffectIntent；replay 使用稳定 effect/idempotency identity 收敛到单一成功结果，复杂多步 durable effect 进入 Workflow。
-- [ ] Extension 升级不静默改变既有 instance；新版本通过新 definition/new instance 使用，不存在通用 state migration engine。
-- [ ] 普通 Project Canvas preview 不再请求已删除 endpoint；旧 Canvas aggregate、runtime snapshot/state 表、DTO、route、repository 和 frontend consumer 全部清除。
-- [ ] Personal publish、Project unpublish、copy-to-personal、lineage、read-only shared VFS、data/resource binding 与 Extension promotion 在新 definition model 上保持完整产品语义。
-- [ ] authoring definition 与 runtime instance 使用不同 module/presentation identity；archive/unpublish 不破坏已 pin 的 revision、instance 或 artifact。
-- [ ] RuntimeGateway envelope 分离 principal/scope/origin/placement/trace；客户端 authority injection 被拒绝。
-- [ ] Workspace Module 只消费 canonical Operation/Interaction projection；旧 weak parser、重复 resolver/provider 和手写 DTO 静态扫描为空。
-- [ ] Interaction attention 与 Channel message/delivery 边界清晰，Channel 不保存 canonical state/event body。
-- [ ] 相关 `.trellis/spec/`、Rust contracts、generated TS、frontend 和 migrations 同步，所有 work items 通过最终全量 gate。
-- [ ] 用户最终评审 planning artifacts 后才允许 `task.py start`。
+- [x] Agent 可以提交一段 inline Rhai script，组合至少两个真实 Operations，并对中间结果执行筛选/清理后返回 bounded JSON/result ref。
+- [x] 同一 Rhai source 可由 AgentRun、standalone Canvas/UserWorkshop 和 Workflow 调用同一 executor；Canvas 路径不要求 AgentRun、AgentFrame 或 RuntimeSession。
+- [x] 每个 nested Operation 调用都重新 admission；未声明/撤销 capability、schema 错误、readiness 变化和 caller cancellation 能在调用点阻断。
+- [x] OperationScript 没有独立持久化 asset/job/step records；Canvas 保存脚本时只把 source 当作 definition/source 文件。
+- [x] OperationScript executor 对调用方是 async；Rhai V1 使用 `ops.invoke` 隐式等待与 `ops.invoke_all` structured concurrency，worker exhaustion、CPU loop cancellation、nested cancellation 和 timeout 均可验证。
+- [x] preflight/run token 对 source/input/manifest/limits/principal/scope/dialect version 的任一不匹配都会失败；脚本不能递归调用 OperationScript。
+- [x] Canvas 的资产、definition revision、runtime instance、Agent attachment、presentation 和 renderer lease 不再被视为同一对象。
+- [x] Human/Agent 共享单一 canonical state；command actor policy 只有 direct/human-only，不存在 Interaction proposal lifecycle。
+- [x] Interaction state transition 由平台服务端拥有；Extension 只能贡献 Component + Operation，不能直接运行 canonical reducer。
+- [x] Definition revision 采用 CAS，无 durable draft/CRDT；instance 固定 definition revision 和 exact Extension artifact digest。
+- [x] Definition/Interaction/OperationScript/component contracts 从 V1 起有显式 discriminator；既有 instance 不受未来 V2 handler/dialect 行为变化影响。
+- [x] `state_patch_v1` 只修改 allowlisted paths，拒绝超限 patch、非法 op、schema violation 和 stale revision，并原子提交 event/state。
+- [x] replay-safe command effect 与 state transaction 原子写入 OperationEffectIntent；replay 使用稳定 effect/idempotency identity 收敛到单一成功结果，复杂多步 durable effect 进入 Workflow。
+- [x] Extension 升级不静默改变既有 instance；新版本通过新 definition/new instance 使用，不存在通用 state migration engine。
+- [x] 普通 Project Canvas preview 不再请求已删除 endpoint；旧 Canvas aggregate、runtime snapshot/state 表、DTO、route、repository 和 frontend consumer 全部清除。
+- [x] Personal publish、Project unpublish、copy-to-personal、lineage、read-only shared VFS、data/resource binding 与 Extension promotion 在新 definition model 上保持完整产品语义。
+- [x] authoring definition 与 runtime instance 使用不同 module/presentation identity；archive/unpublish 不破坏已 pin 的 revision、instance 或 artifact。
+- [x] RuntimeGateway envelope 分离 principal/scope/origin/placement/trace；客户端 authority injection 被拒绝。
+- [x] Workspace Module 只消费 canonical Operation/Interaction projection；旧 weak parser、重复 resolver/provider 和手写 DTO 静态扫描为空。
+- [x] Interaction attention 与 Channel message/delivery 边界清晰，Channel 不保存 canonical state/event body。
+- [x] 相关 `.trellis/spec/`、Rust contracts、generated TS、frontend 和 migrations 同步，所有 work items 完成最终检查与失败归因。
+- [x] 用户最终评审 planning artifacts 后才允许 `task.py start`。
 
 ## Out of Scope
 

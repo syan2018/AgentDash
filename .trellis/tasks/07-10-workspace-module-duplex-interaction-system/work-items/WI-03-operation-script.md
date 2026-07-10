@@ -1,6 +1,6 @@
 # WI-03 OperationScript
 
-Status: implementing
+Status: done
 
 Depends On: WI-01
 

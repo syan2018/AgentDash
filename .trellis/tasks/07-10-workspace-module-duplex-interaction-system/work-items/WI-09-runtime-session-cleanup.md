@@ -1,6 +1,6 @@
 # WI-09 RuntimeSession Cleanup
 
-Status: planned
+Status: done
 
 Depends On: WI-02、WI-05、WI-06、AgentRun adapter migration
 

@@ -36,7 +36,7 @@ const appImportFilter = /^@agentdash\/extension(?:\/.*)?$/;
  * @typedef {{ [key: string]: unknown }} UnknownRecord
  * @typedef {{ kind: "app", root: string, appPath: string } | { kind: "legacy", root: string, manifestPath: string } | { kind: "missing", root: string }} ExtensionProjectMode
  * @typedef {{ key: string, wire_key: string, kind: string, title: string, description: string, permission_summary: string[] }} NormalizedCapability
- * @typedef {{ kind: "agentdash.app", id: string, name: string, version: string, description: string, panel: UnknownRecord, capabilities: NormalizedCapability[], agent_exposures: UnknownRecord[], dispatches: UnknownRecord[], artifacts: UnknownRecord[], operation_catalog: UnknownRecord[], permission_summary: UnknownRecord, package_name: string, extension_id: string, panel_entry: string, package_json: UnknownRecord, diagnostics: string[] }} NormalizedAppDefinition
+ * @typedef {{ kind: "agentdash.app", id: string, name: string, version: string, description: string, panel: UnknownRecord, ui_components: UnknownRecord[], capabilities: NormalizedCapability[], agent_exposures: UnknownRecord[], dispatches: UnknownRecord[], artifacts: UnknownRecord[], operation_catalog: UnknownRecord[], permission_summary: UnknownRecord, package_name: string, extension_id: string, panel_entry: string, package_json: UnknownRecord, diagnostics: string[] }} NormalizedAppDefinition
  * @typedef {{ capability_key: string, kind: string, permissions: UnknownRecord[], runtime_permissions: string[], diagnostics: string[] }} PermissionSummaryItem
  * @typedef {{ manifest: UnknownRecord, package_json: UnknownRecord, host_entry: string, panel_client: string, permission_summary: PermissionSummaryItem[], diagnostics: string[], normalized: NormalizedAppDefinition, registered_surface: { runtime_actions: unknown[], protocols: unknown[] } }} GeneratedAppArtifacts
  * @typedef {{ errors: string[], warnings: string[], manifest: UnknownRecord | null, package_json: UnknownRecord | null, generated?: GeneratedAppArtifacts, mode: "app" | "legacy" }} ExtensionValidationResult
@@ -155,6 +155,13 @@ export function generateAppArtifacts(normalized) {
         renderer: { kind: "webview", entry: "dist/panel/index.html" },
       },
     ],
+    ui_components: normalized.ui_components.map((component) => ({
+      ...component,
+      renderer: {
+        kind: "iframe",
+        entry: `dist/components/${requireStringField(component, "component_key")}/index.html`,
+      },
+    })),
     permissions,
     bundles: [
       {
@@ -352,6 +359,7 @@ export async function prepareAppProjectForLegacyToolchain(projectRoot, options =
   await writeJson(path.join(stageRoot, "package.json"), generated.package_json);
   await writeFile(path.join(stageRoot, "src", "extension.ts"), generated.host_entry, "utf8");
   await writePanelStage(root, stageRoot, generated.normalized.panel_entry);
+  await writeComponentStageEntries(root, stageRoot, generated.normalized.ui_components);
   await writeBackendServiceStageEntries(root, stageRoot, generated.manifest);
   return { stageRoot, generated };
 }
@@ -386,6 +394,7 @@ function normalizeLoadedAppModel(app) {
     version: requireStringField(app, "version"),
     description: stringField(app, "description") ?? "",
     panel,
+    ui_components: arrayRecordField(app, "ui_components"),
     capabilities: arrayRecordField(app, "capabilities").map((capability) => ({
       key: requireStringField(capability, "key"),
       wire_key: requireStringField(capability, "wire_key"),
@@ -405,6 +414,36 @@ function normalizeLoadedAppModel(app) {
     package_json: {},
     diagnostics: [],
   };
+}
+
+/**
+ * @param {string} root
+ * @param {string} stageRoot
+ * @param {UnknownRecord[]} components
+ * @returns {Promise<void>}
+ */
+async function writeComponentStageEntries(root, stageRoot, components) {
+  for (const component of components) {
+    const componentKey = requireStringField(component, "component_key");
+    const renderer = asRecord(component.renderer);
+    const sourceEntry = renderer ? stringField(renderer, "entry") : null;
+    if (!sourceEntry) throw new Error(`ui_components[${componentKey}].renderer.entry 缺失`);
+    const componentDir = path.join(stageRoot, "src", "components", componentKey);
+    await mkdir(componentDir, { recursive: true });
+    const resolved = path.resolve(root, sourceEntry);
+    if (sourceEntry.endsWith(".html") && await isFile(resolved)) {
+      await writeFile(path.join(componentDir, "index.html"), await readFile(resolved, "utf8"), "utf8");
+      continue;
+    }
+    const mainFile = sourceEntry.endsWith(".tsx") ? "main.tsx" : "main.ts";
+    const relativeImport = normalizeImportPath(path.relative(componentDir, resolved));
+    await writeFile(
+      path.join(componentDir, "index.html"),
+      '<!doctype html>\n<html><head><meta charset="UTF-8"></head><body><div id="root"></div><script type="module" src="./main.js"></script></body></html>\n',
+      "utf8",
+    );
+    await writeFile(path.join(componentDir, mainFile), `import ${JSON.stringify(relativeImport)};\n`, "utf8");
+  }
 }
 
 /**

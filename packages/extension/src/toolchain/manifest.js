@@ -88,6 +88,7 @@ export function validateManifest(manifest, errors) {
   validateProtocolMethods(arrayField(manifest, "protocols", errors), errors);
   validateExtensionDependencies(arrayField(manifest, "extension_dependencies", errors), errors);
   validateWorkspaceTabs(arrayField(manifest, "workspace_tabs", errors), errors);
+  validateUiComponents(arrayField(manifest, "ui_components", errors), errors);
   validatePermissions(arrayField(manifest, "permissions", errors), errors);
   validateBundleDefs(arrayField(manifest, "bundles", errors), errors);
   validateFetchRoutes(arrayField(manifest, "fetch_routes", errors), errors);
@@ -416,6 +417,83 @@ function validateWorkspaceTabs(tabs, errors) {
       errors.push("workspace_tabs[].renderer 必须是 webview 或 canvas_panel 且包含 entry");
     }
   }
+}
+
+/**
+ * @param {unknown[]} components
+ * @param {string[]} errors
+ */
+function validateUiComponents(components, errors) {
+  const keys = new Set();
+  for (const component of components) {
+    const record = asRecord(component);
+    if (!record) {
+      errors.push("ui_components[] 必须是对象");
+      continue;
+    }
+    validateQualifiedKey(record, "component_key", "ui_components[].component_key", errors);
+    const componentKey = stringField(record, "component_key");
+    if (componentKey && keys.has(componentKey)) {
+      errors.push(`ui_components[].component_key 重复: ${componentKey}`);
+    }
+    if (componentKey) keys.add(componentKey);
+    if (record.contract_version !== 1) {
+      errors.push("ui_components[].contract_version 当前必须为 1");
+    }
+    const renderer = asRecord(record.renderer);
+    if (!renderer || stringField(renderer, "kind") !== "iframe" || !stringField(renderer, "entry")) {
+      errors.push("ui_components[].renderer 必须是包含 entry 的 iframe");
+    }
+    validateJsonSchemaField(record, "props_schema", "ui_components[].props_schema", errors);
+    validateJsonSchemaField(
+      record,
+      "state_projection_schema",
+      "ui_components[].state_projection_schema",
+      errors,
+    );
+    const events = asRecord(record.events_schema);
+    if (!events) {
+      errors.push("ui_components[].events_schema 必须是对象");
+    } else {
+      for (const [eventType, schema] of Object.entries(events)) {
+        if (!/^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/.test(eventType)) {
+          errors.push(`ui_components[].events_schema event type 非法: ${eventType}`);
+        }
+        if (typeof schema !== "boolean" && !asRecord(schema)) {
+          errors.push(`ui_components[].events_schema.${eventType} 必须是 JSON Schema`);
+        }
+      }
+    }
+    const slots = arrayField(record, "slots", errors);
+    const slotSet = new Set();
+    for (const slot of slots) {
+      if (typeof slot !== "string" || !/^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/.test(slot)) {
+        errors.push("ui_components[].slots[] 必须是 qualified key");
+      } else if (slotSet.has(slot)) {
+        errors.push(`ui_components[].slots[] 重复: ${slot}`);
+      } else {
+        slotSet.add(slot);
+      }
+    }
+    const sizing = asRecord(record.sizing);
+    const minWidth = sizing?.min_width;
+    const minHeight = sizing?.min_height;
+    const maxWidth = sizing?.max_width;
+    const maxHeight = sizing?.max_height;
+    if (!sizing || !positiveNumber(minWidth) || !positiveNumber(minHeight)
+      || (maxWidth !== undefined && (!positiveNumber(maxWidth) || Number(maxWidth) < Number(minWidth)))
+      || (maxHeight !== undefined && (!positiveNumber(maxHeight) || Number(maxHeight) < Number(minHeight)))) {
+      errors.push("ui_components[].sizing 边界无效");
+    }
+    if (record.sandbox_profile !== "isolated_v1") {
+      errors.push("ui_components[].sandbox_profile 当前必须为 isolated_v1");
+    }
+  }
+}
+
+/** @param {unknown} value */
+function positiveNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 /**

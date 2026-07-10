@@ -166,6 +166,22 @@ export interface ExtensionManifest {
       | { kind: "webview"; entry: string }
       | { kind: "canvas_panel"; entry: string };
   }>;
+  ui_components?: Array<{
+    component_key: string;
+    contract_version: 1;
+    renderer: { kind: "iframe"; entry: string };
+    props_schema: JsonObject | boolean;
+    events_schema: Record<string, JsonObject | boolean>;
+    state_projection_schema: JsonObject | boolean;
+    slots: string[];
+    sizing: {
+      min_width: number;
+      min_height: number;
+      max_width?: number;
+      max_height?: number;
+    };
+    sandbox_profile: "isolated_v1";
+  }>;
   permissions?: ExtensionPermissionDeclaration[];
   bundles?: ExtensionBundleRef[];
 }

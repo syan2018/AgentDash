@@ -23,6 +23,8 @@ import type {
   AgentDashPermissionSummary,
   AgentDashPermissionSummaryItem,
   AgentDashRuntimePermissionKey,
+  AgentDashUiComponentDefinition,
+  AgentDashUiComponentInput,
   AgentDashWorkspaceFilesOptions,
   JsonSchema,
 } from "./types.js";
@@ -54,6 +56,7 @@ export function normalizeAppDefinition(input: AgentDashAppInput): AgentDashAppDe
     type_id: normalizeOptionalQualifiedKey(input.panel.type_id, `${id}.panel`, "panel.type_id"),
     uri_scheme: normalizeUriScheme(input.panel.uri_scheme, id),
   };
+  const uiComponents = normalizeUiComponents(input.ui_components ?? []);
 
   const capabilities: AgentDashNormalizedCapability[] = [];
   const dispatches: AgentDashDispatchProjection[] = [];
@@ -100,6 +103,7 @@ export function normalizeAppDefinition(input: AgentDashAppInput): AgentDashAppDe
     version,
     description: input.description?.trim() ?? "",
     panel,
+    ui_components: uiComponents,
     capabilities,
     agent_exposures: exposures,
     dispatches,
@@ -107,6 +111,60 @@ export function normalizeAppDefinition(input: AgentDashAppInput): AgentDashAppDe
     operation_catalog: operationCatalog,
     permission_summary: permissionSummary,
   };
+}
+
+function normalizeUiComponents(
+  components: readonly AgentDashUiComponentInput[],
+): AgentDashUiComponentDefinition[] {
+  const keys = new Set<string>();
+  return components.map((component, index) => {
+    const field = `ui_components[${index}]`;
+    const componentKey = requireTrimmed(component.component_key, `${field}.component_key`);
+    if (!QUALIFIED_KEY_PATTERN.test(componentKey)) {
+      throw new Error(`${field}.component_key must use lowercase qualified key segments`);
+    }
+    if (keys.has(componentKey)) {
+      throw new Error(`${field}.component_key '${componentKey}' is duplicated`);
+    }
+    keys.add(componentKey);
+    const entry = requireTrimmed(component.entry, `${field}.entry`);
+    const events = Object.fromEntries(Object.entries(component.events_schema ?? {}).map(([eventType, schema]) => {
+      const key = requireTrimmed(eventType, `${field}.events_schema key`);
+      if (!QUALIFIED_KEY_PATTERN.test(key)) {
+        throw new Error(`${field}.events_schema key '${key}' is invalid`);
+      }
+      return [key, schema];
+    }));
+    const slots = [...new Set((component.slots ?? []).map((slot) => {
+      const key = requireTrimmed(slot, `${field}.slots[]`);
+      if (!QUALIFIED_KEY_PATTERN.test(key)) {
+        throw new Error(`${field}.slots[] '${key}' is invalid`);
+      }
+      return key;
+    }))].sort();
+    const sizing = {
+      min_width: component.sizing?.min_width ?? 160,
+      min_height: component.sizing?.min_height ?? 120,
+      max_width: component.sizing?.max_width,
+      max_height: component.sizing?.max_height,
+    };
+    if (sizing.min_width <= 0 || sizing.min_height <= 0
+      || (sizing.max_width !== undefined && sizing.max_width < sizing.min_width)
+      || (sizing.max_height !== undefined && sizing.max_height < sizing.min_height)) {
+      throw new Error(`${field}.sizing bounds are invalid`);
+    }
+    return {
+      component_key: componentKey,
+      contract_version: 1,
+      renderer: { kind: "iframe", entry },
+      props_schema: component.props_schema ?? true,
+      events_schema: events,
+      state_projection_schema: component.state_projection_schema ?? true,
+      slots,
+      sizing,
+      sandbox_profile: "isolated_v1",
+    };
+  });
 }
 
 export function isAgentDashRuntimePermissionKey(

@@ -26,6 +26,7 @@ const PANEL_ENTRY_CANDIDATES = [
   "src/panel/index.ts",
 ];
 const BACKEND_SERVICE_OUTPUT_DIR = "dist/backend-services";
+const UI_COMPONENT_OUTPUT_DIR = "dist/components";
 
 /**
  * @typedef {{ archive_path: string, archive_digest: string, manifest_digest: string, manifest: import("./manifest.js").UnknownRecord }} PackResult
@@ -63,6 +64,7 @@ export async function packProject(projectRoot, options = {}) {
 
   await copyPanelAssets(root, distDir);
   await buildPanelBundle(root, distDir);
+  await buildUiComponentBundles(root);
   const backendServiceBundles = await buildBackendServiceBundles(root);
   await validatePackedRuntimeSurface(root);
   const manifest = await writePackedManifest(root, backendServiceBundles);
@@ -162,6 +164,7 @@ export async function watchProject(projectRoot) {
   const distDir = path.join(root, "dist");
   await mkdir(distDir, { recursive: true });
   await copyPanelAssets(root, distDir);
+  await buildUiComponentBundles(root);
   const contexts = [];
   contexts.push(await context({
     entryPoints: [path.join(root, "src", "extension.ts")],
@@ -229,6 +232,42 @@ async function buildPanelBundle(root, distDir) {
   const panelEntry = await findPanelEntry(root);
   if (!panelEntry) return;
   await build(panelBuildOptions(panelEntry, path.join(distDir, "panel", "main.js")));
+}
+
+/**
+ * @param {string} root
+ * @returns {Promise<void>}
+ */
+async function buildUiComponentBundles(root) {
+  const manifest = asRecord(await readJsonFile(path.join(root, MANIFEST_FILE)));
+  if (!manifest) throw new Error(`${MANIFEST_FILE} 必须是对象`);
+  for (const component of uiComponentRecords(manifest)) {
+    const componentKey = stringValue(component.component_key, "");
+    if (!componentKey) continue;
+    const sourceDir = path.join(root, "src", "components", componentKey);
+    const outputDir = path.join(root, UI_COMPONENT_OUTPUT_DIR, componentKey);
+    await copyDirectory(sourceDir, outputDir);
+    const entry = await findWebEntry(sourceDir);
+    if (entry) {
+      await build(panelBuildOptions(entry, path.join(outputDir, "main.js")));
+    }
+  }
+}
+
+/**
+ * @param {string} root
+ * @returns {Promise<string | null>}
+ */
+async function findWebEntry(root) {
+  for (const file of ["main.tsx", "main.ts", "index.tsx", "index.ts"]) {
+    const candidate = path.join(root, file);
+    try {
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
 }
 
 /**
@@ -383,6 +422,18 @@ function backendServiceRecords(manifest) {
   return services
     .map((service) => asRecord(service))
     .filter((service) => service != null);
+}
+
+/**
+ * @param {import("./manifest.js").UnknownRecord} manifest
+ * @returns {import("./manifest.js").UnknownRecord[]}
+ */
+function uiComponentRecords(manifest) {
+  const components = manifest.ui_components;
+  if (!Array.isArray(components)) return [];
+  return components
+    .map((component) => asRecord(component))
+    .filter((component) => component != null);
 }
 
 /**

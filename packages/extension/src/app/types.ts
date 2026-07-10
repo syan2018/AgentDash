@@ -46,6 +46,35 @@ export interface AgentDashPanelDefinition {
   uri_scheme: string;
 }
 
+export interface AgentDashUiComponentSizing {
+  min_width: number;
+  min_height: number;
+  max_width?: number;
+  max_height?: number;
+}
+
+export interface AgentDashUiComponentInput {
+  component_key: string;
+  entry: string;
+  props_schema?: JsonSchema;
+  events_schema?: Readonly<Record<string, JsonSchema>>;
+  state_projection_schema?: JsonSchema;
+  slots?: readonly string[];
+  sizing?: Partial<AgentDashUiComponentSizing>;
+}
+
+export interface AgentDashUiComponentDefinition {
+  component_key: string;
+  contract_version: 1;
+  renderer: { kind: "iframe"; entry: string };
+  props_schema: JsonSchema;
+  events_schema: Readonly<Record<string, JsonSchema>>;
+  state_projection_schema: JsonSchema;
+  slots: readonly string[];
+  sizing: AgentDashUiComponentSizing;
+  sandbox_profile: "isolated_v1";
+}
+
 export interface AgentDashAgentExposureInput {
   key?: string;
   description: string;
@@ -223,6 +252,7 @@ export interface AgentDashAppInput<
   version: string;
   description?: string;
   panel: AgentDashPanelDefinitionInput;
+  ui_components?: readonly AgentDashUiComponentInput[];
   capabilities?: TCapabilities;
 }
 
@@ -235,6 +265,7 @@ export interface AgentDashAppDefinition {
   version: string;
   description: string;
   panel: AgentDashPanelDefinition;
+  ui_components: readonly AgentDashUiComponentDefinition[];
   capabilities: readonly AgentDashNormalizedCapability[];
   agent_exposures: readonly AgentDashNormalizedAgentExposure[];
   dispatches: readonly AgentDashDispatchProjection[];

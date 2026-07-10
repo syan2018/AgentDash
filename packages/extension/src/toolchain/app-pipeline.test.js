@@ -41,6 +41,7 @@ test("generateAppProject writes generated manifest, host entry, panel client and
   const backendServices = recordArray(generated.manifest, "backend_services");
   const fetchRoutes = recordArray(generated.manifest, "fetch_routes");
   const operationCatalog = recordArray(generated.manifest, "operation_catalog");
+  const uiComponents = recordArray(generated.manifest, "ui_components");
   assert.deepEqual(
     runtimeActions.map((action) => stringField(action, "action_key")),
     ["repo-tools.github", "repo-tools.git-status", "repo-tools.files"],
@@ -54,6 +55,11 @@ test("generateAppProject writes generated manifest, host entry, panel client and
   assert.deepEqual(generated.registered_surface.protocols, protocols);
   assert.equal(stringField(backendServices[0], "service_key"), "repo-tools.api");
   assert.equal(stringField(fetchRoutes[0], "scope"), "panel_only");
+  assert.equal(stringField(uiComponents[0], "component_key"), "repo-tools.summary-card");
+  assert.equal(
+    stringField(recordField(uiComponents[0], "renderer"), "entry"),
+    "dist/components/repo-tools.summary-card/index.html",
+  );
   assert.deepEqual(
     operationCatalog.map((operation) => ({
       key: stringField(operation, "operation_key"),
@@ -104,6 +110,11 @@ test("packAppProject stages generated app artifacts through existing archive val
   assert.match(packed.archive_digest, /^sha256:[0-9a-f]{64}$/);
   assert.match(packed.archive_path, /repo-tools-0\.1\.0\.agentdash-extension\.tgz$/);
   assert.equal((await stat(packed.archive_path)).isFile(), true);
+  const archiveFiles = await readTgzFiles(packed.archive_path);
+  assert.equal(
+    archiveFiles.has("dist/components/repo-tools.summary-card/index.html"),
+    true,
+  );
 
   /** @type {Record<string, unknown>} */
   const generatedManifest = JSON.parse(await readFile(path.join(root, GENERATED_MANIFEST_FILE), "utf8"));
@@ -277,6 +288,13 @@ async function fixtureAppProject() {
     '  name: "Repo Tools",',
     '  version: "0.1.0",',
     '  panel: { entry: "src/main.ts" },',
+    "  ui_components: [{",
+    '    component_key: "repo-tools.summary-card",',
+    '    entry: "src/summary-card.ts",',
+    "    props_schema: objectSchema,",
+    '    events_schema: { select: { type: "object" } },',
+    '    slots: ["footer"],',
+    "  }],",
     "  capabilities: {",
     "    github: httpProxy({",
     '      baseUrl: "https://api.github.com",',
@@ -334,6 +352,10 @@ async function fixtureAppProject() {
   await writeFile(path.join(root, "src", "main.ts"), [
     'const target = document.querySelector("#root") ?? document.body;',
     'target.textContent = "Repo Tools";',
+    "",
+  ].join("\n"));
+  await writeFile(path.join(root, "src", "summary-card.ts"), [
+    'document.body.textContent = "Summary Card";',
     "",
   ].join("\n"));
   await writeFile(path.join(root, "src", "server", "message.ts"), [

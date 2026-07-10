@@ -33,6 +33,13 @@ export const smokeAppDefinition: AgentDashAppDefinition = defineApp({
   panel: {
     entry: "src/main.tsx",
   },
+  ui_components: [{
+    component_key: "repo-tools.summary-card",
+    entry: "src/components/summary-card.tsx",
+    props_schema: inputSchema,
+    events_schema: { select: inputSchema },
+    slots: ["footer"],
+  }],
   capabilities: {
     github: httpProxy({
       baseUrl: "https://api.github.com",

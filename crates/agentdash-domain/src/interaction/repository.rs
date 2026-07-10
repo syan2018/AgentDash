@@ -130,7 +130,11 @@ pub trait InteractionPresentationRepository: Send + Sync {
         lease: &InteractionRendererLease,
         expected_revision: Option<u64>,
     ) -> Result<(), InteractionError>;
-    async fn release_renderer_lease(&self, lease_id: Uuid) -> Result<(), InteractionError>;
+    async fn release_renderer_lease(
+        &self,
+        lease_id: Uuid,
+        expected_revision: u64,
+    ) -> Result<(), InteractionError>;
     async fn list_active_renderer_leases(
         &self,
         instance_id: Uuid,

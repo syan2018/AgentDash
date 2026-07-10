@@ -587,16 +587,26 @@ impl InteractionPresentationRepository for PostgresInteractionRepository {
         Ok(())
     }
 
-    async fn release_renderer_lease(&self, lease_id: Uuid) -> Result<(), InteractionError> {
-        let result = sqlx::query("DELETE FROM interaction_renderer_leases WHERE id=$1")
-            .bind(lease_id)
-            .execute(&self.pool)
-            .await
-            .map_err(db_error("interaction_renderer_leases"))?;
+    async fn release_renderer_lease(
+        &self,
+        lease_id: Uuid,
+        expected_revision: u64,
+    ) -> Result<(), InteractionError> {
+        let result =
+            sqlx::query("DELETE FROM interaction_renderer_leases WHERE id=$1 AND revision=$2")
+                .bind(lease_id)
+                .bind(to_i64(
+                    expected_revision,
+                    "interaction_renderer_lease.expected_revision",
+                )?)
+                .execute(&self.pool)
+                .await
+                .map_err(db_error("interaction_renderer_leases"))?;
         if result.rows_affected() == 0 {
-            return Err(InteractionError::NotFound {
-                entity: "interaction_renderer_lease",
-                id: lease_id.to_string(),
+            return Err(InteractionError::StateRevisionConflict {
+                instance_id: lease_id,
+                expected: expected_revision,
+                actual: 0,
             });
         }
         Ok(())

@@ -39,6 +39,8 @@ export type InteractionDefinitionLineageKindDto = "published_from" | "copied_fro
 
 export type InteractionDefinitionStatusDto = "active" | "archived";
 
+export type InteractionEventDto = { id: string, instance_id: string, sequence: bigint, command_id: string, command_key: string, actor: JsonValue, payload: JsonValue, resulting_state_revision: bigint, created_at: string, };
+
 export type InteractionInstanceDto = { instance_id: string, owner: InteractionOwnerDto, definition_id: string, definition_revision_id: string, interaction_contract_version: number, state: JsonValue, state_revision: bigint, status: string, pinned_artifacts: Array<InteractionPinnedArtifactDto>, created_at: string, updated_at: string, closed_at?: string, };
 
 export type InteractionInstanceViewDto = { instance: InteractionInstanceDto, runtime_bindings: Array<InteractionRuntimeBindingDto>, };
@@ -48,6 +50,12 @@ export type InteractionOperationRefDto = { namespace: string, provider_key: stri
 export type InteractionOwnerDto = { "kind": "user", "id": string } | { "kind": "project", "id": string };
 
 export type InteractionPinnedArtifactDto = { artifact_ref: string, digest: string, };
+
+export type InteractionPresentationQueryDto = { presentation_key: string, };
+
+export type InteractionPresentationStateDto = { id: string, instance_id: string, user_id: string, presentation_key: string, revision: bigint, value: JsonValue, updated_at: string, };
+
+export type InteractionRendererLeaseDto = { id: string, instance_id: string, renderer_key: string, user_id: string, revision: bigint, acquired_at: string, renewed_at: string, expires_at: string, };
 
 export type InteractionResourceSlotDto = { slot_key: string, kind: InteractionResourceSlotKindDto, required: boolean, contract: JsonValue, };
 
@@ -70,6 +78,8 @@ export type InteractionSourceSandboxDto = { libraries: Array<string>, import_map
 export type InteractionStatePatchV1ContractDto = { allowed_paths: Array<string>, max_operations: bigint, max_state_bytes: bigint, };
 
 export type ListCanvasDefinitionsQuery = { scope?: CanvasDefinitionListScopeDto, };
+
+export type ListInteractionEventsQueryDto = { after_sequence: bigint, };
 
 export type OperationScriptLimitsDto = { timeout_ms: number, max_source_bytes: number, max_input_bytes: number, max_output_bytes: number, max_rhai_operations: number, max_call_levels: number, max_string_size: number, max_array_size: number, max_map_size: number, max_operation_calls: number, max_parallel_operations: number, };
 
@@ -96,3 +106,9 @@ export type OperationWorkshopScriptRunResponseDto = { outcome: JsonValue, };
 export type OperationWorkshopSurfaceDto = { authority_revision: string, operations: Array<OperationWorkshopDescriptorDto>, };
 
 export type OperationWorkshopSurfaceRequestDto = { context: OperationWorkshopContextDto, };
+
+export type ReleaseInteractionRendererLeaseRequestDto = { expected_revision: bigint, };
+
+export type ReplaceInteractionPresentationRequestDto = { presentation_key: string, value: JsonValue, expected_revision: bigint | null, };
+
+export type UpsertInteractionRendererLeaseRequestDto = { renderer_key: string, ttl_seconds: bigint, expected_revision: bigint | null, };

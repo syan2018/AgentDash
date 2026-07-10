@@ -112,18 +112,21 @@ use agentdash_contracts::interaction::{
     InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
     InteractionComponentBindingDto, InteractionComponentEventBindingDto,
     InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
-    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionInstanceDto,
-    InteractionInstanceViewDto, InteractionOperationRefDto, InteractionOwnerDto,
-    InteractionPinnedArtifactDto, InteractionResourceSlotDto, InteractionResourceSlotKindDto,
-    InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
-    InteractionSourceChangesetDto, InteractionSourceFileChangeDto, InteractionSourceFileDto,
-    InteractionSourceSandboxDto, InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
+    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionEventDto,
+    InteractionInstanceDto, InteractionInstanceViewDto, InteractionOperationRefDto,
+    InteractionOwnerDto, InteractionPinnedArtifactDto, InteractionPresentationQueryDto,
+    InteractionPresentationStateDto, InteractionRendererLeaseDto, InteractionResourceSlotDto,
+    InteractionResourceSlotKindDto, InteractionRuntimeBindingDto,
+    InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto, InteractionSourceChangesetDto,
+    InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
+    InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery, ListInteractionEventsQueryDto,
     OperationScriptLimitsDto, OperationScriptPreflightTokenDto, OperationScriptProgramDto,
     OperationWorkshopContextDto, OperationWorkshopDescriptorDto, OperationWorkshopInvokeRequestDto,
     OperationWorkshopInvokeResponseDto, OperationWorkshopScriptPreflightRequestDto,
     OperationWorkshopScriptPreflightResponseDto, OperationWorkshopScriptRunRequestDto,
     OperationWorkshopScriptRunResponseDto, OperationWorkshopSurfaceDto,
-    OperationWorkshopSurfaceRequestDto,
+    OperationWorkshopSurfaceRequestDto, ReleaseInteractionRendererLeaseRequestDto,
+    ReplaceInteractionPresentationRequestDto, UpsertInteractionRendererLeaseRequestDto,
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthCredentialTargetDto, CodexOAuthFlowStatusDto, CodexOAuthStatusResponse,
@@ -898,6 +901,14 @@ fn main() {
             export_all::<CloseInteractionInstanceRequestDto>(dir);
             export_all::<InteractionCommandRequestDto>(dir);
             export_all::<InteractionCommandResponseDto>(dir);
+            export_all::<ListInteractionEventsQueryDto>(dir);
+            export_all::<InteractionEventDto>(dir);
+            export_all::<InteractionPresentationQueryDto>(dir);
+            export_all::<ReplaceInteractionPresentationRequestDto>(dir);
+            export_all::<InteractionPresentationStateDto>(dir);
+            export_all::<UpsertInteractionRendererLeaseRequestDto>(dir);
+            export_all::<ReleaseInteractionRendererLeaseRequestDto>(dir);
+            export_all::<InteractionRendererLeaseDto>(dir);
             export_all::<OperationWorkshopContextDto>(dir);
             export_all::<OperationWorkshopSurfaceRequestDto>(dir);
             export_all::<OperationWorkshopDescriptorDto>(dir);

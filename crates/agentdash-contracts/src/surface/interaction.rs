@@ -334,6 +334,72 @@ pub struct InteractionCommandResponseDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ListInteractionEventsQueryDto {
+    #[serde(default)]
+    pub after_sequence: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionEventDto {
+    pub id: String,
+    pub instance_id: String,
+    pub sequence: u64,
+    pub command_id: String,
+    pub command_key: String,
+    pub actor: Value,
+    pub payload: Value,
+    pub resulting_state_revision: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionPresentationQueryDto {
+    pub presentation_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ReplaceInteractionPresentationRequestDto {
+    pub presentation_key: String,
+    pub value: Value,
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionPresentationStateDto {
+    pub id: String,
+    pub instance_id: String,
+    pub user_id: String,
+    pub presentation_key: String,
+    pub revision: u64,
+    pub value: Value,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct UpsertInteractionRendererLeaseRequestDto {
+    pub renderer_key: String,
+    pub ttl_seconds: i64,
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ReleaseInteractionRendererLeaseRequestDto {
+    pub expected_revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionRendererLeaseDto {
+    pub id: String,
+    pub instance_id: String,
+    pub renderer_key: String,
+    pub user_id: String,
+    pub revision: u64,
+    pub acquired_at: String,
+    pub renewed_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationWorkshopContextDto {
     Project,

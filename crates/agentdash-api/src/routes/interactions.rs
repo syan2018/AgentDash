@@ -9,7 +9,9 @@ use agentdash_application::interaction::{
     InteractionCommandInput, InteractionCommandService, InteractionComponentArtifactResolver,
     InteractionEffectDescriptorAdmissionPort, InteractionInstanceAccess,
     InteractionInstanceAccessResolver, InteractionInstanceService, InteractionInstanceView,
-    PublishCanvasDefinitionInput, ResolvedComponentArtifact,
+    InteractionPresentationService, PublishCanvasDefinitionInput,
+    ReplaceInteractionPresentationInput, ResolvedComponentArtifact,
+    UpsertInteractionRendererLeaseInput,
 };
 use agentdash_application_runtime_gateway::{OperationPrincipal, OperationReadiness};
 use agentdash_contracts::interaction::{
@@ -20,12 +22,16 @@ use agentdash_contracts::interaction::{
     InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
     InteractionComponentBindingDto, InteractionComponentEventBindingDto,
     InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
-    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionInstanceDto,
-    InteractionInstanceViewDto, InteractionOperationRefDto, InteractionOwnerDto,
-    InteractionPinnedArtifactDto, InteractionResourceSlotDto, InteractionResourceSlotKindDto,
-    InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
-    InteractionSourceChangesetDto, InteractionSourceFileChangeDto, InteractionSourceFileDto,
-    InteractionSourceSandboxDto, InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
+    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionEventDto,
+    InteractionInstanceDto, InteractionInstanceViewDto, InteractionOperationRefDto,
+    InteractionOwnerDto, InteractionPinnedArtifactDto, InteractionPresentationQueryDto,
+    InteractionPresentationStateDto, InteractionRendererLeaseDto, InteractionResourceSlotDto,
+    InteractionResourceSlotKindDto, InteractionRuntimeBindingDto,
+    InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto, InteractionSourceChangesetDto,
+    InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
+    InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery, ListInteractionEventsQueryDto,
+    ReleaseInteractionRendererLeaseRequestDto, ReplaceInteractionPresentationRequestDto,
+    UpsertInteractionRendererLeaseRequestDto,
 };
 use agentdash_domain::interaction::{
     CommandActorPolicy, ComponentBinding, ComponentEventCommandBinding, DefinitionLineageKind,
@@ -100,11 +106,34 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/interaction-instances/{instance_id}/close",
             axum::routing::post(close_interaction_instance),
         )
+        .route(
+            "/interaction-instances/{instance_id}/events",
+            axum::routing::get(list_interaction_events),
+        )
+        .route(
+            "/interaction-instances/{instance_id}/presentation",
+            axum::routing::get(get_interaction_presentation).put(replace_interaction_presentation),
+        )
+        .route(
+            "/interaction-instances/{instance_id}/renderer-leases",
+            axum::routing::get(list_interaction_renderer_leases)
+                .put(upsert_interaction_renderer_lease),
+        )
+        .route(
+            "/interaction-instances/{instance_id}/renderer-leases/{lease_id}",
+            axum::routing::delete(release_interaction_renderer_lease),
+        )
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct InteractionInstancePath {
     instance_id: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct InteractionRendererLeasePath {
+    instance_id: String,
+    lease_id: String,
 }
 
 async fn list_canvas_definitions(
@@ -414,6 +443,133 @@ async fn close_interaction_instance(
     Ok(Json(interaction_instance_to_dto(instance)))
 }
 
+async fn list_interaction_events(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionInstancePath>,
+    Query(query): Query<ListInteractionEventsQueryDto>,
+) -> Result<Json<Vec<InteractionEventDto>>, ApiError> {
+    let events = presentation_service(&state, &current_user)
+        .list_events(
+            parse_uuid(&path.instance_id, "instance_id")?,
+            &current_user.user_id,
+            query.after_sequence,
+        )
+        .await?;
+    Ok(Json(
+        events
+            .into_iter()
+            .map(|event| InteractionEventDto {
+                id: event.id.to_string(),
+                instance_id: event.instance_id.to_string(),
+                sequence: event.sequence,
+                command_id: event.command_id.to_string(),
+                command_key: event.command_key,
+                actor: serde_json::to_value(event.actor).unwrap_or(serde_json::Value::Null),
+                payload: event.payload,
+                resulting_state_revision: event.resulting_state_revision,
+                created_at: event.created_at.to_rfc3339(),
+            })
+            .collect(),
+    ))
+}
+
+async fn get_interaction_presentation(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionInstancePath>,
+    Query(query): Query<InteractionPresentationQueryDto>,
+) -> Result<Json<Option<InteractionPresentationStateDto>>, ApiError> {
+    let state = presentation_service(&state, &current_user)
+        .get_presentation(
+            parse_uuid(&path.instance_id, "instance_id")?,
+            &current_user.user_id,
+            &query.presentation_key,
+        )
+        .await?;
+    Ok(Json(state.map(interaction_presentation_to_dto)))
+}
+
+async fn replace_interaction_presentation(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionInstancePath>,
+    Json(request): Json<ReplaceInteractionPresentationRequestDto>,
+) -> Result<Json<InteractionPresentationStateDto>, ApiError> {
+    let presentation = presentation_service(&state, &current_user)
+        .replace_presentation(
+            ReplaceInteractionPresentationInput {
+                instance_id: parse_uuid(&path.instance_id, "instance_id")?,
+                presentation_key: request.presentation_key,
+                value: request.value,
+                expected_revision: request.expected_revision,
+            },
+            &current_user.user_id,
+            Utc::now(),
+        )
+        .await?;
+    Ok(Json(interaction_presentation_to_dto(presentation)))
+}
+
+async fn list_interaction_renderer_leases(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionInstancePath>,
+) -> Result<Json<Vec<InteractionRendererLeaseDto>>, ApiError> {
+    let leases = presentation_service(&state, &current_user)
+        .list_renderer_leases(
+            parse_uuid(&path.instance_id, "instance_id")?,
+            &current_user.user_id,
+            Utc::now(),
+        )
+        .await?;
+    Ok(Json(
+        leases
+            .into_iter()
+            .map(interaction_renderer_lease_to_dto)
+            .collect(),
+    ))
+}
+
+async fn upsert_interaction_renderer_lease(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionInstancePath>,
+    Json(request): Json<UpsertInteractionRendererLeaseRequestDto>,
+) -> Result<Json<InteractionRendererLeaseDto>, ApiError> {
+    let lease = presentation_service(&state, &current_user)
+        .upsert_renderer_lease(
+            UpsertInteractionRendererLeaseInput {
+                instance_id: parse_uuid(&path.instance_id, "instance_id")?,
+                renderer_key: request.renderer_key,
+                ttl_seconds: request.ttl_seconds,
+                expected_revision: request.expected_revision,
+            },
+            &current_user.user_id,
+            Utc::now(),
+        )
+        .await?;
+    Ok(Json(interaction_renderer_lease_to_dto(lease)))
+}
+
+async fn release_interaction_renderer_lease(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionRendererLeasePath>,
+    Json(request): Json<ReleaseInteractionRendererLeaseRequestDto>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    presentation_service(&state, &current_user)
+        .release_renderer_lease(
+            parse_uuid(&path.instance_id, "instance_id")?,
+            parse_uuid(&path.lease_id, "lease_id")?,
+            request.expected_revision,
+            &current_user.user_id,
+            Utc::now(),
+        )
+        .await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
 fn definition_service(
     state: &Arc<AppState>,
     current_user: &agentdash_integration_api::AuthIdentity,
@@ -441,6 +597,22 @@ fn instance_service(
         access,
         Arc::new(ApiInteractionComponentArtifactResolver {
             installations: state.repos.project_extension_installation_repo.clone(),
+        }),
+    )
+}
+
+fn presentation_service(
+    state: &Arc<AppState>,
+    current_user: &agentdash_integration_api::AuthIdentity,
+) -> InteractionPresentationService {
+    InteractionPresentationService::new(
+        state.repos.interaction_definition_repo.clone(),
+        state.repos.interaction_instance_repo.clone(),
+        state.repos.interaction_event_repo.clone(),
+        state.repos.interaction_presentation_repo.clone(),
+        Arc::new(ApiInteractionInstanceAccessResolver {
+            project_repo: state.repos.project_repo.clone(),
+            context: project_authorization_context(current_user),
         }),
     )
 }
@@ -1044,6 +1216,35 @@ fn interaction_instance_to_dto(
         created_at: instance.created_at.to_rfc3339(),
         updated_at: instance.updated_at.to_rfc3339(),
         closed_at: instance.closed_at.map(|value| value.to_rfc3339()),
+    }
+}
+
+fn interaction_presentation_to_dto(
+    state: agentdash_domain::interaction::InteractionPresentationState,
+) -> InteractionPresentationStateDto {
+    InteractionPresentationStateDto {
+        id: state.id.to_string(),
+        instance_id: state.instance_id.to_string(),
+        user_id: state.user_id,
+        presentation_key: state.presentation_key,
+        revision: state.revision,
+        value: state.value,
+        updated_at: state.updated_at.to_rfc3339(),
+    }
+}
+
+fn interaction_renderer_lease_to_dto(
+    lease: agentdash_domain::interaction::InteractionRendererLease,
+) -> InteractionRendererLeaseDto {
+    InteractionRendererLeaseDto {
+        id: lease.id.to_string(),
+        instance_id: lease.instance_id.to_string(),
+        renderer_key: lease.renderer_key,
+        user_id: lease.user_id,
+        revision: lease.revision,
+        acquired_at: lease.acquired_at.to_rfc3339(),
+        renewed_at: lease.renewed_at.to_rfc3339(),
+        expires_at: lease.expires_at.to_rfc3339(),
     }
 }
 

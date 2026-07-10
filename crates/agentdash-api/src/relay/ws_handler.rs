@@ -804,7 +804,7 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseMcpCallTool { .. }
             | RelayMessage::ResponseMcpClose { .. }
             | RelayMessage::ResponseExtensionActionInvoke { .. }
-            | RelayMessage::ResponseExtensionChannelInvoke { .. }
+            | RelayMessage::ResponseExtensionProtocolInvoke { .. }
             | RelayMessage::ResponseExtensionBackendServiceInvoke { .. }
             | RelayMessage::ResponseVfsMaterialize { .. }
             | RelayMessage::ResponseTerminalSpawn { .. }

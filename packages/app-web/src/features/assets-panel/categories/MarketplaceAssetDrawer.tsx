@@ -678,8 +678,8 @@ function ExtensionTemplateBody({ asset }: { asset: LibraryAssetDto }) {
         {parsed.runtimeActions.length > 0 && (
           <MetaChip>{parsed.runtimeActions.length} runtime action</MetaChip>
         )}
-        {parsed.protocolChannels.length > 0 && (
-          <MetaChip>{parsed.protocolChannels.length} protocol channel</MetaChip>
+        {parsed.protocols.length > 0 && (
+          <MetaChip>{parsed.protocols.length} protocols</MetaChip>
         )}
         {parsed.workspaceTabs.length > 0 && (
           <MetaChip>{parsed.workspaceTabs.length} workspace tab</MetaChip>

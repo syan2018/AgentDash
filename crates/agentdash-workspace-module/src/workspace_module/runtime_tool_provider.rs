@@ -1,12 +1,11 @@
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
 use std::sync::Arc;
 
-use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
 use agentdash_application_ports::extension_runtime::{
-    ExtensionBackendServiceTransport, ExtensionRuntimeChannelTransport,
+    ExtensionBackendServiceTransport, ExtensionRuntimeProtocolTransport,
 };
 use agentdash_application_runtime_gateway::{
-    ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelInvoker, RuntimeGateway,
+    ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeProtocolInvoker, RuntimeGateway,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleOperationReadiness, WorkspaceModuleOperationReadinessKind,
@@ -14,6 +13,7 @@ use agentdash_contracts::workspace_module::{
 use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
+use agentdash_domain::workflow::RuntimeSessionExecutionAnchorRepository;
 use agentdash_spi::platform::tool_capability::CAP_WORKSPACE_MODULE;
 use agentdash_spi::{
     AgentTool, AgentToolError, AgentToolResult, ConnectorError, ContentPart, DynAgentTool,
@@ -28,8 +28,8 @@ use crate::workspace_module::runtime_bridge::{
 use crate::workspace_module::{
     WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
     WorkspaceModuleOperateTool, WorkspaceModulePresentTool,
-    project_authorization_context_from_identity, project_id_from_context,
-    resolve_invocation_backend, runtime_thread_id_from_context, shared_runtime_vfs_from_context,
+    delivery_runtime_session_id_from_context, project_authorization_context_from_identity,
+    project_id_from_context, resolve_invocation_backend, shared_runtime_vfs_from_context,
 };
 
 #[derive(Clone)]
@@ -38,10 +38,10 @@ pub struct WorkspaceModuleRuntimeToolProvider {
     project_repo: Arc<dyn ProjectRepository>,
     canvas_repo: Arc<dyn CanvasRepository>,
     canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
-    runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
     runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
-    extension_channel_transport: Option<Arc<dyn ExtensionRuntimeChannelTransport>>,
+    extension_protocol_transport: Option<Arc<dyn ExtensionRuntimeProtocolTransport>>,
     extension_backend_service_transport: Option<Arc<dyn ExtensionBackendServiceTransport>>,
 }
 
@@ -51,7 +51,7 @@ impl WorkspaceModuleRuntimeToolProvider {
         project_repo: Arc<dyn ProjectRepository>,
         canvas_repo: Arc<dyn CanvasRepository>,
         canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
-        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
+        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
         agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
         runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
     ) -> Self {
@@ -60,19 +60,19 @@ impl WorkspaceModuleRuntimeToolProvider {
             project_repo,
             canvas_repo,
             canvas_runtime_state_repo,
-            runtime_binding_repo,
+            execution_anchor_repo,
             agent_run_bridge_handle,
             runtime_gateway_handle,
-            extension_channel_transport: None,
+            extension_protocol_transport: None,
             extension_backend_service_transport: None,
         }
     }
 
-    pub fn with_extension_channel_transport(
+    pub fn with_extension_protocol_transport(
         mut self,
-        transport: Arc<dyn ExtensionRuntimeChannelTransport>,
+        transport: Arc<dyn ExtensionRuntimeProtocolTransport>,
     ) -> Self {
-        self.extension_channel_transport = Some(transport);
+        self.extension_protocol_transport = Some(transport);
         self
     }
 
@@ -88,7 +88,7 @@ impl WorkspaceModuleRuntimeToolProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InvokeRuntimeDependency {
     RuntimeGateway,
-    ExtensionChannelTransport,
+    ExtensionProtocolTransport,
     RuntimeBackendAnchor,
 }
 
@@ -96,7 +96,7 @@ impl InvokeRuntimeDependency {
     fn as_str(self) -> &'static str {
         match self {
             Self::RuntimeGateway => "runtime_gateway",
-            Self::ExtensionChannelTransport => "extension_channel_transport",
+            Self::ExtensionProtocolTransport => "extension_protocol_transport",
             Self::RuntimeBackendAnchor => "runtime_backend_anchor",
         }
     }
@@ -194,14 +194,14 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
         };
 
         let shared_vfs = shared_runtime_vfs_from_context(context)?;
-        let runtime_thread_id = runtime_thread_id_from_context(context);
+        let delivery_runtime_session_id = delivery_runtime_session_id_from_context(context);
         let current_user = context
             .session
             .identity
             .as_ref()
             .map(project_authorization_context_from_identity);
-        let channel_transport_available = self.extension_channel_transport.is_some();
-        let backend_readiness = operation_backend_readiness(context, &runtime_thread_id);
+        let protocol_transport_available = self.extension_protocol_transport.is_some();
+        let backend_readiness = operation_backend_readiness(context, &delivery_runtime_session_id);
         let backend_service_readiness = operation_backend_service_readiness(
             &backend_readiness,
             self.extension_backend_service_transport.is_some(),
@@ -222,12 +222,12 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 .with_current_user(current_user.clone())
                 .with_agent_run_visibility(
                     self.agent_run_bridge_handle.clone(),
-                    runtime_thread_id.clone(),
+                    delivery_runtime_session_id.clone(),
                 )
                 .with_runtime_dependencies(
                     self.runtime_gateway_handle.clone(),
-                    runtime_thread_id.clone(),
-                    channel_transport_available,
+                    delivery_runtime_session_id.clone(),
+                    protocol_transport_available,
                     backend_readiness.clone(),
                     backend_service_readiness.clone(),
                 ),
@@ -248,12 +248,12 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 .with_current_user(current_user.clone())
                 .with_agent_run_visibility(
                     self.agent_run_bridge_handle.clone(),
-                    runtime_thread_id.clone(),
+                    delivery_runtime_session_id.clone(),
                 )
                 .with_runtime_dependencies(
                     self.runtime_gateway_handle.clone(),
-                    runtime_thread_id.clone(),
-                    channel_transport_available,
+                    delivery_runtime_session_id.clone(),
+                    protocol_transport_available,
                     backend_readiness.clone(),
                     backend_service_readiness.clone(),
                 ),
@@ -272,7 +272,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                     project_id,
                     shared_vfs.clone(),
                     self.agent_run_bridge_handle.clone(),
-                    Some(runtime_thread_id.clone()),
+                    Some(delivery_runtime_session_id.clone()),
                 )
                 .with_current_user(current_user.clone())
                 .with_turn_id(context.session.turn_id.clone()),
@@ -287,7 +287,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             self.push_invoke_tool(
                 context,
                 project_id,
-                &runtime_thread_id,
+                &delivery_runtime_session_id,
                 current_user.clone(),
                 &mut tools,
             )
@@ -303,17 +303,17 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 WorkspaceModulePresentTool::new(
                     self.installation_repo.clone(),
                     self.canvas_repo.clone(),
-                    self.runtime_binding_repo.clone(),
+                    self.execution_anchor_repo.clone(),
                     project_id,
                     shared_vfs,
                     self.agent_run_bridge_handle.clone(),
-                    runtime_thread_id,
+                    delivery_runtime_session_id,
                     context.session.turn_id.clone(),
                 )
                 .with_current_user(current_user.clone())
                 .with_runtime_dependencies(
                     self.runtime_gateway_handle.clone(),
-                    channel_transport_available,
+                    protocol_transport_available,
                     backend_readiness.clone(),
                     backend_service_readiness.clone(),
                 ),
@@ -326,12 +326,12 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
 
 fn operation_backend_readiness(
     context: &ExecutionContext,
-    runtime_thread_id: &str,
+    delivery_runtime_session_id: &str,
 ) -> WorkspaceModuleOperationReadiness {
-    match context
-        .session
-        .require_runtime_backend_anchor("workspace_module_operations", Some(runtime_thread_id))
-    {
+    match context.session.require_runtime_backend_anchor(
+        "workspace_module_operations",
+        Some(delivery_runtime_session_id),
+    ) {
         Ok(anchor) => {
             if resolve_invocation_backend(context.session.vfs.as_ref(), Some(anchor)).is_some() {
                 WorkspaceModuleOperationReadiness::ready()
@@ -371,7 +371,7 @@ impl WorkspaceModuleRuntimeToolProvider {
         &self,
         context: &ExecutionContext,
         project_id: uuid::Uuid,
-        runtime_thread_id: &str,
+        delivery_runtime_session_id: &str,
         current_user: Option<agentdash_domain::project::ProjectAuthorizationContext>,
         tools: &mut Vec<DynAgentTool>,
     ) {
@@ -394,10 +394,10 @@ impl WorkspaceModuleRuntimeToolProvider {
             }
         };
 
-        let backend_anchor = match context
-            .session
-            .require_runtime_backend_anchor("workspace_module_invoke", Some(runtime_thread_id))
-        {
+        let backend_anchor = match context.session.require_runtime_backend_anchor(
+            "workspace_module_invoke",
+            Some(delivery_runtime_session_id),
+        ) {
             Ok(anchor) => anchor,
             Err(error) => {
                 let diagnostic_context = DiagnosticErrorContext::new(
@@ -407,7 +407,7 @@ impl WorkspaceModuleRuntimeToolProvider {
                 diag_error!(Warn, Subsystem::AgentRun,
                     context = &diagnostic_context,
                     error = &error,
-                    runtime_thread_id = %runtime_thread_id,
+                    delivery_runtime_session_id = %delivery_runtime_session_id,
                     project_id = %project_id,
                     tool_name = "workspace_module_invoke",
                     "workspace_module_invoke runtime backend anchor resolution failed"
@@ -420,7 +420,7 @@ impl WorkspaceModuleRuntimeToolProvider {
         };
         let backend =
             resolve_invocation_backend(context.session.vfs.as_ref(), Some(backend_anchor));
-        let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+        let protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
             self.installation_repo.clone(),
             transport,
         ));
@@ -438,13 +438,13 @@ impl WorkspaceModuleRuntimeToolProvider {
                 self.installation_repo.clone(),
                 self.canvas_repo.clone(),
                 self.canvas_runtime_state_repo.clone(),
-                self.runtime_binding_repo.clone(),
+                self.execution_anchor_repo.clone(),
                 project_id,
-                runtime_thread_id.to_string(),
+                delivery_runtime_session_id.to_string(),
                 None,
                 backend,
                 gateway,
-                channel_invoker,
+                protocol_invoker,
                 backend_service_invoker,
             )
             .with_current_user(current_user)
@@ -457,23 +457,23 @@ impl WorkspaceModuleRuntimeToolProvider {
     ) -> Result<
         (
             Arc<RuntimeGateway>,
-            Arc<dyn ExtensionRuntimeChannelTransport>,
+            Arc<dyn ExtensionRuntimeProtocolTransport>,
         ),
         Vec<InvokeRuntimeDependency>,
     > {
         let runtime_gateway = self.runtime_gateway_handle.get().await;
-        let extension_channel_transport = self.extension_channel_transport.as_ref().cloned();
+        let extension_protocol_transport = self.extension_protocol_transport.as_ref().cloned();
         let mut missing = Vec::new();
         if runtime_gateway.is_none() {
             missing.push(InvokeRuntimeDependency::RuntimeGateway);
         }
-        if extension_channel_transport.is_none() {
-            missing.push(InvokeRuntimeDependency::ExtensionChannelTransport);
+        if extension_protocol_transport.is_none() {
+            missing.push(InvokeRuntimeDependency::ExtensionProtocolTransport);
         }
         if missing.is_empty() {
             Ok((
                 runtime_gateway.expect("checked runtime gateway"),
-                extension_channel_transport.expect("checked channel transport"),
+                extension_protocol_transport.expect("checked channel transport"),
             ))
         } else {
             Err(missing)

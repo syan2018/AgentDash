@@ -35,8 +35,8 @@ use agentdash_application_ports::extension_runtime::{
     ExtensionRuntimeActionTransportError,
 };
 use agentdash_application_runtime_gateway::{
-    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
-    ExtensionRuntimeChannelInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
+    ExtensionRuntimeProtocolConsumer, ExtensionRuntimeProtocolInvokeRequest,
+    ExtensionRuntimeProtocolInvokeResult, RuntimeActionKey, RuntimeActor, RuntimeContext,
     RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
     attach_extension_invocation_workspace, resolve_extension_invocation_workspace,
 };
@@ -46,8 +46,8 @@ use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
     ExtensionRuntimeInvokeActionResponse, ExtensionRuntimeInvokeBackendServiceRequest,
     ExtensionRuntimeInvokeBackendServiceResponse,
-    ExtensionRuntimeInvokeChannelRequest as ExtensionRuntimeInvokeChannelRequestDto,
-    ExtensionRuntimeInvokeChannelResponse, ExtensionRuntimeTraceResponse,
+    ExtensionRuntimeInvokeProtocolRequest as ExtensionRuntimeInvokeProtocolRequestDto,
+    ExtensionRuntimeInvokeProtocolResponse, ExtensionRuntimeTraceResponse,
     UninstallExtensionInstallationResponse,
 };
 use agentdash_domain::DomainError;
@@ -68,7 +68,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::post(invoke_agent_run_extension_runtime_action),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-channel",
+            "/agent-runs/{run_id}/agents/{agent_id}/extension-runtime/invoke-protocol",
             axum::routing::post(invoke_agent_run_extension_runtime_channel),
         )
         .route(
@@ -178,13 +178,13 @@ pub async fn invoke_agent_run_extension_runtime_action(
     Ok(Json(extension_runtime_invoke_response(result)))
 }
 
-/// POST `/api/agent-runs/:run_id/agents/:agent_id/extension-runtime/invoke-channel`
+/// POST `/api/agent-runs/:run_id/agents/:agent_id/extension-runtime/invoke-protocol`
 pub async fn invoke_agent_run_extension_runtime_channel(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<AgentRunExtensionRuntimePath>,
-    Json(req): Json<ExtensionRuntimeInvokeChannelRequestDto>,
-) -> Result<Json<ExtensionRuntimeInvokeChannelResponse>, ApiError> {
+    Json(req): Json<ExtensionRuntimeInvokeProtocolRequestDto>,
+) -> Result<Json<ExtensionRuntimeInvokeProtocolResponse>, ApiError> {
     let runtime_surface = resolve_current_runtime_surface_with_backend_for_agent_run_for_api(
         &state,
         &current_user,
@@ -199,14 +199,14 @@ pub async fn invoke_agent_run_extension_runtime_channel(
     let session_id = runtime_surface.runtime_session_id.clone();
     let backend_anchor = &runtime_surface.runtime_backend_anchor;
     let backend_id = backend_anchor.backend_id().to_string();
-    if req.channel_key.trim().is_empty() {
+    if req.protocol_key.trim().is_empty() {
         return Err(ApiError::BadRequest(
-            "extension channel invoke 缺少 channel_key".into(),
+            "extension protocol invoke 缺少 protocol_key".into(),
         ));
     }
     if req.method.trim().is_empty() {
         return Err(ApiError::BadRequest(
-            "extension channel invoke 缺少 method".into(),
+            "extension protocol invoke 缺少 method".into(),
         ));
     }
     ensure_project_backend_access(&state, project_id, &backend_id).await?;
@@ -218,21 +218,23 @@ pub async fn invoke_agent_run_extension_runtime_channel(
         .consumer_extension_key
         .as_ref()
         .map(
-            |extension_key| ExtensionRuntimeChannelConsumer::ExtensionPanel {
+            |extension_key| ExtensionRuntimeProtocolConsumer::ExtensionPanel {
                 extension_key: extension_key.trim().to_string(),
             },
         )
-        .unwrap_or(ExtensionRuntimeChannelConsumer::SessionUser);
+        .unwrap_or(ExtensionRuntimeProtocolConsumer::SessionUser);
     let result = state
         .services
-        .extension_runtime_channel_invoker
-        .invoke(ExtensionRuntimeChannelInvokeRequest {
+        .extension_runtime_protocol_invoker
+        .invoke(ExtensionRuntimeProtocolInvokeRequest {
             project_id,
             session_id,
             backend_id,
             workspace,
             consumer,
-            channel_key: req.channel_key,
+            provider_extension_key: req.provider_extension_key,
+            protocol_key: req.protocol_key,
+            protocol_version: req.protocol_version,
             dependency_alias: req.dependency_alias,
             method: req.method,
             input: req.input,
@@ -501,10 +503,13 @@ fn extension_runtime_invoke_response(
 }
 
 fn extension_runtime_channel_invoke_response(
-    result: ExtensionRuntimeChannelInvokeResult,
-) -> ExtensionRuntimeInvokeChannelResponse {
-    ExtensionRuntimeInvokeChannelResponse {
-        channel_key: result.channel_key,
+    result: ExtensionRuntimeProtocolInvokeResult,
+) -> ExtensionRuntimeInvokeProtocolResponse {
+    ExtensionRuntimeInvokeProtocolResponse {
+        provider_extension_key: result.provider_extension_key,
+        provider_extension_id: result.provider_extension_id,
+        protocol_key: result.protocol_key,
+        protocol_version: result.protocol_version,
         method: result.method,
         trace: extension_runtime_trace_response(&result.trace),
         output: ExtensionRuntimeInvocationOutputResponse {

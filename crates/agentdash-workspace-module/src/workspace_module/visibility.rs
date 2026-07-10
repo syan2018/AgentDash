@@ -289,7 +289,7 @@ mod tests {
                 output_schema: serde_json::json!({"type": "object"}),
                 permissions: Vec::new(),
             }],
-            protocol_channels: vec![],
+            protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
             permissions: vec![],

@@ -492,11 +492,11 @@ pub enum RelayMessage {
         payload: CommandExtensionActionInvokePayload,
     },
 
-    /// 调用本机 TS Extension Host protocol channel
-    #[serde(rename = "command.extension_channel_invoke")]
-    CommandExtensionChannelInvoke {
+    /// 调用本机 TS Extension Host protocol
+    #[serde(rename = "command.extension_protocol_invoke")]
+    CommandExtensionProtocolInvoke {
         id: String,
-        payload: CommandExtensionChannelInvokePayload,
+        payload: CommandExtensionProtocolInvokePayload,
     },
 
     /// 调用 extension-owned 本机 backendService
@@ -552,11 +552,11 @@ pub enum RelayMessage {
         error: Option<RelayError>,
     },
 
-    #[serde(rename = "response.extension_channel_invoke")]
-    ResponseExtensionChannelInvoke {
+    #[serde(rename = "response.extension_protocol_invoke")]
+    ResponseExtensionProtocolInvoke {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        payload: Option<ResponseExtensionChannelInvokePayload>,
+        payload: Option<ResponseExtensionProtocolInvokePayload>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -718,14 +718,14 @@ impl RelayMessage {
             | Self::CommandMcpCallTool { id, .. }
             | Self::CommandMcpClose { id, .. }
             | Self::CommandExtensionActionInvoke { id, .. }
-            | Self::CommandExtensionChannelInvoke { id, .. }
+            | Self::CommandExtensionProtocolInvoke { id, .. }
             | Self::CommandExtensionBackendServiceInvoke { id, .. }
             | Self::ResponseMcpProbeTransport { id, .. }
             | Self::ResponseMcpListTools { id, .. }
             | Self::ResponseMcpCallTool { id, .. }
             | Self::ResponseMcpClose { id, .. }
             | Self::ResponseExtensionActionInvoke { id, .. }
-            | Self::ResponseExtensionChannelInvoke { id, .. }
+            | Self::ResponseExtensionProtocolInvoke { id, .. }
             | Self::ResponseExtensionBackendServiceInvoke { id, .. }
             | Self::EventCapabilitiesChanged { id, .. }
             | Self::EventSessionNotification { id, .. }
@@ -1087,13 +1087,14 @@ mod tests {
     }
 
     #[test]
-    fn extension_channel_invoke_roundtrip() {
-        let msg = RelayMessage::CommandExtensionChannelInvoke {
+    fn extension_protocol_invoke_roundtrip() {
+        let msg = RelayMessage::CommandExtensionProtocolInvoke {
             id: "ext-channel-1".to_string(),
-            payload: CommandExtensionChannelInvokePayload {
+            payload: CommandExtensionProtocolInvokePayload {
                 provider_extension_key: "protocol-demo".to_string(),
                 provider_extension_id: "protocol-demo".to_string(),
-                channel_key: "protocol-demo.api".to_string(),
+                protocol_key: "protocol-demo.api".to_string(),
+                protocol_version: "1.0.0".to_string(),
                 method: "echo".to_string(),
                 project_id: "project-1".to_string(),
                 session_id: "session-1".to_string(),
@@ -1104,7 +1105,7 @@ mod tests {
                         "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                             .to_string(),
                 },
-                consumer: ExtensionChannelConsumerRelay {
+                consumer: ExtensionProtocolConsumerRelay {
                     kind: "extension_panel".to_string(),
                     extension_key: Some("protocol-demo".to_string()),
                     extension_id: Some("protocol-demo".to_string()),
@@ -1119,8 +1120,8 @@ mod tests {
             },
         };
         let json = serde_json::to_value(&msg).expect("serialize");
-        assert_eq!(json["type"], "command.extension_channel_invoke");
-        assert_eq!(json["payload"]["channel_key"], "protocol-demo.api");
+        assert_eq!(json["type"], "command.extension_protocol_invoke");
+        assert_eq!(json["payload"]["protocol_key"], "protocol-demo.api");
         assert_eq!(json["payload"]["method"], "echo");
         assert_eq!(
             json["payload"]["workspace"]["root_ref"],
@@ -1131,7 +1132,7 @@ mod tests {
                 .as_object()
                 .expect("payload object")
                 .contains_key("backend_id"),
-            "extension channel relay payload must not carry backend_id; routing owns the target"
+            "extension protocol relay payload must not carry backend_id; routing owns the target"
         );
 
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
@@ -1139,13 +1140,14 @@ mod tests {
     }
 
     #[test]
-    fn extension_channel_response_roundtrip() {
-        let msg = RelayMessage::ResponseExtensionChannelInvoke {
+    fn extension_protocol_response_roundtrip() {
+        let msg = RelayMessage::ResponseExtensionProtocolInvoke {
             id: "ext-channel-1".to_string(),
-            payload: Some(ResponseExtensionChannelInvokePayload {
+            payload: Some(ResponseExtensionProtocolInvokePayload {
                 provider_extension_key: "protocol-demo".to_string(),
                 provider_extension_id: "protocol-demo".to_string(),
-                channel_key: "protocol-demo.api".to_string(),
+                protocol_key: "protocol-demo.api".to_string(),
+                protocol_version: "1.0.0".to_string(),
                 method: "echo".to_string(),
                 output: serde_json::json!({ "ok": true }),
                 metadata: serde_json::Map::from_iter([(
@@ -1156,7 +1158,7 @@ mod tests {
             error: None,
         };
         let json = serde_json::to_value(&msg).expect("serialize");
-        assert_eq!(json["type"], "response.extension_channel_invoke");
+        assert_eq!(json["type"], "response.extension_protocol_invoke");
         assert_eq!(json["payload"]["metadata"]["trace_id"], "trace-1");
     }
 

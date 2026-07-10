@@ -5,8 +5,8 @@ import type {
   ExtensionRuntimeInvokeActionResponse,
   ExtensionRuntimeInvokeBackendServiceRequest,
   ExtensionRuntimeInvokeBackendServiceResponse,
-  ExtensionRuntimeInvokeChannelRequest,
-  ExtensionRuntimeInvokeChannelResponse,
+  ExtensionRuntimeInvokeProtocolRequest,
+  ExtensionRuntimeInvokeProtocolResponse,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../generated/extension-runtime-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
@@ -35,10 +35,10 @@ export interface ExtensionWebviewBridgeServices {
     target: AgentRunRuntimeTarget,
     request: ExtensionRuntimeInvokeActionRequest,
   ): Promise<ExtensionRuntimeInvokeActionResponse>;
-  invokeChannel(
+  invokeProtocol(
     target: AgentRunRuntimeTarget,
-    request: ExtensionRuntimeInvokeChannelRequest,
-  ): Promise<ExtensionRuntimeInvokeChannelResponse>;
+    request: ExtensionRuntimeInvokeProtocolRequest,
+  ): Promise<ExtensionRuntimeInvokeProtocolResponse>;
   invokeBackendService(
     target: AgentRunRuntimeTarget,
     request: ExtensionRuntimeInvokeBackendServiceRequest,
@@ -102,15 +102,15 @@ export async function handleExtensionWebviewBridgeRequest({
       });
       return result.output.output;
     }
-    case "extension.invoke_channel": {
-      const channelKey = bridgeParamString(message.params, "channel_key");
+    case "extension.invoke_protocol": {
+      const protocolKey = bridgeParamString(message.params, "protocol_key");
       const method = bridgeParamString(message.params, "method");
-      if (!channelKey || !method) {
-        throw new Error("extension.invoke_channel 参数非法");
+      if (!protocolKey || !method) {
+        throw new Error("extension.invoke_protocol 参数非法");
       }
       const dependencyAlias = bridgeParamString(message.params, "dependency_alias");
-      const result = await services.invokeChannel(agentRunTarget, {
-        channel_key: channelKey,
+      const result = await services.invokeProtocol(agentRunTarget, {
+        protocol_key: protocolKey,
         method,
         input: toJsonValue(message.params.input),
         consumer_extension_key: tab.extension_key,

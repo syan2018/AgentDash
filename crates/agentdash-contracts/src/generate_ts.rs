@@ -97,12 +97,12 @@ use agentdash_contracts::extension_runtime::{
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
     ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
-    ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
-    ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionProcessPermissionAccessResponse, ExtensionProtocolMethodProjectionResponse,
+    ExtensionProtocolProjectionResponse, ExtensionRuntimeActionKindResponse,
     ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeInvocationOutputResponse,
     ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
     ExtensionRuntimeInvokeBackendServiceRequest, ExtensionRuntimeInvokeBackendServiceResponse,
-    ExtensionRuntimeInvokeChannelRequest, ExtensionRuntimeInvokeChannelResponse,
+    ExtensionRuntimeInvokeProtocolRequest, ExtensionRuntimeInvokeProtocolResponse,
     ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
@@ -925,8 +925,8 @@ fn main() {
             export_all::<ExtensionFlagProjectionResponse>(dir);
             export_all::<ExtensionMessageRendererProjectionResponse>(dir);
             export_all::<ExtensionRuntimeActionProjectionResponse>(dir);
-            export_all::<ExtensionProtocolChannelMethodProjectionResponse>(dir);
-            export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
+            export_all::<ExtensionProtocolMethodProjectionResponse>(dir);
+            export_all::<ExtensionProtocolProjectionResponse>(dir);
             export_all::<ExtensionDependencyDeclarationResponse>(dir);
             export_all::<ExtensionDependencyProjectionResponse>(dir);
             export_all::<ExtensionWorkspaceTabLoadabilityModeResponse>(dir);
@@ -936,12 +936,12 @@ fn main() {
             export_all::<ExtensionBundleProjectionResponse>(dir);
             export_all::<ExtensionRuntimeProjectionResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
-            export_all::<ExtensionRuntimeInvokeChannelRequest>(dir);
+            export_all::<ExtensionRuntimeInvokeProtocolRequest>(dir);
             export_all::<ExtensionRuntimeInvokeBackendServiceRequest>(dir);
             export_all::<ExtensionRuntimeTraceResponse>(dir);
             export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeProtocolResponse>(dir);
             export_all::<ExtensionBackendServiceInvokeMetadataResponse>(dir);
             export_all::<ExtensionBackendServiceHttpResponse>(dir);
             export_all::<ExtensionBackendServiceReadinessResponse>(dir);

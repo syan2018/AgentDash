@@ -187,7 +187,7 @@ impl Default for WorkspaceModuleRuntimeActionCatalog {
 #[derive(Debug, Clone)]
 pub struct WorkspaceModuleOperationContext {
     pub runtime_actions: WorkspaceModuleRuntimeActionCatalog,
-    pub channel_readiness: WorkspaceModuleOperationReadiness,
+    pub protocol_readiness: WorkspaceModuleOperationReadiness,
     pub backend_readiness: WorkspaceModuleOperationReadiness,
     pub backend_service_readiness: WorkspaceModuleOperationReadiness,
 }
@@ -196,7 +196,7 @@ impl WorkspaceModuleOperationContext {
     pub fn ready(runtime_actions: Vec<RuntimeActionDescriptor>) -> Self {
         Self {
             runtime_actions: WorkspaceModuleRuntimeActionCatalog::from_descriptors(runtime_actions),
-            channel_readiness: WorkspaceModuleOperationReadiness::ready(),
+            protocol_readiness: WorkspaceModuleOperationReadiness::ready(),
             backend_readiness: WorkspaceModuleOperationReadiness::ready(),
             backend_service_readiness: WorkspaceModuleOperationReadiness::ready(),
         }
@@ -207,9 +207,9 @@ impl Default for WorkspaceModuleOperationContext {
     fn default() -> Self {
         Self {
             runtime_actions: WorkspaceModuleRuntimeActionCatalog::default(),
-            channel_readiness: WorkspaceModuleOperationReadiness::unavailable(
-                WorkspaceModuleOperationReadinessKind::MissingChannelTransport,
-                "extension channel transport is not attached to this workspace module projection",
+            protocol_readiness: WorkspaceModuleOperationReadiness::unavailable(
+                WorkspaceModuleOperationReadinessKind::MissingProtocolTransport,
+                "extension protocol transport is not attached to this workspace module projection",
             ),
             backend_readiness: WorkspaceModuleOperationReadiness::unavailable(
                 WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor,
@@ -442,17 +442,23 @@ fn operation_from_generated_projection(
                 readiness,
             )
         }
-        ExtensionGeneratedOperationDispatch::ProtocolChannel {
-            channel_key,
+        ExtensionGeneratedOperationDispatch::ProtocolMethod {
+            provider_extension_key,
+            provider_extension_id,
+            protocol_key,
+            protocol_version,
             method,
         } => (
-            "protocol_channel",
-            WorkspaceModuleOperationDispatch::ProtocolChannel {
-                channel_key: channel_key.clone(),
+            "protocol_method",
+            WorkspaceModuleOperationDispatch::ProtocolMethod {
+                provider_extension_key: provider_extension_key.clone(),
+                provider_extension_id: provider_extension_id.clone(),
+                protocol_key: protocol_key.clone(),
+                protocol_version: protocol_version.clone(),
                 method_name: method.clone(),
             },
             first_unready_or_ready([
-                &operation_context.channel_readiness,
+                &operation_context.protocol_readiness,
                 &operation_context.backend_readiness,
             ]),
         ),
@@ -785,10 +791,10 @@ fn describe_permission(permission: &ExtensionPermissionDeclaration) -> String {
         ExtensionPermissionDeclaration::RuntimeAction { action_key } => {
             format!("runtime_action:{action_key}")
         }
-        ExtensionPermissionDeclaration::ExtensionChannel {
-            channel_key,
+        ExtensionPermissionDeclaration::ExtensionProtocol {
+            protocol_key,
             methods,
-        } => format!("channel:{channel_key}[{}]", methods.join(",")),
+        } => format!("channel:{protocol_key}[{}]", methods.join(",")),
         ExtensionPermissionDeclaration::BackendService {
             service_key,
             routes,

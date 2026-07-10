@@ -769,13 +769,13 @@ const relayState = localRuntimeSnapshot?.relay_connection?.state ?? "not_configu
 - Extension bundle 作为 trusted local extension 在 Node runner context 中加载 self-contained ESM，原因是当前执行面使用本机 Node host 子进程承载插件代码；Host API facade 提供产品权限、协议稳定性与审计入口，不把 Node `vm` 作为不受信代码的安全隔离边界。
 - Node extension host 作为 AgentDash 外围后台 stdio 进程通过 `agentdash-process` substrate 启动，原因是桌面 GUI 宿主下该进程没有用户可见终端 surface，运行诊断只需要 domain/program/cwd/visibility 等启动事实。
 - `api.local.getProfile()` 由 Rust host API facade 返回 username、platform、arch、backend/project/session 与 workspace root 摘要，原因是本机 profile 是 local runtime 的事实源。
-- Host API 运行时裁决使用当前 action 或 provider channel method 的 `permissions` 声明；manifest 顶层 capability 用于安装摘要、依赖解析、可用性诊断和审计，原因是当前插件执行模型是 trusted local extension，不把顶层 capability 重复做成 deny path。
-- `ctx.api.runtime.invoke()` 优先调用当前 Project 已预加载 extension host 中注册的 runtime action；跨 extension action 调用要求当前 action 或 channel method 声明 `runtime.invoke:<action_key>` 或 `runtime.invoke`，并由 runner 限制 invocation depth，原因是 RuntimeGateway 已在 relay payload 中提供 Project enabled extension host surface，本机 runner 可以在同一 host process 内完成可信工具模型下的快速路由。
-- Protocol channel 使用 canonical provider channel key 作为 projection、routing 和 trace 事实；runner 提供 `ctx.api.channels.self()` 与 dependency alias sugar，Gateway 和 local host 仍记录 canonical provider extension/channel/method，原因是 authoring 体验不应改变审计与依赖解析事实。
+- Host API 运行时裁决使用当前 action 或 provider protocol method 的 `permissions` 声明；manifest 顶层 capability 用于安装摘要、依赖解析、可用性诊断和审计，原因是当前插件执行模型是 trusted local extension，不把顶层 capability 重复做成 deny path。
+- `ctx.api.runtime.invoke()` 优先调用当前 Project 已预加载 extension host 中注册的 runtime action；跨 extension action 调用要求当前 action 或 protocol method 声明 `runtime.invoke:<action_key>` 或 `runtime.invoke`，并由 runner 限制 invocation depth，原因是 RuntimeGateway 已在 relay payload 中提供 Project enabled extension host surface，本机 runner 可以在同一 host process 内完成可信工具模型下的快速路由。
+- Protocol 使用 canonical provider protocol key 作为 projection、routing 和 trace 事实；runner 提供 `ctx.api.protocols.self()` 与 dependency alias sugar，Gateway 和 local host 仍记录 canonical provider extension/channel/method，原因是 authoring 体验不应改变审计与依赖解析事实。
 - packaged mode 直接消费 `ExtensionArtifactCacheEntry.unpacked_dir`，原因是 artifact cache 已完成 archive digest 校验与安全解包。
 - action exception 和 host process exit 投影为 host 调用错误，原因是 extension host 故障应隔离在插件执行面内，保留 `agentdash-local` 主进程生命周期。
 - Relay `command.extension_action_invoke` 进入本机 CommandHandler 后调用 TS Extension Host，原因是 RuntimeGateway 只拥有 action/trace/placement 意图，具体插件执行发生在 local runtime。
-- Extension action/channel relay payload 携带 session workspace context 时，`root_ref` 来自当前 session VFS default mount；TS Extension Host 将它作为 workspace/process Host API 的默认 root，原因是插件执行目录必须跟随本次 session 的工作区事实。
+- Extension action/protocol relay payload 携带 session workspace context 时，`root_ref` 来自当前 session VFS default mount；TS Extension Host 将它作为 workspace/process Host API 的默认 root，原因是插件执行目录必须跟随本次 session 的工作区事实。
 - Relay payload 携带 package artifact 时，CommandHandler 先按 `artifact_id + archive_digest` 准备本机 cache，再用 extension key、backend id、project/session id、session workspace root 与 registered workspace roots 激活 TS Extension Host，原因是 packaged extension 的执行上下文由 Project 安装、session workspace 和本机登记事实共同确定。
 - Extension backendService 使用同一个 package artifact cache 作为来源，再 materialize 到 local runtime service cache 并启动 Node service。服务实例 identity 是 `project_id + backend_id + extension_key + service_key + artifact_id + archive_digest`，原因是同一 extension 可安装到多个 Project/backend，artifact digest 改变时必须形成新的本机执行实例。
 - backendService Node process 由 local runtime 注入 `AGENTDASH_BACKEND_SERVICE_HOST=127.0.0.1`、`AGENTDASH_BACKEND_SERVICE_PORT`、`AGENTDASH_BACKEND_SERVICE_URL`、`HOST` 和 `PORT`。`health_path` 存在时以 HTTP 2xx 作为 ready；缺省时以进程存活作为 ready。readiness 使用 `missing_artifact | materialize_failed | starting | health_failed | ready | process_exited | unsupported_runtime`。
@@ -786,7 +786,7 @@ const relayState = localRuntimeSnapshot?.relay_connection?.state ?? "not_configu
 ### 1. Scope / Trigger
 
 - Trigger: 本机 relay 命令同时覆盖 prompt、workspace、tool、materialization、MCP、extension 与 terminal；路由层必须保持薄入口，执行依赖由职责域 handler 持有。
-- Scope: `LocalCommandRouter`、domain command handlers、extension action/channel relay payload、Extension Host workspace/process/env/http/runtime/channel Host API。
+- Scope: `LocalCommandRouter`、domain command handlers、extension action/protocol relay payload、Extension Host workspace/process/env/http/runtime/channel Host API。
 
 ### 2. Signatures
 
@@ -827,7 +827,7 @@ pub struct ToolShellReadPayload {
 ### 3. Contracts
 
 - `LocalCommandRouter` 只匹配 `RelayMessage` envelope 并转发到 domain handler；prompt/session、workspace detect/browse、tool calls、materialization、MCP、extension 和 terminal 各自持有需要的依赖。
-- `CommandExtensionActionInvoke` 与 `CommandExtensionChannelInvoke` 由 extension handler 准备 package artifact cache、activation context 和 workspace context 后进入 `LocalExtensionHostManager`。
+- `CommandExtensionActionInvoke` 与 `CommandExtensionProtocolInvoke` 由 extension handler 准备 package artifact cache、activation context 和 workspace context 后进入 `LocalExtensionHostManager`。
 - `CommandToolShellExec` 省略 `yield_time_ms`、`CommandToolShellRead` 省略 `wait_ms` 时使用 relay protocol 默认观察窗口，原因是模型发起的普通 shell 工具调用需要给短命令完成和输出落盘留出一次自然收口机会。
 - shell session 读取在观察窗口内以“终态、无新输出直到 deadline、或新输出后短 terminal grace”作为返回边界，原因是 stdout/stderr chunk 与进程退出事件可能跨 tokio 调度 tick 到达；短 grace 能把快速命令的输出和 exit code 合并到同一次工具结果，同时让长期运行命令在输出 ready 后及时返回。
 - 云端 `RelayFsMountProvider` 的 shell control RPC timeout 必须按有效观察窗口外加传输余量计算，原因是本机 runtime 合法等待期间不能被云端 relay request timeout 提前截断。
@@ -844,11 +844,11 @@ pub struct ToolShellReadPayload {
 | shell read 省略 `wait_ms` | 本机使用 `DEFAULT_TOOL_SHELL_READ_WAIT_MS` 长轮询新输出或终态 |
 | shell start/read 观察窗口扩大 | 云端 relay RPC timeout 同步扩大为观察窗口加传输余量 |
 | Extension Host API 缺少 active extension | 返回 host API 调用错误 |
-| Host API 调用缺少 action 或 channel invocation context | 返回 permission denied |
-| action/channel method 未声明 Host API permission | 返回 permission denied |
+| Host API 调用缺少 action 或 protocol invocation context | 返回 permission denied |
+| action/protocol method 未声明 Host API permission | 返回 permission denied |
 | `process.exec` 设置 env key 但未声明 `process.env.set` 或 `process.env.set:{KEY}` | 返回 permission denied |
 | Host API 参数尝试传 raw workspace root | 使用 activation workspace context，越界路径按 workspace guard 失败 |
-| action/channel output 不满足 output schema | 返回 host 调用错误 |
+| action/protocol output 不满足 output schema | 返回 host 调用错误 |
 | `command.extension_backend_service_invoke` service 未 ready | 返回 response payload diagnostic，不升级成 relay envelope error |
 
 ### 5. Good/Base/Bad Cases
@@ -864,8 +864,8 @@ pub struct ToolShellReadPayload {
 - `agentdash-local` handler tests 覆盖 prompt/workspace/tool/materialization/MCP/extension/terminal 的 relay response 分发。
 - `agentdash-local` shell session tests 覆盖省略 `yield_time_ms` 的快速命令 completion 合并，以及省略 `wait_ms` 的 read 长轮询。
 - `agentdash-api` relay FS tests 覆盖 shell exec/read 的 RPC timeout 随有效观察窗口扩展。
-- `agentdash-local extensions::host` 测试 process permission、workspace root context、schema validation 和 action/channel output validation。
-- Extension runner tests 覆盖 `ctx.api.process.exec/shell` 和 `ctx.api.channels` 的 action/channel invocation context 透传。
+- `agentdash-local extensions::host` 测试 process permission、workspace root context、schema validation 和 action/protocol output validation。
+- Extension runner tests 覆盖 `ctx.api.process.exec/shell` 和 `ctx.api.protocols` 的 action/protocol invocation context 透传。
 
 ### 7. Boundary Mismatch / Canonical
 

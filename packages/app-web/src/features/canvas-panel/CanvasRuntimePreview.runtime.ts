@@ -225,7 +225,7 @@ export function buildPreviewDocument(
     const agentSubmitTimeoutMs = 60000;
     const pendingRuntimeInvocations = new Map();
     const pendingAssetUrls = new Map();
-    const pendingExtensionChannels = new Map();
+    const pendingExtensionProtocols = new Map();
     const pendingAgentSubmits = new Map();
     let runtimeInvokeSeq = 0;
     let assetUrlSeq = 0;
@@ -459,9 +459,9 @@ export function buildPreviewDocument(
         },
       }),
       extensions: Object.freeze({
-        invoke(channelKey, method, input = {}, options = {}) {
-          if (typeof channelKey !== "string" || channelKey.trim().length === 0) {
-            return Promise.reject(new Error("agentdash.extensions.invoke 需要非空 channelKey"));
+        invoke(protocolKey, method, input = {}, options = {}) {
+          if (typeof protocolKey !== "string" || protocolKey.trim().length === 0) {
+            return Promise.reject(new Error("agentdash.extensions.invoke 需要非空 protocolKey"));
           }
           if (typeof method !== "string" || method.trim().length === 0) {
             return Promise.reject(new Error("agentdash.extensions.invoke 需要非空 method"));
@@ -470,16 +470,16 @@ export function buildPreviewDocument(
           const requestId = "canvas-ext-channel-" + (++extensionChannelSeq);
           return new Promise((resolve, reject) => {
             const timeout = window.setTimeout(() => {
-              pendingExtensionChannels.delete(requestId);
-              reject(new Error("Canvas extension channel 调用超时"));
+              pendingExtensionProtocols.delete(requestId);
+              reject(new Error("Canvas extension protocol 调用超时"));
             }, extensionChannelTimeoutMs);
-            pendingExtensionChannels.set(requestId, { resolve, reject, timeout });
+            pendingExtensionProtocols.set(requestId, { resolve, reject, timeout });
             window.parent.postMessage({
               kind: "canvas-extension-channel-invoke",
               frame_id: frameId,
               generation: frameGeneration,
               request_id: requestId,
-              channel_key: channelKey,
+              protocol_key: protocolKey,
               method,
               input,
               dependency_alias: options && typeof options.dependency_alias === "string"
@@ -540,17 +540,17 @@ export function buildPreviewDocument(
       }
 
       if (payload.kind === "canvas-extension-channel-result") {
-        const pending = pendingExtensionChannels.get(payload.request_id);
+        const pending = pendingExtensionProtocols.get(payload.request_id);
         if (!pending) {
           return;
         }
-        pendingExtensionChannels.delete(payload.request_id);
+        pendingExtensionProtocols.delete(payload.request_id);
         window.clearTimeout(pending.timeout);
 
         if (payload.ok) {
           pending.resolve(payload.result);
         } else {
-          pending.reject(new Error(payload.error || "Canvas extension channel 调用失败"));
+          pending.reject(new Error(payload.error || "Canvas extension protocol 调用失败"));
         }
         return;
       }

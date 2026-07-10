@@ -9,8 +9,8 @@ import type {
   ExtensionRuntimeInvokeActionResponse,
   ExtensionRuntimeInvokeBackendServiceRequest,
   ExtensionRuntimeInvokeBackendServiceResponse,
-  ExtensionRuntimeInvokeChannelRequest,
-  ExtensionRuntimeInvokeChannelResponse,
+  ExtensionRuntimeInvokeProtocolRequest,
+  ExtensionRuntimeInvokeProtocolResponse,
   ExtensionRuntimeProjectionResponse,
   UninstallExtensionInstallationResponse,
 } from "../generated/extension-runtime-contracts";
@@ -33,12 +33,12 @@ export async function invokeAgentRunExtensionRuntimeAction(
   );
 }
 
-export async function invokeAgentRunExtensionRuntimeChannel(
+export async function invokeAgentRunExtensionRuntimeProtocol(
   target: AgentRunRuntimeTarget,
-  request: ExtensionRuntimeInvokeChannelRequest,
-): Promise<ExtensionRuntimeInvokeChannelResponse> {
-  return api.post<ExtensionRuntimeInvokeChannelResponse>(
-    agentRunScopedPath(target, "/extension-runtime/invoke-channel"),
+  request: ExtensionRuntimeInvokeProtocolRequest,
+): Promise<ExtensionRuntimeInvokeProtocolResponse> {
+  return api.post<ExtensionRuntimeInvokeProtocolResponse>(
+    agentRunScopedPath(target, "/extension-runtime/invoke-protocol"),
     request,
   );
 }

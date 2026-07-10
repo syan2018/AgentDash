@@ -199,7 +199,7 @@ export async function analyzeWebappDist(distDir, fetchRoutes) {
           file: file.relative,
           value: localhostUrl,
           message:
-            `发现绝对 localhost 请求 ${localhostUrl}；wrap-webapp 不会自动代理 localhost，也不会把它解释为 backendService，请声明匹配的 httpProxy/customChannel/backendService fetch route`,
+            `发现绝对 localhost 请求 ${localhostUrl}；wrap-webapp 不会自动代理 localhost，也不会把它解释为 backendService，请声明匹配的 httpProxy/customProtocol/backendService fetch route`,
         });
       }
     }
@@ -319,7 +319,7 @@ function diagnoseFetchUrl(url, file, fetchRoutes) {
         code: "api_fetch_route_required",
         file,
         value: url,
-        message: `发现 ${url} 请求；/api/** 类 route 必须通过 --fetch-route 显式绑定到 httpProxy/customChannel/backendService`,
+        message: `发现 ${url} 请求；/api/** 类 route 必须通过 --fetch-route 显式绑定到 httpProxy/customProtocol/backendService`,
       },
     ];
   }
@@ -331,7 +331,7 @@ function diagnoseFetchUrl(url, file, fetchRoutes) {
         file,
         value: url,
         message:
-          `发现绝对 localhost 请求 ${url}；wrap-webapp 不会自动代理 localhost，也不会把它解释为 backendService，请声明匹配的 httpProxy/customChannel/backendService fetch route`,
+          `发现绝对 localhost 请求 ${url}；wrap-webapp 不会自动代理 localhost，也不会把它解释为 backendService，请声明匹配的 httpProxy/customProtocol/backendService fetch route`,
       },
     ];
   }
@@ -608,7 +608,7 @@ Options:
 
 Fetch route binding examples:
   /api/**=httpProxy:https://api.example.com
-  /api/**=customChannel:demo.api#fetch
+  /api/**=customProtocol:demo.api#fetch
   /api/**=backendService:api
   http://localhost:5174/api/**=httpProxy:http://localhost:5174
 `);

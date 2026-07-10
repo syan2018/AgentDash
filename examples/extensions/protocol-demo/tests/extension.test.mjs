@@ -8,39 +8,39 @@ const extensionSource = await readFile(new URL("../src/extension.ts", import.met
 const clientSource = await readFile(new URL("../src/protocol/demo-client.ts", import.meta.url), "utf8");
 const panelSource = await readFile(new URL("../src/panel/App.tsx", import.meta.url), "utf8");
 
-test("manifest declares protocol channel provider and consumer dependency surfaces", () => {
+test("manifest declares protocol provider and consumer dependency surfaces", () => {
   assert.equal(manifest.extension_id, "protocol-demo");
   assert.equal(manifest.package.name, packageJson.name);
-  assert.equal(manifest.protocol_channels[0].channel_key, "protocol-demo.api");
+  assert.equal(manifest.protocols[0].protocol_key, "protocol-demo.api");
   assert.deepEqual(
-    manifest.protocol_channels[0].methods.map((method) => method.name),
+    manifest.protocols[0].methods.map((method) => method.name),
     ["greet", "inspectWorkspace", "runShell"],
   );
   assert.deepEqual(
-    manifest.protocol_channels[0].methods.find((method) => method.name === "runShell").permissions,
+    manifest.protocols[0].methods.find((method) => method.name === "runShell").permissions,
     ["process.shell", "env.read:PATH"],
   );
   assert.deepEqual(manifest.extension_dependencies[0], {
     alias: "demo",
     extension_id: "protocol-demo",
     version: "^1.0.0",
-    channels: ["protocol-demo.api"],
+    protocols: ["protocol-demo.api"],
   });
 });
 
 test("manifest covers built-in host capabilities without lifecycle scripts", () => {
   assert.deepEqual(
     manifest.permissions.map((permission) => permission.kind),
-    ["http", "workspace", "env", "process", "extension_channel"],
+    ["http", "workspace", "env", "process", "extension_protocol"],
   );
   assert.equal(packageJson.scripts.install, undefined);
   assert.equal(packageJson.scripts.pack, "agentdash-ext pack");
 });
 
 test("source demonstrates author-owned protocol adapter and channel authoring sugar", () => {
-  assert.match(extensionSource, /ctx\.channels\.register/);
-  assert.match(extensionSource, /ctx\.api\.channels\.self/);
-  assert.match(extensionSource, /ctx\.api\.channels\.from\("demo", "api"\)/);
+  assert.match(extensionSource, /ctx\.protocols\.register/);
+  assert.match(extensionSource, /ctx\.api\.protocols\.self/);
+  assert.match(extensionSource, /ctx\.api\.protocols\.from\("demo", "api"\)/);
   assert.match(clientSource, /api\.workspace\.writeText/);
   assert.match(clientSource, /api\.process\.shell/);
   assert.match(clientSource, /api\.http\.fetch/);
@@ -48,8 +48,8 @@ test("source demonstrates author-owned protocol adapter and channel authoring su
 
 test("panel uses extension browser bridge to exercise the runtime actions", () => {
   assert.match(panelSource, /@agentdash\/extension\/browser/);
-  assert.match(panelSource, /bridge\.invokeChannel/);
-  assert.match(panelSource, /PROTOCOL_DEMO_ACTIONS\.consumeDemoChannel/);
+  assert.match(panelSource, /bridge\.invokeProtocol/);
+  assert.match(panelSource, /PROTOCOL_DEMO_ACTIONS\.consumeDemoProtocol/);
   assert.match(panelSource, /Self Channel/);
   assert.match(panelSource, /Panel Channel/);
 });

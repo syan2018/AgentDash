@@ -8,7 +8,7 @@ type PanelState = {
   workspace: JsonValue;
   shell: JsonValue;
   channel: JsonValue;
-  bridgeChannel: JsonValue;
+  bridgeProtocol: JsonValue;
   error: string | null;
 };
 
@@ -17,7 +17,7 @@ const initialState: PanelState = {
   workspace: null,
   shell: null,
   channel: null,
-  bridgeChannel: null,
+  bridgeProtocol: null,
   error: null,
 };
 
@@ -45,15 +45,15 @@ export function App() {
         { label: "panel" },
       );
       const channel = await bridge.invokeAction<JsonObject, JsonValue>(
-        PROTOCOL_DEMO_ACTIONS.consumeDemoChannel,
+        PROTOCOL_DEMO_ACTIONS.consumeDemoProtocol,
         input,
       );
-      const bridgeChannel = await bridge.invokeChannel<JsonObject, JsonValue>(
+      const bridgeProtocol = await bridge.invokeProtocol<JsonObject, JsonValue>(
         "api",
         "greet",
         input,
       );
-      setState({ greet, workspace, shell, channel, bridgeChannel, error: null });
+      setState({ greet, workspace, shell, channel, bridgeProtocol, error: null });
     } catch (error) {
       setState({
         ...initialState,
@@ -69,7 +69,7 @@ export function App() {
       <header className="header">
         <p className="eyebrow">AgentDash Extension</p>
         <h1>Protocol Demo</h1>
-        <p className="summary">TypeScript host actions and a self-scoped protocol channel.</p>
+        <p className="summary">TypeScript host actions and a self-scoped protocol.</p>
       </header>
       <div className="toolbar">
         <input
@@ -91,7 +91,7 @@ export function App() {
         <ResultTile title="Workspace API" value={state.workspace} />
         <ResultTile title="Process API" value={state.shell} />
         <ResultTile title="Self Channel" value={state.channel} />
-        <ResultTile title="Panel Channel" value={state.bridgeChannel} />
+        <ResultTile title="Panel Channel" value={state.bridgeProtocol} />
       </div>
     </section>
   );

@@ -1,12 +1,12 @@
 import type { JsonValue } from "../../../generated/common-contracts";
 import type {
-  ExtensionRuntimeInvokeChannelRequest,
-  ExtensionRuntimeInvokeChannelResponse,
+  ExtensionRuntimeInvokeProtocolRequest,
+  ExtensionRuntimeInvokeProtocolResponse,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../generated/extension-runtime-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
-import type { CanvasExtensionChannelRequest } from "../../canvas-panel/CanvasRuntimePreview";
+import type { CanvasExtensionProtocolRequest } from "../../canvas-panel/CanvasRuntimePreview";
 import type { WorkspaceData } from "../../workspace-runtime";
 import { selectExtensionBackendTarget } from "./webviewBridge";
 
@@ -17,30 +17,30 @@ export interface ExtensionCanvasAvailability {
   assetUrl: string | null;
 }
 
-export async function invokeExtensionChannelFromCanvas({
+export async function invokeExtensionProtocolFromCanvas({
   workspaceData,
   tab,
   request,
-  invokeChannel,
+  invokeProtocol,
 }: {
   workspaceData: WorkspaceData;
   tab: ExtensionWorkspaceTabProjectionResponse;
-  request: CanvasExtensionChannelRequest;
-  invokeChannel(
+  request: CanvasExtensionProtocolRequest;
+  invokeProtocol(
     target: AgentRunRuntimeTarget,
-    request: ExtensionRuntimeInvokeChannelRequest,
-  ): Promise<ExtensionRuntimeInvokeChannelResponse>;
+    request: ExtensionRuntimeInvokeProtocolRequest,
+  ): Promise<ExtensionRuntimeInvokeProtocolResponse>;
 }): Promise<unknown> {
   const agentRunTarget = workspaceData.agentRunRuntimeTarget ?? null;
   if (!workspaceData.projectId || !agentRunTarget) {
-    throw new Error("Canvas extension channel 缺少 Project 或 AgentRun context");
+    throw new Error("Canvas extension protocol 缺少 Project 或 AgentRun context");
   }
   const backend = selectExtensionBackendTarget(workspaceData);
   if (!backend || !backend.online) {
-    throw new Error("Canvas extension channel 缺少可用 backend");
+    throw new Error("Canvas extension protocol 缺少可用 backend");
   }
-  const result = await invokeChannel(agentRunTarget, {
-    channel_key: request.channel_key,
+  const result = await invokeProtocol(agentRunTarget, {
+    protocol_key: request.protocol_key,
     method: request.method,
     input: toJsonValue(request.input),
     consumer_extension_key: tab.extension_key,

@@ -17,7 +17,7 @@ pub struct ExtensionRuntimeHostPayload {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionChannelConsumerPayload {
+pub struct ExtensionProtocolConsumerPayload {
     pub kind: String,
     pub extension_key: Option<String>,
     pub extension_id: Option<String>,
@@ -55,26 +55,28 @@ pub struct ExtensionActionInvokeResponse {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionChannelInvokeRequest {
+pub struct ExtensionProtocolInvokeRequest {
     pub provider_extension_key: String,
     pub provider_extension_id: String,
-    pub channel_key: String,
+    pub protocol_key: String,
+    pub protocol_version: String,
     pub method: String,
     pub project_id: String,
     pub session_id: String,
     pub input: Value,
     pub package_artifact: ExtensionPackageArtifactPayload,
-    pub consumer: ExtensionChannelConsumerPayload,
+    pub consumer: ExtensionProtocolConsumerPayload,
     pub workspace: Option<ExtensionInvocationWorkspacePayload>,
     pub trace_id: String,
     pub invocation_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionChannelInvokeResponse {
+pub struct ExtensionProtocolInvokeResponse {
     pub provider_extension_key: String,
     pub provider_extension_id: String,
-    pub channel_key: String,
+    pub protocol_key: String,
+    pub protocol_version: String,
     pub method: String,
     pub output: Value,
     pub metadata: Map<String, Value>,
@@ -166,12 +168,12 @@ pub trait ExtensionRuntimeActionTransport: Send + Sync {
 }
 
 #[async_trait]
-pub trait ExtensionRuntimeChannelTransport: Send + Sync {
-    async fn invoke_extension_channel(
+pub trait ExtensionRuntimeProtocolTransport: Send + Sync {
+    async fn invoke_extension_protocol(
         &self,
         backend_id: &str,
-        request: ExtensionChannelInvokeRequest,
-    ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError>;
+        request: ExtensionProtocolInvokeRequest,
+    ) -> Result<ExtensionProtocolInvokeResponse, ExtensionRuntimeActionTransportError>;
 }
 
 #[async_trait]

@@ -65,7 +65,7 @@ pub fn build_canvas_extension_package(
         capability_directives: Vec::new(),
         asset_refs: Vec::new(),
         runtime_actions: Vec::new(),
-        protocol_channels: Vec::new(),
+        protocols: Vec::new(),
         extension_dependencies: Vec::new(),
         workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
             type_id: format!("{extension_id}.panel"),

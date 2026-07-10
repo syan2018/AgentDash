@@ -1131,7 +1131,7 @@ pub struct ExtensionTemplatePayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runtime_actions: Vec<ExtensionRuntimeActionDefinition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub protocol_channels: Vec<ExtensionProtocolChannelDefinition>,
+    pub protocols: Vec<ExtensionProtocolDefinition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extension_dependencies: Vec<ExtensionDependencyDeclaration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1172,7 +1172,7 @@ impl ExtensionTemplatePayload {
         for action in &self.runtime_actions {
             action.validate()?;
         }
-        for channel in &self.protocol_channels {
+        for channel in &self.protocols {
             channel.validate()?;
         }
         for dependency in &self.extension_dependencies {
@@ -1201,7 +1201,7 @@ impl ExtensionTemplatePayload {
 
     pub fn requires_package_artifact(&self) -> bool {
         !self.runtime_actions.is_empty()
-            || !self.protocol_channels.is_empty()
+            || !self.protocols.is_empty()
             || !self.workspace_tabs.is_empty()
             || !self.backend_services.is_empty()
             || !self.bundles.is_empty()
@@ -1327,8 +1327,8 @@ fn classify_extension_permission_key(permission: &str) -> &'static str {
         "process_env"
     } else if permission.starts_with("runtime.invoke") {
         "runtime_action"
-    } else if permission.starts_with("extension.channel.invoke") {
-        "extension_channel"
+    } else if permission.starts_with("extension.protocol.invoke") {
+        "extension_protocol"
     } else if permission.starts_with("backend_service") {
         "backend_service"
     } else {
@@ -1501,31 +1501,28 @@ impl ExtensionRuntimeActionDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExtensionProtocolChannelDefinition {
-    pub channel_key: String,
+pub struct ExtensionProtocolDefinition {
+    pub protocol_key: String,
     pub version: String,
     pub description: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub methods: Vec<ExtensionProtocolChannelMethodDefinition>,
+    pub methods: Vec<ExtensionProtocolMethodDefinition>,
 }
 
-impl ExtensionProtocolChannelDefinition {
+impl ExtensionProtocolDefinition {
     fn validate(&self) -> Result<(), DomainError> {
         validate_namespaced_extension_key(
-            "extension_template.protocol_channels[].channel_key",
-            &self.channel_key,
+            "extension_template.protocols[].protocol_key",
+            &self.protocol_key,
         )?;
+        require_non_empty("extension_template.protocols[].version", &self.version)?;
         require_non_empty(
-            "extension_template.protocol_channels[].version",
-            &self.version,
-        )?;
-        require_non_empty(
-            "extension_template.protocol_channels[].description",
+            "extension_template.protocols[].description",
             &self.description,
         )?;
         if self.methods.is_empty() {
             return Err(DomainError::InvalidConfig(
-                "extension_template.protocol_channels[].methods 不能为空".to_string(),
+                "extension_template.protocols[].methods 不能为空".to_string(),
             ));
         }
         for method in &self.methods {
@@ -1536,7 +1533,7 @@ impl ExtensionProtocolChannelDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExtensionProtocolChannelMethodDefinition {
+pub struct ExtensionProtocolMethodDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
@@ -1545,27 +1542,24 @@ pub struct ExtensionProtocolChannelMethodDefinition {
     pub permissions: Vec<String>,
 }
 
-impl ExtensionProtocolChannelMethodDefinition {
+impl ExtensionProtocolMethodDefinition {
     fn validate(&self) -> Result<(), DomainError> {
-        validate_protocol_method_name(
-            "extension_template.protocol_channels[].methods[].name",
-            &self.name,
-        )?;
+        validate_protocol_method_name("extension_template.protocols[].methods[].name", &self.name)?;
         require_non_empty(
-            "extension_template.protocol_channels[].methods[].description",
+            "extension_template.protocols[].methods[].description",
             &self.description,
         )?;
         validate_json_schema(
-            "extension_template.protocol_channels[].methods[].input_schema",
+            "extension_template.protocols[].methods[].input_schema",
             &self.input_schema,
         )?;
         validate_json_schema(
-            "extension_template.protocol_channels[].methods[].output_schema",
+            "extension_template.protocols[].methods[].output_schema",
             &self.output_schema,
         )?;
         for permission in &self.permissions {
             validate_permission_key(
-                "extension_template.protocol_channels[].methods[].permissions[]",
+                "extension_template.protocols[].methods[].permissions[]",
                 permission,
             )?;
         }
@@ -1579,7 +1573,7 @@ pub struct ExtensionDependencyDeclaration {
     pub extension_id: String,
     pub version: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub channels: Vec<String>,
+    pub protocols: Vec<String>,
 }
 
 impl ExtensionDependencyDeclaration {
@@ -1596,14 +1590,14 @@ impl ExtensionDependencyDeclaration {
             "extension_template.extension_dependencies[].version",
             &self.version,
         )?;
-        if self.channels.is_empty() {
+        if self.protocols.is_empty() {
             return Err(DomainError::InvalidConfig(
-                "extension_template.extension_dependencies[].channels 不能为空".to_string(),
+                "extension_template.extension_dependencies[].protocols 不能为空".to_string(),
             ));
         }
-        for channel in &self.channels {
+        for channel in &self.protocols {
             validate_namespaced_extension_key(
-                "extension_template.extension_dependencies[].channels[]",
+                "extension_template.extension_dependencies[].protocols[]",
                 channel,
             )?;
         }
@@ -1691,8 +1685,8 @@ pub enum ExtensionPermissionDeclaration {
     RuntimeAction {
         action_key: String,
     },
-    ExtensionChannel {
-        channel_key: String,
+    ExtensionProtocol {
+        protocol_key: String,
         methods: Vec<String>,
     },
     BackendService {
@@ -1715,13 +1709,13 @@ impl ExtensionPermissionDeclaration {
                 "extension_template.permissions[].action_key",
                 action_key,
             ),
-            Self::ExtensionChannel {
-                channel_key,
+            Self::ExtensionProtocol {
+                protocol_key,
                 methods,
             } => {
                 validate_namespaced_extension_key(
-                    "extension_template.permissions[].channel_key",
-                    channel_key,
+                    "extension_template.permissions[].protocol_key",
+                    protocol_key,
                 )?;
                 if methods.is_empty() {
                     return Err(DomainError::InvalidConfig(
@@ -1763,8 +1757,8 @@ pub enum ExtensionGeneratedOperationDispatch {
     RuntimeAction {
         action_key: String,
     },
-    ProtocolChannel {
-        channel_key: String,
+    ProtocolMethod {
+        protocol_key: String,
         #[serde(alias = "method_name")]
         method: String,
     },
@@ -1781,13 +1775,13 @@ impl ExtensionGeneratedOperationDispatch {
                 "extension_template.operation_catalog[].dispatch.action_key",
                 action_key,
             ),
-            Self::ProtocolChannel {
-                channel_key,
+            Self::ProtocolMethod {
+                protocol_key,
                 method,
             } => {
                 validate_namespaced_extension_key(
-                    "extension_template.operation_catalog[].dispatch.channel_key",
-                    channel_key,
+                    "extension_template.operation_catalog[].dispatch.protocol_key",
+                    protocol_key,
                 )?;
                 validate_protocol_method_name(
                     "extension_template.operation_catalog[].dispatch.method",
@@ -1893,12 +1887,12 @@ pub enum ExtensionFetchRouteTargetDefinition {
     RuntimeAction {
         action_key: String,
     },
-    CustomChannel {
-        channel_key: String,
+    CustomProtocol {
+        protocol_key: String,
         method: String,
     },
-    ProtocolChannel {
-        channel_key: String,
+    ProtocolMethod {
+        protocol_key: String,
         method: String,
     },
     BackendService {
@@ -1939,17 +1933,17 @@ impl ExtensionFetchRouteTargetDefinition {
                 "extension_template.fetch_routes[].target.action_key",
                 action_key,
             ),
-            Self::CustomChannel {
-                channel_key,
+            Self::CustomProtocol {
+                protocol_key,
                 method,
             }
-            | Self::ProtocolChannel {
-                channel_key,
+            | Self::ProtocolMethod {
+                protocol_key,
                 method,
             } => {
                 validate_namespaced_extension_key(
-                    "extension_template.fetch_routes[].target.channel_key",
-                    channel_key,
+                    "extension_template.fetch_routes[].target.protocol_key",
+                    protocol_key,
                 )?;
                 validate_protocol_method_name(
                     "extension_template.fetch_routes[].target.method",
@@ -2544,11 +2538,11 @@ mod tests {
                     "http.fetch:gitlab.example",
                     "env.read:GITLAB_TOKEN",
                     "process.exec",
-                    "extension.channel.invoke:gitlab-review.api.listMergeRequests"
+                    "extension.protocol.invoke:gitlab-review.api.listMergeRequests"
                 ]
             }],
-            "protocol_channels": [{
-                "channel_key": "gitlab-review.api",
+            "protocols": [{
+                "protocol_key": "gitlab-review.api",
                 "version": "1.0.0",
                 "description": "GitLab review API channel",
                 "methods": [{
@@ -2563,7 +2557,7 @@ mod tests {
                 "alias": "gitlab",
                 "extension_id": "gitlab-review",
                 "version": "^1.0.0",
-                "channels": ["gitlab-review.api"]
+                "protocols": ["gitlab-review.api"]
             }],
             "workspace_tabs": [{
                 "type_id": "gitlab-review.summary-panel",
@@ -2586,8 +2580,8 @@ mod tests {
                 "kind": "process",
                 "access": "execute"
             }, {
-                "kind": "extension_channel",
-                "channel_key": "gitlab-review.api",
+                "kind": "extension_protocol",
+                "protocol_key": "gitlab-review.api",
                 "methods": ["listMergeRequests"]
             }],
             "bundles": [{
@@ -2631,9 +2625,9 @@ mod tests {
         }));
         assert!(runtime_action.requires_package_artifact());
 
-        let protocol_channel = extension_template_from_json(json!({
-            "protocol_channels": [{
-                "channel_key": "demo.api",
+        let protocol_method = extension_template_from_json(json!({
+            "protocols": [{
+                "protocol_key": "demo.api",
                 "version": "1.0.0",
                 "description": "Demo API",
                 "methods": [{
@@ -2644,7 +2638,7 @@ mod tests {
                 }]
             }]
         }));
-        assert!(protocol_channel.requires_package_artifact());
+        assert!(protocol_method.requires_package_artifact());
 
         let workspace_tab = extension_template_from_json(json!({
             "workspace_tabs": [{
@@ -2860,8 +2854,8 @@ mod tests {
                     "version": "0.1.0"
                 },
                 "asset_version": "0.1.0",
-                "protocol_channels": [{
-                    "channel_key": "bad.api",
+                "protocols": [{
+                    "protocol_key": "bad.api",
                     "version": "1.0.0",
                     "description": "Bad API",
                     "methods": [{
@@ -2937,7 +2931,7 @@ mod tests {
                 output_schema: json!({}),
                 permissions: action_permissions,
             }],
-            protocol_channels: vec![],
+            protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
             permissions,

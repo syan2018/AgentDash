@@ -142,9 +142,9 @@ impl LocalExtensionHostManager {
         result
     }
 
-    pub async fn invoke_channel(
+    pub async fn invoke_protocol(
         &self,
-        channel_key: &str,
+        protocol_key: &str,
         method: &str,
         input: Value,
     ) -> Result<Value, LocalExtensionHostError> {
@@ -152,12 +152,12 @@ impl LocalExtensionHostManager {
         let process = guard
             .as_mut()
             .ok_or_else(|| LocalExtensionHostError::Process("extension host 尚未启动".into()))?;
-        let output_schema = channel_output_schema(process, channel_key, method)?;
+        let output_schema = protocol_output_schema(process, protocol_key, method)?;
         let result = process
             .call(
-                "invoke_channel",
+                "invoke_protocol",
                 json!({
-                    "channel_key": channel_key,
+                    "protocol_key": protocol_key,
                     "method": method,
                     "input": input,
                 }),
@@ -168,7 +168,7 @@ impl LocalExtensionHostManager {
             validate_json_schema_subset(
                 &output_schema,
                 output,
-                &format!("extension channel `{channel_key}.{method}` output"),
+                &format!("extension protocol `{protocol_key}.{method}` output"),
             )?;
         }
         result
@@ -410,25 +410,25 @@ fn action_output_schema(
         })
 }
 
-fn channel_output_schema(
+fn protocol_output_schema(
     process: &ExtensionHostProcess,
-    channel_key: &str,
+    protocol_key: &str,
     method: &str,
 ) -> Result<Value, LocalExtensionHostError> {
     process
         .active_extensions
         .values()
         .find_map(|active| {
-            let canonical_channel_key = if channel_key.contains('.') {
-                channel_key.to_string()
+            let canonical_protocol_key = if protocol_key.contains('.') {
+                protocol_key.to_string()
             } else {
-                format!("{}.{}", active.extension_key, channel_key)
+                format!("{}.{}", active.extension_key, protocol_key)
             };
             active
                 .manifest
-                .protocol_channels
+                .protocols
                 .iter()
-                .find(|channel| channel.channel_key == canonical_channel_key)
+                .find(|channel| channel.protocol_key == canonical_protocol_key)
                 .and_then(|channel| {
                     channel
                         .methods
@@ -439,7 +439,7 @@ fn channel_output_schema(
         })
         .ok_or_else(|| {
             LocalExtensionHostError::Host(format!(
-                "extension channel 未声明 output schema: {channel_key}.{method}"
+                "extension protocol 未声明 output schema: {protocol_key}.{method}"
             ))
         })
 }

@@ -18,7 +18,7 @@ pub struct ExtensionRuntimeHostRelay {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExtensionChannelConsumerRelay {
+pub struct ExtensionProtocolConsumerRelay {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension_key: Option<String>,
@@ -65,17 +65,18 @@ pub struct ResponseExtensionActionInvokePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CommandExtensionChannelInvokePayload {
+pub struct CommandExtensionProtocolInvokePayload {
     pub provider_extension_key: String,
     pub provider_extension_id: String,
-    pub channel_key: String,
+    pub protocol_key: String,
+    pub protocol_version: String,
     pub method: String,
     pub project_id: String,
     pub session_id: String,
     #[serde(default)]
     pub input: Value,
     pub package_artifact: ExtensionPackageArtifactRelay,
-    pub consumer: ExtensionChannelConsumerRelay,
+    pub consumer: ExtensionProtocolConsumerRelay,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<ExtensionInvocationWorkspaceRelay>,
     pub trace_id: String,
@@ -83,10 +84,11 @@ pub struct CommandExtensionChannelInvokePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ResponseExtensionChannelInvokePayload {
+pub struct ResponseExtensionProtocolInvokePayload {
     pub provider_extension_key: String,
     pub provider_extension_id: String,
-    pub channel_key: String,
+    pub protocol_key: String,
+    pub protocol_version: String,
     pub method: String,
     #[serde(default)]
     pub output: Value,
@@ -97,9 +99,17 @@ pub struct ResponseExtensionChannelInvokePayload {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionOperationDispatchRelay {
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        protocol_key: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

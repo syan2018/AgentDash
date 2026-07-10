@@ -22,8 +22,8 @@ export type ExtensionRuntimePermissionKey =
   | `process.env.set:${string}`
   | "runtime.invoke"
   | `runtime.invoke:${string}`
-  | "extension.channel.invoke"
-  | `extension.channel.invoke:${string}`;
+  | "extension.protocol.invoke"
+  | `extension.protocol.invoke:${string}`;
 
 export interface ExtensionCommandHandler {
   kind: "inject_message";
@@ -69,9 +69,9 @@ export type ExtensionPermissionDeclaration =
   | { kind: "env"; names: string[]; access: ExtensionPermissionAccess }
   | { kind: "process"; access: ExtensionProcessPermissionAccess }
   | { kind: "runtime_action"; action_key: string }
-  | { kind: "extension_channel"; channel_key: string; methods: string[] };
+  | { kind: "extension_protocol"; protocol_key: string; methods: string[] };
 
-export interface ExtensionProtocolChannelMethodDefinition<
+export interface ExtensionProtocolMethodDefinition<
   Input extends JsonValue = JsonValue,
   Output extends JsonValue = JsonValue,
 > {
@@ -83,38 +83,38 @@ export interface ExtensionProtocolChannelMethodDefinition<
   invoke(input: Input): Output | Promise<Output>;
 }
 
-export type ExtensionProtocolChannelMethodMapEntry<
+export type ExtensionProtocolMethodMapEntry<
   Input extends JsonValue = JsonValue,
   Output extends JsonValue = JsonValue,
-> = Omit<ExtensionProtocolChannelMethodDefinition<Input, Output>, "name"> & {
+> = Omit<ExtensionProtocolMethodDefinition<Input, Output>, "name"> & {
   name?: string;
 };
 
-export type ExtensionProtocolChannelMethodSet<
+export type ExtensionProtocolMethodSet<
   Input extends JsonValue = JsonValue,
   Output extends JsonValue = JsonValue,
 > =
-  | ExtensionProtocolChannelMethodDefinition<Input, Output>[]
-  | Record<string, ExtensionProtocolChannelMethodMapEntry<Input, Output>>;
+  | ExtensionProtocolMethodDefinition<Input, Output>[]
+  | Record<string, ExtensionProtocolMethodMapEntry<Input, Output>>;
 
-export interface ExtensionProtocolChannelRegistration<
+export interface ExtensionProtocolRegistration<
   Input extends JsonValue = JsonValue,
   Output extends JsonValue = JsonValue,
 > {
-  channel_key: string;
+  protocol_key: string;
   version: string;
   description: string;
-  methods: ExtensionProtocolChannelMethodSet<Input, Output>;
+  methods: ExtensionProtocolMethodSet<Input, Output>;
 }
 
-export interface ExtensionProtocolChannelDefinition {
-  channel_key: string;
+export interface ExtensionProtocolDefinition {
+  protocol_key: string;
   version: string;
   description: string;
-  methods: ExtensionProtocolChannelMethodDefinition[];
+  methods: ExtensionProtocolMethodDefinition[];
 }
 
-export interface ExtensionProtocolChannelMethodManifestDefinition {
+export interface ExtensionProtocolMethodManifestDefinition {
   name: string;
   description: string;
   input_schema: JsonObject | boolean;
@@ -122,18 +122,18 @@ export interface ExtensionProtocolChannelMethodManifestDefinition {
   permissions?: ExtensionRuntimePermissionKey[];
 }
 
-export interface ExtensionProtocolChannelManifestDefinition {
-  channel_key: string;
+export interface ExtensionProtocolManifestDefinition {
+  protocol_key: string;
   version: string;
   description: string;
-  methods: ExtensionProtocolChannelMethodManifestDefinition[];
+  methods: ExtensionProtocolMethodManifestDefinition[];
 }
 
 export interface ExtensionDependencyDeclaration {
   alias: string;
   extension_id: string;
   version: string;
-  channels: string[];
+  protocols: string[];
 }
 
 export interface ExtensionBundleRef {
@@ -156,7 +156,7 @@ export interface ExtensionManifest {
   capability_directives?: Array<{ add: string } | { remove: string }>;
   asset_refs?: Array<{ asset_type: string; key: string; required: boolean }>;
   runtime_actions?: Array<Omit<ExtensionRuntimeActionDefinition, "invoke">>;
-  protocol_channels?: ExtensionProtocolChannelManifestDefinition[];
+  protocols?: ExtensionProtocolManifestDefinition[];
   extension_dependencies?: ExtensionDependencyDeclaration[];
   workspace_tabs?: Array<{
     type_id: string;
@@ -174,7 +174,7 @@ export interface ExtensionContributions {
   commands: ExtensionCommandDefinition[];
   flags: ExtensionFlagDefinition[];
   runtime_actions: ExtensionRuntimeActionDefinition[];
-  protocol_channels: ExtensionProtocolChannelDefinition[];
+  protocols: ExtensionProtocolDefinition[];
   workspace_panels: ExtensionWorkspacePanelDefinition[];
   permissions: ExtensionPermissionDeclaration[];
 }
@@ -251,18 +251,18 @@ export interface ExtensionProcessApi {
   shell(command: string, options?: ExtensionProcessExecOptions): Promise<ExtensionProcessResult>;
 }
 
-export interface ExtensionChannelClient {
+export interface ExtensionProtocolClient {
   invoke<TInput extends JsonValue, TOutput extends JsonValue>(method: string, input: TInput): Promise<TOutput>;
 }
 
-export interface ExtensionChannelsApi {
+export interface ExtensionProtocolsApi {
   invoke<TInput extends JsonValue, TOutput extends JsonValue>(
-    channelKey: string,
+    protocolKey: string,
     method: string,
     input: TInput,
   ): Promise<TOutput>;
-  self(channelKey?: string): ExtensionChannelClient;
-  from(alias: string, channelKey?: string): ExtensionChannelClient;
+  self(protocolKey?: string): ExtensionProtocolClient;
+  from(alias: string, protocolKey?: string): ExtensionProtocolClient;
 }
 
 export interface ExtensionApi {
@@ -272,7 +272,7 @@ export interface ExtensionApi {
   workspace: ExtensionWorkspaceApi;
   env: ExtensionEnvApi;
   process: ExtensionProcessApi;
-  channels: ExtensionChannelsApi;
+  protocols: ExtensionProtocolsApi;
 }
 
 export interface ExtensionApiOverrides {
@@ -282,7 +282,7 @@ export interface ExtensionApiOverrides {
   workspace?: Partial<ExtensionWorkspaceApi>;
   env?: Partial<ExtensionEnvApi>;
   process?: Partial<ExtensionProcessApi>;
-  channels?: Partial<ExtensionChannelsApi>;
+  protocols?: Partial<ExtensionProtocolsApi>;
 }
 
 export interface ExtensionContext {
@@ -298,9 +298,9 @@ export interface ExtensionContext {
       definition: ExtensionRuntimeActionDefinition<Input, Output>,
     ): void;
   };
-  channels: {
+  protocols: {
     register<Input extends JsonValue, Output extends JsonValue>(
-      definition: ExtensionProtocolChannelRegistration<Input, Output>,
+      definition: ExtensionProtocolRegistration<Input, Output>,
     ): void;
   };
   workspace: {
@@ -326,7 +326,7 @@ export function createExtensionContext(api: ExtensionApiOverrides = {}): Extensi
     commands: [],
     flags: [],
     runtime_actions: [],
-    protocol_channels: [],
+    protocols: [],
     workspace_panels: [],
     permissions: [],
   };
@@ -348,9 +348,9 @@ export function createExtensionContext(api: ExtensionApiOverrides = {}): Extensi
         contributions.runtime_actions.push(definition);
       },
     },
-    channels: {
+    protocols: {
       register(definition) {
-        contributions.protocol_channels.push(normalizeProtocolChannelDefinition(definition));
+        contributions.protocols.push(normalizeProtocolMethodDefinition(definition));
       },
     },
     workspace: {
@@ -366,9 +366,9 @@ export function createExtensionContext(api: ExtensionApiOverrides = {}): Extensi
   };
 }
 
-function normalizeProtocolChannelDefinition(
-  definition: ExtensionProtocolChannelRegistration,
-): ExtensionProtocolChannelDefinition {
+function normalizeProtocolMethodDefinition(
+  definition: ExtensionProtocolRegistration,
+): ExtensionProtocolDefinition {
   const methods = Array.isArray(definition.methods)
     ? definition.methods
     : Object.entries(definition.methods).map(([name, method]) => ({
@@ -376,7 +376,7 @@ function normalizeProtocolChannelDefinition(
         name: method.name ?? name,
       }));
   return {
-    channel_key: definition.channel_key,
+    protocol_key: definition.protocol_key,
     version: definition.version,
     description: definition.description,
     methods,
@@ -392,7 +392,7 @@ function createApi(overrides: ExtensionApiOverrides): ExtensionApi {
     workspace: { ...base.workspace, ...overrides.workspace },
     env: { ...base.env, ...overrides.env },
     process: { ...base.process, ...overrides.process },
-    channels: { ...base.channels, ...overrides.channels },
+    protocols: { ...base.protocols, ...overrides.protocols },
   };
 }
 
@@ -446,21 +446,21 @@ function createNoopApi(): ExtensionApi {
         return notConnected("process.shell");
       },
     },
-    channels: {
+    protocols: {
       async invoke() {
-        return notConnected("channels.invoke");
+        return notConnected("protocols.invoke");
       },
       self() {
         return {
           async invoke() {
-            return notConnected("channels.self.invoke");
+            return notConnected("protocols.self.invoke");
           },
         };
       },
       from() {
         return {
           async invoke() {
-            return notConnected("channels.from.invoke");
+            return notConnected("protocols.from.invoke");
           },
         };
       },

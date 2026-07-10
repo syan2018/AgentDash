@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { createDevRuntime } from "./dev-runtime.js";
 
-test("ExtensionDevRuntime dispatches metadata, actions and channels", async () => {
+test("ExtensionDevRuntime dispatches metadata, actions and protocols", async () => {
   const root = await fixtureProject();
   const runtime = createDevRuntime(root);
   await runtime.load();
@@ -23,8 +23,8 @@ test("ExtensionDevRuntime dispatches metadata, actions and channels", async () =
   assert.deepEqual(action, { message: "Hello Codex", source: "action" });
 
   const channel = await runtime.dispatch({
-    method: "extension.invoke_channel",
-    params: { channel_key: "api", method: "greet", input: { name: "Bridge" } },
+    method: "extension.invoke_protocol",
+    params: { protocol_key: "api", method: "greet", input: { name: "Bridge" } },
   });
   assert.deepEqual(channel, { message: "Hello Bridge", source: "channel" });
 
@@ -116,11 +116,11 @@ async function fixtureProject(options = {}) {
       alias: "demo",
       extension_id: "demo",
       version: "^1.0.0",
-      channels: ["demo.api"],
+      protocols: ["demo.api"],
     }],
     runtime_actions: runtimeActions,
-    protocol_channels: [{
-      channel_key: "demo.api",
+    protocols: [{
+      protocol_key: "demo.api",
       version: "1.0.0",
       description: "Demo channel",
       methods: [{
@@ -162,8 +162,8 @@ export default defineExtension({
     asset_version: "0.1.0",
   },
   activate(ctx) {
-    ctx.channels.register({
-      channel_key: "api",
+    ctx.protocols.register({
+      protocol_key: "api",
       version: "1.0.0",
       description: "Demo channel",
       methods: {
@@ -194,7 +194,7 @@ export default defineExtension({
       input_schema: true,
       output_schema: true,
       async invoke(input: JsonValue): Promise<JsonObject> {
-        return await ctx.api.channels.self("api").invoke<JsonValue, JsonObject>("greet", input);
+        return await ctx.api.protocols.self("api").invoke<JsonValue, JsonObject>("greet", input);
       },
     });
     ctx.runtime.registerAction({
@@ -204,7 +204,7 @@ export default defineExtension({
       input_schema: true,
       output_schema: true,
       async invoke(input: JsonValue): Promise<JsonObject> {
-        return await ctx.api.channels.from("demo", "api").invoke<JsonValue, JsonObject>("greet", input);
+        return await ctx.api.protocols.from("demo", "api").invoke<JsonValue, JsonObject>("greet", input);
       },
     });
   },

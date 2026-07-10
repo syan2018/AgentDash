@@ -30,14 +30,14 @@ test("generateAppProject writes generated manifest, host entry, panel client and
     { kind: "process", access: "execute", mode: "exec" },
     { kind: "workspace", access: "read_write" },
     {
-      kind: "extension_channel",
-      channel_key: "repo-tools.protocol",
+      kind: "extension_protocol",
+      protocol_key: "repo-tools.protocol",
       methods: ["summarize", "panelOnlyPing"],
     },
     { kind: "backend_service", service_key: "repo-tools.api", routes: ["/api/**"] },
   ]);
   const runtimeActions = recordArray(generated.manifest, "runtime_actions");
-  const protocolChannels = recordArray(generated.manifest, "protocol_channels");
+  const protocols = recordArray(generated.manifest, "protocols");
   const backendServices = recordArray(generated.manifest, "backend_services");
   const fetchRoutes = recordArray(generated.manifest, "fetch_routes");
   const operationCatalog = recordArray(generated.manifest, "operation_catalog");
@@ -45,13 +45,13 @@ test("generateAppProject writes generated manifest, host entry, panel client and
     runtimeActions.map((action) => stringField(action, "action_key")),
     ["repo-tools.github", "repo-tools.git-status", "repo-tools.files"],
   );
-  assert.equal(stringField(protocolChannels[0], "channel_key"), "repo-tools.protocol");
+  assert.equal(stringField(protocols[0], "protocol_key"), "repo-tools.protocol");
   assert.deepEqual(
-    recordArray(protocolChannels[0], "methods").map((method) => stringField(method, "name")),
+    recordArray(protocols[0], "methods").map((method) => stringField(method, "name")),
     ["summarize", "panelOnlyPing"],
   );
   assert.deepEqual(generated.registered_surface.runtime_actions, runtimeActions);
-  assert.deepEqual(generated.registered_surface.protocol_channels, protocolChannels);
+  assert.deepEqual(generated.registered_surface.protocols, protocols);
   assert.equal(stringField(backendServices[0], "service_key"), "repo-tools.api");
   assert.equal(stringField(fetchRoutes[0], "scope"), "panel_only");
   assert.deepEqual(
@@ -63,7 +63,7 @@ test("generateAppProject writes generated manifest, host entry, panel client and
     [
       { key: "repo-tools.github", visibility: "agent_and_panel", dispatch: "runtime_action" },
       { key: "repo-tools.files", visibility: "panel_only", dispatch: "runtime_action" },
-      { key: "repo-tools.protocol.summarize", visibility: "agent_and_panel", dispatch: "protocol_channel" },
+      { key: "repo-tools.protocol.summarize", visibility: "agent_and_panel", dispatch: "protocol_method" },
       { key: "repo-tools.api", visibility: "agent_and_panel", dispatch: "backend_service" },
     ],
   );
@@ -265,7 +265,7 @@ async function fixtureAppProject() {
     dependencies: { react: "^19.0.0" },
   }));
   await writeFile(path.join(root, "agentdash.app.ts"), [
-    'import { backendService, customChannel, defineApp, httpProxy, localCommand, workspaceFiles } from "@agentdash/extension";',
+    'import { backendService, customProtocol, defineApp, httpProxy, localCommand, workspaceFiles } from "@agentdash/extension";',
     "",
     "const objectSchema = {",
     '  type: "object",',
@@ -299,13 +299,13 @@ async function fixtureAppProject() {
     "        input_schema: objectSchema,",
     "      },",
     "    }),",
-    "    protocol: customChannel({",
+    "    protocol: customProtocol({",
     '      description: "Structured protocol escape hatch.",',
     "      methods: {",
     "        summarize: {",
     '          description: "Summarize a structured payload.",',
     "          input_schema: objectSchema,",
-    '          permissions: ["extension.channel.invoke:repo-tools.protocol"],',
+    '          permissions: ["extension.protocol.invoke:repo-tools.protocol"],',
     "          expose: {",
     '            description: "Summarize structured payloads for the Agent.",',
     "          },",

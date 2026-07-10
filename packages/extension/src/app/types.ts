@@ -20,14 +20,14 @@ export type AgentDashRuntimePermissionKey =
   | `process.env.set:${string}`
   | "runtime.invoke"
   | `runtime.invoke:${string}`
-  | "extension.channel.invoke"
-  | `extension.channel.invoke:${string}`;
+  | "extension.protocol.invoke"
+  | `extension.protocol.invoke:${string}`;
 
 export type AgentDashCapabilityKind =
   | "http_proxy"
   | "local_command"
   | "workspace_files"
-  | "custom_channel"
+  | "custom_protocol"
   | "backend_service";
 
 export type AgentDashOperationVisibility = "panel_only" | "agent_and_panel";
@@ -77,7 +77,7 @@ export interface AgentDashOperationProvenance {
 
 export type AgentDashOperationDispatchProjection =
   | { kind: "runtime_action"; action_key: string }
-  | { kind: "protocol_channel"; channel_key: string; method_name: string }
+  | { kind: "protocol_method"; protocol_key: string; method_name: string }
   | { kind: "backend_service"; service_key: string; route?: string };
 
 export interface AgentDashOperationCatalogEntry {
@@ -113,7 +113,7 @@ export interface AgentDashWorkspaceFilesDispatchConfig {
   roots: readonly string[];
 }
 
-export interface AgentDashProtocolChannelMethodDispatch {
+export interface AgentDashProtocolMethodDispatch {
   name: string;
   description: string;
   input_schema: JsonSchema;
@@ -141,11 +141,11 @@ export type AgentDashCapabilityDispatch =
       workspace: AgentDashWorkspaceFilesDispatchConfig;
     }
   | {
-      kind: "protocol_channel";
-      channel_key: string;
+      kind: "protocol_method";
+      protocol_key: string;
       version: string;
       description: string;
-      methods: readonly AgentDashProtocolChannelMethodDispatch[];
+      methods: readonly AgentDashProtocolMethodDispatch[];
     }
   | {
       kind: "backend_service";
@@ -182,7 +182,7 @@ export type AgentDashPermissionDeclaration =
   | { kind: "http"; hosts: readonly string[]; access: AgentDashCapabilityAccess }
   | { kind: "workspace"; access: AgentDashCapabilityAccess }
   | { kind: "process"; access: "execute"; mode: "exec" | "shell" }
-  | { kind: "extension_channel"; channel_key: string; methods: readonly string[] }
+  | { kind: "extension_protocol"; protocol_key: string; methods: readonly string[] }
   | { kind: "backend_service"; service_key: string; routes: readonly string[] };
 
 export interface AgentDashPermissionSummaryItem {
@@ -273,7 +273,7 @@ export interface AgentDashWorkspaceFilesOptions extends AgentDashRecipeBaseOptio
   roots?: readonly string[];
 }
 
-export interface AgentDashCustomChannelMethodOptions {
+export interface AgentDashCustomProtocolMethodOptions {
   description: string;
   input_schema?: JsonSchema;
   output_schema?: JsonSchema;
@@ -281,12 +281,12 @@ export interface AgentDashCustomChannelMethodOptions {
   expose?: AgentDashExposureListInput;
 }
 
-export interface AgentDashCustomChannelOptions {
+export interface AgentDashCustomProtocolOptions {
   title?: string;
   description?: string;
-  channel_key?: string;
+  protocol_key?: string;
   version?: string;
-  methods: Record<string, AgentDashCustomChannelMethodOptions>;
+  methods: Record<string, AgentDashCustomProtocolMethodOptions>;
 }
 
 export type AgentDashBackendServiceRuntime = "node";
@@ -302,5 +302,5 @@ export type AgentDashCapabilityRecipe =
   | { kind: "http_proxy"; options: AgentDashHttpProxyOptions }
   | { kind: "local_command"; options: AgentDashLocalCommandOptions }
   | { kind: "workspace_files"; options: AgentDashWorkspaceFilesOptions }
-  | { kind: "custom_channel"; options: AgentDashCustomChannelOptions }
+  | { kind: "custom_protocol"; options: AgentDashCustomProtocolOptions }
   | { kind: "backend_service"; options: AgentDashBackendServiceOptions };

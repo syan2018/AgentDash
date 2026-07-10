@@ -6,11 +6,11 @@
  * @typedef {"session_runtime" | "setup"} ExtensionRuntimeActionKind
  * @typedef {JsonObject | boolean} JsonSchemaValue
  * @typedef {{ action_key: string, kind: ExtensionRuntimeActionKind, description: string, input_schema: JsonSchemaValue, output_schema: JsonSchemaValue, permissions?: string[], invoke(input: JsonValue): JsonValue | Promise<JsonValue> }} ExtensionRuntimeActionDefinition
- * @typedef {{ name: string, description: string, input_schema: JsonSchemaValue, output_schema: JsonSchemaValue, permissions?: string[], invoke(input: JsonValue): JsonValue | Promise<JsonValue> }} ExtensionProtocolChannelMethodDefinition
- * @typedef {{ name?: string, description: string, input_schema: JsonSchemaValue, output_schema: JsonSchemaValue, permissions?: string[], invoke(input: JsonValue): JsonValue | Promise<JsonValue> }} ExtensionProtocolChannelMethodMapEntry
- * @typedef {ExtensionProtocolChannelMethodDefinition[] | Record<string, ExtensionProtocolChannelMethodMapEntry>} ExtensionProtocolChannelMethodSet
- * @typedef {{ channel_key: string, version: string, description: string, methods: ExtensionProtocolChannelMethodSet }} ExtensionProtocolChannelRegistration
- * @typedef {{ channel_key: string, version: string, description: string, methods: ExtensionProtocolChannelMethodDefinition[] }} ExtensionProtocolChannelDefinition
+ * @typedef {{ name: string, description: string, input_schema: JsonSchemaValue, output_schema: JsonSchemaValue, permissions?: string[], invoke(input: JsonValue): JsonValue | Promise<JsonValue> }} ExtensionProtocolMethodDefinition
+ * @typedef {{ name?: string, description: string, input_schema: JsonSchemaValue, output_schema: JsonSchemaValue, permissions?: string[], invoke(input: JsonValue): JsonValue | Promise<JsonValue> }} ExtensionProtocolMethodMapEntry
+ * @typedef {ExtensionProtocolMethodDefinition[] | Record<string, ExtensionProtocolMethodMapEntry>} ExtensionProtocolMethodSet
+ * @typedef {{ protocol_key: string, version: string, description: string, methods: ExtensionProtocolMethodSet }} ExtensionProtocolRegistration
+ * @typedef {{ protocol_key: string, version: string, description: string, methods: ExtensionProtocolMethodDefinition[] }} ExtensionProtocolDefinition
  * @typedef {{ path: string, kind: "file" | "directory" }} ExtensionWorkspaceEntry
  * @typedef {{ path: string, kind: "file" | "directory" | "missing", size?: number, modified_at?: string }} ExtensionWorkspaceStat
  * @typedef {{ method?: string, headers?: Record<string, string>, body?: JsonValue | string, timeout_ms?: number }} ExtensionHttpRequestOptions
@@ -23,12 +23,12 @@
  * @typedef {{ readText(path: string): Promise<string>, writeText(path: string, content: string): Promise<void>, list(path: string): Promise<ExtensionWorkspaceEntry[]>, stat(path: string): Promise<ExtensionWorkspaceStat> }} ExtensionWorkspaceApi
  * @typedef {{ get(name: string): Promise<string | null> }} ExtensionEnvApi
  * @typedef {{ exec(command: string, args?: string[], options?: ExtensionProcessExecOptions): Promise<ExtensionProcessResult>, shell(command: string, options?: ExtensionProcessExecOptions): Promise<ExtensionProcessResult> }} ExtensionProcessApi
- * @typedef {{ invoke<TInput extends JsonValue, TOutput extends JsonValue>(method: string, input: TInput): Promise<TOutput> }} ExtensionChannelClient
- * @typedef {{ invoke<TInput extends JsonValue, TOutput extends JsonValue>(channelKey: string, method: string, input: TInput): Promise<TOutput>, self(channelKey?: string): ExtensionChannelClient, from(alias: string, channelKey?: string): ExtensionChannelClient }} ExtensionChannelsApi
- * @typedef {{ runtime: ExtensionRuntimeApi, local: ExtensionLocalApi, http: ExtensionHttpApi, workspace: ExtensionWorkspaceApi, env: ExtensionEnvApi, process: ExtensionProcessApi, channels: ExtensionChannelsApi }} ExtensionApi
- * @typedef {{ runtime?: Partial<ExtensionRuntimeApi>, local?: Partial<ExtensionLocalApi>, http?: Partial<ExtensionHttpApi>, workspace?: Partial<ExtensionWorkspaceApi>, env?: Partial<ExtensionEnvApi>, process?: Partial<ExtensionProcessApi>, channels?: Partial<ExtensionChannelsApi> }} ExtensionApiOverrides
- * @typedef {{ commands: unknown[], flags: unknown[], runtime_actions: ExtensionRuntimeActionDefinition[], protocol_channels: ExtensionProtocolChannelDefinition[], workspace_panels: unknown[], permissions: unknown[] }} ExtensionContributions
- * @typedef {{ api: ExtensionApi, commands: { registerCommand(definition: unknown): void }, flags: { registerFlag(definition: unknown): void }, runtime: { registerAction(definition: ExtensionRuntimeActionDefinition): void }, channels: { register(definition: ExtensionProtocolChannelRegistration): void }, workspace: { registerPanel(definition: unknown): void }, permissions: { require(permission: unknown): void }, contributions: ExtensionContributions }} ExtensionContext
+ * @typedef {{ invoke<TInput extends JsonValue, TOutput extends JsonValue>(method: string, input: TInput): Promise<TOutput> }} ExtensionProtocolClient
+ * @typedef {{ invoke<TInput extends JsonValue, TOutput extends JsonValue>(protocolKey: string, method: string, input: TInput): Promise<TOutput>, self(protocolKey?: string): ExtensionProtocolClient, from(alias: string, protocolKey?: string): ExtensionProtocolClient }} ExtensionProtocolsApi
+ * @typedef {{ runtime: ExtensionRuntimeApi, local: ExtensionLocalApi, http: ExtensionHttpApi, workspace: ExtensionWorkspaceApi, env: ExtensionEnvApi, process: ExtensionProcessApi, protocols: ExtensionProtocolsApi }} ExtensionApi
+ * @typedef {{ runtime?: Partial<ExtensionRuntimeApi>, local?: Partial<ExtensionLocalApi>, http?: Partial<ExtensionHttpApi>, workspace?: Partial<ExtensionWorkspaceApi>, env?: Partial<ExtensionEnvApi>, process?: Partial<ExtensionProcessApi>, protocols?: Partial<ExtensionProtocolsApi> }} ExtensionApiOverrides
+ * @typedef {{ commands: unknown[], flags: unknown[], runtime_actions: ExtensionRuntimeActionDefinition[], protocols: ExtensionProtocolDefinition[], workspace_panels: unknown[], permissions: unknown[] }} ExtensionContributions
+ * @typedef {{ api: ExtensionApi, commands: { registerCommand(definition: unknown): void }, flags: { registerFlag(definition: unknown): void }, runtime: { registerAction(definition: ExtensionRuntimeActionDefinition): void }, protocols: { register(definition: ExtensionProtocolRegistration): void }, workspace: { registerPanel(definition: unknown): void }, permissions: { require(permission: unknown): void }, contributions: ExtensionContributions }} ExtensionContext
  */
 
 /**
@@ -41,7 +41,7 @@ export function createExtensionContext(api = {}) {
     commands: [],
     flags: [],
     runtime_actions: [],
-    protocol_channels: [],
+    protocols: [],
     workspace_panels: [],
     permissions: [],
   };
@@ -63,9 +63,9 @@ export function createExtensionContext(api = {}) {
         contributions.runtime_actions.push(definition);
       },
     },
-    channels: {
+    protocols: {
       register(definition) {
-        contributions.protocol_channels.push(normalizeProtocolChannelDefinition(definition));
+        contributions.protocols.push(normalizeProtocolMethodDefinition(definition));
       },
     },
     workspace: {
@@ -82,10 +82,10 @@ export function createExtensionContext(api = {}) {
 }
 
 /**
- * @param {ExtensionProtocolChannelRegistration} definition
- * @returns {ExtensionProtocolChannelDefinition}
+ * @param {ExtensionProtocolRegistration} definition
+ * @returns {ExtensionProtocolDefinition}
  */
-function normalizeProtocolChannelDefinition(definition) {
+function normalizeProtocolMethodDefinition(definition) {
   const methods = Array.isArray(definition.methods)
     ? definition.methods
     : Object.entries(definition.methods).map(([name, method]) => ({
@@ -93,7 +93,7 @@ function normalizeProtocolChannelDefinition(definition) {
         name: method.name ?? name,
       }));
   return {
-    channel_key: definition.channel_key,
+    protocol_key: definition.protocol_key,
     version: definition.version,
     description: definition.description,
     methods,
@@ -113,7 +113,7 @@ function createApi(overrides) {
     workspace: { ...base.workspace, ...overrides.workspace },
     env: { ...base.env, ...overrides.env },
     process: { ...base.process, ...overrides.process },
-    channels: { ...base.channels, ...overrides.channels },
+    protocols: { ...base.protocols, ...overrides.protocols },
   };
 }
 
@@ -171,21 +171,21 @@ function createNoopApi() {
         return notConnected("process.shell");
       },
     },
-    channels: {
+    protocols: {
       async invoke() {
-        return notConnected("channels.invoke");
+        return notConnected("protocols.invoke");
       },
       self() {
         return {
           async invoke() {
-            return notConnected("channels.self.invoke");
+            return notConnected("protocols.self.invoke");
           },
         };
       },
       from() {
         return {
           async invoke() {
-            return notConnected("channels.from.invoke");
+            return notConnected("protocols.from.invoke");
           },
         };
       },

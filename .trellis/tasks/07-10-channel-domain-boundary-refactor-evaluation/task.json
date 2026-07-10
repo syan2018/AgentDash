@@ -3,7 +3,7 @@
   "name": "channel-domain-boundary-refactor-evaluation",
   "title": "Channel 术语与领域边界收敛",
   "description": "收敛 Extension Protocol Channel 与全局通信 Channel 的语义冲突，并通过父任务 work-items 跟踪原子改名、领域正交化、残留闭环和持久化迁移。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "cross-layer architecture evaluation",
   "package": null,

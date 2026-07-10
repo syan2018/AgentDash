@@ -977,7 +977,7 @@ Promotion 输入引用 `definition_id + revision_id`，输出标准 Extension id
 
 - Good：用户冻结 Interaction revision，生成 Extension，并从标准 Extension runtime 加载 webview。
 - Base：Canvas 只用于编辑与预览，运行时 Instance 仍固定 exact revision。
-- Bad：将 Canvas mount 直接当长期共享资产，或为生成物保留 `canvas_panel` runtime kind。
+- Bad：将 Canvas mount 直接当长期共享资产，或为生成物保留专用 runtime renderer kind。
 
 ### 6. Tests Required
 

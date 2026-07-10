@@ -12,6 +12,7 @@ pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
+pub mod interactions;
 pub mod lifecycle_agents;
 mod lifecycle_contracts;
 pub mod lifecycle_views;
@@ -84,6 +85,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(routines::router())
         .merge(runner_registration_tokens::router())
         .merge(canvases::router())
+        .merge(interactions::router())
         .merge(companion_gates::router())
         .merge(mcp_presets::router())
         .merge(skill_assets::router())

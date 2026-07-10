@@ -19,6 +19,8 @@ pub mod extension_package;
 pub mod extension_runtime;
 #[path = "extension/external_marketplace.rs"]
 pub mod external_marketplace;
+#[path = "surface/interaction.rs"]
+pub mod interaction;
 #[path = "integration/llm_provider.rs"]
 pub mod llm_provider;
 #[path = "integration/mcp_preset.rs"]

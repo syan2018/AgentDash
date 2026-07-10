@@ -361,6 +361,25 @@ impl CanvasDefinitionService {
         Ok(self.definitions.archive(definition.id).await?)
     }
 
+    pub async fn archive(
+        &self,
+        definition_id: Uuid,
+        user_id: &str,
+    ) -> InteractionApplicationResult<InteractionDefinition> {
+        let definition = self.required_definition(definition_id).await?;
+        let revision = self
+            .required_revision(definition.current_revision_id)
+            .await?;
+        let access = self
+            .access_for(&definition, Some(&revision), user_id)
+            .await?;
+        require_access(
+            access.can_edit_source || access.can_manage_shared,
+            "当前用户不可归档 Canvas definition",
+        )?;
+        Ok(self.definitions.archive(definition.id).await?)
+    }
+
     async fn view(
         &self,
         definition: InteractionDefinition,

@@ -182,6 +182,47 @@ impl From<agentdash_application::ApplicationError> for ApiError {
     }
 }
 
+impl From<agentdash_domain::interaction::InteractionError> for ApiError {
+    fn from(err: agentdash_domain::interaction::InteractionError) -> Self {
+        use agentdash_domain::interaction::InteractionError as E;
+        let message = err.to_string();
+        match err {
+            E::NotFound { .. } => ApiError::NotFound(message),
+            E::DefinitionRevisionConflict { .. }
+            | E::StateRevisionConflict { .. }
+            | E::CommandIdempotencyConflict { .. }
+            | E::PersistenceConflict { .. } => ApiError::Conflict(message),
+            E::HumanOnlyCommand { .. } => ApiError::Forbidden(message),
+            E::Persistence { .. } | E::Serialization { .. } => ApiError::Internal(message),
+            E::InvalidField { .. }
+            | E::InvalidSourcePath { .. }
+            | E::MissingEntryFile { .. }
+            | E::InvalidDigest { .. }
+            | E::PatchLimitExceeded { .. }
+            | E::PatchPathDenied { .. }
+            | E::MissingPatchValue { .. }
+            | E::UnexpectedPatchValue { .. }
+            | E::StateSizeExceeded { .. }
+            | E::InvalidStatusTransition { .. }
+            | E::EffectNotReplaySafe
+            | E::InvalidOperationRef { .. } => ApiError::BadRequest(message),
+        }
+    }
+}
+
+impl From<agentdash_application::interaction::InteractionApplicationError> for ApiError {
+    fn from(err: agentdash_application::interaction::InteractionApplicationError) -> Self {
+        use agentdash_application::interaction::InteractionApplicationError as E;
+        let message = err.to_string();
+        match err {
+            E::Domain(error) => ApiError::from(error),
+            E::InvalidCommand { .. } => ApiError::BadRequest(message),
+            E::ContractUnavailable { .. } => ApiError::ServiceUnavailable(message),
+            E::AccessDenied { .. } => ApiError::Forbidden(message),
+        }
+    }
+}
+
 impl From<agentdash_spi::ConnectorError> for ApiError {
     fn from(err: agentdash_spi::ConnectorError) -> Self {
         use agentdash_spi::ConnectorError as E;

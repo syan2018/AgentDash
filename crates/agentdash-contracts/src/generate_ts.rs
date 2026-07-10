@@ -116,6 +116,16 @@ use agentdash_contracts::external_marketplace::{
     MarketplaceSourceTrustLevelDto, RefreshExternalMarketplaceAssetRequest,
     RefreshExternalMarketplaceAssetResponse,
 };
+use agentdash_contracts::interaction::{
+    ArchiveInteractionDefinitionResponse, CanvasDefinitionDto, CanvasDefinitionListScopeDto,
+    CommitCanvasDefinitionRequest, CreateCanvasDefinitionRequest,
+    DistributeCanvasDefinitionRequest, InteractionCommandRequestDto, InteractionCommandResponseDto,
+    InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
+    InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionInstanceDto,
+    InteractionOwnerDto, InteractionSourceBundleDto, InteractionSourceChangesetDto,
+    InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
+    ListCanvasDefinitionsQuery,
+};
 use agentdash_contracts::llm_provider::{
     CodexOAuthCredentialTargetDto, CodexOAuthFlowStatusDto, CodexOAuthStatusResponse,
     CompleteCodexOAuthRequest, CreateLlmProviderRequest, DeleteLlmProviderResponse,
@@ -892,6 +902,36 @@ fn main() {
             export_all::<RuntimeTraceDto>(dir);
             export_all::<RuntimeInvocationOutputDto>(dir);
             export_all::<RuntimeInvocationResultDto>(dir);
+        },
+    );
+
+    // --- interaction-contracts.ts ---
+    emit_domain(
+        &generated_dir,
+        "interaction-contracts.ts",
+        &mut upstream,
+        check,
+        |dir| {
+            export_all::<InteractionOwnerDto>(dir);
+            export_all::<InteractionDefinitionStatusDto>(dir);
+            export_all::<CanvasDefinitionListScopeDto>(dir);
+            export_all::<InteractionDefinitionAccessDto>(dir);
+            export_all::<InteractionSourceFileDto>(dir);
+            export_all::<InteractionSourceSandboxDto>(dir);
+            export_all::<InteractionSourceBundleDto>(dir);
+            export_all::<InteractionDefinitionLineageKindDto>(dir);
+            export_all::<InteractionDefinitionLineageDto>(dir);
+            export_all::<CanvasDefinitionDto>(dir);
+            export_all::<ListCanvasDefinitionsQuery>(dir);
+            export_all::<CreateCanvasDefinitionRequest>(dir);
+            export_all::<InteractionSourceFileChangeDto>(dir);
+            export_all::<InteractionSourceChangesetDto>(dir);
+            export_all::<CommitCanvasDefinitionRequest>(dir);
+            export_all::<DistributeCanvasDefinitionRequest>(dir);
+            export_all::<ArchiveInteractionDefinitionResponse>(dir);
+            export_all::<InteractionInstanceDto>(dir);
+            export_all::<InteractionCommandRequestDto>(dir);
+            export_all::<InteractionCommandResponseDto>(dir);
         },
     );
 

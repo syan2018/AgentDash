@@ -116,6 +116,7 @@ flowchart TD
 
 ### 主要工作
 
+- 定义immutable `AgentSurfaceSnapshot`，作为AgentFrame、Capability Pack与product facts编译后的期望surface与requirements聚合。
 - 定义 ContextRecipe、ContextEnvelope、ToolCatalogRevision、WorkspaceRequirement。
 - 将 AgentFrame 与 Capability Pack 展开为 Skill/Tool/MCP/Workflow/Permission/Hook/Context contributions。
 - 将workflow/project/story/task/run hook sources编译为revisioned HookPlan与逐trigger requirements；Executor不解析业务规则。
@@ -123,6 +124,7 @@ flowchart TD
 - 建立 Tool Broker direct callback 与 session-scoped MCP façade。
 - 实现 tool identity、policy、permission、VFS、credential、timeout/cancel/idempotency。
 - 实现 surface/profile compatibility 与 Pack required contribution admission。
+- 将`AgentSurfaceSnapshot`与Driver Host提供的`RuntimeOffer`求交为`BoundAgentSurface`，固定逐项delivery route、semantic strength、revision与digest。
 - 实现HostLifecycle、ToolBroker、DriverCallback、NativeArtifact、Observed与SteerApproximation delivery规划。
 - AgentFrame revision持久化HookPlan ref/digest/requirements，移除仅替换live HookRuntime snapshot的采用方式。
 - 明确 outer hooks、broker hooks、inner hooks 与 mailbox semantic strength。
@@ -149,12 +151,14 @@ flowchart TD
 
 - 改造 Integration API 为 `AgentRuntimeDriverContribution { definition, factory }`。
 - 实现 AgentServiceDefinition、AgentServiceInstance、RuntimeOffer、RuntimeBinding、DriverLease、SourceIdMap。
+- Driver `describe`经descriptor validation、service instance状态、transport guarantee与host policy归一为`RuntimeOffer`；Host不编译AgentFrame或Capability Pack。
 - 实现配置 schema、credential slots/refs、health、driver generation 与 activation。
 - Runtime Router 严格按 durable binding 分发。
 - 实现 service/transport/host policy profile intersection。
 - Native/Codex/Enterprise Remote 的 composition root改为 Integration contribution；具体 adapter 可由后续工作包完成。
 - Driver descriptor逐trigger声明HookProfile与delivery mechanism，Host只做校验、求交和binding。
 - Binding固定BoundHookPlan、plan/artifact digest、configuration boundary与per-point apply status；required route未ack时不dispatch。
+- RuntimeBinding同时固定offer/profile digest、BoundAgentSurface digest与AppliedAgentSurface revision；Adapter只materialize已绑定surface。
 - 删除 Composite capability OR、broadcast cancel/approval、first-live-session probe。
 
 ### 验收

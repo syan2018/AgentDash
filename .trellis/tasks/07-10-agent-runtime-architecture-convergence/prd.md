@@ -84,6 +84,7 @@
 
 - Application/AgentRun 使用具名 `AgentRunRuntime` facade；facade 本身不保存 runtime 状态，只把产品命令映射到通用 Runtime。
 - 通用 Business/Managed Agent Runtime 对 application 暴露 `execute / snapshot / events` 三入口，并独占 canonical Thread/Turn/Item、operation journal、availability/admission、context 构造、tool surface、compaction、Interaction 和 terminal 状态机。
+- 平台能力拼装由Managed Runtime内部Business Agent Surface完成：Application source adapters提供product facts，编译为immutable `AgentSurfaceSnapshot`；Driver Host把Agent service实际保证归一为`RuntimeOffer`；Runtime admission求交生成并持久化`BoundAgentSurface`/`RuntimeBinding`，Adapter只materialize并回报`AppliedAgentSurface`。
 - Integration/Executor Host 位于 Managed Runtime 下方，负责受信 Integration definition/factory、Agent service instance/offer、driver descriptor、placement、durable binding 和 native ID mapping；不拥有 AgentRun 产品语义或 compaction policy。
 - 所有 first-party/enterprise Agent service 使用同一个 Integration driver contribution；Relay 只是 remote placement transport，最终 binding capability 为 service guarantee、transport guarantee 与 host policy 的交集。
 - `AgentConnector` 业务抽象退役；connector 一词只保留给 L0 transport adapter。L1 Turn、L2 Conversation、L3 Interactive、L4 Managed Thread 仅作为可读的参考类别，不建成永久 trait 继承或单一 admission 门槛；正交 capability profile/guarantee 才是 command availability 的事实源。
@@ -104,6 +105,7 @@
 - [ ] 目标设计定义各层职责、允许的依赖方向、公开契约、状态事实源、事务与失败边界以及跨层数据转换位置。
 - [ ] 内部业务 Agent 与外部 Agent 的统一能力模型能够表达扩展 Codex App Server Protocol 的完整会话与压缩语义，并说明能力发现及不支持能力的处理方式。
 - [ ] 目标设计把 Agent 服务定义为可插拔 Integration contribution，覆盖企业自研 Agent 的注册、service instance 配置、凭据、driver activation、能力协商、运行时路由、thread binding 与隔离语义，不依赖硬编码 connector 分支。
+- [ ] 目标设计明确区分平台期望的`AgentSurfaceSnapshot`、service实际能力`RuntimeOffer`、admission结果`BoundAgentSurface`与adapter应用回执`AppliedAgentSurface`，required contribution不能静默降级。
 - [ ] Runtime reference class与capability profile有明确guarantee、availability映射和conformance方式；Native、Codex、企业Agent service以及Relay transport分别套入正确模型。
 - [ ] 目标设计从第一原则论证模块存在的必要性；不能由明确职责或技术不变量支持的既有抽象被删除或合并。
 - [ ] 重构范围形成父任务内有序工作包，每个工作包都有显式依赖、迁移目标、验证方式、风险点和完成条件。

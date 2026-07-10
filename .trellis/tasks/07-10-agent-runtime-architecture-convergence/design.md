@@ -452,6 +452,20 @@ effective profile
 
 Relay 透明承载 AgentDash-owned Runtime Wire 的 typed command/receipt/event/descriptor，并提供 route、frame sequence、ack/replay、connection health。它不理解 compaction policy、tool business semantics 或 vendor DTO，也不能提升 service capability。
 
+### 6.5 Agent Surface、RuntimeOffer 与绑定装配
+
+平台期望能力与Agent service实际能力保持两条独立输入：
+
+- Application product source adapters只读取AgentFrame、Workflow、Project、Story、Task、Workspace、Skill、MCP、Permission、Capability Pack与Hook等typed facts；
+- Managed Runtime内部Business Agent Surface将这些facts编译为immutable `AgentSurfaceSnapshot`，包含ContextRecipe、InstructionPlan、ToolCatalogRevision、WorkspaceRequirement、HookPlanSnapshot以及逐项required/optional与semantic requirement；
+- Integration Adapter通过`describe`报告source能力，Driver Host结合service instance、credential/health、transport guarantee与host policy归一为AgentDash-owned `RuntimeOffer`；
+- Managed Runtime admission将`AgentSurfaceSnapshot`与`RuntimeOffer`逐项求交，生成`BoundAgentSurface`与sticky `RuntimeBinding`；
+- Driver Adapter只materialize已绑定的surface，并返回revision/digest/per-contribution状态组成的`AppliedAgentSurface`回执。
+
+`RuntimeBinding`持久化service instance、driver generation、placement、offer/profile digest、BoundAgentSurface digest与applied revision。required contribution无法满足或required apply未ack时返回typed incompatibility，不产生driver side effect，也不将PromptOnly、Observed或SteerApproximation提升为exact capability。
+
+因此，平台拼装Agent实际能力的业务层位于`agentdash-agent-runtime::surface`；Application只是product fact adapter，Driver Host只提供/约束实际offer并路由driver，不解析业务Agent规则。完整crate拓扑与迁移地图见[`target-crate-shape.md`](./target-crate-shape.md)。
+
 ## 7. Runtime reference classes 与 capability profiles
 
 ### 7.1 参考类别
@@ -848,17 +862,21 @@ Capability Pack 无需成为所有外部协议都认识的 wire type。Business 
 
 ## 13. 目标 crate / package 归属
 
+本节记录逻辑归属；最终物理crate名称、依赖方向、能力拼装对象与逐crate迁移地图以[`target-crate-shape.md`](./target-crate-shape.md)为准。
+
 | 目标逻辑包 | 建议物理落点 | 说明 |
 | --- | --- | --- |
 | Runtime contract | 新 `agentdash-agent-runtime-contract` | dependency-light IDs/commands/events/profiles/errors/schema；不依赖 vendor/application |
-| Runtime wire | 重建 `agentdash-agent-protocol` 或新 `agentdash-agent-runtime-wire` | owned request/response/event Rust/TS schema |
+| Runtime wire | 新 `agentdash-agent-runtime-wire`，直接替换旧`agentdash-agent-protocol` | owned request/response/event Rust/TS schema |
 | Managed Runtime | 新 `agentdash-agent-runtime` | journal/state/context/compaction/interaction/admission/recovery |
 | Business Agent Surface / Hook Engine | `agentdash-agent-runtime`内部deep module，业务source resolver作为application adapter | 编译AgentFrame/HookPlan/ToolCatalog；不依赖vendor DTO |
 | AgentRun facade | `agentdash-application-agentrun` | product mapping，无独立 runtime state |
-| Driver SPI/Host | 收敛 `agentdash-executor` + Integration API | contribution/factory/service/binding/router/driver lifecycle |
-| Clean Core | 重命名/清理 `agentdash-agent` 与 types | provider-neutral loop，不依赖 AgentDash lifecycle/Codex/projection |
-| Native adapter | first-party Agent Integration | Managed Runtime ↔ Clean Core |
-| Codex adapter | first-party Codex Integration | Codex app-server protocol终止 |
+| Driver SPI | 重写`agentdash-integration-api` | contribution/factory/driver/descriptor/error |
+| Driver Host | `agentdash-agent-runtime-host`，替换旧`agentdash-executor` | service/binding/router/placement/driver lifecycle |
+| Clean Core | `agentdash-agent-core`，合并清理旧`agentdash-agent`与provider-neutral types | provider-neutral loop，不依赖 AgentDash lifecycle/Codex/projection |
+| Native adapter | 新`agentdash-integration-native-agent` | Managed Runtime ↔ Clean Core |
+| Codex adapter | 新`agentdash-integration-codex` | Codex app-server protocol终止 |
+| Runtime conformance | 新`agentdash-agent-runtime-test-support` | reusable runtime/driver behavior harness |
 | Optional ACP projection | read-side protocol Integration（首期不实现） | 只消费授权后的Runtime snapshot/events，输出lossy presentation |
 | Remote placement | Relay/infrastructure | owned Runtime Wire transport |
 | Persistence | infrastructure adapter crates | repository/transaction/outbox/CAS/migration |

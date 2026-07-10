@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_agent_protocol::BackboneEnvelope;
-use agentdash_domain::channel::ChannelDirective;
+use agentdash_domain::channel::ChannelCapabilityRef;
 use agentdash_domain::workflow::MountDirective;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -209,7 +209,7 @@ pub const DECLARATION_TYPE_MOUNT_OPERATION: &str = "mount_operation";
 pub const EFFECT_TYPE_SET_TOOL_ACCESS: &str = "set_tool_access";
 pub const EFFECT_TYPE_SET_MCP_SERVER_SET: &str = "set_server_set";
 pub const EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER: &str = "set_agent_roster";
-pub const EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES: &str = "apply_channel_directives";
+pub const EFFECT_TYPE_SET_CHANNEL_PROJECTION: &str = "set_channel_projection";
 pub const EFFECT_TYPE_APPLY_VFS_OVERLAY: &str = "apply_vfs_overlay";
 pub const EFFECT_TYPE_APPLY_MOUNT_OPERATIONS: &str = "apply_mount_operations";
 
@@ -235,8 +235,8 @@ pub struct SetCompanionAgentRosterEffect {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ApplyChannelDirectivesEffect {
-    pub directives: Vec<ChannelDirective>,
+pub struct SetChannelProjectionEffect {
+    pub visible_channels: Vec<ChannelCapabilityRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

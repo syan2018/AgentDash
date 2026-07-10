@@ -1,9 +1,6 @@
 use std::collections::BTreeSet;
 
-use agentdash_domain::channel::{
-    ChannelCapabilityRef, ChannelDirective, ChannelEgressPolicy, ChannelIngressPolicy,
-    ChannelReadiness,
-};
+use agentdash_domain::channel::ChannelCapabilityRef;
 use agentdash_domain::common::{MountLink, Vfs};
 use agentdash_domain::workflow::{AgentFrame, MountDirective, ToolCapabilityDirective};
 use agentdash_spi::{CapabilityState, RuntimeMcpServer};
@@ -19,15 +16,15 @@ pub use agentdash_spi::{
 pub use agentdash_spi::AccumulationPolicy;
 
 use agentdash_spi::session_persistence::{
-    ApplyChannelDirectivesEffect, ApplyMountOperationsEffect, ApplyVfsOverlayEffect,
-    CAPABILITY_DIMENSION_CHANNEL, CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP,
-    CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS, CapabilityArtifactSource,
-    CapabilityContributionRecord, CapabilityDeclarationRecord,
-    DECLARATION_TYPE_CAPABILITY_DIRECTIVE, DECLARATION_TYPE_MOUNT_OPERATION,
-    EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
-    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
-    EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, PendingCapabilityStateTransition,
-    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SetCompanionAgentRosterEffect,
+    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_CHANNEL,
+    CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_TOOL,
+    CAPABILITY_DIMENSION_VFS, CapabilityArtifactSource, CapabilityContributionRecord,
+    CapabilityDeclarationRecord, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
+    DECLARATION_TYPE_MOUNT_OPERATION, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
+    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_CHANNEL_PROJECTION,
+    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
+    EFFECT_TYPE_SET_TOOL_ACCESS, PendingCapabilityStateTransition, RuntimeCapabilityEffectRecord,
+    RuntimeCapabilityTransition, SetChannelProjectionEffect, SetCompanionAgentRosterEffect,
     SetMcpServerSetEffect, SetToolAccessEffect,
 };
 
@@ -486,13 +483,13 @@ impl CompanionCapabilityDimensionModule {
 }
 
 impl ChannelCapabilityDimensionModule {
-    pub fn apply_channel_directives_effect(
-        directives: Vec<ChannelDirective>,
+    pub fn set_channel_projection_effect(
+        visible_channels: Vec<ChannelCapabilityRef>,
     ) -> Result<RuntimeCapabilityEffectRecord, String> {
         RuntimeCapabilityEffectRecord::typed(
             CAPABILITY_DIMENSION_CHANNEL,
-            EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES,
-            &ApplyChannelDirectivesEffect { directives },
+            EFFECT_TYPE_SET_CHANNEL_PROJECTION,
+            &SetChannelProjectionEffect { visible_channels },
         )
     }
 }
@@ -649,7 +646,7 @@ impl CapabilityDimensionModule for ChannelCapabilityDimensionModule {
     }
 
     fn policy(&self) -> AccumulationPolicy {
-        AccumulationPolicy::Accumulate
+        AccumulationPolicy::Replace
     }
 
     fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
@@ -661,13 +658,11 @@ impl CapabilityDimensionModule for ChannelCapabilityDimensionModule {
     }
 
     fn validate_effect(&self, record: &RuntimeCapabilityEffectRecord) -> Result<(), String> {
-        ensure_effect_type(record, EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES)?;
-        let payload: ApplyChannelDirectivesEffect = decode_effect_payload(record)?;
-        for directive in payload.directives {
-            if let ChannelDirective::Expose { operations, .. } = directive
-                && operations.is_empty()
-            {
-                return Err("channel expose directive operations must not be empty".to_string());
+        ensure_effect_type(record, EFFECT_TYPE_SET_CHANNEL_PROJECTION)?;
+        let payload: SetChannelProjectionEffect = decode_effect_payload(record)?;
+        for channel in payload.visible_channels {
+            if channel.operations.is_empty() {
+                return Err("channel projection operations must not be empty".to_string());
             }
         }
         Ok(())
@@ -679,36 +674,9 @@ impl CapabilityDimensionModule for ChannelCapabilityDimensionModule {
         _context: &mut RuntimeCapabilityReplayContext,
         record: &RuntimeCapabilityEffectRecord,
     ) -> Result<(), String> {
-        ensure_effect_type(record, EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES)?;
-        let payload: ApplyChannelDirectivesEffect = decode_effect_payload(record)?;
-        for directive in payload.directives {
-            match directive {
-                ChannelDirective::Expose {
-                    channel_ref,
-                    aliases,
-                    operations,
-                } => {
-                    state
-                        .channel
-                        .visible_channels
-                        .retain(|existing| existing.channel_ref != channel_ref);
-                    state.channel.visible_channels.push(ChannelCapabilityRef {
-                        channel_ref,
-                        aliases,
-                        operations,
-                        ingress_policy: ChannelIngressPolicy::ParticipantsOnly,
-                        egress_policy: ChannelEgressPolicy::ParticipantsOnly,
-                        readiness: ChannelReadiness::Ready,
-                    });
-                }
-                ChannelDirective::Revoke { channel_ref } => {
-                    state
-                        .channel
-                        .visible_channels
-                        .retain(|existing| existing.channel_ref != channel_ref);
-                }
-            }
-        }
+        ensure_effect_type(record, EFFECT_TYPE_SET_CHANNEL_PROJECTION)?;
+        let payload: SetChannelProjectionEffect = decode_effect_payload(record)?;
+        state.channel.visible_channels = payload.visible_channels;
         normalize_channel_projection(&mut state.channel.visible_channels);
         Ok(())
     }
@@ -978,7 +946,10 @@ fn link_key(link: &MountLink) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::channel::{ChannelOperation, ChannelOwner, ChannelRef};
+    use agentdash_domain::channel::{
+        ChannelEgressPolicy, ChannelIngressPolicy, ChannelOperation, ChannelOwner,
+        ChannelReadiness, ChannelRef,
+    };
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_spi::{CapabilityDimensionKey, CapabilityState, McpTransportConfig};
 
@@ -1113,7 +1084,7 @@ mod tests {
     }
 
     #[test]
-    fn channel_directives_expose_and_revoke_visible_channel_refs() {
+    fn channel_projection_replaces_visible_channel_refs() {
         let channel_ref = ChannelRef {
             owner: ChannelOwner::LifecycleRun {
                 run_id: Uuid::new_v4(),
@@ -1123,11 +1094,14 @@ mod tests {
         let operations = [ChannelOperation::Read, ChannelOperation::Reply]
             .into_iter()
             .collect();
-        let expose = ChannelCapabilityDimensionModule::apply_channel_directives_effect(vec![
-            ChannelDirective::Expose {
-                channel_ref: channel_ref.clone(),
+        let expose = ChannelCapabilityDimensionModule::set_channel_projection_effect(vec![
+            ChannelCapabilityRef {
+                channel_ref,
                 aliases: vec!["review".to_string()],
                 operations,
+                ingress_policy: ChannelIngressPolicy::ParticipantsOnly,
+                egress_policy: ChannelEgressPolicy::ParticipantsOnly,
+                readiness: ChannelReadiness::Ready,
             },
         ])
         .expect("channel effect");
@@ -1141,10 +1115,8 @@ mod tests {
             vec!["review"]
         );
 
-        let revoke = ChannelCapabilityDimensionModule::apply_channel_directives_effect(vec![
-            ChannelDirective::Revoke { channel_ref },
-        ])
-        .expect("channel revoke effect");
+        let revoke = ChannelCapabilityDimensionModule::set_channel_projection_effect(vec![])
+            .expect("empty channel projection effect");
         let transition = RuntimeCapabilityTransition::from_records(vec![], vec![revoke]);
         let replay = replay_runtime_capability_transition(&replay.capability_state, &transition)
             .expect("replay revoke");

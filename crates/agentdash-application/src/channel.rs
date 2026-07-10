@@ -6,12 +6,12 @@ use agentdash_domain::agent_run_mailbox::{
     NewAgentRunMailboxMessage,
 };
 use agentdash_domain::channel::{
-    Channel, ChannelAddress, ChannelBinding, ChannelBindingId, ChannelBindingStatus,
-    ChannelCapabilityRef, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryTarget,
-    ChannelEgressPolicy, ChannelIngressPolicy, ChannelMessage, ChannelOperation, ChannelOwner,
-    ChannelParticipant, ChannelParticipantRef, ChannelPolicy, ChannelReadiness, ChannelRecord,
-    ChannelRef, ChannelRegistryDocument, ChannelRegistryMutation, ChannelTopology,
-    channel_address_to_mailbox_source_identity,
+    Channel, ChannelBinding, ChannelBindingId, ChannelBindingStatus, ChannelCapabilityRef,
+    ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryTarget, ChannelEgressPolicy,
+    ChannelIngressPolicy, ChannelLocator, ChannelMessage, ChannelMessageOrigin, ChannelOperation,
+    ChannelOwner, ChannelParticipant, ChannelParticipantRef, ChannelPolicy, ChannelReadiness,
+    ChannelRecord, ChannelRef, ChannelRegistryDocument, ChannelRegistryMutation, ChannelStatus,
+    channel_message_origin_to_mailbox_source_identity,
 };
 use agentdash_domain::workflow::LifecycleRunRepository;
 use async_trait::async_trait;
@@ -74,6 +74,16 @@ impl ChannelOwnerStore for LifecycleRunChannelOwnerStore {
                 owner.stable_key()
             )));
         };
+        if let ChannelRegistryMutation::UpsertChannel(record)
+        | ChannelRegistryMutation::CreateChannelIfAbsent(record) = &mutation
+            && &record.channel.owner != owner
+        {
+            return Err(ApplicationError::Conflict(format!(
+                "channel record owner {} does not match store owner {}",
+                record.channel.owner.stable_key(),
+                owner.stable_key()
+            )));
+        }
         self.lifecycle_run_repo
             .mutate_channel_registry(*run_id, mutation)
             .await
@@ -147,7 +157,7 @@ pub struct ChannelGateMaterializationCommand {
     pub gate_id: Uuid,
     pub channel_id: Uuid,
     pub correlation_ref: Option<String>,
-    pub address: ChannelAddress,
+    pub origin: ChannelMessageOrigin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,21 +241,41 @@ impl ChannelService {
             .await
     }
 
-    pub async fn create_runtime_channel(
+    pub async fn create_if_absent(
         &self,
-        owner: ChannelOwner,
-        topology: ChannelTopology,
+        locator: ChannelLocator,
         aliases: Vec<String>,
     ) -> Result<ChannelRecord, ApplicationError> {
-        let mut channel = Channel::new(
-            owner.clone(),
-            agentdash_domain::channel::ChannelMedium::Runtime,
-            topology,
-        );
+        let mut channel = Channel::new(locator.owner.clone(), locator.channel_key.clone());
         channel.aliases = aliases;
-        let record = ChannelRecord::new(channel);
-        self.upsert_channel(record.clone()).await?;
-        Ok(record)
+        self.create_record_if_absent(ChannelRecord::new(channel))
+            .await
+    }
+
+    pub async fn create_record_if_absent(
+        &self,
+        record: ChannelRecord,
+    ) -> Result<ChannelRecord, ApplicationError> {
+        let owner = record.channel.owner.clone();
+        let channel_key = record.channel.key.clone();
+        let registry = self
+            .owner_store
+            .mutate_registry(
+                &owner,
+                ChannelRegistryMutation::CreateChannelIfAbsent(record),
+            )
+            .await?;
+        registry
+            .channels
+            .into_iter()
+            .find(|existing| existing.channel.owner == owner && existing.channel.key == channel_key)
+            .ok_or_else(|| {
+                ApplicationError::Conflict(format!(
+                    "channel create_if_absent did not materialize locator {}:{}",
+                    owner.stable_key(),
+                    channel_key
+                ))
+            })
     }
 
     pub async fn close_channel(
@@ -384,17 +414,13 @@ impl ChannelService {
                 } else {
                     "room_message"
                 };
-                let mut address =
-                    ChannelAddress::new(format!("im.{}", envelope.key.provider), kind, "external")
-                        .with_correlation_ref(
-                            envelope
-                                .correlation_ref
-                                .clone()
-                                .or(envelope.key.provider_event_ref.clone())
-                                .unwrap_or_else(|| binding.binding_id.to_string()),
-                        );
+                let mut origin = ChannelMessageOrigin::new(
+                    format!("im.{}", envelope.key.provider),
+                    kind,
+                    "external",
+                );
                 if let Some(event_ref) = &envelope.key.provider_event_ref {
-                    address = address.with_source_ref(event_ref);
+                    origin = origin.with_source_ref(event_ref);
                 }
                 let mut message = ChannelMessage::new(
                     channel_id,
@@ -404,10 +430,27 @@ impl ChannelService {
                         text: envelope.text,
                         data: envelope.payload,
                     },
-                    address,
+                    origin,
                 );
                 message.provider_event_ref = envelope.key.provider_event_ref;
-                message.correlation_ref = envelope.correlation_ref;
+                message.correlation_ref = envelope
+                    .correlation_ref
+                    .or_else(|| message.provider_event_ref.clone())
+                    .or_else(|| Some(binding.binding_id.to_string()));
+                let registry = self.owner_store.load_registry(&owner).await?;
+                let record = registry
+                    .channel(channel_id)
+                    .map_err(ApplicationError::from)?;
+                if !record.bindings.iter().any(|candidate| {
+                    candidate.binding_id == binding.binding_id
+                        && candidate.status == ChannelBindingStatus::Active
+                }) {
+                    return Err(ApplicationError::Conflict(format!(
+                        "resolved channel binding {} is not active in channel {}",
+                        binding.binding_id, channel_id
+                    )));
+                }
+                validate_message_admission(record, &message, ChannelOperation::Publish)?;
                 Ok(ChannelIngressOutcome::Resolved { owner, message })
             }
             ChannelBindingResolution::Unresolved => Ok(ChannelIngressOutcome::Unresolved),
@@ -434,6 +477,7 @@ impl ChannelService {
             )));
         }
 
+        validate_message_admission(record, &message, ChannelOperation::Broadcast)?;
         let active_participants = participants_for_message(record, &message)?;
         Ok(active_participants
             .into_iter()
@@ -525,7 +569,7 @@ impl ChannelService {
                 )));
             }
         };
-        let source = channel_address_to_mailbox_source_identity(&intent.message.address);
+        let source = channel_message_origin_to_mailbox_source_identity(&intent.message.origin);
         let correlation_ref = channel_message_correlation_ref(&intent.message);
         let payload_json = serde_json::json!({
             "channel": {
@@ -545,7 +589,7 @@ impl ChannelService {
                 run_id,
                 agent_id,
                 delivery_runtime_session_id: None,
-                origin: mailbox_origin_from_channel_address(&intent.message.address),
+                origin: mailbox_origin_from_channel_message_origin(&intent.message.origin),
                 source,
                 delivery: MailboxDelivery::LaunchOrContinueTurn,
                 barrier: ConsumptionBarrier::ImmediateIfIdle,
@@ -584,12 +628,14 @@ impl ChannelService {
             gate_id,
             channel_id: intent.message.channel_id,
             correlation_ref: channel_message_correlation_ref(&intent.message),
-            address: intent.message.address.clone(),
+            origin: intent.message.origin.clone(),
         })
     }
 }
 
-fn mailbox_origin_from_channel_address(address: &ChannelAddress) -> MailboxMessageOrigin {
+fn mailbox_origin_from_channel_message_origin(
+    address: &ChannelMessageOrigin,
+) -> MailboxMessageOrigin {
     match address.namespace.as_str() {
         "companion" => MailboxMessageOrigin::Companion,
         "workflow" => MailboxMessageOrigin::Workflow,
@@ -610,16 +656,27 @@ fn channel_message_preview(message: &ChannelMessage) -> String {
 }
 
 fn channel_message_correlation_ref(message: &ChannelMessage) -> Option<String> {
-    message
-        .correlation_ref
-        .clone()
-        .or_else(|| message.address.correlation_ref.clone())
+    message.correlation_ref.clone()
 }
 
 fn participants_for_message(
     record: &ChannelRecord,
     message: &ChannelMessage,
 ) -> Result<Vec<ChannelParticipant>, ApplicationError> {
+    if let agentdash_domain::channel::ChannelAudience::Participants { participant_refs } =
+        &message.audience
+    {
+        for participant_ref in participant_refs {
+            if !record.participants.iter().any(|participant| {
+                participant.left_at.is_none() && participant.participant_ref == *participant_ref
+            }) {
+                return Err(ApplicationError::Conflict(format!(
+                    "channel audience participant {} is not active",
+                    participant_ref.stable_key()
+                )));
+            }
+        }
+    }
     let participants = match &message.audience {
         agentdash_domain::channel::ChannelAudience::AllParticipants => record
             .participants
@@ -653,21 +710,74 @@ fn participants_for_message(
     Ok(participants)
 }
 
+fn validate_message_admission(
+    record: &ChannelRecord,
+    message: &ChannelMessage,
+    operation: ChannelOperation,
+) -> Result<(), ApplicationError> {
+    if record.channel.status != ChannelStatus::Open {
+        return Err(ApplicationError::Conflict(format!(
+            "channel {} is closed",
+            record.channel.id
+        )));
+    }
+    let sender = record
+        .participants
+        .iter()
+        .find(|participant| {
+            participant.left_at.is_none() && participant.participant_ref == message.sender
+        })
+        .ok_or_else(|| {
+            ApplicationError::Conflict(format!(
+                "channel sender {} is not an active participant",
+                message.sender.stable_key()
+            ))
+        })?;
+    if !sender.operations.contains(&operation) {
+        return Err(ApplicationError::Conflict(format!(
+            "channel sender {} is not allowed to {operation:?}",
+            message.sender.stable_key()
+        )));
+    }
+    if sender.egress_policy == ChannelEgressPolicy::Disabled {
+        return Err(ApplicationError::Conflict(format!(
+            "channel sender {} egress is disabled",
+            message.sender.stable_key()
+        )));
+    }
+    let recipients = participants_for_message(record, message)?;
+    if recipients.is_empty() {
+        return Err(ApplicationError::Conflict(
+            "channel message has no admitted recipients".to_string(),
+        ));
+    }
+    for recipient in recipients {
+        if recipient.ingress_policy == ChannelIngressPolicy::Disabled
+            || !recipient.operations.contains(&ChannelOperation::Receive)
+        {
+            return Err(ApplicationError::Conflict(format!(
+                "channel recipient {} cannot receive messages",
+                recipient.participant_ref.stable_key()
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn participant_to_delivery_target(
     participant: ChannelParticipant,
 ) -> Option<ChannelDeliveryTarget> {
     match participant.participant_ref {
-        ChannelParticipantRef::AgentRun { run_id, agent_id }
-        | ChannelParticipantRef::LifecycleAgent { run_id, agent_id } => {
+        ChannelParticipantRef::Agent { run_id, agent_id } => {
             Some(ChannelDeliveryTarget::Mailbox { run_id, agent_id })
         }
-        ChannelParticipantRef::User { user_id } | ChannelParticipantRef::Human { user_id } => {
+        ChannelParticipantRef::User { user_id } => {
             Some(ChannelDeliveryTarget::Notification { user_id })
         }
-        ChannelParticipantRef::Platform { key } => {
+        ChannelParticipantRef::Service { key } => {
             Some(ChannelDeliveryTarget::Platform { broker_key: key })
         }
-        ChannelParticipantRef::External { .. } | ChannelParticipantRef::System { .. } => None,
+        ChannelParticipantRef::External { .. } => None,
     }
 }
 
@@ -681,7 +791,7 @@ fn validate_non_empty(field: &'static str, value: &str) -> Result<(), Applicatio
 #[cfg(test)]
 mod tests {
     use agentdash_domain::channel::{
-        ChannelEgressPolicy, ChannelIngressPolicy, ChannelMedium, ChannelOperation, ChannelPayload,
+        ChannelEgressPolicy, ChannelIngressPolicy, ChannelKey, ChannelOperation, ChannelPayload,
         ChannelPolicy, ChannelRole,
     };
     use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository};
@@ -700,9 +810,8 @@ mod tests {
         let owner = ChannelOwner::LifecycleRun { run_id: run.id };
 
         let record = service
-            .create_runtime_channel(
-                owner.clone(),
-                ChannelTopology::Direct,
+            .create_if_absent(
+                locator(owner.clone(), "runtime:companion"),
                 vec!["companion".to_string()],
             )
             .await
@@ -760,14 +869,14 @@ mod tests {
         let service = test_service(repo);
         let owner = ChannelOwner::LifecycleRun { run_id: run.id };
         let record = service
-            .create_runtime_channel(owner.clone(), ChannelTopology::Group, vec![])
+            .create_if_absent(locator(owner.clone(), "runtime:delivery"), vec![])
             .await
             .expect("create channel");
-        let sender = ChannelParticipantRef::AgentRun {
+        let sender = ChannelParticipantRef::Agent {
             run_id: run.id,
             agent_id: Uuid::new_v4(),
         };
-        let receiver = ChannelParticipantRef::AgentRun {
+        let receiver = ChannelParticipantRef::Agent {
             run_id: run.id,
             agent_id: Uuid::new_v4(),
         };
@@ -792,7 +901,7 @@ mod tests {
             record.channel.id,
             sender,
             ChannelPayload::text("request", "hello"),
-            ChannelAddress::new("companion", "dispatch", "agent"),
+            ChannelMessageOrigin::new("companion", "dispatch", "agent"),
         );
         let intents = service
             .plan_broadcast_deliveries(&owner, message)
@@ -809,6 +918,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn broadcast_admission_rechecks_sender_status_and_recipient_policy() {
+        let repo = Arc::new(MemoryLifecycleRunRepository::default());
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        LifecycleRunRepository::create(repo.as_ref(), &run)
+            .await
+            .expect("create run");
+        let service = test_service(repo);
+        let owner = ChannelOwner::LifecycleRun { run_id: run.id };
+        let record = service
+            .create_if_absent(locator(owner.clone(), "runtime:admission"), vec![])
+            .await
+            .expect("create channel");
+        let sender = ChannelParticipantRef::Agent {
+            run_id: run.id,
+            agent_id: Uuid::new_v4(),
+        };
+        let receiver = ChannelParticipantRef::Agent {
+            run_id: run.id,
+            agent_id: Uuid::new_v4(),
+        };
+        for participant_ref in [sender.clone(), receiver.clone()] {
+            service
+                .add_participant(
+                    &owner,
+                    record.channel.id,
+                    ChannelParticipant::new(participant_ref, ChannelRole::Member),
+                )
+                .await
+                .expect("add participant");
+        }
+        let message = || {
+            ChannelMessage::new(
+                record.channel.id,
+                sender.clone(),
+                ChannelPayload::text("request", "hello"),
+                ChannelMessageOrigin::new("companion", "dispatch", "agent"),
+            )
+        };
+
+        let operations = [ChannelOperation::Read, ChannelOperation::Receive]
+            .into_iter()
+            .collect();
+        service
+            .update_participant_policy(
+                &owner,
+                record.channel.id,
+                receiver,
+                operations,
+                ChannelIngressPolicy::Disabled,
+                ChannelEgressPolicy::ParticipantsOnly,
+            )
+            .await
+            .expect("disable recipient ingress");
+        assert!(
+            service
+                .plan_broadcast_deliveries(&owner, message())
+                .await
+                .is_err()
+        );
+
+        service
+            .close_channel(&owner, record.channel.id, Some("complete".to_string()))
+            .await
+            .expect("close channel");
+        assert!(
+            service
+                .plan_broadcast_deliveries(&owner, message())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn participant_projection_returns_visible_channel_refs() {
         let repo = Arc::new(MemoryLifecycleRunRepository::default());
         let run = LifecycleRun::new_plain(Uuid::new_v4());
@@ -818,14 +1000,13 @@ mod tests {
         let service = test_service(repo);
         let owner = ChannelOwner::LifecycleRun { run_id: run.id };
         let record = service
-            .create_runtime_channel(
-                owner.clone(),
-                ChannelTopology::Direct,
+            .create_if_absent(
+                locator(owner.clone(), "runtime:review"),
                 vec!["review".to_string()],
             )
             .await
             .expect("create channel");
-        let participant_ref = ChannelParticipantRef::AgentRun {
+        let participant_ref = ChannelParticipantRef::Agent {
             run_id: run.id,
             agent_id: Uuid::new_v4(),
         };
@@ -859,10 +1040,10 @@ mod tests {
         let service = test_service(repo);
         let owner = ChannelOwner::LifecycleRun { run_id: run.id };
         let record = service
-            .create_runtime_channel(owner.clone(), ChannelTopology::Direct, vec![])
+            .create_if_absent(locator(owner.clone(), "runtime:mutations"), vec![])
             .await
             .expect("create channel");
-        let participant_ref = ChannelParticipantRef::AgentRun {
+        let participant_ref = ChannelParticipantRef::Agent {
             run_id: run.id,
             agent_id: Uuid::new_v4(),
         };
@@ -929,17 +1110,18 @@ mod tests {
         let mut binding = ChannelBinding::new("slack", "workspace-1");
         binding.external_room_ref = Some("room-1".to_string());
         let channel = Channel::new(
-            ChannelOwner::System,
-            ChannelMedium::Im,
-            ChannelTopology::Thread,
+            ChannelOwner::Project {
+                project_id: Uuid::new_v4(),
+            },
+            ChannelKey::parse("im:slack:thread").unwrap(),
         );
         let message = ChannelMessage::new(
             channel.id,
-            ChannelParticipantRef::System {
+            ChannelParticipantRef::Service {
                 key: "system".to_string(),
             },
             ChannelPayload::text("response", "ok"),
-            ChannelAddress::new("im.slack", "thread_reply", "agent"),
+            ChannelMessageOrigin::new("im.slack", "thread_reply", "agent"),
         );
 
         let intent = service
@@ -952,13 +1134,11 @@ mod tests {
 
     #[test]
     fn address_mapper_uses_mailbox_display_key_semantics() {
-        let address = ChannelAddress::new("companion", "dispatch", "agent")
+        let address = ChannelMessageOrigin::new("companion", "dispatch", "agent")
             .with_source_ref("dispatch-1")
-            .with_correlation_ref("dispatch-1")
-            .with_route("child")
             .with_display_label_key("channel.source.companion.dispatch");
 
-        let source = channel_address_to_mailbox_source_identity(&address);
+        let source = channel_message_origin_to_mailbox_source_identity(&address);
 
         assert_eq!(source.namespace, "companion");
         assert_eq!(source.kind, "dispatch");
@@ -980,13 +1160,12 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let message = ChannelMessage::new(
             channel_id,
-            ChannelParticipantRef::System {
+            ChannelParticipantRef::Service {
                 key: "system".to_string(),
             },
             ChannelPayload::text("dispatch", "review this"),
-            ChannelAddress::new("companion", "dispatch", "agent")
-                .with_source_ref("dispatch-1")
-                .with_correlation_ref("dispatch-1"),
+            ChannelMessageOrigin::new("companion", "dispatch", "agent")
+                .with_source_ref("dispatch-1"),
         );
         let intent = ChannelDeliveryIntent::new(
             message,
@@ -1020,15 +1199,15 @@ mod tests {
             Arc::new(UnsupportedChannelBindingResolver),
         );
         let gate_id = Uuid::new_v4();
-        let message = ChannelMessage::new(
+        let mut message = ChannelMessage::new(
             Uuid::new_v4(),
-            ChannelParticipantRef::System {
+            ChannelParticipantRef::Service {
                 key: "system".to_string(),
             },
             ChannelPayload::text("response", "done"),
-            ChannelAddress::new("companion", "result", "agent")
-                .with_correlation_ref("gate-correlation"),
+            ChannelMessageOrigin::new("companion", "result", "agent"),
         );
+        message.correlation_ref = Some("gate-correlation".to_string());
         let intent = ChannelDeliveryIntent::new(
             message.clone(),
             ChannelDeliveryTarget::LifecycleGate { gate_id },
@@ -1047,6 +1226,13 @@ mod tests {
         ChannelService::new(
             Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
             Arc::new(UnsupportedChannelBindingResolver),
+        )
+    }
+
+    fn locator(owner: ChannelOwner, key: &str) -> ChannelLocator {
+        ChannelLocator::new(
+            owner,
+            agentdash_domain::channel::ChannelKey::parse(key).unwrap(),
         )
     }
 

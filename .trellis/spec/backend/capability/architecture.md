@@ -29,6 +29,8 @@ Capability 子系统统一描述 session 能力声明、runtime transition、工
 
 Host Integration API 当前按 Stable / Experimental / Internal 分层，企业仓只能追加集成，不能维护独立宿主装配逻辑。
 
+Channel capability 由 `ChannelService::project_participant_capability` 从 owner registry、active membership 与 participant policy 生成，并通过 `set_channel_projection` replace effect 写入 AgentFrame surface。Projection effect 接收完整 `ChannelCapabilityRef`，原因是 capability replay 只负责恢复已生成的 actor-specific view；Channel 的创建、membership 和授权仍由 owner registry 与每次 `ChannelService` admission 持有。
+
 ## Local Decisions
 
 - VFS 在 dimension replay 顺序中先于 projection-only 维度，原因是 Skill/guideline 等 projection 需要从 final VFS 派生。

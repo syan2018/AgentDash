@@ -7,9 +7,9 @@ use agentdash_agent_protocol::{
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::MailboxSourceIdentity;
 use agentdash_domain::channel::{
-    Channel, ChannelAddress, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryStatus,
-    ChannelDeliveryTarget, ChannelMedium, ChannelMessage, ChannelOwner, ChannelParticipant,
-    ChannelParticipantRef, ChannelPayload, ChannelRecord, ChannelRole, ChannelTopology,
+    Channel, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryStatus,
+    ChannelDeliveryTarget, ChannelKey, ChannelMessage, ChannelMessageOrigin, ChannelOwner,
+    ChannelParticipant, ChannelParticipantRef, ChannelPayload, ChannelRecord, ChannelRole,
     MaterializedDeliveryRef,
 };
 #[cfg(test)]
@@ -279,18 +279,10 @@ async fn ensure_companion_agent_channel(
     let owner = ChannelOwner::LifecycleRun { run_id };
     let stable_alias = format!("companion:{parent_agent_id}:{child_agent_id}");
     let service = companion_channel_service(repos);
-    let registry = service.load_registry(&owner).await?;
-    if let Some(record) = registry.channels.iter().find(|record| {
-        record
-            .channel
-            .aliases
-            .iter()
-            .any(|alias| alias == &stable_alias)
-    }) {
-        return Ok(record.channel.id);
-    }
-
-    let mut channel = Channel::new(owner, ChannelMedium::Runtime, ChannelTopology::Direct);
+    let mut channel = Channel::new(
+        owner,
+        ChannelKey::parse(stable_alias.clone()).map_err(crate::ApplicationError::from)?,
+    );
     channel.aliases = dedup_channel_aliases(vec![
         "companion".to_string(),
         stable_alias,
@@ -298,22 +290,20 @@ async fn ensure_companion_agent_channel(
     ]);
     let mut record = ChannelRecord::new(channel);
     record.participants.push(ChannelParticipant::new(
-        ChannelParticipantRef::LifecycleAgent {
+        ChannelParticipantRef::Agent {
             run_id,
             agent_id: parent_agent_id,
         },
         ChannelRole::Owner,
     ));
     record.participants.push(ChannelParticipant::new(
-        ChannelParticipantRef::LifecycleAgent {
+        ChannelParticipantRef::Agent {
             run_id,
             agent_id: child_agent_id,
         },
         ChannelRole::Member,
     ));
-    let channel_id = record.channel.id;
-    service.upsert_channel(record).await?;
-    Ok(channel_id)
+    Ok(service.create_record_if_absent(record).await?.channel.id)
 }
 
 async fn ensure_companion_human_channel(
@@ -325,33 +315,23 @@ async fn ensure_companion_human_channel(
     let owner = ChannelOwner::LifecycleRun { run_id };
     let stable_alias = format!("companion_human:{agent_id}:{request_id}");
     let service = companion_channel_service(repos);
-    let registry = service.load_registry(&owner).await?;
-    if let Some(record) = registry.channels.iter().find(|record| {
-        record
-            .channel
-            .aliases
-            .iter()
-            .any(|alias| alias == &stable_alias)
-    }) {
-        return Ok(record.channel.id);
-    }
-
-    let mut channel = Channel::new(owner, ChannelMedium::Human, ChannelTopology::Direct);
+    let mut channel = Channel::new(
+        owner,
+        ChannelKey::parse(stable_alias.clone()).map_err(crate::ApplicationError::from)?,
+    );
     channel.aliases = vec![stable_alias, "human".to_string()];
     let mut record = ChannelRecord::new(channel);
     record.participants.push(ChannelParticipant::new(
-        ChannelParticipantRef::LifecycleAgent { run_id, agent_id },
+        ChannelParticipantRef::Agent { run_id, agent_id },
         ChannelRole::Member,
     ));
     record.participants.push(ChannelParticipant::new(
-        ChannelParticipantRef::Human {
+        ChannelParticipantRef::User {
             user_id: "human".to_string(),
         },
         ChannelRole::External,
     ));
-    let channel_id = record.channel.id;
-    service.upsert_channel(record).await?;
-    Ok(channel_id)
+    Ok(service.create_record_if_absent(record).await?.channel.id)
 }
 
 fn dedup_channel_aliases(aliases: Vec<String>) -> Vec<String> {
@@ -364,20 +344,16 @@ fn dedup_channel_aliases(aliases: Vec<String>) -> Vec<String> {
     deduped
 }
 
-fn channel_address_from_mailbox_source(source: &MailboxSourceIdentity) -> ChannelAddress {
-    let mut address = ChannelAddress::new(
+fn channel_message_origin_from_mailbox_source(
+    source: &MailboxSourceIdentity,
+) -> ChannelMessageOrigin {
+    let mut address = ChannelMessageOrigin::new(
         source.namespace.clone(),
         source.kind.clone(),
         source.actor.clone(),
     );
     if let Some(source_ref) = &source.source_ref {
         address = address.with_source_ref(source_ref.clone());
-    }
-    if let Some(correlation_ref) = &source.correlation_ref {
-        address = address.with_correlation_ref(correlation_ref.clone());
-    }
-    if let Some(route) = &source.route {
-        address = address.with_route(route.clone());
     }
     if let Some(metadata) = &source.metadata {
         address = address.with_metadata(metadata.clone());
@@ -394,7 +370,7 @@ fn companion_channel_delivery_intent(
     payload_kind: &'static str,
     input_text: &str,
 ) -> ChannelDeliveryIntent {
-    let address = channel_address_from_mailbox_source(source);
+    let address = channel_message_origin_from_mailbox_source(source);
     let mut message = ChannelMessage::new(
         channel_id,
         sender,
@@ -807,7 +783,7 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
                 runtime_session_id: command.parent_delivery_runtime_session_id,
-                sender: ChannelParticipantRef::LifecycleAgent {
+                sender: ChannelParticipantRef::Agent {
                     run_id: command.run_id,
                     agent_id: command.child_agent_id,
                 },
@@ -876,7 +852,7 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
                 runtime_session_id: command.parent_delivery_runtime_session_id,
-                sender: ChannelParticipantRef::LifecycleAgent {
+                sender: ChannelParticipantRef::Agent {
                     run_id: command.run_id,
                     agent_id: command.child_agent_id,
                 },
@@ -928,7 +904,7 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 run_id: command.run_id,
                 agent_id: command.child_agent_id,
                 runtime_session_id: command.child_delivery_runtime_session_id,
-                sender: ChannelParticipantRef::LifecycleAgent {
+                sender: ChannelParticipantRef::Agent {
                     run_id: command.run_id,
                     agent_id: command.parent_agent_id,
                 },
@@ -982,7 +958,7 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
                 run_id: command.run_id,
                 agent_id: command.agent_id,
                 runtime_session_id: command.delivery_runtime_session_id,
-                sender: ChannelParticipantRef::Human {
+                sender: ChannelParticipantRef::User {
                     user_id: "human".to_string(),
                 },
                 source,
@@ -1666,7 +1642,7 @@ impl CompanionRequestTool {
             channel_id,
             dispatch_result.run_ref,
             dispatch_result.agent_ref,
-            ChannelParticipantRef::LifecycleAgent {
+            ChannelParticipantRef::Agent {
                 run_id: parent_run_id,
                 agent_id: parent_agent_id,
             },

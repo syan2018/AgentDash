@@ -370,51 +370,12 @@ impl<'a> AgentRunMailboxService<'a> {
             "source_turn_id": source_turn_id,
             "runtime_session_id": runtime_session_id,
         });
-        let address = ChannelAddress::new("core", "hook_auto_resume", "system")
+        let source = MailboxSourceIdentity::hook_auto_resume()
             .with_source_ref(effect_id.to_string())
-            .with_correlation_ref(correlation_ref.clone())
-            .with_metadata(base_metadata.clone());
-        let mut channel_message = ChannelMessage::new(
-            effect_id,
-            ChannelParticipantRef::System {
-                key: "hook_auto_resume".to_string(),
-            },
-            ChannelPayload {
-                kind: "hook_auto_resume".to_string(),
-                text: Some(format!(
-                    "Hook auto-resume after terminal event #{terminal_event_seq}"
-                )),
-                data: Some(base_metadata.clone()),
-            },
-            address.clone(),
-        );
-        channel_message.correlation_ref = Some(correlation_ref);
-        let channel_delivery_intent = ChannelDeliveryIntent::new(
-            channel_message,
-            ChannelDeliveryTarget::Mailbox {
-                run_id: run.id,
-                agent_id: agent.id,
-            },
-        );
-        let mut source_metadata = base_metadata;
-        if let Some(metadata) = source_metadata.as_object_mut() {
-            metadata.insert(
-                "channel_id".to_string(),
-                serde_json::json!(channel_delivery_intent.message.channel_id.to_string()),
-            );
-            metadata.insert(
-                "channel_message_id".to_string(),
-                serde_json::json!(channel_delivery_intent.message.id.to_string()),
-            );
-            metadata.insert(
-                "channel_delivery_id".to_string(),
-                serde_json::json!(channel_delivery_intent.id.to_string()),
-            );
-        }
-        let source =
-            channel_address_to_mailbox_source_identity(&address).with_metadata(source_metadata);
+            .with_correlation_ref(correlation_ref)
+            .with_metadata(base_metadata);
         let source_dedup_key = mailbox_source_identity_dedup_key(&source)
-            .unwrap_or_else(|| format!("channel_delivery:{}", channel_delivery_intent.id));
+            .unwrap_or_else(|| format!("hook_auto_resume:{effect_id}"));
         let _message = self
             .mailbox_repo
             .create_message_idempotent(NewAgentRunMailboxMessage {

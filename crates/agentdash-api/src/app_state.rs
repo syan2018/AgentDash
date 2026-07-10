@@ -352,6 +352,7 @@ impl AppState {
         ));
         let operation_gateway = crate::bootstrap::runtime_gateway::build_operation_gateway(
             mcp_probe_relay,
+            session_mcp_access.clone(),
             repos.clone(),
             backend_registry.clone(),
             setup_action_transport,

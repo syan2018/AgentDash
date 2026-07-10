@@ -13,8 +13,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::{
-    McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
-    execute_runtime_mcp_tool,
+    McpCallToolInput, OperationAuthorizationScope, OperationExecutionError, OperationMcpAccess,
+    OperationMcpTool, OperationPrincipal, OperationPrincipalRef, RuntimeMcpToolDescriptor,
+    RuntimeSessionMcpAccess, RuntimeSessionMcpError, execute_runtime_mcp_tool,
 };
 
 const RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT: &str = "runtime_mcp_tool_discovery";
@@ -54,6 +55,30 @@ impl CurrentSurfaceRuntimeMcpAccess {
             .map(|outcome| outcome.tools)
             .map_err(runtime_mcp_error_from_connector)
     }
+
+    async fn discover_entries_for_agent_run(
+        &self,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+    ) -> Result<(Vec<DiscoveredMcpTool>, String), RuntimeSessionMcpError> {
+        let surface = self
+            .surface_query
+            .current_runtime_mcp_surface_for_agent_run(
+                run_id,
+                agent_id,
+                RuntimeGatewayMcpSurfaceQueryPurpose::new(RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT),
+            )
+            .await
+            .map_err(runtime_surface_query_error_to_mcp)?;
+        let backend_id = surface.runtime_backend_anchor.backend_id().to_string();
+        let tools = self
+            .mcp_tool_discovery
+            .discover_tool_entries(discovery_request(surface))
+            .await
+            .map(|outcome| outcome.tools)
+            .map_err(runtime_mcp_error_from_connector)?;
+        Ok((tools, backend_id))
+    }
 }
 
 #[async_trait]
@@ -85,7 +110,82 @@ impl RuntimeSessionMcpAccess for CurrentSurfaceRuntimeMcpAccess {
                 )
             })?;
         let arguments = input.arguments.unwrap_or(Value::Null);
-        execute_runtime_mcp_tool(entry.tool, &entry.runtime_name, arguments).await
+        execute_runtime_mcp_tool(
+            entry.tool,
+            &entry.runtime_name,
+            arguments,
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl OperationMcpAccess for CurrentSurfaceRuntimeMcpAccess {
+    async fn discover_tools(
+        &self,
+        principal: &OperationPrincipal,
+        _: &OperationAuthorizationScope,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Vec<OperationMcpTool>, OperationExecutionError> {
+        if cancel.is_cancelled() {
+            return Err(OperationExecutionError::Cancelled);
+        }
+        let OperationPrincipalRef::AgentRunAgent { run_id, agent_id } = principal.principal_ref()
+        else {
+            return Ok(Vec::new());
+        };
+        let (entries, backend_id) = self
+            .discover_entries_for_agent_run(*run_id, *agent_id)
+            .await
+            .map_err(operation_error_from_mcp)?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| OperationMcpTool {
+                server_name: entry.server_name,
+                tool_name: entry.tool_name,
+                description: entry.description,
+                input_schema: entry.parameters_schema,
+                backend_id: backend_id.clone(),
+            })
+            .collect())
+    }
+
+    async fn invoke_tool(
+        &self,
+        principal: &OperationPrincipal,
+        _: &OperationAuthorizationScope,
+        server_name: &str,
+        tool_name: &str,
+        arguments: Value,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Value, OperationExecutionError> {
+        let OperationPrincipalRef::AgentRunAgent { run_id, agent_id } = principal.principal_ref()
+        else {
+            return Err(OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["agent_run.mcp".to_string()],
+            });
+        };
+        let (entries, _) = self
+            .discover_entries_for_agent_run(*run_id, *agent_id)
+            .await
+            .map_err(operation_error_from_mcp)?;
+        let operation_ref = agentdash_domain::operation::OperationRef::new(
+            super::MCP_OPERATION_NAMESPACE,
+            server_name,
+            tool_name,
+            1,
+        )
+        .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
+        let entry = entries
+            .into_iter()
+            .find(|entry| entry.server_name == server_name && entry.tool_name == tool_name)
+            .ok_or(OperationExecutionError::OperationUnavailable { operation_ref })?;
+        let result = execute_runtime_mcp_tool(entry.tool, &entry.runtime_name, arguments, cancel)
+            .await
+            .map_err(operation_error_from_mcp)?;
+        serde_json::to_value(result)
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))
     }
 }
 
@@ -156,6 +256,25 @@ fn runtime_mcp_error_from_connector(error: ConnectorError) -> RuntimeSessionMcpE
     }
 }
 
+fn operation_error_from_mcp(error: RuntimeSessionMcpError) -> OperationExecutionError {
+    match error {
+        RuntimeSessionMcpError::InvalidArguments(message) => {
+            OperationExecutionError::invalid_request(message)
+        }
+        RuntimeSessionMcpError::ToolUnavailable(message)
+        | RuntimeSessionMcpError::SessionUnavailable(message) => {
+            OperationExecutionError::NotReady {
+                code: "mcp_unavailable".to_string(),
+                message,
+            }
+        }
+        RuntimeSessionMcpError::DiscoveryFailed(message)
+        | RuntimeSessionMcpError::ExecutionFailed(message) => {
+            OperationExecutionError::provider_failed(message)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -200,6 +319,22 @@ mod tests {
         async fn current_runtime_mcp_surface_with_backend(
             &self,
             _runtime_session_id: &str,
+            _purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
+        ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError>
+        {
+            Ok(self
+                .surface
+                .lock()
+                .expect("surface mutex poisoned")
+                .as_ref()
+                .expect("surface")
+                .clone())
+        }
+
+        async fn current_runtime_mcp_surface_for_agent_run(
+            &self,
+            _run_id: Uuid,
+            _agent_id: Uuid,
             _purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
         ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError>
         {

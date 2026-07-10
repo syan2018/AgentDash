@@ -1126,6 +1126,30 @@ impl RuntimeGatewayMcpSurfaceQueryPort for AgentRunRuntimeSurfaceQuery {
             .map(RuntimeGatewayMcpSurfaceWithBackend::from)
             .map_err(RuntimeGatewayMcpSurfaceQueryError::from)
     }
+
+    async fn current_runtime_mcp_surface_for_agent_run(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
+        purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
+    ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError> {
+        let surface = self
+            .current_runtime_surface_for_agent_run(run_id, agent_id, purpose.clone().into())
+            .await
+            .map_err(RuntimeGatewayMcpSurfaceQueryError::from)?;
+        let runtime_backend_anchor = surface.runtime_backend_anchor.clone().ok_or_else(|| {
+            RuntimeGatewayMcpSurfaceQueryError::new(format!(
+                "AgentRun MCP surface 缺少 backend anchor: run_id={run_id}, agent_id={agent_id}, component={}",
+                purpose.component
+            ))
+        })?;
+        Ok(RuntimeGatewayMcpSurfaceWithBackend::from(
+            AgentRunRuntimeSurfaceWithBackend {
+                surface,
+                runtime_backend_anchor,
+            },
+        ))
+    }
 }
 
 #[cfg(test)]

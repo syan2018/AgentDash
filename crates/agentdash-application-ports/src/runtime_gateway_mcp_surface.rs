@@ -1,6 +1,7 @@
 use agentdash_domain::backend::{RuntimeBackendAnchor, RuntimeBackendAnchorError};
 use agentdash_spi::{AuthIdentity, CapabilityState, RuntimeMcpServer, RuntimeVfsAccessPolicy, Vfs};
 use async_trait::async_trait;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeGatewayMcpSurfaceQueryPurpose {
@@ -63,6 +64,13 @@ pub trait RuntimeGatewayMcpSurfaceQueryPort: Send + Sync {
     async fn current_runtime_mcp_surface_with_backend(
         &self,
         runtime_session_id: &str,
+        purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
+    ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError>;
+
+    async fn current_runtime_mcp_surface_for_agent_run(
+        &self,
+        run_id: Uuid,
+        agent_id: Uuid,
         purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
     ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError>;
 }

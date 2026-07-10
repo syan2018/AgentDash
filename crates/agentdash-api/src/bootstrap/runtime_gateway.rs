@@ -9,14 +9,15 @@ use agentdash_application_ports::backend_transport::{BackendTransport, Transport
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_application_runtime_gateway::{
     CompositeOperationAuthorityResolver, ExtensionRuntimeActionProvider,
-    InMemoryOperationResultStore, McpCallToolProvider, McpListToolsProvider, McpProbeSetupPort,
-    McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
-    OperationGateway, RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
-    SetupOperationAccessPort, SetupOperationAuthorityResolver, SetupOperationProvider,
-    TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput,
-    WorkspaceBrowseDirectoryOutput, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
-    WorkspaceDetectGitOutput, WorkspaceDetectGitSetupPort, WorkspaceDetectInput,
-    WorkspaceDetectOutput, WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    InMemoryOperationResultStore, McpCallToolProvider, McpListToolsProvider, McpOperationProvider,
+    McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput,
+    McpProbeTransportOutput, OperationGateway, RuntimeGateway, RuntimeGatewaySetupError,
+    RuntimeSessionMcpAccess, SetupOperationAccessPort, SetupOperationAuthorityResolver,
+    SetupOperationProvider, TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry,
+    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
+    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
+    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
@@ -50,6 +51,7 @@ pub(crate) fn build_runtime_gateway(
 
 pub(crate) fn build_operation_gateway(
     mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,
+    operation_mcp_access: Arc<dyn agentdash_application_runtime_gateway::OperationMcpAccess>,
     repos: RepositorySet,
     backend_registry: Arc<BackendRegistry>,
     setup_action_transport: Arc<
@@ -89,7 +91,10 @@ pub(crate) fn build_operation_gateway(
             surface_authority,
         )),
         [setup_provider as Arc<dyn agentdash_application_runtime_gateway::OperationProvider>],
-        [],
+        [Arc::new(McpOperationProvider::new(operation_mcp_access))
+            as Arc<
+                dyn agentdash_application_runtime_gateway::DynamicOperationProvider,
+            >],
         Arc::new(InMemoryOperationResultStore::default()),
         Arc::new(TracingOperationAuditSink),
     )
@@ -290,6 +295,22 @@ impl agentdash_application_runtime_gateway::OperationAuthorityResolver
                     "agent:{run_id}:{agent_id}:{}:{}",
                     frame.id, frame.revision
                 ));
+                if let Some(capability_value) = frame.surface_document().capability_state {
+                    let capability_state =
+                        serde_json::from_value::<agentdash_spi::CapabilityState>(capability_value)
+                            .map_err(|error| OperationExecutionError::NotReady {
+                                code: "agent_capability_invalid".to_string(),
+                                message: error.to_string(),
+                            })?;
+                    capabilities.extend(capability_state.capability_keys());
+                    capabilities.extend(
+                        capability_state
+                            .tool
+                            .mcp_servers
+                            .iter()
+                            .map(|server| format!("mcp:{}", server.name)),
+                    );
+                }
                 capabilities.insert("agent.operation.invoke".to_string());
             }
             OperationPrincipalRef::ExtensionInstallation { installation_id } => {

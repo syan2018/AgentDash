@@ -3,6 +3,7 @@ mod extension_actions;
 mod extension_workspace;
 mod gateway;
 mod mcp_access;
+mod mcp_operations;
 mod operation_authority;
 mod operation_core;
 mod operation_error;
@@ -56,6 +57,9 @@ pub use extension_workspace::{
 };
 pub use gateway::RuntimeGateway;
 pub use mcp_access::CurrentSurfaceRuntimeMcpAccess;
+pub use mcp_operations::{
+    MCP_OPERATION_NAMESPACE, McpOperationProvider, OperationMcpAccess, OperationMcpTool,
+};
 pub use operation_authority::CompositeOperationAuthorityResolver;
 pub use operation_core::{
     OperationAuditSink, OperationDispatcher, OperationExecutionCore, OperationPlacementResolver,

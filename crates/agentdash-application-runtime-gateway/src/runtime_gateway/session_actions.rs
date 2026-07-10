@@ -267,15 +267,11 @@ pub(crate) async fn execute_runtime_mcp_tool(
     tool: agentdash_agent_types::DynAgentTool,
     runtime_name: &str,
     arguments: Value,
+    cancel: CancellationToken,
 ) -> Result<AgentToolResult, RuntimeSessionMcpError> {
-    tool.execute(
-        &format!("rt-mcp-{runtime_name}"),
-        arguments,
-        CancellationToken::new(),
-        None,
-    )
-    .await
-    .map_err(runtime_mcp_error_from_tool_error)
+    tool.execute(&format!("rt-mcp-{runtime_name}"), arguments, cancel, None)
+        .await
+        .map_err(runtime_mcp_error_from_tool_error)
 }
 
 fn runtime_mcp_error_from_tool_error(error: AgentToolError) -> RuntimeSessionMcpError {

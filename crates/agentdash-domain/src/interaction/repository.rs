@@ -99,11 +99,21 @@ pub trait InteractionCommandTransactionPort: Send + Sync {
 }
 
 #[async_trait::async_trait]
+pub trait InteractionEventRepository: Send + Sync {
+    async fn list_events(
+        &self,
+        instance_id: Uuid,
+        after_sequence: u64,
+    ) -> Result<Vec<InteractionEvent>, InteractionError>;
+}
+
+#[async_trait::async_trait]
 pub trait OperationEffectIntentRepository: Send + Sync {
     async fn claim_due(
         &self,
         limit: usize,
         claimed_at: chrono::DateTime<chrono::Utc>,
+        claim_expires_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<OperationEffectIntent>, InteractionError>;
     async fn mark_succeeded(
         &self,

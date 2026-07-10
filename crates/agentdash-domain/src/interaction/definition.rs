@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::operation::OperationRef;
+
 use super::{
     DEFINITION_FORMAT_V1, INTERACTION_CONTRACT_V1, InteractionCommandRequest, InteractionError,
     InteractionResult, ResolvedInteractionCommand, SourceBundle,
@@ -59,7 +61,6 @@ pub enum CommandActorPolicy {
 #[serde(tag = "handler", rename_all = "snake_case")]
 pub enum PlatformCommandHandler {
     StatePatchV1,
-    InstanceCloseV1,
 }
 
 impl PlatformCommandHandler {
@@ -75,6 +76,12 @@ pub struct InteractionCommandDefinition {
     pub actor_policy: CommandActorPolicy,
     pub payload_schema: Value,
     pub state_patch_v1: Option<super::StatePatchV1Contract>,
+    pub operation_effect: Option<InteractionOperationEffectDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InteractionOperationEffectDefinition {
+    pub operation_ref: OperationRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -245,23 +252,21 @@ impl InteractionDefinitionRevision {
             .map(|definition| definition.command_key.as_str())
             .collect::<std::collections::HashSet<_>>();
         for command in &self.command_definitions {
-            match (&command.handler, &command.state_patch_v1) {
-                (PlatformCommandHandler::StatePatchV1, Some(contract)) => {
-                    contract.validate_contract()?
-                }
-                (PlatformCommandHandler::StatePatchV1, None) => {
-                    return Err(InteractionError::InvalidField {
+            let contract =
+                command
+                    .state_patch_v1
+                    .as_ref()
+                    .ok_or(InteractionError::InvalidField {
                         field: "command_definitions.state_patch_v1",
                         reason: "state_patch_v1 handler 必须声明 patch contract",
-                    });
-                }
-                (_, Some(_)) => {
-                    return Err(InteractionError::InvalidField {
-                        field: "command_definitions.state_patch_v1",
-                        reason: "非 state_patch_v1 handler 不能声明 patch contract",
-                    });
-                }
-                (_, None) => {}
+                    })?;
+            contract.validate_contract()?;
+            if let Some(effect) = &command.operation_effect {
+                effect.operation_ref.validate().map_err(|error| {
+                    InteractionError::InvalidOperationRef {
+                        reason: error.to_string(),
+                    }
+                })?;
             }
         }
         for component in &self.component_bindings {
@@ -454,6 +459,7 @@ mod tests {
             state_patch_v1: Some(
                 StatePatchV1Contract::new(vec!["/value".to_string()], 10, 1024).expect("contract"),
             ),
+            operation_effect: None,
         };
         revision.command_definitions = vec![command.clone(), command];
 
@@ -490,6 +496,7 @@ mod tests {
                 state_patch_v1: Some(
                     StatePatchV1Contract::new(vec!["/value".into()], 1, 1024).expect("contract"),
                 ),
+                operation_effect: None,
             });
         let resolved = revision
             .resolve_command(InteractionCommandRequest {

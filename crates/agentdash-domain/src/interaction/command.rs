@@ -223,11 +223,19 @@ impl OperationEffectIntent {
         self.admission_audit.scope.validate()
     }
 
-    pub fn claim(&mut self, claim_token: Uuid, at: DateTime<Utc>) -> InteractionResult<()> {
+    pub fn claim(
+        &mut self,
+        claim_token: Uuid,
+        at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> InteractionResult<()> {
+        let reclaimable = self.status == OperationEffectStatus::Claimed
+            && self.claim_expires_at.is_some_and(|expires| expires <= at);
         if !matches!(
             self.status,
             OperationEffectStatus::Pending | OperationEffectStatus::RetryScheduled
-        ) {
+        ) && !reclaimable
+        {
             return Err(InteractionError::InvalidStatusTransition {
                 from: effect_status_str(self.status),
                 to: "claimed",
@@ -236,6 +244,7 @@ impl OperationEffectIntent {
         self.status = OperationEffectStatus::Claimed;
         self.claim_token = Some(claim_token);
         self.claimed_at = Some(at);
+        self.claim_expires_at = Some(expires_at);
         self.attempt = self.attempt.saturating_add(1);
         Ok(())
     }
@@ -248,6 +257,8 @@ impl OperationEffectIntent {
         self.require_claim(claim_token, "succeeded")?;
         self.status = OperationEffectStatus::Succeeded;
         self.completed_at = Some(at);
+        self.claim_token = None;
+        self.claim_expires_at = None;
         Ok(())
     }
 
@@ -262,6 +273,7 @@ impl OperationEffectIntent {
         self.next_attempt_at = next_attempt_at;
         self.claim_token = None;
         self.claimed_at = None;
+        self.claim_expires_at = None;
         self.last_failure_code = Some(failure_code.into());
         Ok(())
     }
@@ -275,6 +287,8 @@ impl OperationEffectIntent {
         self.require_claim(claim_token, "terminal_failed")?;
         self.status = OperationEffectStatus::TerminalFailed;
         self.completed_at = Some(at);
+        self.claim_token = None;
+        self.claim_expires_at = None;
         self.last_failure_code = Some(failure_code.into());
         Ok(())
     }
@@ -394,6 +408,7 @@ pub struct OperationEffectIntent {
     pub next_attempt_at: DateTime<Utc>,
     pub claim_token: Option<Uuid>,
     pub claimed_at: Option<DateTime<Utc>>,
+    pub claim_expires_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
     pub last_failure_code: Option<String>,
 }
@@ -463,5 +478,62 @@ mod tests {
             "actor": { "kind": "human", "user_id": "u" }, "origin": "user_workshop", "attachment_id": null
         });
         assert!(serde_json::from_value::<InteractionCommandRequest>(value).is_err());
+    }
+
+    #[test]
+    fn expired_effect_claim_is_recoverable_and_terminal_clears_lease() {
+        let now = Utc::now();
+        let mut effect = OperationEffectIntent {
+            effect_id: Uuid::new_v4(),
+            instance_id: Uuid::new_v4(),
+            source_event_id: Uuid::new_v4(),
+            operation_ref: crate::operation::OperationRef::new("host", "core", "notify", 1)
+                .expect("operation"),
+            validated_input: serde_json::json!({}),
+            admission_audit: OperationEffectAdmissionAudit {
+                principal: OperationEffectPrincipalRef::Human {
+                    user_id: "u".into(),
+                },
+                scope: InteractionOwner::User("u".into()),
+                capability_revision_ref: "cap:1".into(),
+                admitted_at: now,
+            },
+            idempotency_key: "effect-1".into(),
+            safety: OperationEffectSafety::Idempotent,
+            status: OperationEffectStatus::Pending,
+            attempt: 0,
+            next_attempt_at: now,
+            claim_token: None,
+            claimed_at: None,
+            claim_expires_at: None,
+            completed_at: None,
+            last_failure_code: None,
+        };
+        let first = Uuid::new_v4();
+        effect
+            .claim(first, now, now + chrono::Duration::seconds(5))
+            .expect("first claim");
+        assert!(
+            effect
+                .claim(
+                    Uuid::new_v4(),
+                    now + chrono::Duration::seconds(1),
+                    now + chrono::Duration::seconds(6)
+                )
+                .is_err()
+        );
+        let recovered = Uuid::new_v4();
+        effect
+            .claim(
+                recovered,
+                now + chrono::Duration::seconds(5),
+                now + chrono::Duration::seconds(10),
+            )
+            .expect("expired claim is recoverable");
+        effect
+            .mark_terminal_failed(recovered, now + chrono::Duration::seconds(6), "terminal")
+            .expect("terminal");
+        assert!(effect.claim_token.is_none());
+        assert!(effect.claim_expires_at.is_none());
     }
 }

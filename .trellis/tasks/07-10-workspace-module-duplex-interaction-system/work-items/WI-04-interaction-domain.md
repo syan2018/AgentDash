@@ -1,6 +1,6 @@
 # WI-04 Interaction Domain
 
-Status: planned
+Status: in_progress
 
 Depends On: WI-00
 
@@ -31,3 +31,17 @@ Depends On: WI-00
 - direct/human_only 与 Channel suggestion boundary tests。
 - ownership/permission/secret projection tests。
 - migration/repository concurrency tests。
+
+## Evidence
+
+- `776349dd`：V1 definition/source/instance/command/event/effect 与 repository/transaction ports。
+- `cf01f178`：pinned definition command resolution、canonical SourceBundle/patch、typed binding/audit 与唯一 OperationRef。
+- `e806d312`：PostgreSQL definition/instance/event/effect repository、原子 command transaction 与 effect claim 实现。
+- Stage B（本提交）：server-owned caller admission、确定性 command/state rebuild、typed close 与 lease-aware effect dispatcher。
+- Domain Interaction 13 tests、Application Interaction 6 tests、Infrastructure transaction validation test 与三层 production checks 已通过。
+
+## Remaining Integration Gates
+
+- WI-05 在最终 `0062` 中同时创建 Interaction schema、删除旧 Canvas 五表，并运行真实 PostgreSQL transaction/concurrency tests。
+- API/AppState、canonical OperationExecutionCore adapter、subscription/frontend projection 与 Channel suggestion 边界尚待对应 work item 接线。
+- 完成上述 gate 前保持 `in_progress`，不标记 `ready_for_integration`。

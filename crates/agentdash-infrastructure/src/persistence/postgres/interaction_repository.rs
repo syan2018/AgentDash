@@ -7,8 +7,9 @@ use agentdash_domain::interaction::{
     DefinitionRevisionCommit, InteractionAttachment, InteractionCommandCommit,
     InteractionCommandTransaction, InteractionCommandTransactionPort, InteractionDefinition,
     InteractionDefinitionRepository, InteractionDefinitionRevision, InteractionError,
-    InteractionEvent, InteractionInstance, InteractionInstanceRepository, InteractionOwner,
-    InteractionRuntimeBinding, OperationEffectIntent, OperationEffectIntentRepository,
+    InteractionEvent, InteractionEventRepository, InteractionInstance,
+    InteractionInstanceRepository, InteractionOwner, InteractionRuntimeBinding,
+    OperationEffectIntent, OperationEffectIntentRepository,
 };
 
 #[derive(Clone)]
@@ -357,11 +358,27 @@ impl InteractionCommandTransactionPort for PostgresInteractionRepository {
 }
 
 #[async_trait::async_trait]
+impl InteractionEventRepository for PostgresInteractionRepository {
+    async fn list_events(
+        &self,
+        instance_id: Uuid,
+        after_sequence: u64,
+    ) -> Result<Vec<InteractionEvent>, InteractionError> {
+        let rows = sqlx::query("SELECT document FROM interaction_events WHERE instance_id=$1 AND sequence>$2 ORDER BY sequence")
+            .bind(instance_id.to_string()).bind(after_sequence as i64).fetch_all(&self.pool).await.map_err(db_error("interaction_events"))?;
+        rows.into_iter()
+            .map(|row| decode_row(&row, "interaction_events.document"))
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
 impl OperationEffectIntentRepository for PostgresInteractionRepository {
     async fn claim_due(
         &self,
         limit: usize,
         claimed_at: DateTime<Utc>,
+        claim_expires_at: DateTime<Utc>,
     ) -> Result<Vec<OperationEffectIntent>, InteractionError> {
         let limit = i64::try_from(limit).map_err(|_| InteractionError::InvalidField {
             field: "effect_claim.limit",
@@ -372,12 +389,12 @@ impl OperationEffectIntentRepository for PostgresInteractionRepository {
             .begin()
             .await
             .map_err(db_error("effect_claim_begin"))?;
-        let rows=sqlx::query("SELECT document FROM interaction_operation_effect_intents WHERE status IN ('pending','retry_scheduled') AND next_attempt_at <= $1 ORDER BY next_attempt_at,effect_id FOR UPDATE SKIP LOCKED LIMIT $2").bind(claimed_at).bind(limit).fetch_all(&mut *tx).await.map_err(db_error("interaction_operation_effect_intents"))?;
+        let rows=sqlx::query("SELECT document FROM interaction_operation_effect_intents WHERE ((status IN ('pending','retry_scheduled') AND next_attempt_at <= $1) OR (status='claimed' AND claim_expires_at <= $1)) ORDER BY next_attempt_at,effect_id FOR UPDATE SKIP LOCKED LIMIT $2").bind(claimed_at).bind(limit).fetch_all(&mut *tx).await.map_err(db_error("interaction_operation_effect_intents"))?;
         let mut claimed = Vec::with_capacity(rows.len());
         for row in rows {
             let mut effect: OperationEffectIntent =
                 decode_row(&row, "interaction_operation_effect_intents.document")?;
-            effect.claim(Uuid::new_v4(), claimed_at)?;
+            effect.claim(Uuid::new_v4(), claimed_at, claim_expires_at)?;
             update_effect(&mut tx, &effect).await?;
             claimed.push(effect);
         }
@@ -464,14 +481,14 @@ async fn insert_effect(
     tx: &mut Transaction<'_, Postgres>,
     effect: &OperationEffectIntent,
 ) -> Result<(), InteractionError> {
-    sqlx::query("INSERT INTO interaction_operation_effect_intents (effect_id,instance_id,source_event_id,status,next_attempt_at,claim_token,document) VALUES ($1,$2,$3,$4,$5,$6,$7)").bind(effect.effect_id.to_string()).bind(effect.instance_id.to_string()).bind(effect.source_event_id.to_string()).bind(effect_status(effect.status)).bind(effect.next_attempt_at).bind(effect.claim_token.map(|id|id.to_string())).bind(Json(to_value(effect,"operation_effect_intent")?)).execute(&mut **tx).await.map_err(db_error("interaction_operation_effect_intents"))?;
+    sqlx::query("INSERT INTO interaction_operation_effect_intents (effect_id,instance_id,source_event_id,status,next_attempt_at,claim_token,claim_expires_at,document) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)").bind(effect.effect_id.to_string()).bind(effect.instance_id.to_string()).bind(effect.source_event_id.to_string()).bind(effect_status(effect.status)).bind(effect.next_attempt_at).bind(effect.claim_token.map(|id|id.to_string())).bind(effect.claim_expires_at).bind(Json(to_value(effect,"operation_effect_intent")?)).execute(&mut **tx).await.map_err(db_error("interaction_operation_effect_intents"))?;
     Ok(())
 }
 async fn update_effect(
     tx: &mut Transaction<'_, Postgres>,
     effect: &OperationEffectIntent,
 ) -> Result<(), InteractionError> {
-    sqlx::query("UPDATE interaction_operation_effect_intents SET status=$2,next_attempt_at=$3,claim_token=$4,document=$5 WHERE effect_id=$1").bind(effect.effect_id.to_string()).bind(effect_status(effect.status)).bind(effect.next_attempt_at).bind(effect.claim_token.map(|id|id.to_string())).bind(Json(to_value(effect,"operation_effect_intent")?)).execute(&mut **tx).await.map_err(db_error("interaction_operation_effect_intents"))?;
+    sqlx::query("UPDATE interaction_operation_effect_intents SET status=$2,next_attempt_at=$3,claim_token=$4,claim_expires_at=$5,document=$6 WHERE effect_id=$1").bind(effect.effect_id.to_string()).bind(effect_status(effect.status)).bind(effect.next_attempt_at).bind(effect.claim_token.map(|id|id.to_string())).bind(effect.claim_expires_at).bind(Json(to_value(effect,"operation_effect_intent")?)).execute(&mut **tx).await.map_err(db_error("interaction_operation_effect_intents"))?;
     Ok(())
 }
 async fn mutate_effect<F>(

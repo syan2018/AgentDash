@@ -135,6 +135,7 @@ dependencies = [
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
  "async-trait",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -625,6 +626,8 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "agentdash-agent-protocol",
+ "agentdash-agent-runtime",
+ "agentdash-agent-runtime-contract",
  "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",

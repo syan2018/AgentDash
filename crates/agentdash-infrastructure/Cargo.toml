@@ -9,6 +9,8 @@ agentdash-domain = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
+agentdash-agent-runtime = { workspace = true }
+agentdash-agent-runtime-contract = { workspace = true }
 agentdash-process = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

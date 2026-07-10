@@ -7,32 +7,33 @@ use agentdash_agent_runtime_contract::{
     RuntimeOperationTerminal, RuntimeProfile, RuntimeRevision, RuntimeSnapshot, RuntimeThreadId,
     RuntimeThreadStatus, RuntimeTurnId, ThreadSettingsRevision, ToolSetRevision,
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EntityPhase<T> {
     Active,
     Terminal(T),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeTurnState {
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeTurnTerminal>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeItemState {
     pub turn_id: RuntimeTurnId,
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeItemTerminal>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeInteractionState {
     pub turn_id: RuntimeTurnId,
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeInteractionTerminal>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeOperationRecord {
     pub operation_id: RuntimeOperationId,
     pub idempotency_key: IdempotencyKey,
@@ -56,7 +57,7 @@ impl RuntimeOperationRecord {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeThreadState {
     pub thread_id: RuntimeThreadId,
     pub revision: RuntimeRevision,
@@ -80,7 +81,7 @@ pub struct RuntimeThreadState {
     pub interactions: BTreeMap<RuntimeInteractionId, RuntimeInteractionState>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize)]
 pub enum TransitionError {
     #[error("operation {operation_id} was already accepted")]
     OperationAlreadyAccepted { operation_id: RuntimeOperationId },

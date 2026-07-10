@@ -44,6 +44,7 @@ pub use persistence::postgres::PostgresRoutineExecutionRepository;
 pub use persistence::postgres::PostgresRoutineRepository;
 pub use persistence::postgres::PostgresRunnerRegistrationTokenRepository;
 pub use persistence::postgres::PostgresRuntimeHealthRepository;
+pub use persistence::postgres::PostgresRuntimeRepository;
 pub use persistence::postgres::PostgresRuntimeSessionExecutionAnchorRepository;
 pub use persistence::postgres::PostgresSessionRepository;
 pub use persistence::postgres::PostgresSettingsRepository;

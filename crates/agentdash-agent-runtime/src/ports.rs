@@ -3,6 +3,7 @@ use agentdash_agent_runtime_contract::{
     RuntimeEventEnvelope, RuntimeOperationId, RuntimeRevision, RuntimeThreadId,
 };
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -10,7 +11,7 @@ use crate::{
     ContextPreparationWorkItem, RuntimeOperationRecord, RuntimeThreadState,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeOutboxEntry {
     pub operation_id: RuntimeOperationId,
     pub thread_id: RuntimeThreadId,
@@ -18,7 +19,72 @@ pub struct RuntimeOutboxEntry {
     pub command: RuntimeCommand,
 }
 
+/// A durable work category. Each category retains its own business state; the queue only owns
+/// leases and delivery acknowledgement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeWorkKind {
+    RuntimeOutbox,
+    ContextPreparation,
+    ContextActivationDispatch,
+    ContextActivationRecovery,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeWorkIdentity {
+    Operation(RuntimeOperationId),
+    Compaction(agentdash_agent_runtime_contract::ContextCompactionId),
+    Activation(agentdash_agent_runtime_contract::ContextActivationId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeWorkPayload {
+    RuntimeOutbox(RuntimeOutboxEntry),
+    ContextPreparation(ContextPreparationWorkItem),
+    ContextActivationDispatch(ContextActivationOutboxEntry),
+    ContextActivationRecovery(ContextActivation),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RuntimeWorkerId(pub String);
+
+impl RuntimeWorkerId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RuntimeWorkClaimToken(pub String);
+
+impl RuntimeWorkClaimToken {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeWorkClaimRequest {
+    pub kind: RuntimeWorkKind,
+    pub owner: RuntimeWorkerId,
+    pub lease_duration_ms: u64,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeWorkClaim {
+    pub kind: RuntimeWorkKind,
+    pub identity: RuntimeWorkIdentity,
+    pub token: RuntimeWorkClaimToken,
+    pub owner: RuntimeWorkerId,
+    pub lease_expires_at_ms: i64,
+    pub attempt: u32,
+    pub payload: RuntimeWorkPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextActivationOutboxEntry {
     pub activation_id: agentdash_agent_runtime_contract::ContextActivationId,
     pub candidate_id: agentdash_agent_runtime_contract::ContextCandidateId,
@@ -30,7 +96,7 @@ pub struct ContextActivationOutboxEntry {
     pub digest: agentdash_agent_runtime_contract::ContextDigest,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DriverEventQuarantineReason {
     CanonicalThreadNotFound,
     StaleBinding {
@@ -44,7 +110,7 @@ pub enum DriverEventQuarantineReason {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuarantinedDriverEvent {
     pub event: agentdash_agent_runtime_contract::DriverEventEnvelope,
     pub reason: DriverEventQuarantineReason,
@@ -133,6 +199,10 @@ pub enum RuntimeStoreError {
     OperationConflict { operation_id: RuntimeOperationId },
     #[error("idempotency key is already accepted by operation {operation_id}")]
     IdempotencyConflict { operation_id: RuntimeOperationId },
+    #[error("runtime work claim is not owned by the supplied owner and token")]
+    WorkClaimConflict,
+    #[error("runtime work claim request is invalid: {0}")]
+    InvalidWorkClaim(String),
     #[error("runtime store is unavailable: {0}")]
     Unavailable(String),
 }
@@ -219,4 +289,21 @@ pub trait RuntimeUnitOfWork: Send + Sync {
 pub trait RuntimeTransientEvents: Send + Sync {
     async fn publish(&self, event: RuntimeEventEnvelope);
     async fn read(&self, thread_id: &RuntimeThreadId) -> Vec<RuntimeEventEnvelope>;
+}
+
+/// Durable multi-worker lease queue for side effects and recovery work.
+#[async_trait]
+pub trait RuntimeWorkQueue: Send + Sync {
+    async fn claim(
+        &self,
+        request: RuntimeWorkClaimRequest,
+    ) -> Result<Vec<RuntimeWorkClaim>, RuntimeStoreError>;
+
+    async fn ack(&self, claim: &RuntimeWorkClaim) -> Result<(), RuntimeStoreError>;
+
+    async fn release(
+        &self,
+        claim: &RuntimeWorkClaim,
+        error: String,
+    ) -> Result<(), RuntimeStoreError>;
 }

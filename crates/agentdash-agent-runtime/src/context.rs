@@ -6,6 +6,7 @@ use agentdash_agent_runtime_contract::{
     RuntimeContextView, RuntimeEvent, RuntimeOperationId, RuntimeOperationTerminal,
     RuntimeThreadId, RuntimeThreadStatus,
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -13,7 +14,7 @@ use crate::{
     RuntimeStoreError, RuntimeUnitOfWork,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCheckpoint {
     pub checkpoint_id: ContextCheckpointId,
     pub thread_id: RuntimeThreadId,
@@ -32,7 +33,7 @@ impl ContextCheckpoint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveContextHead {
     pub thread_id: RuntimeThreadId,
     pub checkpoint_id: ContextCheckpointId,
@@ -54,14 +55,14 @@ impl ActiveContextHead {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompactionTerminal {
     Succeeded,
     Failed { reason: String },
     Lost { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCandidate {
     pub candidate_id: ContextCandidateId,
     pub compaction_id: ContextCompactionId,
@@ -74,7 +75,7 @@ pub struct ContextCandidate {
     pub checkpoint: ContextCheckpoint,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextActivationStatus {
     Prepared,
     Applied {
@@ -87,13 +88,13 @@ pub enum ContextActivationStatus {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextAppliedState {
     pub digest: ContextDigest,
     pub driver_context_revision: DriverContextRevision,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextActivation {
     pub activation_id: ContextActivationId,
     pub candidate_id: ContextCandidateId,
@@ -102,13 +103,13 @@ pub struct ContextActivation {
     pub status: ContextActivationStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextHeadWrite {
     pub expected_revision: Option<ContextRevision>,
     pub head: ActiveContextHead,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextPreparationStatus {
     Pending,
     Prepared {
@@ -120,7 +121,7 @@ pub enum ContextPreparationStatus {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextPreparationWorkItem {
     pub compaction_id: ContextCompactionId,
     pub operation_id: RuntimeOperationId,
@@ -131,7 +132,7 @@ pub struct ContextPreparationWorkItem {
     pub status: ContextPreparationStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactionPreparation {
     pub candidate_id: ContextCandidateId,
     pub compaction_id: ContextCompactionId,
@@ -145,7 +146,7 @@ pub struct CompactionPreparation {
     pub materialized: MaterializedContext,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActivationObservation {
     Applied {
         digest: ContextDigest,

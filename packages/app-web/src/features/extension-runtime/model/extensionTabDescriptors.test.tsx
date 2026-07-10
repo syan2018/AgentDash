@@ -22,14 +22,6 @@ describe("createExtensionTabDescriptors", () => {
         renderer: { kind: "webview", entry: "dist/panel/index.html" },
         loadability: { available: true, mode: "extension_host", reason: null },
       }, {
-        extension_key: "canvas-demo",
-        extension_id: "canvas-demo",
-        type_id: "canvas-demo.panel",
-        label: "Canvas Demo",
-        uri_scheme: "canvas-demo",
-        renderer: { kind: "canvas_panel", entry: "dist/canvas/runtime-snapshot.json" },
-        loadability: { available: true, mode: "ui_only", reason: null },
-      }, {
         extension_key: "broken",
         extension_id: "broken",
         type_id: "broken.panel",
@@ -49,12 +41,9 @@ describe("createExtensionTabDescriptors", () => {
 
     const descriptors = createExtensionTabDescriptors({ projection });
 
-    expect(descriptors).toHaveLength(2);
+    expect(descriptors).toHaveLength(1);
     expect(descriptors[0].typeId).toBe("local-hello.panel");
     expect(descriptors[0].defaultUri).toBe("local-hello://panel");
     expect(descriptors[0].parseUri("local-hello://profile")).toEqual({ resource: "profile" });
-    expect(descriptors[1].typeId).toBe("canvas-demo.panel");
-    expect(descriptors[1].defaultUri).toBe("canvas-demo://panel");
-    expect(descriptors[1].resolveTitle("canvas-demo://snapshot")).toBe("Canvas Demo: snapshot");
   });
 });

@@ -18,7 +18,6 @@ import type {
 } from "../generated/workflow-contracts";
 import type { ProjectAgentSummary } from "../types";
 import {
-  activeCanvasMountIdsFromRuntimeSurface,
   openUserCanvasModule,
   selectCanvasModuleOpenOptions,
 } from "../features/workspace-panel/model/canvasModuleOpen";
@@ -510,41 +509,18 @@ function canvasModule(
 describe("Canvas workspace module selector and user-open flow", () => {
   it("selects only ready Canvas modules with concrete canonical presentation URIs", () => {
     const options = selectCanvasModuleOpenOptions([
-      canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a"),
+      canvasModule("canvas:def-a", "canvas://def-a"),
       canvasModule("canvas:cvs-empty", "canvas://"),
       canvasModule("canvas:cvs-missing", null),
       canvasModule("canvas:cvs-disabled", "canvas://cvs-disabled", "unavailable"),
     ]);
 
     expect(options).toEqual([{
-      module_id: "canvas:cvs-mount-a",
+      module_id: "canvas:def-a",
       view_key: "preview",
-      title: "Preview canvas:cvs-mount-a",
-      presentation_uri: "canvas://cvs-mount-a",
+      title: "Preview canvas:def-a",
+      presentation_uri: "canvas://def-a",
     }]);
-  });
-
-  it("filters Canvas menu options to the current runtime surface", () => {
-    const activeCanvasMountIds = activeCanvasMountIdsFromRuntimeSurface({
-      surface_ref: "session_runtime:session-1",
-      source: { source_type: "session_runtime", session_id: "session-1" },
-      mounts: [{
-        id: "cvs-mount-a",
-        display_name: "Canvas A",
-        provider: "canvas_fs",
-        backend_id: "",
-        capabilities: ["read"],
-        default_write: false,
-        purpose: "canvas",
-        edit_capabilities: { create: true, delete: true, rename: true },
-      }],
-    });
-    const options = selectCanvasModuleOpenOptions([
-      canvasModule("canvas:cvs-mount-a", "canvas://cvs-mount-a"),
-      canvasModule("canvas:cvs-mount-b", "canvas://cvs-mount-b"),
-    ], activeCanvasMountIds);
-
-    expect(options.map((option) => option.presentation_uri)).toEqual(["canvas://cvs-mount-a"]);
   });
 
   it("opens an already active Canvas from the canonical project presentation URI", async () => {

@@ -162,9 +162,7 @@ export interface ExtensionManifest {
     type_id: string;
     label: string;
     uri_scheme: string;
-    renderer:
-      | { kind: "webview"; entry: string }
-      | { kind: "canvas_panel"; entry: string };
+    renderer: { kind: "webview"; entry: string };
   }>;
   ui_components?: Array<{
     component_key: string;

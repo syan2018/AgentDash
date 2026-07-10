@@ -56,7 +56,7 @@ impl WorkspaceModuleStatus {
 /// `list` 返回的摘要——不含完整 schema。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct WorkspaceModuleSummary {
-    /// 稳定 id：`ext:{extension_key}` / `canvas:{canvas_mount_id}` / `builtin:{key}`。
+    /// 稳定 id：`ext:{extension_key}` / `canvas:{definition_id}` / `builtin:{key}`。
     pub module_id: String,
     pub kind: WorkspaceModuleKind,
     pub title: String,

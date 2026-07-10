@@ -1,355 +1,236 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import {
+  commitCanvas,
+  createInteractionInstance,
+  executeInteractionCommand,
   fetchCanvas,
-  fetchAgentRunCanvasRuntimeSnapshot,
-  fetchCanvasByMountId,
-  fetchCanvasRuntimeSnapshot,
-  upsertAgentRunCanvasRuntimeBinding,
-  updateCanvas,
-  type AgentRunCanvasBridgeIdentity,
+  fetchInteractionInstance,
 } from "../../services/canvas";
-import type { Canvas, CanvasRuntimeSnapshot } from "../../types";
-import { CanvasFilesEditor, type CanvasFilesEditorSaveInput } from "./CanvasFilesEditor";
-import { CanvasRuntimeBindingsEditor, type CanvasRuntimeBindingDraft } from "./CanvasRuntimeBindingsEditor";
-import { CanvasRuntimePreview } from "./CanvasRuntimePreview";
-import { areCanvasRuntimeSnapshotsEquivalent } from "./CanvasRuntimePreview.runtime";
+import {
+  buildExactExtensionComponentAssetUrl,
+  fetchProjectExtensionRuntime,
+} from "../../services/extensionRuntime";
+import type {
+  CanvasDefinitionDto,
+  InteractionInstanceViewDto,
+} from "../../generated/interaction-contracts";
+import type { ExtensionUiComponentProjectionResponse } from "../../generated/extension-runtime-contracts";
+import type { JsonValue } from "../../generated/common-contracts";
+import { ExtensionInteractionComponent } from "../extension-runtime";
+import type { ExtensionUiComponentDescriptor } from "../extension-runtime";
 
 export interface CanvasRuntimePanelProps {
-  canvasId: string | null;
-  canvasMountId?: string | null;
-  projectId?: string | null;
-  agentRunBridge?: AgentRunCanvasBridgeIdentity | null;
-  showBridgeUnavailable?: boolean;
-  onAgentRunWorkspaceRefresh?: (() => Promise<unknown>) | null;
+  projectId: string | null;
+  definitionId?: string | null;
+  instanceId?: string | null;
   refreshRevision?: number;
-  onClose: () => void;
-  /** 打开该 Canvas 对应 mount 的资源浏览 Tab */
-  onBrowseFiles?: (mountId: string) => void;
+  onOpenInteraction?(instanceId: string): void;
 }
 
-type CanvasDetailMode = "bindings" | "files";
-
 export function CanvasRuntimePanel({
-  canvasId,
-  canvasMountId,
   projectId,
-  agentRunBridge = null,
-  showBridgeUnavailable = false,
-  onAgentRunWorkspaceRefresh = null,
+  definitionId = null,
+  instanceId = null,
   refreshRevision = 0,
-  onClose,
-  onBrowseFiles,
+  onOpenInteraction,
 }: CanvasRuntimePanelProps) {
-  const [canvas, setCanvas] = useState<Canvas | null>(null);
-  const [snapshot, setSnapshot] = useState<CanvasRuntimeSnapshot | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [definition, setDefinition] = useState<CanvasDefinitionDto | null>(null);
+  const [instance, setInstance] = useState<InteractionInstanceViewDto | null>(null);
+  const [components, setComponents] = useState<ExtensionUiComponentProjectionResponse[]>([]);
+  const [entrySource, setEntrySource] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSavingBindings, setIsSavingBindings] = useState(false);
-  const [bindingsError, setBindingsError] = useState<string | null>(null);
-  const [isSavingFiles, setIsSavingFiles] = useState(false);
-  const [filesError, setFilesError] = useState<string | null>(null);
 
-  const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [detailMode, setDetailMode] = useState<CanvasDetailMode>("bindings");
-
-  const loadCanvasData = useCallback(async () => {
-    if (!canvasId && (!canvasMountId || !projectId)) {
-      setCanvas(null);
-      setSnapshot(null);
-      setError(null);
-      setBindingsError(null);
-      setFilesError(null);
-      return;
-    }
-
-    setIsLoading(true);
+  const load = useCallback(async () => {
     setError(null);
-    setBindingsError(null);
-    setFilesError(null);
     try {
-      const canvasRequest = canvasId
-        ? fetchCanvas(canvasId)
-        : fetchCanvasByMountId(projectId ?? "", canvasMountId ?? "");
-      const snapshotCanvasId = canvasId ?? (await canvasRequest).canvas_id;
-      const [nextCanvas, nextSnapshot] = await Promise.all([
-        canvasRequest,
-        agentRunBridge
-          ? fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
-          : fetchCanvasRuntimeSnapshot(snapshotCanvasId),
-      ]);
-      setCanvas(nextCanvas);
-      setSnapshot((current) =>
-        areCanvasRuntimeSnapshotsEquivalent(current, nextSnapshot) ? current : nextSnapshot,
+      const nextInstance = instanceId ? await fetchInteractionInstance(instanceId) : null;
+      const nextDefinitionId = definitionId ?? nextInstance?.instance.definition_id ?? null;
+      const nextDefinition = nextDefinitionId ? await fetchCanvas(nextDefinitionId) : null;
+      setInstance(nextInstance);
+      setDefinition(nextDefinition);
+      setEntrySource(
+        nextDefinition?.source_bundle.files.find(
+          (file) => file.path === nextDefinition.source_bundle.entry_file,
+        )?.content ?? "",
       );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Canvas 加载失败");
-      setCanvas(null);
-      setSnapshot(null);
-      setBindingsError(null);
-      setFilesError(null);
-    } finally {
-      setIsLoading(false);
+      if (projectId && nextDefinition?.component_bindings.length) {
+        const runtime = await fetchProjectExtensionRuntime(projectId);
+        setComponents(runtime.ui_components);
+      } else {
+        setComponents([]);
+      }
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Canvas 加载失败");
     }
-  }, [agentRunBridge, canvasId, canvasMountId, projectId]);
+  }, [definitionId, instanceId, projectId]);
 
-  useEffect(() => {
-    void loadCanvasData();
-  }, [loadCanvasData, refreshRevision]);
+  useEffect(() => { void load(); }, [load, refreshRevision]);
 
-  const handleBindingUpsert = useCallback(async (binding: CanvasRuntimeBindingDraft) => {
-    if (!agentRunBridge) {
-      const accessError = new Error("当前视图没有 AgentRun runtime bridge，不能保存运行期绑定。");
-      setBindingsError(accessError.message);
-      throw accessError;
-    }
-    setIsSavingBindings(true);
-    setBindingsError(null);
+  const handleSave = useCallback(async () => {
+    if (!definition || !definition.access.can_edit_source) return;
+    const entry = definition.source_bundle.files.find(
+      (file) => file.path === definition.source_bundle.entry_file,
+    );
+    if (!entry || entry.content === entrySource) return;
+    setBusy(true);
+    setError(null);
     try {
-      const nextSnapshot = await upsertAgentRunCanvasRuntimeBinding(agentRunBridge, binding);
-      setSnapshot((current) =>
-        areCanvasRuntimeSnapshotsEquivalent(current, nextSnapshot) ? current : nextSnapshot,
-      );
-    } catch (err) {
-      setBindingsError(err instanceof Error ? err.message : "保存运行期绑定失败");
-      throw err;
-    } finally {
-      setIsSavingBindings(false);
-    }
-  }, [agentRunBridge]);
-
-  const handleFilesSave = useCallback(async (input: CanvasFilesEditorSaveInput) => {
-    if (!canvas) {
-      return;
-    }
-    if (canvas.access.can_edit_source !== true) {
-      const accessError = new Error("当前 Canvas 源为只读，不能保存源文件。");
-      setFilesError(accessError.message);
-      throw accessError;
-    }
-
-    setIsSavingFiles(true);
-    setFilesError(null);
-    try {
-      const nextCanvas = await updateCanvas(canvas.canvas_id, {
-        entry_file: input.entryFile,
-        files: input.files,
+      const updated = await commitCanvas(definition.definition_id, {
+        base_revision_id: definition.current_revision_id,
+        changeset: {
+          file_changes: [{ kind: "upsert", file: { ...entry, content: entrySource } }],
+        },
       });
-      setCanvas(nextCanvas);
-      const nextSnapshot = agentRunBridge
-        ? await fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
-        : await fetchCanvasRuntimeSnapshot(nextCanvas.canvas_id);
-      setSnapshot((current) =>
-        areCanvasRuntimeSnapshotsEquivalent(current, nextSnapshot) ? current : nextSnapshot,
-      );
-    } catch (err) {
-      setFilesError(err instanceof Error ? err.message : "保存源文件失败");
-      throw err;
+      setDefinition(updated);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Canvas 保存失败");
     } finally {
-      setIsSavingFiles(false);
+      setBusy(false);
     }
-  }, [agentRunBridge, canvas]);
+  }, [definition, entrySource]);
 
-  const toggleDetailMode = useCallback((mode: CanvasDetailMode) => {
-    setDetailMode(mode);
-    setIsDetailOpen((current) => (current && detailMode === mode ? false : true));
-  }, [detailMode]);
+  const handleCreateInstance = useCallback(async () => {
+    if (!definition) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await createInteractionInstance(definition.definition_id, {
+        definition_revision_id: definition.current_revision_id,
+      });
+      setInstance(created);
+      onOpenInteraction?.(created.instance.instance_id);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Interaction 创建失败");
+    } finally {
+      setBusy(false);
+    }
+  }, [definition, onOpenInteraction]);
 
-  const vfsMountId = canvas?.vfs_mount_id ?? snapshot?.vfs_mount_id ?? null;
-  const canEditSource = canvas?.access.can_edit_source === true;
+  const preview = useMemo(() => {
+    if (!entrySource) return null;
+    return (
+      <iframe
+        title="Canvas definition preview"
+        srcDoc={entrySource}
+        sandbox="allow-scripts"
+        className="h-full min-h-[320px] w-full rounded-[8px] border border-border bg-white"
+      />
+    );
+  }, [entrySource]);
 
-  if (!canvasId && !canvasMountId) {
-    return null;
+  if (!definition) {
+    return <div className="p-4 text-sm text-muted-foreground">{error ?? "正在加载 Canvas…"}</div>;
   }
 
   return (
-    <aside className="flex h-full w-full flex-col overflow-hidden bg-background">
-      {/* ── 顶部：标题 + 操作 ── */}
-      <header className="flex items-center justify-between border-b border-border px-4 py-2.5">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold text-foreground">
-              {canvas?.title || canvasMountId || canvasId}
-            </h3>
-          </div>
-          {snapshot && (
-            <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5">
-                {snapshot.files.length} 文件
-              </span>
-              <span className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5">
-                {snapshot.bindings.length} 绑定
-              </span>
-              <span className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5">
-                {snapshot.entry || "无入口"}
-              </span>
-              {canvas && !canEditSource && (
-                <span className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5">
-                  只读源
-                </span>
-              )}
-            </div>
-          )}
+    <div className="flex h-full min-h-[420px] flex-col gap-3 p-3">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{definition.title}</h3>
+          <p className="text-xs text-muted-foreground">
+            revision {definition.revision_number} · canvas://{definition.definition_id}
+            {instance ? ` · interaction://${instance.instance.instance_id}` : ""}
+          </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => void loadCanvasData()}
-            className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            刷新
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            关闭
-          </button>
+        <div className="flex gap-2">
+          {definition.access.can_edit_source && (
+            <button className="agentdash-button-secondary" disabled={busy} onClick={() => void handleSave()}>
+              保存 revision
+            </button>
+          )}
+          {!instance && (
+            <button className="agentdash-button-primary" disabled={busy} onClick={() => void handleCreateInstance()}>
+              启动 Interaction
+            </button>
+          )}
         </div>
       </header>
 
-      {/* ── 中部：Canvas 预览（主体，占满剩余空间） ── */}
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        {isLoading && (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-            正在加载 Canvas 运行时快照...
-          </div>
-        )}
-        {error && (
-          <div className="m-4 rounded-[8px] border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            {error}
-          </div>
-        )}
+      {error && <div className="rounded-[8px] border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{error}</div>}
 
-        {!isLoading && !error && snapshot && (
-          <CanvasRuntimePreview
-            snapshot={snapshot}
-            agentRunBridge={agentRunBridge}
-            showBridgeUnavailable={showBridgeUnavailable}
-            onAgentRunWorkspaceRefresh={onAgentRunWorkspaceRefresh}
+      <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(280px,0.8fr)_minmax(360px,1.2fr)]">
+        <section className="flex min-h-[320px] flex-col gap-2">
+          <p className="text-xs font-medium text-muted-foreground">{definition.source_bundle.entry_file}</p>
+          <textarea
+            value={entrySource}
+            onChange={(event) => setEntrySource(event.target.value)}
+            readOnly={!definition.access.can_edit_source}
+            className="min-h-[320px] flex-1 resize-none rounded-[8px] border border-border bg-background p-3 font-mono text-xs text-foreground outline-none"
           />
-        )}
-
-        {!isLoading && !error && !snapshot && (
-          <div className="flex flex-1 items-center justify-center px-4 text-sm text-muted-foreground">
-            当前还没有可展示的 Canvas 运行时快照。
-          </div>
-        )}
+        </section>
+        <section className="min-h-[320px]">{preview}</section>
       </div>
 
-      {/* ── 底部：操作栏 ── */}
-      {!isLoading && !error && snapshot && (
-        <div className="shrink-0 border-t border-border">
-          <div className="flex items-center justify-between bg-secondary/20 px-3 py-1.5">
-            <div className="flex items-center gap-1">
-              {onBrowseFiles && vfsMountId && (
-                <button
-                  type="button"
-                  onClick={() => onBrowseFiles(vfsMountId)}
-                  className="rounded-[6px] px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                >
-                  浏览文件
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => toggleDetailMode("bindings")}
-                className={[
-                  "rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors",
-                  isDetailOpen && detailMode === "bindings"
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                ].join(" ")}
-              >
-                数据绑定
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleDetailMode("files")}
-                className={[
-                  "rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors",
-                  isDetailOpen && detailMode === "files"
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                ].join(" ")}
-              >
-                源文件
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsDetailOpen((v) => !v)}
-              className="text-muted-foreground transition-transform hover:text-foreground"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className={`transition-transform ${isDetailOpen ? "" : "rotate-180"}`}
-              >
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-            </button>
+      {instance && (
+        <section className="space-y-3 rounded-[8px] border border-border p-3">
+          <div>
+            <p className="text-xs font-medium text-foreground">Canonical state</p>
+            <pre className="mt-2 max-h-48 overflow-auto rounded-[8px] bg-secondary/30 p-3 text-xs">{JSON.stringify(instance.instance.state, null, 2)}</pre>
           </div>
-
-          {isDetailOpen && (
-            <div className="max-h-[45vh] overflow-y-auto px-3 py-3">
-              <div className="space-y-3">
-                {!canEditSource && (
-                  <div className="rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
-                    当前 Canvas 源为只读，预览和读取保持可用。
-                  </div>
-                )}
-
-                {detailMode === "bindings" && (
-                  <>
-                    <section className="space-y-2 rounded-[8px] border border-border bg-secondary/20 p-3">
-                      <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">当前绑定状态</p>
-                      {snapshot.bindings.length === 0 && (
-                        <p className="text-xs text-muted-foreground">当前没有数据绑定。</p>
-                      )}
-                      {snapshot.bindings.map((binding) => (
-                        <div key={`${binding.alias}:${binding.source_uri}`} className="rounded-[8px] border border-border bg-background px-2 py-2 text-xs">
-                          <p className="font-medium text-foreground">{binding.alias}</p>
-                          <p className="break-all text-muted-foreground">source: {binding.source_uri}</p>
-                          <p className="text-muted-foreground">path: {binding.data_path}</p>
-                          <p className="text-muted-foreground">resolved: {binding.resolved ? "yes" : "no"}</p>
-                        </div>
-                      ))}
-                    </section>
-
-                    <CanvasRuntimeBindingsEditor
-                      value={snapshot.bindings}
-                      isSaving={isSavingBindings}
-                      error={bindingsError}
-                      readOnly={!agentRunBridge}
-                      onUpsert={handleBindingUpsert}
-                    />
-                  </>
-                )}
-
-                {detailMode === "files" && (
-                  <CanvasFilesEditor
-                    value={canvas?.files ?? []}
-                    entryFile={canvas?.entry_file ?? ""}
-                    isSaving={isSavingFiles}
-                    error={filesError}
-                    readOnly={!canEditSource}
-                    onSave={handleFilesSave}
-                  />
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+          {definition.component_bindings.map((binding) => (
+            <BoundComponent
+              key={binding.binding_key}
+              projectId={projectId}
+              instance={instance}
+              binding={binding}
+              components={components}
+              onInstanceChange={setInstance}
+            />
+          ))}
+        </section>
       )}
-    </aside>
+    </div>
+  );
+}
+
+interface BoundComponentProps {
+  projectId: string | null;
+  instance: InteractionInstanceViewDto;
+  binding: CanvasDefinitionDto["component_bindings"][number];
+  components: ExtensionUiComponentProjectionResponse[];
+  onInstanceChange(value: InteractionInstanceViewDto): void;
+}
+
+function BoundComponent({ projectId, instance, binding, components, onInstanceChange }: BoundComponentProps) {
+  const component = components.find((item) => item.component_key === binding.component_ref);
+  const runtimeBinding = instance.runtime_bindings.find((item) => item.slot_key === `component:${binding.binding_key}`);
+  if (!projectId || !component || !component.available || component.renderer.kind !== "iframe"
+    || component.contract_version !== 1 || component.sandbox_profile !== "isolated_v1"
+    || runtimeBinding?.target.kind !== "artifact") {
+    return <div className="text-xs text-muted-foreground">Component unavailable: {binding.component_ref}</div>;
+  }
+  const artifactSrc = buildExactExtensionComponentAssetUrl(
+    projectId,
+    runtimeBinding.target.artifact_ref,
+    runtimeBinding.target.digest,
+    component.component_key,
+    component.renderer.entry,
+  );
+  const descriptor = component as unknown as ExtensionUiComponentDescriptor;
+  return (
+    <ExtensionInteractionComponent
+      descriptor={descriptor}
+      artifactSrc={artifactSrc}
+      componentInstanceId={`${instance.instance.instance_id}:${binding.binding_key}`}
+      props={binding.props}
+      stateProjection={instance.instance.state}
+      theme="light"
+      locale="zh-CN"
+      onEvent={async (eventType, payload) => {
+        const eventBinding = binding.event_commands.find((item) => item.event_type === eventType);
+        if (!eventBinding) throw new Error(`未绑定 component event: ${eventType}`);
+        const result = await executeInteractionCommand(instance.instance.instance_id, {
+          command_id: crypto.randomUUID(),
+          command_key: eventBinding.command_key,
+          payload: payload as JsonValue,
+          expected_state_revision: instance.instance.state_revision,
+        });
+        onInstanceChange({ ...instance, instance: result.instance });
+        return { state_revision: result.instance.state_revision, duplicate: result.duplicate };
+      }}
+    />
   );
 }
 

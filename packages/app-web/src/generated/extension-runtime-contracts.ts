@@ -97,12 +97,12 @@ export type ExtensionUiComponentSandboxProfileResponse = "isolated_v1";
 
 export type ExtensionUiComponentSizingResponse = { min_width: number, min_height: number, max_width: number | null, max_height: number | null, };
 
-export type ExtensionWorkspaceTabLoadabilityModeResponse = "extension_host" | "ui_only";
+export type ExtensionWorkspaceTabLoadabilityModeResponse = "extension_host";
 
 export type ExtensionWorkspaceTabLoadabilityResponse = { available: boolean, mode: ExtensionWorkspaceTabLoadabilityModeResponse, reason?: string | null, };
 
 export type ExtensionWorkspaceTabProjectionResponse = { extension_key: string, extension_id: string, type_id: string, label: string, uri_scheme: string, renderer: ExtensionWorkspaceTabRendererResponse, loadability: ExtensionWorkspaceTabLoadabilityResponse, };
 
-export type ExtensionWorkspaceTabRendererResponse = { "kind": "webview", entry: string, } | { "kind": "canvas_panel", entry: string, };
+export type ExtensionWorkspaceTabRendererResponse = { "kind": "webview", entry: string, };
 
 export type UninstallExtensionInstallationResponse = { installation_id: string, extension_key: string, };

@@ -4,7 +4,6 @@ import type {
 } from "../../../types";
 import type { TabTypeDescriptor } from "../../workspace-runtime";
 import { ExtensionTabIcon } from "../ui/ExtensionTabIcon";
-import { ExtensionCanvasPanel } from "../ui/ExtensionCanvasPanel";
 import { ExtensionWebviewPanel } from "../ui/ExtensionWebviewPanel";
 
 interface CreateExtensionTabDescriptorsInput {
@@ -15,7 +14,7 @@ export function createExtensionTabDescriptors({
   projection,
 }: CreateExtensionTabDescriptorsInput): TabTypeDescriptor[] {
   return projection.workspace_tabs
-    .filter((tab) => tab.loadability.available)
+    .filter((tab) => tab.loadability.available && tab.renderer.kind === "webview")
     .map((tab, index) => createExtensionTabDescriptor(tab, index));
 }
 
@@ -32,9 +31,6 @@ function createExtensionTabDescriptor(
     defaultUri: `${tab.uri_scheme}://panel`,
     menuOrder: 200 + index,
     renderContent: (props) => {
-      if (tab.renderer.kind === "canvas_panel") {
-        return <ExtensionCanvasPanel tab={tab} />;
-      }
       return (
         <ExtensionWebviewPanel
           tab={tab}

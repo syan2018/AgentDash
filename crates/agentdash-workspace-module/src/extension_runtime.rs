@@ -133,7 +133,6 @@ pub struct ExtensionUiComponentProjection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtensionWorkspaceTabLoadabilityMode {
     ExtensionHost,
-    UiOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -678,29 +677,6 @@ fn workspace_tab_loadability(
                 reason: None,
             }
         }
-        ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => {
-            if !has_package_artifact {
-                return ExtensionWorkspaceTabLoadabilityProjection {
-                    available: false,
-                    mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
-                    reason: Some(
-                        "extension package artifact 缺失，Canvas panel 无法加载".to_string(),
-                    ),
-                };
-            }
-            if entry.trim().is_empty() {
-                return ExtensionWorkspaceTabLoadabilityProjection {
-                    available: false,
-                    mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
-                    reason: Some("Canvas panel renderer entry 为空".to_string()),
-                };
-            }
-            ExtensionWorkspaceTabLoadabilityProjection {
-                available: true,
-                mode: ExtensionWorkspaceTabLoadabilityMode::UiOnly,
-                reason: None,
-            }
-        }
     }
 }
 
@@ -907,40 +883,6 @@ mod tests {
         }
     }
 
-    fn canvas_panel_manifest(extension_id: &str) -> ExtensionTemplatePayload {
-        ExtensionTemplatePayload {
-            manifest_version: "2".to_string(),
-            extension_id: extension_id.to_string(),
-            package: ExtensionPackageMetadata {
-                name: format!("@agentdash/{extension_id}"),
-                version: "1.0.0".to_string(),
-            },
-            asset_version: "1.0.0".to_string(),
-            commands: vec![],
-            flags: vec![],
-            message_renderers: vec![],
-            capability_directives: vec![],
-            asset_refs: vec![],
-            runtime_actions: vec![],
-            protocols: vec![],
-            extension_dependencies: vec![],
-            workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
-                type_id: format!("{extension_id}.panel"),
-                label: "Canvas".to_string(),
-                uri_scheme: extension_id.to_string(),
-                renderer: ExtensionWorkspaceTabRendererDeclaration::CanvasPanel {
-                    entry: "dist/canvas/runtime-snapshot.json".to_string(),
-                },
-            }],
-            ui_components: vec![],
-            permissions: vec![],
-            fetch_routes: vec![],
-            operation_catalog: vec![],
-            backend_services: vec![],
-            bundles: vec![],
-        }
-    }
-
     #[test]
     fn flattens_enabled_extension_runtime_projection() {
         let projection = extension_runtime_projection_from_installations(vec![installation(
@@ -1040,33 +982,14 @@ mod tests {
     }
 
     #[test]
-    fn canvas_panel_tab_is_ui_only_and_loadable_without_extension_host_bundle() {
-        let project_id = uuid::Uuid::new_v4();
-        let installation = ProjectExtensionInstallation::new_packaged(
-            project_id,
-            "canvas-demo",
-            "Canvas Demo",
-            canvas_panel_manifest("canvas-demo"),
-            artifact_ref("canvas-demo"),
-        )
-        .expect("packaged canvas panel installation");
-
-        let projection = extension_runtime_projection_from_installations(vec![installation])
-            .expect("projection");
-
-        assert!(projection.bundles.is_empty());
-        let tab = &projection.workspace_tabs[0];
-        assert!(tab.loadability.available);
-        assert_eq!(
-            tab.loadability.mode,
-            ExtensionWorkspaceTabLoadabilityMode::UiOnly
-        );
-    }
-
-    #[test]
     fn ui_component_projection_carries_exact_artifact_pin() {
         let project_id = uuid::Uuid::new_v4();
-        let mut component_manifest = canvas_panel_manifest("component-demo");
+        let mut component_manifest = manifest(
+            "component-demo",
+            "component-demo.action",
+            "component-demo.panel",
+            "component-demo",
+        );
         component_manifest.ui_components = vec![ExtensionUiComponentDefinition {
             component_key: "component-demo.review-card".to_string(),
             contract_version: 1,

@@ -5,19 +5,31 @@ import type { JsonValue } from "./common-contracts";
 
 export type ArchiveInteractionDefinitionResponse = { definition_id: string, status: InteractionDefinitionStatusDto, };
 
-export type CanvasDefinitionDto = { definition_id: string, project_id: string, owner: InteractionOwnerDto, status: InteractionDefinitionStatusDto, current_revision_id: string, revision_number: bigint, definition_format_version: number, interaction_contract_version: number, title: string, description: string, source_bundle: InteractionSourceBundleDto, initial_state: JsonValue, state_schema: JsonValue, lineage?: InteractionDefinitionLineageDto, access: InteractionDefinitionAccessDto, created_at: string, updated_at: string, };
+export type CanvasDefinitionDto = { definition_id: string, project_id: string, owner: InteractionOwnerDto, status: InteractionDefinitionStatusDto, current_revision_id: string, revision_number: bigint, definition_format_version: number, interaction_contract_version: number, title: string, description: string, source_bundle: InteractionSourceBundleDto, initial_state: JsonValue, state_schema: JsonValue, command_definitions: Array<InteractionCommandDefinitionDto>, component_bindings: Array<InteractionComponentBindingDto>, resource_slots: Array<InteractionResourceSlotDto>, lineage?: InteractionDefinitionLineageDto, access: InteractionDefinitionAccessDto, created_at: string, updated_at: string, };
 
 export type CanvasDefinitionListScopeDto = "all" | "mine" | "shared";
 
-export type CommitCanvasDefinitionRequest = { base_revision_id: string, title?: string, description?: string, changeset: InteractionSourceChangesetDto, };
+export type CloseInteractionInstanceRequestDto = { expected_state_revision: bigint, };
 
-export type CreateCanvasDefinitionRequest = { title: string, description: string, source_bundle: InteractionSourceBundleDto, initial_state: JsonValue, state_schema: JsonValue, };
+export type CommitCanvasDefinitionRequest = { base_revision_id: string, title?: string, description?: string, changeset: InteractionSourceChangesetDto, command_definitions?: Array<InteractionCommandDefinitionDto>, component_bindings?: Array<InteractionComponentBindingDto>, resource_slots?: Array<InteractionResourceSlotDto>, };
+
+export type CreateCanvasDefinitionRequest = { title: string, description: string, source_bundle: InteractionSourceBundleDto, initial_state: JsonValue, state_schema: JsonValue, command_definitions: Array<InteractionCommandDefinitionDto>, component_bindings: Array<InteractionComponentBindingDto>, resource_slots: Array<InteractionResourceSlotDto>, };
+
+export type CreateInteractionInstanceRequestDto = { definition_revision_id: string, };
 
 export type DistributeCanvasDefinitionRequest = { source_revision_id: string, title?: string, description?: string, };
+
+export type InteractionCommandActorPolicyDto = "direct" | "human_only";
+
+export type InteractionCommandDefinitionDto = { command_key: string, actor_policy: InteractionCommandActorPolicyDto, payload_schema: JsonValue, state_patch_v1: InteractionStatePatchV1ContractDto, operation_effect?: InteractionOperationRefDto, };
 
 export type InteractionCommandRequestDto = { command_id: string, command_key: string, payload: JsonValue, expected_state_revision: bigint, };
 
 export type InteractionCommandResponseDto = { instance: InteractionInstanceDto, event_id: string, event_sequence: bigint, duplicate: boolean, };
+
+export type InteractionComponentBindingDto = { binding_key: string, component_ref: string, component_abi_version: number, props: JsonValue, event_commands: Array<InteractionComponentEventBindingDto>, };
+
+export type InteractionComponentEventBindingDto = { event_type: string, payload_schema: JsonValue, command_key: string, };
 
 export type InteractionDefinitionAccessDto = { can_view: boolean, can_edit_source: boolean, can_publish: boolean, can_manage_shared: boolean, can_copy: boolean, };
 
@@ -27,9 +39,23 @@ export type InteractionDefinitionLineageKindDto = "published_from" | "copied_fro
 
 export type InteractionDefinitionStatusDto = "active" | "archived";
 
-export type InteractionInstanceDto = { instance_id: string, owner: InteractionOwnerDto, definition_id: string, definition_revision_id: string, interaction_contract_version: number, state: JsonValue, state_revision: bigint, status: string, created_at: string, updated_at: string, closed_at?: string, };
+export type InteractionInstanceDto = { instance_id: string, owner: InteractionOwnerDto, definition_id: string, definition_revision_id: string, interaction_contract_version: number, state: JsonValue, state_revision: bigint, status: string, pinned_artifacts: Array<InteractionPinnedArtifactDto>, created_at: string, updated_at: string, closed_at?: string, };
+
+export type InteractionInstanceViewDto = { instance: InteractionInstanceDto, runtime_bindings: Array<InteractionRuntimeBindingDto>, };
+
+export type InteractionOperationRefDto = { namespace: string, provider_key: string, operation_key: string, contract_version: number, };
 
 export type InteractionOwnerDto = { "kind": "user", "id": string } | { "kind": "project", "id": string };
+
+export type InteractionPinnedArtifactDto = { artifact_ref: string, digest: string, };
+
+export type InteractionResourceSlotDto = { slot_key: string, kind: InteractionResourceSlotKindDto, required: boolean, contract: JsonValue, };
+
+export type InteractionResourceSlotKindDto = "resource" | "artifact" | "provider";
+
+export type InteractionRuntimeBindingDto = { binding_id: string, slot_key: string, target: InteractionRuntimeBindingTargetDto, };
+
+export type InteractionRuntimeBindingTargetDto = { "kind": "resource", resource_ref: string, version_ref: string, } | { "kind": "artifact", artifact_ref: string, digest: string, } | { "kind": "provider", provider_ref: string, contract_version: number, };
 
 export type InteractionSourceBundleDto = { format_version: number, entry_file: string, files: Array<InteractionSourceFileDto>, sandbox: InteractionSourceSandboxDto, digest: string, };
 
@@ -40,5 +66,7 @@ export type InteractionSourceFileChangeDto = { "kind": "upsert", file: Interacti
 export type InteractionSourceFileDto = { path: string, content: string, media_type?: string, };
 
 export type InteractionSourceSandboxDto = { libraries: Array<string>, import_map: { [key in string]?: string }, };
+
+export type InteractionStatePatchV1ContractDto = { allowed_paths: Array<string>, max_operations: bigint, max_state_bytes: bigint, };
 
 export type ListCanvasDefinitionsQuery = { scope?: CanvasDefinitionListScopeDto, };

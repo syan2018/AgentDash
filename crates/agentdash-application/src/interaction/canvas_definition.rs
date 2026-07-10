@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_domain::interaction::{
-    DefinitionLineage, DefinitionLineageKind, DefinitionRevisionCommit, InteractionDefinition,
-    InteractionDefinitionAccess, InteractionDefinitionRepository, InteractionDefinitionRevision,
-    InteractionDefinitionStatus, InteractionError, InteractionOwner, SourceBundle,
+    ComponentBinding, DefinitionLineage, DefinitionLineageKind, DefinitionRevisionCommit,
+    InteractionCommandDefinition, InteractionDefinition, InteractionDefinitionAccess,
+    InteractionDefinitionRepository, InteractionDefinitionRevision, InteractionDefinitionStatus,
+    InteractionError, InteractionOwner, ResourceSlotDefinition, SourceBundle,
     SourceBundleChangeset,
 };
 use async_trait::async_trait;
@@ -52,6 +53,9 @@ pub struct CreateCanvasDefinitionInput {
     pub source_bundle: SourceBundle,
     pub initial_state: Value,
     pub state_schema: Value,
+    pub command_definitions: Vec<InteractionCommandDefinition>,
+    pub component_bindings: Vec<ComponentBinding>,
+    pub resource_slots: Vec<ResourceSlotDefinition>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,6 +65,9 @@ pub struct CommitCanvasDefinitionInput {
     pub title: Option<String>,
     pub description: Option<String>,
     pub changeset: SourceBundleChangeset,
+    pub command_definitions: Option<Vec<InteractionCommandDefinition>>,
+    pub component_bindings: Option<Vec<ComponentBinding>>,
+    pub resource_slots: Option<Vec<ResourceSlotDefinition>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +112,7 @@ impl CanvasDefinitionService {
         self.require_project(input.project_id, user_id, |access| access.can_configure)
             .await?;
         let definition_id = Uuid::new_v4();
-        let revision = InteractionDefinitionRevision::new_canvas_v1(
+        let mut revision = InteractionDefinitionRevision::new_canvas_v1(
             definition_id,
             1,
             input.project_id,
@@ -117,6 +124,10 @@ impl CanvasDefinitionService {
             input.state_schema,
             user_id,
         )?;
+        revision.command_definitions = input.command_definitions;
+        revision.component_bindings = input.component_bindings;
+        revision.resource_slots = input.resource_slots;
+        revision.validate()?;
         let (definition, revision) = revision.into_initial_definition()?;
         self.definitions.create(&definition, &revision).await?;
         self.view(definition, revision, user_id).await
@@ -204,9 +215,21 @@ impl CanvasDefinitionService {
         revision.title = input.title.unwrap_or(revision.title);
         revision.description = input.description.unwrap_or(revision.description);
         revision.source_bundle = current.source_bundle.apply_changeset(input.changeset)?;
+        revision.command_definitions = input
+            .command_definitions
+            .unwrap_or_else(|| current.command_definitions.clone());
+        revision.component_bindings = input
+            .component_bindings
+            .unwrap_or_else(|| current.component_bindings.clone());
+        revision.resource_slots = input
+            .resource_slots
+            .unwrap_or_else(|| current.resource_slots.clone());
         if revision.source_bundle.digest == current.source_bundle.digest
             && revision.title == current.title
             && revision.description == current.description
+            && revision.command_definitions == current.command_definitions
+            && revision.component_bindings == current.component_bindings
+            && revision.resource_slots == current.resource_slots
         {
             return Err(InteractionApplicationError::InvalidCommand {
                 field: "definition_changeset",

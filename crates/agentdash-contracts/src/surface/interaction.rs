@@ -90,6 +90,12 @@ pub struct CanvasDefinitionDto {
     pub source_bundle: InteractionSourceBundleDto,
     pub initial_state: Value,
     pub state_schema: Value,
+    #[serde(default)]
+    pub command_definitions: Vec<InteractionCommandDefinitionDto>,
+    #[serde(default)]
+    pub component_bindings: Vec<InteractionComponentBindingDto>,
+    #[serde(default)]
+    pub resource_slots: Vec<InteractionResourceSlotDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub lineage: Option<InteractionDefinitionLineageDto>,
@@ -115,6 +121,12 @@ pub struct CreateCanvasDefinitionRequest {
     pub initial_state: Value,
     #[serde(default)]
     pub state_schema: Value,
+    #[serde(default)]
+    pub command_definitions: Vec<InteractionCommandDefinitionDto>,
+    #[serde(default)]
+    pub component_bindings: Vec<InteractionComponentBindingDto>,
+    #[serde(default)]
+    pub resource_slots: Vec<InteractionResourceSlotDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -146,6 +158,81 @@ pub struct CommitCanvasDefinitionRequest {
     #[ts(optional)]
     pub description: Option<String>,
     pub changeset: InteractionSourceChangesetDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub command_definitions: Option<Vec<InteractionCommandDefinitionDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub component_bindings: Option<Vec<InteractionComponentBindingDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_slots: Option<Vec<InteractionResourceSlotDto>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionCommandActorPolicyDto {
+    Direct,
+    HumanOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionOperationRefDto {
+    pub namespace: String,
+    pub provider_key: String,
+    pub operation_key: String,
+    pub contract_version: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionStatePatchV1ContractDto {
+    pub allowed_paths: Vec<String>,
+    pub max_operations: u64,
+    pub max_state_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionCommandDefinitionDto {
+    pub command_key: String,
+    pub actor_policy: InteractionCommandActorPolicyDto,
+    pub payload_schema: Value,
+    pub state_patch_v1: InteractionStatePatchV1ContractDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub operation_effect: Option<InteractionOperationRefDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionComponentEventBindingDto {
+    pub event_type: String,
+    pub payload_schema: Value,
+    pub command_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionComponentBindingDto {
+    pub binding_key: String,
+    pub component_ref: String,
+    pub component_abi_version: u16,
+    pub props: Value,
+    #[serde(default)]
+    pub event_commands: Vec<InteractionComponentEventBindingDto>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionResourceSlotKindDto {
+    Resource,
+    Artifact,
+    Provider,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionResourceSlotDto {
+    pub slot_key: String,
+    pub kind: InteractionResourceSlotKindDto,
+    pub required: bool,
+    pub contract: Value,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
@@ -175,11 +262,59 @@ pub struct InteractionInstanceDto {
     pub state: Value,
     pub state_revision: u64,
     pub status: String,
+    #[serde(default)]
+    pub pinned_artifacts: Vec<InteractionPinnedArtifactDto>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub closed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionPinnedArtifactDto {
+    pub artifact_ref: String,
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InteractionRuntimeBindingTargetDto {
+    Resource {
+        resource_ref: String,
+        version_ref: String,
+    },
+    Artifact {
+        artifact_ref: String,
+        digest: String,
+    },
+    Provider {
+        provider_ref: String,
+        contract_version: u16,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionRuntimeBindingDto {
+    pub binding_id: String,
+    pub slot_key: String,
+    pub target: InteractionRuntimeBindingTargetDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct InteractionInstanceViewDto {
+    pub instance: InteractionInstanceDto,
+    pub runtime_bindings: Vec<InteractionRuntimeBindingDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CreateInteractionInstanceRequestDto {
+    pub definition_revision_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CloseInteractionInstanceRequestDto {
+    pub expected_state_revision: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

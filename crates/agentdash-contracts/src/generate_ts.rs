@@ -106,13 +106,19 @@ use agentdash_contracts::external_marketplace::{
 };
 use agentdash_contracts::interaction::{
     ArchiveInteractionDefinitionResponse, CanvasDefinitionDto, CanvasDefinitionListScopeDto,
-    CommitCanvasDefinitionRequest, CreateCanvasDefinitionRequest,
-    DistributeCanvasDefinitionRequest, InteractionCommandRequestDto, InteractionCommandResponseDto,
+    CloseInteractionInstanceRequestDto, CommitCanvasDefinitionRequest,
+    CreateCanvasDefinitionRequest, CreateInteractionInstanceRequestDto,
+    DistributeCanvasDefinitionRequest, InteractionCommandActorPolicyDto,
+    InteractionCommandDefinitionDto, InteractionCommandRequestDto, InteractionCommandResponseDto,
+    InteractionComponentBindingDto, InteractionComponentEventBindingDto,
     InteractionDefinitionAccessDto, InteractionDefinitionLineageDto,
     InteractionDefinitionLineageKindDto, InteractionDefinitionStatusDto, InteractionInstanceDto,
-    InteractionOwnerDto, InteractionSourceBundleDto, InteractionSourceChangesetDto,
+    InteractionInstanceViewDto, InteractionOperationRefDto, InteractionOwnerDto,
+    InteractionPinnedArtifactDto, InteractionResourceSlotDto, InteractionResourceSlotKindDto,
+    InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
+    InteractionSourceChangesetDto,
     InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
-    ListCanvasDefinitionsQuery,
+    InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthCredentialTargetDto, CodexOAuthFlowStatusDto, CodexOAuthStatusResponse,
@@ -867,10 +873,24 @@ fn main() {
             export_all::<CreateCanvasDefinitionRequest>(dir);
             export_all::<InteractionSourceFileChangeDto>(dir);
             export_all::<InteractionSourceChangesetDto>(dir);
+            export_all::<InteractionCommandActorPolicyDto>(dir);
+            export_all::<InteractionOperationRefDto>(dir);
+            export_all::<InteractionStatePatchV1ContractDto>(dir);
+            export_all::<InteractionCommandDefinitionDto>(dir);
+            export_all::<InteractionComponentEventBindingDto>(dir);
+            export_all::<InteractionComponentBindingDto>(dir);
+            export_all::<InteractionResourceSlotKindDto>(dir);
+            export_all::<InteractionResourceSlotDto>(dir);
             export_all::<CommitCanvasDefinitionRequest>(dir);
             export_all::<DistributeCanvasDefinitionRequest>(dir);
             export_all::<ArchiveInteractionDefinitionResponse>(dir);
             export_all::<InteractionInstanceDto>(dir);
+            export_all::<InteractionPinnedArtifactDto>(dir);
+            export_all::<InteractionRuntimeBindingTargetDto>(dir);
+            export_all::<InteractionRuntimeBindingDto>(dir);
+            export_all::<InteractionInstanceViewDto>(dir);
+            export_all::<CreateInteractionInstanceRequestDto>(dir);
+            export_all::<CloseInteractionInstanceRequestDto>(dir);
             export_all::<InteractionCommandRequestDto>(dir);
             export_all::<InteractionCommandResponseDto>(dir);
         },

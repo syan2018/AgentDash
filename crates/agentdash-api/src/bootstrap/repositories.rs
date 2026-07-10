@@ -197,7 +197,9 @@ pub(crate) async fn build_repositories(
     let repos = RepositorySet {
         project_repo: project_repo.clone(),
         interaction_definition_repo: interaction_repo.clone(),
-        interaction_instance_repo: interaction_repo,
+        interaction_instance_repo: interaction_repo.clone(),
+        interaction_command_transaction: interaction_repo.clone(),
+        interaction_event_repo: interaction_repo,
         workspace_repo: workspace_repo.clone(),
         story_repo: story_repo.clone(),
         state_change_repo: state_change_repo.clone(),

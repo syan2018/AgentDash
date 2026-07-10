@@ -30,7 +30,8 @@ use agentdash_domain::extension_package::ExtensionPackageArtifactRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::interaction::{
-    InteractionDefinitionRepository, InteractionInstanceRepository,
+    InteractionCommandTransactionPort, InteractionDefinitionRepository, InteractionEventRepository,
+    InteractionInstanceRepository,
 };
 use agentdash_domain::llm_provider::{LlmProviderCredentialRepository, LlmProviderRepository};
 use agentdash_domain::mcp_preset::McpPresetRepository;
@@ -68,6 +69,8 @@ pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
     pub interaction_definition_repo: Arc<dyn InteractionDefinitionRepository>,
     pub interaction_instance_repo: Arc<dyn InteractionInstanceRepository>,
+    pub interaction_command_transaction: Arc<dyn InteractionCommandTransactionPort>,
+    pub interaction_event_repo: Arc<dyn InteractionEventRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,

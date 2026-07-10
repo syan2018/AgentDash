@@ -164,6 +164,9 @@ fn create_input(project_id: Uuid) -> CreateCanvasDefinitionInput {
         source_bundle: source("v1"),
         initial_state: serde_json::json!({}),
         state_schema: serde_json::json!({"type":"object"}),
+        command_definitions: vec![],
+        component_bindings: vec![],
+        resource_slots: vec![],
     }
 }
 
@@ -195,6 +198,9 @@ async fn changeset_uses_current_revision_cas_and_rejects_noop() {
                     )],
                     ..SourceBundleChangeset::default()
                 },
+                command_definitions: None,
+                component_bindings: None,
+                resource_slots: None,
             },
             "u",
             Utc::now(),
@@ -210,6 +216,9 @@ async fn changeset_uses_current_revision_cas_and_rejects_noop() {
                 title: None,
                 description: None,
                 changeset: SourceBundleChangeset::default(),
+                command_definitions: None,
+                component_bindings: None,
+                resource_slots: None,
             },
             "u",
             Utc::now(),

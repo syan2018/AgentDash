@@ -221,7 +221,7 @@ export function buildPreviewDocument(
     };
     const runtimeInvokeTimeoutMs = 60000;
     const assetUrlTimeoutMs = 60000;
-    const extensionChannelTimeoutMs = 60000;
+    const extensionProtocolTimeoutMs = 60000;
     const agentSubmitTimeoutMs = 60000;
     const pendingRuntimeInvocations = new Map();
     const pendingAssetUrls = new Map();
@@ -229,7 +229,7 @@ export function buildPreviewDocument(
     const pendingAgentSubmits = new Map();
     let runtimeInvokeSeq = 0;
     let assetUrlSeq = 0;
-    let extensionChannelSeq = 0;
+    let extensionProtocolSeq = 0;
     let agentSubmitSeq = 0;
     const diagnostics = [];
     const interactionState = {};
@@ -467,12 +467,12 @@ export function buildPreviewDocument(
             return Promise.reject(new Error("agentdash.extensions.invoke 需要非空 method"));
           }
 
-          const requestId = "canvas-ext-channel-" + (++extensionChannelSeq);
+          const requestId = "canvas-ext-protocol-" + (++extensionProtocolSeq);
           return new Promise((resolve, reject) => {
             const timeout = window.setTimeout(() => {
               pendingExtensionProtocols.delete(requestId);
               reject(new Error("Canvas extension protocol 调用超时"));
-            }, extensionChannelTimeoutMs);
+            }, extensionProtocolTimeoutMs);
             pendingExtensionProtocols.set(requestId, { resolve, reject, timeout });
             window.parent.postMessage({
               kind: "canvas-extension-channel-invoke",

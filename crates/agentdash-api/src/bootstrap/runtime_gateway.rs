@@ -138,9 +138,17 @@ impl agentdash_application_runtime_gateway::OperationAuthorityResolver
                     });
                 }
                 match &scope.scope_ref {
-                    OperationScopeRef::Project { project_id }
-                    | OperationScopeRef::WorkspaceBinding { project_id, .. } => {
+                    OperationScopeRef::Project { project_id } => {
                         self.require_project_use(identity, *project_id, &mut facts)
+                            .await?;
+                    }
+                    OperationScopeRef::WorkspaceBinding {
+                        project_id,
+                        workspace_id,
+                    } => {
+                        self.require_project_use(identity, *project_id, &mut facts)
+                            .await?;
+                        self.require_workspace_binding(*project_id, *workspace_id, &mut facts)
                             .await?;
                     }
                     OperationScopeRef::InteractionInstance { instance_id } => {
@@ -312,6 +320,30 @@ impl agentdash_application_runtime_gateway::OperationAuthorityResolver
 }
 
 impl ApplicationSurfaceOperationAuthority {
+    async fn require_workspace_binding(
+        &self,
+        project_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+        facts: &mut Vec<String>,
+    ) -> Result<(), agentdash_application_runtime_gateway::OperationExecutionError> {
+        use agentdash_application_runtime_gateway::OperationExecutionError;
+        let workspace = self
+            .repos
+            .workspace_repo
+            .get_by_id(workspace_id)
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+            .filter(|workspace| workspace.project_id == project_id)
+            .ok_or_else(|| OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["workspace.project_scope".to_string()],
+            })?;
+        facts.push(format!(
+            "workspace:{}:{}:{}",
+            workspace.id, workspace.project_id, workspace.updated_at
+        ));
+        Ok(())
+    }
+
     async fn require_project_use(
         &self,
         identity: &AuthIdentity,

@@ -531,8 +531,10 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-runtime-contract",
  "agentdash-application-ports",
+ "agentdash-application-runtime-gateway",
  "agentdash-diagnostics",
  "agentdash-domain",
+ "agentdash-infrastructure",
  "agentdash-spi",
  "agentdash-test-support",
  "async-trait",
@@ -543,6 +545,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]

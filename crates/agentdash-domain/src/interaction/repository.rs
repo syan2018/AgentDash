@@ -100,12 +100,23 @@ pub trait InteractionCommandTransactionPort: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait OperationEffectIntentRepository: Send + Sync {
-    async fn claim_due(&self, limit: usize)
-    -> Result<Vec<OperationEffectIntent>, InteractionError>;
-    async fn mark_succeeded(&self, effect_id: Uuid) -> Result<(), InteractionError>;
+    async fn claim_due(
+        &self,
+        limit: usize,
+        claimed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<OperationEffectIntent>, InteractionError>;
+    async fn mark_succeeded(
+        &self,
+        effect_id: Uuid,
+        claim_token: Uuid,
+        completed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), InteractionError>;
     async fn mark_failed(
         &self,
         effect_id: Uuid,
+        claim_token: Uuid,
         next_attempt_at: chrono::DateTime<chrono::Utc>,
+        failure_code: &str,
+        terminal: bool,
     ) -> Result<(), InteractionError>;
 }

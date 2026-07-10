@@ -10,6 +10,7 @@ mod canvas_repository;
 mod canvas_runtime_state_repository;
 mod extension_package_artifact_repository;
 mod inline_file_repository;
+mod interaction_repository;
 mod json_document;
 mod lifecycle_anchor_repository;
 mod llm_provider_repository;
@@ -162,6 +163,7 @@ pub use canvas_repository::PostgresCanvasRepository;
 pub use canvas_runtime_state_repository::PostgresCanvasRuntimeStateRepository;
 pub use extension_package_artifact_repository::PostgresExtensionPackageArtifactRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;
+pub use interaction_repository::PostgresInteractionRepository;
 pub use lifecycle_anchor_repository::{
     PostgresAgentFrameRepository, PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
     PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,

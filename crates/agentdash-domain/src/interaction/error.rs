@@ -89,6 +89,12 @@ pub enum InteractionError {
         operation: &'static str,
         message: String,
     },
+
+    #[error("Interaction persistence 约束冲突: {entity}.{constraint}")]
+    PersistenceConflict {
+        entity: &'static str,
+        constraint: String,
+    },
 }
 
 pub type InteractionResult<T> = Result<T, InteractionError>;

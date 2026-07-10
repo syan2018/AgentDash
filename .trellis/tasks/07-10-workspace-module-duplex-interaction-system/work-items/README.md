@@ -17,7 +17,7 @@ Parent task: `.trellis/tasks/07-10-workspace-module-duplex-interaction-system`
 | WI-00 | `WI-00-architecture-contract-gate.md` | ready_for_integration | 已确认产品决策 | 权威 specs 已固定 Interaction V1、OperationScript async bridge、identity、SourceBundle、state/effect 与 RuntimeSession removal 边界 |
 | WI-01 | `WI-01-runtime-gateway-operation-core.md` | implementing | WI-00 | canonical core 与 Setup caller 已迁移；Session-bound Agent/Canvas/Extension residual 等待 WI-02 host authority resolver |
 | WI-02 | `WI-02-user-workshop-canvas-standalone.md` | planned | WI-01 | Project Canvas 仍请求已删除 endpoint；目标 bridge 已固定 |
-| WI-03 | `WI-03-operation-script.md` | planned | WI-01 | Rhai 1.24 同步 evaluator 通过 bounded worker/async bridge 承载 `rhai_v1` |
+| WI-03 | `WI-03-operation-script.md` | implementing | WI-01 | async execution port、bounded Rhai worker、结构化 Operation 组合调用与 scoped result ref 已落地；等待 Agent/Canvas/Workflow caller parity |
 | WI-04 | `WI-04-interaction-domain.md` | planned | WI-00 | owner/lifetime、`state_patch_v1`、EffectIntent、SourceBundle/CAS 已确认 |
 | WI-05 | `WI-05-canvas-interaction-migration.md` | planned | WI-02、WI-04 | Canvas 无需旧数据 backfill；新模型完整承接 distribution/VFS/binding/promotion |
 | WI-06 | `WI-06-extension-component-runtime.md` | planned | WI-02、WI-04、Channel WI-01 | Component + Operation、exact artifact pin 已确认 |

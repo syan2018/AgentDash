@@ -1,6 +1,6 @@
 # WI-03 OperationScript
 
-Status: planned
+Status: implementing
 
 Depends On: WI-01
 
@@ -28,3 +28,19 @@ Depends On: WI-01
 - compile/JSON bridge/evaluator factory/`ops` host surface/manifest/token digest property tests。
 - recursive rejection、worker exhaustion、CPU/host-call cancel、timeout/limit/parallel/partial outcome/scoped result tests。
 - Agent、Canvas 与 Workflow executor parity tests。
+
+## Implementation Evidence
+
+- `30590c8b feat(operation-script): 建立异步脚本执行合同与 Rhai 沙箱`
+  - 完成 HMAC preflight binding、bounded blocking worker、纯 Rhai 取消与 worker admission。
+- `dd853978 feat(operation-script): 接入结构化 Operation 组合调用`
+  - `ops.invoke` / buffered `ops.invoke_all` 经 `GatewayOperationScriptExecutor` 重入 canonical OperationGateway。
+  - 每次 run 使用独立 execution id；失败结果保留 ordered call evidence、partial 与 outcome-unknown。
+  - AST cache 按 entry/source bytes 有界淘汰；大结果使用 scoped ref，并在读取时重新校验当前 principal/scope/capability/TTL。
+- Focused checks:
+  - `cargo check -p agentdash-application-runtime-gateway -p agentdash-infrastructure`
+  - `cargo test -p agentdash-infrastructure operation_script -- --nocapture`（8 passed）
+
+## Remaining Integration
+
+- Agent、Canvas/UserWorkshop 与 Workflow caller wiring/parity 由各自工作项接入同一 execution port 后闭合。

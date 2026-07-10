@@ -1,0 +1,33 @@
+{
+  "id": "channel-domain-boundary-refactor-evaluation",
+  "name": "channel-domain-boundary-refactor-evaluation",
+  "title": "Channel 术语与领域边界收敛评估",
+  "description": "审计 Extension Protocol Channel 与全局通信 Channel 的语义冲突，形成原子改名、领域正交化和持久化迁移方案。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "cross-layer architecture evaluation",
+  "package": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-07-10",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "crates/agentdash-domain/src/channel/mod.rs",
+    "crates/agentdash-domain/src/shared_library/value_objects.rs",
+    "crates/agentdash-application/src/channel.rs",
+    "crates/agentdash-application-runtime-gateway/src/runtime_gateway/extension_actions.rs",
+    "crates/agentdash-workspace-module/src/extension_runtime.rs",
+    "packages/extension/src/host/index.ts"
+  ],
+  "notes": "推荐保留通信 Channel，将 Extension ProtocolChannel 原子收束为 ExtensionProtocol；全局 Channel persistence 必须先通过 owner/use-case evidence gate。",
+  "meta": {}
+}

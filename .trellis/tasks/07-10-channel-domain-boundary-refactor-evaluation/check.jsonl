@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/prd.md","reason":"核对评估与重构规划的验收范围"}
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/design.md","reason":"核对目标术语、不变量、adapter 与 persistence 决策"}
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/research/current-state.md","reason":"复核每项结论有现状证据"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"执行 Rust 质量门与测试约定"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查全链路 contract/codegen 一致性"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 migration 与 repository 正确性"}

@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/07-10-workspace-module-duplex-interaction-system/prd.md","reason":"核对双工交互与 Agent-facing program 的验收范围"}
+{"file":".trellis/tasks/07-10-workspace-module-duplex-interaction-system/design.md","reason":"核对 OperationProgram、InteractionInstance、Attachment 与 component ABI 决策"}
+{"file":".trellis/tasks/07-10-workspace-module-duplex-interaction-system/research/current-state.md","reason":"复核设计没有把遥测快照或 iframe JS 误当现成 runtime"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"执行 Rust 质量门与测试约定"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"执行 frontend typecheck/test 与交互质量门"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 definition/instance/event/execution migrations"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"验证 human/Agent/component 端到端数据流与事实源"}

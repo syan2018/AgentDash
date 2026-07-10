@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/research/current-state.md","reason":"两套 Channel 的代码事实、差异矩阵、存量不变量缺口与 migration 风险"}
+{"file":".trellis/spec/backend/architecture.md","reason":"保持 domain/application/infrastructure 依赖方向"}
+{"file":".trellis/spec/backend/capability/architecture.md","reason":"Channel capability 必须保持 projection 而非 membership 第二事实源"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"ExtensionProtocol method 到 Operation 的统一 admission/dispatch 边界"}
+{"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"Channel delivery 与 AgentRun mailbox materialization 的职责边界"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Channel registry 与 Extension manifest JSONB migration 约束"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Rust/TS/generated contract 原子改名与 codegen 要求"}

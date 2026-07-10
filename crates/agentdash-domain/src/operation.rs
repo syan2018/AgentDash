@@ -76,6 +76,9 @@ pub enum OperationOriginRef {
         instance_id: Uuid,
         component_key: String,
     },
+    ExtensionPanel {
+        installation_id: Uuid,
+    },
     Workflow,
     OperationScriptNested {
         script_invocation_id: String,
@@ -163,6 +166,9 @@ impl OperationOriginRef {
             } => {
                 validate_uuid("origin.instance_id", *instance_id)?;
                 validate_non_empty("origin.component_key", component_key)
+            }
+            Self::ExtensionPanel { installation_id } => {
+                validate_uuid("origin.installation_id", *installation_id)
             }
             Self::OperationScriptNested {
                 script_invocation_id,

@@ -62,6 +62,28 @@ impl OperationGateway {
             .await
     }
 
+    /// Resolve the current surface from stable server-owned context references.
+    /// Authority revisions never cross the host boundary.
+    pub async fn surface_current(
+        &self,
+        principal: &OperationPrincipal,
+        scope_ref: &super::OperationScopeRef,
+        origin: &OperationOriginRef,
+        cancel: CancellationToken,
+    ) -> Result<ActorOperationSurface, OperationExecutionError> {
+        self.runtime
+            .resolve_surface(
+                principal,
+                &OperationAuthorizationScope {
+                    scope_ref: scope_ref.clone(),
+                    authority_revision: String::new(),
+                },
+                origin,
+                cancel,
+            )
+            .await
+    }
+
     pub async fn invoke(
         &self,
         command: OperationInvocationCommand,

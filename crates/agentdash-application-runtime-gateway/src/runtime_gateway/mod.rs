@@ -3,9 +3,11 @@ mod extension_actions;
 mod extension_workspace;
 mod gateway;
 mod mcp_access;
+mod operation_authority;
 mod operation_core;
 mod operation_error;
 mod operation_gateway;
+mod operation_hosts;
 mod operation_provider;
 mod operation_script_adapter;
 mod operation_types;
@@ -54,6 +56,7 @@ pub use extension_workspace::{
 };
 pub use gateway::RuntimeGateway;
 pub use mcp_access::CurrentSurfaceRuntimeMcpAccess;
+pub use operation_authority::CompositeOperationAuthorityResolver;
 pub use operation_core::{
     OperationAuditSink, OperationDispatcher, OperationExecutionCore, OperationPlacementResolver,
     OperationResultStore, OperationSurfaceResolver, result_access_matches, scope_project_id,
@@ -61,6 +64,10 @@ pub use operation_core::{
 pub use operation_error::{OperationExecutionError, OperationExecutionErrorKind};
 pub use operation_gateway::{
     InMemoryOperationResultStore, OperationGateway, TracingOperationAuditSink,
+};
+pub use operation_hosts::{
+    AgentRunOperationHost, BoundOperationHost, ExtensionServiceOperationHost,
+    HostInvocationOptions, HostOperationInvocation, UserWorkshopOperationHost,
 };
 pub use operation_provider::{
     OperationAuthorityGrant, OperationAuthorityResolver, OperationProvider,

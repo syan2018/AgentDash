@@ -9,10 +9,10 @@ use agentdash_domain::shared_library::{
     ExtensionFlagType, ExtensionGeneratedOperationDefinition,
     ExtensionGeneratedOperationDispatch as DomainGeneratedOperationDispatch,
     ExtensionGeneratedOperationVisibility as DomainGeneratedOperationVisibility,
-    ExtensionPermissionDeclaration, ExtensionProtocolChannelDefinition,
-    ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
-    ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource,
-    ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
+    ExtensionPermissionDeclaration, ExtensionProtocolDefinition, ExtensionProtocolMethodDefinition,
+    ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
+    ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource, ProjectExtensionInstallation,
+    ProjectExtensionInstallationRepository,
 };
 use uuid::Uuid;
 
@@ -23,7 +23,7 @@ pub struct ExtensionRuntimeProjection {
     pub flags: Vec<ExtensionFlagProjection>,
     pub message_renderers: Vec<ExtensionMessageRendererProjection>,
     pub runtime_actions: Vec<ExtensionRuntimeActionProjection>,
-    pub protocol_channels: Vec<ExtensionProtocolChannelProjection>,
+    pub protocols: Vec<ExtensionProtocolProjection>,
     pub extension_dependencies: Vec<ExtensionDependencyProjection>,
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjection>,
     pub permissions: Vec<ExtensionPermissionProjection>,
@@ -83,17 +83,17 @@ pub struct ExtensionRuntimeActionProjection {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionProtocolChannelProjection {
+pub struct ExtensionProtocolProjection {
     pub extension_key: String,
     pub extension_id: String,
-    pub channel_key: String,
+    pub protocol_key: String,
     pub version: String,
     pub description: String,
-    pub methods: Vec<ExtensionProtocolChannelMethodProjection>,
+    pub methods: Vec<ExtensionProtocolMethodProjection>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionProtocolChannelMethodProjection {
+pub struct ExtensionProtocolMethodProjection {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
@@ -162,9 +162,20 @@ impl ExtensionGeneratedOperationVisibility {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExtensionGeneratedOperationDispatch {
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        provider_extension_key: String,
+        provider_extension_id: String,
+        protocol_key: String,
+        protocol_version: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,10 +201,20 @@ pub struct ExtensionGeneratedOperationProjection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionFetchRouteTargetProjection {
-    HttpProxy { capability_key: String },
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    HttpProxy {
+        capability_key: String,
+    },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        protocol_key: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,7 +280,7 @@ pub fn extension_runtime_projection_from_installations(
 ) -> Result<ExtensionRuntimeProjection, DomainError> {
     let mut projection = ExtensionRuntimeProjection::default();
     let mut action_keys = BTreeMap::new();
-    let mut channel_keys = BTreeMap::new();
+    let mut protocol_keys = BTreeMap::new();
     let mut workspace_tab_type_ids = BTreeMap::new();
     let mut uri_schemes = BTreeMap::new();
     for installation in installations {
@@ -278,11 +299,11 @@ pub fn extension_runtime_projection_from_installations(
                 &extension_key,
             )?;
         }
-        for channel in &manifest.protocol_channels {
+        for channel in &manifest.protocols {
             claim_unique_extension_runtime_key(
-                &mut channel_keys,
-                "protocol channel key",
-                &channel.channel_key,
+                &mut protocol_keys,
+                "protocol key",
+                &channel.protocol_key,
                 &extension_key,
             )?;
         }
@@ -361,11 +382,12 @@ pub fn extension_runtime_projection_from_installations(
                     permissions: action.permissions,
                 }
             }));
-        projection.protocol_channels.extend(
-            manifest
-                .protocol_channels
-                .into_iter()
-                .map(|channel| protocol_channel_projection(&extension_key, &extension_id, channel)),
+        let protocols = manifest.protocols;
+        projection.protocols.extend(
+            protocols
+                .iter()
+                .cloned()
+                .map(|channel| protocol_method_projection(&extension_key, &extension_id, channel)),
         );
         projection
             .extension_dependencies
@@ -428,7 +450,7 @@ pub fn extension_runtime_projection_from_installations(
         projection
             .operation_catalog
             .extend(manifest.operation_catalog.into_iter().map(|operation| {
-                generated_operation_projection(&extension_key, &extension_id, operation)
+                generated_operation_projection(&extension_key, &extension_id, &protocols, operation)
             }));
         projection
             .backend_services
@@ -489,15 +511,15 @@ fn fetch_route_target_projection(
                 action_key: action_key.clone(),
             }
         }
-        ExtensionFetchRouteTargetDefinition::CustomChannel {
-            channel_key,
+        ExtensionFetchRouteTargetDefinition::CustomProtocol {
+            protocol_key,
             method,
         }
-        | ExtensionFetchRouteTargetDefinition::ProtocolChannel {
-            channel_key,
+        | ExtensionFetchRouteTargetDefinition::ProtocolMethod {
+            protocol_key,
             method,
-        } => ExtensionFetchRouteTargetProjection::ProtocolChannel {
-            channel_key: channel_key.clone(),
+        } => ExtensionFetchRouteTargetProjection::ProtocolMethod {
+            protocol_key: protocol_key.clone(),
             method: method.clone(),
         },
         ExtensionFetchRouteTargetDefinition::BackendService {
@@ -513,6 +535,7 @@ fn fetch_route_target_projection(
 fn generated_operation_projection(
     extension_key: &str,
     extension_id: &str,
+    protocols: &[ExtensionProtocolDefinition],
     operation: ExtensionGeneratedOperationDefinition,
 ) -> ExtensionGeneratedOperationProjection {
     ExtensionGeneratedOperationProjection {
@@ -535,13 +558,23 @@ fn generated_operation_projection(
             DomainGeneratedOperationDispatch::RuntimeAction { action_key } => {
                 ExtensionGeneratedOperationDispatch::RuntimeAction { action_key }
             }
-            DomainGeneratedOperationDispatch::ProtocolChannel {
-                channel_key,
+            DomainGeneratedOperationDispatch::ProtocolMethod {
+                protocol_key,
                 method,
-            } => ExtensionGeneratedOperationDispatch::ProtocolChannel {
-                channel_key,
-                method,
-            },
+            } => {
+                let protocol_version = protocols
+                    .iter()
+                    .find(|protocol| protocol.protocol_key == protocol_key)
+                    .map(|protocol| protocol.version.clone())
+                    .expect("validated operation protocol must exist in manifest");
+                ExtensionGeneratedOperationDispatch::ProtocolMethod {
+                    provider_extension_key: extension_key.to_string(),
+                    provider_extension_id: extension_id.to_string(),
+                    protocol_key,
+                    protocol_version,
+                    method,
+                }
+            }
             DomainGeneratedOperationDispatch::BackendService { service_key, route } => {
                 ExtensionGeneratedOperationDispatch::BackendService { service_key, route }
             }
@@ -636,29 +669,29 @@ fn workspace_tab_loadability(
     }
 }
 
-fn protocol_channel_projection(
+fn protocol_method_projection(
     extension_key: &str,
     extension_id: &str,
-    channel: ExtensionProtocolChannelDefinition,
-) -> ExtensionProtocolChannelProjection {
-    ExtensionProtocolChannelProjection {
+    channel: ExtensionProtocolDefinition,
+) -> ExtensionProtocolProjection {
+    ExtensionProtocolProjection {
         extension_key: extension_key.to_string(),
         extension_id: extension_id.to_string(),
-        channel_key: channel.channel_key,
+        protocol_key: channel.protocol_key,
         version: channel.version,
         description: channel.description,
         methods: channel
             .methods
             .into_iter()
-            .map(protocol_channel_method_projection)
+            .map(protocol_method_method_projection)
             .collect(),
     }
 }
 
-fn protocol_channel_method_projection(
-    method: ExtensionProtocolChannelMethodDefinition,
-) -> ExtensionProtocolChannelMethodProjection {
-    ExtensionProtocolChannelMethodProjection {
+fn protocol_method_method_projection(
+    method: ExtensionProtocolMethodDefinition,
+) -> ExtensionProtocolMethodProjection {
+    ExtensionProtocolMethodProjection {
         name: method.name,
         description: method.description,
         input_schema: method.input_schema,
@@ -703,8 +736,8 @@ mod tests {
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
         ExtensionCommandHandler, ExtensionDependencyDeclaration, ExtensionFlagDefinition,
         ExtensionFlagType, ExtensionMessageRendererDefinition, ExtensionPermissionAccess,
-        ExtensionPermissionDeclaration, ExtensionProtocolChannelDefinition,
-        ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
+        ExtensionPermissionDeclaration, ExtensionProtocolDefinition,
+        ExtensionProtocolMethodDefinition, ExtensionRendererDeclaration,
         ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
         ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration,
         InstalledAssetSource, ProjectExtensionInstallation,
@@ -762,11 +795,11 @@ mod tests {
                 output_schema: serde_json::json!({}),
                 permissions: vec!["local.profile.read".to_string()],
             }],
-            protocol_channels: vec![ExtensionProtocolChannelDefinition {
-                channel_key: format!("{extension_id}.api"),
+            protocols: vec![ExtensionProtocolDefinition {
+                protocol_key: format!("{extension_id}.api"),
                 version: "1.0.0".to_string(),
                 description: "demo API channel".to_string(),
-                methods: vec![ExtensionProtocolChannelMethodDefinition {
+                methods: vec![ExtensionProtocolMethodDefinition {
                     name: "readProfile".to_string(),
                     description: "read profile through channel".to_string(),
                     input_schema: serde_json::json!({}),
@@ -778,7 +811,7 @@ mod tests {
                 alias: "self_api".to_string(),
                 extension_id: extension_id.to_string(),
                 version: "^1.0.0".to_string(),
-                channels: vec![format!("{extension_id}.api")],
+                protocols: vec![format!("{extension_id}.api")],
             }],
             workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
                 type_id: tab_type_id.to_string(),
@@ -851,7 +884,7 @@ mod tests {
             capability_directives: vec![],
             asset_refs: vec![],
             runtime_actions: vec![],
-            protocol_channels: vec![],
+            protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
                 type_id: format!("{extension_id}.panel"),
@@ -884,11 +917,8 @@ mod tests {
         assert_eq!(projection.flags[0].name, "demo.verbose");
         assert_eq!(projection.message_renderers[0].custom_type, "demo.card");
         assert_eq!(projection.runtime_actions[0].action_key, "demo.profile");
-        assert_eq!(projection.protocol_channels[0].channel_key, "demo.api");
-        assert_eq!(
-            projection.protocol_channels[0].methods[0].name,
-            "readProfile"
-        );
+        assert_eq!(projection.protocols[0].protocol_key, "demo.api");
+        assert_eq!(projection.protocols[0].methods[0].name, "readProfile");
         assert_eq!(
             projection.extension_dependencies[0].dependency.alias,
             "self_api"

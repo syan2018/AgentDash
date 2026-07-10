@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { authenticatedFetch } from "../../../api/client";
-import { invokeAgentRunExtensionRuntimeChannel } from "../../../services/extensionRuntime";
+import { invokeAgentRunExtensionRuntimeProtocol } from "../../../services/extensionRuntime";
 import type {
   CanvasRuntimeSnapshot,
   ExtensionWorkspaceTabProjectionResponse,
@@ -9,7 +9,7 @@ import type {
 import { CanvasRuntimePreview } from "../../canvas-panel/CanvasRuntimePreview";
 import { useWorkspaceData } from "../../workspace-runtime";
 import {
-  invokeExtensionChannelFromCanvas,
+  invokeExtensionProtocolFromCanvas,
   resolveExtensionCanvasAvailability,
 } from "../model/canvasBridge";
 
@@ -105,12 +105,12 @@ export function ExtensionCanvasPanel({ tab }: ExtensionCanvasPanelProps) {
           agentRunBridge={bridge}
           showBridgeUnavailable
           onAgentRunWorkspaceRefresh={workspaceData.refreshAgentRunWorkspace}
-          extensionChannelBridge={(request) =>
-            invokeExtensionChannelFromCanvas({
+          extensionProtocolBridge={(request) =>
+            invokeExtensionProtocolFromCanvas({
               workspaceData,
               tab,
               request,
-              invokeChannel: invokeAgentRunExtensionRuntimeChannel,
+              invokeProtocol: invokeAgentRunExtensionRuntimeProtocol,
             })}
         />
       </div>

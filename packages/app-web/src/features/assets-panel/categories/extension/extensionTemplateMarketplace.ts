@@ -7,7 +7,7 @@ export interface ExtensionTemplateMarketplaceParsed {
   flags: Array<{ name: string; type: string; defaultValue: string; description: string }>;
   renderers: Array<{ customType: string; kind: string }>;
   runtimeActions: Array<{ name: string; kind: string; description: string | null }>;
-  protocolChannels: string[];
+  protocols: string[];
   workspaceTabs: string[];
   bundles: string[];
   requiresPackageArtifact: boolean;
@@ -69,7 +69,7 @@ export function parseExtensionTemplateMarketplacePayload(
       },
     ];
   });
-  const protocolChannels = stringKeysFromArray(raw.protocol_channels, "name");
+  const protocols = stringKeysFromArray(raw.protocols, "name");
   const workspaceTabs = stringKeysFromArray(raw.workspace_tabs, "id");
   const bundles = stringKeysFromArray(raw.bundles, "id");
   return {
@@ -79,12 +79,12 @@ export function parseExtensionTemplateMarketplacePayload(
     flags,
     renderers,
     runtimeActions,
-    protocolChannels,
+    protocols,
     workspaceTabs,
     bundles,
     requiresPackageArtifact:
       runtimeActions.length > 0 ||
-      protocolChannels.length > 0 ||
+      protocols.length > 0 ||
       workspaceTabs.length > 0 ||
       bundles.length > 0,
   };

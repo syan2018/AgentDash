@@ -3,9 +3,9 @@
 /**
  * @typedef {"panel_only" | "agent_and_panel"} FetchRouteScope
  * @typedef {{ kind: "http_proxy", base_url: string }} HttpProxyFetchRouteTarget
- * @typedef {{ kind: "custom_channel", channel_key: string, method: string }} CustomChannelFetchRouteTarget
+ * @typedef {{ kind: "custom_protocol", protocol_key: string, method: string }} CustomProtocolFetchRouteTarget
  * @typedef {{ kind: "backend_service", service_key: string }} BackendServiceFetchRouteTarget
- * @typedef {HttpProxyFetchRouteTarget | CustomChannelFetchRouteTarget | BackendServiceFetchRouteTarget} FetchRouteTarget
+ * @typedef {HttpProxyFetchRouteTarget | CustomProtocolFetchRouteTarget | BackendServiceFetchRouteTarget} FetchRouteTarget
  * @typedef {{ route: string, target: FetchRouteTarget, scope: FetchRouteScope }} FetchRouteBinding
  * @typedef {{ route: FetchRouteBinding, url: string, path: string }} FetchRouteMatch
  * @typedef {{ route: FetchRouteBinding, url: string, method: string, headers: Record<string, string>, body?: string }} RoutedFetchRequest
@@ -13,12 +13,12 @@
  * @typedef {{ invokeFetchRoute(request: RoutedFetchRequest): Promise<RoutedFetchResponse> }} FetchRouteBridge
  */
 
-/** @type {Record<string, "http_proxy" | "custom_channel" | "backend_service">} */
+/** @type {Record<string, "http_proxy" | "custom_protocol" | "backend_service">} */
 const ROUTE_TARGET_PREFIXES = {
   httpProxy: "http_proxy",
   http_proxy: "http_proxy",
-  customChannel: "custom_channel",
-  custom_channel: "custom_channel",
+  customProtocol: "custom_protocol",
+  custom_protocol: "custom_protocol",
   backendService: "backend_service",
   backend_service: "backend_service",
 };
@@ -42,14 +42,14 @@ export function parseFetchRouteBinding(value) {
   const targetSeparator = targetSpec.indexOf(":");
   if (targetSeparator <= 0 || targetSeparator === targetSpec.length - 1) {
     throw new Error(
-      "fetch route target 必须显式声明为 httpProxy:<baseUrl>、customChannel:<channel>#<method> 或 backendService:<serviceKey>",
+      "fetch route target 必须显式声明为 httpProxy:<baseUrl>、customProtocol:<channel>#<method> 或 backendService:<serviceKey>",
     );
   }
   const rawKind = targetSpec.slice(0, targetSeparator);
   const normalizedKind = ROUTE_TARGET_PREFIXES[rawKind];
   if (!normalizedKind) {
     throw new Error(
-      `fetch route target kind 非法: ${rawKind}; 支持 httpProxy、customChannel、backendService`,
+      `fetch route target kind 非法: ${rawKind}; 支持 httpProxy、customProtocol、backendService`,
     );
   }
   const rawTarget = targetSpec.slice(targetSeparator + 1).trim();
@@ -161,12 +161,12 @@ export function isLocalhostUrl(url, options = {}) {
  */
 export function describeFetchRouteTarget(target) {
   if (target.kind === "http_proxy") return `httpProxy:${target.base_url}`;
-  if (target.kind === "custom_channel") return `customChannel:${target.channel_key}#${target.method}`;
+  if (target.kind === "custom_protocol") return `customProtocol:${target.protocol_key}#${target.method}`;
   return `backendService:${target.service_key}`;
 }
 
 /**
- * @param {"http_proxy" | "custom_channel" | "backend_service"} kind
+ * @param {"http_proxy" | "custom_protocol" | "backend_service"} kind
  * @param {string} value
  * @returns {FetchRouteTarget}
  */
@@ -174,16 +174,16 @@ function parseFetchRouteTarget(kind, value) {
   if (kind === "http_proxy") {
     return { kind, base_url: normalizeHttpBaseUrl(value) };
   }
-  if (kind === "custom_channel") {
+  if (kind === "custom_protocol") {
     const methodSeparator = value.indexOf("#");
     if (methodSeparator <= 0 || methodSeparator === value.length - 1) {
-      throw new Error("customChannel fetch route target 必须使用 <channel_key>#<method>");
+      throw new Error("customProtocol fetch route target 必须使用 <protocol_key>#<method>");
     }
-    const channelKey = value.slice(0, methodSeparator).trim();
+    const protocolKey = value.slice(0, methodSeparator).trim();
     const method = value.slice(methodSeparator + 1).trim();
-    validateNamespacedKey(channelKey, "customChannel channel_key");
-    validateMethodName(method, "customChannel method");
-    return { kind, channel_key: channelKey, method };
+    validateNamespacedKey(protocolKey, "customProtocol protocol_key");
+    validateMethodName(method, "customProtocol method");
+    return { kind, protocol_key: protocolKey, method };
   }
   validateServiceKey(value, "backendService service_key");
   return { kind, service_key: value };
@@ -201,15 +201,15 @@ function normalizeFetchRouteTarget(value) {
     if (!baseUrl) throw new Error("http_proxy target.base_url 不能为空");
     return { kind: "http_proxy", base_url: normalizeHttpBaseUrl(baseUrl) };
   }
-  if (record.kind === "custom_channel") {
-    const channelKey = stringField(record, "channel_key");
+  if (record.kind === "custom_protocol") {
+    const protocolKey = stringField(record, "protocol_key");
     const method = stringField(record, "method");
-    if (!channelKey || !method) {
-      throw new Error("custom_channel target.channel_key 和 target.method 不能为空");
+    if (!protocolKey || !method) {
+      throw new Error("custom_protocol target.protocol_key 和 target.method 不能为空");
     }
-    validateNamespacedKey(channelKey, "custom_channel target.channel_key");
-    validateMethodName(method, "custom_channel target.method");
-    return { kind: "custom_channel", channel_key: channelKey, method };
+    validateNamespacedKey(protocolKey, "custom_protocol target.protocol_key");
+    validateMethodName(method, "custom_protocol target.method");
+    return { kind: "custom_protocol", protocol_key: protocolKey, method };
   }
   if (record.kind === "backend_service") {
     const serviceKey = stringField(record, "service_key");
@@ -217,7 +217,7 @@ function normalizeFetchRouteTarget(value) {
     validateServiceKey(serviceKey, "backend_service target.service_key");
     return { kind: "backend_service", service_key: serviceKey };
   }
-  throw new Error("fetch route.target.kind 必须是 http_proxy、custom_channel 或 backend_service");
+  throw new Error("fetch route.target.kind 必须是 http_proxy、custom_protocol 或 backend_service");
 }
 
 /**

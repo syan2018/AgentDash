@@ -66,7 +66,7 @@ async fn reload_updates_action_handler() {
 }
 
 #[tokio::test]
-async fn protocol_channel_registers_and_self_invokes() {
+async fn protocol_method_registers_and_self_invokes() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_channel_echo_package(temp.path())
         .await
@@ -76,7 +76,7 @@ async fn protocol_channel_registers_and_self_invokes() {
         .activate_dev_directory(&package_dir, activation())
         .await
         .expect("activate");
-    assert_eq!(health.channel_keys, vec!["local-hello.api".to_string()]);
+    assert_eq!(health.protocol_keys, vec!["local-hello.api".to_string()]);
 
     let action_result = manager
         .invoke_action("local-hello.profile", json!({ "source": "action" }))
@@ -85,7 +85,7 @@ async fn protocol_channel_registers_and_self_invokes() {
     assert_eq!(action_result["echoed"]["source"], "action");
 
     let channel_result = manager
-        .invoke_channel("local-hello.api", "echo", json!({ "source": "direct" }))
+        .invoke_protocol("local-hello.api", "echo", json!({ "source": "direct" }))
         .await
         .expect("invoke channel");
     assert_eq!(channel_result["echoed"]["source"], "direct");
@@ -93,7 +93,7 @@ async fn protocol_channel_registers_and_self_invokes() {
 }
 
 #[tokio::test]
-async fn channel_output_schema_is_validated_by_local_host() {
+async fn protocol_output_schema_is_validated_by_local_host() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir =
         write_channel_echo_package_with_output_schema(temp.path(), json!({ "type": "string" }))
@@ -106,7 +106,7 @@ async fn channel_output_schema_is_validated_by_local_host() {
         .expect("activate");
 
     let err = manager
-        .invoke_channel("local-hello.api", "echo", json!({ "source": "direct" }))
+        .invoke_protocol("local-hello.api", "echo", json!({ "source": "direct" }))
         .await
         .expect_err("output schema should reject object output");
     assert!(err.to_string().contains("output 不符合 JSON Schema"));
@@ -151,7 +151,7 @@ async fn dependency_alias_invokes_provider_channel_in_same_host() {
 }
 
 #[tokio::test]
-async fn channel_method_permissions_guard_host_api_facade() {
+async fn protocol_method_permissions_guard_host_api_facade() {
     let temp = tempfile::tempdir().expect("tempdir");
     let denied_dir = write_channel_env_package(temp.path(), false)
         .await
@@ -163,12 +163,12 @@ async fn channel_method_permissions_guard_host_api_facade() {
         .expect("activate denied");
 
     let err = manager
-        .invoke_channel("local-hello.api", "readEnv", Value::Null)
+        .invoke_protocol("local-hello.api", "readEnv", Value::Null)
         .await
         .expect_err("permission denied");
 
     assert!(err.to_string().contains(
-        "extension channel method `local-hello.api.readEnv` 未声明 env.read 或 env.read:PATH"
+        "extension protocol method `local-hello.api.readEnv` 未声明 env.read 或 env.read:PATH"
     ));
     manager.stop().await.expect("stop denied manager");
 
@@ -182,7 +182,7 @@ async fn channel_method_permissions_guard_host_api_facade() {
         .expect("activate allowed");
 
     let result = manager
-        .invoke_channel("local-hello.api", "readEnv", Value::Null)
+        .invoke_protocol("local-hello.api", "readEnv", Value::Null)
         .await
         .expect("invoke allowed");
 
@@ -203,7 +203,7 @@ async fn channel_invocation_limits_recursive_calls() {
         .expect("activate");
 
     let err = manager
-        .invoke_channel("local-hello.api", "loop", Value::Null)
+        .invoke_protocol("local-hello.api", "loop", Value::Null)
         .await
         .expect_err("recursive channel");
 
@@ -349,7 +349,7 @@ async fn runtime_invoke_limits_recursive_calls() {
 }
 
 #[tokio::test]
-async fn protocol_channel_invoke_reports_unloaded_method_without_host_api_substitution() {
+async fn protocol_method_invoke_reports_unloaded_method_without_host_api_substitution() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), unloaded_channel_invoke_bundle(), false, false)
         .await
@@ -363,10 +363,10 @@ async fn protocol_channel_invoke_reports_unloaded_method_without_host_api_substi
     let err = manager
         .invoke_action("local-hello.profile", json!({ "source": "channel" }))
         .await
-        .expect_err("unloaded channel method");
+        .expect_err("unloaded protocol method");
 
     assert!(err.to_string().contains(
-        "extension channel method is not loaded in current extension host: provider.api.echo"
+        "extension protocol method is not loaded in current extension host: provider.api.echo"
     ));
     manager.stop().await.expect("stop");
 }
@@ -713,8 +713,8 @@ async fn write_channel_echo_package_with_output_schema(
             "output_schema": true,
             "permissions": [],
         }],
-        "protocol_channels": [{
-            "channel_key": "local-hello.api",
+        "protocols": [{
+            "protocol_key": "local-hello.api",
             "version": "1.0.0",
             "description": "Local API",
             "methods": [{
@@ -761,8 +761,8 @@ async fn write_channel_env_package(
         "extension_id": "local-hello",
         "package": { "name": "@agentdash/local-hello", "version": "0.1.0" },
         "asset_version": "0.1.0",
-        "protocol_channels": [{
-            "channel_key": "local-hello.api",
+        "protocols": [{
+            "protocol_key": "local-hello.api",
             "version": "1.0.0",
             "description": "Local API",
             "methods": [{
@@ -797,8 +797,8 @@ async fn write_channel_loop_package(root: &Path) -> anyhow::Result<PathBuf> {
         "extension_id": "local-hello",
         "package": { "name": "@agentdash/local-hello", "version": "0.1.0" },
         "asset_version": "0.1.0",
-        "protocol_channels": [{
-            "channel_key": "local-hello.api",
+        "protocols": [{
+            "protocol_key": "local-hello.api",
             "version": "1.0.0",
             "description": "Local API",
             "methods": [{
@@ -833,8 +833,8 @@ async fn write_provider_package(root: &Path) -> anyhow::Result<PathBuf> {
         "extension_id": "provider",
         "package": { "name": "@agentdash/provider", "version": "1.0.0" },
         "asset_version": "1.0.0",
-        "protocol_channels": [{
-            "channel_key": "provider.api",
+        "protocols": [{
+            "protocol_key": "provider.api",
             "version": "1.0.0",
             "description": "Provider API",
             "methods": [{
@@ -875,13 +875,13 @@ async fn write_consumer_package(root: &Path) -> anyhow::Result<PathBuf> {
             "description": "Call provider",
             "input_schema": true,
             "output_schema": true,
-            "permissions": ["extension.channel.invoke:provider.api.echo"],
+            "permissions": ["extension.protocol.invoke:provider.api.echo"],
         }],
         "extension_dependencies": [{
             "alias": "provider",
             "extension_id": "provider",
             "version": "^1.0.0",
-            "channels": ["provider.api"],
+            "protocols": ["provider.api"],
         }],
         "bundles": [{
             "kind": "extension_host",
@@ -1106,9 +1106,9 @@ export default {
     ctx.runtime.registerAction({
       action_key: "local-hello.profile",
       kind: "session_runtime",
-      description: "Invoke unloaded channel method",
+      description: "Invoke unloaded protocol method",
       async invoke(input) {
-        return await ctx.api.channels.invoke("provider.api", "echo", input);
+        return await ctx.api.protocols.invoke("provider.api", "echo", input);
       },
     });
   },
@@ -1121,8 +1121,8 @@ fn channel_bundle() -> String {
     r#"
 export default {
   activate(ctx) {
-    ctx.channels.register({
-      channel_key: "api",
+    ctx.protocols.register({
+      protocol_key: "api",
       version: "1.0.0",
       description: "Echo channel",
       methods: {
@@ -1139,7 +1139,7 @@ export default {
       kind: "session_runtime",
       description: "Invoke own channel",
       async invoke(input) {
-        return await ctx.api.channels.self("api").invoke("echo", input);
+        return await ctx.api.protocols.self("api").invoke("echo", input);
       },
     });
   },
@@ -1152,8 +1152,8 @@ fn provider_channel_bundle() -> String {
     r#"
 export default {
   activate(ctx) {
-    ctx.channels.register({
-      channel_key: "api",
+    ctx.protocols.register({
+      protocol_key: "api",
       version: "1.0.0",
       description: "Provider API",
       methods: {
@@ -1178,9 +1178,9 @@ export default {
     ctx.runtime.registerAction({
       action_key: "consumer.call",
       kind: "session_runtime",
-      description: "Call provider channel",
+      description: "Call provider protocol",
       async invoke(input) {
-        return await ctx.api.channels.from("provider").invoke("echo", input);
+        return await ctx.api.protocols.from("provider").invoke("echo", input);
       },
     });
   },
@@ -1193,8 +1193,8 @@ fn channel_env_bundle() -> String {
     r#"
 export default {
   activate(ctx) {
-    ctx.channels.register({
-      channel_key: "api",
+    ctx.protocols.register({
+      protocol_key: "api",
       version: "1.0.0",
       description: "Local API",
       methods: {
@@ -1217,15 +1217,15 @@ fn channel_loop_bundle() -> String {
     r#"
 export default {
   activate(ctx) {
-    ctx.channels.register({
-      channel_key: "api",
+    ctx.protocols.register({
+      protocol_key: "api",
       version: "1.0.0",
       description: "Loop channel",
       methods: {
         loop: {
           description: "Loop forever",
           async invoke() {
-            return await ctx.api.channels.self("api").invoke("loop", {});
+            return await ctx.api.protocols.self("api").invoke("loop", {});
           },
         },
       },

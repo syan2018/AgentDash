@@ -21,7 +21,7 @@ export type ExtensionCommandHandlerResponse = { "kind": "inject_message", conten
 
 export type ExtensionCommandProjectionResponse = { extension_key: string, extension_id: string, name: string, description: string, handler: ExtensionCommandHandlerResponse, };
 
-export type ExtensionDependencyDeclarationResponse = { alias: string, extension_id: string, version: string, channels: Array<string>, };
+export type ExtensionDependencyDeclarationResponse = { alias: string, extension_id: string, version: string, protocols: Array<string>, };
 
 export type ExtensionDependencyProjectionResponse = { extension_key: string, extension_id: string, dependency: ExtensionDependencyDeclarationResponse, };
 
@@ -31,13 +31,13 @@ export type ExtensionFetchRouteProjectionResponse = { extension_key: string, ext
  */
 panel_only: boolean, target: ExtensionFetchRouteTargetResponse, };
 
-export type ExtensionFetchRouteTargetResponse = { "kind": "http_proxy", capability_key: string, } | { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method: string, } | { "kind": "backend_service", service_key: string, route: string, };
+export type ExtensionFetchRouteTargetResponse = { "kind": "http_proxy", capability_key: string, } | { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_method", protocol_key: string, method: string, } | { "kind": "backend_service", service_key: string, route: string, };
 
 export type ExtensionFlagProjectionResponse = { extension_key: string, extension_id: string, name: string, flag_type: ExtensionFlagTypeResponse, default: JsonValue, description: string, };
 
 export type ExtensionFlagTypeResponse = "bool" | "string";
 
-export type ExtensionGeneratedOperationDispatchResponse = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_channel", channel_key: string, method: string, } | { "kind": "backend_service", service_key: string, route: string, };
+export type ExtensionGeneratedOperationDispatchResponse = { "kind": "runtime_action", action_key: string, } | { "kind": "protocol_method", provider_extension_key: string, provider_extension_id: string, protocol_key: string, protocol_version: string, method: string, } | { "kind": "backend_service", service_key: string, route: string, };
 
 export type ExtensionGeneratedOperationProjectionResponse = { extension_key: string, extension_id: string, operation_key: string, description: string, visibility: ExtensionGeneratedOperationVisibilityResponse, input_schema: JsonValue, output_schema: JsonValue, permission_summary: Array<string>, dispatch: ExtensionGeneratedOperationDispatchResponse, provenance: ExtensionGeneratedOperationProvenanceResponse, };
 
@@ -57,15 +57,15 @@ export type ExtensionPackageArtifactRefResponse = { artifact_id: string, package
 
 export type ExtensionPermissionAccessResponse = "read" | "write" | "read_write";
 
-export type ExtensionPermissionDeclarationResponse = { "kind": "local_profile", access: ExtensionPermissionAccessResponse, } | { "kind": "http", hosts: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "workspace", access: ExtensionPermissionAccessResponse, } | { "kind": "env", names: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "process", access: ExtensionProcessPermissionAccessResponse, } | { "kind": "runtime_action", action_key: string, } | { "kind": "extension_channel", channel_key: string, methods: Array<string>, } | { "kind": "backend_service", service_key: string, routes: Array<string>, };
+export type ExtensionPermissionDeclarationResponse = { "kind": "local_profile", access: ExtensionPermissionAccessResponse, } | { "kind": "http", hosts: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "workspace", access: ExtensionPermissionAccessResponse, } | { "kind": "env", names: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "process", access: ExtensionProcessPermissionAccessResponse, } | { "kind": "runtime_action", action_key: string, } | { "kind": "extension_protocol", protocol_key: string, methods: Array<string>, } | { "kind": "backend_service", service_key: string, routes: Array<string>, };
 
 export type ExtensionPermissionProjectionResponse = { extension_key: string, extension_id: string, permission: ExtensionPermissionDeclarationResponse, };
 
 export type ExtensionProcessPermissionAccessResponse = "execute";
 
-export type ExtensionProtocolChannelMethodProjectionResponse = { name: string, description: string, input_schema: JsonValue, output_schema: JsonValue, permissions: Array<string>, };
+export type ExtensionProtocolMethodProjectionResponse = { name: string, description: string, input_schema: JsonValue, output_schema: JsonValue, permissions: Array<string>, };
 
-export type ExtensionProtocolChannelProjectionResponse = { extension_key: string, extension_id: string, channel_key: string, version: string, description: string, methods: Array<ExtensionProtocolChannelMethodProjectionResponse>, };
+export type ExtensionProtocolProjectionResponse = { extension_key: string, extension_id: string, protocol_key: string, version: string, description: string, methods: Array<ExtensionProtocolMethodProjectionResponse>, };
 
 export type ExtensionRuntimeActionKindResponse = "session_runtime" | "setup";
 
@@ -81,11 +81,11 @@ export type ExtensionRuntimeInvokeBackendServiceRequest = { extension_key: strin
 
 export type ExtensionRuntimeInvokeBackendServiceResponse = { trace: ExtensionRuntimeTraceResponse, metadata: ExtensionBackendServiceInvokeMetadataResponse, response?: ExtensionBackendServiceHttpResponse | null, diagnostic?: ExtensionBackendServiceDiagnosticResponse | null, };
 
-export type ExtensionRuntimeInvokeChannelRequest = { channel_key: string, method: string, input: JsonValue, consumer_extension_key?: string | null, dependency_alias?: string | null, };
+export type ExtensionRuntimeInvokeProtocolRequest = { provider_extension_key?: string | null, protocol_key: string, protocol_version?: string | null, method: string, input: JsonValue, consumer_extension_key?: string | null, dependency_alias?: string | null, };
 
-export type ExtensionRuntimeInvokeChannelResponse = { channel_key: string, method: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
+export type ExtensionRuntimeInvokeProtocolResponse = { provider_extension_key: string, provider_extension_id: string, protocol_key: string, protocol_version: string, method: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
 
-export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocol_channels: Array<ExtensionProtocolChannelProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, fetch_routes?: Array<ExtensionFetchRouteProjectionResponse>, operation_catalog?: Array<ExtensionGeneratedOperationProjectionResponse>, backend_services?: Array<ExtensionBackendServiceProjectionResponse>, };
+export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocols: Array<ExtensionProtocolProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, fetch_routes?: Array<ExtensionFetchRouteProjectionResponse>, operation_catalog?: Array<ExtensionGeneratedOperationProjectionResponse>, backend_services?: Array<ExtensionBackendServiceProjectionResponse>, };
 
 export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: string, parent_trace_id?: string | null, created_at: string, };
 

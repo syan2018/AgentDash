@@ -73,7 +73,7 @@ fn project_extension_management_item_response(
             flags: item.capability_summary.flags,
             message_renderers: item.capability_summary.message_renderers,
             runtime_actions: item.capability_summary.runtime_actions,
-            protocol_channels: item.capability_summary.protocol_channels,
+            protocols: item.capability_summary.protocols,
             workspace_tabs: item.capability_summary.workspace_tabs,
             permissions: item.capability_summary.permissions,
             bundles: item.capability_summary.bundles,

@@ -1,6 +1,6 @@
 import {
   backendService,
-  customChannel,
+  customProtocol,
   defineApp,
   httpProxy,
   localCommand,
@@ -56,12 +56,12 @@ export const smokeAppDefinition: AgentDashAppDefinition = defineApp({
         input_schema: inputSchema,
       },
     }),
-    protocol: customChannel({
+    protocol: customProtocol({
       description: "Structured protocol escape hatch.",
       methods: {
         summarize: {
           description: "Summarize a structured payload.",
-          permissions: ["extension.channel.invoke:repo-tools.protocol"],
+          permissions: ["extension.protocol.invoke:repo-tools.protocol"],
           expose: {
             description: "Summarize a structured payload for the Agent.",
           },

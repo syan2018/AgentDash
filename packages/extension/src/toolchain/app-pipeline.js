@@ -38,7 +38,7 @@ const appImportFilter = /^@agentdash\/extension(?:\/.*)?$/;
  * @typedef {{ key: string, wire_key: string, kind: string, title: string, description: string, permission_summary: string[] }} NormalizedCapability
  * @typedef {{ kind: "agentdash.app", id: string, name: string, version: string, description: string, panel: UnknownRecord, capabilities: NormalizedCapability[], agent_exposures: UnknownRecord[], dispatches: UnknownRecord[], artifacts: UnknownRecord[], operation_catalog: UnknownRecord[], permission_summary: UnknownRecord, package_name: string, extension_id: string, panel_entry: string, package_json: UnknownRecord, diagnostics: string[] }} NormalizedAppDefinition
  * @typedef {{ capability_key: string, kind: string, permissions: UnknownRecord[], runtime_permissions: string[], diagnostics: string[] }} PermissionSummaryItem
- * @typedef {{ manifest: UnknownRecord, package_json: UnknownRecord, host_entry: string, panel_client: string, permission_summary: PermissionSummaryItem[], diagnostics: string[], normalized: NormalizedAppDefinition, registered_surface: { runtime_actions: unknown[], protocol_channels: unknown[] } }} GeneratedAppArtifacts
+ * @typedef {{ manifest: UnknownRecord, package_json: UnknownRecord, host_entry: string, panel_client: string, permission_summary: PermissionSummaryItem[], diagnostics: string[], normalized: NormalizedAppDefinition, registered_surface: { runtime_actions: unknown[], protocols: unknown[] } }} GeneratedAppArtifacts
  * @typedef {{ errors: string[], warnings: string[], manifest: UnknownRecord | null, package_json: UnknownRecord | null, generated?: GeneratedAppArtifacts, mode: "app" | "legacy" }} ExtensionValidationResult
  * @typedef {{ archive_path: string, archive_digest: string, manifest_digest: string, manifest: UnknownRecord, mode?: "app" | "legacy", generated?: GeneratedAppArtifacts, stage_root?: string }} ExtensionPackResult
  */
@@ -133,7 +133,7 @@ export async function normalizeAppDefinition(projectRoot, app) {
 export function generateAppArtifacts(normalized) {
   const permissions = normalizedPermissions(normalized);
   const runtimeActions = runtimeActionsFromDispatches(normalized);
-  const protocolChannels = protocolChannelsFromDispatches(normalized);
+  const protocols = protocolsFromDispatches(normalized);
   const backendServices = backendServicesFromArtifacts(normalized);
   const fetchRoutes = fetchRoutesFromBackendServices(backendServices);
   const operationCatalog = operationCatalogFromNormalized(normalized);
@@ -146,7 +146,7 @@ export function generateAppArtifacts(normalized) {
     },
     asset_version: normalized.version,
     runtime_actions: runtimeActions,
-    protocol_channels: protocolChannels,
+    protocols: protocols,
     workspace_tabs: [
       {
         type_id: stringField(normalized.panel, "type_id") ?? `${normalized.extension_id}.panel`,
@@ -178,7 +178,7 @@ export function generateAppArtifacts(normalized) {
     normalized,
     registered_surface: {
       runtime_actions: runtimeActions,
-      protocol_channels: protocolChannels,
+      protocols: protocols,
     },
   };
 }
@@ -446,15 +446,15 @@ function runtimeActionsFromDispatches(normalized) {
  * @param {NormalizedAppDefinition} normalized
  * @returns {unknown[]}
  */
-function protocolChannelsFromDispatches(normalized) {
+function protocolsFromDispatches(normalized) {
   const result = [];
   for (const projection of normalized.dispatches) {
     const dispatch = asRecord(projection.dispatch);
-    if (!dispatch || dispatch.kind !== "protocol_channel") continue;
+    if (!dispatch || dispatch.kind !== "protocol_method") continue;
     result.push({
-      channel_key: requireStringField(dispatch, "channel_key"),
+      protocol_key: requireStringField(dispatch, "protocol_key"),
       version: stringField(dispatch, "version") ?? "1.0.0",
-      description: stringField(dispatch, "description") ?? requireStringField(dispatch, "channel_key"),
+      description: stringField(dispatch, "description") ?? requireStringField(dispatch, "protocol_key"),
       methods: arrayRecordField(dispatch, "methods").map((method) => ({
         name: requireStringField(method, "name"),
         description: requireStringField(method, "description"),
@@ -540,10 +540,10 @@ function operationDispatchForManifest(normalized, dispatch) {
       action_key: requireStringField(dispatch, "action_key"),
     };
   }
-  if (kind === "protocol_channel") {
+  if (kind === "protocol_method") {
     return {
       kind,
-      channel_key: requireStringField(dispatch, "channel_key"),
+      protocol_key: requireStringField(dispatch, "protocol_key"),
       method: stringField(dispatch, "method") ?? requireStringField(dispatch, "method_name"),
     };
   }
@@ -620,7 +620,7 @@ function firstBackendServiceRoute(normalized, serviceKey) {
  */
 function createHostEntrySource(manifest, normalized) {
   const runtimeActions = runtimeActionsFromDispatches(normalized);
-  const protocolChannels = protocolChannelsFromDispatches(normalized);
+  const protocols = protocolsFromDispatches(normalized);
   const actionRegistrations = runtimeActions.map((action) => {
     const dispatch = dispatchForRuntimeAction(normalized, requireStringField(asRecord(action) ?? {}, "action_key"));
     return [
@@ -632,9 +632,9 @@ function createHostEntrySource(manifest, normalized) {
       "    });",
     ].join("\n");
   });
-  const channelRegistrations = protocolChannels.map((channel) => [
-    "    ctx.channels.register({",
-    `      channel_key: ${JSON.stringify(requireStringField(asRecord(channel) ?? {}, "channel_key"))},`,
+  const protocolRegistrations = protocols.map((channel) => [
+    "    ctx.protocols.register({",
+    `      protocol_key: ${JSON.stringify(requireStringField(asRecord(channel) ?? {}, "protocol_key"))},`,
     `      version: ${JSON.stringify(stringField(asRecord(channel) ?? {}, "version") ?? "1.0.0")},`,
     `      description: ${JSON.stringify(stringField(asRecord(channel) ?? {}, "description") ?? "")},`,
     "      methods: {",
@@ -645,14 +645,14 @@ function createHostEntrySource(manifest, normalized) {
       `          output_schema: ${JSON.stringify(schemaField(method, "output_schema"))},`,
       `          permissions: ${JSON.stringify(stringListField(method, "permissions"))},`,
       "          async invoke(input) {",
-      `            return invokeGeneratedChannelMethod(${JSON.stringify(requireStringField(asRecord(channel) ?? {}, "channel_key"))}, ${JSON.stringify(requireStringField(method, "name"))}, input);`,
+      `            return invokeGeneratedProtocolMethod(${JSON.stringify(requireStringField(asRecord(channel) ?? {}, "protocol_key"))}, ${JSON.stringify(requireStringField(method, "name"))}, input);`,
       "          },",
       "        },",
     ].join("\n")),
     "      },",
     "    });",
   ].join("\n"));
-  const body = [...actionRegistrations, ...channelRegistrations].join("\n");
+  const body = [...actionRegistrations, ...protocolRegistrations].join("\n");
   return [
     "// Generated by agentdash-ext generate.",
     'import { defineExtension } from "@agentdash/extension/host";',
@@ -742,8 +742,8 @@ function generatedHostHelpersSource() {
     "  throw new Error(`Unsupported generated runtime action host API: ${dispatch.host_api}`);",
     "}",
     "",
-    "async function invokeGeneratedChannelMethod(channelKey, methodName) {",
-    "  throw new Error(`Generated protocol channel ${channelKey}.${methodName} requires host implementation`);",
+    "async function invokeGeneratedProtocolMethod(protocolKey, methodName) {",
+    "  throw new Error(`Generated protocol ${protocolKey}.${methodName} requires host implementation`);",
     "}",
   ].join("\n");
 }

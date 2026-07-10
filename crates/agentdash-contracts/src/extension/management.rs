@@ -37,7 +37,7 @@ pub struct ProjectExtensionCapabilitySummaryResponse {
     pub flags: usize,
     pub message_renderers: usize,
     pub runtime_actions: usize,
-    pub protocol_channels: usize,
+    pub protocols: usize,
     pub workspace_tabs: usize,
     pub permissions: usize,
     pub bundles: usize,

@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use agentdash_relay::{
     CommandExtensionActionInvokePayload, CommandExtensionBackendServiceInvokePayload,
-    CommandExtensionChannelInvokePayload, ExtensionBackendServiceHttpResponseRelay,
+    CommandExtensionProtocolInvokePayload, ExtensionBackendServiceHttpResponseRelay,
     ExtensionBackendServiceInvokeDiagnosticRelay, ExtensionBackendServiceReadinessRelay,
     ExtensionInvocationWorkspaceRelay, ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay,
     RelayError, RelayMessage, ResponseExtensionActionInvokePayload,
-    ResponseExtensionBackendServiceInvokePayload, ResponseExtensionChannelInvokePayload,
+    ResponseExtensionBackendServiceInvokePayload, ResponseExtensionProtocolInvokePayload,
 };
 use serde_json::{Map, json};
 
@@ -57,7 +57,7 @@ impl ExtensionCommandHandler {
     pub(super) fn dispatch_plan(msg: &RelayMessage) -> Option<CommandDispatchPlan> {
         match msg {
             RelayMessage::CommandExtensionActionInvoke { .. }
-            | RelayMessage::CommandExtensionChannelInvoke { .. }
+            | RelayMessage::CommandExtensionProtocolInvoke { .. }
             | RelayMessage::CommandExtensionBackendServiceInvoke { .. } => {
                 Some(CommandDispatchPlan::INLINE)
             }
@@ -131,10 +131,10 @@ impl ExtensionCommandHandler {
         }
     }
 
-    pub(super) async fn handle_extension_channel_invoke(
+    pub(super) async fn handle_extension_protocol_invoke(
         &self,
         id: String,
-        payload: CommandExtensionChannelInvokePayload,
+        payload: CommandExtensionProtocolInvokePayload,
     ) -> RelayMessage {
         if let Err(error) = self
             .activate_extension_host_from_artifact(
@@ -146,7 +146,7 @@ impl ExtensionCommandHandler {
             )
             .await
         {
-            return RelayMessage::ResponseExtensionChannelInvoke {
+            return RelayMessage::ResponseExtensionProtocolInvoke {
                 id,
                 payload: None,
                 error: Some(RelayError::runtime_error(error)),
@@ -155,7 +155,11 @@ impl ExtensionCommandHandler {
 
         match self
             .extension_host
-            .invoke_channel(&payload.channel_key, &payload.method, payload.input.clone())
+            .invoke_protocol(
+                &payload.protocol_key,
+                &payload.method,
+                payload.input.clone(),
+            )
             .await
         {
             Ok(output) => {
@@ -168,7 +172,11 @@ impl ExtensionCommandHandler {
                     "provider_extension_id".to_string(),
                     json!(payload.provider_extension_id),
                 );
-                metadata.insert("channel_key".to_string(), json!(payload.channel_key));
+                metadata.insert("protocol_key".to_string(), json!(payload.protocol_key));
+                metadata.insert(
+                    "protocol_version".to_string(),
+                    json!(payload.protocol_version),
+                );
                 metadata.insert("method".to_string(), json!(payload.method));
                 metadata.insert("project_id".to_string(), json!(payload.project_id));
                 metadata.insert("session_id".to_string(), json!(payload.session_id));
@@ -184,12 +192,13 @@ impl ExtensionCommandHandler {
                 if let Some(alias) = payload.consumer.dependency_alias {
                     metadata.insert("dependency_alias".to_string(), json!(alias));
                 }
-                RelayMessage::ResponseExtensionChannelInvoke {
+                RelayMessage::ResponseExtensionProtocolInvoke {
                     id,
-                    payload: Some(ResponseExtensionChannelInvokePayload {
+                    payload: Some(ResponseExtensionProtocolInvokePayload {
                         provider_extension_key: payload.provider_extension_key,
                         provider_extension_id: payload.provider_extension_id,
-                        channel_key: payload.channel_key,
+                        protocol_key: payload.protocol_key,
+                        protocol_version: payload.protocol_version,
                         method: payload.method,
                         output,
                         metadata,
@@ -197,7 +206,7 @@ impl ExtensionCommandHandler {
                     error: None,
                 }
             }
-            Err(error) => RelayMessage::ResponseExtensionChannelInvoke {
+            Err(error) => RelayMessage::ResponseExtensionProtocolInvoke {
                 id,
                 payload: None,
                 error: Some(RelayError::runtime_error(error.to_string())),

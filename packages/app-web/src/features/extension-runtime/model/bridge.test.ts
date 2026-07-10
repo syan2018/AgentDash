@@ -8,8 +8,8 @@ import type {
   ExtensionRuntimeInvokeActionResponse,
   ExtensionRuntimeInvokeBackendServiceRequest,
   ExtensionRuntimeInvokeBackendServiceResponse,
-  ExtensionRuntimeInvokeChannelRequest,
-  ExtensionRuntimeInvokeChannelResponse,
+  ExtensionRuntimeInvokeProtocolRequest,
+  ExtensionRuntimeInvokeProtocolResponse,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../generated/extension-runtime-contracts";
 import type { WorkspaceData } from "../../workspace-runtime";
@@ -19,7 +19,7 @@ import {
   resolveExtensionWebviewAvailability,
   type ExtensionWebviewBridgeServices,
 } from "./webviewBridge";
-import { invokeExtensionChannelFromCanvas } from "./canvasBridge";
+import { invokeExtensionProtocolFromCanvas } from "./canvasBridge";
 
 describe("extension bridge message validation", () => {
   it("只接受 agentdash extension request message", () => {
@@ -70,7 +70,7 @@ describe("extension bridge message validation", () => {
     }> = [];
     const channelCalls: Array<{
       target: AgentRunRuntimeTarget;
-      request: ExtensionRuntimeInvokeChannelRequest;
+      request: ExtensionRuntimeInvokeProtocolRequest;
     }> = [];
     const openTabCalls: Array<{ typeId: string; uri: string }> = [];
     const readCalls: Array<{ surfaceRef: string; mountId: string; path: string }> = [];
@@ -88,9 +88,9 @@ describe("extension bridge message validation", () => {
         actionCalls.push({ target, request });
         return actionResponse(request.action_key, { ok: true });
       },
-      async invokeChannel(target, request) {
+      async invokeProtocol(target, request) {
         channelCalls.push({ target, request });
-        return channelResponse(request.channel_key, request.method, { channel: true });
+        return protocolResponse(request.protocol_key, request.method, { channel: true });
       },
       async invokeBackendService() {
         throw new Error("unexpected backendService invoke");
@@ -127,8 +127,8 @@ describe("extension bridge message validation", () => {
     }]);
 
     await expect(handleExtensionWebviewBridgeRequest({
-      message: bridgeRequest("extension.invoke_channel", {
-        channel_key: "api",
+      message: bridgeRequest("extension.invoke_protocol", {
+        protocol_key: "api",
         method: "greet",
         dependency_alias: " demo ",
         input: { source: "panel" },
@@ -142,7 +142,7 @@ describe("extension bridge message validation", () => {
     expect(channelCalls).toEqual([{
       target: { runId: "run-1", agentId: "agent-1" },
       request: {
-        channel_key: "api",
+        protocol_key: "api",
         method: "greet",
         input: { source: "panel" },
         consumer_extension_key: "protocol-demo",
@@ -500,23 +500,23 @@ describe("extension bridge message validation", () => {
     });
   });
 
-  it("为 Canvas-like consumer 组装 extension channel request", async () => {
+  it("为 Canvas-like consumer 组装 extension protocol request", async () => {
     const calls: Array<{
       target: AgentRunRuntimeTarget;
-      request: ExtensionRuntimeInvokeChannelRequest;
+      request: ExtensionRuntimeInvokeProtocolRequest;
     }> = [];
-    const result = await invokeExtensionChannelFromCanvas({
+    const result = await invokeExtensionProtocolFromCanvas({
       workspaceData: workspaceRuntimeData(),
       tab: canvasTab(),
       request: {
-        channel_key: "api",
+        protocol_key: "api",
         method: "greet",
         input: { value: Number.NaN },
         dependency_alias: "demo",
       },
-      async invokeChannel(target, request) {
+      async invokeProtocol(target, request) {
         calls.push({ target, request });
-        return channelResponse(request.channel_key, request.method, { ok: true });
+        return protocolResponse(request.protocol_key, request.method, { ok: true });
       },
     });
 
@@ -524,7 +524,7 @@ describe("extension bridge message validation", () => {
     expect(calls).toEqual([{
       target: { runId: "run-1", agentId: "agent-1" },
       request: {
-        channel_key: "api",
+        protocol_key: "api",
         method: "greet",
         input: { value: null },
         consumer_extension_key: "protocol-demo",
@@ -532,7 +532,7 @@ describe("extension bridge message validation", () => {
       },
     }]);
 
-    await expect(invokeExtensionChannelFromCanvas({
+    await expect(invokeExtensionProtocolFromCanvas({
       workspaceData: workspaceRuntimeData({
         runtimeSurface: {
           ...runtimeSurface(),
@@ -541,14 +541,14 @@ describe("extension bridge message validation", () => {
       }),
       tab: canvasTab(),
       request: {
-        channel_key: "api",
+        protocol_key: "api",
         method: "greet",
         input: null,
       },
-      async invokeChannel() {
+      async invokeProtocol() {
         throw new Error("unexpected invoke");
       },
-    })).rejects.toThrow("Canvas extension channel 缺少可用 backend");
+    })).rejects.toThrow("Canvas extension protocol 缺少可用 backend");
   });
 });
 
@@ -571,8 +571,8 @@ function noopServices(): ExtensionWebviewBridgeServices {
     async invokeAction(_target, request) {
       return actionResponse(request.action_key, null);
     },
-    async invokeChannel(_target, request) {
-      return channelResponse(request.channel_key, request.method, null);
+    async invokeProtocol(_target, request) {
+      return protocolResponse(request.protocol_key, request.method, null);
     },
     async invokeBackendService() {
       return backendServiceResponse(204, {}, null);
@@ -598,13 +598,16 @@ function actionResponse(
   };
 }
 
-function channelResponse(
-  channelKey: string,
+function protocolResponse(
+  protocolKey: string,
   method: string,
   output: JsonValue,
-): ExtensionRuntimeInvokeChannelResponse {
+): ExtensionRuntimeInvokeProtocolResponse {
   return {
-    channel_key: channelKey,
+    provider_extension_key: protocolKey.split(".")[0] ?? protocolKey,
+    provider_extension_id: protocolKey.split(".")[0] ?? protocolKey,
+    protocol_key: protocolKey,
+    protocol_version: "1.0.0",
     method,
     trace: runtimeTrace(),
     output: {
@@ -732,7 +735,7 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
           output_schema: true,
           permissions: [],
         }],
-        protocol_channels: [],
+        protocols: [],
         extension_dependencies: [],
         workspace_tabs: [],
         permissions: [],

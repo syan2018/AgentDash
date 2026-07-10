@@ -156,7 +156,7 @@ mod tests {
 
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
-        ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
+        ExtensionProtocolDefinition, ExtensionProtocolMethodDefinition,
         ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -195,7 +195,7 @@ mod tests {
         let channel_env = resolve_host_api(
             Some(&active),
             "env.get",
-            &channel_params(json!({ "name": "PATH" })),
+            &protocol_params(json!({ "name": "PATH" })),
         )
         .await
         .expect("channel env");
@@ -568,10 +568,10 @@ mod tests {
         params
     }
 
-    fn channel_params(mut params: Value) -> Value {
+    fn protocol_params(mut params: Value) -> Value {
         let object = params.as_object_mut().expect("params object");
-        object.insert("channel_key".to_string(), json!("local-hello.api"));
-        object.insert("channel_method".to_string(), json!("readEnv"));
+        object.insert("protocol_key".to_string(), json!("local-hello.api"));
+        object.insert("protocol_method".to_string(), json!("readEnv"));
         params
     }
 
@@ -595,13 +595,13 @@ mod tests {
     fn active_extension(
         workspace_root: &Path,
         action_permissions: &[&str],
-        channel_permissions: &[&str],
+        protocol_permissions: &[&str],
     ) -> ActiveExtension {
         active_extension_with_roots(
             Some(workspace_root),
             vec![workspace_root.to_path_buf()],
             action_permissions,
-            channel_permissions,
+            protocol_permissions,
         )
     }
 
@@ -609,7 +609,7 @@ mod tests {
         default_workspace_root: Option<&Path>,
         workspace_roots: Vec<PathBuf>,
         action_permissions: &[&str],
-        channel_permissions: &[&str],
+        protocol_permissions: &[&str],
     ) -> ActiveExtension {
         let profile_workspace_roots = workspace_roots
             .iter()
@@ -631,7 +631,7 @@ mod tests {
         }
         ActiveExtension {
             extension_key: "local-hello".to_string(),
-            manifest: manifest(action_permissions, channel_permissions),
+            manifest: manifest(action_permissions, protocol_permissions),
             profile: LocalExtensionHostProfile {
                 username: "user".to_string(),
                 platform: "windows".to_string(),
@@ -648,7 +648,7 @@ mod tests {
 
     fn manifest(
         action_permissions: &[&str],
-        channel_permissions: &[&str],
+        protocol_permissions: &[&str],
     ) -> ExtensionTemplatePayload {
         ExtensionTemplatePayload {
             manifest_version: "2".to_string(),
@@ -674,16 +674,16 @@ mod tests {
                     .map(|item| item.to_string())
                     .collect(),
             }],
-            protocol_channels: vec![ExtensionProtocolChannelDefinition {
-                channel_key: "local-hello.api".to_string(),
+            protocols: vec![ExtensionProtocolDefinition {
+                protocol_key: "local-hello.api".to_string(),
                 version: "1.0.0".to_string(),
                 description: "Local API".to_string(),
-                methods: vec![ExtensionProtocolChannelMethodDefinition {
+                methods: vec![ExtensionProtocolMethodDefinition {
                     name: "readEnv".to_string(),
                     description: "Read env".to_string(),
                     input_schema: json!(true),
                     output_schema: json!(true),
-                    permissions: channel_permissions
+                    permissions: protocol_permissions
                         .iter()
                         .map(|item| item.to_string())
                         .collect(),

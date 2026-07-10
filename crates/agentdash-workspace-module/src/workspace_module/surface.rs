@@ -12,10 +12,10 @@ use agentdash_application_ports::agent_frame_materialization::{
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_application_runtime_gateway::{
     ExtensionRuntimeBackendServiceInvokeRequest, ExtensionRuntimeBackendServiceInvokeResult,
-    ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelConsumer,
-    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult,
-    ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeGateway,
-    RuntimeInvocationError, RuntimeInvocationErrorKind, RuntimeInvocationRequest,
+    ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeProtocolConsumer,
+    ExtensionRuntimeProtocolInvokeRequest, ExtensionRuntimeProtocolInvokeResult,
+    ExtensionRuntimeProtocolInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext,
+    RuntimeGateway, RuntimeInvocationError, RuntimeInvocationErrorKind, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeTarget, RuntimeTrace, attach_extension_invocation_workspace,
 };
 use agentdash_contracts::workspace_module::{
@@ -132,7 +132,7 @@ pub(crate) struct WorkspaceModuleOperationRuntimeSource {
     runtime_gateway_handle: Option<SharedWorkspaceModuleRuntimeGatewayHandle>,
     delivery_runtime_session_id: Option<String>,
     agent_id: Option<String>,
-    channel_transport_available: bool,
+    protocol_transport_available: bool,
     backend_readiness: WorkspaceModuleOperationReadiness,
     backend_service_readiness: WorkspaceModuleOperationReadiness,
 }
@@ -144,7 +144,7 @@ impl Default for WorkspaceModuleOperationRuntimeSource {
             runtime_gateway_handle: None,
             delivery_runtime_session_id: None,
             agent_id: None,
-            channel_transport_available: false,
+            protocol_transport_available: false,
             backend_readiness: WorkspaceModuleOperationReadiness::unavailable(
                 WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor,
                 "runtime backend anchor is not available in this workspace module context",
@@ -163,14 +163,14 @@ impl WorkspaceModuleOperationRuntimeSource {
         runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
         delivery_runtime_session_id: impl Into<String>,
         agent_id: Option<String>,
-        channel_transport_available: bool,
+        protocol_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
         backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.runtime_gateway_handle = Some(runtime_gateway_handle);
         self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
         self.agent_id = agent_id;
-        self.channel_transport_available = channel_transport_available;
+        self.protocol_transport_available = protocol_transport_available;
         self.backend_readiness = backend_readiness;
         self.backend_service_readiness = backend_service_readiness;
         self
@@ -181,14 +181,14 @@ impl WorkspaceModuleOperationRuntimeSource {
         runtime_gateway: Arc<RuntimeGateway>,
         delivery_runtime_session_id: impl Into<String>,
         agent_id: Option<String>,
-        channel_transport_available: bool,
+        protocol_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
         backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.runtime_gateway = Some(runtime_gateway);
         self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
         self.agent_id = agent_id;
-        self.channel_transport_available = channel_transport_available;
+        self.protocol_transport_available = protocol_transport_available;
         self.backend_readiness = backend_readiness;
         self.backend_service_readiness = backend_service_readiness;
         self
@@ -198,7 +198,7 @@ impl WorkspaceModuleOperationRuntimeSource {
         let runtime_actions = self.runtime_action_catalog(project_id).await;
         WorkspaceModuleOperationContext {
             runtime_actions,
-            channel_readiness: self.channel_readiness(),
+            protocol_readiness: self.protocol_readiness(),
             backend_readiness: self.backend_readiness.clone(),
             backend_service_readiness: self.backend_service_readiness.clone(),
         }
@@ -246,13 +246,13 @@ impl WorkspaceModuleOperationRuntimeSource {
         }
     }
 
-    fn channel_readiness(&self) -> WorkspaceModuleOperationReadiness {
-        if self.channel_transport_available {
+    fn protocol_readiness(&self) -> WorkspaceModuleOperationReadiness {
+        if self.protocol_transport_available {
             WorkspaceModuleOperationReadiness::ready()
         } else {
             WorkspaceModuleOperationReadiness::unavailable(
-                WorkspaceModuleOperationReadinessKind::MissingChannelTransport,
-                "extension channel transport is not available in this runtime",
+                WorkspaceModuleOperationReadinessKind::MissingProtocolTransport,
+                "extension protocol transport is not available in this runtime",
             )
         }
     }
@@ -300,7 +300,7 @@ pub(crate) struct WorkspaceModuleInvokeCommand<'a> {
     pub execution_anchor_repo: &'a Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub project_id: Uuid,
     pub gateway: &'a Arc<RuntimeGateway>,
-    pub channel_invoker: &'a Arc<ExtensionRuntimeChannelInvoker>,
+    pub protocol_invoker: &'a Arc<ExtensionRuntimeProtocolInvoker>,
     pub backend_service_invoker: Option<&'a ExtensionRuntimeBackendServiceInvoker>,
     pub visibility_source: &'a WorkspaceModuleVisibilitySource,
     pub operation_runtime_source: &'a WorkspaceModuleOperationRuntimeSource,
@@ -335,8 +335,8 @@ pub(crate) enum WorkspaceModuleOperationOutcome {
         result: RuntimeInvocationResult,
         provenance: serde_json::Value,
     },
-    ProtocolChannelInvoked {
-        result: ExtensionRuntimeChannelInvokeResult,
+    ProtocolMethodInvoked {
+        result: ExtensionRuntimeProtocolInvokeResult,
         provenance: serde_json::Value,
     },
     BackendServiceInvoked {
@@ -704,8 +704,11 @@ async fn invoke(
                 .map_err(runtime_error_to_surface_error)?;
             Ok(WorkspaceModuleOperationOutcome::RuntimeActionInvoked { result, provenance })
         }
-        WorkspaceModuleOperationDispatch::ProtocolChannel {
-            channel_key,
+        WorkspaceModuleOperationDispatch::ProtocolMethod {
+            provider_extension_key,
+            provider_extension_id: _,
+            protocol_key,
+            protocol_version,
             method_name,
         } => {
             let backend = match require_backend(command.runtime_context.backend()) {
@@ -716,8 +719,8 @@ async fn invoke(
             };
             let trace = RuntimeTrace::new();
             let result = command
-                .channel_invoker
-                .invoke(ExtensionRuntimeChannelInvokeRequest {
+                .protocol_invoker
+                .invoke(ExtensionRuntimeProtocolInvokeRequest {
                     project_id: command.project_id,
                     session_id: command
                         .runtime_context
@@ -725,8 +728,10 @@ async fn invoke(
                         .to_string(),
                     backend_id: backend.backend_id.clone(),
                     workspace: backend.workspace.clone(),
-                    consumer: ExtensionRuntimeChannelConsumer::SessionUser,
-                    channel_key: channel_key.clone(),
+                    consumer: ExtensionRuntimeProtocolConsumer::SessionUser,
+                    provider_extension_key: Some(provider_extension_key.clone()),
+                    protocol_key: protocol_key.clone(),
+                    protocol_version: Some(protocol_version.clone()),
                     dependency_alias: None,
                     method: method_name.clone(),
                     input: command.input,
@@ -739,12 +744,12 @@ async fn invoke(
             if let Some(obj) = provenance.as_object_mut() {
                 obj.insert("backend".to_string(), serde_json::json!(backend.backend_id));
                 obj.insert(
-                    "channel_key".to_string(),
-                    serde_json::json!(result.channel_key),
+                    "protocol_key".to_string(),
+                    serde_json::json!(result.protocol_key),
                 );
                 obj.insert("method".to_string(), serde_json::json!(result.method));
             }
-            Ok(WorkspaceModuleOperationOutcome::ProtocolChannelInvoked { result, provenance })
+            Ok(WorkspaceModuleOperationOutcome::ProtocolMethodInvoked { result, provenance })
         }
         WorkspaceModuleOperationDispatch::BackendService { service_key, route } => {
             let backend = match require_backend(command.runtime_context.backend()) {
@@ -1301,8 +1306,8 @@ fn readiness_error_code(readiness: &WorkspaceModuleOperationReadiness) -> &'stat
     match readiness.kind {
         WorkspaceModuleOperationReadinessKind::Ready => "operation_ready",
         WorkspaceModuleOperationReadinessKind::MissingRuntimeGateway => "missing_runtime_gateway",
-        WorkspaceModuleOperationReadinessKind::MissingChannelTransport => {
-            "missing_channel_transport"
+        WorkspaceModuleOperationReadinessKind::MissingProtocolTransport => {
+            "missing_protocol_transport"
         }
         WorkspaceModuleOperationReadinessKind::MissingRuntimeBackendAnchor => {
             "missing_runtime_backend_anchor"
@@ -1642,8 +1647,8 @@ mod tests {
 
     use agentdash_application_ports::agent_run_surface::AgentRunGrantProjection;
     use agentdash_application_ports::extension_runtime::{
-        ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
-        ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelTransport,
+        ExtensionProtocolInvokeRequest, ExtensionProtocolInvokeResponse,
+        ExtensionRuntimeActionTransportError, ExtensionRuntimeProtocolTransport,
     };
     use agentdash_application_ports::runtime_surface_adoption::AgentFrameRuntimeTarget;
     use agentdash_application_vfs::tools::{RuntimeVfsState, SharedRuntimeVfs};
@@ -1933,15 +1938,15 @@ mod tests {
         }
     }
 
-    struct NoopChannelTransport;
+    struct NoopProtocolTransport;
 
     #[async_trait]
-    impl ExtensionRuntimeChannelTransport for NoopChannelTransport {
-        async fn invoke_extension_channel(
+    impl ExtensionRuntimeProtocolTransport for NoopProtocolTransport {
+        async fn invoke_extension_protocol(
             &self,
             _backend_id: &str,
-            _payload: ExtensionChannelInvokeRequest,
-        ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError> {
+            _payload: ExtensionProtocolInvokeRequest,
+        ) -> Result<ExtensionProtocolInvokeResponse, ExtensionRuntimeActionTransportError> {
             Err(ExtensionRuntimeActionTransportError::Failed(
                 "noop channel transport".to_string(),
             ))
@@ -2102,9 +2107,9 @@ mod tests {
             .with_current_user(Some(current_user.clone()))
             .with_agent_run_bridge(Some(bridge_handle.clone()));
         let gateway = Arc::new(RuntimeGateway::new());
-        let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+        let protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
             installation_repo.clone(),
-            Arc::new(NoopChannelTransport),
+            Arc::new(NoopProtocolTransport),
         ));
 
         let outcome = WorkspaceModuleAgentSurface::execute(
@@ -2115,7 +2120,7 @@ mod tests {
                 execution_anchor_repo: &execution_anchor_repo,
                 project_id,
                 gateway: &gateway,
-                channel_invoker: &channel_invoker,
+                protocol_invoker: &protocol_invoker,
                 backend_service_invoker: None,
                 visibility_source: &visibility_source,
                 operation_runtime_source: &operation_runtime_source,

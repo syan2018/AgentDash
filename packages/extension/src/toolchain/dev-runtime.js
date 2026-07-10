@@ -1,4 +1,4 @@
-﻿// @ts-check
+// @ts-check
 
 import { exec as execCommand, execFile } from "node:child_process";
 import { mkdtemp, readFile, stat } from "node:fs/promises";
@@ -23,7 +23,7 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
  * @typedef {import("./runtime-context.js").JsonObject} JsonObject
  * @typedef {import("./runtime-context.js").ExtensionContext} ExtensionContext
  * @typedef {import("./runtime-context.js").ExtensionRuntimeActionDefinition} ExtensionRuntimeActionDefinition
- * @typedef {import("./runtime-context.js").ExtensionProtocolChannelDefinition} ExtensionProtocolChannelDefinition
+ * @typedef {import("./runtime-context.js").ExtensionProtocolDefinition} ExtensionProtocolDefinition
  * @typedef {{ method: string, params?: Record<string, unknown> }} DevBridgeDispatchRequest
  * @typedef {{ project_id: string, session_id: string, extension_id: string, extension_key: string, panel_type_id: string, uri: string }} DevPanelContext
  * @typedef {{ path: string, mtime_ms: number }} InputStamp
@@ -77,8 +77,8 @@ export class ExtensionDevRuntime {
     return {
       extension_id: extensionIdFromManifest(manifest),
       action_keys: this.actions().map((action) => action.action_key).sort(),
-      channel_keys: this.channels()
-        .map((channel) => canonicalChannelKey(extensionIdFromManifest(manifest), channel.channel_key))
+      protocol_keys: this.protocols()
+        .map((channel) => canonicalProtocolKey(extensionIdFromManifest(manifest), channel.protocol_key))
         .sort(),
       input_count: this.inputStamps.length,
       load_version: this.loadVersion,
@@ -99,9 +99,9 @@ export class ExtensionDevRuntime {
           stringParam(request.params, "action_key"),
           toJsonValue(request.params?.input),
         );
-      case "extension.invoke_channel":
-        return await this.invokeChannel({
-          channel_key: stringParam(request.params, "channel_key"),
+      case "extension.invoke_protocol":
+        return await this.invokeProtocol({
+          protocol_key: stringParam(request.params, "protocol_key"),
           method: stringParam(request.params, "method"),
           dependency_alias: nullableStringParam(request.params, "dependency_alias"),
           input: toJsonValue(request.params?.input),
@@ -162,28 +162,28 @@ export class ExtensionDevRuntime {
     const execProcess = (command, args = [], options = {}) => runExecFile(command, args, options);
     /** @param {string} command @param {import("./runtime-context.js").ExtensionProcessExecOptions} [options] */
     const shellProcess = (command, options = {}) => runShell(command, options);
-    /** @param {string} channelKey @param {string} method @param {JsonValue} input */
-    const invokeChannel = (channelKey, method, input) => this.invokeChannel({
-      channel_key: channelKey,
+    /** @param {string} protocolKey @param {string} method @param {JsonValue} input */
+    const invokeProtocol = (protocolKey, method, input) => this.invokeProtocol({
+      protocol_key: protocolKey,
       method,
       input: toJsonValue(input),
     });
-    /** @param {string} [channelKey] */
-    const selfChannel = (channelKey = "api") => ({
+    /** @param {string} [protocolKey] */
+    const selfProtocol = (protocolKey = "api") => ({
       /** @param {string} method @param {JsonValue} input */
-      invoke: (method, input) => this.invokeChannel({
-        channel_key: channelKey,
+      invoke: (method, input) => this.invokeProtocol({
+        protocol_key: protocolKey,
         method,
         input: toJsonValue(input),
       }),
     });
-    /** @param {string} alias @param {string | null} [channelKey] */
-    const dependencyChannel = (alias, channelKey = null) => ({
+    /** @param {string} alias @param {string | null} [protocolKey] */
+    const dependencyProtocol = (alias, protocolKey = null) => ({
       /** @param {string} method @param {JsonValue} input */
       invoke: (method, input) => {
-        const resolved = this.resolveDependencyChannel(alias, channelKey);
-        return this.invokeChannel({
-          channel_key: resolved,
+        const resolved = this.resolveDependencyProtocol(alias, protocolKey);
+        return this.invokeProtocol({
+          protocol_key: resolved,
           method,
           input: toJsonValue(input),
         });
@@ -225,10 +225,10 @@ export class ExtensionDevRuntime {
         exec: execProcess,
         shell: shellProcess,
       },
-      channels: {
-        invoke: invokeChannel,
-        self: selfChannel,
-        from: dependencyChannel,
+      protocols: {
+        invoke: invokeProtocol,
+        self: selfProtocol,
+        from: dependencyProtocol,
       },
     };
     return /** @type {import("./runtime-context.js").ExtensionApiOverrides} */ (overrides);
@@ -253,27 +253,27 @@ export class ExtensionDevRuntime {
 
   /**
    * @private
-   * @param {{ channel_key: string, method: string, input: JsonValue, dependency_alias?: string | null }} request
+   * @param {{ protocol_key: string, method: string, input: JsonValue, dependency_alias?: string | null }} request
    * @returns {Promise<JsonValue>}
    */
-  async invokeChannel(request) {
-    if (!request.channel_key) {
-      throw new Error("extension.invoke_channel 缺少 channel_key");
+  async invokeProtocol(request) {
+    if (!request.protocol_key) {
+      throw new Error("extension.invoke_protocol 缺少 protocol_key");
     }
     if (!request.method) {
-      throw new Error("extension.invoke_channel 缺少 method");
+      throw new Error("extension.invoke_protocol 缺少 method");
     }
     const manifest = this.requireManifest();
     const extensionId = extensionIdFromManifest(manifest);
-    const channelKey = request.dependency_alias
-      ? this.resolveDependencyChannel(request.dependency_alias, request.channel_key)
-      : canonicalChannelKey(extensionId, request.channel_key);
-    const channel = this.channels().find((item) =>
-      canonicalChannelKey(extensionId, item.channel_key) === channelKey
+    const protocolKey = request.dependency_alias
+      ? this.resolveDependencyProtocol(request.dependency_alias, request.protocol_key)
+      : canonicalProtocolKey(extensionId, request.protocol_key);
+    const channel = this.protocols().find((item) =>
+      canonicalProtocolKey(extensionId, item.protocol_key) === protocolKey
     );
     const method = channel?.methods.find((item) => item.name === request.method);
     if (!method) {
-      throw new Error(`Extension channel method 未注册: ${channelKey}.${request.method}`);
+      throw new Error(`Extension protocol method 未注册: ${protocolKey}.${request.method}`);
     }
     return toJsonValue(await method.invoke(request.input));
   }
@@ -281,10 +281,10 @@ export class ExtensionDevRuntime {
   /**
    * @private
    * @param {string} alias
-   * @param {string | null} channelKey
+   * @param {string | null} protocolKey
    * @returns {string}
    */
-  resolveDependencyChannel(alias, channelKey) {
+  resolveDependencyProtocol(alias, protocolKey) {
     const manifest = this.requireManifest();
     /** @type {Record<string, unknown>[]} */
     const dependencies = [];
@@ -296,19 +296,19 @@ export class ExtensionDevRuntime {
     if (!dependency) {
       throw new Error(`Extension dependency alias 未声明: ${alias}`);
     }
-    const channels = arrayField(dependency, "channels").filter((item) => typeof item === "string");
-    if (!channelKey) {
-      const first = channels[0];
+    const protocols = arrayField(dependency, "protocols").filter((item) => typeof item === "string");
+    if (!protocolKey) {
+      const first = protocols[0];
       if (!first) {
         throw new Error(`Extension dependency 没有可用 channel: ${alias}`);
       }
       return first;
     }
-    const matched = channelKey.includes(".")
-      ? channels.find((item) => item === channelKey)
-      : channels.find((item) => item.split(".").at(-1) === channelKey);
+    const matched = protocolKey.includes(".")
+      ? protocols.find((item) => item === protocolKey)
+      : protocols.find((item) => item.split(".").at(-1) === protocolKey);
     if (!matched) {
-      throw new Error(`Extension dependency channel 未声明: ${alias}.${channelKey}`);
+      throw new Error(`Extension dependency channel 未声明: ${alias}.${protocolKey}`);
     }
     return matched;
   }
@@ -323,10 +323,10 @@ export class ExtensionDevRuntime {
 
   /**
    * @private
-   * @returns {ExtensionProtocolChannelDefinition[]}
+   * @returns {ExtensionProtocolDefinition[]}
    */
-  channels() {
-    return this.context?.contributions.protocol_channels ?? [];
+  protocols() {
+    return this.context?.contributions.protocols ?? [];
   }
 
   /**
@@ -506,11 +506,11 @@ function firstWorkspaceTab(manifest) {
 
 /**
  * @param {string} extensionId
- * @param {string} channelKey
+ * @param {string} protocolKey
  * @returns {string}
  */
-function canonicalChannelKey(extensionId, channelKey) {
-  return channelKey.includes(".") ? channelKey : `${extensionId}.${channelKey}`;
+function canonicalProtocolKey(extensionId, protocolKey) {
+  return protocolKey.includes(".") ? protocolKey : `${extensionId}.${protocolKey}`;
 }
 
 /**

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_application_runtime_gateway::{
     ExtensionRuntimeBackendServiceInvokeResult, ExtensionRuntimeBackendServiceInvoker,
-    ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker, RuntimeGateway,
+    ExtensionRuntimeProtocolInvokeResult, ExtensionRuntimeProtocolInvoker, RuntimeGateway,
     RuntimeInvocationResult,
 };
 use agentdash_application_vfs::tools::SharedRuntimeVfs;
@@ -120,7 +120,7 @@ impl WorkspaceModuleListTool {
         mut self,
         runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
         delivery_runtime_session_id: String,
-        channel_transport_available: bool,
+        protocol_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
         backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
@@ -128,7 +128,7 @@ impl WorkspaceModuleListTool {
             runtime_gateway_handle,
             delivery_runtime_session_id,
             None,
-            channel_transport_available,
+            protocol_transport_available,
             backend_readiness,
             backend_service_readiness,
         );
@@ -265,7 +265,7 @@ impl WorkspaceModuleDescribeTool {
         mut self,
         runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
         delivery_runtime_session_id: String,
-        channel_transport_available: bool,
+        protocol_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
         backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
@@ -273,7 +273,7 @@ impl WorkspaceModuleDescribeTool {
             runtime_gateway_handle,
             delivery_runtime_session_id,
             None,
-            channel_transport_available,
+            protocol_transport_available,
             backend_readiness,
             backend_service_readiness,
         );
@@ -501,8 +501,8 @@ fn project_operation_outcome(
         WorkspaceModuleOperationOutcome::RuntimeActionInvoked { result, provenance } => {
             Ok(runtime_action_invocation_to_tool_result(result, provenance))
         }
-        WorkspaceModuleOperationOutcome::ProtocolChannelInvoked { result, provenance } => Ok(
-            protocol_channel_invocation_to_tool_result(result, provenance),
+        WorkspaceModuleOperationOutcome::ProtocolMethodInvoked { result, provenance } => Ok(
+            protocol_method_invocation_to_tool_result(result, provenance),
         ),
         WorkspaceModuleOperationOutcome::BackendServiceInvoked { result, provenance } => Ok(
             backend_service_invocation_to_tool_result(result, provenance),
@@ -587,8 +587,8 @@ fn runtime_action_invocation_to_tool_result(
     }
 }
 
-fn protocol_channel_invocation_to_tool_result(
-    result: ExtensionRuntimeChannelInvokeResult,
+fn protocol_method_invocation_to_tool_result(
+    result: ExtensionRuntimeProtocolInvokeResult,
     provenance: serde_json::Value,
 ) -> AgentToolResult {
     let trace = serde_json::to_value(&result.trace).unwrap_or(serde_json::Value::Null);
@@ -736,7 +736,7 @@ pub struct WorkspaceModuleInvokeTool {
     agent_id: Option<String>,
     backend: Option<ResolvedInvocationBackend>,
     gateway: Arc<RuntimeGateway>,
-    channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
+    protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
     backend_service_invoker: Option<Arc<ExtensionRuntimeBackendServiceInvoker>>,
     visibility_source: WorkspaceModuleVisibilitySource,
     operation_runtime_source: WorkspaceModuleOperationRuntimeSource,
@@ -756,7 +756,7 @@ impl WorkspaceModuleInvokeTool {
         agent_id: Option<String>,
         backend: Option<ResolvedInvocationBackend>,
         gateway: Arc<RuntimeGateway>,
-        channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
+        protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
         backend_service_invoker: Option<Arc<ExtensionRuntimeBackendServiceInvoker>>,
     ) -> Self {
         let backend_readiness = backend_readiness_for_optional_backend(&backend);
@@ -783,7 +783,7 @@ impl WorkspaceModuleInvokeTool {
             agent_id,
             backend,
             gateway,
-            channel_invoker,
+            protocol_invoker,
             backend_service_invoker,
             visibility_source: WorkspaceModuleVisibilitySource::default(),
             operation_runtime_source,
@@ -867,7 +867,7 @@ impl AgentTool for WorkspaceModuleInvokeTool {
                     execution_anchor_repo: &self.execution_anchor_repo,
                     project_id: self.project_id,
                     gateway: &self.gateway,
-                    channel_invoker: &self.channel_invoker,
+                    protocol_invoker: &self.protocol_invoker,
                     backend_service_invoker: self.backend_service_invoker.as_deref(),
                     visibility_source: &self.visibility_source,
                     operation_runtime_source: &self.operation_runtime_source,
@@ -952,7 +952,7 @@ impl WorkspaceModulePresentTool {
     pub fn with_runtime_dependencies(
         mut self,
         runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
-        channel_transport_available: bool,
+        protocol_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
         backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
@@ -960,7 +960,7 @@ impl WorkspaceModulePresentTool {
             runtime_gateway_handle,
             self.delivery_runtime_session_id.clone(),
             None,
-            channel_transport_available,
+            protocol_transport_available,
             backend_readiness,
             backend_service_readiness,
         );
@@ -1112,7 +1112,7 @@ mod tests {
                 output_schema: serde_json::json!({"type": "object"}),
                 permissions: vec!["local.profile.read".to_string()],
             }],
-            protocol_channels: vec![],
+            protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
             permissions: vec![],
@@ -2036,9 +2036,9 @@ mod tests {
     use agentdash_application_ports::extension_runtime::{
         ExtensionBackendServiceHttpResponsePayload, ExtensionBackendServiceInvokeMetadataPayload,
         ExtensionBackendServiceInvokeRequest, ExtensionBackendServiceInvokeResponse,
-        ExtensionBackendServiceTransport, ExtensionChannelInvokeRequest,
-        ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError,
-        ExtensionRuntimeChannelTransport,
+        ExtensionBackendServiceTransport, ExtensionProtocolInvokeRequest,
+        ExtensionProtocolInvokeResponse, ExtensionRuntimeActionTransportError,
+        ExtensionRuntimeProtocolTransport,
     };
     use agentdash_application_runtime_gateway::{
         RuntimeActionDescriptor, RuntimeActionKind, RuntimeInvocationOutput, RuntimePolicy,
@@ -2085,15 +2085,15 @@ mod tests {
         }
     }
 
-    struct NoopChannelTransport;
+    struct NoopProtocolTransport;
 
     #[async_trait]
-    impl ExtensionRuntimeChannelTransport for NoopChannelTransport {
-        async fn invoke_extension_channel(
+    impl ExtensionRuntimeProtocolTransport for NoopProtocolTransport {
+        async fn invoke_extension_protocol(
             &self,
             _backend_id: &str,
-            _payload: ExtensionChannelInvokeRequest,
-        ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError> {
+            _payload: ExtensionProtocolInvokeRequest,
+        ) -> Result<ExtensionProtocolInvokeResponse, ExtensionRuntimeActionTransportError> {
             Err(ExtensionRuntimeActionTransportError::Failed(
                 "noop channel transport".to_string(),
             ))
@@ -2166,9 +2166,9 @@ mod tests {
                 invoke_count: invoke_count.clone(),
             })),
         );
-        let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+        let protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
             install_repo.clone(),
-            Arc::new(NoopChannelTransport),
+            Arc::new(NoopProtocolTransport),
         ));
         let tool = WorkspaceModuleInvokeTool::new(
             install_repo,
@@ -2180,7 +2180,7 @@ mod tests {
             None,
             backend,
             gateway,
-            channel_invoker,
+            protocol_invoker,
             None,
         )
         .with_current_user(Some(test_current_user()))
@@ -2199,9 +2199,9 @@ mod tests {
         transport: Arc<CapturingBackendServiceTransport>,
     ) -> WorkspaceModuleInvokeTool {
         let gateway = Arc::new(RuntimeGateway::new());
-        let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+        let protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
             install_repo.clone(),
-            Arc::new(NoopChannelTransport),
+            Arc::new(NoopProtocolTransport),
         ));
         let backend_service_invoker = Arc::new(ExtensionRuntimeBackendServiceInvoker::new(
             install_repo.clone(),
@@ -2217,7 +2217,7 @@ mod tests {
             None,
             backend,
             gateway,
-            channel_invoker,
+            protocol_invoker,
             Some(backend_service_invoker),
         )
         .with_current_user(Some(test_current_user()))
@@ -2288,7 +2288,7 @@ mod tests {
             SharedWorkspaceModuleAgentRunBridgeHandle::default(),
             gateway_handle,
         )
-        .with_extension_channel_transport(Arc::new(NoopChannelTransport));
+        .with_extension_protocol_transport(Arc::new(NoopProtocolTransport));
         let context = workspace_module_execution_context(project_id);
 
         let tools = provider
@@ -2366,7 +2366,7 @@ mod tests {
             .filter_map(serde_json::Value::as_str)
             .collect::<Vec<_>>();
         assert!(missing.contains(&"runtime_gateway"));
-        assert!(missing.contains(&"extension_channel_transport"));
+        assert!(missing.contains(&"extension_protocol_transport"));
     }
 
     #[tokio::test]
@@ -2391,7 +2391,7 @@ mod tests {
             SharedWorkspaceModuleAgentRunBridgeHandle::default(),
             gateway_handle,
         )
-        .with_extension_channel_transport(Arc::new(NoopChannelTransport));
+        .with_extension_protocol_transport(Arc::new(NoopProtocolTransport));
         let context = workspace_module_execution_context(project_id);
 
         let tools = provider

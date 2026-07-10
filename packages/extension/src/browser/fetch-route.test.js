@@ -54,12 +54,12 @@ test("backendService fetch routes accept generated namespaced service keys", asy
 
 test("createRoutedFetch is opt-in and does not replace global fetch", async () => {
   const originalFetch = globalThis.fetch;
-  const route = parseFetchRouteBinding("/api/**=customChannel:demo.api#fetch");
+  const route = parseFetchRouteBinding("/api/**=customProtocol:demo.api#fetch");
   const routedFetch = createRoutedFetch(
     [route],
     {
       async invokeFetchRoute(request) {
-        assert.equal(request.route.target.kind, "custom_channel");
+        assert.equal(request.route.target.kind, "custom_protocol");
         assert.equal(request.method, "POST");
         assert.equal(request.url, "https://panel.local/api/users");
         assert.equal(request.headers["x-demo"], "yes");

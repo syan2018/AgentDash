@@ -28,7 +28,7 @@ export interface CanvasRuntimePreviewProps {
   agentRunBridge?: AgentRunCanvasBridgeIdentity | null;
   showBridgeUnavailable?: boolean;
   onAgentRunWorkspaceRefresh?: (() => Promise<unknown>) | null;
-  extensionChannelBridge?: (request: CanvasExtensionChannelRequest) => Promise<unknown>;
+  extensionProtocolBridge?: (request: CanvasExtensionProtocolRequest) => Promise<unknown>;
 }
 
 type PreviewStatus = "idle" | "building" | "ready" | "error";
@@ -84,21 +84,21 @@ interface AssetRevokeEnvelope {
   url: string;
 }
 
-export interface CanvasExtensionChannelRequest {
-  channel_key: string;
+export interface CanvasExtensionProtocolRequest {
+  protocol_key: string;
   method: string;
   input: unknown;
   dependency_alias?: string | null;
 }
 
-interface ExtensionChannelInvokeEnvelope extends CanvasExtensionChannelRequest {
+interface ExtensionProtocolInvokeEnvelope extends CanvasExtensionProtocolRequest {
   kind: "canvas-extension-channel-invoke";
   frame_id: string;
   generation: number;
   request_id: string;
 }
 
-interface ExtensionChannelResultEnvelope {
+interface ExtensionProtocolResultEnvelope {
   kind: "canvas-extension-channel-result";
   frame_id: string;
   generation: number;
@@ -175,7 +175,7 @@ export function CanvasRuntimePreview({
   agentRunBridge = null,
   showBridgeUnavailable = false,
   onAgentRunWorkspaceRefresh = null,
-  extensionChannelBridge,
+  extensionProtocolBridge,
 }: CanvasRuntimePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const agentRunBridgeRef = useRef<AgentRunCanvasBridgeIdentity | null>(agentRunBridge);
@@ -280,7 +280,7 @@ export function CanvasRuntimePreview({
     iframeRef.current?.contentWindow?.postMessage(payload, "*");
   }, []);
 
-  const sendExtensionChannelResult = useCallback((payload: ExtensionChannelResultEnvelope) => {
+  const sendExtensionProtocolResult = useCallback((payload: ExtensionProtocolResultEnvelope) => {
     iframeRef.current?.contentWindow?.postMessage(payload, "*");
   }, []);
 
@@ -417,27 +417,27 @@ export function CanvasRuntimePreview({
     }
   }, [sendAssetUrlResult, snapshot]);
 
-  const handleExtensionChannelInvoke = useCallback(async (payload: ExtensionChannelInvokeEnvelope) => {
+  const handleExtensionProtocolInvoke = useCallback(async (payload: ExtensionProtocolInvokeEnvelope) => {
     const generation = activeGenerationRef.current;
     if (!generation || payload.frame_id !== generation.frameId || payload.generation !== generation.generation) {
       return;
     }
 
-    if (!extensionChannelBridge) {
-      sendExtensionChannelResult({
+    if (!extensionProtocolBridge) {
+      sendExtensionProtocolResult({
         kind: "canvas-extension-channel-result",
         frame_id: generation.frameId,
         generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
-        error: "当前 Canvas runtime 未绑定 Extension channel bridge",
+        error: "当前 Canvas runtime 未绑定 Extension protocol bridge",
       });
       return;
     }
 
     try {
-      const result = await extensionChannelBridge({
-        channel_key: payload.channel_key,
+      const result = await extensionProtocolBridge({
+        protocol_key: payload.protocol_key,
         method: payload.method,
         input: payload.input ?? {},
         dependency_alias: payload.dependency_alias ?? null,
@@ -445,7 +445,7 @@ export function CanvasRuntimePreview({
       if (activeGenerationRef.current !== generation) {
         return;
       }
-      sendExtensionChannelResult({
+      sendExtensionProtocolResult({
         kind: "canvas-extension-channel-result",
         frame_id: generation.frameId,
         generation: generation.generation,
@@ -457,16 +457,16 @@ export function CanvasRuntimePreview({
       if (activeGenerationRef.current !== generation) {
         return;
       }
-      sendExtensionChannelResult({
+      sendExtensionProtocolResult({
         kind: "canvas-extension-channel-result",
         frame_id: generation.frameId,
         generation: generation.generation,
         request_id: payload.request_id,
         ok: false,
-        error: error instanceof Error ? error.message : "Canvas extension channel 调用失败",
+        error: error instanceof Error ? error.message : "Canvas extension protocol 调用失败",
       });
     }
-  }, [extensionChannelBridge, sendExtensionChannelResult]);
+  }, [extensionProtocolBridge, sendExtensionProtocolResult]);
 
   const handleRenderObservation = useCallback(async (payload: RenderObservationEnvelope) => {
     const generation = activeGenerationRef.current;
@@ -605,8 +605,8 @@ export function CanvasRuntimePreview({
       return;
     }
 
-    if (isExtensionChannelInvokeEnvelope(payload) && payload.frame_id === generation?.frameId) {
-      void handleExtensionChannelInvoke(payload);
+    if (isExtensionProtocolInvokeEnvelope(payload) && payload.frame_id === generation?.frameId) {
+      void handleExtensionProtocolInvoke(payload);
       return;
     }
 
@@ -652,7 +652,7 @@ export function CanvasRuntimePreview({
   }, [
     handleAgentSubmit,
     handleAssetUrlRequest,
-    handleExtensionChannelInvoke,
+    handleExtensionProtocolInvoke,
     handleInteractionSnapshot,
     handleRenderObservation,
     handleRuntimeInvoke,
@@ -784,7 +784,7 @@ function isAssetRevokeEnvelope(value: unknown): value is AssetRevokeEnvelope {
   );
 }
 
-function isExtensionChannelInvokeEnvelope(value: unknown): value is ExtensionChannelInvokeEnvelope {
+function isExtensionProtocolInvokeEnvelope(value: unknown): value is ExtensionProtocolInvokeEnvelope {
   if (value == null || typeof value !== "object") {
     return false;
   }
@@ -795,7 +795,7 @@ function isExtensionChannelInvokeEnvelope(value: unknown): value is ExtensionCha
     && typeof record.frame_id === "string"
     && typeof record.generation === "number"
     && typeof record.request_id === "string"
-    && typeof record.channel_key === "string"
+    && typeof record.protocol_key === "string"
     && typeof record.method === "string"
   );
 }

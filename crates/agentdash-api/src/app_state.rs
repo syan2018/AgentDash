@@ -36,7 +36,7 @@ use agentdash_application_lifecycle::run_view_builder::LifecycleReadModelQueryAd
 use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;
 use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_application_runtime_gateway::{
-    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeChannelInvoker, RuntimeGateway,
+    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeProtocolInvoker, RuntimeGateway,
 };
 use agentdash_application_runtime_session::session::{
     SessionBranchingService, SessionControlService, SessionCoreService, SessionEventingService,
@@ -133,7 +133,7 @@ pub struct ServiceSet {
     pub audit_bus: SharedContextAuditBus,
     /// 统一运行时能力网关 — Session/Setup runtime action 的共享入口
     pub runtime_gateway: Arc<RuntimeGateway>,
-    pub extension_runtime_channel_invoker: Arc<ExtensionRuntimeChannelInvoker>,
+    pub extension_runtime_protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
     /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
     /// Workflow function/local-effect executor port — orchestration scheduler 共享。
@@ -351,7 +351,7 @@ impl AppState {
         workspace_module_runtime_gateway_handle
             .set(runtime_gateway.clone())
             .await;
-        let extension_runtime_channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+        let extension_runtime_protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
         ));
@@ -487,7 +487,7 @@ impl AppState {
                 routine_executor: None,
                 audit_bus,
                 runtime_gateway,
-                extension_runtime_channel_invoker,
+                extension_runtime_protocol_invoker,
                 extension_package_artifact_storage,
                 function_runner,
             },

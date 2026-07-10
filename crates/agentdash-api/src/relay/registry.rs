@@ -577,7 +577,7 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::CommandMcpCallTool { .. } => "command.mcp_call_tool",
         RelayMessage::CommandMcpClose { .. } => "command.mcp_close",
         RelayMessage::CommandExtensionActionInvoke { .. } => "command.extension_action_invoke",
-        RelayMessage::CommandExtensionChannelInvoke { .. } => "command.extension_channel_invoke",
+        RelayMessage::CommandExtensionProtocolInvoke { .. } => "command.extension_protocol_invoke",
         RelayMessage::CommandExtensionBackendServiceInvoke { .. } => {
             "command.extension_backend_service_invoke"
         }
@@ -586,7 +586,9 @@ pub(crate) fn relay_message_kind(msg: &RelayMessage) -> &'static str {
         RelayMessage::ResponseMcpCallTool { .. } => "response.mcp_call_tool",
         RelayMessage::ResponseMcpClose { .. } => "response.mcp_close",
         RelayMessage::ResponseExtensionActionInvoke { .. } => "response.extension_action_invoke",
-        RelayMessage::ResponseExtensionChannelInvoke { .. } => "response.extension_channel_invoke",
+        RelayMessage::ResponseExtensionProtocolInvoke { .. } => {
+            "response.extension_protocol_invoke"
+        }
         RelayMessage::ResponseExtensionBackendServiceInvoke { .. } => {
             "response.extension_backend_service_invoke"
         }

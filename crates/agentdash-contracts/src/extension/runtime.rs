@@ -49,9 +49,20 @@ pub enum ExtensionGeneratedOperationVisibilityResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionGeneratedOperationDispatchResponse {
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        provider_extension_key: String,
+        provider_extension_id: String,
+        protocol_key: String,
+        protocol_version: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -78,10 +89,20 @@ pub struct ExtensionGeneratedOperationProjectionResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionFetchRouteTargetResponse {
-    HttpProxy { capability_key: String },
-    RuntimeAction { action_key: String },
-    ProtocolChannel { channel_key: String, method: String },
-    BackendService { service_key: String, route: String },
+    HttpProxy {
+        capability_key: String,
+    },
+    RuntimeAction {
+        action_key: String,
+    },
+    ProtocolMethod {
+        protocol_key: String,
+        method: String,
+    },
+    BackendService {
+        service_key: String,
+        route: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -165,8 +186,8 @@ pub enum ExtensionPermissionDeclarationResponse {
     RuntimeAction {
         action_key: String,
     },
-    ExtensionChannel {
-        channel_key: String,
+    ExtensionProtocol {
+        protocol_key: String,
         methods: Vec<String>,
     },
     BackendService {
@@ -246,7 +267,7 @@ pub struct ExtensionRuntimeActionProjectionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ExtensionProtocolChannelMethodProjectionResponse {
+pub struct ExtensionProtocolMethodProjectionResponse {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
@@ -255,13 +276,13 @@ pub struct ExtensionProtocolChannelMethodProjectionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ExtensionProtocolChannelProjectionResponse {
+pub struct ExtensionProtocolProjectionResponse {
     pub extension_key: String,
     pub extension_id: String,
-    pub channel_key: String,
+    pub protocol_key: String,
     pub version: String,
     pub description: String,
-    pub methods: Vec<ExtensionProtocolChannelMethodProjectionResponse>,
+    pub methods: Vec<ExtensionProtocolMethodProjectionResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -269,7 +290,7 @@ pub struct ExtensionDependencyDeclarationResponse {
     pub alias: String,
     pub extension_id: String,
     pub version: String,
-    pub channels: Vec<String>,
+    pub protocols: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -313,7 +334,7 @@ pub struct ExtensionRuntimeProjectionResponse {
     pub flags: Vec<ExtensionFlagProjectionResponse>,
     pub message_renderers: Vec<ExtensionMessageRendererProjectionResponse>,
     pub runtime_actions: Vec<ExtensionRuntimeActionProjectionResponse>,
-    pub protocol_channels: Vec<ExtensionProtocolChannelProjectionResponse>,
+    pub protocols: Vec<ExtensionProtocolProjectionResponse>,
     pub extension_dependencies: Vec<ExtensionDependencyProjectionResponse>,
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjectionResponse>,
     pub permissions: Vec<ExtensionPermissionProjectionResponse>,
@@ -334,8 +355,12 @@ pub struct ExtensionRuntimeInvokeActionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ExtensionRuntimeInvokeChannelRequest {
-    pub channel_key: String,
+pub struct ExtensionRuntimeInvokeProtocolRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_extension_key: Option<String>,
+    pub protocol_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
     pub method: String,
     #[serde(default)]
     pub input: Value,
@@ -382,8 +407,11 @@ pub struct ExtensionRuntimeInvokeActionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ExtensionRuntimeInvokeChannelResponse {
-    pub channel_key: String,
+pub struct ExtensionRuntimeInvokeProtocolResponse {
+    pub provider_extension_key: String,
+    pub provider_extension_id: String,
+    pub protocol_key: String,
+    pub protocol_version: String,
     pub method: String,
     pub trace: ExtensionRuntimeTraceResponse,
     pub output: ExtensionRuntimeInvocationOutputResponse,

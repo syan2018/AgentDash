@@ -22,8 +22,8 @@ pub use agentdash_contracts::extension_runtime::{
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
     ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
-    ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
-    ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionProcessPermissionAccessResponse, ExtensionProtocolMethodProjectionResponse,
+    ExtensionProtocolProjectionResponse, ExtensionRuntimeActionKindResponse,
     ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeProjectionResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
@@ -130,19 +130,19 @@ pub fn extension_runtime_projection_response(
                 permissions: action.permissions,
             })
             .collect(),
-        protocol_channels: projection
-            .protocol_channels
+        protocols: projection
+            .protocols
             .into_iter()
-            .map(|channel| ExtensionProtocolChannelProjectionResponse {
+            .map(|channel| ExtensionProtocolProjectionResponse {
                 extension_key: channel.extension_key,
                 extension_id: channel.extension_id,
-                channel_key: channel.channel_key,
+                protocol_key: channel.protocol_key,
                 version: channel.version,
                 description: channel.description,
                 methods: channel
                     .methods
                     .into_iter()
-                    .map(|method| ExtensionProtocolChannelMethodProjectionResponse {
+                    .map(|method| ExtensionProtocolMethodProjectionResponse {
                         name: method.name,
                         description: method.description,
                         input_schema: method.input_schema,
@@ -287,11 +287,17 @@ fn extension_operation_dispatch_response(
         ExtensionGeneratedOperationDispatch::RuntimeAction { action_key } => {
             ExtensionGeneratedOperationDispatchResponse::RuntimeAction { action_key }
         }
-        ExtensionGeneratedOperationDispatch::ProtocolChannel {
-            channel_key,
+        ExtensionGeneratedOperationDispatch::ProtocolMethod {
+            provider_extension_key,
+            provider_extension_id,
+            protocol_key,
+            protocol_version,
             method,
-        } => ExtensionGeneratedOperationDispatchResponse::ProtocolChannel {
-            channel_key,
+        } => ExtensionGeneratedOperationDispatchResponse::ProtocolMethod {
+            provider_extension_key,
+            provider_extension_id,
+            protocol_key,
+            protocol_version,
             method,
         },
         ExtensionGeneratedOperationDispatch::BackendService { service_key, route } => {
@@ -310,11 +316,11 @@ fn extension_fetch_route_target_response(
         ExtensionFetchRouteTargetProjection::RuntimeAction { action_key } => {
             ExtensionFetchRouteTargetResponse::RuntimeAction { action_key }
         }
-        ExtensionFetchRouteTargetProjection::ProtocolChannel {
-            channel_key,
+        ExtensionFetchRouteTargetProjection::ProtocolMethod {
+            protocol_key,
             method,
-        } => ExtensionFetchRouteTargetResponse::ProtocolChannel {
-            channel_key,
+        } => ExtensionFetchRouteTargetResponse::ProtocolMethod {
+            protocol_key,
             method,
         },
         ExtensionFetchRouteTargetProjection::BackendService { service_key, route } => {
@@ -357,11 +363,11 @@ fn extension_permission_response(
         ExtensionPermissionDeclaration::RuntimeAction { action_key } => {
             ExtensionPermissionDeclarationResponse::RuntimeAction { action_key }
         }
-        ExtensionPermissionDeclaration::ExtensionChannel {
-            channel_key,
+        ExtensionPermissionDeclaration::ExtensionProtocol {
+            protocol_key,
             methods,
-        } => ExtensionPermissionDeclarationResponse::ExtensionChannel {
-            channel_key,
+        } => ExtensionPermissionDeclarationResponse::ExtensionProtocol {
+            protocol_key,
             methods,
         },
         ExtensionPermissionDeclaration::BackendService {
@@ -381,7 +387,7 @@ fn extension_dependency_response(
         alias: dependency.alias,
         extension_id: dependency.extension_id,
         version: dependency.version,
-        channels: dependency.channels,
+        protocols: dependency.protocols,
     }
 }
 

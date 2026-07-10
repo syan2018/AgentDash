@@ -45,27 +45,27 @@ pub(super) fn require_declared_permission(
         )));
     }
 
-    if let (Some(channel_key), Some(channel_method)) = (
-        optional_string(params, "channel_key"),
-        optional_string(params, "channel_method"),
+    if let (Some(protocol_key), Some(protocol_method)) = (
+        optional_string(params, "protocol_key"),
+        optional_string(params, "protocol_method"),
     ) {
         let Some(channel) = active
             .manifest
-            .protocol_channels
+            .protocols
             .iter()
-            .find(|channel| channel.channel_key == channel_key)
+            .find(|channel| channel.protocol_key == protocol_key)
         else {
             return Err(LocalExtensionHostError::PermissionDenied(format!(
-                "extension channel `{channel_key}` 不存在"
+                "extension protocol `{protocol_key}` 不存在"
             )));
         };
         let Some(method) = channel
             .methods
             .iter()
-            .find(|method| method.name == channel_method)
+            .find(|method| method.name == protocol_method)
         else {
             return Err(LocalExtensionHostError::PermissionDenied(format!(
-                "extension channel method `{channel_key}.{channel_method}` 不存在"
+                "extension protocol method `{protocol_key}.{protocol_method}` 不存在"
             )));
         };
         if permissions.iter().any(|permission| {
@@ -77,13 +77,13 @@ pub(super) fn require_declared_permission(
             return Ok(());
         }
         return Err(LocalExtensionHostError::PermissionDenied(format!(
-            "extension channel method `{channel_key}.{channel_method}` 未声明 {}",
+            "extension protocol method `{protocol_key}.{protocol_method}` 未声明 {}",
             permissions.join(" 或 ")
         )));
     }
 
     Err(LocalExtensionHostError::PermissionDenied(format!(
-        "{requested} 缺少 action 或 channel invocation context"
+        "{requested} 缺少 action 或 protocol invocation context"
     )))
 }
 
@@ -109,6 +109,6 @@ fn is_known_extension_permission_key(permission: &str) -> bool {
         || permission.starts_with("process.env.set:")
         || permission == "runtime.invoke"
         || permission.starts_with("runtime.invoke:")
-        || permission == "extension.channel.invoke"
-        || permission.starts_with("extension.channel.invoke:")
+        || permission == "extension.protocol.invoke"
+        || permission.starts_with("extension.protocol.invoke:")
 }

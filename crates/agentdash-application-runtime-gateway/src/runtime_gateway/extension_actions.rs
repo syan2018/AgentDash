@@ -6,15 +6,15 @@ use agentdash_application_ports::extension_runtime::{
     ExtensionBackendServiceInvokeDiagnosticPayload, ExtensionBackendServiceInvokeMetadataPayload,
     ExtensionBackendServiceInvokeRequest, ExtensionBackendServiceInvokeResponse,
     ExtensionBackendServiceReadinessPayload, ExtensionBackendServiceTransport,
-    ExtensionChannelConsumerPayload, ExtensionChannelInvokeRequest,
     ExtensionInvocationWorkspacePayload, ExtensionPackageArtifactPayload,
+    ExtensionProtocolConsumerPayload, ExtensionProtocolInvokeRequest,
     ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
-    ExtensionRuntimeChannelTransport, ExtensionRuntimeHostPayload,
+    ExtensionRuntimeHostPayload, ExtensionRuntimeProtocolTransport,
 };
 use agentdash_domain::shared_library::{
-    ExtensionBackendServiceDefinition, ExtensionDependencyDeclaration,
-    ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
-    ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ProjectExtensionInstallation,
+    ExtensionBackendServiceDefinition, ExtensionDependencyDeclaration, ExtensionProtocolDefinition,
+    ExtensionProtocolMethodDefinition, ExtensionRuntimeActionDefinition,
+    ExtensionRuntimeActionKind, ProjectExtensionInstallation,
     ProjectExtensionInstallationRepository,
 };
 use async_trait::async_trait;
@@ -514,10 +514,10 @@ fn classify_runtime_extension_permission_key(permission: &str) -> Option<&'stati
         Some("process_env")
     } else if permission == "runtime.invoke" || permission.starts_with("runtime.invoke:") {
         Some("runtime_action")
-    } else if permission == "extension.channel.invoke"
-        || permission.starts_with("extension.channel.invoke:")
+    } else if permission == "extension.protocol.invoke"
+        || permission.starts_with("extension.protocol.invoke:")
     {
-        Some("extension_channel")
+        Some("extension_protocol")
     } else {
         None
     }
@@ -578,13 +578,15 @@ fn runtime_host_payloads(
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionRuntimeChannelInvokeRequest {
+pub struct ExtensionRuntimeProtocolInvokeRequest {
     pub project_id: Uuid,
     pub session_id: String,
     pub backend_id: String,
     pub workspace: Option<ExtensionInvocationWorkspaceContext>,
-    pub consumer: ExtensionRuntimeChannelConsumer,
-    pub channel_key: String,
+    pub consumer: ExtensionRuntimeProtocolConsumer,
+    pub provider_extension_key: Option<String>,
+    pub protocol_key: String,
+    pub protocol_version: Option<String>,
     pub dependency_alias: Option<String>,
     pub method: String,
     pub input: serde_json::Value,
@@ -592,15 +594,18 @@ pub struct ExtensionRuntimeChannelInvokeRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExtensionRuntimeChannelConsumer {
+pub enum ExtensionRuntimeProtocolConsumer {
     ExtensionPanel { extension_key: String },
     UserCanvas { canvas_id: Option<Uuid> },
     SessionUser,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionRuntimeChannelInvokeResult {
-    pub channel_key: String,
+pub struct ExtensionRuntimeProtocolInvokeResult {
+    pub provider_extension_key: String,
+    pub provider_extension_id: String,
+    pub protocol_key: String,
+    pub protocol_version: String,
     pub method: String,
     pub trace: super::RuntimeTrace,
     pub output: RuntimeInvocationOutput,
@@ -711,15 +716,15 @@ impl ExtensionRuntimeBackendServiceInvoker {
     }
 }
 
-pub struct ExtensionRuntimeChannelInvoker {
+pub struct ExtensionRuntimeProtocolInvoker {
     installations: Arc<dyn ProjectExtensionInstallationRepository>,
-    transport: Arc<dyn ExtensionRuntimeChannelTransport>,
+    transport: Arc<dyn ExtensionRuntimeProtocolTransport>,
 }
 
-impl ExtensionRuntimeChannelInvoker {
+impl ExtensionRuntimeProtocolInvoker {
     pub fn new(
         installations: Arc<dyn ProjectExtensionInstallationRepository>,
-        transport: Arc<dyn ExtensionRuntimeChannelTransport>,
+        transport: Arc<dyn ExtensionRuntimeProtocolTransport>,
     ) -> Self {
         Self {
             installations,
@@ -729,8 +734,8 @@ impl ExtensionRuntimeChannelInvoker {
 
     pub async fn invoke(
         &self,
-        request: ExtensionRuntimeChannelInvokeRequest,
-    ) -> Result<ExtensionRuntimeChannelInvokeResult, RuntimeInvocationError> {
+        request: ExtensionRuntimeProtocolInvokeRequest,
+    ) -> Result<ExtensionRuntimeProtocolInvokeResult, RuntimeInvocationError> {
         let installations = self
             .installations
             .list_enabled_by_project(request.project_id)
@@ -745,26 +750,27 @@ impl ExtensionRuntimeChannelInvoker {
         let artifact = resolved.provider.package_artifact.as_ref().ok_or_else(|| {
             RuntimeInvocationError::conflict(
                 format!(
-                    "extension channel provider `{}` 缺少 package artifact",
+                    "extension protocol provider `{}` 缺少 package artifact",
                     resolved.provider.extension_key
                 ),
                 Some(request.trace.clone()),
             )
         })?;
-        validate_channel_method_permissions(resolved.channel, resolved.method, &request)?;
+        validate_protocol_method_permissions(resolved.channel, resolved.method, &request)?;
         validate_json_schema_subset(
             &resolved.method.input_schema,
             &request.input,
             &format!(
-                "extension channel `{}.{}` input",
-                resolved.channel.channel_key, resolved.method.name
+                "extension protocol `{}.{}` input",
+                resolved.channel.protocol_key, resolved.method.name
             ),
             &request.trace,
         )?;
-        let transport_request = ExtensionChannelInvokeRequest {
+        let transport_request = ExtensionProtocolInvokeRequest {
             provider_extension_key: resolved.provider.extension_key.clone(),
             provider_extension_id: resolved.provider.manifest.extension_id.clone(),
-            channel_key: resolved.channel.channel_key.clone(),
+            protocol_key: resolved.channel.protocol_key.clone(),
+            protocol_version: resolved.channel.version.clone(),
             method: resolved.method.name.clone(),
             project_id: request.project_id.to_string(),
             session_id: request.session_id.clone(),
@@ -787,7 +793,7 @@ impl ExtensionRuntimeChannelInvoker {
         };
         let response = self
             .transport
-            .invoke_extension_channel(&request.backend_id, transport_request)
+            .invoke_extension_protocol(&request.backend_id, transport_request)
             .await
             .map_err(|error| transport_error_to_channel_invocation(error, &request))?;
         let mut metadata = BTreeMap::new();
@@ -799,7 +805,7 @@ impl ExtensionRuntimeChannelInvoker {
             "provider_extension_id".to_string(),
             json!(response.provider_extension_id),
         );
-        metadata.insert("channel_key".to_string(), json!(response.channel_key));
+        metadata.insert("protocol_key".to_string(), json!(response.protocol_key));
         metadata.insert("method".to_string(), json!(response.method));
         metadata.insert("backend_id".to_string(), json!(request.backend_id));
         metadata.insert("trace_id".to_string(), json!(request.trace.trace_id));
@@ -813,8 +819,11 @@ impl ExtensionRuntimeChannelInvoker {
         for (key, value) in response.metadata {
             metadata.insert(key, value);
         }
-        Ok(ExtensionRuntimeChannelInvokeResult {
-            channel_key: resolved.channel.channel_key.clone(),
+        Ok(ExtensionRuntimeProtocolInvokeResult {
+            provider_extension_key: resolved.provider.extension_key.clone(),
+            provider_extension_id: resolved.provider.manifest.extension_id.clone(),
+            protocol_key: resolved.channel.protocol_key.clone(),
+            protocol_version: resolved.channel.version.clone(),
             method: resolved.method.name.clone(),
             trace: request.trace,
             output: RuntimeInvocationOutput {
@@ -825,17 +834,17 @@ impl ExtensionRuntimeChannelInvoker {
     }
 }
 
-fn validate_channel_method_permissions(
-    channel: &ExtensionProtocolChannelDefinition,
-    method: &ExtensionProtocolChannelMethodDefinition,
-    request: &ExtensionRuntimeChannelInvokeRequest,
+fn validate_protocol_method_permissions(
+    channel: &ExtensionProtocolDefinition,
+    method: &ExtensionProtocolMethodDefinition,
+    request: &ExtensionRuntimeProtocolInvokeRequest,
 ) -> Result<(), RuntimeInvocationError> {
     for permission in &method.permissions {
         if classify_runtime_extension_permission_key(permission).is_none() {
             return Err(RuntimeInvocationError::capability_denied(
                 format!(
-                    "extension channel method `{}.{}` 声明了未知权限: {}",
-                    channel.channel_key, method.name, permission
+                    "extension protocol method `{}.{}` 声明了未知权限: {}",
+                    channel.protocol_key, method.name, permission
                 ),
                 Some(request.trace.clone()),
             ));
@@ -846,52 +855,80 @@ fn validate_channel_method_permissions(
 
 struct ResolvedChannelInvocation<'a> {
     provider: &'a ProjectExtensionInstallation,
-    channel: &'a ExtensionProtocolChannelDefinition,
-    method: &'a ExtensionProtocolChannelMethodDefinition,
+    channel: &'a ExtensionProtocolDefinition,
+    method: &'a ExtensionProtocolMethodDefinition,
     consumer_installation: Option<&'a ProjectExtensionInstallation>,
     dependency_alias: Option<&'a str>,
 }
 
 fn resolve_channel_invocation<'a>(
     installations: &'a [ProjectExtensionInstallation],
-    request: &'a ExtensionRuntimeChannelInvokeRequest,
+    request: &'a ExtensionRuntimeProtocolInvokeRequest,
 ) -> Result<ResolvedChannelInvocation<'a>, RuntimeInvocationError> {
     let consumer_installation = match &request.consumer {
-        ExtensionRuntimeChannelConsumer::ExtensionPanel { extension_key } => installations
+        ExtensionRuntimeProtocolConsumer::ExtensionPanel { extension_key } => installations
             .iter()
             .find(|installation| installation.extension_key == *extension_key),
-        ExtensionRuntimeChannelConsumer::UserCanvas { .. }
-        | ExtensionRuntimeChannelConsumer::SessionUser => None,
+        ExtensionRuntimeProtocolConsumer::UserCanvas { .. }
+        | ExtensionRuntimeProtocolConsumer::SessionUser => None,
     };
     if matches!(
         request.consumer,
-        ExtensionRuntimeChannelConsumer::ExtensionPanel { .. }
+        ExtensionRuntimeProtocolConsumer::ExtensionPanel { .. }
     ) && consumer_installation.is_none()
     {
         return Err(RuntimeInvocationError::capability_denied(
-            "extension channel consumer 未安装或未启用",
+            "extension protocol consumer 未安装或未启用",
             Some(request.trace.clone()),
         ));
     }
 
-    let (channel_key, dependency_alias) =
-        resolve_requested_channel_key(consumer_installation, request)?;
-    let (provider, channel) = installations
+    let (protocol_key, dependency_alias) =
+        resolve_requested_protocol_key(consumer_installation, request)?;
+    let candidates = installations
         .iter()
-        .find_map(|installation| {
+        .filter_map(|installation| {
+            if request
+                .provider_extension_key
+                .as_deref()
+                .is_some_and(|expected| installation.extension_key != expected)
+            {
+                return None;
+            }
             installation
                 .manifest
-                .protocol_channels
+                .protocols
                 .iter()
-                .find(|channel| channel.channel_key == channel_key)
+                .find(|channel| channel.protocol_key == protocol_key)
                 .map(|channel| (installation, channel))
         })
-        .ok_or_else(|| {
-            RuntimeInvocationError::capability_denied(
-                format!("extension channel 未启用或不可见: {channel_key}"),
+        .collect::<Vec<_>>();
+    let (provider, channel) = match candidates.as_slice() {
+        [] => {
+            return Err(RuntimeInvocationError::capability_denied(
+                format!("extension protocol 未启用或不可见: {protocol_key}"),
                 Some(request.trace.clone()),
-            )
-        })?;
+            ));
+        }
+        [candidate] => *candidate,
+        _ => {
+            return Err(RuntimeInvocationError::conflict(
+                format!("extension protocol provider 不唯一: {protocol_key}"),
+                Some(request.trace.clone()),
+            ));
+        }
+    };
+    if let Some(requirement) = request.protocol_version.as_deref()
+        && !version_satisfies(requirement, &channel.version)
+    {
+        return Err(RuntimeInvocationError::capability_denied(
+            format!(
+                "extension protocol `{protocol_key}` 版本要求 `{requirement}` 与 provider contract `{}` 不匹配",
+                channel.version
+            ),
+            Some(request.trace.clone()),
+        ));
+    }
     let method = channel
         .methods
         .iter()
@@ -899,8 +936,8 @@ fn resolve_channel_invocation<'a>(
         .ok_or_else(|| {
             RuntimeInvocationError::capability_denied(
                 format!(
-                    "extension channel method 未声明: {}.{}",
-                    channel.channel_key, request.method
+                    "extension protocol method 未声明: {}.{}",
+                    channel.protocol_key, request.method
                 ),
                 Some(request.trace.clone()),
             )
@@ -922,9 +959,9 @@ fn resolve_channel_invocation<'a>(
     })
 }
 
-fn resolve_requested_channel_key<'a>(
+fn resolve_requested_protocol_key<'a>(
     consumer: Option<&'a ProjectExtensionInstallation>,
-    request: &'a ExtensionRuntimeChannelInvokeRequest,
+    request: &'a ExtensionRuntimeProtocolInvokeRequest,
 ) -> Result<(String, Option<&'a str>), RuntimeInvocationError> {
     if let Some(alias) = request.dependency_alias.as_deref() {
         let consumer = consumer.ok_or_else(|| {
@@ -944,23 +981,23 @@ fn resolve_requested_channel_key<'a>(
                     Some(request.trace.clone()),
                 )
             })?;
-        let channel_key =
-            select_dependency_channel(dependency, &request.channel_key).ok_or_else(|| {
+        let protocol_key = select_dependency_protocol(dependency, &request.protocol_key)
+            .ok_or_else(|| {
                 RuntimeInvocationError::capability_denied(
                     format!(
                         "extension dependency `{alias}` 未声明 channel: {}",
-                        request.channel_key
+                        request.protocol_key
                     ),
                     Some(request.trace.clone()),
                 )
             })?;
-        return Ok((channel_key, Some(alias)));
+        return Ok((protocol_key, Some(alias)));
     }
 
-    let raw = request.channel_key.trim();
+    let raw = request.protocol_key.trim();
     if raw.is_empty() {
         return Err(RuntimeInvocationError::invalid_request(
-            "extension channel key 不能为空",
+            "extension protocol key 不能为空",
             Some(request.trace.clone()),
         ));
     }
@@ -976,23 +1013,23 @@ fn resolve_requested_channel_key<'a>(
     Ok((format!("{}.{}", consumer.extension_key, raw), None))
 }
 
-fn select_dependency_channel(
+fn select_dependency_protocol(
     dependency: &ExtensionDependencyDeclaration,
     requested: &str,
 ) -> Option<String> {
     let requested = requested.trim();
     if requested.is_empty() {
-        return dependency.channels.first().cloned();
+        return dependency.protocols.first().cloned();
     }
     if requested.contains('.') {
         dependency
-            .channels
+            .protocols
             .iter()
             .find(|channel| channel.as_str() == requested)
             .cloned()
     } else {
         dependency
-            .channels
+            .protocols
             .iter()
             .find(|channel| channel.rsplit('.').next() == Some(requested))
             .cloned()
@@ -1002,9 +1039,9 @@ fn select_dependency_channel(
 fn ensure_consumer_dependency(
     consumer: Option<&ProjectExtensionInstallation>,
     provider: &ProjectExtensionInstallation,
-    channel: &ExtensionProtocolChannelDefinition,
+    channel: &ExtensionProtocolDefinition,
     dependency_alias: Option<&str>,
-    request: &ExtensionRuntimeChannelInvokeRequest,
+    request: &ExtensionRuntimeProtocolInvokeRequest,
 ) -> Result<(), RuntimeInvocationError> {
     let Some(consumer) = consumer else {
         return Ok(());
@@ -1028,16 +1065,16 @@ fn ensure_consumer_dependency(
                 .find(|dependency| {
                     dependency.extension_id == provider.manifest.extension_id
                         && dependency
-                            .channels
+                            .protocols
                             .iter()
-                            .any(|key| key == &channel.channel_key)
+                            .any(|key| key == &channel.protocol_key)
                 })
         })
         .ok_or_else(|| {
             RuntimeInvocationError::capability_denied(
                 format!(
                     "extension `{}` 未声明依赖 channel `{}`",
-                    consumer.extension_key, channel.channel_key
+                    consumer.extension_key, channel.protocol_key
                 ),
                 Some(request.trace.clone()),
             )
@@ -1052,14 +1089,14 @@ fn ensure_consumer_dependency(
         ));
     }
     if !dependency
-        .channels
+        .protocols
         .iter()
-        .any(|key| key == &channel.channel_key)
+        .any(|key| key == &channel.protocol_key)
     {
         return Err(RuntimeInvocationError::capability_denied(
             format!(
                 "extension dependency `{}` 未声明 channel `{}`",
-                dependency.alias, channel.channel_key
+                dependency.alias, channel.protocol_key
             ),
             Some(request.trace.clone()),
         ));
@@ -1111,13 +1148,13 @@ fn parse_semver_prefix(value: &str) -> Option<(u64, u64, u64)> {
 }
 
 fn channel_consumer_payload(
-    consumer: &ExtensionRuntimeChannelConsumer,
+    consumer: &ExtensionRuntimeProtocolConsumer,
     consumer_installation: Option<&ProjectExtensionInstallation>,
     dependency_alias: Option<&str>,
-) -> ExtensionChannelConsumerPayload {
+) -> ExtensionProtocolConsumerPayload {
     match consumer {
-        ExtensionRuntimeChannelConsumer::ExtensionPanel { extension_key } => {
-            ExtensionChannelConsumerPayload {
+        ExtensionRuntimeProtocolConsumer::ExtensionPanel { extension_key } => {
+            ExtensionProtocolConsumerPayload {
                 kind: "extension_panel".to_string(),
                 extension_key: Some(extension_key.clone()),
                 extension_id: consumer_installation
@@ -1125,15 +1162,15 @@ fn channel_consumer_payload(
                 dependency_alias: dependency_alias.map(str::to_string),
             }
         }
-        ExtensionRuntimeChannelConsumer::UserCanvas { canvas_id } => {
-            ExtensionChannelConsumerPayload {
+        ExtensionRuntimeProtocolConsumer::UserCanvas { canvas_id } => {
+            ExtensionProtocolConsumerPayload {
                 kind: "canvas".to_string(),
                 extension_key: None,
                 extension_id: canvas_id.map(|id| id.to_string()),
                 dependency_alias: dependency_alias.map(str::to_string),
             }
         }
-        ExtensionRuntimeChannelConsumer::SessionUser => ExtensionChannelConsumerPayload {
+        ExtensionRuntimeProtocolConsumer::SessionUser => ExtensionProtocolConsumerPayload {
             kind: "session_user".to_string(),
             extension_key: None,
             extension_id: None,
@@ -1360,24 +1397,24 @@ fn transport_error_to_backend_service_invocation(
 
 fn transport_error_to_channel_invocation(
     error: ExtensionRuntimeActionTransportError,
-    request: &ExtensionRuntimeChannelInvokeRequest,
+    request: &ExtensionRuntimeProtocolInvokeRequest,
 ) -> RuntimeInvocationError {
     match error {
         ExtensionRuntimeActionTransportError::Offline { backend_id } => {
             RuntimeInvocationError::conflict(
-                format!("extension channel backend offline: {backend_id}"),
+                format!("extension protocol backend offline: {backend_id}"),
                 Some(request.trace.clone()),
             )
         }
         ExtensionRuntimeActionTransportError::Timeout { backend_id } => {
             RuntimeInvocationError::timeout(
-                format!("extension channel backend timeout: {backend_id}"),
+                format!("extension protocol backend timeout: {backend_id}"),
                 Some(request.trace.clone()),
             )
         }
         ExtensionRuntimeActionTransportError::ResponseDropped { backend_id } => {
             RuntimeInvocationError::provider_failed(
-                format!("extension channel backend response dropped: {backend_id}"),
+                format!("extension protocol backend response dropped: {backend_id}"),
                 Some(request.trace.clone()),
             )
         }
@@ -1423,7 +1460,7 @@ mod tests {
     use agentdash_application_ports::extension_runtime::{
         ExtensionActionInvokeResponse, ExtensionBackendServiceHttpResponsePayload,
         ExtensionBackendServiceInvokeMetadataPayload, ExtensionBackendServiceInvokeRequest,
-        ExtensionBackendServiceInvokeResponse, ExtensionChannelInvokeResponse,
+        ExtensionBackendServiceInvokeResponse, ExtensionProtocolInvokeResponse,
     };
     use agentdash_domain::DomainError;
     use agentdash_domain::extension_package::{
@@ -1431,10 +1468,9 @@ mod tests {
     };
     use agentdash_domain::shared_library::{
         ExtensionBackendServiceDefinition, ExtensionDependencyDeclaration,
-        ExtensionPermissionAccess, ExtensionPermissionDeclaration,
-        ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
-        ExtensionRuntimeActionDefinition, ExtensionTemplatePayload, InstalledAssetSource,
-        ProjectExtensionInstallation,
+        ExtensionPermissionAccess, ExtensionPermissionDeclaration, ExtensionProtocolDefinition,
+        ExtensionProtocolMethodDefinition, ExtensionRuntimeActionDefinition,
+        ExtensionTemplatePayload, InstalledAssetSource, ProjectExtensionInstallation,
     };
     use serde_json::json;
 
@@ -1522,17 +1558,17 @@ mod tests {
     }
 
     struct FakeChannelTransport {
-        result: Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError>,
-        last_payload: StdMutex<Option<ExtensionChannelInvokeRequest>>,
+        result: Result<ExtensionProtocolInvokeResponse, ExtensionRuntimeActionTransportError>,
+        last_payload: StdMutex<Option<ExtensionProtocolInvokeRequest>>,
     }
 
     #[async_trait]
-    impl ExtensionRuntimeChannelTransport for FakeChannelTransport {
-        async fn invoke_extension_channel(
+    impl ExtensionRuntimeProtocolTransport for FakeChannelTransport {
+        async fn invoke_extension_protocol(
             &self,
             backend_id: &str,
-            payload: ExtensionChannelInvokeRequest,
-        ) -> Result<ExtensionChannelInvokeResponse, ExtensionRuntimeActionTransportError> {
+            payload: ExtensionProtocolInvokeRequest,
+        ) -> Result<ExtensionProtocolInvokeResponse, ExtensionRuntimeActionTransportError> {
             assert_eq!(backend_id, "backend-1");
             *self.last_payload.lock().expect("lock") = Some(payload);
             self.result.clone()
@@ -1961,13 +1997,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channel_invoker_routes_dependency_alias() {
+    async fn protocol_invoker_routes_dependency_alias() {
         let project_id = Uuid::new_v4();
         let transport = Arc::new(FakeChannelTransport {
             result: Ok(channel_response_payload(json!({ "ok": true }))),
             last_payload: StdMutex::new(None),
         });
-        let invoker = ExtensionRuntimeChannelInvoker::new(
+        let invoker = ExtensionRuntimeProtocolInvoker::new(
             Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider_channel_installation(project_id),
@@ -1992,7 +2028,7 @@ mod tests {
             .clone()
             .expect("payload");
         assert_eq!(payload.provider_extension_key, "provider");
-        assert_eq!(payload.channel_key, "provider.api");
+        assert_eq!(payload.protocol_key, "provider.api");
         assert_eq!(
             payload.consumer.dependency_alias.as_deref(),
             Some("provider")
@@ -2010,7 +2046,7 @@ mod tests {
     async fn gateway_validates_channel_input_schema_before_transport() {
         let project_id = Uuid::new_v4();
         let mut provider = provider_channel_installation(project_id);
-        provider.manifest.protocol_channels[0].methods[0].input_schema = json!({
+        provider.manifest.protocols[0].methods[0].input_schema = json!({
             "type": "object",
             "required": ["message"],
             "properties": {
@@ -2022,7 +2058,7 @@ mod tests {
             result: Ok(channel_response_payload(json!({ "ok": true }))),
             last_payload: StdMutex::new(None),
         });
-        let invoker = ExtensionRuntimeChannelInvoker::new(
+        let invoker = ExtensionRuntimeProtocolInvoker::new(
             Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider,
@@ -2042,16 +2078,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gateway_rejects_unknown_channel_method_permission_before_transport() {
+    async fn gateway_rejects_unknown_protocol_method_permission_before_transport() {
         let project_id = Uuid::new_v4();
         let mut provider = provider_channel_installation(project_id);
-        provider.manifest.protocol_channels[0].methods[0].permissions =
+        provider.manifest.protocols[0].methods[0].permissions =
             vec!["local.profile.admin".to_string()];
         let transport = Arc::new(FakeChannelTransport {
             result: Ok(channel_response_payload(json!({ "ok": true }))),
             last_payload: StdMutex::new(None),
         });
-        let invoker = ExtensionRuntimeChannelInvoker::new(
+        let invoker = ExtensionRuntimeProtocolInvoker::new(
             Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider,
@@ -2064,16 +2100,16 @@ mod tests {
         let err = invoker
             .invoke(channel_request(project_id, "api", Some("provider")))
             .await
-            .expect_err("unknown channel method permission");
+            .expect_err("unknown protocol method permission");
 
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
         assert!(transport.last_payload.lock().expect("lock").is_none());
     }
 
     #[tokio::test]
-    async fn channel_invoker_rejects_missing_provider() {
+    async fn protocol_invoker_rejects_missing_provider() {
         let project_id = Uuid::new_v4();
-        let invoker = ExtensionRuntimeChannelInvoker::new(
+        let invoker = ExtensionRuntimeProtocolInvoker::new(
             Arc::new(FixtureInstallationRepo {
                 installations: vec![consumer_channel_installation(project_id, "^1.0.0", true)],
             }),
@@ -2092,9 +2128,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channel_invoker_rejects_missing_dependency() {
+    async fn protocol_invoker_rejects_missing_dependency() {
         let project_id = Uuid::new_v4();
-        let invoker = ExtensionRuntimeChannelInvoker::new(
+        let invoker = ExtensionRuntimeProtocolInvoker::new(
             Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider_channel_installation(project_id),
@@ -2116,9 +2152,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channel_invoker_rejects_dependency_version_mismatch() {
+    async fn protocol_invoker_rejects_dependency_version_mismatch() {
         let project_id = Uuid::new_v4();
-        let invoker = ExtensionRuntimeChannelInvoker::new(
+        let invoker = ExtensionRuntimeProtocolInvoker::new(
             Arc::new(FixtureInstallationRepo {
                 installations: vec![
                     provider_channel_installation(project_id),
@@ -2154,7 +2190,7 @@ mod tests {
             last_payload: StdMutex::new(None),
         });
         let invoker = ExtensionRuntimeBackendServiceInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![installation(project_id, true, true)],
             }),
             transport.clone(),
@@ -2222,7 +2258,7 @@ mod tests {
             last_payload: StdMutex::new(None),
         });
         let invoker = ExtensionRuntimeBackendServiceInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![installation(project_id, true, true)],
             }),
             transport.clone(),
@@ -2300,11 +2336,12 @@ mod tests {
         }
     }
 
-    fn channel_response_payload(output: serde_json::Value) -> ExtensionChannelInvokeResponse {
-        ExtensionChannelInvokeResponse {
+    fn channel_response_payload(output: serde_json::Value) -> ExtensionProtocolInvokeResponse {
+        ExtensionProtocolInvokeResponse {
             provider_extension_key: "provider".to_string(),
             provider_extension_id: "provider".to_string(),
-            channel_key: "provider.api".to_string(),
+            protocol_key: "provider.api".to_string(),
+            protocol_version: "1.0.0".to_string(),
             method: "echo".to_string(),
             output,
             metadata: Default::default(),
@@ -2313,10 +2350,10 @@ mod tests {
 
     fn channel_request(
         project_id: Uuid,
-        channel_key: &str,
+        protocol_key: &str,
         dependency_alias: Option<&str>,
-    ) -> ExtensionRuntimeChannelInvokeRequest {
-        ExtensionRuntimeChannelInvokeRequest {
+    ) -> ExtensionRuntimeProtocolInvokeRequest {
+        ExtensionRuntimeProtocolInvokeRequest {
             project_id,
             session_id: "session-1".to_string(),
             backend_id: "backend-1".to_string(),
@@ -2324,10 +2361,12 @@ mod tests {
                 "main",
                 "D:/Workspaces/demo",
             )),
-            consumer: ExtensionRuntimeChannelConsumer::ExtensionPanel {
+            consumer: ExtensionRuntimeProtocolConsumer::ExtensionPanel {
                 extension_key: "consumer".to_string(),
             },
-            channel_key: channel_key.to_string(),
+            provider_extension_key: None,
+            protocol_key: protocol_key.to_string(),
+            protocol_version: None,
             dependency_alias: dependency_alias.map(str::to_string),
             method: "echo".to_string(),
             input: json!({ "source": "test" }),
@@ -2507,7 +2546,7 @@ mod tests {
                     vec![]
                 },
             }],
-            protocol_channels: vec![],
+            protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
             permissions: if include_top_level_permission {
@@ -2545,11 +2584,11 @@ mod tests {
             capability_directives: vec![],
             asset_refs: vec![],
             runtime_actions: vec![],
-            protocol_channels: vec![ExtensionProtocolChannelDefinition {
-                channel_key: "provider.api".to_string(),
+            protocols: vec![ExtensionProtocolDefinition {
+                protocol_key: "provider.api".to_string(),
                 version: "1.0.0".to_string(),
                 description: "Provider API".to_string(),
-                methods: vec![ExtensionProtocolChannelMethodDefinition {
+                methods: vec![ExtensionProtocolMethodDefinition {
                     name: "echo".to_string(),
                     description: "Echo input".to_string(),
                     input_schema: json!({}),
@@ -2585,13 +2624,13 @@ mod tests {
             capability_directives: vec![],
             asset_refs: vec![],
             runtime_actions: vec![],
-            protocol_channels: vec![],
+            protocols: vec![],
             extension_dependencies: if include_dependency {
                 vec![ExtensionDependencyDeclaration {
                     alias: "provider".to_string(),
                     extension_id: "provider".to_string(),
                     version: version.to_string(),
-                    channels: vec!["provider.api".to_string()],
+                    protocols: vec!["provider.api".to_string()],
                 }]
             } else {
                 vec![]

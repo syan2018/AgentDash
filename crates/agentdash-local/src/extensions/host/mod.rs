@@ -53,7 +53,7 @@ pub struct LocalExtensionHostHealth {
     pub extension_id: Option<String>,
     pub action_keys: Vec<String>,
     #[serde(default)]
-    pub channel_keys: Vec<String>,
+    pub protocol_keys: Vec<String>,
     pub pid: Option<u32>,
 }
 

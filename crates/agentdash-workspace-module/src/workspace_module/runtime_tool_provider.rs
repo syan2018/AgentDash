@@ -2,10 +2,10 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use std::sync::Arc;
 
 use agentdash_application_ports::extension_runtime::{
-    ExtensionBackendServiceTransport, ExtensionRuntimeChannelTransport,
+    ExtensionBackendServiceTransport, ExtensionRuntimeProtocolTransport,
 };
 use agentdash_application_runtime_gateway::{
-    ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeChannelInvoker, RuntimeGateway,
+    ExtensionRuntimeBackendServiceInvoker, ExtensionRuntimeProtocolInvoker, RuntimeGateway,
 };
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleOperationReadiness, WorkspaceModuleOperationReadinessKind,
@@ -41,7 +41,7 @@ pub struct WorkspaceModuleRuntimeToolProvider {
     execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
     runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
-    extension_channel_transport: Option<Arc<dyn ExtensionRuntimeChannelTransport>>,
+    extension_protocol_transport: Option<Arc<dyn ExtensionRuntimeProtocolTransport>>,
     extension_backend_service_transport: Option<Arc<dyn ExtensionBackendServiceTransport>>,
 }
 
@@ -63,16 +63,16 @@ impl WorkspaceModuleRuntimeToolProvider {
             execution_anchor_repo,
             agent_run_bridge_handle,
             runtime_gateway_handle,
-            extension_channel_transport: None,
+            extension_protocol_transport: None,
             extension_backend_service_transport: None,
         }
     }
 
-    pub fn with_extension_channel_transport(
+    pub fn with_extension_protocol_transport(
         mut self,
-        transport: Arc<dyn ExtensionRuntimeChannelTransport>,
+        transport: Arc<dyn ExtensionRuntimeProtocolTransport>,
     ) -> Self {
-        self.extension_channel_transport = Some(transport);
+        self.extension_protocol_transport = Some(transport);
         self
     }
 
@@ -88,7 +88,7 @@ impl WorkspaceModuleRuntimeToolProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InvokeRuntimeDependency {
     RuntimeGateway,
-    ExtensionChannelTransport,
+    ExtensionProtocolTransport,
     RuntimeBackendAnchor,
 }
 
@@ -96,7 +96,7 @@ impl InvokeRuntimeDependency {
     fn as_str(self) -> &'static str {
         match self {
             Self::RuntimeGateway => "runtime_gateway",
-            Self::ExtensionChannelTransport => "extension_channel_transport",
+            Self::ExtensionProtocolTransport => "extension_protocol_transport",
             Self::RuntimeBackendAnchor => "runtime_backend_anchor",
         }
     }
@@ -200,7 +200,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             .identity
             .as_ref()
             .map(project_authorization_context_from_identity);
-        let channel_transport_available = self.extension_channel_transport.is_some();
+        let protocol_transport_available = self.extension_protocol_transport.is_some();
         let backend_readiness = operation_backend_readiness(context, &delivery_runtime_session_id);
         let backend_service_readiness = operation_backend_service_readiness(
             &backend_readiness,
@@ -227,7 +227,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 .with_runtime_dependencies(
                     self.runtime_gateway_handle.clone(),
                     delivery_runtime_session_id.clone(),
-                    channel_transport_available,
+                    protocol_transport_available,
                     backend_readiness.clone(),
                     backend_service_readiness.clone(),
                 ),
@@ -253,7 +253,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 .with_runtime_dependencies(
                     self.runtime_gateway_handle.clone(),
                     delivery_runtime_session_id.clone(),
-                    channel_transport_available,
+                    protocol_transport_available,
                     backend_readiness.clone(),
                     backend_service_readiness.clone(),
                 ),
@@ -313,7 +313,7 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
                 .with_current_user(current_user.clone())
                 .with_runtime_dependencies(
                     self.runtime_gateway_handle.clone(),
-                    channel_transport_available,
+                    protocol_transport_available,
                     backend_readiness.clone(),
                     backend_service_readiness.clone(),
                 ),
@@ -420,7 +420,7 @@ impl WorkspaceModuleRuntimeToolProvider {
         };
         let backend =
             resolve_invocation_backend(context.session.vfs.as_ref(), Some(backend_anchor));
-        let channel_invoker = Arc::new(ExtensionRuntimeChannelInvoker::new(
+        let protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
             self.installation_repo.clone(),
             transport,
         ));
@@ -444,7 +444,7 @@ impl WorkspaceModuleRuntimeToolProvider {
                 None,
                 backend,
                 gateway,
-                channel_invoker,
+                protocol_invoker,
                 backend_service_invoker,
             )
             .with_current_user(current_user)
@@ -457,23 +457,23 @@ impl WorkspaceModuleRuntimeToolProvider {
     ) -> Result<
         (
             Arc<RuntimeGateway>,
-            Arc<dyn ExtensionRuntimeChannelTransport>,
+            Arc<dyn ExtensionRuntimeProtocolTransport>,
         ),
         Vec<InvokeRuntimeDependency>,
     > {
         let runtime_gateway = self.runtime_gateway_handle.get().await;
-        let extension_channel_transport = self.extension_channel_transport.as_ref().cloned();
+        let extension_protocol_transport = self.extension_protocol_transport.as_ref().cloned();
         let mut missing = Vec::new();
         if runtime_gateway.is_none() {
             missing.push(InvokeRuntimeDependency::RuntimeGateway);
         }
-        if extension_channel_transport.is_none() {
-            missing.push(InvokeRuntimeDependency::ExtensionChannelTransport);
+        if extension_protocol_transport.is_none() {
+            missing.push(InvokeRuntimeDependency::ExtensionProtocolTransport);
         }
         if missing.is_empty() {
             Ok((
                 runtime_gateway.expect("checked runtime gateway"),
-                extension_channel_transport.expect("checked channel transport"),
+                extension_protocol_transport.expect("checked channel transport"),
             ))
         } else {
             Err(missing)

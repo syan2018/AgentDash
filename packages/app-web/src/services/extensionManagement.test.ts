@@ -48,7 +48,7 @@ function sampleExtensionResponse(): ProjectExtensionManagementListResponse {
           flags: 1,
           message_renderers: 0,
           runtime_actions: 1,
-          protocol_channels: 0,
+          protocols: 0,
           workspace_tabs: 1,
           permissions: 2,
           bundles: 1,

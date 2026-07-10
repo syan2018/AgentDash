@@ -266,10 +266,10 @@ impl LocalCommandRouter {
                         .await,
                 ]
             }
-            RelayMessage::CommandExtensionChannelInvoke { id, payload } => {
+            RelayMessage::CommandExtensionProtocolInvoke { id, payload } => {
                 vec![
                     self.extension
-                        .handle_extension_channel_invoke(id, payload)
+                        .handle_extension_protocol_invoke(id, payload)
                         .await,
                 ]
             }

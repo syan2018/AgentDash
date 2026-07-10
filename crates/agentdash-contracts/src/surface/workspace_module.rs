@@ -113,16 +113,19 @@ pub enum WorkspaceModuleOperationVisibility {
 ///
 /// `origin` 是给人/UI 看的扁平标签；`dispatch` 承载 invoke 元工具据以**直接路由**的
 /// 结构化分量，由聚合层（`build_workspace_modules`）在构造 operation 时一并填好。
-/// invoke 据 `dispatch` 派发，**不再字符串拆 `operation_key`**（避免 channel method
+/// invoke 据 `dispatch` 派发，**不再字符串拆 `operation_key`**（避免 protocol method
 /// 名含驼峰时的反解析脆弱）。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WorkspaceModuleOperationDispatch {
     /// extension runtime action：直接以 `action_key` 走 RuntimeGateway。
     RuntimeAction { action_key: String },
-    /// extension protocol channel method：走 ExtensionRuntimeChannelInvoker，不经 action_key。
-    ProtocolChannel {
-        channel_key: String,
+    /// extension protocol method：走 ExtensionRuntimeProtocolInvoker，不经 action_key。
+    ProtocolMethod {
+        provider_extension_key: String,
+        provider_extension_id: String,
+        protocol_key: String,
+        protocol_version: String,
         method_name: String,
     },
     /// Extension-owned backend service route. M3 local lifecycle manager owns execution.
@@ -142,7 +145,7 @@ pub enum WorkspaceModuleOperationDispatch {
 pub enum WorkspaceModuleOperationReadinessKind {
     Ready,
     MissingRuntimeGateway,
-    MissingChannelTransport,
+    MissingProtocolTransport,
     MissingRuntimeBackendAnchor,
     BackendUnavailable,
     RuntimeActionUnavailable,
@@ -180,11 +183,11 @@ impl WorkspaceModuleOperationReadiness {
     }
 }
 
-/// 单个 operation（extension action / protocol channel method / host canvas / builtin 同构呈现）。
+/// 单个 operation（extension action / protocol method / host canvas / builtin 同构呈现）。
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct WorkspaceModuleOperation {
     pub operation_key: String,
-    /// "runtime_action" | "protocol_channel" | "host_canvas" | "builtin"。
+    /// "runtime_action" | "protocol_method" | "host_canvas" | "builtin"。
     pub origin: String,
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -567,6 +567,7 @@ mod tests {
                     pending_overlay_applied: construction.resolution.pending_overlay_applied,
                 },
             },
+            agent_run_execution: None,
         }
     }
 

@@ -159,7 +159,7 @@ async fn plain_run_uses_unique_execution_id_per_token() {
 async fn invoke_and_invoke_all_are_exact_ordered_and_bounded() {
     let engine = engine(7);
     let mut program = program(
-        r#"let one = ops.invoke("agentdash:fixture:echo:v1", #{value: 1}); let many = ops.invoke_all([#{operation:"agentdash:fixture:echo:v1",input:#{value:2}},#{operation:"agentdash:fixture:echo:v1",input:#{value:3}}]); #{one:one,many:many}"#,
+        r#"let one = ops.invoke("agentdash:fixture:echo:v1", #{value: 1}); let many = ops.invoke_all([#{operation:"agentdash:fixture:echo:v1",input:#{value:2}},#{operation:"agentdash:fixture:echo:v1",input:#{value:3}},#{operation:"agentdash:fixture:echo:v1",input:#{value:4}}]); #{one:one,many:many}"#,
     );
     program.allowed_operations.push(allowed());
     program.limits.max_parallel_operations = 2;
@@ -167,12 +167,70 @@ async fn invoke_and_invoke_all_are_exact_ordered_and_bounded() {
     let outcome = run(&engine, program, context(), executor.clone())
         .await
         .unwrap();
-    assert_eq!(outcome.calls.len(), 3);
+    assert_eq!(outcome.calls.len(), 4);
     assert!(executor.peak.load(Ordering::SeqCst) <= 2);
     let OperationScriptResultValue::Inline { value } = outcome.value else {
         panic!("inline")
     };
     assert_eq!(value["many"][1]["input"]["value"], 3);
+    assert_eq!(value["many"][2]["input"]["value"], 4);
+}
+
+#[tokio::test]
+async fn call_limit_failure_keeps_completed_evidence() {
+    let mut program = program(
+        r#"ops.invoke("agentdash:fixture:echo:v1", #{}); ops.invoke("agentdash:fixture:echo:v1", #{})"#,
+    );
+    program.allowed_operations.push(allowed());
+    program.limits.max_operation_calls = 1;
+    let error = run(&engine(7), program, context(), executor())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, OperationScriptError::ExecutionFailed { calls, partial: true, .. } if calls.len() == 1)
+    );
+}
+
+#[tokio::test]
+async fn nested_call_cancellation_keeps_outcome_unknown_evidence() {
+    let engine = Arc::new(engine(7));
+    let mut program = program(r#"ops.invoke("agentdash:fixture:echo:v1", #{})"#);
+    program.allowed_operations.push(allowed());
+    let context = context();
+    let plan = engine
+        .preflight(
+            OperationScriptPreflightRequest {
+                program: program.clone(),
+                context: context.clone(),
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let cancel = CancellationToken::new();
+    let task = {
+        let engine = engine.clone();
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            engine
+                .run(
+                    OperationScriptRunRequest {
+                        program,
+                        context,
+                        token: plan.token,
+                    },
+                    executor(),
+                    cancel,
+                )
+                .await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    cancel.cancel();
+    let error = task.await.unwrap().unwrap_err();
+    assert!(
+        matches!(error, OperationScriptError::ExecutionFailed { calls, outcome_unknown: true, .. } if calls.len() == 1)
+    );
 }
 
 #[tokio::test]
@@ -259,6 +317,34 @@ async fn large_result_ref_is_scoped_and_rechecks_capabilities() {
     assert_eq!(
         engine
             .resolve_result(&result_ref, &denied, CancellationToken::new())
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn scoped_result_ref_expires_without_bearer_access() {
+    let mut config = RhaiOperationScriptConfig::default();
+    config.max_inline_result_bytes = 4;
+    config.result_ttl = Duration::milliseconds(1);
+    let engine = RhaiOperationScriptEngine::new(&[7; 32], config).unwrap();
+    let context = context();
+    let outcome = run(
+        &engine,
+        program(r#""large-result""#),
+        context.clone(),
+        executor(),
+    )
+    .await
+    .unwrap();
+    let OperationScriptResultValue::Ref { result_ref } = outcome.value else {
+        panic!("ref")
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(3)).await;
+    assert_eq!(
+        engine
+            .resolve_result(&result_ref, &context, CancellationToken::new())
             .await
             .unwrap(),
         None

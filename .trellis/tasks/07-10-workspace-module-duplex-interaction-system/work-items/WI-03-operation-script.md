@@ -39,7 +39,7 @@ Depends On: WI-01
   - AST cache 按 entry/source bytes 有界淘汰；大结果使用 scoped ref，并在读取时重新校验当前 principal/scope/capability/TTL。
 - Focused checks:
   - `cargo check -p agentdash-application-runtime-gateway -p agentdash-infrastructure`
-  - `cargo test -p agentdash-infrastructure operation_script -- --nocapture`（8 passed）
+  - `cargo test -p agentdash-infrastructure operation_script -- --nocapture`（11 passed）
 
 ## Remaining Integration
 

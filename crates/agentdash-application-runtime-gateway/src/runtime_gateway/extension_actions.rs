@@ -2549,6 +2549,7 @@ mod tests {
             protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions: if include_top_level_permission {
                 vec![ExtensionPermissionDeclaration::LocalProfile {
                     access: ExtensionPermissionAccess::Read,
@@ -2598,6 +2599,7 @@ mod tests {
             }],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions: vec![],
             fetch_routes: vec![],
             operation_catalog: vec![],
@@ -2636,6 +2638,7 @@ mod tests {
                 vec![]
             },
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions: vec![],
             fetch_routes: vec![],
             operation_catalog: vec![],

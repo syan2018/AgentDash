@@ -738,6 +738,7 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
         protocols: [],
         extension_dependencies: [],
         workspace_tabs: [],
+        ui_components: [],
         permissions: [],
         bundles: [],
       },

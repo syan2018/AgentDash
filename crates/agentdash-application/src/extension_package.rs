@@ -13,6 +13,7 @@ use agentdash_domain::extension_package::{
     ExtensionPackageArtifact, ExtensionPackageArtifactOwner, ExtensionPackageArtifactRef,
     validate_sha256_digest,
 };
+use agentdash_domain::interaction::{InteractionOwner, RuntimeBindingTarget};
 use agentdash_domain::shared_library::{
     ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
     ProjectExtensionInstallation,
@@ -102,6 +103,21 @@ pub struct ExtensionPackageWebviewAsset {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ReadExtensionPackageComponentAssetInput {
+    pub project_id: Uuid,
+    pub artifact_id: Uuid,
+    pub expected_archive_digest: String,
+    pub component_key: String,
+    pub asset_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtensionPackageComponentAsset {
+    pub asset_path: String,
+    pub bytes: Vec<u8>,
+}
+
 pub fn validate_extension_package_archive(
     archive_bytes: &[u8],
     expected_archive_digest: Option<&str>,
@@ -132,6 +148,7 @@ pub fn validate_extension_package_archive(
     let package_json = parse_json_file(&files, PACKAGE_JSON_PATH)?;
     validate_package_json(&package_json, &manifest)?;
     validate_workspace_tab_entries(&files, &manifest)?;
+    validate_ui_component_entries(&files, &manifest)?;
     validate_bundle_entries(&files, &manifest)?;
 
     Ok(ValidatedExtensionPackageArchive {
@@ -293,12 +310,43 @@ async fn project_can_access_extension_artifact(
         .project_extension_installation_repo
         .list_by_project(project_id)
         .await?;
-    Ok(installations.iter().any(|installation| {
+    if installations.iter().any(|installation| {
         installation
             .package_artifact
             .as_ref()
             .is_some_and(|package| package.artifact_id == artifact.id)
-    }))
+    }) {
+        return Ok(true);
+    }
+    let instances = repos
+        .interaction_instance_repo
+        .list_by_owner(&InteractionOwner::Project(project_id))
+        .await
+        .map_err(|error| DomainError::Database {
+            operation: "list interaction instances for artifact access",
+            message: error.to_string(),
+        })?;
+    for instance in instances {
+        let bindings = repos
+            .interaction_instance_repo
+            .list_runtime_bindings(instance.id, None)
+            .await
+            .map_err(|error| DomainError::Database {
+                operation: "list interaction bindings for artifact access",
+                message: error.to_string(),
+            })?;
+        if bindings.iter().any(|binding| {
+            matches!(
+                &binding.target,
+                RuntimeBindingTarget::Artifact { artifact_ref, digest }
+                    if artifact_ref == &artifact.id.to_string()
+                        && digest == &artifact.archive_digest
+            )
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub async fn read_extension_package_webview_asset(
@@ -342,6 +390,57 @@ pub async fn read_extension_package_webview_asset(
         })?;
 
     Ok(ExtensionPackageWebviewAsset { asset_path, bytes })
+}
+
+pub async fn read_extension_package_component_asset(
+    repos: &RepositorySet,
+    storage: &dyn ExtensionPackageArtifactStorage,
+    input: ReadExtensionPackageComponentAssetInput,
+) -> Result<ExtensionPackageComponentAsset, ExtensionPackageArtifactUseCaseError> {
+    validate_sha256_digest("expected_archive_digest", &input.expected_archive_digest)?;
+    let asset_path = normalize_webview_asset_path(&input.asset_path)?;
+    let artifact = repos
+        .extension_package_artifact_repo
+        .get(input.artifact_id)
+        .await?
+        .ok_or_else(|| {
+            ExtensionPackageArtifactUseCaseError::NotFound(
+                "Extension component artifact 不存在".to_string(),
+            )
+        })?;
+    if artifact.archive_digest != input.expected_archive_digest
+        || !project_can_access_extension_artifact(repos, input.project_id, &artifact).await?
+    {
+        return Err(ExtensionPackageArtifactUseCaseError::NotFound(
+            "Extension component artifact 不存在".to_string(),
+        ));
+    }
+    let component = artifact
+        .manifest
+        .ui_components
+        .iter()
+        .find(|component| component.component_key == input.component_key)
+        .ok_or_else(|| {
+            ExtensionPackageArtifactUseCaseError::NotFound(
+                "Extension UI component 不存在".to_string(),
+            )
+        })?;
+    let entry_path = normalize_webview_asset_path(component.renderer.entry())?;
+    if !asset_path_is_within_entry_directory(&asset_path, &entry_path) {
+        return Err(ExtensionPackageArtifactUseCaseError::Forbidden(
+            "Extension component asset 不属于声明的 renderer 目录".to_string(),
+        ));
+    }
+    let archive_bytes =
+        read_verified_archive_bytes(storage, &artifact.storage_ref, &artifact.archive_digest)
+            .await?;
+    let bytes =
+        read_extension_package_archive_file(&archive_bytes, &asset_path)?.ok_or_else(|| {
+            ExtensionPackageArtifactUseCaseError::NotFound(
+                "Extension component asset 不存在".to_string(),
+            )
+        })?;
+    Ok(ExtensionPackageComponentAsset { asset_path, bytes })
 }
 
 pub fn digest_bytes(bytes: &[u8]) -> String {
@@ -520,6 +619,21 @@ fn validate_workspace_tab_entries(
     Ok(())
 }
 
+fn validate_ui_component_entries(
+    files: &BTreeMap<String, Vec<u8>>,
+    manifest: &ExtensionTemplatePayload,
+) -> Result<(), DomainError> {
+    for component in &manifest.ui_components {
+        let entry = component.renderer.entry();
+        if !files.contains_key(entry) {
+            return Err(DomainError::InvalidConfig(format!(
+                "extension package archive 缺少 UI component renderer entry `{entry}`"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn workspace_tab_renderer_entry(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &str {
     match renderer {
         ExtensionWorkspaceTabRendererDeclaration::Webview { entry }
@@ -586,6 +700,15 @@ fn webview_asset_allowed(manifest: &ExtensionTemplatePayload, asset_path: &str) 
         };
         asset_path.starts_with(&format!("{dir}/"))
     })
+}
+
+fn asset_path_is_within_entry_directory(asset_path: &str, entry_path: &str) -> bool {
+    if asset_path == entry_path {
+        return true;
+    }
+    entry_path
+        .rsplit_once('/')
+        .is_some_and(|(directory, _)| asset_path.starts_with(&format!("{directory}/")))
 }
 
 async fn upsert_extension_installation(
@@ -671,6 +794,7 @@ mod tests {
             protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions: vec![],
             fetch_routes: vec![],
             operation_catalog: vec![],
@@ -740,6 +864,32 @@ mod tests {
         })
     }
 
+    fn component_manifest() -> Value {
+        serde_json::json!({
+            "manifest_version": "2",
+            "extension_id": "component-demo",
+            "package": {
+                "name": "@agentdash/component-demo",
+                "version": "0.1.0"
+            },
+            "asset_version": "0.1.0",
+            "ui_components": [{
+                "component_key": "component-demo.review-card",
+                "contract_version": 1,
+                "renderer": {
+                    "kind": "iframe",
+                    "entry": "dist/components/review-card/index.html"
+                },
+                "props_schema": true,
+                "events_schema": {},
+                "state_projection_schema": true,
+                "slots": [],
+                "sizing": { "min_width": 160, "min_height": 120 },
+                "sandbox_profile": "isolated_v1"
+            }]
+        })
+    }
+
     #[test]
     fn validates_extension_package_archive() {
         let bytes = valid_archive();
@@ -749,6 +899,48 @@ mod tests {
         assert_eq!(validated.manifest.package.name, "@agentdash/local-hello");
         assert!(validated.archive_digest.starts_with("sha256:"));
         assert!(validated.manifest_digest.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn component_archive_requires_declared_exact_renderer_entry() {
+        let package_json = serde_json::to_vec(&serde_json::json!({
+            "name": "@agentdash/component-demo",
+            "version": "0.1.0"
+        }))
+        .expect("package json");
+        let manifest_bytes = serde_json::to_vec(&component_manifest()).expect("manifest");
+        let missing = archive_bytes(vec![
+            (EXTENSION_MANIFEST_PATH, manifest_bytes.clone()),
+            (PACKAGE_JSON_PATH, package_json.clone()),
+        ]);
+        assert!(validate_extension_package_archive(&missing, None).is_err());
+
+        let complete = archive_bytes(vec![
+            (EXTENSION_MANIFEST_PATH, manifest_bytes),
+            (PACKAGE_JSON_PATH, package_json),
+            (
+                "dist/components/review-card/index.html",
+                b"<!doctype html>".to_vec(),
+            ),
+        ]);
+        let validated = validate_extension_package_archive(&complete, None).expect("component");
+        assert_eq!(validated.manifest.ui_components.len(), 1);
+    }
+
+    #[test]
+    fn component_asset_scope_is_limited_to_declared_entry_directory() {
+        assert!(asset_path_is_within_entry_directory(
+            "dist/components/review-card/index.html",
+            "dist/components/review-card/index.html",
+        ));
+        assert!(asset_path_is_within_entry_directory(
+            "dist/components/review-card/app.js",
+            "dist/components/review-card/index.html",
+        ));
+        assert!(!asset_path_is_within_entry_directory(
+            "dist/extension.js",
+            "dist/components/review-card/index.html",
+        ));
     }
 
     #[test]

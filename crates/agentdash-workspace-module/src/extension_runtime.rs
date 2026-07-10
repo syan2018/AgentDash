@@ -10,7 +10,7 @@ use agentdash_domain::shared_library::{
     ExtensionGeneratedOperationDispatch as DomainGeneratedOperationDispatch,
     ExtensionGeneratedOperationVisibility as DomainGeneratedOperationVisibility,
     ExtensionPermissionDeclaration, ExtensionProtocolDefinition, ExtensionProtocolMethodDefinition,
-    ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
+    ExtensionRendererDeclaration, ExtensionRuntimeActionKind, ExtensionUiComponentDefinition,
     ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource, ProjectExtensionInstallation,
     ProjectExtensionInstallationRepository,
 };
@@ -26,6 +26,7 @@ pub struct ExtensionRuntimeProjection {
     pub protocols: Vec<ExtensionProtocolProjection>,
     pub extension_dependencies: Vec<ExtensionDependencyProjection>,
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjection>,
+    pub ui_components: Vec<ExtensionUiComponentProjection>,
     pub permissions: Vec<ExtensionPermissionProjection>,
     pub bundles: Vec<ExtensionBundleProjection>,
     pub fetch_routes: Vec<ExtensionFetchRouteProjection>,
@@ -117,6 +118,16 @@ pub struct ExtensionWorkspaceTabProjection {
     pub uri_scheme: String,
     pub renderer: ExtensionWorkspaceTabRendererDeclaration,
     pub loadability: ExtensionWorkspaceTabLoadabilityProjection,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionUiComponentProjection {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub descriptor: ExtensionUiComponentDefinition,
+    pub package_artifact: Option<ExtensionPackageArtifactRef>,
+    pub available: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,6 +293,7 @@ pub fn extension_runtime_projection_from_installations(
     let mut action_keys = BTreeMap::new();
     let mut protocol_keys = BTreeMap::new();
     let mut workspace_tab_type_ids = BTreeMap::new();
+    let mut ui_component_keys = BTreeMap::new();
     let mut uri_schemes = BTreeMap::new();
     for installation in installations {
         let extension_key = installation.extension_key.clone();
@@ -321,6 +333,15 @@ pub fn extension_runtime_projection_from_installations(
                 &extension_key,
             )?;
         }
+        for component in &manifest.ui_components {
+            claim_unique_extension_runtime_key(
+                &mut ui_component_keys,
+                "UI component key",
+                &component.component_key,
+                &extension_key,
+            )?;
+        }
+        let package_artifact = installation.package_artifact.clone();
         projection
             .installations
             .push(ExtensionInstallationProjection {
@@ -329,7 +350,7 @@ pub fn extension_runtime_projection_from_installations(
                 extension_id: extension_id.clone(),
                 display_name: installation.display_name.clone(),
                 installed_source: installation.installed_source,
-                package_artifact: installation.package_artifact,
+                package_artifact: package_artifact.clone(),
             });
         projection
             .commands
@@ -416,6 +437,20 @@ pub fn extension_runtime_projection_from_installations(
                         has_extension_host_bundle,
                     ),
                     renderer: tab.renderer,
+                }
+            }));
+        projection
+            .ui_components
+            .extend(manifest.ui_components.into_iter().map(|descriptor| {
+                let available = package_artifact.is_some();
+                ExtensionUiComponentProjection {
+                    extension_key: extension_key.clone(),
+                    extension_id: extension_id.clone(),
+                    descriptor,
+                    package_artifact: package_artifact.clone(),
+                    available,
+                    reason: (!available)
+                        .then(|| "UI component 需要 exact packaged artifact".to_string()),
                 }
             }));
         projection
@@ -739,6 +774,8 @@ mod tests {
         ExtensionPermissionDeclaration, ExtensionProtocolDefinition,
         ExtensionProtocolMethodDefinition, ExtensionRendererDeclaration,
         ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
+        ExtensionUiComponentDefinition, ExtensionUiComponentRendererDeclaration,
+        ExtensionUiComponentSandboxProfile, ExtensionUiComponentSizing,
         ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration,
         InstalledAssetSource, ProjectExtensionInstallation,
     };
@@ -821,6 +858,7 @@ mod tests {
                     entry: "dist/panel/index.html".to_string(),
                 },
             }],
+            ui_components: vec![],
             permissions: vec![ExtensionPermissionDeclaration::LocalProfile {
                 access: ExtensionPermissionAccess::Read,
             }],
@@ -894,6 +932,7 @@ mod tests {
                     entry: "dist/canvas/runtime-snapshot.json".to_string(),
                 },
             }],
+            ui_components: vec![],
             permissions: vec![],
             fetch_routes: vec![],
             operation_catalog: vec![],
@@ -1021,6 +1060,58 @@ mod tests {
         assert_eq!(
             tab.loadability.mode,
             ExtensionWorkspaceTabLoadabilityMode::UiOnly
+        );
+    }
+
+    #[test]
+    fn ui_component_projection_carries_exact_artifact_pin() {
+        let project_id = uuid::Uuid::new_v4();
+        let mut component_manifest = canvas_panel_manifest("component-demo");
+        component_manifest.ui_components = vec![ExtensionUiComponentDefinition {
+            component_key: "component-demo.review-card".to_string(),
+            contract_version: 1,
+            renderer: ExtensionUiComponentRendererDeclaration::Iframe {
+                entry: "dist/components/review-card/index.html".to_string(),
+            },
+            props_schema: serde_json::Value::Bool(true),
+            events_schema: std::collections::BTreeMap::new(),
+            state_projection_schema: serde_json::Value::Bool(true),
+            slots: vec![],
+            sizing: ExtensionUiComponentSizing {
+                min_width: 160,
+                min_height: 120,
+                max_width: None,
+                max_height: None,
+            },
+            sandbox_profile: ExtensionUiComponentSandboxProfile::IsolatedV1,
+        }];
+        let expected_artifact = artifact_ref("component-demo");
+        let installation = ProjectExtensionInstallation::new_packaged(
+            project_id,
+            "component-demo",
+            "Component Demo",
+            component_manifest,
+            expected_artifact.clone(),
+        )
+        .expect("packaged component installation");
+
+        let projection = extension_runtime_projection_from_installations(vec![installation])
+            .expect("projection");
+        let component = &projection.ui_components[0];
+        assert!(component.available);
+        assert_eq!(
+            component
+                .package_artifact
+                .as_ref()
+                .map(|artifact| artifact.artifact_id),
+            Some(expected_artifact.artifact_id)
+        );
+        assert_eq!(
+            component
+                .package_artifact
+                .as_ref()
+                .map(|artifact| artifact.archive_digest.as_str()),
+            Some(expected_artifact.archive_digest.as_str())
         );
     }
 

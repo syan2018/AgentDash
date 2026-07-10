@@ -20,6 +20,8 @@ pub use value_objects::{
     ExtensionPermissionDeclaration, ExtensionProcessPermissionAccess, ExtensionProtocolDefinition,
     ExtensionProtocolMethodDefinition, ExtensionRendererDeclaration,
     ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
+    ExtensionUiComponentDefinition, ExtensionUiComponentRendererDeclaration,
+    ExtensionUiComponentSandboxProfile, ExtensionUiComponentSizing,
     ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration,
     InlineMountFilePayload, InstalledAssetSource, IntegrationLibraryAssetSeed, LibraryAssetPayload,
     LibraryAssetScope, LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload,

@@ -104,6 +104,8 @@ use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvokeBackendServiceRequest, ExtensionRuntimeInvokeBackendServiceResponse,
     ExtensionRuntimeInvokeProtocolRequest, ExtensionRuntimeInvokeProtocolResponse,
     ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionUiComponentProjectionResponse, ExtensionUiComponentRendererResponse,
+    ExtensionUiComponentSandboxProfileResponse, ExtensionUiComponentSizingResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
     UninstallExtensionInstallationResponse,
@@ -917,6 +919,10 @@ fn main() {
             export_all::<ExtensionCommandHandlerResponse>(dir);
             export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
             export_all::<ExtensionWorkspaceTabRendererResponse>(dir);
+            export_all::<ExtensionUiComponentRendererResponse>(dir);
+            export_all::<ExtensionUiComponentSizingResponse>(dir);
+            export_all::<ExtensionUiComponentSandboxProfileResponse>(dir);
+            export_all::<ExtensionUiComponentProjectionResponse>(dir);
             export_all::<ExtensionPermissionDeclarationResponse>(dir);
             export_all::<ExtensionInstalledAssetSourceResponse>(dir);
             export_all::<ExtensionPackageArtifactRefResponse>(dir);

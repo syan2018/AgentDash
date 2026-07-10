@@ -85,9 +85,17 @@ export type ExtensionRuntimeInvokeProtocolRequest = { provider_extension_key?: s
 
 export type ExtensionRuntimeInvokeProtocolResponse = { provider_extension_key: string, provider_extension_id: string, protocol_key: string, protocol_version: string, method: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
 
-export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocols: Array<ExtensionProtocolProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, fetch_routes?: Array<ExtensionFetchRouteProjectionResponse>, operation_catalog?: Array<ExtensionGeneratedOperationProjectionResponse>, backend_services?: Array<ExtensionBackendServiceProjectionResponse>, };
+export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocols: Array<ExtensionProtocolProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, ui_components: Array<ExtensionUiComponentProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, fetch_routes?: Array<ExtensionFetchRouteProjectionResponse>, operation_catalog?: Array<ExtensionGeneratedOperationProjectionResponse>, backend_services?: Array<ExtensionBackendServiceProjectionResponse>, };
 
 export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: string, parent_trace_id?: string | null, created_at: string, };
+
+export type ExtensionUiComponentProjectionResponse = { extension_key: string, extension_id: string, component_key: string, contract_version: number, renderer: ExtensionUiComponentRendererResponse, props_schema: JsonValue, events_schema: { [key in string]?: JsonValue }, state_projection_schema: JsonValue, slots: Array<string>, sizing: ExtensionUiComponentSizingResponse, sandbox_profile: ExtensionUiComponentSandboxProfileResponse, package_artifact: ExtensionPackageArtifactRefResponse | null, available: boolean, reason: string | null, };
+
+export type ExtensionUiComponentRendererResponse = { "kind": "iframe", entry: string, };
+
+export type ExtensionUiComponentSandboxProfileResponse = "isolated_v1";
+
+export type ExtensionUiComponentSizingResponse = { min_width: number, min_height: number, max_width: number | null, max_height: number | null, };
 
 export type ExtensionWorkspaceTabLoadabilityModeResponse = "extension_host" | "ui_only";
 

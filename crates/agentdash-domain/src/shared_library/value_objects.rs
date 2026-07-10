@@ -1112,6 +1112,112 @@ impl InlineMountFilePayload {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionUiComponentSizing {
+    pub min_width: u32,
+    pub min_height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_height: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionUiComponentRendererDeclaration {
+    Iframe { entry: String },
+}
+
+impl ExtensionUiComponentRendererDeclaration {
+    pub fn entry(&self) -> &str {
+        match self {
+            Self::Iframe { entry } => entry,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionUiComponentSandboxProfile {
+    IsolatedV1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionUiComponentDefinition {
+    pub component_key: String,
+    pub contract_version: u16,
+    pub renderer: ExtensionUiComponentRendererDeclaration,
+    pub props_schema: Value,
+    #[serde(default)]
+    pub events_schema: BTreeMap<String, Value>,
+    pub state_projection_schema: Value,
+    #[serde(default)]
+    pub slots: Vec<String>,
+    pub sizing: ExtensionUiComponentSizing,
+    pub sandbox_profile: ExtensionUiComponentSandboxProfile,
+}
+
+impl ExtensionUiComponentDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        validate_extension_qualified_id(
+            "extension_template.ui_components[].component_key",
+            &self.component_key,
+        )?;
+        if self.contract_version != 1 {
+            return Err(DomainError::InvalidConfig(
+                "extension_template.ui_components[].contract_version 必须为 1".to_string(),
+            ));
+        }
+        require_non_empty(
+            "extension_template.ui_components[].renderer.entry",
+            self.renderer.entry(),
+        )?;
+        validate_json_schema(
+            "extension_template.ui_components[].props_schema",
+            &self.props_schema,
+        )?;
+        validate_json_schema(
+            "extension_template.ui_components[].state_projection_schema",
+            &self.state_projection_schema,
+        )?;
+        for (event_key, schema) in &self.events_schema {
+            validate_extension_qualified_id(
+                "extension_template.ui_components[].events_schema key",
+                event_key,
+            )?;
+            validate_json_schema(
+                "extension_template.ui_components[].events_schema value",
+                schema,
+            )?;
+        }
+        let mut slots = BTreeSet::new();
+        for slot in &self.slots {
+            validate_extension_qualified_id("extension_template.ui_components[].slots[]", slot)?;
+            if !slots.insert(slot) {
+                return Err(DomainError::InvalidConfig(format!(
+                    "extension_template.ui_components[].slots[] 重复: {slot}"
+                )));
+            }
+        }
+        if self.sizing.min_width == 0
+            || self.sizing.min_height == 0
+            || self
+                .sizing
+                .max_width
+                .is_some_and(|maximum| maximum < self.sizing.min_width)
+            || self
+                .sizing
+                .max_height
+                .is_some_and(|maximum| maximum < self.sizing.min_height)
+        {
+            return Err(DomainError::InvalidConfig(
+                "extension_template.ui_components[].sizing 边界无效".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExtensionTemplatePayload {
     pub manifest_version: String,
@@ -1136,6 +1242,8 @@ pub struct ExtensionTemplatePayload {
     pub extension_dependencies: Vec<ExtensionDependencyDeclaration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workspace_tabs: Vec<ExtensionWorkspaceTabDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ui_components: Vec<ExtensionUiComponentDefinition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub permissions: Vec<ExtensionPermissionDeclaration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1181,6 +1289,16 @@ impl ExtensionTemplatePayload {
         for tab in &self.workspace_tabs {
             tab.validate()?;
         }
+        let mut component_keys = BTreeSet::new();
+        for component in &self.ui_components {
+            component.validate()?;
+            if !component_keys.insert(&component.component_key) {
+                return Err(DomainError::InvalidConfig(format!(
+                    "extension_template.ui_components[].component_key 重复: {}",
+                    component.component_key
+                )));
+            }
+        }
         for permission in &self.permissions {
             permission.validate()?;
         }
@@ -1203,6 +1321,7 @@ impl ExtensionTemplatePayload {
         !self.runtime_actions.is_empty()
             || !self.protocols.is_empty()
             || !self.workspace_tabs.is_empty()
+            || !self.ui_components.is_empty()
             || !self.backend_services.is_empty()
             || !self.bundles.is_empty()
     }
@@ -2894,6 +3013,68 @@ mod tests {
         }
     }
 
+    #[test]
+    fn extension_ui_component_contract_is_versioned_and_requires_package_artifact() {
+        let payload = extension_template_from_json(json!({
+            "ui_components": [{
+                "component_key": "demo.review-card",
+                "contract_version": 1,
+                "renderer": { "kind": "iframe", "entry": "dist/components/review-card/index.html" },
+                "props_schema": { "type": "object" },
+                "events_schema": { "review.submit": { "type": "object" } },
+                "state_projection_schema": true,
+                "slots": ["review.actions"],
+                "sizing": { "min_width": 320, "min_height": 180, "max_width": 960 },
+                "sandbox_profile": "isolated_v1"
+            }]
+        }));
+        assert!(payload.requires_package_artifact());
+        assert_eq!(payload.ui_components[0].contract_version, 1);
+    }
+
+    #[test]
+    fn extension_ui_component_rejects_unversioned_or_invalid_sizing_contract() {
+        for component in [
+            json!({
+                "component_key": "demo.review-card",
+                "contract_version": 2,
+                "renderer": { "kind": "iframe", "entry": "dist/component.html" },
+                "props_schema": true,
+                "events_schema": {},
+                "state_projection_schema": true,
+                "slots": [],
+                "sizing": { "min_width": 160, "min_height": 120 },
+                "sandbox_profile": "isolated_v1"
+            }),
+            json!({
+                "component_key": "demo.review-card",
+                "contract_version": 1,
+                "renderer": { "kind": "iframe", "entry": "dist/component.html" },
+                "props_schema": true,
+                "events_schema": {},
+                "state_projection_schema": true,
+                "slots": [],
+                "sizing": { "min_width": 320, "min_height": 120, "max_width": 160 },
+                "sandbox_profile": "isolated_v1"
+            }),
+        ] {
+            let mut payload = json!({
+                "manifest_version": "2",
+                "extension_id": "demo",
+                "package": { "name": "@agentdash/demo", "version": "0.1.0" },
+                "asset_version": "0.1.0",
+                "ui_components": [component]
+            });
+            assert!(
+                LibraryAssetPayload::from_value(
+                    LibraryAssetType::ExtensionTemplate,
+                    payload.take(),
+                )
+                .is_err()
+            );
+        }
+    }
+
     fn extension_template_for_permission(
         include_top_level_permission: bool,
         include_action_permission: bool,
@@ -2934,6 +3115,7 @@ mod tests {
             protocols: vec![],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions,
             fetch_routes: vec![],
             operation_catalog: vec![],

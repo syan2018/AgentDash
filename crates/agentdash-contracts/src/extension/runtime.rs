@@ -312,6 +312,44 @@ pub struct ExtensionWorkspaceTabProjectionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionUiComponentRendererResponse {
+    Iframe { entry: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionUiComponentSizingResponse {
+    pub min_width: u32,
+    pub min_height: u32,
+    pub max_width: Option<u32>,
+    pub max_height: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionUiComponentSandboxProfileResponse {
+    IsolatedV1,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionUiComponentProjectionResponse {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub component_key: String,
+    pub contract_version: u16,
+    pub renderer: ExtensionUiComponentRendererResponse,
+    pub props_schema: Value,
+    pub events_schema: BTreeMap<String, Value>,
+    pub state_projection_schema: Value,
+    pub slots: Vec<String>,
+    pub sizing: ExtensionUiComponentSizingResponse,
+    pub sandbox_profile: ExtensionUiComponentSandboxProfileResponse,
+    pub package_artifact: Option<ExtensionPackageArtifactRefResponse>,
+    pub available: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionPermissionProjectionResponse {
     pub extension_key: String,
     pub extension_id: String,
@@ -337,6 +375,7 @@ pub struct ExtensionRuntimeProjectionResponse {
     pub protocols: Vec<ExtensionProtocolProjectionResponse>,
     pub extension_dependencies: Vec<ExtensionDependencyProjectionResponse>,
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjectionResponse>,
+    pub ui_components: Vec<ExtensionUiComponentProjectionResponse>,
     pub permissions: Vec<ExtensionPermissionProjectionResponse>,
     pub bundles: Vec<ExtensionBundleProjectionResponse>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

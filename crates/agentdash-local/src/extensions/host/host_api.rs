@@ -691,6 +691,7 @@ mod tests {
             }],
             extension_dependencies: vec![],
             workspace_tabs: vec![],
+            ui_components: vec![],
             permissions: vec![],
             fetch_routes: vec![],
             operation_catalog: vec![],

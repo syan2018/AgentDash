@@ -7,6 +7,7 @@ use agentdash_domain::shared_library::{
     ExtensionBundleKind, ExtensionCommandHandler, ExtensionDependencyDeclaration,
     ExtensionFlagType, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
     ExtensionProcessPermissionAccess, ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
+    ExtensionUiComponentRendererDeclaration, ExtensionUiComponentSandboxProfile,
     ExtensionWorkspaceTabRendererDeclaration,
 };
 
@@ -25,6 +26,8 @@ pub use agentdash_contracts::extension_runtime::{
     ExtensionProcessPermissionAccessResponse, ExtensionProtocolMethodProjectionResponse,
     ExtensionProtocolProjectionResponse, ExtensionRuntimeActionKindResponse,
     ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeProjectionResponse,
+    ExtensionUiComponentProjectionResponse, ExtensionUiComponentRendererResponse,
+    ExtensionUiComponentSandboxProfileResponse, ExtensionUiComponentSizingResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
 };
@@ -190,6 +193,50 @@ pub fn extension_runtime_projection_response(
                     },
                     reason: tab.loadability.reason,
                 },
+            })
+            .collect(),
+        ui_components: projection
+            .ui_components
+            .into_iter()
+            .map(|component| ExtensionUiComponentProjectionResponse {
+                extension_key: component.extension_key,
+                extension_id: component.extension_id,
+                component_key: component.descriptor.component_key,
+                contract_version: component.descriptor.contract_version,
+                renderer: match component.descriptor.renderer {
+                    ExtensionUiComponentRendererDeclaration::Iframe { entry } => {
+                        ExtensionUiComponentRendererResponse::Iframe { entry }
+                    }
+                },
+                props_schema: component.descriptor.props_schema,
+                events_schema: component.descriptor.events_schema,
+                state_projection_schema: component.descriptor.state_projection_schema,
+                slots: component.descriptor.slots,
+                sizing: ExtensionUiComponentSizingResponse {
+                    min_width: component.descriptor.sizing.min_width,
+                    min_height: component.descriptor.sizing.min_height,
+                    max_width: component.descriptor.sizing.max_width,
+                    max_height: component.descriptor.sizing.max_height,
+                },
+                sandbox_profile: match component.descriptor.sandbox_profile {
+                    ExtensionUiComponentSandboxProfile::IsolatedV1 => {
+                        ExtensionUiComponentSandboxProfileResponse::IsolatedV1
+                    }
+                },
+                package_artifact: component.package_artifact.map(|artifact| {
+                    ExtensionPackageArtifactRefResponse {
+                        artifact_id: artifact.artifact_id.to_string(),
+                        package_name: artifact.package_name,
+                        package_version: artifact.package_version,
+                        asset_version: artifact.asset_version,
+                        source_version: artifact.source_version,
+                        storage_ref: artifact.storage_ref,
+                        archive_digest: artifact.archive_digest,
+                        manifest_digest: artifact.manifest_digest,
+                    }
+                }),
+                available: component.available,
+                reason: component.reason,
             })
             .collect(),
         permissions: projection

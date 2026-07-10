@@ -25,7 +25,7 @@ const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
  * @typedef {import("./runtime-context.js").ExtensionRuntimeActionDefinition} ExtensionRuntimeActionDefinition
  * @typedef {import("./runtime-context.js").ExtensionProtocolDefinition} ExtensionProtocolDefinition
  * @typedef {{ method: string, params?: Record<string, unknown> }} DevBridgeDispatchRequest
- * @typedef {{ project_id: string, session_id: string, extension_id: string, extension_key: string, panel_type_id: string, uri: string }} DevPanelContext
+ * @typedef {{ project_id: string, execution_id: string, extension_id: string, extension_key: string, panel_type_id: string, uri: string }} DevPanelContext
  * @typedef {{ path: string, mtime_ms: number }} InputStamp
  * @typedef {{ extension_id?: unknown, package?: unknown, workspace_tabs?: unknown, extension_dependencies?: unknown }} ManifestRecord
  */
@@ -126,7 +126,7 @@ export class ExtensionDevRuntime {
     const scheme = stringField(tab, "uri_scheme") ?? extensionId;
     return {
       project_id: "dev-project",
-      session_id: "dev-session",
+      execution_id: "dev-session",
       extension_id: extensionId,
       extension_key: extensionId,
       panel_type_id: stringField(tab, "type_id") ?? `${extensionId}.panel`,
@@ -200,7 +200,7 @@ export class ExtensionDevRuntime {
           arch: process.arch,
           backend_id: "extension-toolchain",
           project_id: "dev-project",
-          session_id: "dev-session",
+          execution_id: "dev-session",
           workspace_roots: [{
             index: 0,
             name: path.basename(this.projectRoot),

@@ -346,29 +346,6 @@ impl From<agentdash_application_shared_library::ExternalMarketplaceLibraryError>
     }
 }
 
-impl From<agentdash_application_runtime_gateway::RuntimeInvocationError> for ApiError {
-    fn from(err: agentdash_application_runtime_gateway::RuntimeInvocationError) -> Self {
-        use agentdash_application_runtime_gateway::{
-            RuntimeInvocationError as E, RuntimeInvocationErrorKind,
-        };
-
-        let message = err.to_string();
-        match err.kind() {
-            RuntimeInvocationErrorKind::InvalidRequest => ApiError::BadRequest(message),
-            RuntimeInvocationErrorKind::CapabilityDenied => ApiError::Forbidden(message),
-            RuntimeInvocationErrorKind::Conflict => ApiError::Conflict(message),
-            RuntimeInvocationErrorKind::ProviderUnavailable => {
-                ApiError::ServiceUnavailable(message)
-            }
-            RuntimeInvocationErrorKind::ProviderFailed => match err {
-                E::ProviderFailed { message, .. } => ApiError::Internal(message),
-                _ => ApiError::Internal(message),
-            },
-            RuntimeInvocationErrorKind::Timeout => ApiError::ServiceUnavailable(message),
-        }
-    }
-}
-
 impl From<agentdash_application_runtime_gateway::OperationExecutionError> for ApiError {
     fn from(err: agentdash_application_runtime_gateway::OperationExecutionError) -> Self {
         use agentdash_application_runtime_gateway::OperationExecutionErrorKind;

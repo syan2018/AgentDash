@@ -81,7 +81,7 @@ impl ExtensionCommandHandler {
         if let Err(error) = self
             .ensure_runtime_extension_hosts_activation(
                 &payload.project_id,
-                &payload.session_id,
+                &payload.execution_id,
                 &payload.runtime_extensions,
                 payload.workspace.as_ref(),
             )
@@ -108,7 +108,7 @@ impl ExtensionCommandHandler {
                 metadata.insert("extension_id".to_string(), json!(extension_id));
                 metadata.insert("action_key".to_string(), json!(action_key));
                 metadata.insert("project_id".to_string(), json!(payload.project_id));
-                metadata.insert("session_id".to_string(), json!(payload.session_id));
+                metadata.insert("execution_id".to_string(), json!(payload.execution_id));
                 metadata.insert("trace_id".to_string(), json!(payload.trace_id));
                 metadata.insert("invocation_id".to_string(), json!(payload.invocation_id));
                 RelayMessage::ResponseExtensionActionInvoke {
@@ -139,7 +139,7 @@ impl ExtensionCommandHandler {
         if let Err(error) = self
             .activate_extension_host_from_artifact(
                 &payload.project_id,
-                &payload.session_id,
+                &payload.execution_id,
                 &payload.provider_extension_key,
                 &payload.package_artifact,
                 payload.workspace.as_ref(),
@@ -179,7 +179,7 @@ impl ExtensionCommandHandler {
                 );
                 metadata.insert("method".to_string(), json!(payload.method));
                 metadata.insert("project_id".to_string(), json!(payload.project_id));
-                metadata.insert("session_id".to_string(), json!(payload.session_id));
+                metadata.insert("execution_id".to_string(), json!(payload.execution_id));
                 metadata.insert("trace_id".to_string(), json!(payload.trace_id));
                 metadata.insert("invocation_id".to_string(), json!(payload.invocation_id));
                 metadata.insert("consumer_kind".to_string(), json!(payload.consumer.kind));
@@ -349,7 +349,7 @@ impl ExtensionCommandHandler {
                     extension_key: payload.extension_key.clone(),
                     backend_id: self.backend_id.clone(),
                     project_id: Some(payload.project_id.clone()),
-                    session_id: Some(payload.session_id.clone()),
+                    execution_id: Some(payload.execution_id.clone()),
                     default_workspace_root: workspace_root_from_relay(payload.workspace.as_ref()),
                     workspace_roots: self.workspace_roots.clone(),
                 },
@@ -362,7 +362,7 @@ impl ExtensionCommandHandler {
     async fn ensure_runtime_extension_hosts_activation(
         &self,
         project_id: &str,
-        session_id: &str,
+        execution_id: &str,
         runtime_extensions: &[ExtensionRuntimeHostRelay],
         workspace: Option<&ExtensionInvocationWorkspaceRelay>,
     ) -> Result<(), String> {
@@ -372,7 +372,7 @@ impl ExtensionCommandHandler {
             };
             self.activate_extension_host_from_artifact(
                 project_id,
-                session_id,
+                execution_id,
                 &extension.extension_key,
                 artifact,
                 workspace,
@@ -385,7 +385,7 @@ impl ExtensionCommandHandler {
     async fn activate_extension_host_from_artifact(
         &self,
         project_id: &str,
-        session_id: &str,
+        execution_id: &str,
         extension_key: &str,
         artifact: &ExtensionPackageArtifactRelay,
         workspace: Option<&ExtensionInvocationWorkspaceRelay>,
@@ -408,7 +408,7 @@ impl ExtensionCommandHandler {
                     extension_key: extension_key.to_string(),
                     backend_id: self.backend_id.clone(),
                     project_id: Some(project_id.to_string()),
-                    session_id: Some(session_id.to_string()),
+                    execution_id: Some(execution_id.to_string()),
                     default_workspace_root: workspace_root_from_relay(workspace),
                     workspace_roots: self.workspace_roots.clone(),
                 },

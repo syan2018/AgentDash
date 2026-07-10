@@ -122,8 +122,8 @@ pub fn extension_runtime_projection_response(
                 extension_id: action.extension_id,
                 action_key: action.action_key,
                 kind: match action.kind {
-                    ExtensionRuntimeActionKind::SessionRuntime => {
-                        ExtensionRuntimeActionKindResponse::SessionRuntime
+                    ExtensionRuntimeActionKind::Runtime => {
+                        ExtensionRuntimeActionKindResponse::Runtime
                     }
                     ExtensionRuntimeActionKind::Setup => ExtensionRuntimeActionKindResponse::Setup,
                 },

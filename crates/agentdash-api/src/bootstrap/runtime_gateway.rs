@@ -6,23 +6,20 @@ use agentdash_application::backend::{
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::workspace::WorkspaceDetectionError;
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
-use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_application_runtime_gateway::{
     CompositeOperationAuthorityResolver, ExtensionOperationProvider,
-    ExtensionOperationRuntimeContext, ExtensionRuntimeActionProvider, InMemoryOperationResultStore,
-    InteractionCommandOperation, InteractionOperationAccess, InteractionOperationProvider,
-    McpCallToolProvider, McpListToolsProvider, McpOperationProvider, McpProbeSetupPort,
-    McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
-    OperationGateway, RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
-    SetupOperationAccessPort, SetupOperationAuthorityResolver, SetupOperationProvider,
-    TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput,
-    WorkspaceBrowseDirectoryOutput, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
-    WorkspaceDetectGitOutput, WorkspaceDetectGitSetupPort, WorkspaceDetectInput,
-    WorkspaceDetectOutput, WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    ExtensionOperationRuntimeContext, InMemoryOperationResultStore, InteractionCommandOperation,
+    InteractionOperationAccess, InteractionOperationProvider, McpOperationProvider,
+    McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput,
+    McpProbeTransportOutput, OperationGateway, RuntimeGatewaySetupError, SetupOperationAccessPort,
+    SetupOperationAuthorityResolver, SetupOperationProvider, TracingOperationAuditSink,
+    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
+    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
+    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
-use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::AuthIdentity;
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
@@ -32,24 +29,6 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use crate::relay::registry::BackendRegistry;
-
-pub(crate) fn build_runtime_gateway(
-    session_mcp_access: Arc<dyn RuntimeSessionMcpAccess>,
-    extension_installations: Arc<dyn ProjectExtensionInstallationRepository>,
-    extension_action_transport: Arc<dyn ExtensionRuntimeActionTransport>,
-) -> Arc<RuntimeGateway> {
-    Arc::new(
-        RuntimeGateway::new()
-            .with_provider(Arc::new(McpListToolsProvider::new(
-                session_mcp_access.clone(),
-            )))
-            .with_provider(Arc::new(McpCallToolProvider::new(session_mcp_access)))
-            .with_dynamic_provider(Arc::new(ExtensionRuntimeActionProvider::new(
-                extension_installations,
-                extension_action_transport,
-            ))),
-    )
-}
 
 pub(crate) fn build_operation_gateway(
     mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,

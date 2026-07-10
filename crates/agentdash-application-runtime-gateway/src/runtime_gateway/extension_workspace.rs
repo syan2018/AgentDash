@@ -1,7 +1,17 @@
 use agentdash_domain::backend::RuntimeBackendAnchor;
 use agentdash_domain::common::Vfs;
 
-use super::extension_actions::ExtensionInvocationWorkspaceContext;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionInvocationWorkspaceContext {
+    pub mount_id: String,
+    pub root_ref: String,
+}
+
+impl ExtensionInvocationWorkspaceContext {
+    pub fn new(mount_id: String, root_ref: String) -> Self {
+        Self { mount_id, root_ref }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionInvocationWorkspaceResolution {

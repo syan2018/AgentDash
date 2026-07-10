@@ -3,7 +3,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 export type JsonObject = { [key: string]: JsonValue };
 
 export type ExtensionBundleKind = "extension_host";
-export type ExtensionRuntimeActionKind = "session_runtime" | "setup";
+export type ExtensionRuntimeActionKind = "runtime" | "setup";
 export type ExtensionPermissionAccess = "read" | "write" | "read_write";
 export type ExtensionProcessPermissionAccess = "execute";
 export type ExtensionRuntimePermissionKey =

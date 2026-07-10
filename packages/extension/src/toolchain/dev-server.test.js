@@ -74,7 +74,7 @@ async function fixtureProject() {
     }],
     runtime_actions: [{
       action_key: "server.greet",
-      kind: "session_runtime",
+      kind: "runtime",
       description: "Greet",
       input_schema: true,
       output_schema: true,
@@ -103,7 +103,7 @@ export default defineExtension({
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: "server.greet",
-      kind: "session_runtime",
+      kind: "runtime",
       description: "Greet",
       input_schema: true,
       output_schema: true,

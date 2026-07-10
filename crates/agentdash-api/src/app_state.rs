@@ -40,10 +40,7 @@ use agentdash_application_lifecycle::run_view_builder::LifecycleReadModelQueryAd
 use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;
 use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_application_ports::operation_script::OperationScriptEngine;
-use agentdash_application_runtime_gateway::{
-    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeProtocolInvoker, OperationGateway,
-    RuntimeGateway,
-};
+use agentdash_application_runtime_gateway::{CurrentSurfaceRuntimeMcpAccess, OperationGateway};
 use agentdash_application_runtime_session::session::{
     SessionBranchingService, SessionControlService, SessionCoreService, SessionEventingService,
     SessionHookService, SessionLaunchService, SessionRuntimeService,
@@ -144,13 +141,10 @@ pub struct ServiceSet {
     pub routine_executor: Option<Arc<RoutineExecutor>>,
     /// Session 上下文审计总线 — Bundle / Fragment 产出与消费的可观测轨迹
     pub audit_bus: SharedContextAuditBus,
-    /// 统一运行时能力网关 — Session/Setup runtime action 的共享入口
-    pub runtime_gateway: Arc<RuntimeGateway>,
     /// actor-neutral canonical Operation gateway；Setup caller 已迁入，Session caller 随 host adapter 收敛。
     pub operation_gateway: Arc<OperationGateway>,
     /// Ephemeral async Rhai V1 engine shared by trusted UserWorkshop/Canvas/Workflow hosts.
     pub operation_script_engine: Arc<dyn OperationScriptEngine>,
-    pub extension_runtime_protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
     /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
     /// Workflow function/local-effect executor port — orchestration scheduler 共享。
@@ -376,15 +370,6 @@ impl AppState {
         workspace_module_operation_gateway
             .set(operation_gateway.clone())
             .await;
-        let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
-            session_mcp_access,
-            repos.project_extension_installation_repo.clone(),
-            backend_registry.clone(),
-        );
-        let extension_runtime_protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
-            repos.project_extension_installation_repo.clone(),
-            backend_registry.clone(),
-        ));
 
         let project_repo_port: Arc<dyn ProjectRepository> = repos.project_repo.clone();
         let state_change_repo_port: Arc<dyn StateChangeRepository> =
@@ -538,10 +523,8 @@ impl AppState {
                 cron_scheduler: CronSchedulerHandle::new(),
                 routine_executor: None,
                 audit_bus,
-                runtime_gateway,
                 operation_gateway,
                 operation_script_engine,
-                extension_runtime_protocol_invoker,
                 extension_package_artifact_storage,
                 function_runner,
             },

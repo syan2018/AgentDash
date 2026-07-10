@@ -14,12 +14,6 @@ test("validateProject accepts a packaged manifest shape", async () => {
   assert.deepEqual(result.errors, []);
 });
 
-test("validateProject accepts canvas panel renderer", async () => {
-  const root = await fixtureProject({ rendererKind: "canvas_panel" });
-  const result = await validateProject(root);
-  assert.deepEqual(result.errors, []);
-});
-
 test("validateProject accepts protocols, dependencies, and trusted host capabilities", async () => {
   const root = await fixtureProject({ withProtocol: true });
   const result = await validateProject(root);
@@ -108,7 +102,7 @@ test("validateProject rejects non self-contained dependencies and native constra
 });
 
 /**
- * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withProjectionFields?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean, backendServiceOverride?: Record<string, unknown>, omitBackendServiceEntryFile?: boolean }} [options]
+ * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview", withProtocol?: boolean, withProjectionFields?: boolean, withInvalidProtocol?: boolean, unknownRuntimePermission?: string, omitActionSchema?: boolean, nullActionSchema?: boolean, backendServiceOverride?: Record<string, unknown>, omitBackendServiceEntryFile?: boolean }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
@@ -279,7 +273,7 @@ function runtimeAction(options) {
     : ["local.profile.read"];
   const action = {
     action_key: "local-hello.profile",
-    kind: "session_runtime",
+    kind: "runtime",
     description: "Read profile",
     output_schema: {},
     permissions,

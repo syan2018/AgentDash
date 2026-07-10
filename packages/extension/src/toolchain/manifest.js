@@ -304,8 +304,8 @@ function validateRuntimeActions(actions, errors) {
     }
     validateQualifiedKey(record, "action_key", "runtime_actions[].action_key", errors);
     const kind = stringField(record, "kind");
-    if (kind !== "session_runtime" && kind !== "setup") {
-      errors.push("runtime_actions[].kind 必须是 session_runtime 或 setup");
+    if (kind !== "runtime" && kind !== "setup") {
+      errors.push("runtime_actions[].kind 必须是 runtime 或 setup");
     }
     validateJsonSchemaField(record, "input_schema", "runtime_actions[].input_schema", errors);
     validateJsonSchemaField(record, "output_schema", "runtime_actions[].output_schema", errors);
@@ -411,10 +411,10 @@ function validateWorkspaceTabs(tabs, errors) {
     const rendererKind = stringField(renderer ?? {}, "kind");
     if (
       !renderer
-      || (rendererKind !== "webview" && rendererKind !== "canvas_panel")
+      || rendererKind !== "webview"
       || !stringField(renderer, "entry")
     ) {
-      errors.push("workspace_tabs[].renderer 必须是 webview 或 canvas_panel 且包含 entry");
+      errors.push("workspace_tabs[].renderer 必须是 webview 且包含 entry");
     }
   }
 }

@@ -40,7 +40,7 @@ pub struct CommandExtensionActionInvokePayload {
     pub extension_id: String,
     pub action_key: String,
     pub project_id: String,
-    pub session_id: String,
+    pub execution_id: String,
     #[serde(default)]
     pub input: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -72,7 +72,7 @@ pub struct CommandExtensionProtocolInvokePayload {
     pub protocol_version: String,
     pub method: String,
     pub project_id: String,
-    pub session_id: String,
+    pub execution_id: String,
     #[serde(default)]
     pub input: Value,
     pub package_artifact: ExtensionPackageArtifactRelay,
@@ -127,7 +127,7 @@ pub struct ExtensionBackendServiceInvokeMetadataRelay {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CommandExtensionBackendServiceInvokePayload {
     pub metadata: ExtensionBackendServiceInvokeMetadataRelay,
-    pub session_id: String,
+    pub execution_id: String,
     pub method: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,

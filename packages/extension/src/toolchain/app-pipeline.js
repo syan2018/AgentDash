@@ -468,7 +468,7 @@ function runtimeActionsFromDispatches(normalized) {
     const capability = capabilityByKey(normalized, stringField(projection, "capability_key"));
     result.push({
       action_key: actionKey,
-      kind: "session_runtime",
+      kind: "runtime",
       description: stringField(operation ?? {}, "description")
         ?? capability?.description
         ?? capability?.title

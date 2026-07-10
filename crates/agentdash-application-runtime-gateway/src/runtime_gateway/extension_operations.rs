@@ -329,7 +329,7 @@ async fn dispatch_operation(
                     extension_id: installation.manifest.extension_id.clone(),
                     action_key,
                     project_id: runtime.project_id.to_string(),
-                    session_id: execution_id,
+                    execution_id: execution_id,
                     input: envelope.input,
                     package_artifact: Some(package_artifact),
                     runtime_extensions: runtime_hosts(&installations),
@@ -362,7 +362,7 @@ async fn dispatch_operation(
                         protocol_version: protocol.version.clone(),
                         method,
                         project_id: runtime.project_id.to_string(),
-                        session_id: execution_id,
+                        execution_id: execution_id,
                         input: envelope.input,
                         package_artifact,
                         consumer: ExtensionProtocolConsumerPayload {
@@ -393,7 +393,7 @@ async fn dispatch_operation(
                         service_key,
                         route,
                         project_id: runtime.project_id.to_string(),
-                        session_id: execution_id,
+                        execution_id: execution_id,
                         method: "POST".to_string(),
                         headers: BTreeMap::from([(
                             "content-type".to_string(),
@@ -621,7 +621,7 @@ mod tests {
                 .map(|_| {
                     vec![ExtensionRuntimeActionDefinition {
                         action_key,
-                        kind: ExtensionRuntimeActionKind::SessionRuntime,
+                        kind: ExtensionRuntimeActionKind::Runtime,
                         description: "Run".to_string(),
                         input_schema: json!({ "type": "object" }),
                         output_schema: json!(true),

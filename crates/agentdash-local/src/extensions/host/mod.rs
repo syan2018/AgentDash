@@ -21,7 +21,7 @@ pub struct LocalExtensionHostActivation {
     pub extension_key: String,
     pub backend_id: String,
     pub project_id: Option<String>,
-    pub session_id: Option<String>,
+    pub execution_id: Option<String>,
     pub default_workspace_root: Option<PathBuf>,
     pub workspace_roots: Vec<PathBuf>,
 }
@@ -34,7 +34,7 @@ pub struct LocalExtensionHostProfile {
     pub arch: String,
     pub backend_id: String,
     pub project_id: Option<String>,
-    pub session_id: Option<String>,
+    pub execution_id: Option<String>,
     pub workspace_roots: Vec<LocalExtensionHostWorkspaceRoot>,
 }
 

@@ -1,8 +1,5 @@
-mod error;
-mod extension_actions;
 mod extension_operations;
 mod extension_workspace;
-mod gateway;
 mod interaction_operations;
 mod mcp_access;
 mod mcp_operations;
@@ -14,11 +11,8 @@ mod operation_hosts;
 mod operation_provider;
 mod operation_script_adapter;
 mod operation_types;
-mod provider;
 mod schema;
-mod session_actions;
 mod setup_operations;
-mod types;
 
 pub use agentdash_application_ports::extension_runtime::{
     ExtensionBackendServiceTransport, ExtensionRuntimeActionTransport,
@@ -41,26 +35,14 @@ pub use agentdash_domain::operation::{
     OperationEffect, OperationOriginRef, OperationPrincipalRef, OperationReplayPolicy,
     OperationScopeRef,
 };
-pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
-pub use extension_actions::{
-    EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_ID_METADATA,
-    EXTENSION_RUNTIME_DESCRIPTOR_EXTENSION_KEY_METADATA,
-    EXTENSION_RUNTIME_DESCRIPTOR_INSTALLATION_ID_METADATA, ExtensionInvocationWorkspaceContext,
-    ExtensionRuntimeActionProvider, ExtensionRuntimeBackendServiceInvokeRequest,
-    ExtensionRuntimeBackendServiceInvokeResult, ExtensionRuntimeBackendServiceInvoker,
-    ExtensionRuntimeProtocolConsumer, ExtensionRuntimeProtocolInvokeRequest,
-    ExtensionRuntimeProtocolInvokeResult, ExtensionRuntimeProtocolInvoker,
-    attach_extension_invocation_workspace,
-};
 pub use extension_operations::{
     EXTENSION_OPERATION_NAMESPACE, ExtensionOperationContextPort, ExtensionOperationProvider,
     ExtensionOperationRuntimeContext,
 };
 pub use extension_workspace::{
-    ExtensionInvocationWorkspaceResolution, ExtensionInvocationWorkspaceUnavailableReason,
-    resolve_extension_invocation_workspace,
+    ExtensionInvocationWorkspaceContext, ExtensionInvocationWorkspaceResolution,
+    ExtensionInvocationWorkspaceUnavailableReason, resolve_extension_invocation_workspace,
 };
-pub use gateway::RuntimeGateway;
 pub use interaction_operations::{
     INTERACTION_OPERATION_NAMESPACE, InteractionCommandOperation, InteractionOperationAccess,
     InteractionOperationProvider,
@@ -96,20 +78,8 @@ pub use operation_types::{
     OperationPrincipal, OperationProvenance, OperationReadiness, OperationResultAccess,
     OperationResultRef, OperationResultValue, OperationTraceContext, ScopedOperationResult,
 };
-pub use provider::RuntimeProvider;
 pub use schema::{validate_json_schema_definition, validate_json_schema_subset};
-pub(crate) use session_actions::execute_runtime_mcp_tool;
-pub use session_actions::{
-    MCP_CALL_TOOL_ACTION, MCP_LIST_TOOLS_ACTION, McpCallToolInput, McpCallToolProvider,
-    McpListToolsInput, McpListToolsOutput, McpListToolsProvider, RuntimeMcpToolDescriptor,
-    RuntimeSessionMcpAccess, RuntimeSessionMcpError,
-};
 pub use setup_operations::{
     SETUP_OPERATION_NAMESPACE, SETUP_OPERATION_PROVIDER_KEY, SetupOperationAccessPort,
     SetupOperationAuthorityResolver, SetupOperationProvider, setup_operation_ref,
-};
-pub use types::{
-    RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKeyError, RuntimeActionKind,
-    RuntimeActor, RuntimeContext, RuntimeInvocationOutput, RuntimeInvocationRequest,
-    RuntimeInvocationResult, RuntimePolicy, RuntimeSurface, RuntimeTarget, RuntimeTrace,
 };

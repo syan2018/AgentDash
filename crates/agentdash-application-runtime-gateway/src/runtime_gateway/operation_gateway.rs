@@ -290,18 +290,19 @@ impl OperationPlacementResolver for OperationProviderRuntime {
         descriptor: &OperationDescriptor,
         principal: &OperationPrincipal,
         scope: &OperationAuthorizationScope,
+        origin: &OperationOriginRef,
         cancel: CancellationToken,
     ) -> Result<OperationPlacement, OperationExecutionError> {
         if let Ok(provider) = self.provider_for(descriptor) {
             return provider
-                .resolve_placement(descriptor, principal, scope, cancel)
+                .resolve_placement(descriptor, principal, scope, origin, cancel)
                 .await;
         }
         self.dynamic_provider_for(&descriptor.operation_ref.provider)?
             .ok_or_else(|| OperationExecutionError::OperationUnavailable {
                 operation_ref: descriptor.operation_ref.clone(),
             })?
-            .resolve_placement(descriptor, principal, scope, cancel)
+            .resolve_placement(descriptor, principal, scope, origin, cancel)
             .await
     }
 }
@@ -420,6 +421,7 @@ mod tests {
             _: &OperationDescriptor,
             _: &OperationPrincipal,
             _: &OperationAuthorizationScope,
+            _: &OperationOriginRef,
             _: CancellationToken,
         ) -> Result<OperationPlacement, OperationExecutionError> {
             Ok(OperationPlacement::Cloud)

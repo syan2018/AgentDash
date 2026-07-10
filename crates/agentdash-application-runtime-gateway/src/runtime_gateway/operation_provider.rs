@@ -27,6 +27,7 @@ pub trait OperationProvider: Send + Sync {
         descriptor: &OperationDescriptor,
         principal: &OperationPrincipal,
         scope: &OperationAuthorizationScope,
+        origin: &OperationOriginRef,
         cancel: CancellationToken,
     ) -> Result<OperationPlacement, OperationExecutionError>;
 
@@ -57,6 +58,7 @@ pub trait DynamicOperationProvider: Send + Sync {
         descriptor: &OperationDescriptor,
         principal: &OperationPrincipal,
         scope: &OperationAuthorizationScope,
+        origin: &OperationOriginRef,
         cancel: CancellationToken,
     ) -> Result<OperationPlacement, OperationExecutionError>;
 

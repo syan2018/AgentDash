@@ -102,6 +102,7 @@ impl DynamicOperationProvider for McpOperationProvider {
         descriptor: &OperationDescriptor,
         principal: &OperationPrincipal,
         scope: &OperationAuthorizationScope,
+        _origin: &OperationOriginRef,
         cancel: CancellationToken,
     ) -> Result<OperationPlacement, OperationExecutionError> {
         let tool = self
@@ -261,7 +262,13 @@ mod tests {
         );
         assert_eq!(
             provider
-                .resolve_placement(descriptor, &principal(), &scope(), CancellationToken::new(),)
+                .resolve_placement(
+                    descriptor,
+                    &principal(),
+                    &scope(),
+                    &OperationOriginRef::AgentTool,
+                    CancellationToken::new(),
+                )
                 .await
                 .expect("placement"),
             OperationPlacement::LocalBackend {

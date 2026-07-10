@@ -333,6 +333,7 @@ impl OperationProvider for SetupOperationProvider {
         descriptor: &OperationDescriptor,
         _principal: &OperationPrincipal,
         scope: &OperationAuthorizationScope,
+        _origin: &OperationOriginRef,
         _cancel: CancellationToken,
     ) -> Result<OperationPlacement, OperationExecutionError> {
         if descriptor.operation_ref.operation_key == MCP_PROBE_TRANSPORT_ACTION {

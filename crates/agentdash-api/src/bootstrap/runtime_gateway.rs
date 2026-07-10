@@ -8,16 +8,16 @@ use agentdash_application::workspace::WorkspaceDetectionError;
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_application_runtime_gateway::{
-    CompositeOperationAuthorityResolver, ExtensionRuntimeActionProvider,
-    InMemoryOperationResultStore, McpCallToolProvider, McpListToolsProvider, McpOperationProvider,
-    McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput,
-    McpProbeTransportOutput, OperationGateway, RuntimeGateway, RuntimeGatewaySetupError,
-    RuntimeSessionMcpAccess, SetupOperationAccessPort, SetupOperationAuthorityResolver,
-    SetupOperationProvider, TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry,
-    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
-    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
-    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
-    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    CompositeOperationAuthorityResolver, ExtensionOperationProvider,
+    ExtensionOperationRuntimeContext, ExtensionRuntimeActionProvider, InMemoryOperationResultStore,
+    McpCallToolProvider, McpListToolsProvider, McpOperationProvider, McpProbeSetupPort,
+    McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
+    OperationGateway, RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
+    SetupOperationAccessPort, SetupOperationAuthorityResolver, SetupOperationProvider,
+    TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput,
+    WorkspaceBrowseDirectoryOutput, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
+    WorkspaceDetectGitOutput, WorkspaceDetectGitSetupPort, WorkspaceDetectInput,
+    WorkspaceDetectOutput, WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
@@ -52,6 +52,9 @@ pub(crate) fn build_runtime_gateway(
 pub(crate) fn build_operation_gateway(
     mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,
     operation_mcp_access: Arc<dyn agentdash_application_runtime_gateway::OperationMcpAccess>,
+    runtime_surface_query: Arc<
+        dyn agentdash_application_agentrun::agent_run::AgentRunRuntimeSurfaceQueryPort,
+    >,
     repos: RepositorySet,
     backend_registry: Arc<BackendRegistry>,
     setup_action_transport: Arc<
@@ -60,7 +63,7 @@ pub(crate) fn build_operation_gateway(
 ) -> Result<Arc<OperationGateway>, agentdash_application_runtime_gateway::OperationExecutionError> {
     let mcp_probe_setup = Arc::new(ApplicationMcpProbeSetupPort::new(
         Some(mcp_probe_relay),
-        McpProbeBackendTargetResolver::new(repos.clone(), backend_registry),
+        McpProbeBackendTargetResolver::new(repos.clone(), backend_registry.clone()),
         Arc::new(agentdash_infrastructure::RmcpProbeTransport::new()),
     ));
     let workspace_setup = Arc::new(ApplicationWorkspaceSetupPort::new(setup_action_transport));
@@ -81,7 +84,19 @@ pub(crate) fn build_operation_gateway(
     )));
     let surface_authority: Arc<
         dyn agentdash_application_runtime_gateway::OperationAuthorityResolver,
-    > = Arc::new(ApplicationSurfaceOperationAuthority { repos });
+    > = Arc::new(ApplicationSurfaceOperationAuthority {
+        repos: repos.clone(),
+    });
+    let extension_provider = Arc::new(ExtensionOperationProvider::new(
+        repos.project_extension_installation_repo.clone(),
+        Arc::new(ApplicationExtensionOperationContext {
+            repos,
+            runtime_surface_query,
+        }),
+        backend_registry.clone(),
+        backend_registry.clone(),
+        backend_registry,
+    ));
     OperationGateway::try_new(
         Arc::new(CompositeOperationAuthorityResolver::new(
             setup_authority,
@@ -91,10 +106,11 @@ pub(crate) fn build_operation_gateway(
             surface_authority,
         )),
         [setup_provider as Arc<dyn agentdash_application_runtime_gateway::OperationProvider>],
-        [Arc::new(McpOperationProvider::new(operation_mcp_access))
-            as Arc<
-                dyn agentdash_application_runtime_gateway::DynamicOperationProvider,
-            >],
+        [
+            Arc::new(McpOperationProvider::new(operation_mcp_access))
+                as Arc<dyn agentdash_application_runtime_gateway::DynamicOperationProvider>,
+            extension_provider,
+        ],
         Arc::new(InMemoryOperationResultStore::default()),
         Arc::new(TracingOperationAuditSink),
     )
@@ -107,6 +123,159 @@ struct ApplicationSetupOperationAccess {
 
 struct ApplicationSurfaceOperationAuthority {
     repos: RepositorySet,
+}
+
+struct ApplicationExtensionOperationContext {
+    repos: RepositorySet,
+    runtime_surface_query:
+        Arc<dyn agentdash_application_agentrun::agent_run::AgentRunRuntimeSurfaceQueryPort>,
+}
+
+#[async_trait]
+impl agentdash_application_runtime_gateway::ExtensionOperationContextPort
+    for ApplicationExtensionOperationContext
+{
+    async fn resolve_context(
+        &self,
+        principal: &agentdash_application_runtime_gateway::OperationPrincipal,
+        scope: &agentdash_application_runtime_gateway::OperationAuthorizationScope,
+        _origin: &agentdash_application_runtime_gateway::OperationOriginRef,
+        cancel: CancellationToken,
+    ) -> Result<
+        ExtensionOperationRuntimeContext,
+        agentdash_application_runtime_gateway::OperationExecutionError,
+    > {
+        use agentdash_application_agentrun::agent_run::RuntimeSurfaceQueryPurpose;
+        use agentdash_application_runtime_gateway::{
+            OperationExecutionError, OperationPrincipalRef, OperationScopeRef,
+        };
+        use agentdash_domain::interaction::InteractionOwner;
+        use agentdash_domain::workspace::WorkspaceBindingStatus;
+
+        if cancel.is_cancelled() {
+            return Err(OperationExecutionError::Cancelled);
+        }
+        if let OperationPrincipalRef::AgentRunAgent { run_id, agent_id } = principal.principal_ref()
+        {
+            let surface = self
+                .runtime_surface_query
+                .current_runtime_surface_for_agent_run(
+                    *run_id,
+                    *agent_id,
+                    RuntimeSurfaceQueryPurpose::new("extension_operation"),
+                )
+                .await
+                .map_err(|error| OperationExecutionError::NotReady {
+                    code: "agent_extension_surface_unavailable".to_string(),
+                    message: error.to_string(),
+                })?;
+            let backend = surface.runtime_backend_anchor.as_ref().ok_or_else(|| {
+                OperationExecutionError::NotReady {
+                    code: "extension_backend_unavailable".to_string(),
+                    message: "AgentRun current surface 缺少 backend anchor".to_string(),
+                }
+            })?;
+            if agentdash_application_runtime_gateway::scope_project_id(&scope.scope_ref)
+                != Some(surface.project_id)
+            {
+                return Err(OperationExecutionError::CapabilitiesDenied {
+                    missing: vec!["agent_run.project_scope".to_string()],
+                });
+            }
+            let workspace = agentdash_application_runtime_gateway::resolve_extension_invocation_workspace(
+                &surface.vfs,
+                backend,
+            )
+            .into_workspace()
+            .map(|workspace| agentdash_application_ports::extension_runtime::ExtensionInvocationWorkspacePayload {
+                mount_id: workspace.mount_id,
+                root_ref: workspace.root_ref,
+            });
+            return Ok(ExtensionOperationRuntimeContext {
+                project_id: surface.project_id,
+                backend_id: Some(backend.backend_id().to_string()),
+                workspace,
+            });
+        }
+
+        let project_id = match &scope.scope_ref {
+            OperationScopeRef::Project { project_id }
+            | OperationScopeRef::WorkspaceBinding { project_id, .. } => *project_id,
+            OperationScopeRef::InteractionInstance { instance_id } => {
+                let instance = self
+                    .repos
+                    .interaction_instance_repo
+                    .get(*instance_id)
+                    .await
+                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                    .ok_or_else(|| OperationExecutionError::NotReady {
+                        code: "interaction_not_found".to_string(),
+                        message: format!("InteractionInstance 不存在: {instance_id}"),
+                    })?;
+                match instance.owner {
+                    InteractionOwner::Project(project_id) => project_id,
+                    InteractionOwner::User(_) => {
+                        return Err(OperationExecutionError::NotReady {
+                            code: "extension_project_scope_required".to_string(),
+                            message: "User-owned Interaction 没有 Project Extension surface"
+                                .to_string(),
+                        });
+                    }
+                }
+            }
+            OperationScopeRef::EnvironmentSetup { .. } => {
+                return Err(OperationExecutionError::invalid_request(
+                    "Extension Operation 不接受 Setup scope",
+                ));
+            }
+        };
+        let OperationScopeRef::WorkspaceBinding { workspace_id, .. } = &scope.scope_ref else {
+            return Ok(ExtensionOperationRuntimeContext {
+                project_id,
+                backend_id: None,
+                workspace: None,
+            });
+        };
+        let workspace = self
+            .repos
+            .workspace_repo
+            .get_by_id(*workspace_id)
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+            .filter(|workspace| workspace.project_id == project_id)
+            .ok_or_else(|| OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["workspace.project_scope".to_string()],
+            })?;
+        let binding = workspace
+            .default_binding_id
+            .and_then(|binding_id| {
+                workspace
+                    .bindings
+                    .iter()
+                    .find(|binding| binding.id == binding_id)
+            })
+            .or_else(|| {
+                workspace
+                    .bindings
+                    .iter()
+                    .find(|binding| binding.status == WorkspaceBindingStatus::Ready)
+            })
+            .filter(|binding| binding.status == WorkspaceBindingStatus::Ready)
+            .ok_or_else(|| OperationExecutionError::NotReady {
+                code: "workspace_binding_unavailable".to_string(),
+                message: format!("Workspace 没有 active binding: {workspace_id}"),
+            })?;
+        Ok(ExtensionOperationRuntimeContext {
+            project_id,
+            backend_id: Some(binding.backend_id.clone()),
+            workspace: Some(
+                agentdash_application_ports::extension_runtime::ExtensionInvocationWorkspacePayload {
+                    mount_id: format!("workspace:{workspace_id}"),
+                    root_ref: binding.root_ref.clone(),
+                },
+            ),
+        })
+    }
 }
 
 #[async_trait]
@@ -197,6 +366,17 @@ impl agentdash_application_runtime_gateway::OperationAuthorityResolver
                         ));
                     }
                 }
+                if let Some(project_id) =
+                    agentdash_application_runtime_gateway::scope_project_id(&scope.scope_ref)
+                {
+                    for installation in self.enabled_installations(project_id).await? {
+                        capabilities.insert(format!("extension:{}", installation.extension_key));
+                        facts.push(format!(
+                            "extension:{}:{}:{}",
+                            installation.id, installation.enabled, installation.updated_at
+                        ));
+                    }
+                }
                 if let OperationOriginRef::ExtensionPanel { installation_id } = origin {
                     let project_id =
                         agentdash_application_runtime_gateway::scope_project_id(&scope.scope_ref)
@@ -205,7 +385,8 @@ impl agentdash_application_runtime_gateway::OperationAuthorityResolver
                                 "Extension panel 需要 Project scope",
                             )
                         })?;
-                    self.require_installation(project_id, *installation_id, &mut facts)
+                    let _ = self
+                        .require_installation(project_id, *installation_id, &mut facts)
                         .await?;
                 }
                 if let OperationOriginRef::Canvas { definition_id } = origin {
@@ -310,6 +491,19 @@ impl agentdash_application_runtime_gateway::OperationAuthorityResolver
                             .iter()
                             .map(|server| format!("mcp:{}", server.name)),
                     );
+                    for installation in self.enabled_installations(run.project_id).await? {
+                        if capability_state
+                            .workspace_module
+                            .allows(&format!("ext:{}", installation.extension_key))
+                        {
+                            capabilities
+                                .insert(format!("extension:{}", installation.extension_key));
+                            facts.push(format!(
+                                "extension:{}:{}:{}",
+                                installation.id, installation.enabled, installation.updated_at
+                            ));
+                        }
+                    }
                 }
                 capabilities.insert("agent.operation.invoke".to_string());
             }
@@ -321,8 +515,10 @@ impl agentdash_application_runtime_gateway::OperationAuthorityResolver
                                 "Extension service 需要 Project scope",
                             )
                         })?;
-                self.require_installation(project_id, *installation_id, &mut facts)
+                let installation = self
+                    .require_installation(project_id, *installation_id, &mut facts)
                     .await?;
+                capabilities.insert(format!("extension:{}", installation.extension_key));
                 capabilities.insert("extension.operation.invoke".to_string());
             }
             OperationPrincipalRef::WorkflowNode { .. } => {
@@ -342,6 +538,24 @@ impl agentdash_application_runtime_gateway::OperationAuthorityResolver
 }
 
 impl ApplicationSurfaceOperationAuthority {
+    async fn enabled_installations(
+        &self,
+        project_id: uuid::Uuid,
+    ) -> Result<
+        Vec<agentdash_domain::shared_library::ProjectExtensionInstallation>,
+        agentdash_application_runtime_gateway::OperationExecutionError,
+    > {
+        self.repos
+            .project_extension_installation_repo
+            .list_enabled_by_project(project_id)
+            .await
+            .map_err(|error| {
+                agentdash_application_runtime_gateway::OperationExecutionError::provider_failed(
+                    error.to_string(),
+                )
+            })
+    }
+
     async fn require_workspace_binding(
         &self,
         project_id: uuid::Uuid,
@@ -409,7 +623,10 @@ impl ApplicationSurfaceOperationAuthority {
         project_id: uuid::Uuid,
         installation_id: uuid::Uuid,
         facts: &mut Vec<String>,
-    ) -> Result<(), agentdash_application_runtime_gateway::OperationExecutionError> {
+    ) -> Result<
+        agentdash_domain::shared_library::ProjectExtensionInstallation,
+        agentdash_application_runtime_gateway::OperationExecutionError,
+    > {
         use agentdash_application_runtime_gateway::OperationExecutionError;
         let installation = self
             .repos
@@ -425,7 +642,7 @@ impl ApplicationSurfaceOperationAuthority {
             "extension:{}:{}:{}",
             installation.id, installation.enabled, installation.updated_at
         ));
-        Ok(())
+        Ok(installation)
     }
 }
 

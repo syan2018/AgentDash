@@ -1,5 +1,6 @@
 mod error;
 mod extension_actions;
+mod extension_operations;
 mod extension_workspace;
 mod gateway;
 mod mcp_access;
@@ -50,6 +51,10 @@ pub use extension_actions::{
     ExtensionRuntimeProtocolConsumer, ExtensionRuntimeProtocolInvokeRequest,
     ExtensionRuntimeProtocolInvokeResult, ExtensionRuntimeProtocolInvoker,
     attach_extension_invocation_workspace,
+};
+pub use extension_operations::{
+    EXTENSION_OPERATION_NAMESPACE, ExtensionOperationContextPort, ExtensionOperationProvider,
+    ExtensionOperationRuntimeContext,
 };
 pub use extension_workspace::{
     ExtensionInvocationWorkspaceResolution, ExtensionInvocationWorkspaceUnavailableReason,

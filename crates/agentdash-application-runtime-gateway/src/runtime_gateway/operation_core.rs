@@ -35,6 +35,7 @@ pub trait OperationPlacementResolver: Send + Sync {
         descriptor: &OperationDescriptor,
         principal: &OperationPrincipal,
         scope: &super::OperationAuthorizationScope,
+        origin: &OperationOriginRef,
         cancel: CancellationToken,
     ) -> Result<OperationPlacement, OperationExecutionError>;
 }
@@ -191,6 +192,7 @@ impl OperationExecutionCore {
                 &descriptor,
                 &request.principal,
                 &request.scope,
+                &request.origin,
                 child_cancel.clone(),
             ),
         )
@@ -531,6 +533,7 @@ mod tests {
             _descriptor: &OperationDescriptor,
             _principal: &OperationPrincipal,
             _scope: &OperationAuthorizationScope,
+            _origin: &OperationOriginRef,
             _cancel: CancellationToken,
         ) -> Result<OperationPlacement, OperationExecutionError> {
             Ok(OperationPlacement::Cloud)
@@ -546,6 +549,7 @@ mod tests {
             _descriptor: &OperationDescriptor,
             _principal: &OperationPrincipal,
             _scope: &OperationAuthorizationScope,
+            _origin: &OperationOriginRef,
             cancel: CancellationToken,
         ) -> Result<OperationPlacement, OperationExecutionError> {
             cancel.cancelled().await;

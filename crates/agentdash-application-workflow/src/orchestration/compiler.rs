@@ -355,6 +355,14 @@ impl<'a> Compiler<'a> {
                     spec: FunctionActivityExecutorSpec::BashExec(spec.clone()),
                 },
             ),
+            ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::OperationScript(spec)) => {
+                (
+                    PlanNodeKind::Function,
+                    ExecutorSpec::Function {
+                        spec: FunctionActivityExecutorSpec::OperationScript(spec.clone()),
+                    },
+                )
+            }
             ActivityExecutorSpec::Human(spec) => (
                 PlanNodeKind::HumanGate,
                 ExecutorSpec::Human { spec: spec.clone() },
@@ -921,8 +929,9 @@ mod tests {
         ActivityCompletionPolicy, ActivityIterationPolicy, AgentActivityExecutorSpec,
         AgentReusePolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, BashExecExecutorSpec,
         ContextStrategy, DefinitionSource, GateStrategy, HumanActivityExecutorSpec,
-        HumanApprovalExecutorSpec, InputPortDefinition, OutputPortDefinition, RuntimeSessionPolicy,
-        StandaloneFulfillment,
+        HumanApprovalExecutorSpec, InputPortDefinition, OperationScriptExecutorLimits,
+        OperationScriptExecutorSpec, OperationScriptInputBinding, OutputPortDefinition,
+        RuntimeSessionPolicy, StandaloneFulfillment,
     };
     use chrono::{TimeZone, Utc};
     use uuid::Uuid;
@@ -1031,6 +1040,22 @@ mod tests {
                 working_directory: Some(".".to_string()),
             },
         ));
+        let mut operation_script = agent_activity("operation_script");
+        operation_script.executor = ActivityExecutorSpec::Function(
+            FunctionActivityExecutorSpec::OperationScript(OperationScriptExecutorSpec {
+                language: "rhai_v1".to_string(),
+                host_api_version: 1,
+                source: "input".to_string(),
+                input_binding: OperationScriptInputBinding::NodeInput,
+                requested_operations: vec![
+                    agentdash_domain::operation::OperationRef::new(
+                        "workflow", "fixture", "lookup", 1,
+                    )
+                    .expect("operation ref"),
+                ],
+                limits: OperationScriptExecutorLimits::default(),
+            }),
+        );
         let mut human = agent_activity("human");
         human.executor = ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(
             HumanApprovalExecutorSpec {
@@ -1044,11 +1069,12 @@ mod tests {
 
         let graph = graph(
             "agent",
-            vec![agent_activity("agent"), api, bash, human],
+            vec![agent_activity("agent"), api, bash, operation_script, human],
             vec![
                 transition("agent", "api"),
                 transition("api", "bash"),
-                transition("bash", "human"),
+                transition("bash", "operation_script"),
+                transition("operation_script", "human"),
             ],
         );
 
@@ -1067,6 +1093,7 @@ mod tests {
         assert_eq!(kinds["agent"], PlanNodeKind::AgentCall);
         assert_eq!(kinds["api"], PlanNodeKind::Function);
         assert_eq!(kinds["bash"], PlanNodeKind::LocalEffect);
+        assert_eq!(kinds["operation_script"], PlanNodeKind::Function);
         assert_eq!(kinds["human"], PlanNodeKind::HumanGate);
 
         let bash_node = output
@@ -1079,6 +1106,18 @@ mod tests {
             bash_node.executor,
             Some(ExecutorSpec::Function {
                 spec: FunctionActivityExecutorSpec::BashExec(_)
+            })
+        ));
+        let operation_script_node = output
+            .plan_snapshot
+            .nodes
+            .iter()
+            .find(|node| node.node_id == "operation_script")
+            .expect("OperationScript node");
+        assert!(matches!(
+            operation_script_node.executor,
+            Some(ExecutorSpec::Function {
+                spec: FunctionActivityExecutorSpec::OperationScript(_)
             })
         ));
     }

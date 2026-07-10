@@ -8,9 +8,10 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::FunctionRunner;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{WorkflowApplicationError, WorkflowRepositorySet};
+use crate::{WorkflowApplicationError, WorkflowOperationScriptCaller, WorkflowRepositorySet};
 
 use super::agent_node_launcher::{AgentNodeLaunchOutcome, AgentNodeLauncher};
 use super::function_node_runner::FunctionNodeRunner;
@@ -117,12 +118,36 @@ impl OrchestrationExecutorLauncher {
         self
     }
 
+    pub fn with_operation_script_caller(
+        mut self,
+        caller: Arc<WorkflowOperationScriptCaller>,
+    ) -> Self {
+        self.function_node_runner = self
+            .function_node_runner
+            .with_operation_script_caller(caller);
+        self
+    }
+
     pub async fn drain_ready_nodes(
         &self,
         run_id: Uuid,
     ) -> Result<OrchestrationExecutorDrainResult, WorkflowApplicationError> {
+        self.drain_ready_nodes_with_cancel(run_id, CancellationToken::new())
+            .await
+    }
+
+    pub async fn drain_ready_nodes_with_cancel(
+        &self,
+        run_id: Uuid,
+        cancel: CancellationToken,
+    ) -> Result<OrchestrationExecutorDrainResult, WorkflowApplicationError> {
         let mut result = OrchestrationExecutorDrainResult::default();
         for _ in 0..MAX_DRAIN_STEPS {
+            if cancel.is_cancelled() {
+                return Err(WorkflowApplicationError::Conflict(
+                    "orchestration executor drain 已取消".to_string(),
+                ));
+            }
             let run = self.load_run(run_id).await?;
             let Some((coordinate, kind, attempt_policy)) = ReadyNodeView::next(&run).map(|view| {
                 (
@@ -148,7 +173,10 @@ impl OrchestrationExecutorLauncher {
                 }
                 PlanNodeKind::Function | PlanNodeKind::LocalEffect => {
                     let node_path = coordinate.node_path.clone();
-                    match self.launch_function_node(run, coordinate).await? {
+                    match self
+                        .launch_function_node(run, coordinate, cancel.clone())
+                        .await?
+                    {
                         FunctionLaunchTerminal::Completed => {
                             result.completed_effect_nodes.push(node_path);
                         }
@@ -245,6 +273,7 @@ impl OrchestrationExecutorLauncher {
         &self,
         run: LifecycleRun,
         coordinate: RuntimeNodeCoordinate,
+        cancel: CancellationToken,
     ) -> Result<FunctionLaunchTerminal, WorkflowApplicationError> {
         let function_run_id = Uuid::new_v4().to_string();
         let run = self
@@ -262,7 +291,11 @@ impl OrchestrationExecutorLauncher {
             )
             .await?;
 
-        let terminal = match self.function_node_runner.execute(&run, &coordinate).await {
+        let terminal = match self
+            .function_node_runner
+            .execute(&run, &coordinate, cancel)
+            .await
+        {
             Ok(outputs) => OrchestrationRuntimeEvent::NodeCompleted {
                 node_path: coordinate.node_path.clone(),
                 attempt: coordinate.attempt,

@@ -5,3 +5,6 @@
 {"file":".trellis/spec/backend/session/agentrun-mailbox.md","reason":"Channel delivery 与 AgentRun mailbox materialization 的职责边界"}
 {"file":".trellis/spec/backend/database-guidelines.md","reason":"Channel registry 与 Extension manifest JSONB migration 约束"}
 {"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Rust/TS/generated contract 原子改名与 codegen 要求"}
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/work-items/README.md","reason":"父任务内部实施状态、依赖与集成 gate 索引"}
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/work-items/decisions.md","reason":"Channel 历史决策与 evidence-gated technical decisions 台账"}
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/work-items/WI-00-decision-residual-reconciliation.md","reason":"07-07 归档任务、当前规范和代码 residual 对账"}

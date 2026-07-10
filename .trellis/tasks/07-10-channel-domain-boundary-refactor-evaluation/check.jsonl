@@ -4,3 +4,5 @@
 {"file":".trellis/spec/backend/quality-guidelines.md","reason":"执行 Rust 质量门与测试约定"}
 {"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查全链路 contract/codegen 一致性"}
 {"file":".trellis/spec/backend/database-guidelines.md","reason":"检查 migration 与 repository 正确性"}
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/work-items/README.md","reason":"核对所有工作项状态、依赖与全量集成 closure"}
+{"file":".trellis/tasks/07-10-channel-domain-boundary-refactor-evaluation/work-items/decisions.md","reason":"核对 owner-local persistence 等已确认决策没有被实现漂移"}

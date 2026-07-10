@@ -1,10 +1,10 @@
-# Channel 术语与领域边界收敛评估
+# Channel 术语与领域边界收敛
 
 ## Goal
 
 评估并收敛项目内两套 `Channel` 语言：Extension / Workspace Module 所消费的版本化 protocol 调用面，以及全局通信领域 `Channel`。形成可执行的重构建议，使“稳定调用契约”与“稳定通信空间”各自拥有清晰的身份、生命周期、权限和运行边界，并为后续 Workspace Module 通用交互系统提供无歧义的基础词汇。
 
-本任务只负责现状审计、目标模型和重构规划，不启动代码改造。
+本任务在 planning 阶段完成现状审计、目标模型和实施工作项；用户完成最终评审并执行 `task.py start` 后，在同一个父任务内推进完整代码改造，并由 `work-items/` 统一跟踪依赖、状态、写入范围和验收证据。
 
 ## Background
 
@@ -15,6 +15,8 @@
 
 当前审计已确认：Extension 侧是 typed request/response service contract，应收束为 `ExtensionProtocol` 并投影为 `Operation`；全局 Channel 保留通信语义，但需要拆分 medium/topology/lifecycle 等交叉维度，补齐稳定 `ChannelKey`、admission 与多 owner persistence。
 
+持久化延续 07-07 Channel 任务已经确认并写入数据库规范的基线：领域模型允许有真实产品需求的多 owner，runtime Channel 进入 owner-local `ChannelRegistryDocument`，Project Channel 的物理承载由 Project Assets 收束。独立 aggregate 不是默认目标，只有跨 owner 查询、独立 retention/claim、跨 owner binding reverse index 或数据库唯一约束等真实不变量需要时才引入。
+
 ## Requirements
 
 - R1：完成两套 Channel 从 domain、application、contracts、relay、SDK、Workspace Module、前端和文档的全链路影响面审计。
@@ -24,6 +26,8 @@
 - R5：明确 Extension / Integration 如何为全局 Channel 贡献 provider adapter、binding transport 或 normalization，而不让调用协议冒充通信空间。
 - R6：说明全局 Channel 与 Workspace Module、Canvas、MCP、Agent capability 以及拟议通用双工交互系统的边界。
 - R7：输出按依赖顺序排列的原子重构方案、迁移影响、验证方式和风险点，不设计兼容/回退路径。
+- R8：复核 07-07 已归档任务的 residual closure，特别是 synthetic channel identity、绕过 `ChannelService` 的 runtime wake、service-level admission 和 capability directive 第二授权路径；不能把既有 tracker 的完成状态当成当前代码已满足目标不变量的证据。
+- R9：父任务内建立 `work-items/`，所有实施步骤、依赖、状态、检查证据和设计回退都在该目录统一管理。
 
 ## Acceptance Criteria
 
@@ -33,6 +37,8 @@
 - [ ] Extension provider API 与全局 Channel adapter 的关系可被具体数据流验证。
 - [ ] 重构计划覆盖 Rust、TS SDK、manifest/contracts、relay、Workspace Module、前端文案、文档与数据库 migration。
 - [ ] 规划产物经过用户评审后才允许进入实现。
+- [ ] 既有 owner-local persistence 决策与当前规范完成对账；任何推翻都明确记录新证据、被替代规范和 migration 影响。
+- [ ] `work-items/README.md` 能追踪全部实施项，并且每个工作项都有依赖、退出条件和验证方式。
 
 ## Out of Scope
 

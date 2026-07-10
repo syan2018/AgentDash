@@ -1,74 +1,84 @@
 # Implement · Channel 术语与领域边界收敛
 
-本文件是后续重构切片，不代表本评估任务已经进入实现。
+当前父任务仍处于 planning。用户完成最终评审并执行 `task.py start` 后，在本任务内完成全量改名、领域收敛、migration 和残留清理，并由父任务 `work-items/` 统一追踪。
 
-## 1. 实施顺序
+## 1. 工作项追踪
 
-### C1 · ExtensionProtocol 原子改名
+| ID | 工作项 | 依赖 |
+| --- | --- | --- |
+| WI-00 | 历史决策、规范与代码 residual 对账 | 无 |
+| WI-01 | ExtensionProtocol 原子改名与 qualified identity | WI-00；Operation descriptor contract 稳定 |
+| WI-02 | Channel domain identity、维度与 admission 收敛 | WI-00 |
+| WI-03 | Owner-local persistence、migration 与 binding index | WI-02 |
+| WI-04 | ChannelBindingProvider 与 delivery integration | WI-02、WI-03 |
+| WI-05 | 全量集成、spec 与残留验证 | WI-01 至 WI-04 |
 
-- 将 manifest、domain、contracts、generated TS、SDK、Workspace Module dispatch、RuntimeGateway、relay/local host protocol 与示例统一改为 `protocol/protocol_key/invoke_protocol`。
+`work-items/README.md` 是状态与证据索引；每个 `WI-*.md` 维护写入范围、退出条件和验证结果。历史 tracker 的完成状态不能替代当前代码检查。
+
+## 2. 全局实施清单
+
+### WI-00 · 历史决策、规范与代码 residual 对账
+
+- 延续已确认的多 owner 领域模型与 owner-local persistence；Project Channel 物理承载归 Project Assets。
+- 对账 07-07 已归档任务、数据库规范和当前实现，建立 residual matrix。
+- 明确 synthetic channel identity、绕过 ChannelService 的 runtime wake、service-level admission、capability directive 第二授权路径和 unsupported binding 产品路径。
+- 对每个 `ChannelOwner` variant 记录真实产品需求、创建者、lifetime、query、store 和 binding resolution；无证据 variant 从目标模型删除。
+- 独立 aggregate 只在跨 owner query、独立 retention/claim、不可重建 reverse index 或数据库唯一约束有真实需求时重新评审。
+
+### WI-01 · ExtensionProtocol 原子改名与 qualified identity
+
+- 将 manifest、domain、contracts、generated TS、SDK、Workspace Module、RuntimeGateway、relay/local host、example 与文档统一改为 `protocol/protocol_key/invoke_protocol`。
 - 删除 `protocol_channels/channel_key/invoke_channel` 旧字段和旧入口，不提供双读或兼容 alias。
-- package validation、surface parity、typed client 与 diagnostics 同步更新。
-- dispatch 改为显式 provider identity + protocol key + method + contract version requirement，删除全局 key 首个命中。
-- migration 清理并重建 library/package/install manifest snapshots 与 artifact digests；owned Canvas/fixtures 中的旧脚本直接重建。
+- 完整调用引用携带 provider extension/install identity、protocol key、method 与 contract version requirement，删除全局 key 首个命中。
+- manifest authoring 是事实源，canonical Operation descriptor 是 actor-specific 调用投影；底层 protocol invoker 只保留 adapter provenance。
+- migration 清理并重建 library/package/install manifest snapshots 与 artifact digests；owned fixtures/scripts 直接重建。
 
-验收：仓库中除全局通信模块及明确历史 task 文档外，不再以 Channel 命名 request/response provider contract。
+### WI-02 · Channel domain identity、维度与 admission 收敛
 
-### C2 · Operation 调用面收束
+- 引入 owner-local unique `ChannelKey/ChannelLocator`，区分全局 `ChannelId`、稳定业务地址与 display/search aliases。
+- 收束 canonical participant principal，删除同义 Agent/User/System variants。
+- 删除混合 scope/transport/audience 的 `ChannelMedium`；binding 表达 transport/endpoint，owner 表达 authority/lifetime。
+- 删除混合 cardinality/audience/thread 的 `ChannelTopology`；membership、delivery audience 和 thread relation 分别表达。
+- 将 lifetime 与 retention 分离；拆分 message origin、reply target 与 correlation。
+- publish/reply/broadcast 每次重新校验 open status、membership、operation、audience、ingress/egress 与 binding readiness。
+- capability 只投影 actor 可见操作面；禁止 directive 暴露不存在或未授权的 ChannelRef。
+- 所有 runtime wake、Companion/AgentRun/Interaction attention 必须解析真实 registry channel；不得制造 synthetic channel id。
 
-- 将 ExtensionProtocol method 生成到 canonical Operation descriptor。
-- Browser/Canvas/component 只消费 actor-specific Operation surface；ExtensionProtocolInvoker 降为内部 dispatch adapter。
-- 保留 provenance，使 trace 能定位 extension package、protocol 与 method。
+### WI-03 · Owner-local persistence、migration 与 binding index
 
-验收：Agent 与 UI 对同一 method 使用同一 schema、visibility、capability admission 和 trace 主链路。
+- LifecycleRun runtime Channel 继续使用 typed `channel_registry` owner document 与语义 mutation port。
+- Project Channel 在 Project Assets 工作项落地前保持明确 owner store contract；本任务不发明临时 ProjectConfig 或独立表 fallback。
+- 为 owner-local `ChannelKey` 实现原子 create-if-absent/unique validation，并验证 record owner 与 locator owner 一致。
+- external binding inbound resolution 需要可重建或明确持久化的 reverse index；禁止扫描全部 owner documents。
+- migration 覆盖 schema_version、key/identity、participant/binding/lifetime/retention 的结构变更；不保留旧结构 decoder。
+- 若 evidence 证明必须独立 aggregate，先更新 PRD/design/spec 并获得用户确认，再迁移并删除旧 owner document 权威路径。
 
-### C3 · 全局 Channel 领域正交化
+### WI-04 · ChannelBindingProvider 与 delivery integration
 
-- 确认 canonical principal identity，收束重复 participant variants。
-- 删除 `ChannelMedium`，把 transport/endpoint 放入 binding，把 scope 放入 owner。
-- 删除混合 cardinality/audience/thread 的 `ChannelTopology`，以 membership、delivery policy 与 thread relation 分别表达。
-- 将 lifecycle 与 retention 分离。
-- 拆分 message origin、reply target 与 correlation。
-- 引入 owner-local unique `ChannelKey/ChannelLocator`，明确 ChannelId、ChannelRef 与 aliases 的约束。
-- 关闭 capability directive 绕开 registry membership 的第二授权路径，并补齐 service-level admission。
+- 建立 `ChannelBindingProvider` SPI，覆盖 inbound normalize、identity/participant resolution、outbound publish/reply 和 delivery state。
+- 以 internal/test provider 覆盖完整 ingress → policy → message → mailbox/gate/attention delivery。
+- Extension/Integration 可同时贡献 OperationProvider 与 ChannelBindingProvider，但 ExtensionProtocol 不自动成为 Channel binding。
+- Interaction/Operation refs 只作为 message content refs/correlation，不进入 Channel canonical state。
 
-验收：每个字段只回答一个领域问题，domain validation 能直接表达唯一性和生命周期不变量。
+### WI-05 · 全量集成、spec 与残留验证
 
-### C4 · persistence 与 migration
-
-- 先完成 Project/Story/System owner 的真实消费者、lifetime、query、binding 与 transaction evidence matrix。
-- 若只有 LifecycleRun 成立：删除其它 owner，升级 owner-local registry schema，迁移/reset JSONB 并补齐 owner/key/admission validation。
-- 若多 owner 成立：建立独立 Channel aggregate repository，将 registry 展开到新表，校验 owner/ID/policy/delivery refs 后删除旧 JSONB column。
-- exact ChannelRef 随选定 persistence 只保留一种 authority 形状；更新 test support 与 repository contract tests。
-
-验收：领域声明的每个 owner 都有真实 store 与可验证 use case；未实现 owner 不留在 enum 中，不再通过 owner enum 猜 store 实现。
-
-### C5 · binding provider 与端到端验证
-
-- 建立 `ChannelBindingProvider` SPI，替换默认 unsupported resolver 的产品路径。
-- 以一个 internal/test provider 覆盖 inbound normalize、participant resolution、policy、mailbox materialization、reply/publish 与 delivery state。
-- 验证 interaction/operation refs 仅作为 message content refs/correlation，不改变 Channel 事务边界。
-
-## 2. 主要影响面
-
-- Rust domain/contracts/application/runtime gateway/relay/local host
-- `packages/extension` authoring、host、browser 与 toolchain generator
-- Workspace Module operation projection
-- Canvas/Extension frontend bridge 与诊断文案
-- generated TypeScript contracts、examples、handbook
-- PostgreSQL migration、repository 与 integration tests
+- Rust、TS SDK、manifest/contracts、relay/local、Workspace Module、frontend 文案、examples、handbook 与 generated contracts 同步。
+- 更新 Channel、database、capability、runtime gateway、mailbox 与 cross-layer specs。
+- repository-wide static scan 清除旧 Extension Channel 词汇、synthetic channel identity、绕过 service admission 和重复 authority refs。
+- 运行 domain property tests、repository mutation/concurrency、migration forward、provider ingress/outbound、mailbox/gate materialization 与 frontend/contract checks。
 
 ## 3. 验证策略
 
-- repository-wide `rg` 确认旧 Extension Channel 词汇被清除。
-- Extension package validate/pack 与 host surface parity tests。
-- Workspace Module describe/invoke 和 RuntimeGateway actor/capability tests。
-- Channel domain property/validation tests。
-- migration forward test 与 repository concurrency test。
-- provider inbound/outbound、mailbox/gate/outbox materialization integration tests。
+- `cargo fmt --check`，受影响 package test/check/clippy。
+- `pnpm run contracts:check`、Extension package validate/pack、host surface parity、frontend typecheck/focused tests。
+- `pnpm run migration:guard`、干净 PostgreSQL migration、owner document concurrency/roundtrip。
+- 静态检查旧 `protocol_channels/channel_key/invoke_channel`，但排除归档历史任务文档。
+- 静态检查 `ChannelMessage::new` 的 channel id 均来自 registry/locator resolution。
+- `git diff --check`。
 
-## 4. 任务依赖
+## 4. Review Gate
 
-- C1 可先于 Workspace 双工交互任务实施。
-- C2 的 canonical Operation descriptor 应与 `OperationProgram` 设计共同定稿。
-- C3 可先推进；C4 必须通过 owner evidence gate。Interaction attention/handoff 接入前完成唯一的 ChannelRef 与 persistence 方案。
+- Channel 一词只属于通信领域；Extension authoring 使用 ExtensionProtocol，调用投影使用 Operation。
+- owner-local persistence 基线与当前规范一致，任何独立 aggregate 升级都有真实不变量和用户确认。
+- Workspace 双工交互只通过 refs/attention 与 Channel 连接，不把 command/event 并入 Channel。
+- `work-items/` 完整、JSONL context 有效、PRD/design/implement convergence 完成并经用户批准后，才允许 `task.py start`。

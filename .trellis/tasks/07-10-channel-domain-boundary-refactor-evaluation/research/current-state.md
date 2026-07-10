@@ -25,7 +25,7 @@
 
 这一调用链没有 participant、membership、message history、delivery state、broadcast 或 binding topology。`channel_key` 实际承担 provider contract key，`method` 才是可调用 operation。
 
-现有 identity/admission 还有两个独立问题：RuntimeGateway 会在 enabled installations 中按 `channel_key` 找首个命中，dispatch 没有显式 provider installation identity；protocol `version` 被投影但未成为真实 contract resolution 约束。raw `SessionUser` invocation 也比 Workspace Module operation exposure 更宽，未来 program executor 不能复用这条宽入口绕过 operation catalog。
+现有 identity/admission 还有两个独立问题：RuntimeGateway 会在 enabled installations 中按 `channel_key` 找首个命中，dispatch 没有显式 provider installation identity；protocol `version` 被投影但未成为真实 contract resolution 约束。raw `SessionUser` invocation 也比 Workspace Module operation exposure 更宽，未来 OperationScript executor 不能复用这条宽入口绕过 operation catalog。
 
 ## 3. 全局 Channel 事实链
 
@@ -45,7 +45,7 @@
 - `ChannelParticipantRef` 存在 `AgentRun/LifecycleAgent`、`User/Human`、`System/Platform` 成对重叠。
 - `ChannelAddress` 同时携带 source、actor、correlation、route 与 display metadata，实际兼任 message origin 和 reply target。
 - `ChannelRef { owner, channel_id }` 用 owner 做 store routing，但 UUID 已是全局身份；aliases 只校验非空，没有 owner 内唯一性。
-- owner enum 声称支持 Project/Story/System，但 persistence 与 application service 无法兑现。
+- owner enum 声称支持 Project/Story/System；当前代码只兑现 LifecycleRun store。Project 公共 Channel 与企业 IM 是已确认产品方向，Project 物理承载等待 Project Assets；Story/System 尚缺独立用例证据。
 - `plan_broadcast_deliveries` 尚未闭合 sender membership、operation、open status、audience 与 ingress/egress admission；多个 policy 字段目前只被保存/投影。
 - Runtime capability directive 可以直接 `Expose` 一个 ChannelRef，形成绕开 registry membership 的第二事实源。
 - hook auto-resume 等消费者已把 `ChannelMessage/ChannelAddress` 当成通用 delivery envelope，甚至用非 registry identity 伪造 channel_id，说明 provenance/delivery 语言需要从 Channel aggregate 拆出。
@@ -66,7 +66,7 @@
 ## 5. 与通用交互系统的边界
 
 - `Operation` 表达一次原子、受 admission 控制的调用；MCP tool、Extension protocol method、runtime action 都可贡献 Operation。
-- `OperationProgram` 表达一组有界 Operation 的组合执行。
+- `OperationScript` 表达一次有界 Rhai 脚本对 canonical Operation 的组合执行。
 - `InteractionInstance` 表达人和 AI 共同读写的状态对象及 command/event。
 - `Channel` 表达参与者之间的消息、关注、唤醒、handoff 与异步 delivery。
 
@@ -75,7 +75,7 @@ Channel message 可以引用 `interaction_instance_id`、`interaction_event_id` 
 ## 6. 当前重构风险
 
 - `protocol_channels` 跨 Rust contracts、TS SDK、generated manifest、relay/local host 和示例，改名必须原子完成；项目未上线，不建设兼容字段或双读。
-- 全局 Channel 若继续支持多 owner，必须脱离 `lifecycle_runs.channel_registry`；这会涉及 database migration 与 repository 事务边界。
+- 多 owner 不要求把所有 Channel 搬离 owner document；每个 owner 由自己的 store/asset 边界承载。只有跨 owner query、独立 retention/claim、不可重建 reverse index 或数据库唯一约束等真实不变量出现时，才升级为独立 aggregate。
 - 若保留 aliases 作为稳定寻址，需要 owner 内唯一约束；若只是展示/搜索，应从 `ChannelRef` 中移除其身份含义。
 - 当前消息、mailbox、gate、outbox 各自已有持久化职责；若选择独立 Channel aggregate，也不应复制完整 message body 或建立第二套投递事实源。
 - Extension manifest 同时存在于 library asset、package artifact 与 project installation JSONB snapshot；协议改名会改变 artifact digest，迁移应重建 owned artifacts/install snapshots，不增加旧 decoder。

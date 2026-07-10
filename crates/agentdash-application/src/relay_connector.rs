@@ -721,6 +721,7 @@ mod tests {
                 }),
                 runtime_backend_anchor: None,
                 identity: None,
+                agent_run_execution: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
                 capability_state: CapabilityState::default(),
@@ -765,6 +766,7 @@ mod tests {
                 }),
                 runtime_backend_anchor: None,
                 identity: None,
+                agent_run_execution: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
                 capability_state: CapabilityState::default(),
@@ -876,6 +878,7 @@ mod tests {
                 }),
                 runtime_backend_anchor: None,
                 identity: None,
+                agent_run_execution: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
                 capability_state: CapabilityState::default(),

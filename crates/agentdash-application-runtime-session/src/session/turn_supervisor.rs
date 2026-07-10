@@ -229,6 +229,7 @@ mod tests {
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,
+                agent_run_execution: None,
             },
             CapabilityState::default(),
             Uuid::new_v4(),

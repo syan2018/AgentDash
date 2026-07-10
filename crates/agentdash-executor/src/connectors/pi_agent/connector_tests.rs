@@ -513,6 +513,7 @@ fn execution_context_with_config(executor_config: agentdash_spi::AgentConfig) ->
             backend_execution: None,
             runtime_backend_anchor: None,
             identity: None,
+            agent_run_execution: None,
         },
         turn: agentdash_spi::ExecutionTurnFrame::default(),
     }
@@ -2584,6 +2585,7 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
                     backend_execution: None,
                     runtime_backend_anchor: None,
                     identity: None,
+                    agent_run_execution: None,
                 },
                 turn: agentdash_spi::ExecutionTurnFrame::default(),
             },
@@ -2696,6 +2698,7 @@ async fn prompt_selected_unavailable_provider_reports_credential_mode() {
                     backend_execution: None,
                     runtime_backend_anchor: None,
                     identity: None,
+                    agent_run_execution: None,
                 },
                 turn: agentdash_spi::ExecutionTurnFrame::default(),
             },
@@ -2775,6 +2778,7 @@ async fn prompt_selected_user_required_provider_reports_byok_when_identity_exist
                         provider: Some("test".to_string()),
                         extra: serde_json::Value::Null,
                     }),
+                    agent_run_execution: None,
                 },
                 turn: agentdash_spi::ExecutionTurnFrame::default(),
             },
@@ -2969,6 +2973,7 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
                     backend_execution: None,
                     runtime_backend_anchor: None,
                     identity: None,
+                    agent_run_execution: None,
                 },
                 turn: agentdash_spi::ExecutionTurnFrame {
                     restored_session_state: Some(agentdash_spi::RestoredSessionState {
@@ -3023,6 +3028,7 @@ async fn prompt_hydrates_session_item_identity_from_restored_messages() {
                     backend_execution: None,
                     runtime_backend_anchor: None,
                     identity: None,
+                    agent_run_execution: None,
                 },
                 turn: agentdash_spi::ExecutionTurnFrame {
                     restored_session_state: Some(agentdash_spi::RestoredSessionState {
@@ -3139,6 +3145,7 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,
+                agent_run_execution: None,
             },
             turn: turn_frame,
         }
@@ -3312,6 +3319,7 @@ async fn prompt_rebuilds_live_agent_when_model_selection_changes() {
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,
+                agent_run_execution: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame::default(),
         }

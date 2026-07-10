@@ -372,6 +372,7 @@ mod tests {
                 backend_execution: None,
                 runtime_backend_anchor: Some(runtime_backend_anchor.clone()),
                 identity: None,
+                agent_run_execution: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame::default(),
         };
@@ -450,6 +451,7 @@ mod tests {
                 backend_execution: None,
                 runtime_backend_anchor: Some(runtime_backend_anchor),
                 identity: None,
+                agent_run_execution: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
                 capability_state,
@@ -500,6 +502,7 @@ mod tests {
                 backend_execution: None,
                 runtime_backend_anchor: None,
                 identity: None,
+                agent_run_execution: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame::default(),
         };

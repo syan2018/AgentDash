@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/capability/integration-api.md","reason":"复核Integration taxonomy与企业service扩展点"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"复核sticky binding、generation fencing与routing"}
+{"file":".trellis/spec/cross-layer/deployment-runtime.md","reason":"复核Relay未成为service identity"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"复核Driver Host不解析业务Hook rule"}

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/session/architecture.md","reason":"收敛Thread/Turn/Item状态所有权"}
+{"file":".trellis/spec/backend/session/context-compaction-projection.md","reason":"重建checkpoint/head/compaction状态机"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"统一turn terminal、live与durable状态"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"实现journal/outbox/CAS/migration"}
+{"file":".trellis/spec/backend/repository-pattern.md","reason":"定义runtime repository ports与transaction scope"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/application-compaction-context.md","reason":"现有compaction/context链路与一致性缺陷证据"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/design-option-minimal-interface.md","reason":"durable operation journal与compaction saga设计依据"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"迁移HookRun、ContextFrame、mailbox effect与failure semantics"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"实现Host-owned triggers与durable Hook orchestration"}

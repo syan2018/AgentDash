@@ -1,0 +1,5 @@
+{"file":".trellis/spec/cross-layer/deployment-runtime.md","reason":"重建cloud/local placement与service provenance"}
+{"file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"local driver adapter与workspace locality"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"用owned Runtime Wire替代Value Backbone"}
+{"file":".trellis/spec/backend/session/streaming-protocol.md","reason":"transport sequence/replay/terminal语义"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/protocol-runtime.md","reason":"当前Relay双runtime、事件丢失与terminal缺口"}

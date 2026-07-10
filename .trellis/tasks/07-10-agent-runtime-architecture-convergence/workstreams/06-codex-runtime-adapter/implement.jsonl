@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/session/streaming-protocol.md","reason":"映射Codex item/delta/terminal到canonical lifecycle"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"无损映射instruction/additional context/input"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"dynamic tools接Platform Tool Broker"}
+{"file":".trellis/spec/backend/permission/architecture.md","reason":"approval/user-input durable interaction"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/codex-app-server-l4-vocabulary.md","reason":"完整Codex方法、Item、Interaction与L4缺口"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/external-agent-feature-integration-matrix.md","reason":"Codex feature真实支持强度与adapter优先级"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/codex-hook-projection.md","reason":"Codex native Hook、plugin artifact、bridge、digest与trust"}

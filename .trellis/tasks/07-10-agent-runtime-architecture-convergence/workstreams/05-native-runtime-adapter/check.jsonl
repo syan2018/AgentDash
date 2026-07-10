@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/shared-library.md","reason":"复核Clean Core无产品与vendor依赖"}
+{"file":".trellis/spec/backend/session/pi-agent-streaming.md","reason":"复核Native streaming与terminal"}
+{"file":".trellis/spec/backend/session/context-compaction-projection.md","reason":"复核exact checkpoint/compaction"}
+{"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"复核Core callback不读取workflow/repository"}

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/capability/integration-api.md","reason":"改造受信Integration contribution与service instance"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"定义Driver Host、Router与binding边界"}
+{"file":".trellis/spec/backend/architecture.md","reason":"保持Host不反向拥有Application/Managed Runtime语义"}
+{"file":".trellis/spec/cross-layer/deployment-runtime.md","reason":"区分service、placement与Relay transport"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/integration-runtime-baseline.md","reason":"现有Integration/connector装配缺口证据"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/design-option-extensible-integration.md","reason":"definition/instance/offer/binding模型依据"}
+{"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"HookProfile求交、BoundHookPlan与apply ack"}

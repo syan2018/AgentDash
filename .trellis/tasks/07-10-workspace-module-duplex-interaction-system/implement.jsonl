@@ -1,10 +1,14 @@
 {"file":".trellis/tasks/07-10-workspace-module-duplex-interaction-system/research/current-state.md","reason":"Canvas/Agent/Extension/Session 的事实链、断口与组件 ABI 对照"}
+{"file":".trellis/tasks/07-10-workspace-module-duplex-interaction-system/research/freeze-review.md","reason":"Canvas/Interaction V1 替代方案反证、冻结合同与未来版本迁移边界"}
 {"file":".trellis/spec/backend/runtime-gateway.md","reason":"Operation invocation、actor context、admission、trace 与 cancellation 主链路"}
-{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"Program step 与 Agent 普通 tool call 共享 capability/approval/finalize"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"OperationScript nested invoke 与 Agent 普通 tool call 共享 capability/admission/finalize"}
 {"file":".trellis/spec/backend/session/architecture.md","reason":"AgentRun、RuntimeSession、AgentFrame 与 Interaction attachment 边界"}
 {"file":".trellis/spec/backend/vfs/architecture.md","reason":"Canvas definition/source 与 AgentFrame VFS projection 边界"}
-{"file":".trellis/spec/backend/workflow/architecture.md","reason":"OperationProgram 与 durable Workflow 的职责边界"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"一次性 OperationScript 与 durable Workflow 的职责边界"}
 {"file":".trellis/spec/frontend/architecture.md","reason":"WorkspacePanel、Canvas runtime 与 Extension renderer 组合边界"}
 {"file":".trellis/spec/frontend/state-management.md","reason":"Interaction canonical state、projection 与 UI local state 分层"}
 {"file":".trellis/spec/frontend/component-guidelines.md","reason":"Extension component host、props/events 与组合规范"}
-{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Interaction/Program/component contracts 与 generated TS 一致性"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"Interaction/OperationScript/component contracts 与 generated TS 一致性"}
+{"file":".trellis/tasks/07-10-workspace-module-duplex-interaction-system/work-items/README.md","reason":"父任务内部实施状态、依赖与集成 gate 索引"}
+{"file":".trellis/tasks/07-10-workspace-module-duplex-interaction-system/work-items/decisions.md","reason":"已确认产品决策与实现推导边界的唯一台账"}
+{"file":".trellis/tasks/07-10-workspace-module-duplex-interaction-system/work-items/WI-00-architecture-contract-gate.md","reason":"生产实现前的 RuntimeGateway/Interaction/spec 合同 gate"}

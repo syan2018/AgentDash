@@ -1,228 +1,307 @@
 # Design · Workspace Module 通用双工交互系统
 
-## 1. 推荐架构
+## 1. 目标架构
 
 ```mermaid
 flowchart LR
-  MCP["MCP Tool"] --> OC["Operation Catalog"]
+  MCP["MCP Tool"] --> OC["Canonical Operation Catalog"]
   EP["ExtensionProtocol.method"] --> OC
-  RA["Runtime Action"] --> OC
-  OC --> WM["Workspace Module projection"]
-  OC --> RG["RuntimeGateway + OperationExecutionCore"]
-  OP["OperationProgram"] --> RG
+  RA["Runtime Action / Host Operation"] --> OC
 
+  AG["AgentRun + AgentFrame"] --> AA["AgentRun Adapter"]
   U["Authenticated User"] --> UW["UserWorkshop Adapter"]
-  C["Canvas / Extension / Component"] -->|origin| UW
+  WF["Workflow"] --> WA["Workflow Adapter"]
+  AA --> RG["RuntimeGateway + OperationExecutionCore"]
   UW --> RG
-  AF["AgentRun + AgentFrame"] --> AA["AgentRun Adapter"]
-  AA --> RG
-  W["Workflow / Service Principal"] --> WA["Workflow/Service Adapter"]
   WA --> RG
 
-  D["InteractionDefinition revision"] --> I["InteractionInstance"]
-  UI["Human / component"] -->|command| I
-  AG["Agent via Workspace Module"] -->|command| I
-  I -->|state patch / event| UI
-  I -->|projection / event| AG
-  I -->|attention ref| CH["Channel"]
-  CH --> MB["Mailbox / notification / external binding"]
+  SRC["Inline Rhai OperationScript"] --> SE["OperationScriptExecutor"]
+  SE --> RG
+
+  DEF["InteractionDefinitionRevision"] --> INS["InteractionInstance"]
+  HUMAN["Human / Component"] -->|"typed command"| INS
+  AGENT["Agent via Workspace Module"] -->|"typed command"| INS
+  INS -->|"state/event projection"| HUMAN
+  INS -->|"agent projection"| AGENT
+  INS -->|"replay-safe single Operation effect"| OE["OperationEffect Outbox"]
+  OE --> RG
+  INS -->|"attention ref"| CH["Channel"]
+  CH --> MB["Mailbox / Notification / External Binding"]
 ```
 
-核心决策：
+核心边界：
 
-- 统一可调用行为叫 `Operation`，不以 MCP、Extension channel 或 transport 作为执行模型。
-- 短生命周期、有界、无 LLM 的组合叫 `OperationProgram`。
-- 人与 AI 共享的运行状态属于 `InteractionInstance`。
-- Canvas 是一种 `InteractionDefinition` authoring format 与 presentation schema，不是 runtime instance、renderer lease 或 tab state。
-- Extension 贡献 component definition；首版任意代码组件运行在隔离 iframe 中。
-- Workspace Module 是 Agent capability projection；RuntimeGateway 是 actor-neutral 执行主链；User workshop 与 AgentRun 通过不同 adapter 进入同一 Gateway；AgentFrame 只属于 AgentRun adapter；RuntimeSession 不进入目标 contract；Channel 是异步通信 rail。
+- `Operation` 是所有可调用能力的统一描述和执行单位。
+- `OperationScript` 是一次性的 inline Rhai 脚本执行能力，用于组合 Operations 并处理 JSON 结果；它不是 asset、job、Workflow 或 Interaction state。
+- `InteractionInstance` 是 Human/Agent 共享 state/revision/command/event 的唯一事实源。
+- Canvas 是 `InteractionDefinitionRevision(kind=canvas)` 的 source/presentation authoring format，不是独立 aggregate 或 runtime instance。
+- Extension 贡献 Component + Operation；不贡献 Interaction reducer。
+- Workspace Module 只做 Agent-facing projection；RuntimeGateway/OperationExecutionCore 承担 actor-neutral admission/dispatch。
+- AgentFrame 只服务 AgentRun adapter；RuntimeSession 不进入目标 authority/scope/placement/Interaction contract。
+- Channel 只承担 attention/message/delivery。
 
-## 2. Canonical Operation
+## 2. Canonical Operation 与 RuntimeGateway
 
-### 2.1 Descriptor 与引用
-
-建议建立 actor-neutral descriptor：
+### 2.1 Operation descriptor
 
 ```text
 OperationDescriptor {
-  operation_ref,
+  operation_ref,              // provider-qualified identity + version
   input_schema,
   output_schema,
   effect_summary,
   required_capabilities,
   actor_visibility,
   execution_policy,
+  replay_policy,             // non_replayable / idempotent / replay_safe
+  readiness,
   provenance,
   dispatch
 }
 ```
 
-provider adapters 可来自 MCP tool、ExtensionProtocol method、Runtime Action 或 host operation。Workspace Module 只把 canonical descriptor 组织为 Agent-facing module/operation，不作为另一个重复 provider。`operation_ref` 必须显式携带 provider identity/version；不能只按一个全局字符串首个命中。
+Provider adapters 可来自 MCP tool、ExtensionProtocol method、Runtime Action 或 host operation。Workspace Module 只按 module/category 组织 descriptor，不创建另一套 provider identity、schema 或 dispatch。
 
-Workspace Module 可以按 module/category 为 Agent 描述这些 operations，但 operation catalog 与 dispatch 仍由各 provider 的事实源生成。
+`operation_ref` 必须携带 exact provider identity/version；Extension protocol 不再按全局 key 首个命中。discovery、preflight、direct invoke 与 OperationScript nested invoke 使用同一个 actor-specific catalog。
 
-### 2.2 RuntimeGateway OperationExecutionCore
-
-RuntimeGateway 保持 actor-neutral admission/dispatch 主入口，并在内部收束 direct invocation 与 OperationProgram step 共用的 execution core：
-
-```text
-resolve actor context
-  -> resolve current effective Operation surface
-  -> input/schema/effect validation
-  -> capability + runtime policy admission
-  -> invoke provider with child cancellation token
-  -> output schema + size/result-ref handling
-  -> trace/audit/finalize
-```
-
-浏览器或 operation caller 不提交 Session、Backend、workspace root 等 authority IDs。可信 application adapter 从认证用户、Project access、InteractionAttachment、Extension installation 或 AgentFrame 解析 authority/scope；preflight 与 surface handle 都不是授权凭证，执行每一步仍需重新 admission，避免 TOCTOU。
-
-Agent loop 特有的 `before_tool_call/after_tool_call`、assistant message 与用户审批不下沉给 Canvas/User actor。`operation_program_run` 在 Agent 看来仍是一个外层 tool call：preflight 生成确定的 definition/effect manifest digest，外层对整份 effect manifest 做审批；step core 只允许执行 manifest 内的 operation，并逐步重验当前 capability、schema、limits、取消与 trace。需要交互式逐步批准的 operation 不进入同步 MVP。
-
-### 2.3 Session-independent RuntimeInvocationEnvelope
-
-内部 invocation 按五个正交维度组装：
+### 2.2 Runtime invocation envelope
 
 ```text
 RuntimeInvocationEnvelope {
-  principal,            // 谁：User / AgentRunAgent / WorkflowNode / ExtensionInstallation
-  scope,                // 在哪里：Project / InteractionInstance / Workspace binding
-  origin,               // 从哪里触发：Canvas / ExtensionPanel / ComponentEvent / AgentTool
-  operation_ref + input,
-  authority_revision,   // 本次 admission 所依据的 grant/surface revision
-  trace_context         // 可选关联 AgentRun / Interaction / UI surface，不含 authority
+  principal,            // User / AgentRunAgent / WorkflowNode / ExtensionInstallation
+  scope,                // Project / InteractionInstance / Workspace binding
+  origin,               // Canvas / ExtensionPanel / ComponentEvent / AgentTool / Workflow
+  operation_ref,
+  input,
+  authority_revision,
+  trace_context
 }
 ```
 
 规则：
 
-- `Canvas`、`ExtensionPanel` 和 component 都是 origin，不是安全 principal。用户点击时 principal 是 authenticated User；Extension 自治执行时必须使用具备显式 grant 的 `ExtensionInstallation` service principal。
-- `RuntimeSurfaceResolver` 根据 principal + scope 生成 actor-specific Operation surface；AgentRun adapter 从 AgentFrame 读取 effective surface，UserWorkshop adapter 从用户/Project/Interaction access 生成 surface。
-- UserWorkshop 只是 application adapter，不是新的持久 Session/aggregate。MCP、Extension 与 RuntimeAction 的 standalone surface 从 Project grants、workspace binding、installation 与 provider readiness 生成；AgentFrame 是 AgentRun 消费该能力面的 projection，不是 User surface 的来源。
-- `RuntimePlacementResolver` 在 admission 后根据 Operation provider、Project/workspace binding 与在线执行器选择 cloud/local placement；RuntimeSession 和客户端 backend_id 都不参与 placement authority。
-- discovery 返回的 surface handle/revision 只服务稳定 UI 与 diagnostics；invoke 时重新解析授权，不能把 opaque handle 当 capability token。
-- trace 可以记录 AgentRun、InteractionInstance、Canvas、Extension component 等 correlation，但没有必填 runtime_session_id。
+- Canvas/Extension/Component 是 origin，不是 security principal。
+- 用户操作使用 authenticated User principal；Extension 自治行为使用具备显式 grant 的 Installation service principal。
+- AgentRun adapter 从 AgentFrame/effective capability 解析 surface；UserWorkshop adapter 从用户、Project、Interaction access 与 installation facts 解析 surface。
+- `RuntimePlacementResolver` 在 admission 后根据 provider、Project/workspace binding 与在线执行器选择 cloud/local placement；客户端 backend id 和 RuntimeSession 不参与 placement authority。
+- discovery handle/revision 只服务 UI 稳定性与 diagnostics；invoke 时重新解析 authorization/admission。
 
-## 3. OperationProgram
+### 2.3 OperationExecutionCore
+
+direct invocation 与 OperationScript nested invoke 共用：
+
+```text
+resolve current actor surface
+  -> resolve exact OperationDescriptor
+  -> input schema/effect validation
+  -> capability + actor policy + runtime admission
+  -> resolve placement
+  -> invoke provider with child cancellation token
+  -> output schema/size/result-ref handling
+  -> trace/audit/finalize
+```
+
+Agent loop 的 message/tool hook 与 outer tool approval 留在 Agent adapter。任何 adapter 都不能绕过 common core 直接调用 provider。
+
+## 3. OperationScript
 
 ### 3.1 定位
 
-`OperationProgram` 是独立 headless capability，Canvas、Agent、Workflow 都只是调用者。名称不用 `ProtocolProgram`，因为 target 可以是 MCP tool、Workspace Module operation 或 runtime action。
+`OperationScript` 解决的问题是：Agent 能像受控 REPL 一样即时编写脚本，串行或批量调用多个 Operations，并使用普通脚本控制流对中间 JSON 结果做筛选、聚合和清理。
 
-它负责单一当前上下文内的同步、有界 JSON DAG：不调用 LLM、不创建 AgentRun、不包含 human gate、不后台运行、不承担跨会话恢复。Workflow 继续负责长生命周期、后台恢复、多 Agent、审批与阶段调度，并可将一个 program 作为 node。
+它只在一次 caller request 内运行：
 
-### 3.2 最小 IR
+- 不持久化 script asset 或 execution job。
+- 不调用 LLM、不创建 AgentRun、不包含 human gate。
+- 不后台运行、不跨请求保存变量、不承担恢复。
+- 不自动 retry、compensation 或 rollback；已经完成的副作用保持真实。
+- Workflow 可以把一次 OperationScript 执行作为 node，但复用同一 executor。
 
-```json
-{
-  "version": 1,
-  "steps": [
-    {
-      "id": "discover",
-      "operation_ref": "mcp://github/search_issues",
-      "input": { "query": "is:open label:bug" }
-    },
-    {
-      "id": "render",
-      "depends_on": ["discover"],
-      "operation_ref": "workspace-module://reports/render",
-      "input": {
-        "items": { "$ref": "/steps/discover/output/items" }
-      }
-    }
-  ],
-  "output": { "$ref": "/steps/render/output" },
-  "limits": {
-    "timeout_ms": 30000,
-    "max_steps": 16,
-    "max_parallelism": 4,
-    "max_output_bytes": 65536
+### 3.2 外部合同
+
+```text
+OperationScriptInput {
+  language: "rhai_v1",
+  host_api_version: 1,
+  source,
+  input,
+  allowed_operations: [OperationRef...],
+  limits?: {
+    timeout_ms,
+    max_operation_calls,
+    max_parallelism,
+    max_output_bytes
   }
 }
 ```
 
-MVP 约束：
+`allowed_operations` 是本次 script 可调用面的显式 manifest。script 中的 `ops.invoke()`/`ops.invoke_all()` 只能使用 manifest 内的 exact ref；preflight 解析当前 descriptor、capability/effect/replay summary，并生成 execution plan digest。V1 不允许 allowed manifest 包含 OperationScript 自身，避免递归 evaluator。
 
-- 只支持顺序与显式 DAG；禁止 cycle、loop 与动态 step generation。
-- 数据流只使用 JSON Pointer `$ref`，不执行字符串模板或任意表达式。
-- fail-fast；已完成副作用不会被描述成自动回滚。
-- 不提供自动 retry/compensation；需要时由 operation 自身幂等合同或 Workflow 处理。
-- definition limits 与服务端 hard limits 取更小值。
+preflight 返回短期 opaque token，绑定 `language/host_api_version + source_digest + input_digest + descriptor/effect_manifest_digest + normalized_limits + principal/scope + expiry`。run 对任一不匹配都拒绝，并在每个 nested invoke 重新读取当前 surface，避免 approval substitution 与 TOCTOU。
 
-### 3.3 Preflight 与同步执行
+入口：
+
+- `operation_script_preflight`：编译 Rhai、校验 host surface/allowed Operations/limits，返回 diagnostics、execution plan digest、effect/capability/replay summary 和短期 plan token；不产生副作用。
+- `operation_script_run`：消费同一 plan token，生成 ephemeral `script_execution_id`，在 caller cancellation/timeout 内返回 JSON output 或 scoped result ref，以及 root/child trace、已执行 call evidence 和 bounded diagnostics。
+
+### 3.3 Engine boundary
+
+Application 定义：
 
 ```text
-OperationProgramDefinition
-  -> preflight
-ValidatedOperationProgram(definition_digest + effect_manifest_digest)
-  -> run
-SynchronousExecution(root_trace + caller cancellation token)
-  -> inline output preview / result ref / audit
+OperationScriptExecutor
+  -> OperationScriptEngine port
+  -> OperationScriptHostCall port
 ```
 
-Agent-facing MVP 只有两个入口：
+Infrastructure 首个 adapter 复用现有 `RhaiScriptRuntime` 的 AST cache、JSON bridge 和 sandbox limits：max operations、call levels、string/array/map size。OperationScript executor 额外控制 wall-clock timeout、Operation call count、parallelism、result bytes 和 root cancellation。
 
-- `operation_program_preflight`：解析 inline definition 或 asset ref，返回 diagnostics、advisory resolution、effect/capability summary、definition/effect manifest digest，不产生副作用。
-- `operation_program_run`：校验 definition/effect manifest digest，从当前 AgentFrame 重新解析 surface 并逐 step admission；在有界调用内返回受限 output preview/result ref。
+Rhai evaluation 是同步 CPU work，RuntimeGateway invocation 是异步 I/O。adapter 因此在有 `max_concurrent_scripts` admission 的专用 worker pool 中运行 execution-scoped evaluator，通过有界 request/response host-call bridge 把调用交回 Application async executor；Tokio core worker 不直接阻塞等待 Operation。
 
-外层 AgentTool/HTTP request 的 cancellation token 是 root token，step 使用 child token；取消时停止调度并传播到 provider。每次 run 建立 root trace，step trace 以 root 为 parent。大结果进入统一 result store，inline 只保留受限 preview。并行必须由 DAG 与 `max_parallelism` 控制。
+现有 `RhaiScriptRuntime` 可复用 limits、JSON bridge 与 AST cache 设计，但不能把带固定 helper closure 的全局 Engine 直接当作 OperationScript singleton。目标 adapter 使用 evaluator factory：共享已验证 AST/cache 与 sandbox profile，每次 execution 注入自己的 `ops` capability object、cancellation/deadline/progress hook 和 call counters。Rhai 纯 CPU loop 通过 progress hook 响应取消；等待中的 host call 通过 bridge cancellation 唤醒。
 
-`get/cancel` API、durable execution/step records 与短后台运行属于后续异步模式；不能在同步 MVP 中预先制造第二套 job runtime。
+Rhai helper surface 至少包括：
 
-### 3.4 与 Canvas 的关系
+- `ops.invoke(operation_ref, input)`：一次受控 Operation 调用，Rhai 语义为隐式等待。
+- `ops.invoke_all(calls)`：受 `max_parallelism` 限制的 structured concurrency，保持输入顺序返回逐项 structured result。
+- Rhai 自身 array/map/filter/control-flow 能力用于结果变换。
 
-Canvas 可以：
+engine port 不把 Rhai AST、Dynamic 或 engine-specific error 暴露给 Application contract。以后增加 JavaScript sandbox 时只新增 adapter/`language` implementation，不改变 Canvas、Agent、Workflow 或 OperationExecutionCore。
 
-- 作为 program 的编辑/可视化 authoring surface；
-- 在 component event binding 中引用 program；
-- 显示 execution state/result；
-- 让 Agent 创建或修改 program definition。
+OperationScript 不自动 replay。网络中断或取消无法证明 provider outcome 时返回 `outcome_unknown` call evidence；调用方不得把整个 script 当作安全 retry 单元。large result ref 继承 principal/scope/capability 与 TTL，不能作为跨 owner bearer token。
 
-Canvas iframe 的任意 JS 不作为可信 program IR，也不能成为 server-side Agent executor。
+### 3.4 Canvas / Agent / Workflow 复用
 
-## 4. 通用 Interaction 模型
+- Agent 直接向 tool 提交 inline source。
+- Canvas definition/source 可以保存 `.rhai` 文件或 inline source；Canvas JS/component event 通过 host bridge 把整段 source + input 交给 UserWorkshop adapter。
+- iframe 不解释 Rhai，也拿不到 Operation credentials/placement facts。
+- Workflow 以 inline source 调用 executor，durable source 由 Workflow definition 自己持有。
+- script source 随 Canvas 保存时只是 Canvas definition source，不产生独立 OperationScript identity。
 
-| 对象 | 权威职责 |
+## 4. Interaction 模型
+
+### 4.1 对象与所有权
+
+| Object | Authority |
 | --- | --- |
-| `InteractionDefinitionRevision` | 版本化 layout/source/component refs/program bindings/initial state schema；Canvas 是一种 kind |
-| `ExtensionComponentDefinition` | logical component contract 与 package asset entry，不含 resolved installation/artifact identity 或 runtime state |
+| `InteractionDefinition` | stable authoring asset identity、owner/scope、current revision pointer |
+| `InteractionDefinitionRevision` | immutable V1 contract versions、SourceBundle digest、layout/component/resource slots/script bindings/initial state schema |
+| `InteractionDefinitionLineage` | publish/copy/promote 的 exact source definition revision 与 actor/time |
 | `InteractionInstance` | pinned definition revision、canonical state revision、command/event log、status |
-| `InteractionAttachment` | 把 User/AgentRun 接到 instance，持有 role 与 capability projection |
-| `AgentFrame` | 某个 Agent 的不可变 effective runtime surface revision：capability/context/VFS/MCP/execution profile/visibility projections |
-| `RuntimeAccessAdapter` | 将 User workshop、AgentRun、Workflow 或 Extension service principal 解析为内部 invocation envelope |
-| `ExecutionPlacement` | invocation admission 后解析出的 cloud/local/provider execution target，不参与业务 identity |
-| `PresentationState` | per-user/client tab、layout 与 focus 偏好 |
-| `RendererLease` | browser frame/generation/heartbeat；刷新可替换，不拥有业务状态 |
+| `InteractionAttachment` | User/AgentRun 对 instance 的 role 与 capability projection |
+| `InteractionRuntimeBinding` | instance/attachment scoped authorized resource refs、exact component artifact digest 与 provider refs |
+| `OperationEffectIntent` | command transaction 产生的 replay-safe 单 Operation durable outbox |
+| `PresentationState` | per-user/client tab、layout、focus 偏好 |
+| `RendererLease` | browser frame/generation/heartbeat；可重建，不拥有业务状态 |
 
-RuntimeSession 当前仍承载部分 turn/delivery/trace plumbing，但目标设计不从它解析 authority、Operation surface、placement 或 Interaction identity，并最终删除这条依赖。AgentRun 是否影响 instance lifetime 由待确认的 owner/lifetime policy 决定。AgentFrame 保存某个 Agent revision 的 effective runtime surface，包括 capability、context、VFS、MCP、execution profile 与 interaction/module visibility projection；它只供 AgentRun adapter 使用，不是 User workshop 或 Canvas/Extension 的前置对象，也不保存 InteractionInstance canonical state 或 Canvas definition body。
+Owner/lifetime：
 
-### 4.1 双工 command/event
+- Personal definition → User-owned instance。
+- Project definition → Project-owned instance。
+- AgentRun 永远只是 optional attachment。
+- tab、renderer、AgentRun、RuntimeSession 结束不删除 instance。
+- explicit close + retention policy 管理 instance；默认不从 delivery/renderer 状态推断销毁。
+
+### 4.2 V1 definition / source contract
+
+```text
+InteractionDefinitionRevision {
+  definition_format_version: 1,
+  interaction_contract_version: 1,
+  source_bundle: {
+    kind: "canvas_v1",
+    entry_file,
+    sandbox_profile,
+    import_map,
+    files,
+    source_digest
+  },
+  state_schema,
+  command_descriptors,
+  resource_slots,
+  component_refs,
+  operation_script_bindings
+}
+```
+
+`SourceBundle` 是随 revision 不可变的 authoring value；数据库可以用 revision child rows/object storage 实现，但 domain contract 只暴露 normalized bundle + digest。VFS 不修改旧 revision：一次 changeset 携带 base revision，对 create/write/delete/rename 归一化后原子创建新 source bundle/revision。
+
+平台 command handler 固定版本化 identity，例如 `state_patch_v1`、`instance_close_v1`。`interaction_contract_version=1` 的既有 instance 永远使用 V1 语义；未来增加 V2 handler/reader 与显式迁移，不覆盖 V1 行为。
+
+### 4.3 Definition concurrency
+
+Definition 使用 immutable revision + optimistic CAS：
+
+```text
+save_definition_changeset(definition_id, base_revision, source_changeset)
+  -> base matches current: create revision N+1
+  -> base stale: conflict(current_revision, bounded diff metadata)
+```
+
+Human editor draft 留在客户端；Agent 的每次 VFS changeset 也以 base revision 保存。一个 changeset 可以包含多个文件 mutation，避免半个 rename/copy 被发布为不同 revision。没有独立 durable draft aggregate、CRDT 或实时协同编辑。
+
+### 4.4 Typed command 与 state transition
 
 ```text
 InteractionCommand {
   command_id,
+  instance_ref,
   attachment_ref,
   actor,
   expected_revision,
-  command_type,
+  command_key,
   payload
 }
-  -> schema + role/capability + reducer admission
+  -> schema + actor policy + role/capability + idempotency + CAS
+  -> platform-owned deterministic state transition
   -> append InteractionEvent + audit
   -> state revision + 1
-  -> publish event/patch to attachments and renderer leases
+  -> publish state/event projection
 ```
 
-人和 Agent 使用同一 application use case：
+Actor policy 对 Agent 只有：
 
-- UI/component：`get_state / command / subscribe`
-- Agent/Workspace Module：`interaction.get_state / interaction.command / interaction.wait_events`
+- `direct`：Agent 与 Human 都可以在各自 role/capability 允许时执行。
+- `human_only`：Agent 不能提交 canonical command；只能向 Channel 发送非权威 suggestion/attention，Human 查看后重新提交正式 command。
 
-MVP 使用 expected revision + conflict，不先引入 CRDT。component local hover/focus/draft 可留在 iframe；会影响业务或需被 Agent 观察的状态必须通过 typed command 写入 instance。Agent 只看到 descriptor 明确声明的 `agent_projection`，不默认读取整份表单/秘密字段。
+Interaction 不拥有 proposal/approval/request lifecycle。PermissionGrant 继续只管理 capability grant，LifecycleGate 继续只管理 wait/result，Channel/Mailbox 继续只管理 delivery。
 
-### 4.2 Channel 边界
+Canonical state transition 由 Interaction service 在服务端拥有：
 
-Interaction service 自己拥有 command schema、state revision、event ordering 与 persistence。只有需要异步唤醒、外部参与者或 mailbox handoff 时，才通过独立 attention binding 向 Channel 投递引用：
+- V1 通用 mutation 固定为 `state_patch_v1`：payload 是有界 JSON Patch，只允许 `add/remove/replace`，path 必须命中 definition command descriptor 的 JSON Pointer allowlist。
+- patch 前校验 input schema/expected revision/actor policy，patch 后校验完整 state schema、patch count 与 state bytes；command idempotency、event、state revision 和 audit 在同一事务提交。
+- 其它平台行为使用封闭且版本化的 typed handler，例如 `instance_close_v1`；新增 handler 需要明确不变量和 contract version。
+- 不建设 generic handler registry、declarative reducer DSL 或 arbitrary script reducer。
+- Extension component 不能执行 canonical reducer。
+
+Component event binding 只有 schema validation + payload pass-through：目标要么是一个 exact platform command descriptor，要么是一个即时 Operation/OperationScript action。binding 不执行服务端表达式、字段 transform 或 reducer；需要不同 payload 的 component 由其事件合同或 Canvas host code 构造目标 command payload。
+
+Agent 只看到 definition 声明的 `agent_projection`，不默认读取秘密字段或整份表单。
+
+### 4.5 External effect boundary
+
+即时 Operation/OperationScript action 与 canonical command 是两条显式路径：即时 action 返回结果/partial-call evidence，但不自动写 Interaction state，也不自动 replay。
+
+当 canonical command 必须可靠触发外部副作用时，state transaction 可以同时写一个 `OperationEffectIntent`：
+
+```text
+OperationEffectIntent {
+  effect_id,                 // command-derived stable idempotency identity
+  interaction_instance_ref,
+  command_id,
+  exact_operation_ref,
+  input,
+  principal_scope,
+  status,
+  attempt_evidence
+}
+```
+
+只有 descriptor 声明 `idempotent/replay_safe` 的单 Operation 可进入 outbox；dispatcher 每次 replay 仍进入 OperationExecutionCore。复杂多步可靠执行通过单个 `workflow.start` 类 Operation 进入 Workflow。OperationScript 不进入 durable effect outbox，因其多步 partial side effects 不能在通用层承诺 replay safety。
+
+### 4.6 Channel boundary
+
+Interaction service 拥有 command schema、state revision、event ordering 和 persistence。需要异步唤醒、外部参与者或 Agent mailbox handoff 时，向 Channel 投递：
 
 ```text
 AttentionRequested {
@@ -233,30 +312,15 @@ AttentionRequested {
 }
 ```
 
-Channel 不成为本地 UI 与 Agent command 的中转总线，也不保存 canonical interaction state/event body。
-
-### 4.3 Definition、Attachment 与 Gateway 的协作
-
-```text
-Canvas / InteractionDefinitionRevision
-  -> instantiate -> InteractionInstance
-  -> attach User -> UserWorkshop Adapter -> RuntimeGateway
-  -> attach AgentRun -> AgentFrame revision -> AgentRun Adapter -> RuntimeGateway
-  -> open UI -> PresentationState + RendererLease
-```
-
-边界规则：
-
-- 修改 Canvas source/layout/component binding 会产生新的 definition revision，不直接修改运行中 instance state。
-- 创建或恢复 instance 时固定 definition revision；state/command/event 由 instance 自己维护。
-- 给 Agent 新增或撤销 attachment/capability 时产生新的 AgentFrame revision；普通 interaction state 变化不重写 AgentFrame。
-- Agent 发起 command 时，AgentRun adapter 从当前 AgentFrame/attachment 组装 invocation；用户从 Canvas/Extension 发起 command 时，UserWorkshop adapter 从认证用户与 Project/attachment 组装 invocation。两者进入同一 RuntimeGateway。
-- 用户关闭 tab 或浏览器刷新只改变 PresentationState/RendererLease；Gateway invocation 不要求创建或查找 RuntimeSession。
-- definition 升级、instance lifetime 与 AgentRun 结束后的保留策略分别由显式产品规则决定，不能从 session/tab 状态推断。
+Channel 不成为 local UI/Agent command bus，不保存 canonical state/event body。
 
 ## 5. Extension Component ABI
 
-### 5.1 Descriptor
+### 5.1 Existing behavior reuse
+
+当前 Extension runtime actions、protocol methods 和 backend services 全部作为 canonical Operation providers 保留。第三方复杂业务状态仍由 Extension 自己的 Operation/backend service 拥有；Interaction 只保存 host-owned shared state、refs 或声明的 projection。
+
+### 5.2 Component descriptor
 
 ```text
 ui_components[] {
@@ -272,79 +336,114 @@ ui_components[] {
 }
 ```
 
-Canvas definition 保存：
+Interaction definition 保存 logical component contract ref、layout/slot、props/state projection binding，以及 event → platform command / OperationScript binding。Definition 不保存 installation id、backend id 或可变 URL。
 
-```text
-component_contract_ref
-slot/layout
-props bindings
-state projection binding
-event -> interaction command / OperationProgram binding
-```
+### 5.3 Runtime protocol and security
 
-definition revision 不保存 installation ID、backend ID 或可变 URL，只保存带 contract version requirement 的逻辑 component ref。实例化时由 Project installation authority 解析到 exact package/artifact digest，并只在 `InteractionInstanceRuntimeBinding` 中固定 resolved artifact；definition 与 instance 不重复保存运行态 authority。
-
-### 5.2 Runtime protocol
-
-每个 component instance 使用宿主创建的 `MessageChannel`：
-
-- Host → component：initialize、props/state projection、event binding result、theme/locale、dispose。
+- 每个 component instance 使用宿主创建的 scoped MessageChannel。
+- Host → component：initialize、props/state projection、binding result、theme/locale、dispose。
 - Component → host：ready、resize、typed event、diagnostic。
-- props/events/output 双向 JSON Schema validation。
-- MessagePort/renderer lease、rate/size limits 与 trace 均为 component-instance scoped；业务权限只存在于宿主 event binding。
-- component 看不到 Project/session/backend/workspace root 等宿主 authority 字段。
+- props/events/output 进行 JSON Schema validation。
+- iframe 不使用 `allow-same-origin`；独立 CSP 默认禁止任意网络。
+- component 看不到 Project/session/backend/workspace root，也不能直接 invoke generic Operation 或 reducer。
 
-安全基线：iframe 不使用 `allow-same-origin`；独立 CSP 默认禁止任意网络，业务能力只能由宿主 event binding 触发；不以全局 `postMessage("*")` 作为长期协议。
+### 5.4 Artifact pinning / upgrade
 
-### 5.3 Renderer 选择
+- InteractionInstance 固定 definition revision。
+- 实例化时 Project installation authority 把 logical component ref 解析为 exact package/artifact digest，并写入 runtime binding。
+- Extension 安装升级只供新 definition revision/new instance 使用；existing instance 不自动 re-resolve。
+- 当前任务不建设通用 state/schema migration engine。需要新版本时创建新 definition revision 和新 instance。
+- referenced old artifact 在 instance 存续期间保持可寻址；installation disable 时 existing instance structured unavailable，不静默切换新 artifact。
+- artifact repository/cache 以 exact digest 为地址并跟踪 runtime binding 引用；安装升级不能覆盖仍被 instance 引用的 artifact，清理只发生在引用和保留策略均允许之后。
 
-MVP 只实现 isolated iframe component renderer，以复用现有 artifact serving 与任意 framework 能力并建立清晰隔离。Schema-driven host primitives 可作为平台组件贡献进入相同 descriptor/catalog；Web Components/ESM 只在以后有明确 trusted/signed tier 与 capability 模型时评估，不进入首个切片。
+## 6. Canvas 最终替换
 
-## 6. 递进验证切片
+目标模型不保留独立 Canvas aggregate/persistence authority：
 
-不要用一个 demo 同时验证三个新系统，按以下顺序建立独立证据：
+| Current | Target |
+| --- | --- |
+| `Canvas` + `canvases/canvas_files/canvas_bindings` | `InteractionDefinition(kind=canvas)` + immutable V1 revisions/SourceBundle |
+| personal/project Canvas scope | definition owner/scope |
+| Canvas source update whole overwrite | atomic VFS changeset + definition revision CAS |
+| publish/copy/unpublish lineage fields | exact `InteractionDefinitionLineage` + catalog archive status |
+| Canvas runtime data binding metadata | definition resource slot + instance/attachment `InteractionRuntimeBinding` |
+| AgentRun Canvas attach/present | InteractionAttachment + Workspace Module projection |
+| Canvas runtime snapshot | definition authoring preview 或 InteractionInstance runtime view |
+| Canvas interaction latest snapshot | InteractionInstance canonical state/event |
+| frame_id/generation | RendererLease |
+| Canvas module/presentation identity | `canvas:{definition_id}` / `canvas://{definition_id}` authoring preview |
+| shared runtime module/presentation identity | `interaction:{instance_id}` / `interaction://{instance_id}` |
+| Canvas Extension promotion | 从 exact definition revision 构建 package artifact |
 
-### Slice A · Program-only
+### 6.1 Identity 与 authoring/runtime 分层
 
-- 两个可测试 Operation 组成同步 DAG。
-- AgentRun adapter 与 standalone UserWorkshop adapter 分别调用同一 inline definition；UserWorkshop 路径没有 AgentRun、AgentFrame 或 RuntimeSession。
-- 验证 effect manifest 审批、step capability revalidation、root cancellation、parallel limit、trace 与 result ref。
-- 不引入 InteractionInstance 或 Extension component。
+- `InteractionDefinition.id` 是稳定资产身份，revision/source digest 是不可变内容身份；VFS mount id 只是 authoring adapter identity。
+- `InteractionInstance.id` 是共享运行态身份；AgentRun attachment、browser renderer lease 和 Workspace tab 都只引用它。
+- Definition preview 可以渲染 source/initial state 并通过 UserWorkshop 运行即时 Operation/OperationScript，但不伪装成 canonical shared instance。
+- 需要共享/恢复/Agent command 的场景显式创建或打开 InteractionInstance。
 
-### Slice B · Interaction-only
+### 6.2 Personal / Project distribution 与 lineage
 
-- 普通 Canvas 静态 preview 与 attached runtime preview 分离，消除旧 endpoint 断链。
-- 从第一天起只建立一套 canonical `InteractionDefinitionRevision`，Canvas source 直接迁入该 revision，不先建临时 Canvas revision。
-- 建立 revisioned `InteractionInstance` 与 User/AgentRun attachment。
-- 先用 host-owned `approval-card` 验证 Human command → state/event → Agent observe/command → renderer patch，以及 renderer 重建与 Gateway access re-resolution。
-- 不引入第三方 component 或 program event binding。
+- Personal publish 读取 exact source revision，创建或 CAS 更新独立 Project-owned definition revision，并记录 `published_from_definition_revision`、actor/time。Project 版本不会跟随 Personal current revision 静默变化。
+- copy-to-personal 从 exact source revision 创建新的 User-owned definition；后续 source、instances 和 publication lifecycle 独立。
+- unpublish/archive 从 Project catalog 移除 definition，但被 InteractionInstance、Extension artifact 或 lineage 引用的 revision/source bundle 保持可寻址；真正清理由引用与 retention 决定。
+- Extension promotion 只消费 exact definition revision/source bundle，生成 artifact 后不再读取 definition current pointer。
 
-### Slice C · Component composition
+### 6.3 Resource binding
 
-- Extension manifest 贡献 isolated iframe component `demo.approval-card`。
-- component 只能发 `decision_changed` typed event；宿主 binding 将其唯一映射为 `decision.set` command。
-- 验证 artifact resolution/pinning、CSP/MessageChannel、schema、sizing、unavailable state。
-- 在基础闭环稳定后，再让一个 host event binding 引用 Slice A 的 OperationProgram。
+- Definition revision 声明 logical resource slots：alias、schema/content type、access mode、required/optional；source 只引用 slot，不保存 backend path/secret/capability。
+- `InteractionRuntimeBinding` 将 slot 绑定到 authorized `ResourceRef`。Project/instance binding 可供共享 runtime 使用；attachment-local binding 只服务对应 actor 的 preview/projection，不能自动进入 shared canonical effect。
+- 每次读取或 Operation 调用仍重新 authorization；binding revision/handle 不是 bearer capability。生成到 VFS 的 `bindings/*` 文件保持只读 projection。
 
-这些切片都不包含拖拽编辑器、CRDT、marketplace、任意服务端脚本、Channel command bus 或完整 Workflow 集成。
+### 6.4 Initial migration
 
-## 7. 已确认产品决策
+因为没有需保留的生产存量，新增 migration 直接创建最终 Interaction schema并删除旧 Canvas/runtime snapshot/state 表与约束；fixtures、seed、examples 和 tests 按新模型重建。没有 data backfill、旧 decoder、legacy route 或 fallback。
 
-已确认把 `OperationProgram` 定义为独立、actor-neutral、可版本化的资产/合同；MVP 同时接受 inline definition，避免一开始强制持久化。Canvas 只是 author/trigger/presentation consumer，Agent 与 Workflow 也能引用同一 program。
+## 7. V1 之后的兼容与迁移
 
-已确认 RuntimeSession 不进入目标架构。Canvas、Extension panel/component 通过 UserWorkshop adapter 在没有 AgentRun/AgentFrame/RuntimeSession 时访问 RuntimeGateway；AgentRun 通过自己的 AgentFrame adapter 访问同一 Gateway。Session correlation 在迁移期只作为可选 trace evidence，最终删除。
+首次替换只写 V1 数据，因此不需要旧 Canvas decoder；但最终 schema 与 wire contract 从第一天保存显式 discriminator：
 
-如果只把它做成一次性的 Agent batch tool，首期更小，但 Canvas component event 之后仍需另建 action-binding 事实源，最终会出现第二套 program identity/version/审计模型。
+- definition format、interaction command/state handler、OperationScript dialect/host API、component contract 和 OperationRef 都有稳定 version。
+- instance 固定 definition revision/interaction contract version；runtime binding 固定 artifact/resource refs。
+- future breaking change 以 V2 reader/handler/new revision/new instance 引入。需要延续既有实例时，编写显式、可审计的 V1→V2 migration；不按 JSON 字段存在性猜测版本。
+- archived definition revision、source bundle、artifact 与 V1 handler 的保留期由实际引用决定。清理前必须证明没有 live instance、lineage、artifact 或 audit 引用。
+- additive wire change 仍遵守 generated contracts 和 schema validation；不会借“同为 V1”改变已有字段语义。
 
-下一项依次讨论 InteractionInstance 默认 owner/lifetime、Agent write policy、definition 并发与 Extension upgrade migration。
+## 8. End-to-End Acceptance Scenarios
 
-## 8. Review Gate
+### OperationScript
 
-进入实现前需要确认：
+- AgentRun 与 standalone UserWorkshop 分别运行同一 inline Rhai source。
+- script 调用两个 Operations，对第一个结果 filter/map 后构造第二个 input，最终清理输出。
+- 验证 plan token binding、manifest、nested admission、capability revocation、worker admission、CPU/host-call timeout/cancel、call/parallel/output limits、root/child trace 与 scoped result ref。
 
-- OperationProgram 是一等独立合同，同步 MVP 可 inline（已确认）。
-- RuntimeGateway 的 principal/scope/origin/placement/trace 五个维度与 RuntimeSession 脱钩；standalone Canvas/Extension 路径不创建 AgentRun/AgentFrame/RuntimeSession（已确认）。
-- RuntimeGateway 内的 `OperationExecutionCore` 是所有 actor 的共同 schema/capability/execute 路径；Agent 特有 hook/approval 留在外层 tool call。
-- Canvas definition、InteractionInstance、Attachment、Presentation 与 RendererLease 明确分离。
-- component MVP 使用 descriptor + isolated iframe + scoped MessageChannel。
-- Interaction command/event 与 Channel message/delivery 不合并。
+### Interaction
+
+- Human command → canonical state/event → Agent observe → Agent direct command → renderer patch/rebuild。
+- human-only command 被 Agent 拒绝；Agent 只能发送 attention，Human 随后提交正式 command。
+- `state_patch_v1` path/schema/size/revision validation、definition changeset CAS、instance reload、多 tab lease 与 explicit close/retention 可验证。
+- replay-safe OperationEffectIntent 在 state commit 后可恢复执行；非 replay-safe 或多步脚本不会进入该 outbox。
+
+### Component composition
+
+- Extension isolated iframe component 发 typed event。
+- Host binding 唯一映射为平台 command 或 OperationScript。
+- 验证 component schema/CSP/MessageChannel、artifact pinning、installation disable unavailable 与新 version/new instance。
+
+### Canvas distribution / resources
+
+- Personal definition publish、Project unpublish、copy-to-personal 与 Extension promotion 全部固定 exact source revision/lineage。
+- authoring preview 与 Interaction runtime 使用不同 module/presentation identity；shared VFS read-only、resource slot binding 和 attachment-local binding authority 可验证。
+
+## 9. Review Gate
+
+- OperationScript 是 ephemeral inline Rhai capability，无独立 asset/job/REPL persistence。
+- OperationScript executor async、Rhai `rhai_v1` 同步语义、execution-scoped `ops` capability 与 bounded structured concurrency 已固定。
+- RuntimeGateway principal/scope/origin/placement/trace 与 RuntimeSession 脱钩。
+- Interaction owner/lifetime、direct/human-only、`state_patch_v1`、OperationEffectIntent 与 definition/source changeset CAS 已固定。
+- Extension 只贡献 Component + Operation，不贡献 reducer；instance exact artifact pin，无自动升级/state migration。
+- Canvas 独立 aggregate/runtime snapshot/state 通过新 migration 与代码清扫整体删除。
+- Canvas distribution/lineage、resource binding、VFS、promotion 和 authoring/runtime public identity 在新模型中有完整落点。
+- 所有持久化/调用合同携带 V1 discriminator；future breaking change 通过 V2 与显式 migration 演进。
+- Workspace Module 只做 projection；Interaction command/event 与 Channel message/delivery 不合并。
+- 父任务 `work-items/` 统一覆盖完整实现、spec、migration 和最终残留验证。

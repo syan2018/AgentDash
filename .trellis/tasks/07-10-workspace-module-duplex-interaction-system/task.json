@@ -1,15 +1,15 @@
 {
   "id": "workspace-module-duplex-interaction-system",
   "name": "workspace-module-duplex-interaction-system",
-  "title": "Workspace Module 通用双工交互系统预研",
-  "description": "设计 actor-neutral OperationProgram、通用 InteractionInstance 与 Extension component ABI，解耦 Canvas、Session、AgentFrame 和 Workspace presentation。",
+  "title": "Workspace Module 通用双工交互系统",
+  "description": "冻结 Canvas/Interaction V1：通过父任务 work-items 落实 async Rhai OperationScript、versioned InteractionInstance、Extension component ABI、SourceBundle/distribution/resource binding，以及 RuntimeGateway/Workspace projection 的完整收敛。",
   "status": "planning",
   "dev_type": null,
   "scope": "cross-layer architecture research",
   "package": null,
   "priority": "P2",
   "creator": "cursor-agent",
-  "assignee": "cursor-agent",
+  "assignee": "codex-agent",
   "createdAt": "2026-07-10",
   "completedAt": null,
   "branch": null,
@@ -29,6 +29,6 @@
     "packages/app-web/src/features/extension-runtime",
     "packages/extension/src"
   ],
-  "notes": "已确认 OperationProgram 为独立 actor-neutral versioned contract；RuntimeSession 不进入目标架构，Canvas/Extension 通过 standalone UserWorkshop adapter 访问 RuntimeGateway；Canvas preview 断链纳入 W0。下一决策是 InteractionInstance owner/lifetime。",
+  "notes": "V1 冻结方案已收敛：OperationScript 是 async executor 承载的 ephemeral rhai_v1 脚本，使用 execution-scoped ops capability 与 structured concurrency；InteractionInstance 继承 definition owner scope，使用 versioned state_patch_v1、direct/human-only 与 replay-safe OperationEffectIntent；Canvas 由 immutable SourceBundle/lineage/resource binding 的 InteractionDefinition 整体替换，完整承接 publish/copy/unpublish/VFS/promotion；Extension 贡献 Component + Operation 并 exact artifact pin。所有稳定合同从 V1 显式版本化，future breaking change 使用 V2 + 显式 migration。",
   "meta": {}
 }

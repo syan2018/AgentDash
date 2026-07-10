@@ -550,6 +550,12 @@ mod tests {
         async fn detach(&self, _: Uuid) -> Result<(), InteractionError> {
             unsupported()
         }
+        async fn list_attachments(
+            &self,
+            _: Uuid,
+        ) -> Result<Vec<InteractionAttachment>, InteractionError> {
+            Ok(vec![])
+        }
         async fn upsert_runtime_binding(
             &self,
             _: &InteractionRuntimeBinding,

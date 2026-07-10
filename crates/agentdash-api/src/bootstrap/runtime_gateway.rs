@@ -10,6 +10,7 @@ use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransp
 use agentdash_application_runtime_gateway::{
     CompositeOperationAuthorityResolver, ExtensionOperationProvider,
     ExtensionOperationRuntimeContext, ExtensionRuntimeActionProvider, InMemoryOperationResultStore,
+    InteractionCommandOperation, InteractionOperationAccess, InteractionOperationProvider,
     McpCallToolProvider, McpListToolsProvider, McpOperationProvider, McpProbeSetupPort,
     McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
     OperationGateway, RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
@@ -25,6 +26,7 @@ use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 use agentdash_spi::AuthIdentity;
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
+use agentdash_workspace_module::runtime_tool_provider::SharedOperationGatewayHandle;
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -60,6 +62,7 @@ pub(crate) fn build_operation_gateway(
     setup_action_transport: Arc<
         dyn agentdash_application_ports::backend_transport::BackendTransport,
     >,
+    gateway_handle: SharedOperationGatewayHandle,
 ) -> Result<Arc<OperationGateway>, agentdash_application_runtime_gateway::OperationExecutionError> {
     let mcp_probe_setup = Arc::new(ApplicationMcpProbeSetupPort::new(
         Some(mcp_probe_relay),
@@ -90,13 +93,19 @@ pub(crate) fn build_operation_gateway(
     let extension_provider = Arc::new(ExtensionOperationProvider::new(
         repos.project_extension_installation_repo.clone(),
         Arc::new(ApplicationExtensionOperationContext {
-            repos,
+            repos: repos.clone(),
             runtime_surface_query,
         }),
         backend_registry.clone(),
         backend_registry.clone(),
         backend_registry,
     ));
+    let interaction_provider = Arc::new(InteractionOperationProvider::new(Arc::new(
+        ApplicationInteractionOperationAccess {
+            repos: repos.clone(),
+            gateway_handle,
+        },
+    )));
     OperationGateway::try_new(
         Arc::new(CompositeOperationAuthorityResolver::new(
             setup_authority,
@@ -110,11 +119,371 @@ pub(crate) fn build_operation_gateway(
             Arc::new(McpOperationProvider::new(operation_mcp_access))
                 as Arc<dyn agentdash_application_runtime_gateway::DynamicOperationProvider>,
             extension_provider,
+            interaction_provider,
         ],
         Arc::new(InMemoryOperationResultStore::default()),
         Arc::new(TracingOperationAuditSink),
     )
     .map(Arc::new)
+}
+
+struct ApplicationInteractionOperationAccess {
+    repos: RepositorySet,
+    gateway_handle: SharedOperationGatewayHandle,
+}
+
+#[derive(serde::Deserialize)]
+struct InteractionOperationInput {
+    instance_id: uuid::Uuid,
+    command_id: uuid::Uuid,
+    #[serde(default)]
+    payload: serde_json::Value,
+    expected_state_revision: u64,
+}
+
+#[async_trait]
+impl InteractionOperationAccess for ApplicationInteractionOperationAccess {
+    async fn discover_commands(
+        &self,
+        principal: &agentdash_application_runtime_gateway::OperationPrincipal,
+        scope: &agentdash_application_runtime_gateway::OperationAuthorizationScope,
+        cancel: CancellationToken,
+    ) -> Result<
+        Vec<InteractionCommandOperation>,
+        agentdash_application_runtime_gateway::OperationExecutionError,
+    > {
+        use agentdash_application_runtime_gateway::{
+            OperationExecutionError, OperationPrincipalRef, OperationScopeRef,
+        };
+        use agentdash_domain::interaction::{
+            CommandActorPolicy, InteractionDefinitionStatus, InteractionOwner,
+        };
+        if cancel.is_cancelled() {
+            return Err(OperationExecutionError::Cancelled);
+        }
+        let project_id = match &scope.scope_ref {
+            OperationScopeRef::Project { project_id }
+            | OperationScopeRef::WorkspaceBinding { project_id, .. } => *project_id,
+            OperationScopeRef::InteractionInstance { instance_id } => {
+                let instance = self
+                    .repos
+                    .interaction_instance_repo
+                    .get(*instance_id)
+                    .await
+                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                    .ok_or_else(|| OperationExecutionError::OperationUnavailable {
+                        operation_ref: agentdash_domain::operation::OperationRef::new(
+                            "interaction",
+                            instance_id.to_string(),
+                            "unknown",
+                            1,
+                        )
+                        .expect("static operation ref"),
+                    })?;
+                match instance.owner {
+                    InteractionOwner::Project(project_id) => project_id,
+                    InteractionOwner::User(_) => return Ok(vec![]),
+                }
+            }
+            OperationScopeRef::EnvironmentSetup { .. } => return Ok(vec![]),
+        };
+        let agent = matches!(
+            principal.principal_ref(),
+            OperationPrincipalRef::AgentRunAgent { .. }
+        );
+        let definitions = self
+            .repos
+            .interaction_definition_repo
+            .list_canvas_by_project(project_id)
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
+        let mut commands = Vec::new();
+        for definition in definitions {
+            if definition.status != InteractionDefinitionStatus::Active
+                || !matches!(definition.owner, InteractionOwner::Project(owner) if owner == project_id)
+            {
+                continue;
+            }
+            let revision = self
+                .repos
+                .interaction_definition_repo
+                .get_revision(definition.current_revision_id)
+                .await
+                .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                .ok_or_else(|| OperationExecutionError::NotReady {
+                    code: "interaction_revision_missing".into(),
+                    message: format!(
+                        "Interaction revision 不存在: {}",
+                        definition.current_revision_id
+                    ),
+                })?;
+            commands.extend(
+                revision
+                    .command_definitions
+                    .iter()
+                    .filter(|command| !agent || command.actor_policy == CommandActorPolicy::Direct)
+                    .map(|command| InteractionCommandOperation {
+                        definition_id: revision.definition_id,
+                        definition_revision_id: revision.revision_id,
+                        title: revision.title.clone(),
+                        command_key: command.command_key.clone(),
+                        actor_policy: command.actor_policy,
+                        payload_schema: command.payload_schema.clone(),
+                    }),
+            );
+        }
+        Ok(commands)
+    }
+
+    async fn invoke_command(
+        &self,
+        principal: &agentdash_application_runtime_gateway::OperationPrincipal,
+        scope: &agentdash_application_runtime_gateway::OperationAuthorizationScope,
+        definition_id: uuid::Uuid,
+        definition_revision_id: uuid::Uuid,
+        command_key: &str,
+        input: serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<serde_json::Value, agentdash_application_runtime_gateway::OperationExecutionError>
+    {
+        use agentdash_application::interaction::{
+            InteractionCommandCallerContext, InteractionCommandInput, InteractionCommandService,
+        };
+        use agentdash_application_runtime_gateway::OperationExecutionError;
+        if cancel.is_cancelled() {
+            return Err(OperationExecutionError::Cancelled);
+        }
+        let input: InteractionOperationInput = serde_json::from_value(input)
+            .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
+        let instance = self
+            .repos
+            .interaction_instance_repo
+            .get(input.instance_id)
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+            .ok_or_else(|| OperationExecutionError::NotReady {
+                code: "interaction_not_found".into(),
+                message: format!("Interaction instance 不存在: {}", input.instance_id),
+            })?;
+        if instance.definition_id != definition_id {
+            return Err(OperationExecutionError::invalid_request(
+                "Interaction operation 与 instance definition 不一致",
+            ));
+        }
+        if instance.definition_revision_id != definition_revision_id {
+            return Err(OperationExecutionError::invalid_request(
+                "Interaction operation exact revision 与 instance pinned revision 不一致",
+            ));
+        }
+        let caller = match principal.principal_ref() {
+            agentdash_domain::operation::OperationPrincipalRef::AgentRunAgent {
+                run_id,
+                agent_id,
+            } => InteractionCommandCallerContext::ResolvedAgentRun {
+                run_id: *run_id,
+                agent_id: *agent_id,
+            },
+            agentdash_domain::operation::OperationPrincipalRef::User { user_id } => {
+                InteractionCommandCallerContext::AuthenticatedUser {
+                    user_id: user_id.clone(),
+                }
+            }
+            agentdash_domain::operation::OperationPrincipalRef::WorkflowNode { .. }
+            | agentdash_domain::operation::OperationPrincipalRef::ExtensionInstallation {
+                ..
+            } => {
+                return Err(OperationExecutionError::CapabilitiesDenied {
+                    missing: vec!["interaction.command.actor".into()],
+                });
+            }
+        };
+        let service = InteractionCommandService::new(
+            self.repos.interaction_definition_repo.clone(),
+            self.repos.interaction_instance_repo.clone(),
+            self.repos.interaction_command_transaction.clone(),
+            self.repos.interaction_event_repo.clone(),
+            Arc::new(InteractionOperationAdmission {
+                repos: self.repos.clone(),
+                scope: scope.clone(),
+            }),
+            Arc::new(InteractionOperationEffectAdmission {
+                gateway_handle: self.gateway_handle.clone(),
+                principal: principal.clone(),
+                scope_ref: scope.scope_ref.clone(),
+            }),
+        );
+        let commit = service
+            .execute(
+                InteractionCommandInput {
+                    instance_id: input.instance_id,
+                    command_id: input.command_id,
+                    command_key: command_key.to_string(),
+                    payload: input.payload,
+                    expected_state_revision: input.expected_state_revision,
+                },
+                caller,
+                chrono::Utc::now(),
+            )
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
+        let (instance, event, duplicate) = match commit {
+            agentdash_domain::interaction::InteractionCommandCommit::Committed {
+                instance,
+                event,
+                ..
+            } => (instance, event, false),
+            agentdash_domain::interaction::InteractionCommandCommit::Duplicate {
+                instance,
+                event,
+                ..
+            } => (instance, event, true),
+        };
+        Ok(serde_json::json!({
+            "instance_id": instance.id,
+            "state": instance.state,
+            "state_revision": instance.state_revision,
+            "event_id": event.id,
+            "event_sequence": event.sequence,
+            "duplicate": duplicate,
+        }))
+    }
+}
+
+struct InteractionOperationAdmission {
+    repos: RepositorySet,
+    scope: agentdash_application_runtime_gateway::OperationAuthorizationScope,
+}
+
+#[async_trait]
+impl agentdash_application::interaction::InteractionCommandAdmissionPort
+    for InteractionOperationAdmission
+{
+    async fn admit(
+        &self,
+        instance: &agentdash_domain::interaction::InteractionInstance,
+        _: &agentdash_application::interaction::InteractionCommandInput,
+        caller: &agentdash_application::interaction::InteractionCommandCallerContext,
+    ) -> agentdash_application::interaction::InteractionApplicationResult<
+        agentdash_application::interaction::InteractionCommandAdmission,
+    > {
+        use agentdash_application::interaction::{
+            InteractionApplicationError, InteractionCommandAdmission,
+            InteractionCommandCallerContext,
+        };
+        use agentdash_domain::interaction::{
+            AttachmentSubject, InteractionActor, InteractionCommandOrigin, InteractionOwner,
+        };
+        match caller {
+            InteractionCommandCallerContext::ResolvedAgentRun { run_id, agent_id } => {
+                let attachment = self.repos.interaction_instance_repo.list_attachments(instance.id).await?
+                    .into_iter().find(|attachment| {
+                        attachment.detached_at.is_none()
+                            && attachment.capabilities.can_submit_commands
+                            && matches!(attachment.subject, AttachmentSubject::AgentRun { run_id: attached } if attached == *run_id)
+                    }).ok_or_else(|| InteractionApplicationError::AccessDenied {
+                        reason: "AgentRun 没有可提交 command 的 active Interaction attachment".into(),
+                    })?;
+                Ok(InteractionCommandAdmission {
+                    actor: InteractionActor::Agent {
+                        agent_id: *agent_id,
+                        run_id: Some(*run_id),
+                    },
+                    origin: InteractionCommandOrigin::AgentFrame,
+                    attachment_id: Some(attachment.id),
+                    capability_revision_ref: format!(
+                        "{}:attachment:{}",
+                        self.scope.authority_revision, attachment.id
+                    ),
+                })
+            }
+            InteractionCommandCallerContext::AuthenticatedUser { user_id } => {
+                if matches!(&instance.owner, InteractionOwner::User(owner) if owner != user_id) {
+                    return Err(InteractionApplicationError::AccessDenied {
+                        reason: "Interaction 不属于当前用户".into(),
+                    });
+                }
+                Ok(InteractionCommandAdmission {
+                    actor: InteractionActor::Human {
+                        user_id: user_id.clone(),
+                    },
+                    origin: InteractionCommandOrigin::UserWorkshop,
+                    attachment_id: None,
+                    capability_revision_ref: self.scope.authority_revision.clone(),
+                })
+            }
+        }
+    }
+
+    async fn admit_close(
+        &self,
+        _: &agentdash_domain::interaction::InteractionInstance,
+        _: &agentdash_application::interaction::InteractionCloseInput,
+        _: &agentdash_application::interaction::InteractionCommandCallerContext,
+    ) -> agentdash_application::interaction::InteractionApplicationResult<()> {
+        Err(
+            agentdash_application::interaction::InteractionApplicationError::AccessDenied {
+                reason: "Interaction Operation 不提供 close".into(),
+            },
+        )
+    }
+}
+
+struct InteractionOperationEffectAdmission {
+    gateway_handle: SharedOperationGatewayHandle,
+    principal: agentdash_application_runtime_gateway::OperationPrincipal,
+    scope_ref: agentdash_domain::operation::OperationScopeRef,
+}
+
+#[async_trait]
+impl agentdash_application::interaction::InteractionEffectDescriptorAdmissionPort
+    for InteractionOperationEffectAdmission
+{
+    async fn admit_replay_safe(
+        &self,
+        operation_ref: &agentdash_domain::operation::OperationRef,
+    ) -> agentdash_application::interaction::InteractionApplicationResult<
+        agentdash_domain::interaction::OperationEffectSafety,
+    > {
+        use agentdash_application::interaction::InteractionApplicationError;
+        use agentdash_application_runtime_gateway::{OperationReadiness, OperationReplayPolicy};
+        let gateway = self.gateway_handle.get().await.ok_or_else(|| {
+            InteractionApplicationError::ContractUnavailable {
+                reason: "canonical OperationGateway 尚未装配".into(),
+            }
+        })?;
+        let surface = gateway
+            .surface_current(
+                &self.principal,
+                &self.scope_ref,
+                &agentdash_domain::operation::OperationOriginRef::AgentTool,
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| InteractionApplicationError::ContractUnavailable {
+                reason: error.to_string(),
+            })?;
+        let descriptor = surface.catalog.get(operation_ref).ok_or_else(|| {
+            InteractionApplicationError::ContractUnavailable {
+                reason: format!("Operation 不在当前 actor surface: {operation_ref:?}"),
+            }
+        })?;
+        if !matches!(descriptor.readiness, OperationReadiness::Ready) {
+            return Err(InteractionApplicationError::ContractUnavailable {
+                reason: "Operation 当前不可执行".into(),
+            });
+        }
+        match descriptor.replay_policy {
+            OperationReplayPolicy::ReplaySafe => {
+                Ok(agentdash_domain::interaction::OperationEffectSafety::ReplaySafe)
+            }
+            OperationReplayPolicy::Idempotent => {
+                Ok(agentdash_domain::interaction::OperationEffectSafety::Idempotent)
+            }
+            OperationReplayPolicy::NonReplayable => {
+                Err(agentdash_domain::interaction::InteractionError::EffectNotReplaySafe.into())
+            }
+        }
+    }
 }
 
 struct ApplicationSetupOperationAccess {

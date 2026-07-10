@@ -3,6 +3,7 @@ mod extension_actions;
 mod extension_operations;
 mod extension_workspace;
 mod gateway;
+mod interaction_operations;
 mod mcp_access;
 mod mcp_operations;
 mod operation_authority;
@@ -60,6 +61,10 @@ pub use extension_workspace::{
     resolve_extension_invocation_workspace,
 };
 pub use gateway::RuntimeGateway;
+pub use interaction_operations::{
+    INTERACTION_OPERATION_NAMESPACE, InteractionCommandOperation, InteractionOperationAccess,
+    InteractionOperationProvider,
+};
 pub use mcp_access::CurrentSurfaceRuntimeMcpAccess;
 pub use mcp_operations::{
     MCP_OPERATION_NAMESPACE, McpOperationProvider, OperationMcpAccess, OperationMcpTool,

@@ -356,6 +356,22 @@ impl InteractionInstanceRepository for PostgresInteractionRepository {
         }
         Ok(())
     }
+
+    async fn list_attachments(
+        &self,
+        instance_id: Uuid,
+    ) -> Result<Vec<InteractionAttachment>, InteractionError> {
+        let rows = sqlx::query(
+            "SELECT document FROM interaction_attachments WHERE instance_id=$1 AND detached_at IS NULL ORDER BY created_at,id",
+        )
+        .bind(instance_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error("interaction_attachments"))?;
+        rows.into_iter()
+            .map(|row| decode_row(&row, "interaction_attachments.document"))
+            .collect()
+    }
     async fn upsert_runtime_binding(
         &self,
         binding: &InteractionRuntimeBinding,

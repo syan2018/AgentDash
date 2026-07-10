@@ -361,6 +361,7 @@ impl AppState {
             repos.clone(),
             backend_registry.clone(),
             setup_action_transport,
+            workspace_module_operation_gateway.clone(),
         )?;
         let mut operation_script_signing_secret = [0_u8; 32];
         operation_script_signing_secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());

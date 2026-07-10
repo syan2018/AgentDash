@@ -58,6 +58,10 @@ pub trait InteractionInstanceRepository: Send + Sync {
     ) -> Result<InteractionInstance, InteractionError>;
     async fn attach(&self, attachment: &InteractionAttachment) -> Result<(), InteractionError>;
     async fn detach(&self, attachment_id: Uuid) -> Result<(), InteractionError>;
+    async fn list_attachments(
+        &self,
+        instance_id: Uuid,
+    ) -> Result<Vec<InteractionAttachment>, InteractionError>;
     async fn upsert_runtime_binding(
         &self,
         binding: &InteractionRuntimeBinding,

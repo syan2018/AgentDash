@@ -3,7 +3,7 @@
   "name": "agent-runtime-architecture-convergence",
   "title": "Agent Runtime 架构收敛重构",
   "description": "从 Agent Core 实际使用链路重构 Application、Managed Runtime、Integration Driver Host、协议 Adapter、Context Compaction 与 Relay 边界。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

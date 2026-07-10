@@ -129,6 +129,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-agent-runtime-contract"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ts-rs",
+]
+
+[[package]]
+name = "agentdash-agent-runtime-test-support"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-runtime-contract",
+ "async-trait",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "agentdash-agent-runtime-wire"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-runtime-contract",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ts-rs",
+]
+
+[[package]]
 name = "agentdash-agent-types"
 version = "0.1.0"
 dependencies = [

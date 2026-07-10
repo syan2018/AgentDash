@@ -1,0 +1,2584 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RuntimeContractSchema",
+  "description": "Root used by the owned TypeScript and JSON Schema generator.",
+  "type": "object",
+  "properties": {
+    "command": {
+      "$ref": "#/$defs/RuntimeCommandEnvelope"
+    },
+    "operation_receipt": {
+      "$ref": "#/$defs/OperationReceipt"
+    },
+    "execute_error": {
+      "$ref": "#/$defs/RuntimeExecuteError"
+    },
+    "snapshot_query": {
+      "$ref": "#/$defs/RuntimeSnapshotQuery"
+    },
+    "event": {
+      "$ref": "#/$defs/RuntimeEventEnvelope"
+    },
+    "event_subscription": {
+      "$ref": "#/$defs/RuntimeEventSubscription"
+    },
+    "snapshot": {
+      "$ref": "#/$defs/RuntimeSnapshot"
+    },
+    "snapshot_error": {
+      "$ref": "#/$defs/RuntimeSnapshotError"
+    },
+    "subscribe_error": {
+      "$ref": "#/$defs/RuntimeSubscribeError"
+    },
+    "availability_state": {
+      "$ref": "#/$defs/AvailabilityState"
+    },
+    "command_availability": {
+      "$ref": "#/$defs/CommandAvailability"
+    },
+    "effective_profile": {
+      "$ref": "#/$defs/EffectiveRuntimeProfile"
+    },
+    "hook_requirement": {
+      "$ref": "#/$defs/HookRequirement"
+    },
+    "driver_describe_request": {
+      "$ref": "#/$defs/DriverDescribeRequest"
+    },
+    "descriptor": {
+      "$ref": "#/$defs/RuntimeDescriptor"
+    },
+    "driver_bind_request": {
+      "$ref": "#/$defs/DriverBindRequest"
+    },
+    "driver_binding": {
+      "$ref": "#/$defs/DriverBinding"
+    },
+    "driver_command": {
+      "$ref": "#/$defs/DriverCommandEnvelope"
+    },
+    "driver_dispatch_receipt": {
+      "$ref": "#/$defs/DriverDispatchReceipt"
+    },
+    "driver_event": {
+      "$ref": "#/$defs/DriverEventEnvelope"
+    },
+    "driver_inspection_query": {
+      "$ref": "#/$defs/DriverInspectionQuery"
+    },
+    "driver_inspection": {
+      "$ref": "#/$defs/DriverInspection"
+    },
+    "driver_error": {
+      "$ref": "#/$defs/DriverError"
+    }
+  },
+  "required": [
+    "command",
+    "operation_receipt",
+    "execute_error",
+    "snapshot_query",
+    "event",
+    "event_subscription",
+    "snapshot",
+    "snapshot_error",
+    "subscribe_error",
+    "availability_state",
+    "command_availability",
+    "effective_profile",
+    "hook_requirement",
+    "driver_describe_request",
+    "descriptor",
+    "driver_bind_request",
+    "driver_binding",
+    "driver_command",
+    "driver_dispatch_receipt",
+    "driver_event",
+    "driver_inspection_query",
+    "driver_inspection",
+    "driver_error"
+  ],
+  "$defs": {
+    "RuntimeCommandEnvelope": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/$defs/OperationMeta"
+        },
+        "command": {
+          "$ref": "#/$defs/RuntimeCommand"
+        }
+      },
+      "required": [
+        "meta",
+        "command"
+      ]
+    },
+    "OperationMeta": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "expected_thread_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "actor": {
+          "$ref": "#/$defs/RuntimeActor"
+        }
+      },
+      "required": [
+        "operation_id",
+        "idempotency_key",
+        "actor"
+      ]
+    },
+    "RuntimeActor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "user": {
+              "type": "object",
+              "properties": {
+                "subject": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "subject"
+              ]
+            }
+          },
+          "required": [
+            "user"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "agent": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
+          },
+          "required": [
+            "agent"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "system": {
+              "type": "object",
+              "properties": {
+                "component": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "component"
+              ]
+            }
+          },
+          "required": [
+            "system"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "RuntimeCommand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeInput"
+              }
+            },
+            "surface_digest": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_start"
+            }
+          },
+          "required": [
+            "kind",
+            "input",
+            "surface_digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_resume"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "checkpoint_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_fork"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "instructions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_settings_update"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "instructions"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "input": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeInput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "turn_start"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "expected_turn_id": {
+              "type": "string"
+            },
+            "input": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeInput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "turn_steer"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "expected_turn_id",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "expected_turn_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "turn_interrupt"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "expected_turn_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "interaction_id": {
+              "type": "string"
+            },
+            "response": {
+              "$ref": "#/$defs/InteractionResponse"
+            },
+            "kind": {
+              "type": "string",
+              "const": "interaction_respond"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "interaction_id",
+            "response"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "base_checkpoint_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_compact"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "base_checkpoint_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "expected_tool_set_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "tool_set_digest": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "tool_set_replace"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "expected_tool_set_revision",
+            "tool_set_digest"
+          ]
+        }
+      ]
+    },
+    "RuntimeInput": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mime_type": {
+              "type": "string"
+            },
+            "data_url": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "image"
+            }
+          },
+          "required": [
+            "kind",
+            "mime_type",
+            "data_url"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "media_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "file_reference"
+            }
+          },
+          "required": [
+            "kind",
+            "uri"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schema": {
+              "type": "string"
+            },
+            "value": true,
+            "kind": {
+              "type": "string",
+              "const": "structured"
+            }
+          },
+          "required": [
+            "kind",
+            "schema",
+            "value"
+          ]
+        }
+      ]
+    },
+    "InteractionResponse": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "approved"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "denied"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeInput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_input"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "output": true,
+            "kind": {
+              "type": "string",
+              "const": "dynamic_tool_result"
+            }
+          },
+          "required": [
+            "kind",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "value": true,
+            "kind": {
+              "type": "string",
+              "const": "mcp_elicitation"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        }
+      ]
+    },
+    "OperationReceipt": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        },
+        "operation_sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "thread_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accepted_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "duplicate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation_id",
+        "operation_sequence",
+        "accepted_revision",
+        "duplicate"
+      ]
+    },
+    "RuntimeExecuteError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/RuntimeCommandKind"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unsupported"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "reason",
+            "retryable"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "expected": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "actual": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "revision_conflict"
+            }
+          },
+          "required": [
+            "kind",
+            "expected",
+            "actual"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "invalid_command"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "incompatible"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "persistence"
+            }
+          },
+          "required": [
+            "kind",
+            "reason",
+            "retryable"
+          ]
+        }
+      ]
+    },
+    "RuntimeCommandKind": {
+      "type": "string",
+      "enum": [
+        "thread_start",
+        "thread_resume",
+        "thread_fork",
+        "thread_settings_update",
+        "turn_start",
+        "turn_steer",
+        "turn_interrupt",
+        "interaction_respond",
+        "context_compact",
+        "tool_set_replace"
+      ]
+    },
+    "RuntimeSnapshotQuery": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "at_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "thread_id"
+      ]
+    },
+    "RuntimeEventEnvelope": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "event": {
+          "$ref": "#/$defs/RuntimeEvent"
+        }
+      },
+      "required": [
+        "thread_id",
+        "revision",
+        "event"
+      ]
+    },
+    "RuntimeEvent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "operation_accepted"
+            }
+          },
+          "required": [
+            "kind",
+            "operation_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "type": "string"
+            },
+            "terminal": {
+              "$ref": "#/$defs/RuntimeOperationTerminal"
+            },
+            "kind": {
+              "type": "string",
+              "const": "operation_terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "operation_id",
+            "terminal"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "binding_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "binding_established"
+            }
+          },
+          "required": [
+            "kind",
+            "binding_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "binding_id": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "binding_lost"
+            }
+          },
+          "required": [
+            "kind",
+            "binding_id",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "critical": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "protocol_violation"
+            }
+          },
+          "required": [
+            "kind",
+            "code",
+            "message",
+            "critical"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/RuntimeThreadStatus"
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread_status_changed"
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "turn_started"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "terminal": {
+              "$ref": "#/$defs/RuntimeTurnTerminal"
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "turn_terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "terminal"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "item_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "item_started"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "item_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "item_id": {
+              "type": "string"
+            },
+            "delta": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "item_delta"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "item_id",
+            "delta"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "item_id": {
+              "type": "string"
+            },
+            "terminal": {
+              "$ref": "#/$defs/RuntimeItemTerminal"
+            },
+            "final_content": {
+              "$ref": "#/$defs/RuntimeItemContent"
+            },
+            "kind": {
+              "type": "string",
+              "const": "item_terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "item_id",
+            "terminal",
+            "final_content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "item_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "interaction_id": {
+              "type": "string"
+            },
+            "interaction_kind": {
+              "$ref": "#/$defs/RuntimeInteractionKind"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "interaction_requested"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "interaction_id",
+            "interaction_kind",
+            "prompt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
+            "interaction_id": {
+              "type": "string"
+            },
+            "terminal": {
+              "$ref": "#/$defs/RuntimeInteractionTerminal"
+            },
+            "kind": {
+              "type": "string",
+              "const": "interaction_terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "interaction_id",
+            "terminal"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "checkpoint_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_checkpoint_prepared"
+            }
+          },
+          "required": [
+            "kind",
+            "checkpoint_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "checkpoint_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_checkpoint_activated"
+            }
+          },
+          "required": [
+            "kind",
+            "checkpoint_id"
+          ]
+        }
+      ]
+    },
+    "RuntimeOperationTerminal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "succeeded"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "retryable": {
+              "type": "boolean"
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "kind",
+            "retryable"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "retryable": {
+              "type": "boolean"
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "lost"
+            }
+          },
+          "required": [
+            "kind",
+            "retryable"
+          ]
+        }
+      ]
+    },
+    "RuntimeThreadStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "suspended",
+        "closed",
+        "lost"
+      ]
+    },
+    "RuntimeTurnTerminal": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "interrupted",
+        "refused",
+        "limit_reached",
+        "failed",
+        "lost"
+      ]
+    },
+    "RuntimeItemTerminal": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "cancelled",
+        "lost"
+      ]
+    },
+    "RuntimeItemContent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeInput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_message"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "agent_message"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "arguments": true,
+            "kind": {
+              "type": "string",
+              "const": "tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "arguments"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "output": true,
+            "kind": {
+              "type": "string",
+              "const": "tool_result"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "checkpoint_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "system_context_change"
+            }
+          },
+          "required": [
+            "kind",
+            "checkpoint_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "checkpoint_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_compaction"
+            }
+          },
+          "required": [
+            "kind",
+            "checkpoint_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "reasoning"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "plan"
+            }
+          },
+          "required": [
+            "kind",
+            "steps"
+          ]
+        }
+      ]
+    },
+    "RuntimeInteractionKind": {
+      "type": "string",
+      "enum": [
+        "command_approval",
+        "file_change_approval",
+        "permission_approval",
+        "user_input_request",
+        "mcp_elicitation",
+        "dynamic_tool_execution"
+      ]
+    },
+    "RuntimeInteractionTerminal": {
+      "type": "string",
+      "enum": [
+        "resolved",
+        "expired",
+        "cancelled",
+        "failed",
+        "lost"
+      ]
+    },
+    "RuntimeEventSubscription": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "after": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "include_transient": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "thread_id",
+        "include_transient"
+      ]
+    },
+    "RuntimeSnapshot": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/RuntimeThreadStatus"
+        },
+        "active_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "profile_digest": {
+          "type": "string"
+        },
+        "bound_profile": {
+          "$ref": "#/$defs/RuntimeProfile"
+        },
+        "active_checkpoint_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "settings_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "tool_set_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pending_interactions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "command_availability": {
+          "type": "object",
+          "properties": {
+            "context_compact": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "interaction_respond": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "thread_fork": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "thread_resume": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "thread_settings_update": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "thread_start": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "tool_set_replace": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "turn_interrupt": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "turn_start": {
+              "$ref": "#/$defs/CommandAvailability"
+            },
+            "turn_steer": {
+              "$ref": "#/$defs/CommandAvailability"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "thread_id",
+        "revision",
+        "status",
+        "binding_id",
+        "profile_digest",
+        "bound_profile",
+        "context_revision",
+        "settings_revision",
+        "tool_set_revision",
+        "pending_interactions",
+        "command_availability"
+      ]
+    },
+    "RuntimeProfile": {
+      "type": "object",
+      "properties": {
+        "reference_class": {
+          "$ref": "#/$defs/ReferenceRuntimeClass"
+        },
+        "input": {
+          "$ref": "#/$defs/InputProfile"
+        },
+        "instruction": {
+          "$ref": "#/$defs/InstructionProfile"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolProfile"
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceProfile"
+        },
+        "interactions": {
+          "$ref": "#/$defs/InteractionProfile"
+        },
+        "lifecycle": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/LifecycleCapability"
+          }
+        },
+        "hooks": {
+          "$ref": "#/$defs/HookProfile"
+        },
+        "context": {
+          "$ref": "#/$defs/ContextProfile"
+        },
+        "telemetry_config": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/TelemetryCapability"
+          }
+        }
+      },
+      "required": [
+        "reference_class",
+        "input",
+        "instruction",
+        "tools",
+        "workspace",
+        "interactions",
+        "lifecycle",
+        "hooks",
+        "context",
+        "telemetry_config"
+      ]
+    },
+    "ReferenceRuntimeClass": {
+      "type": "string",
+      "enum": [
+        "turn",
+        "conversation",
+        "interactive",
+        "managed_thread"
+      ]
+    },
+    "InputProfile": {
+      "type": "object",
+      "properties": {
+        "modalities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/InputModality"
+          }
+        }
+      },
+      "required": [
+        "modalities"
+      ]
+    },
+    "InputModality": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "file_reference",
+        "structured"
+      ]
+    },
+    "InstructionProfile": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/InstructionChannel"
+          }
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/ConfigurationBoundary"
+        }
+      },
+      "required": [
+        "channels",
+        "configuration_boundary"
+      ]
+    },
+    "InstructionChannel": {
+      "type": "string",
+      "enum": [
+        "system",
+        "developer",
+        "additional_context"
+      ]
+    },
+    "ConfigurationBoundary": {
+      "type": "string",
+      "enum": [
+        "static_service",
+        "binding",
+        "thread_start",
+        "turn_start",
+        "hot_replace"
+      ]
+    },
+    "ToolProfile": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ToolChannel"
+          }
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/ConfigurationBoundary"
+        },
+        "cancellation": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "channels",
+        "configuration_boundary",
+        "cancellation"
+      ]
+    },
+    "ToolChannel": {
+      "type": "string",
+      "enum": [
+        "direct_callback",
+        "mcp_facade",
+        "driver_native"
+      ]
+    },
+    "WorkspaceProfile": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/WorkspaceCapability"
+          }
+        },
+        "mechanism": {
+          "$ref": "#/$defs/DeliveryMechanism"
+        }
+      },
+      "required": [
+        "capabilities",
+        "mechanism"
+      ]
+    },
+    "WorkspaceCapability": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "search",
+        "multiple_roots",
+        "virtual_file_system"
+      ]
+    },
+    "DeliveryMechanism": {
+      "type": "string",
+      "enum": [
+        "native",
+        "host_adapted_exact",
+        "host_adapted_boundary",
+        "observed",
+        "prompt_only"
+      ]
+    },
+    "InteractionProfile": {
+      "type": "object",
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/RuntimeInteractionKind"
+          }
+        },
+        "durable_correlation": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kinds",
+        "durable_correlation"
+      ]
+    },
+    "LifecycleCapability": {
+      "type": "string",
+      "enum": [
+        "thread_start",
+        "thread_resume",
+        "thread_fork",
+        "thread_read",
+        "turn_start",
+        "turn_steer",
+        "turn_interrupt",
+        "tool_set_replace"
+      ]
+    },
+    "HookProfile": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HookPointCapability"
+          }
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/ConfigurationBoundary"
+        }
+      },
+      "required": [
+        "points",
+        "configuration_boundary"
+      ]
+    },
+    "HookPointCapability": {
+      "type": "object",
+      "properties": {
+        "point": {
+          "$ref": "#/$defs/HookPoint"
+        },
+        "actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/HookAction"
+          }
+        },
+        "strength": {
+          "$ref": "#/$defs/SemanticStrength"
+        },
+        "mechanism": {
+          "$ref": "#/$defs/DeliveryMechanism"
+        },
+        "failure_policies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/HookFailurePolicy"
+          }
+        },
+        "acknowledged": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "point",
+        "actions",
+        "strength",
+        "mechanism",
+        "failure_policies",
+        "acknowledged"
+      ]
+    },
+    "HookPoint": {
+      "type": "string",
+      "enum": [
+        "before_thread_start",
+        "after_thread_start",
+        "before_turn",
+        "after_turn",
+        "before_provider_request",
+        "before_tool",
+        "after_tool",
+        "before_context_compact",
+        "after_context_compact",
+        "before_stop",
+        "after_item"
+      ]
+    },
+    "HookAction": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "add_context",
+        "block",
+        "rewrite_input",
+        "rewrite_result",
+        "request_approval",
+        "continue_turn",
+        "refresh_surface",
+        "emit_effect"
+      ]
+    },
+    "SemanticStrength": {
+      "type": "string",
+      "enum": [
+        "observed_only",
+        "boundary_adapted",
+        "exact_durable_boundary",
+        "exact_synchronous"
+      ]
+    },
+    "HookFailurePolicy": {
+      "type": "string",
+      "enum": [
+        "fail_closed",
+        "fail_open_with_diagnostic",
+        "retry_durable_effect",
+        "observe_only"
+      ]
+    },
+    "ContextProfile": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ContextCapability"
+          }
+        },
+        "fidelity": {
+          "$ref": "#/$defs/ContextFidelity"
+        },
+        "activation_idempotent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "capabilities",
+        "fidelity",
+        "activation_idempotent"
+      ]
+    },
+    "ContextCapability": {
+      "type": "string",
+      "enum": [
+        "read",
+        "export",
+        "import",
+        "prepare_compaction",
+        "activate_checkpoint"
+      ]
+    },
+    "ContextFidelity": {
+      "type": "string",
+      "enum": [
+        "opaque",
+        "event_projected",
+        "agent_replay",
+        "driver_exact",
+        "platform_exact"
+      ]
+    },
+    "TelemetryCapability": {
+      "type": "string",
+      "enum": [
+        "usage",
+        "reasoning",
+        "deltas",
+        "diagnostics",
+        "configuration_evidence"
+      ]
+    },
+    "CommandAvailability": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "available"
+            }
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "unmet": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/AvailabilityPredicate"
+              }
+            },
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "status",
+            "unmet",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "AvailabilityPredicate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "capability": {
+              "$ref": "#/$defs/LifecycleCapability"
+            },
+            "kind": {
+              "type": "string",
+              "const": "lifecycle"
+            }
+          },
+          "required": [
+            "kind",
+            "capability"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "active_turn"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "no_active_turn"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pending_interaction"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "capability": {
+              "$ref": "#/$defs/ContextCapability"
+            },
+            "minimum_fidelity": {
+              "$ref": "#/$defs/ContextFidelity"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context"
+            }
+          },
+          "required": [
+            "kind",
+            "capability",
+            "minimum_fidelity"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "tool_hot_replace"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "RuntimeSnapshotError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_found"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ]
+    },
+    "RuntimeSubscribeError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not_found"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "invalid_cursor"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "reason",
+            "retryable"
+          ]
+        }
+      ]
+    },
+    "AvailabilityState": {
+      "type": "object",
+      "properties": {
+        "thread_status": {
+          "$ref": "#/$defs/RuntimeThreadStatus"
+        },
+        "has_active_turn": {
+          "type": "boolean"
+        },
+        "has_pending_interaction": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "thread_status",
+        "has_active_turn",
+        "has_pending_interaction"
+      ]
+    },
+    "EffectiveRuntimeProfile": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/RuntimeProfile"
+        },
+        "provenance": {
+          "$ref": "#/$defs/ProfileProvenance"
+        }
+      },
+      "required": [
+        "profile",
+        "provenance"
+      ]
+    },
+    "ProfileProvenance": {
+      "type": "object",
+      "properties": {
+        "service_digest": {
+          "type": "string"
+        },
+        "transport_digest": {
+          "type": "string"
+        },
+        "host_policy_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_digest",
+        "transport_digest",
+        "host_policy_digest"
+      ]
+    },
+    "HookRequirement": {
+      "type": "object",
+      "properties": {
+        "point": {
+          "$ref": "#/$defs/HookPoint"
+        },
+        "actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/HookAction"
+          }
+        },
+        "minimum_strength": {
+          "$ref": "#/$defs/SemanticStrength"
+        },
+        "failure_policy": {
+          "$ref": "#/$defs/HookFailurePolicy"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "point",
+        "actions",
+        "minimum_strength",
+        "failure_policy",
+        "required"
+      ]
+    },
+    "DriverDescribeRequest": {
+      "type": "object",
+      "properties": {
+        "service_instance_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "service_instance_id"
+      ]
+    },
+    "RuntimeDescriptor": {
+      "type": "object",
+      "properties": {
+        "protocol_revision": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "service_instance_id": {
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/RuntimeProfile"
+        },
+        "profile_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol_revision",
+        "service_instance_id",
+        "profile",
+        "profile_digest"
+      ]
+    },
+    "DriverBindRequest": {
+      "type": "object",
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        },
+        "service_instance_id": {
+          "type": "string"
+        },
+        "surface_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "surface_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_id",
+        "service_instance_id",
+        "surface_revision",
+        "surface_digest"
+      ]
+    },
+    "DriverBinding": {
+      "type": "object",
+      "properties": {
+        "driver_binding_id": {
+          "type": "string"
+        },
+        "source_thread_id": {
+          "type": "string"
+        },
+        "applied_surface_revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "applied_surface_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "driver_binding_id",
+        "source_thread_id",
+        "applied_surface_revision",
+        "applied_surface_digest"
+      ]
+    },
+    "DriverCommandEnvelope": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "source_thread_id": {
+          "type": "string"
+        },
+        "command": {
+          "$ref": "#/$defs/RuntimeCommand"
+        }
+      },
+      "required": [
+        "request_id",
+        "binding_id",
+        "generation",
+        "source_thread_id",
+        "command"
+      ]
+    },
+    "DriverDispatchReceipt": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "string"
+        },
+        "duplicate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "request_id",
+        "duplicate"
+      ]
+    },
+    "DriverEventEnvelope": {
+      "type": "object",
+      "properties": {
+        "binding_id": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "source_thread_id": {
+          "type": "string"
+        },
+        "source_turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event": {
+          "$ref": "#/$defs/RuntimeEvent"
+        }
+      },
+      "required": [
+        "binding_id",
+        "generation",
+        "source_thread_id",
+        "event"
+      ]
+    },
+    "DriverInspectionQuery": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "driver_binding_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "binding"
+            }
+          },
+          "required": [
+            "kind",
+            "driver_binding_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "candidate_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "compaction_activation"
+            }
+          },
+          "required": [
+            "kind",
+            "candidate_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "checkpoint_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "checkpoint"
+            }
+          },
+          "required": [
+            "kind",
+            "checkpoint_id"
+          ]
+        }
+      ]
+    },
+    "DriverInspection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "active": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "binding"
+            }
+          },
+          "required": [
+            "kind",
+            "active"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "applied": {
+              "type": "boolean"
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "compaction_activation"
+            }
+          },
+          "required": [
+            "kind",
+            "applied"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "available": {
+              "type": "boolean"
+            },
+            "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "checkpoint"
+            }
+          },
+          "required": [
+            "kind",
+            "available"
+          ]
+        }
+      ]
+    },
+    "DriverError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unsupported"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "rejected"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "reason",
+            "retryable"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "stale_generation"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "critical": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "protocol_violation"
+            }
+          },
+          "required": [
+            "kind",
+            "reason",
+            "critical"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "lost"
+            }
+          },
+          "required": [
+            "kind",
+            "reason",
+            "retryable"
+          ]
+        }
+      ]
+    }
+  }
+}

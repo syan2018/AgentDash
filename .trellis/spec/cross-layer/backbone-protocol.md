@@ -6,6 +6,149 @@ Backbone Protocol 是 AgentDash 内部 session 事件流的统一传输协议。
 
 `BackboneEnvelope` 是平台内部持久化、NDJSON 推送和前端消费的事件 envelope。外部协议 adapter 可以存在，但进入 AgentDash 主链路前必须转换为 Backbone。
 
+Runtime重构期间，`agentdash-agent-runtime-contract`与`agentdash-agent-runtime-wire`是新执行链的canonical合同；Backbone继续承载现有产品feed/presentation，直到AgentRun完成切换。Runtime Contract不引用Backbone或vendor DTO，原因是执行状态机、Driver与transport需要在不依赖旧presentation形状的前提下演进。
+
+## Scenario: Agent Runtime Contract、Wire 与同源Bindings
+
+### 1. Scope / Trigger
+
+当新增或修改Runtime command、event、profile、Driver SPI、Wire frame或其Rust/TypeScript/JSON Schema形状时，适用本合同。目标是让Application、Managed Runtime、Driver Host、Adapter与Relay共享AgentDash-owned vocabulary，同时保持canonical/source坐标、业务状态与transport framing的类型隔离。
+
+### 2. Signatures
+
+公共Runtime seam：
+
+```rust
+trait AgentRuntimeGateway {
+    async fn execute(
+        &self,
+        command: RuntimeCommandEnvelope,
+    ) -> Result<OperationReceipt, RuntimeExecuteError>;
+
+    async fn snapshot(
+        &self,
+        query: RuntimeSnapshotQuery,
+    ) -> Result<RuntimeSnapshot, RuntimeSnapshotError>;
+
+    async fn events(
+        &self,
+        subscription: RuntimeEventSubscription,
+    ) -> Result<RuntimeEventStream, RuntimeSubscribeError>;
+}
+```
+
+Wire envelope与response correlation：
+
+```rust
+struct RuntimeWireEnvelope {
+    protocol_revision: u32,
+    frame_id: RuntimeWireFrameId,
+    critical: bool,
+    frame: RuntimeWireFrame,
+}
+
+enum RuntimeWireFrame {
+    Request(RuntimeWireRequest),
+    Response {
+        request_frame_id: RuntimeWireFrameId,
+        response: RuntimeWireResponse,
+    },
+    Notification(RuntimeWireNotification),
+    Ack(RuntimeWireAck),
+}
+```
+
+Operation terminal使用typed outcome：
+
+```rust
+enum RuntimeOperationTerminal {
+    Succeeded,
+    Failed { retryable: bool, message: Option<String> },
+    Lost { retryable: bool, message: Option<String> },
+}
+```
+
+### 3. Contracts
+
+- canonical Runtime ID与Driver source ID使用不同newtype；任何source mapping只在Driver Host/Adapter完成。
+- `Ok(DriverDispatchReceipt)`天然表示delivery acceptance；unsupported/rejected通过`DriverError`返回，不使用`accepted: bool`构造false-success。
+- 每个Response携带`request_frame_id`；Ack使用typed frame coordinate并只表达已接收边界。
+- unknown critical frame返回`RuntimeProtocolViolation::UnknownCriticalFrame`；unknown non-critical frame返回显式ignored decode result。
+- `RuntimeContractSchema`覆盖公开command/event/snapshot/profile/availability与Driver describe/bind/dispatch/inspect/error families，TypeScript与JSON Schema共享同一Rust来源。
+- Hook capability逐point表达actions、semantic strength、delivery、acknowledgment与failure policies；required failure policy参与profile intersection与admission。
+- JSON开放值只用于structured input、tool arguments/results、MCP与Wire首阶段parse边界；canonical lifecycle使用typed union。
+- bindings只由显式generator通过`TS::export_all_to(tempdir)`汇总到`packages/app-web/src/generated`与`schemas`；源码crate保持无`bindings/`副产物，原因是单一输出面才能让drift check可靠。
+
+生成入口：
+
+```powershell
+pnpm contracts:generate
+pnpm contracts:check
+```
+
+### 4. Validation & Error Matrix
+
+| 条件 | 必须结果 |
+| --- | --- |
+| protocol revision不匹配 | `UnsupportedRevision` |
+| unknown critical frame | `UnknownCriticalFrame`，连接方按critical policy终止/隔离 |
+| unknown non-critical frame | `IgnoredUnknown`，保留frame kind与可用坐标 |
+| response缺少request correlation | 反序列化失败为malformed envelope |
+| unsupported Driver command | side effect前返回`DriverError::Unsupported` |
+| required Hook failure policy不在effective profile | admission incompatible |
+| Operation/Turn/Item/Interaction重复terminal | conformance violation |
+| Item terminal后继续delta | conformance violation |
+| Item/Interaction后续事件改变Thread/Turn parent | parent-coordinate conformance violation |
+| 源码crate出现隐式`bindings/`目录 | contract generation/check失败 |
+| generated TS/Schema与Rust root不一致 | `pnpm contracts:check`失败 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：两个同method request并发发送，两个Response分别通过`request_frame_id`关联，Ack独立推进接收边界。
+- Good：Hook requirement要求FailClosed，service、transport与host policy都声明该failure policy后才形成effective capability。
+- Base：新版本发送non-critical presentation hint，旧版本显式忽略且继续处理后续known frame。
+- Bad：Driver返回`Ok`但没有接受delivery；合同不提供这种状态，必须返回typed error。
+- Bad：Operation用`succeeded/retryable`布尔组合表达terminal；typed outcome阻止非法组合进入Wire与Schema。
+
+### 6. Tests Required
+
+- `cargo test -p agentdash-agent-runtime-contract`：typed terminal、profile/failure policy、schema root覆盖。
+- `cargo test -p agentdash-agent-runtime-wire`：request correlation、revision、critical/non-critical frame与serde形状。
+- `cargo test -p agentdash-agent-runtime-test-support`：exactly-one terminal、Lost、final item authoritative、parent coordinates与unsupported-before-side-effect。
+- `cargo clippy -p agentdash-agent-runtime-contract -p agentdash-agent-runtime-wire -p agentdash-agent-runtime-test-support --all-targets -- -D warnings`。
+- `pnpm contracts:check`：Rust/TS/JSON Schema drift与crate-local bindings residue。
+- `pnpm frontend:check`：生成TypeScript可被前端编译消费。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+struct DriverDispatchReceipt {
+    accepted: bool,
+}
+
+#[ts(export)]
+struct RuntimeCommandEnvelope { /* ... */ }
+```
+
+这种形状允许`Ok(accepted=false)`，并让测试/编译在每个crate产生额外bindings输出面。
+
+#### Correct
+
+```rust
+struct DriverDispatchReceipt {
+    request_id: DriverRequestId,
+    duplicate: bool,
+}
+
+// 类型只derive TS；显式generator在tempdir调用export_all_to后写唯一产物。
+#[derive(TS)]
+struct RuntimeCommandEnvelope { /* ... */ }
+```
+
+`Ok`语义单一，bindings产物也只有一个受drift check治理的事实源。
+
 ## BackboneEnvelope
 
 定义位置：`crates/agentdash-agent-protocol/src/backbone/envelope.rs`

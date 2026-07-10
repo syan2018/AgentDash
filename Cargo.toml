@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/agentdash-agent-runtime-contract",
+    "crates/agentdash-agent-runtime-wire",
+    "crates/agentdash-agent-runtime-test-support",
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
     "crates/agentdash-application-runtime-gateway",
@@ -91,6 +94,9 @@ rhai = { version = "1.24", features = ["serde", "sync"] }
 
 # 工作区内部 crate 互相引用
 agentdash-domain = { path = "crates/agentdash-domain" }
+agentdash-agent-runtime-contract = { path = "crates/agentdash-agent-runtime-contract" }
+agentdash-agent-runtime-wire = { path = "crates/agentdash-agent-runtime-wire" }
+agentdash-agent-runtime-test-support = { path = "crates/agentdash-agent-runtime-test-support" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
 agentdash-application-runtime-gateway = { path = "crates/agentdash-application-runtime-gateway" }
 agentdash-application-runtime-session = { path = "crates/agentdash-application-runtime-session" }

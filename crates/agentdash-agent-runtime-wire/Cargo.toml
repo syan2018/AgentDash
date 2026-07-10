@@ -1,0 +1,21 @@
+[package]
+name = "agentdash-agent-runtime-wire"
+description = "Typed cross-process framing for the AgentDash Agent Runtime"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "generate_agent_runtime_wire"
+path = "src/generate.rs"
+
+[dependencies]
+agentdash-agent-runtime-contract = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tempfile = { workspace = true }
+ts-rs = { workspace = true }

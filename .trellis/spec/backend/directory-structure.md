@@ -8,6 +8,9 @@
 
 ```
 crates/
+├── agentdash-agent-runtime-contract/ # AgentDash-owned Runtime IDs/commands/events/profiles/errors
+├── agentdash-agent-runtime-wire/     # transport-neutral Runtime request/response/event framing
+├── agentdash-agent-runtime-test-support/ # Runtime/Driver共享conformance behavior harness
 ├── agentdash-api/               # Interface Layer — HTTP 路由、DTO、中间件
 ├── agentdash-application/       # Application Layer — 剩余用例编排与 composition adapters
 ├── agentdash-application-ports/ # Application Boundary Ports — API/local 实现、application 消费的纯端口
@@ -46,7 +49,10 @@ Domain Layer (agentdash-domain)
 Infrastructure Layer (agentdash-infrastructure, agentdash-executor)
 
 Agent 子系统（独立于主分层）：
-agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-executor
+agentdash-agent-runtime-contract ← agentdash-agent-runtime-wire
+agentdash-agent-runtime-contract ← agentdash-agent-runtime-test-support
+
+现有Agent执行链在后续工作包中逐步切换到Managed Runtime与Integration Driver Host；新Runtime Contract不反向依赖application、domain repository、旧protocol、vendor或transport。
 ```
 
 ### 分层职责
@@ -62,6 +68,9 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor` | 持久化实现、连接器、WebSocket 中继 | domain |
 | **Agent Types** | `agentdash-agent-types` | 跨层共享类型（Message/Tool/Context/Delegate） | serde, async-trait |
 | **Agent Engine** | `agentdash-agent` | Agent Loop 引擎、LlmBridge trait | agent-types, domain |
+| **Agent Runtime Contract** | `agentdash-agent-runtime-contract` | canonical Runtime IDs、commands、events、snapshots、profiles、availability、errors与Driver SPI | serde、schema/TS生成、结构化错误与async trait |
+| **Agent Runtime Wire** | `agentdash-agent-runtime-wire` | typed request/response/notification/ack、protocol revision与critical frame violation | agent-runtime-contract、serde、schema/TS生成 |
+| **Agent Runtime Test Support** | `agentdash-agent-runtime-test-support` | 可被Runtime/Host/Adapter复用的行为一致性测试 | agent-runtime-contract、test runtime |
 
 ---
 

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agentdash-application-ports = { workspace = true }
+agentdash-application-runtime-gateway = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-spi = { workspace = true }
 async-trait = "0.1"
@@ -17,8 +18,10 @@ sha2 = "0.10"
 thiserror = { workspace = true }
 agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }
 uuid = { workspace = true }
 
 [dev-dependencies]
+agentdash-infrastructure = { workspace = true }
 agentdash-test-support = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

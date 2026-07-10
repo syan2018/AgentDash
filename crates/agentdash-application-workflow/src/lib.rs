@@ -4,6 +4,7 @@ mod error;
 pub mod gate;
 mod graph_planner;
 pub mod graph_resolver;
+mod operation_script_caller;
 pub mod orchestration;
 mod repository_set;
 pub mod script;
@@ -20,6 +21,10 @@ pub use definition::{
 pub use error::WorkflowApplicationError;
 pub use graph_planner::ApplicationWorkflowGraphPlanner;
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
+pub use operation_script_caller::{
+    WorkflowOperationScriptCallContext, WorkflowOperationScriptCaller,
+    WorkflowOperationScriptCallerError, WorkflowOperationScriptProgram,
+};
 pub use orchestration::{
     OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput,
     SubmitHumanGateDecisionResult,

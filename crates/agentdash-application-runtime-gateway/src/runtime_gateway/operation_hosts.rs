@@ -433,7 +433,7 @@ mod tests {
 
     use super::*;
     use crate::runtime_gateway::{
-        InMemoryOperationResultStore, OperationAuthorityGrant, OperationAuthorityResolver,
+        EphemeralOperationResultStore, OperationAuthorityGrant, OperationAuthorityResolver,
         OperationAuthorizationScope, TracingOperationAuditSink,
     };
 
@@ -461,7 +461,7 @@ mod tests {
                 Arc::new(AllowAuthority),
                 [],
                 [],
-                Arc::new(InMemoryOperationResultStore::default()),
+                Arc::new(EphemeralOperationResultStore::default()),
                 Arc::new(TracingOperationAuditSink),
             )
             .expect("gateway"),

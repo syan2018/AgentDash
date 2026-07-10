@@ -8,13 +8,13 @@ use agentdash_domain::interaction::{
 use super::*;
 
 #[derive(Default)]
-struct MemoryDefinitions {
+struct RecordingDefinitions {
     definitions: Mutex<HashMap<Uuid, InteractionDefinition>>,
     revisions: Mutex<HashMap<Uuid, InteractionDefinitionRevision>>,
 }
 
 #[async_trait]
-impl InteractionDefinitionRepository for MemoryDefinitions {
+impl InteractionDefinitionRepository for RecordingDefinitions {
     async fn create(
         &self,
         definition: &InteractionDefinition,
@@ -170,8 +170,8 @@ fn create_input(project_id: Uuid) -> CreateCanvasDefinitionInput {
     }
 }
 
-fn service() -> (CanvasDefinitionService, Arc<MemoryDefinitions>) {
-    let definitions = Arc::new(MemoryDefinitions::default());
+fn service() -> (CanvasDefinitionService, Arc<RecordingDefinitions>) {
+    let definitions = Arc::new(RecordingDefinitions::default());
     (
         CanvasDefinitionService::new(definitions.clone(), Arc::new(FullAccess)),
         definitions,

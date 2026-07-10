@@ -185,7 +185,7 @@ mod tests {
         OPERATION_SCRIPT_HOST_API_V1, OperationScriptResultValue, RHAI_V1_DIALECT,
     };
     use agentdash_application_runtime_gateway::{
-        InMemoryOperationResultStore, OperationActorKind, OperationAuthorityGrant,
+        EphemeralOperationResultStore, OperationActorKind, OperationAuthorityGrant,
         OperationAuthorityResolver, OperationAuthorizationScope, OperationDescriptor,
         OperationDispatch, OperationExecutionPolicy, OperationInvocationEnvelope,
         OperationPlacement, OperationProvenance, OperationProvider, OperationReadiness,
@@ -327,7 +327,7 @@ mod tests {
                 }),
                 [provider.clone() as Arc<dyn OperationProvider>],
                 [],
-                Arc::new(InMemoryOperationResultStore::default()),
+                Arc::new(EphemeralOperationResultStore::default()),
                 Arc::new(TracingOperationAuditSink),
             )
             .expect("gateway"),

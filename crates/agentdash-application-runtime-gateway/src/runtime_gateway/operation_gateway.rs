@@ -328,12 +328,12 @@ impl OperationDispatcher for OperationProviderRuntime {
 }
 
 #[derive(Default)]
-pub struct InMemoryOperationResultStore {
+pub struct EphemeralOperationResultStore {
     results: RwLock<HashMap<uuid::Uuid, ScopedOperationResult>>,
 }
 
 #[async_trait]
-impl OperationResultStore for InMemoryOperationResultStore {
+impl OperationResultStore for EphemeralOperationResultStore {
     async fn put(&self, result: ScopedOperationResult) -> Result<(), OperationExecutionError> {
         let mut results = self.results.write().await;
         prune_expired(&mut results);
@@ -492,7 +492,7 @@ mod tests {
                     invalid: false,
                 }),
             ],
-            Arc::new(InMemoryOperationResultStore::default()),
+            Arc::new(EphemeralOperationResultStore::default()),
             Arc::new(TracingOperationAuditSink),
         )
         .expect("gateway");

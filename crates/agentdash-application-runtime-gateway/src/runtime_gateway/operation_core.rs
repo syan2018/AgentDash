@@ -594,12 +594,12 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MemoryResultStore {
+    struct RecordingResultStore {
         results: Mutex<HashMap<Uuid, ScopedOperationResult>>,
     }
 
     #[async_trait]
-    impl OperationResultStore for MemoryResultStore {
+    impl OperationResultStore for RecordingResultStore {
         async fn put(&self, result: ScopedOperationResult) -> Result<(), OperationExecutionError> {
             self.results
                 .lock()
@@ -725,7 +725,7 @@ mod tests {
     fn core(
         surfaces: Arc<dyn OperationSurfaceResolver>,
         dispatcher: Arc<RecordingDispatcher>,
-        result_store: Arc<MemoryResultStore>,
+        result_store: Arc<RecordingResultStore>,
         audit: Arc<RecordingAuditSink>,
     ) -> OperationExecutionCore {
         OperationExecutionCore::new(
@@ -748,7 +748,7 @@ mod tests {
         );
         let resolver = Arc::new(SequenceSurfaceResolver::new(vec![actor_surface]));
         let dispatcher = Arc::new(RecordingDispatcher::new(json!({ "ok": true })));
-        let result_store = Arc::new(MemoryResultStore::default());
+        let result_store = Arc::new(RecordingResultStore::default());
         let audit = Arc::new(RecordingAuditSink::default());
         let core = core(resolver, dispatcher.clone(), result_store, audit);
 
@@ -792,7 +792,7 @@ mod tests {
         let core = core(
             resolver,
             dispatcher.clone(),
-            Arc::new(MemoryResultStore::default()),
+            Arc::new(RecordingResultStore::default()),
             Arc::new(RecordingAuditSink::default()),
         );
 
@@ -826,7 +826,7 @@ mod tests {
         let core = core(
             resolver,
             dispatcher.clone(),
-            Arc::new(MemoryResultStore::default()),
+            Arc::new(RecordingResultStore::default()),
             Arc::new(RecordingAuditSink::default()),
         );
 
@@ -855,7 +855,7 @@ mod tests {
         let core = Arc::new(core(
             resolver,
             dispatcher,
-            Arc::new(MemoryResultStore::default()),
+            Arc::new(RecordingResultStore::default()),
             Arc::new(RecordingAuditSink::default()),
         ));
         let cancel = CancellationToken::new();
@@ -900,7 +900,7 @@ mod tests {
             resolver,
             Arc::new(HangingPlacementResolver),
             dispatcher.clone(),
-            Arc::new(MemoryResultStore::default()),
+            Arc::new(RecordingResultStore::default()),
             Arc::new(RecordingAuditSink::default()),
         ));
         let cancel = CancellationToken::new();
@@ -948,7 +948,7 @@ mod tests {
         let core = core(
             Arc::new(SequenceSurfaceResolver::new(vec![actor_surface])),
             dispatcher.clone(),
-            Arc::new(MemoryResultStore::default()),
+            Arc::new(RecordingResultStore::default()),
             Arc::new(RecordingAuditSink::default()),
         );
 
@@ -981,7 +981,7 @@ mod tests {
         );
         let resolver = Arc::new(SequenceSurfaceResolver::new(vec![actor_surface]));
         let dispatcher = Arc::new(RecordingDispatcher::new(json!({ "ok": true })));
-        let result_store = Arc::new(MemoryResultStore::default());
+        let result_store = Arc::new(RecordingResultStore::default());
         let core = core(
             resolver,
             dispatcher,

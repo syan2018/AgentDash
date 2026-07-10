@@ -58,7 +58,7 @@ pub use operation_core::{
 };
 pub use operation_error::{OperationExecutionError, OperationExecutionErrorKind};
 pub use operation_gateway::{
-    InMemoryOperationResultStore, OperationGateway, TracingOperationAuditSink,
+    EphemeralOperationResultStore, OperationGateway, TracingOperationAuditSink,
 };
 pub use operation_hosts::{
     AgentRunOperationHost, BoundOperationHost, BoundOperationScriptHost,

@@ -7,13 +7,13 @@ use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::workspace::WorkspaceDetectionError;
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
 use agentdash_application_runtime_gateway::{
-    CompositeOperationAuthorityResolver, ExtensionOperationProvider,
-    ExtensionOperationRuntimeContext, InMemoryOperationResultStore, InteractionCommandOperation,
-    InteractionOperationAccess, InteractionOperationProvider, McpOperationProvider,
-    McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput,
-    McpProbeTransportOutput, OperationGateway, RuntimeGatewaySetupError, SetupOperationAccessPort,
-    SetupOperationAuthorityResolver, SetupOperationProvider, TracingOperationAuditSink,
-    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    CompositeOperationAuthorityResolver, EphemeralOperationResultStore, ExtensionOperationProvider,
+    ExtensionOperationRuntimeContext, InteractionCommandOperation, InteractionOperationAccess,
+    InteractionOperationProvider, McpOperationProvider, McpProbeSetupPort, McpProbeTarget,
+    McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput, OperationGateway,
+    RuntimeGatewaySetupError, SetupOperationAccessPort, SetupOperationAuthorityResolver,
+    SetupOperationProvider, TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry,
+    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
     WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
     WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
     WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
@@ -100,7 +100,7 @@ pub(crate) fn build_operation_gateway(
             extension_provider,
             interaction_provider,
         ],
-        Arc::new(InMemoryOperationResultStore::default()),
+        Arc::new(EphemeralOperationResultStore::default()),
         Arc::new(TracingOperationAuditSink),
     )
     .map(Arc::new)

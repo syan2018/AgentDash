@@ -120,12 +120,12 @@ struct StoredResult {
 }
 
 #[derive(Default)]
-pub struct InMemoryOperationScriptResultStore {
+pub struct EphemeralOperationScriptResultStore {
     results: AsyncRwLock<HashMap<Uuid, StoredResult>>,
 }
 
 #[async_trait]
-impl OperationScriptResultStore for InMemoryOperationScriptResultStore {
+impl OperationScriptResultStore for EphemeralOperationScriptResultStore {
     async fn put(
         &self,
         value: Value,
@@ -179,7 +179,7 @@ impl RhaiOperationScriptEngine {
         Self::with_result_store(
             signing_secret,
             config,
-            Arc::new(InMemoryOperationScriptResultStore::default()),
+            Arc::new(EphemeralOperationScriptResultStore::default()),
         )
     }
 

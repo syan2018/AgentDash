@@ -1,5 +1,5 @@
 mod rhai_engine;
 
 pub use rhai_engine::{
-    InMemoryOperationScriptResultStore, RhaiOperationScriptConfig, RhaiOperationScriptEngine,
+    EphemeralOperationScriptResultStore, RhaiOperationScriptConfig, RhaiOperationScriptEngine,
 };

@@ -492,7 +492,7 @@ mod tests {
 
     use super::*;
     use crate::runtime_gateway::{
-        InMemoryOperationResultStore, OperationGateway, OperationInvocationCommand,
+        EphemeralOperationResultStore, OperationGateway, OperationInvocationCommand,
         OperationResultValue, OperationTraceContext, TracingOperationAuditSink,
         validate_json_schema_subset,
     };
@@ -654,7 +654,7 @@ mod tests {
             Arc::new(SetupOperationAuthorityResolver::new(access)),
             [provider(ports) as Arc<dyn OperationProvider>],
             [],
-            Arc::new(InMemoryOperationResultStore::default()),
+            Arc::new(EphemeralOperationResultStore::default()),
             Arc::new(TracingOperationAuditSink),
         )
         .expect("valid setup operation gateway")

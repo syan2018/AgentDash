@@ -356,6 +356,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-types",
  "agentdash-application-ports",
+ "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
  "agentdash-test-support",

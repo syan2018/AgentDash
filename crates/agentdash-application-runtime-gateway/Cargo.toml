@@ -8,6 +8,7 @@ license.workspace = true
 agentdash-agent-types = { workspace = true }
 agentdash-application-ports = { workspace = true }
 agentdash-domain = { workspace = true }
+agentdash-diagnostics = { workspace = true }
 agentdash-spi = { workspace = true }
 async-trait = "0.1"
 chrono = { workspace = true }

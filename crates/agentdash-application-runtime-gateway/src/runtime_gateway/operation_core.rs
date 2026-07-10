@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_domain::operation::{OperationOriginRef, OperationScopeRef};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::Value;
@@ -9,9 +10,8 @@ use uuid::Uuid;
 use super::operation_types::{
     ActorOperationSurface, OperationActorKind, OperationAuditEvent, OperationAuditStage,
     OperationDescriptor, OperationExecutionRequest, OperationExecutionResult,
-    OperationInvocationEnvelope, OperationOrigin, OperationPlacement, OperationPrincipal,
-    OperationReadiness, OperationResultAccess, OperationResultRef, OperationResultValue,
-    OperationScopeRef, ScopedOperationResult,
+    OperationInvocationEnvelope, OperationPlacement, OperationPrincipal, OperationReadiness,
+    OperationResultAccess, OperationResultRef, OperationResultValue, ScopedOperationResult,
 };
 use super::{
     OperationExecutionError, validate_json_schema_definition, validate_json_schema_subset,
@@ -23,7 +23,7 @@ pub trait OperationSurfaceResolver: Send + Sync {
         &self,
         principal: &OperationPrincipal,
         scope: &super::OperationAuthorizationScope,
-        origin: &OperationOrigin,
+        origin: &OperationOriginRef,
         cancel: CancellationToken,
     ) -> Result<ActorOperationSurface, OperationExecutionError>;
 }
@@ -124,6 +124,20 @@ impl OperationExecutionCore {
     ) -> Result<OperationExecutionResult, OperationExecutionError> {
         request
             .operation_ref
+            .validate()
+            .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
+        request
+            .principal
+            .principal_ref()
+            .validate()
+            .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
+        request
+            .scope
+            .scope_ref
+            .validate()
+            .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
+        request
+            .origin
             .validate()
             .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
         if request.deadline <= Utc::now() {
@@ -288,7 +302,7 @@ impl OperationExecutionCore {
                     operation_ref: request.operation_ref.clone(),
                     value: output,
                     access: OperationResultAccess {
-                        principal: request.principal.clone(),
+                        principal_ref: request.principal.principal_ref().clone(),
                         scope: request.scope.clone(),
                         required_capabilities: descriptor.required_capabilities.clone(),
                         expires_at,
@@ -315,7 +329,7 @@ impl OperationExecutionCore {
         self.audit_sink
             .record(OperationAuditEvent {
                 operation_ref: request.operation_ref.clone(),
-                principal: request.principal.clone(),
+                principal_ref: request.principal.principal_ref().clone(),
                 scope: request.scope.clone(),
                 origin: request.origin.clone(),
                 trace: request.trace.clone(),
@@ -403,7 +417,7 @@ fn validate_replay_admission(
     descriptor: &OperationDescriptor,
     request: &OperationExecutionRequest,
 ) -> Result<(), OperationExecutionError> {
-    if !matches!(request.origin, OperationOrigin::EffectReplay { .. }) {
+    if !matches!(request.origin, OperationOriginRef::EffectReplay { .. }) {
         return Ok(());
     }
     if descriptor.replay_policy == super::OperationReplayPolicy::NonReplayable {
@@ -424,13 +438,14 @@ pub fn result_access_matches(
     current_capabilities: &std::collections::BTreeSet<String>,
 ) -> bool {
     access.expires_at > Utc::now()
-        && access.principal == *principal
+        && access.principal_ref == *principal.principal_ref()
         && access.scope.scope_ref == scope.scope_ref
         && access.required_capabilities.is_subset(current_capabilities)
 }
 
 pub fn scope_project_id(scope: &OperationScopeRef) -> Option<Uuid> {
     match scope {
+        OperationScopeRef::EnvironmentSetup { project_id, .. } => *project_id,
         OperationScopeRef::Project { project_id }
         | OperationScopeRef::WorkspaceBinding { project_id, .. } => Some(*project_id),
         OperationScopeRef::InteractionInstance { .. } => None,
@@ -444,6 +459,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use agentdash_domain::operation::OperationRef;
+    use agentdash_spi::{AuthIdentity, AuthMode};
     use async_trait::async_trait;
     use chrono::{Duration, Utc};
     use serde_json::{Value, json};
@@ -452,7 +468,7 @@ mod tests {
     use super::*;
     use crate::runtime_gateway::{
         ActorOperationSurface, OperationAuthorizationScope, OperationCatalog, OperationDescriptor,
-        OperationDispatch, OperationEffect, OperationExecutionPolicy, OperationOrigin,
+        OperationDispatch, OperationEffect, OperationExecutionPolicy, OperationOriginRef,
         OperationProvenance, OperationReadiness, OperationReplayPolicy, OperationResultValue,
         OperationScopeRef, OperationTraceContext,
     };
@@ -487,7 +503,7 @@ mod tests {
             &self,
             _principal: &OperationPrincipal,
             _scope: &OperationAuthorizationScope,
-            _origin: &OperationOrigin,
+            _origin: &OperationOriginRef,
             cancel: CancellationToken,
         ) -> Result<ActorOperationSurface, OperationExecutionError> {
             if self.hang {
@@ -521,10 +537,26 @@ mod tests {
         }
     }
 
+    struct HangingPlacementResolver;
+
+    #[async_trait]
+    impl OperationPlacementResolver for HangingPlacementResolver {
+        async fn resolve_placement(
+            &self,
+            _descriptor: &OperationDescriptor,
+            _principal: &OperationPrincipal,
+            _scope: &OperationAuthorizationScope,
+            cancel: CancellationToken,
+        ) -> Result<OperationPlacement, OperationExecutionError> {
+            cancel.cancelled().await;
+            Err(OperationExecutionError::Cancelled)
+        }
+    }
+
     struct RecordingDispatcher {
         calls: AtomicUsize,
         routes: Mutex<Vec<String>>,
-        origins: Mutex<Vec<OperationOrigin>>,
+        origins: Mutex<Vec<OperationOriginRef>>,
         output: Value,
     }
 
@@ -603,6 +635,21 @@ mod tests {
         OperationRef::new("extension", provider_key, "lookup", 1).expect("valid operation ref")
     }
 
+    fn test_identity(user_id: &str) -> AuthIdentity {
+        AuthIdentity {
+            auth_mode: AuthMode::Personal,
+            user_id: user_id.to_string(),
+            subject: user_id.to_string(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin: false,
+            provider: None,
+            extra: Value::Null,
+        }
+    }
+
     fn descriptor(provider_key: &str, route: &str) -> OperationDescriptor {
         let operation_ref = operation_ref(provider_key);
         OperationDescriptor {
@@ -649,13 +696,14 @@ mod tests {
         }
     }
 
-    fn request(operation_ref: OperationRef, origin: OperationOrigin) -> OperationExecutionRequest {
+    fn request(
+        operation_ref: OperationRef,
+        origin: OperationOriginRef,
+    ) -> OperationExecutionRequest {
         OperationExecutionRequest {
             operation_ref,
             input: json!({ "query": "demo" }),
-            principal: OperationPrincipal::User {
-                user_id: "user-1".to_string(),
-            },
+            principal: OperationPrincipal::authenticated_user(test_identity("user-1")),
             scope: OperationAuthorizationScope {
                 scope_ref: OperationScopeRef::Project {
                     project_id: Uuid::new_v4(),
@@ -701,7 +749,7 @@ mod tests {
         let core = core(resolver, dispatcher.clone(), result_store, audit);
 
         core.execute(
-            request(operation_ref("beta.weather"), OperationOrigin::AgentTool),
+            request(operation_ref("beta.weather"), OperationOriginRef::AgentTool),
             CancellationToken::new(),
         )
         .await
@@ -709,7 +757,7 @@ mod tests {
         core.execute(
             request(
                 operation_ref("beta.weather"),
-                OperationOrigin::OperationScriptNested {
+                OperationOriginRef::OperationScriptNested {
                     script_invocation_id: "script-1".to_string(),
                 },
             ),
@@ -746,7 +794,10 @@ mod tests {
 
         let error = core
             .execute(
-                request(operation_ref("alpha.weather"), OperationOrigin::AgentTool),
+                request(
+                    operation_ref("alpha.weather"),
+                    OperationOriginRef::AgentTool,
+                ),
                 CancellationToken::new(),
             )
             .await
@@ -777,7 +828,10 @@ mod tests {
 
         let error = core
             .execute(
-                request(operation_ref("alpha.weather"), OperationOrigin::AgentTool),
+                request(
+                    operation_ref("alpha.weather"),
+                    OperationOriginRef::AgentTool,
+                ),
                 CancellationToken::new(),
             )
             .await
@@ -806,7 +860,10 @@ mod tests {
             let cancel = cancel.clone();
             async move {
                 core.execute(
-                    request(operation_ref("alpha.weather"), OperationOrigin::AgentTool),
+                    request(
+                        operation_ref("alpha.weather"),
+                        OperationOriginRef::AgentTool,
+                    ),
                     cancel,
                 )
                 .await
@@ -823,6 +880,89 @@ mod tests {
             error.kind(),
             super::super::OperationExecutionErrorKind::Cancelled
         );
+    }
+
+    #[tokio::test]
+    async fn cancellation_interrupts_a_hanging_placement_resolver() {
+        let operation = descriptor("alpha.weather", "alpha-route");
+        let actor_surface = surface(
+            "rev-1",
+            BTreeSet::from(["extension.invoke".to_string()]),
+            vec![operation],
+        );
+        let resolver = Arc::new(SequenceSurfaceResolver::new(vec![actor_surface]));
+        let dispatcher = Arc::new(RecordingDispatcher::new(json!({ "ok": true })));
+        let core = Arc::new(OperationExecutionCore::new(
+            resolver,
+            Arc::new(HangingPlacementResolver),
+            dispatcher.clone(),
+            Arc::new(MemoryResultStore::default()),
+            Arc::new(RecordingAuditSink::default()),
+        ));
+        let cancel = CancellationToken::new();
+        let execution = tokio::spawn({
+            let core = core.clone();
+            let cancel = cancel.clone();
+            async move {
+                core.execute(
+                    request(
+                        operation_ref("alpha.weather"),
+                        OperationOriginRef::AgentTool,
+                    ),
+                    cancel,
+                )
+                .await
+            }
+        });
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        let error = execution
+            .await
+            .expect("execution task should finish")
+            .expect_err("cancelled placement must fail");
+        assert_eq!(
+            error.kind(),
+            super::super::OperationExecutionErrorKind::Cancelled
+        );
+        assert_eq!(dispatcher.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn unavailable_descriptor_is_rejected_before_placement() {
+        let mut operation = descriptor("alpha.weather", "alpha-route");
+        operation.readiness = OperationReadiness::Unavailable {
+            code: "provider_offline".to_string(),
+            message: "provider is offline".to_string(),
+        };
+        let actor_surface = surface(
+            "rev-1",
+            BTreeSet::from(["extension.invoke".to_string()]),
+            vec![operation],
+        );
+        let dispatcher = Arc::new(RecordingDispatcher::new(json!({ "ok": true })));
+        let core = core(
+            Arc::new(SequenceSurfaceResolver::new(vec![actor_surface])),
+            dispatcher.clone(),
+            Arc::new(MemoryResultStore::default()),
+            Arc::new(RecordingAuditSink::default()),
+        );
+
+        let error = core
+            .execute(
+                request(
+                    operation_ref("alpha.weather"),
+                    OperationOriginRef::AgentTool,
+                ),
+                CancellationToken::new(),
+            )
+            .await
+            .expect_err("unavailable descriptor must fail before dispatch");
+        assert_eq!(
+            error.kind(),
+            super::super::OperationExecutionErrorKind::Unavailable
+        );
+        assert_eq!(dispatcher.calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -846,7 +986,7 @@ mod tests {
         );
         let execution_request = request(
             operation_ref("alpha.weather"),
-            OperationOrigin::UserWorkshop,
+            OperationOriginRef::UserWorkshop,
         );
         let principal = execution_request.principal.clone();
         let scope = execution_request.scope.clone();
@@ -861,9 +1001,7 @@ mod tests {
         let denied = result_store
             .get_authorized(
                 &result_ref,
-                &OperationPrincipal::User {
-                    user_id: "another-user".to_string(),
-                },
+                &OperationPrincipal::authenticated_user(test_identity("another-user")),
                 &scope,
                 &BTreeSet::from(["extension.invoke".to_string()]),
             )

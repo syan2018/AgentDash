@@ -8,15 +8,16 @@ use agentdash_application::workspace::WorkspaceDetectionError;
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_application_runtime_gateway::{
-    ExtensionRuntimeActionProvider, McpCallToolProvider, McpListToolsProvider, McpProbeSetupPort,
-    McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
-    McpProbeTransportProvider, RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
+    ExtensionRuntimeActionProvider, InMemoryOperationResultStore, McpCallToolProvider,
+    McpListToolsProvider, McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput,
+    McpProbeTransportInput, McpProbeTransportOutput, OperationGateway, RuntimeGateway,
+    RuntimeGatewaySetupError, RuntimeSessionMcpAccess, SetupOperationAccessPort,
+    SetupOperationAuthorityResolver, SetupOperationProvider, TracingOperationAuditSink,
     WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
-    WorkspaceBrowseDirectoryProvider, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
-    WorkspaceDetectGitOutput, WorkspaceDetectGitProvider, WorkspaceDetectGitSetupPort,
-    WorkspaceDetectInput, WorkspaceDetectOutput, WorkspaceDetectProvider, WorkspaceDetectSetupPort,
-    WorkspaceDiscoverByIdentityCandidateOutput, WorkspaceDiscoverByIdentityInput,
-    WorkspaceDiscoverByIdentityOutput, WorkspaceDiscoverByIdentityProvider,
+    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
+    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
+    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
@@ -24,42 +25,18 @@ use agentdash_spi::AuthIdentity;
 use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::{McpRelayProvider, RelayProbeTarget};
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 
 use crate::relay::registry::BackendRegistry;
 
 pub(crate) fn build_runtime_gateway(
-    mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,
-    repos: RepositorySet,
-    backend_registry: Arc<BackendRegistry>,
-    setup_action_transport: Arc<
-        dyn agentdash_application_ports::backend_transport::BackendTransport,
-    >,
     session_mcp_access: Arc<dyn RuntimeSessionMcpAccess>,
     extension_installations: Arc<dyn ProjectExtensionInstallationRepository>,
     extension_action_transport: Arc<dyn ExtensionRuntimeActionTransport>,
 ) -> Arc<RuntimeGateway> {
-    let mcp_probe_setup = Arc::new(ApplicationMcpProbeSetupPort::new(
-        Some(mcp_probe_relay),
-        McpProbeBackendTargetResolver::new(repos, backend_registry),
-        Arc::new(agentdash_infrastructure::RmcpProbeTransport::new()),
-    ));
-    let workspace_setup = Arc::new(ApplicationWorkspaceSetupPort::new(setup_action_transport));
-
     Arc::new(
         RuntimeGateway::new()
-            .with_provider(Arc::new(McpProbeTransportProvider::new(mcp_probe_setup)))
-            .with_provider(Arc::new(WorkspaceDetectProvider::new(
-                workspace_setup.clone(),
-            )))
-            .with_provider(Arc::new(WorkspaceDetectGitProvider::new(
-                workspace_setup.clone(),
-            )))
-            .with_provider(Arc::new(WorkspaceBrowseDirectoryProvider::new(
-                workspace_setup.clone(),
-            )))
-            .with_provider(Arc::new(WorkspaceDiscoverByIdentityProvider::new(
-                workspace_setup,
-            )))
             .with_provider(Arc::new(McpListToolsProvider::new(
                 session_mcp_access.clone(),
             )))
@@ -69,6 +46,172 @@ pub(crate) fn build_runtime_gateway(
                 extension_action_transport,
             ))),
     )
+}
+
+pub(crate) fn build_operation_gateway(
+    mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,
+    repos: RepositorySet,
+    backend_registry: Arc<BackendRegistry>,
+    setup_action_transport: Arc<
+        dyn agentdash_application_ports::backend_transport::BackendTransport,
+    >,
+) -> Result<Arc<OperationGateway>, agentdash_application_runtime_gateway::OperationExecutionError> {
+    let mcp_probe_setup = Arc::new(ApplicationMcpProbeSetupPort::new(
+        Some(mcp_probe_relay),
+        McpProbeBackendTargetResolver::new(repos.clone(), backend_registry),
+        Arc::new(agentdash_infrastructure::RmcpProbeTransport::new()),
+    ));
+    let workspace_setup = Arc::new(ApplicationWorkspaceSetupPort::new(setup_action_transport));
+
+    let setup_provider = Arc::new(SetupOperationProvider::new(
+        mcp_probe_setup,
+        workspace_setup.clone(),
+        workspace_setup.clone(),
+        workspace_setup.clone(),
+        workspace_setup,
+    ));
+    OperationGateway::try_new(
+        Arc::new(SetupOperationAuthorityResolver::new(Arc::new(
+            ApplicationSetupOperationAccess { repos },
+        ))),
+        [setup_provider as Arc<dyn agentdash_application_runtime_gateway::OperationProvider>],
+        Arc::new(InMemoryOperationResultStore::default()),
+        Arc::new(TracingOperationAuditSink),
+    )
+    .map(Arc::new)
+}
+
+struct ApplicationSetupOperationAccess {
+    repos: RepositorySet,
+}
+
+#[async_trait]
+impl SetupOperationAccessPort for ApplicationSetupOperationAccess {
+    async fn resolve_access(
+        &self,
+        identity: &AuthIdentity,
+        scope: &agentdash_application_runtime_gateway::OperationAuthorizationScope,
+        cancel: CancellationToken,
+    ) -> Result<
+        agentdash_application_runtime_gateway::OperationAuthorityGrant,
+        agentdash_application_runtime_gateway::OperationExecutionError,
+    > {
+        use agentdash_application::backend::{BackendAuthorizationService, BackendPermission};
+        use agentdash_application::project::{
+            ProjectAuthorizationService, ProjectPermission,
+            project_authorization_context_from_identity,
+        };
+        use agentdash_application_runtime_gateway::{OperationExecutionError, OperationScopeRef};
+
+        if cancel.is_cancelled() {
+            return Err(OperationExecutionError::Cancelled);
+        }
+        let OperationScopeRef::EnvironmentSetup {
+            project_id,
+            workspace_id,
+            backend_id,
+        } = &scope.scope_ref
+        else {
+            return Err(OperationExecutionError::invalid_request(
+                "Setup authority 需要 EnvironmentSetup scope",
+            ));
+        };
+
+        let mut revision_facts = vec![format!("user:{}", identity.user_id)];
+        if let Some(project_id) = project_id {
+            let project = self
+                .repos
+                .project_repo
+                .get_by_id(*project_id)
+                .await
+                .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                .ok_or_else(|| OperationExecutionError::NotReady {
+                    code: "project_not_found".to_string(),
+                    message: format!("Project 不存在: {project_id}"),
+                })?;
+            let allowed = ProjectAuthorizationService::new(self.repos.project_repo.as_ref())
+                .can_access_project(
+                    &project_authorization_context_from_identity(identity),
+                    &project,
+                    ProjectPermission::Use,
+                )
+                .await
+                .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
+            if !allowed {
+                return Err(OperationExecutionError::CapabilitiesDenied {
+                    missing: vec!["project.use".to_string()],
+                });
+            }
+            revision_facts.push(format!("project:{project_id}:{}", project.updated_at));
+        }
+
+        if let Some(workspace_id) = workspace_id {
+            let workspace = self
+                .repos
+                .workspace_repo
+                .get_by_id(*workspace_id)
+                .await
+                .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                .ok_or_else(|| OperationExecutionError::NotReady {
+                    code: "workspace_not_found".to_string(),
+                    message: format!("Workspace 不存在: {workspace_id}"),
+                })?;
+            if project_id.is_some_and(|project_id| workspace.project_id != project_id) {
+                return Err(OperationExecutionError::CapabilitiesDenied {
+                    missing: vec!["workspace.project_scope".to_string()],
+                });
+            }
+            revision_facts.push(format!("workspace:{workspace_id}:{}", workspace.updated_at));
+        }
+
+        let mut capabilities = std::collections::BTreeSet::from(["setup.mcp_probe".to_string()]);
+        if let Some(backend_id) = backend_id {
+            let backend = BackendAuthorizationService::new(
+                self.repos.backend_repo.as_ref(),
+                self.repos.project_repo.as_ref(),
+                self.repos.project_backend_access_repo.as_ref(),
+            )
+            .require_backend(identity, backend_id, BackendPermission::View)
+            .await
+            .map_err(|error| OperationExecutionError::CapabilitiesDenied {
+                missing: vec![error.to_string()],
+            })?;
+            revision_facts.push(format!(
+                "backend:{}:{}:{:?}:{:?}:{:?}",
+                backend.id,
+                backend.enabled,
+                backend.owner_user_id,
+                backend.visibility,
+                backend.share_scope_id
+            ));
+            if let Some(project_id) = project_id {
+                let grant = self
+                    .repos
+                    .project_backend_access_repo
+                    .get_active_for_project_backend(*project_id, backend_id)
+                    .await
+                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                    .ok_or_else(|| OperationExecutionError::CapabilitiesDenied {
+                        missing: vec!["project.backend.use".to_string()],
+                    })?;
+                revision_facts.push(format!("grant:{}:{}", grant.id, grant.updated_at));
+            }
+            capabilities.insert("setup.workspace".to_string());
+        }
+
+        revision_facts.sort();
+        let mut digest = Sha256::new();
+        for fact in revision_facts {
+            digest.update(fact.as_bytes());
+            digest.update([0]);
+        }
+        Ok(
+            agentdash_application_runtime_gateway::OperationAuthorityGrant {
+                authority_revision: format!("sha256:{:x}", digest.finalize()),
+                capabilities,
+            },
+        )
+    }
 }
 
 struct ApplicationMcpProbeSetupPort {

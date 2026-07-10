@@ -328,6 +328,27 @@ impl From<agentdash_application_runtime_gateway::RuntimeInvocationError> for Api
     }
 }
 
+impl From<agentdash_application_runtime_gateway::OperationExecutionError> for ApiError {
+    fn from(err: agentdash_application_runtime_gateway::OperationExecutionError) -> Self {
+        use agentdash_application_runtime_gateway::OperationExecutionErrorKind;
+
+        let message = err.to_string();
+        match err.kind() {
+            OperationExecutionErrorKind::InvalidRequest => ApiError::BadRequest(message),
+            OperationExecutionErrorKind::AuthorityChanged => ApiError::Conflict(message),
+            OperationExecutionErrorKind::Denied => ApiError::Forbidden(message),
+            OperationExecutionErrorKind::Unavailable
+            | OperationExecutionErrorKind::DeadlineExceeded => {
+                ApiError::ServiceUnavailable(message)
+            }
+            OperationExecutionErrorKind::Cancelled => ApiError::Conflict(message),
+            OperationExecutionErrorKind::ProviderFailed
+            | OperationExecutionErrorKind::InvalidOutput
+            | OperationExecutionErrorKind::ResultStoreFailed => ApiError::Internal(message),
+        }
+    }
+}
+
 impl From<agentdash_application::backend::BackendAuthorizationError> for ApiError {
     fn from(err: agentdash_application::backend::BackendAuthorizationError) -> Self {
         use agentdash_application::backend::BackendAuthorizationError as E;

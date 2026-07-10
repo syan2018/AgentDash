@@ -5,11 +5,13 @@ mod gateway;
 mod mcp_access;
 mod operation_core;
 mod operation_error;
+mod operation_gateway;
+mod operation_provider;
 mod operation_types;
 mod provider;
 mod schema;
 mod session_actions;
-mod setup_actions;
+mod setup_operations;
 mod tool_adapter;
 mod types;
 
@@ -29,6 +31,10 @@ pub use agentdash_application_ports::runtime_gateway_setup::{
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
     WorkspaceDiscoverByIdentityWorkspaceInput,
+};
+pub use agentdash_domain::operation::{
+    OperationEffect, OperationOriginRef, OperationPrincipalRef, OperationReplayPolicy,
+    OperationScopeRef,
 };
 pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
 pub use extension_actions::{
@@ -52,14 +58,19 @@ pub use operation_core::{
     OperationResultStore, OperationSurfaceResolver, result_access_matches, scope_project_id,
 };
 pub use operation_error::{OperationExecutionError, OperationExecutionErrorKind};
+pub use operation_gateway::{
+    InMemoryOperationResultStore, OperationGateway, TracingOperationAuditSink,
+};
+pub use operation_provider::{
+    OperationAuthorityGrant, OperationAuthorityResolver, OperationProvider,
+};
 pub use operation_types::{
     ActorOperationSurface, OperationActorKind, OperationAuditEvent, OperationAuditStage,
     OperationAuthorizationScope, OperationCatalog, OperationDescriptor, OperationDispatch,
-    OperationEffect, OperationExecutionPolicy, OperationExecutionRequest, OperationExecutionResult,
-    OperationInvocationEnvelope, OperationOrigin, OperationPlacement, OperationPrincipal,
-    OperationProvenance, OperationReadiness, OperationReplayPolicy, OperationResultAccess,
-    OperationResultRef, OperationResultValue, OperationScopeRef, OperationTraceContext,
-    ScopedOperationResult,
+    OperationExecutionPolicy, OperationExecutionRequest, OperationExecutionResult,
+    OperationInvocationCommand, OperationInvocationEnvelope, OperationPlacement,
+    OperationPrincipal, OperationProvenance, OperationReadiness, OperationResultAccess,
+    OperationResultRef, OperationResultValue, OperationTraceContext, ScopedOperationResult,
 };
 pub use provider::RuntimeProvider;
 pub use schema::{validate_json_schema_definition, validate_json_schema_subset};
@@ -69,9 +80,9 @@ pub use session_actions::{
     McpListToolsInput, McpListToolsOutput, McpListToolsProvider, RuntimeMcpToolDescriptor,
     RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
-pub use setup_actions::{
-    McpProbeTransportProvider, WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider,
-    WorkspaceDetectProvider, WorkspaceDiscoverByIdentityProvider,
+pub use setup_operations::{
+    SETUP_OPERATION_NAMESPACE, SETUP_OPERATION_PROVIDER_KEY, SetupOperationAccessPort,
+    SetupOperationAuthorityResolver, SetupOperationProvider, setup_operation_ref,
 };
 pub use tool_adapter::{RuntimeActionToolAdapter, RuntimeActionToolSpec};
 pub use types::{

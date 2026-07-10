@@ -1,29 +1,17 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
-use agentdash_domain::operation::{OperationProviderRef, OperationRef};
+use agentdash_domain::operation::{
+    OperationEffect, OperationOriginRef, OperationPrincipalRef, OperationProviderRef, OperationRef,
+    OperationReplayPolicy, OperationScopeRef,
+};
+use agentdash_spi::AuthIdentity;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::OperationExecutionError;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationEffect {
-    Read,
-    LocalMutation,
-    ExternalSideEffect,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationReplayPolicy {
-    NonReplayable,
-    Idempotent,
-    ReplaySafe,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -212,70 +200,53 @@ fn operation_sort_key(descriptor: &OperationDescriptor) -> (&str, &str, &str, u1
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum OperationPrincipal {
-    User { user_id: String },
-    AgentRunAgent { run_id: Uuid, agent_id: Uuid },
-    WorkflowNode { run_id: Uuid, node_key: String },
-    ExtensionInstallation { installation_id: Uuid },
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperationPrincipal {
+    principal_ref: OperationPrincipalRef,
+    user_identity: Option<AuthIdentity>,
 }
 
 impl OperationPrincipal {
-    pub fn actor_kind(&self) -> OperationActorKind {
-        match self {
-            Self::User { .. } => OperationActorKind::User,
-            Self::AgentRunAgent { .. } => OperationActorKind::Agent,
-            Self::WorkflowNode { .. } => OperationActorKind::Workflow,
-            Self::ExtensionInstallation { .. } => OperationActorKind::ExtensionService,
+    pub fn authenticated_user(identity: AuthIdentity) -> Self {
+        Self {
+            principal_ref: OperationPrincipalRef::User {
+                user_id: identity.user_id.clone(),
+            },
+            user_identity: Some(identity),
         }
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum OperationScopeRef {
-    Project {
-        project_id: Uuid,
-    },
-    InteractionInstance {
-        instance_id: Uuid,
-    },
-    WorkspaceBinding {
-        project_id: Uuid,
-        workspace_id: Uuid,
-    },
+    pub fn server_resolved(principal_ref: OperationPrincipalRef) -> Self {
+        Self {
+            principal_ref,
+            user_identity: None,
+        }
+    }
+
+    pub fn principal_ref(&self) -> &OperationPrincipalRef {
+        &self.principal_ref
+    }
+
+    pub fn user_identity(&self) -> Option<&AuthIdentity> {
+        self.user_identity.as_ref()
+    }
+
+    pub fn actor_kind(&self) -> OperationActorKind {
+        match self.principal_ref {
+            OperationPrincipalRef::User { .. } => OperationActorKind::User,
+            OperationPrincipalRef::AgentRunAgent { .. } => OperationActorKind::Agent,
+            OperationPrincipalRef::WorkflowNode { .. } => OperationActorKind::Workflow,
+            OperationPrincipalRef::ExtensionInstallation { .. } => {
+                OperationActorKind::ExtensionService
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct OperationAuthorizationScope {
     pub scope_ref: OperationScopeRef,
     pub authority_revision: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum OperationOrigin {
-    AgentTool,
-    UserWorkshop,
-    Canvas {
-        definition_id: Uuid,
-    },
-    Interaction {
-        instance_id: Uuid,
-    },
-    ComponentEvent {
-        instance_id: Uuid,
-        component_key: String,
-    },
-    Workflow,
-    OperationScriptNested {
-        script_invocation_id: String,
-    },
-    EffectReplay {
-        effect_id: Uuid,
-    },
-    ExtensionService,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -322,7 +293,22 @@ pub struct OperationExecutionRequest {
     pub input: Value,
     pub principal: OperationPrincipal,
     pub scope: OperationAuthorizationScope,
-    pub origin: OperationOrigin,
+    pub origin: OperationOriginRef,
+    pub trace: OperationTraceContext,
+    pub deadline: DateTime<Utc>,
+    pub idempotency_key: Option<String>,
+    pub attachment_ref: Option<String>,
+}
+
+/// Trusted host command. Authority revision and placement are deliberately absent;
+/// `OperationGateway` resolves both immediately before execution.
+#[derive(Debug, Clone)]
+pub struct OperationInvocationCommand {
+    pub operation_ref: OperationRef,
+    pub input: Value,
+    pub principal: OperationPrincipal,
+    pub scope_ref: OperationScopeRef,
+    pub origin: OperationOriginRef,
     pub trace: OperationTraceContext,
     pub deadline: DateTime<Utc>,
     pub idempotency_key: Option<String>,
@@ -335,7 +321,7 @@ pub struct OperationInvocationEnvelope {
     pub input: Value,
     pub principal: OperationPrincipal,
     pub scope: OperationAuthorizationScope,
-    pub origin: OperationOrigin,
+    pub origin: OperationOriginRef,
     pub placement: OperationPlacement,
     pub trace: OperationTraceContext,
     pub deadline: DateTime<Utc>,
@@ -362,9 +348,9 @@ pub struct OperationResultRef {
     pub result_id: Uuid,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OperationResultAccess {
-    pub principal: OperationPrincipal,
+    pub principal_ref: OperationPrincipalRef,
     pub scope: OperationAuthorizationScope,
     pub required_capabilities: BTreeSet<String>,
     pub expires_at: DateTime<Utc>,
@@ -398,9 +384,9 @@ pub enum OperationAuditStage {
 #[derive(Debug, Clone)]
 pub struct OperationAuditEvent {
     pub operation_ref: OperationRef,
-    pub principal: OperationPrincipal,
+    pub principal_ref: OperationPrincipalRef,
     pub scope: OperationAuthorizationScope,
-    pub origin: OperationOrigin,
+    pub origin: OperationOriginRef,
     pub trace: OperationTraceContext,
     pub stage: OperationAuditStage,
     pub outcome_code: Option<String>,

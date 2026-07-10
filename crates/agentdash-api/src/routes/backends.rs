@@ -27,6 +27,7 @@ use crate::dto::{
     EnsureLocalRuntimeResponse, RuntimeHealthResponse, backend_capabilities_response,
     backend_response,
 };
+use crate::operation_runtime::{SetupOperationScope, invoke_setup_operation};
 use crate::relay::registry::OnlineBackendInfo;
 use crate::routes::release_info;
 use crate::rpc::ApiError;
@@ -38,7 +39,6 @@ use agentdash_application::backend::{
     remove_backend_record,
 };
 use agentdash_application_runtime_gateway::{
-    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
     WorkspaceBrowseDirectoryOutput,
 };
@@ -533,24 +533,20 @@ pub async fn browse_directory(
     .map_err(|error| {
         ApiError::BadRequest(format!("workspace.browse_directory 输入非法: {error}"))
     })?;
-    let request = RuntimeInvocationRequest::new(
-        RuntimeActionKey::parse(WORKSPACE_BROWSE_DIRECTORY_ACTION).map_err(|error| {
-            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
-        })?,
-        RuntimeActor::PlatformUser {
-            user_id: Some(current_user.user_id),
-        },
-        RuntimeContext::Setup {
+    let output = invoke_setup_operation(
+        state.as_ref(),
+        &current_user,
+        WORKSPACE_BROWSE_DIRECTORY_ACTION,
+        input,
+        SetupOperationScope {
             project_id: None,
             workspace_id: None,
             backend_id: Some(backend.id),
-            root_ref: None,
         },
-        input,
-    );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
-    let output = serde_json::from_value::<WorkspaceBrowseDirectoryOutput>(invocation.output.output)
-        .map_err(|error| {
+    )
+    .await?;
+    let output =
+        serde_json::from_value::<WorkspaceBrowseDirectoryOutput>(output).map_err(|error| {
             ApiError::Internal(format!(
                 "workspace.browse_directory 返回值解析失败: {error}"
             ))

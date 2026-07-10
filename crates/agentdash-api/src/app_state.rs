@@ -36,7 +36,8 @@ use agentdash_application_lifecycle::run_view_builder::LifecycleReadModelQueryAd
 use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;
 use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
 use agentdash_application_runtime_gateway::{
-    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeProtocolInvoker, RuntimeGateway,
+    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeProtocolInvoker, OperationGateway,
+    RuntimeGateway,
 };
 use agentdash_application_runtime_session::session::{
     SessionBranchingService, SessionControlService, SessionCoreService, SessionEventingService,
@@ -133,6 +134,8 @@ pub struct ServiceSet {
     pub audit_bus: SharedContextAuditBus,
     /// 统一运行时能力网关 — Session/Setup runtime action 的共享入口
     pub runtime_gateway: Arc<RuntimeGateway>,
+    /// actor-neutral canonical Operation gateway；Setup caller 已迁入，Session caller 随 host adapter 收敛。
+    pub operation_gateway: Arc<OperationGateway>,
     pub extension_runtime_protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
     /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
@@ -337,11 +340,13 @@ impl AppState {
             runtime_surface_query.clone(),
             mcp_tool_discovery,
         ));
-        let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
+        let operation_gateway = crate::bootstrap::runtime_gateway::build_operation_gateway(
             mcp_probe_relay,
             repos.clone(),
             backend_registry.clone(),
             setup_action_transport,
+        )?;
+        let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
             session_mcp_access,
             repos.project_extension_installation_repo.clone(),
             backend_registry.clone(),
@@ -487,6 +492,7 @@ impl AppState {
                 routine_executor: None,
                 audit_bus,
                 runtime_gateway,
+                operation_gateway,
                 extension_runtime_protocol_invoker,
                 extension_package_artifact_storage,
                 function_runner,

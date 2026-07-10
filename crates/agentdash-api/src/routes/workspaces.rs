@@ -12,7 +12,6 @@ use agentdash_application::workspace::{
     WorkspacePlacementService,
 };
 use agentdash_application_runtime_gateway::{
-    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION, WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
     WorkspaceDetectGitInput, WorkspaceDetectGitOutput, WorkspaceDetectInput,
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
@@ -40,6 +39,7 @@ use crate::dto::{
     DetectWorkspaceResponse, UpdateWorkspaceRequest, UpdateWorkspaceStatusRequest,
     WorkspaceBindingInput, WorkspaceBindingResponse, WorkspaceResponse,
 };
+use crate::operation_runtime::{SetupOperationScope, invoke_setup_operation};
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
 use crate::workspace_placement_runtime::RuntimeGatewayWorkspacePlacementRuntime;
@@ -130,7 +130,8 @@ pub async fn create_workspace(
         .map(|binding| binding_input_to_binding(Uuid::nil(), binding))
         .collect::<Result<Vec<_>, _>>()?;
     let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
-        state.services.runtime_gateway.clone(),
+        state.services.operation_gateway.clone(),
+        current_user.clone(),
     ));
     let stored = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
         .create_workspace(CreateWorkspacePlacementInput {
@@ -196,7 +197,8 @@ pub async fn update_workspace(
         })
         .transpose()?;
     let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
-        state.services.runtime_gateway.clone(),
+        state.services.operation_gateway.clone(),
+        current_user.clone(),
     ));
     let stored = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
         .update_workspace(UpdateWorkspacePlacementInput {
@@ -271,7 +273,7 @@ pub async fn detect_workspace(
     ensure_project_backend_access(&state, project_id, &req.backend_id).await?;
     let detected = invoke_workspace_setup_detect(
         &state,
-        Some(current_user.user_id.as_str()),
+        &current_user,
         project_id,
         &req.backend_id,
         &req.root_ref,
@@ -308,6 +310,7 @@ pub async fn detect_workspace(
 
 pub async fn detect_git(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<DetectGitRequest>,
 ) -> Result<Json<DetectGitResponse>, ApiError> {
     let root_ref = req.root_ref.trim();
@@ -316,7 +319,8 @@ pub async fn detect_git(
     }
 
     let backend_id = require_backend_id(req.backend_id.as_deref())?;
-    let result = invoke_workspace_setup_detect_git(&state, backend_id, root_ref).await?;
+    let result =
+        invoke_workspace_setup_detect_git(&state, &current_user, backend_id, root_ref).await?;
 
     Ok(Json(DetectGitResponse {
         resolved_root_ref: result.resolved_root_ref,
@@ -373,7 +377,7 @@ pub async fn discover_local_bindings(
         .collect();
     let discovered = invoke_workspace_discover_by_identity(
         &state,
-        Some(current_user.user_id.as_str()),
+        &current_user,
         project_id,
         &backend_id,
         input_workspaces,
@@ -456,7 +460,8 @@ pub async fn bind_discovered(
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
     let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
-        state.services.runtime_gateway.clone(),
+        state.services.operation_gateway.clone(),
+        current_user.clone(),
     ));
     let result = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
         .bind_discovered(BindDiscoveredWorkspaceBindingsInput {
@@ -521,7 +526,7 @@ fn normalize_required_string(field: &str, raw: &str) -> Result<String, ApiError>
 
 async fn invoke_workspace_discover_by_identity(
     state: &Arc<AppState>,
-    user_id: Option<&str>,
+    identity: &agentdash_spi::AuthIdentity,
     project_id: Uuid,
     backend_id: &str,
     workspaces: Vec<WorkspaceDiscoverByIdentityWorkspaceInput>,
@@ -533,29 +538,23 @@ async fn invoke_workspace_discover_by_identity(
     .map_err(|error| {
         ApiError::BadRequest(format!("workspace.discover_by_identity 输入非法: {error}"))
     })?;
-    let request = RuntimeInvocationRequest::new(
-        RuntimeActionKey::parse(WORKSPACE_DISCOVER_BY_IDENTITY_ACTION).map_err(|error| {
-            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
-        })?,
-        RuntimeActor::PlatformUser {
-            user_id: user_id.map(str::to_string),
-        },
-        RuntimeContext::Setup {
+    let output = invoke_setup_operation(
+        state.as_ref(),
+        identity,
+        WORKSPACE_DISCOVER_BY_IDENTITY_ACTION,
+        input,
+        SetupOperationScope {
             project_id: Some(project_id),
             workspace_id: None,
             backend_id: Some(backend_id.to_string()),
-            root_ref: None,
-        },
-        input,
-    );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
-    serde_json::from_value::<WorkspaceDiscoverByIdentityOutput>(invocation.output.output).map_err(
-        |error| {
-            ApiError::Internal(format!(
-                "workspace.discover_by_identity 返回值解析失败: {error}"
-            ))
         },
     )
+    .await?;
+    serde_json::from_value::<WorkspaceDiscoverByIdentityOutput>(output).map_err(|error| {
+        ApiError::Internal(format!(
+            "workspace.discover_by_identity 返回值解析失败: {error}"
+        ))
+    })
 }
 
 fn binding_input_to_binding(
@@ -587,7 +586,7 @@ fn binding_input_to_binding(
 
 async fn invoke_workspace_setup_detect(
     state: &Arc<AppState>,
-    user_id: Option<&str>,
+    identity: &agentdash_spi::AuthIdentity,
     project_id: Uuid,
     backend_id: &str,
     root_ref: &str,
@@ -597,23 +596,19 @@ async fn invoke_workspace_setup_detect(
         root_ref: root_ref.to_string(),
     })
     .map_err(|error| ApiError::BadRequest(format!("workspace.detect 输入非法: {error}")))?;
-    let request = RuntimeInvocationRequest::new(
-        RuntimeActionKey::parse(WORKSPACE_DETECT_ACTION).map_err(|error| {
-            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
-        })?,
-        RuntimeActor::PlatformUser {
-            user_id: user_id.map(str::to_string),
-        },
-        RuntimeContext::Setup {
+    let output = invoke_setup_operation(
+        state.as_ref(),
+        identity,
+        WORKSPACE_DETECT_ACTION,
+        input,
+        SetupOperationScope {
             project_id: (project_id != Uuid::nil()).then_some(project_id),
             workspace_id: None,
             backend_id: Some(backend_id.to_string()),
-            root_ref: Some(root_ref.to_string()),
         },
-        input,
-    );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
-    serde_json::from_value::<WorkspaceDetectionResult>(invocation.output.output)
+    )
+    .await?;
+    serde_json::from_value::<WorkspaceDetectionResult>(output)
         .map_err(|error| ApiError::Internal(format!("workspace.detect 返回值解析失败: {error}")))
 }
 
@@ -641,6 +636,7 @@ fn require_backend_id(raw: Option<&str>) -> Result<&str, ApiError> {
 
 async fn invoke_workspace_setup_detect_git(
     state: &Arc<AppState>,
+    identity: &agentdash_spi::AuthIdentity,
     backend_id: &str,
     root_ref: &str,
 ) -> Result<WorkspaceDetectGitOutput, ApiError> {
@@ -649,21 +645,19 @@ async fn invoke_workspace_setup_detect_git(
         root_ref: root_ref.to_string(),
     })
     .map_err(|error| ApiError::BadRequest(format!("workspace.detect_git 输入非法: {error}")))?;
-    let request = RuntimeInvocationRequest::new(
-        RuntimeActionKey::parse(WORKSPACE_DETECT_GIT_ACTION).map_err(|error| {
-            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
-        })?,
-        RuntimeActor::PlatformUser { user_id: None },
-        RuntimeContext::Setup {
+    let output = invoke_setup_operation(
+        state.as_ref(),
+        identity,
+        WORKSPACE_DETECT_GIT_ACTION,
+        input,
+        SetupOperationScope {
             project_id: None,
             workspace_id: None,
             backend_id: Some(backend_id.to_string()),
-            root_ref: Some(root_ref.to_string()),
         },
-        input,
-    );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
-    serde_json::from_value::<WorkspaceDetectGitOutput>(invocation.output.output).map_err(|error| {
+    )
+    .await?;
+    serde_json::from_value::<WorkspaceDetectGitOutput>(output).map_err(|error| {
         ApiError::Internal(format!("workspace.detect_git 返回值解析失败: {error}"))
     })
 }

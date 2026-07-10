@@ -1,6 +1,6 @@
 # WI-00 Architecture / Contract Gate
 
-Status: planned
+Status: ready_for_integration
 
 Depends On: 已确认产品决策与现状证据
 
@@ -24,3 +24,15 @@ Depends On: 已确认产品决策与现状证据
 - `rg` 核对目标 spec 中 RuntimeGateway、OperationScript、Interaction、Canvas 与 Extension 术语。
 - `task.py validate` 核对 implement/check JSONL。
 - 用户最终 planning review。
+
+## Evidence
+
+- 新增 `.trellis/spec/backend/interaction/architecture.md`，固定 definition/source、instance owner/lifetime、
+  `state_patch_v1`、OperationEffectIntent、projection 与 V1/V2 migration 合同，并加入 backend spec index。
+- `backend/runtime-gateway.md` 保留既有 provider/transport/error matrix/tests，在顶部增加 actor-neutral canonical
+  Operation、RuntimeInvocationEnvelope、async OperationScript executor、bounded Rhai worker/bridge 与迁移优先级。
+- Session、VFS、Workflow、Capability、Frontend 与 cross-layer specs 已对齐 public identity、SourceBundle CAS、
+  resource binding、standalone runtime、component ABI 与 RuntimeSession trace-only 边界。
+- 旧 Canvas mount/snapshot/Session contracts 已明确标记为 replacement/migration source，不再与 V1 target
+  contract 竞争 authority。
+- Checks：`task.py validate`、目标术语扫描、Markdown link scan、`git diff --check`。

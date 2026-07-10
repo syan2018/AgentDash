@@ -296,7 +296,16 @@ companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", 
 
 ## Workspace Module Agent Surface
 
-Canvas、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `workspace_module` capability 暴露。Canvas 仍保留自己的 domain、repository、VFS provider 与 panel runtime；`workspace_module` 只承担 Agent-facing lifecycle、operation schema、invoke routing 和 presentation facade。
+Canvas、Interaction、Extension 和平台内嵌 workspace 能力面向 Agent 统一通过 `workspace_module` capability 暴露。`workspace_module` 只承担 Agent-facing discovery、attachment/lifecycle projection、canonical Operation descriptor 与 presentation facade；Canvas definition、Interaction state、Operation catalog 和 Extension dispatch 各自保留唯一 owner。
+
+目标 module identity 为 `canvas:{definition_id}` 与 `interaction:{instance_id}`，presentation URI 分别为
+`canvas://{definition_id}` 与 `interaction://{instance_id}`。Module operation 直接引用 provider-qualified
+canonical OperationRef，并通过 actor-neutral RuntimeGateway admission；AgentRun adapter 可以从 AgentFrame
+解析 capability，但 Workspace Module/Interaction identity 不依赖 RuntimeSession。
+
+下述 `canvas_mount_id`、AgentRun-scoped binding/observation/snapshot 与 Session exposure 细节是旧 Canvas
+实现的迁移覆盖清单。最终合同由 Interaction Architecture 与 Runtime Gateway V1 Target Contract 定义；
+迁移必须保留 create/publish/copy/present/VFS/diagnostic 产品能力，但不能保留旧 state authority 或 identity。
 
 ### 1. Scope / Trigger
 

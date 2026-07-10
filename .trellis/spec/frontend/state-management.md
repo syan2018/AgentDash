@@ -1,5 +1,13 @@
 # 状态管理
 
+## Interaction State Boundary
+
+- `InteractionInstance.state + state_revision` 来自后端 query/subscription，是 Human 与 Agent 共享状态的唯一事实源。前端 store 只能缓存 projection，并以 instance id + revision 做 replace/reconcile。
+- command 提交携带 generated typed payload、`command_id` 与 `expected_state_revision`；conflict 后重新读取 authoritative projection，不在客户端合并 canonical state。
+- Canvas definition draft、editor buffer、PresentationState、RendererLease、component ephemeral UI state 可以保留在 feature-local store；它们不写入 Interaction canonical state，也不随 AgentRun/RuntimeSession 生命周期清理 instance。
+- Component event 只按 generated descriptor 校验并传递 payload；前端不执行服务端 reducer/mapping DSL。Operation/OperationScript invocation 由 host bridge 解析 identity/scope。
+- Workspace tab URI 区分 `canvas://{definition_id}` 与 `interaction://{instance_id}`；persisted layout 只保存 URI/title/pinned 等展示事实，不保存 state snapshot、artifact binding 或 capability。
+
 > Zustand 5 全局状态 + React useState 本地状态。
 
 ---
@@ -241,7 +249,7 @@ ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}
 - WorkspacePanel 从 `WorkspaceRuntimeData.agentRunRuntimeTarget` 构造 `agentrun:{runId}:{agentId}`。
 - `WorkspaceTabLayout` 只保存 tab type、URI、title、pinned 和 active URI；它不保存 runtime trace state。
 - RuntimeSession id 仍可作为 tab content 的 trace/diagnostic prop，例如 terminal event projection、context audit diagnostic path 或 raw session detail。
-- Canvas tab opening uses concrete `presentation_uri` and active resource surface; persisted layout key stays AgentRun scoped.
+- Canvas/Interaction tab opening uses concrete versioned presentation URI; an AgentRun-scoped layout may reference the URI but does not own its definition/instance lifetime.
 
 ### 4. Validation & Error Matrix
 
@@ -258,7 +266,7 @@ ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}
 
 - AgentRun workspace opens, initializes pinned tabs, then restores user dynamic tabs from `ui.agentrun_workspace_tab_layout.agentrun:{run_id}:{agent_id}`.
 - Same AgentRun receives a new current delivery RuntimeSession; terminal/context tab content refreshes from new runtime refs, while tab order and dynamic URIs remain user layout state.
-- Canvas module presentation opens from `canvas://{canvas_mount_id}`; the layout records that URI, and current resource surface determines whether it remains openable.
+- Canvas module presentation opens from `canvas://{definition_id}` and shared runtime opens from `interaction://{instance_id}`; access projection determines whether the referenced object remains openable.
 
 ### 6. Tests Required
 

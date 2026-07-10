@@ -1,5 +1,97 @@
 # Runtime Gateway
 
+## V1 Target Contract
+
+RuntimeGateway 的目标合同是 actor-neutral canonical Operation discovery、admission 与 dispatch。MCP tool、
+ExtensionProtocol method、Runtime Action 和 host operation 都投影为 provider-qualified、versioned
+`OperationDescriptor`；direct invoke、OperationScript nested invoke 与 replay-safe effect invoke 共享同一个
+`OperationExecutionCore`。
+
+```text
+OperationDescriptor {
+  operation_ref,
+  input_schema,
+  output_schema,
+  effect_summary,
+  required_capabilities,
+  actor_visibility,
+  execution_policy,
+  replay_policy: non_replayable | idempotent | replay_safe,
+  readiness,
+  provenance,
+  dispatch
+}
+
+RuntimeInvocationEnvelope {
+  operation_ref,
+  input,
+  principal,
+  authorization_scope,
+  origin,
+  placement,
+  trace,
+  deadline,
+  idempotency_key,
+  optional_attachment_ref
+}
+```
+
+- `OperationRef` 包含 exact provider identity/version，不能按全局短 key 首个命中。
+- principal、authorization scope、origin、placement 与 trace 正交；origin 可以是 AgentRun、UserWorkshop、
+  Canvas/Interaction、Workflow 或 EffectReplay，但不代替 principal/scope。
+- browser/iframe 只提交 OperationRef + input。backend、workspace root、RuntimeSession、capability、principal、
+  scope、placement 与 trace 均由宿主 resolver 生成。
+- AgentRun adapter 可以从 AgentFrame/current delivery surface 解析 envelope；RuntimeSession 只作为 connector
+  delivery/trace evidence，不进入 canonical Operation authority。Canvas、Interaction、Extension panel 与
+  Workflow 调用不要求 RuntimeSession。
+- `OperationExecutionCore` 固定执行 exact resolution、input schema、capability/actor admission、readiness/
+  placement、deadline/cancellation/idempotency、dispatch、output schema/size、trace/audit/result-ref finalize。
+  Declaration/discovery 不执行 provider side effect。
+- Workspace Module 只组织 descriptor/projection，不拥有第二套 Operation identity、schema、resolver 或 dispatch。
+
+### OperationScript V1
+
+```text
+OperationScriptRequest {
+  dialect: "rhai_v1",
+  host_api_version: 1,
+  source,
+  input,
+  allowed_operations,
+  limits
+}
+```
+
+- Application 定义 async `OperationScriptExecutor` / `OperationScriptEngine` port；Infrastructure 首个 adapter
+  复用 bounded `RhaiScriptRuntime`、JSON bridge 与 AST cache。
+- Rhai V1 语法同步；execution-scoped `ops.invoke()` 隐式等待 async Operation，`ops.invoke_all()` 提供
+  有界 structured concurrency。脚本退出时所有 child invocation 已完成或取消，不允许 detached task。
+- evaluator 运行在有界专用 worker pool，通过 request/response bridge 调用 async OperationExecutionCore，
+  不阻塞 Tokio core worker。limits 覆盖 concurrent scripts/queue/deadline、operation count/parallelism、
+  Rhai steps/call depth/collection size 与 input/output bytes。
+- progress/cancellation/deadline 同时中止纯脚本循环与 nested invocation。每个 nested invoke 校验 allowed
+  manifest 并重新执行完整 admission；外层 script admission 不是 blanket authorization。
+- preflight token 绑定 dialect/host API、source/input digest、exact descriptor/effect manifest、normalized
+  limits、principal/scope 与 expiry。Run 任一不匹配即失败；V1 禁止递归 OperationScript。
+- 失败返回 bounded diagnostic、trace 与 completed-call evidence。即时 script 不自动 retry/rollback/replay，
+  不创建 asset/job/AgentRun，不调用 LLM，不包含 human gate；result ref 继承 caller owner/scope/capability/TTL。
+- AgentRun、standalone UserWorkshop、Canvas/Interaction 与 Workflow 复用同一 executor。Canvas/Workflow 可以
+  保存 Rhai source，但执行时仍把完整 source 交给服务端。
+
+### Target Validation
+
+- direct 与 nested invoke admission parity、provider-qualified resolution、input/output schema 与 result ownership。
+- 客户端 authority injection、revoked capability、readiness/placement change、descriptor digest mismatch。
+- Rhai CPU-loop/nested cancellation、worker/queue exhaustion、deadline、parallel limit、recursive call 与 bounded output。
+- 非 AgentRun caller 的 invocation path 静态与行为测试均无 RuntimeSession dependency。
+
+## Current Implementation And Migration Source
+
+下述 RuntimeAction/Session contracts 记录现有实现与需保留的具体 provider、schema、transport、error matrix 和
+测试要求。WI-01 将这些执行细节迁入上述 Operation contract；凡涉及 Canvas/Extension 必须依赖
+`RuntimeContext::Session`、RuntimeSession 注入 authority 或按裸 action key 解析的表述，以 V1 Target
+Contract 为最终语义，不能继续成为新调用方合同。
+
 > application 层的统一运行时能力调用入口，承载 Session Runtime Action 与 Setup Action 的调用协议。
 
 ---

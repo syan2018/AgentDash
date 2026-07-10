@@ -1,5 +1,30 @@
 # Component Guidelines
 
+## Extension Interaction Component V1
+
+第三方 Interaction component 使用版本化 descriptor + isolated iframe + scoped MessageChannel：
+
+```text
+ComponentDescriptorV1 {
+  component_ref,
+  artifact_digest,
+  entry,
+  props_schema,
+  events,
+  state_projection_schema,
+  slots,
+  sizing,
+  resource_policy,
+  csp
+}
+```
+
+- instance 固定 exact artifact digest；安装升级只影响新 definition/new instance，既有 renderer 不静默切换。
+- component 只接收 props、只读 state projection 和 instance-scoped host capability；typed event 经 schema validation 后交给 definition binding。
+- canonical mutation 只能进入版本化 platform command（V1 通用为 `state_patch_v1`）；外部行为进入 canonical Operation/OperationScript。component/Extension 不提供 reducer code。
+- iframe 使用专属 MessagePort、CSP、origin/resource allowlist、payload/频率限制与 lease；不得共享全局 `window.agentdash` authority，也不得把 browser 提交的 Project/backend/session/capability 当作可信事实。
+- resize/focus/theme/a11y/presentation 属于 renderer protocol；component unmount/lease expiry 不关闭 InteractionInstance。
+
 > 前端组件开发规范。
 
 ---

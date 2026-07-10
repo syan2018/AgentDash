@@ -16,6 +16,8 @@ VFS 子系统给 Agent、前端和业务用例提供统一地址模型，屏蔽 
 - Agent-facing VFS tools 按职责拆分：共享 runtime VFS handle 与 URI resolution 在 `vfs/tools/common.rs`，mount discovery 在 `vfs/tools/mounts.rs`，`vfs/tools/fs.rs` 只保留 file/search/patch/shell tool facade，具体 handler 位于 `vfs/tools/fs/`。共享 session state 和具体工具分离，原因是工具集合会继续扩展，但 runtime VFS address 语义必须集中。
 - Session runtime tool surface 由 `SessionRuntimeToolComposer` 组合多个 domain provider；VFS bootstrap 只构建 VFS service/materialization/registry，session bootstrap 负责注入 runtime tool composer，原因是 Agent-facing tool surface 同时消费 VFS、workflow、collaboration 和 workspace module runtime facts，不能归属于单一 VFS service。
 - Workspace module runtime surface 以 `WorkspaceModuleAgentSurface` 的 domain outcome / surface error 作为业务边界，`AgentToolResult`、`AgentToolError` 和 `ContentPart` 只出现在 `workspace_module/tools.rs` 等 AgentTool adapter 层。Canvas runtime bridge helpers 使用 workspace-module bridge error，再由 surface 显式映射为 surface error，原因是 surface 需要表达 Canvas binding、runtime action、protocol channel、diagnostic 和 presentation 语义，而工具协议投影只是 Agent-facing adapter 的输出格式。
+- Canvas authoring provider 暴露 immutable `InteractionDefinitionRevision.source_bundle` 的 VFS projection。文件 changeset 必须携带 base revision CAS，并以一次提交生成一个新 SourceBundle/revision；VFS mount identity 不是 Canvas definition 或 Interaction instance identity。
+- Definition 声明 resource slots，instance/attachment runtime binding 只保存 authorized resource refs。共享 instance binding 与 actor-local preview binding 分层，binding handle 不能被当作 capability，也不能写回 source bundle。
 
 ## Current Baseline
 
@@ -28,7 +30,7 @@ Provider baseline：
 | `skill_asset_fs` | 暴露 Skill asset 文件视图 |
 | `lifecycle_vfs` | 暴露 AgentRun delivery session 证据面与 runtime node artifact / record 投影 |
 | `routine_vfs` | 暴露 Routine 当前触发投影、Routine 级 memory 与当前 entity memory |
-| `canvas_fs` | 暴露 Canvas 虚拟内容 |
+| `canvas_fs` | 暴露 Canvas definition revision 的 SourceBundle authoring projection |
 
 Tool module baseline：
 

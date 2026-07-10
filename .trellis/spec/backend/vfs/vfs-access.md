@@ -56,9 +56,20 @@ Contract:
 - HTTP `/vfs-surfaces/read-file-blob` 直接返回 provider bytes 和 `Content-Type: result.mime_type`。
 - Canvas asset URL 读取到非 `image/*` MIME 时，前端 runtime asset cache 必须拒绝资源。
 
-## Canvas Session Visibility
+## Canvas Definition And Interaction Runtime Visibility
+
+目标 Canvas authoring mount 从 exact `InteractionDefinitionRevision.source_bundle` 投影，changeset 使用
+base revision CAS 生成新 revision；`canvas://{definition_id}` 是 presentation identity，VFS mount URI 只
+服务文件访问。Interaction instance 通过 Attachment/RuntimeBinding 暴露 authorized resources，binding
+handle 不是 capability，AgentRun/RuntimeSession 结束不销毁 definition、instance 或 shared binding。
+
+### Legacy Canvas Session Visibility Migration Source
 
 Canvas 被 `workspace_module_operate(operation="canvas.*")` 或 `workspace_module_present(module_id="canvas:{canvas_mount_id}")` 暴露给当前 session 后，前端从 Session runtime surface 浏览 `canvas_fs` mount。Canvas VFS 仍由 `canvas_fs` provider 管理；workspace module 只负责 Agent-facing lifecycle、operation 和 presentation 入口。
+
+本节余下 contract 用于核对旧 Session exposure、read-only shared mount 与文件能力覆盖面；其中
+`canvas_mount_id` module/presentation identity、Session meta visibility 和 AgentRun-scoped binding 不进入 V1
+目标合同。
 
 Contract:
 

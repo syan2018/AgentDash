@@ -12,6 +12,9 @@
 - Lifecycle 运行态以后端 `LifecycleRunView` / `SubjectExecutionView` / `AgentFrameRuntimeView` / `AgentRunWorkspaceView` 为准；用户可见执行工作台展示 AgentRun Workspace，`RuntimeSession` trace view 只展示 trace，不作为业务执行归属事实源。
 - Project 是顶层导航和隔离单元；Workspace、Story、Assets、runtime preview 都按 Project scope 组织。
 - AgentRun workspace 的 runtime feed、context overview 和 VFS tab 以 AgentRun scoped runtime endpoints 与 `runtime_surface` 作为 UI 输入；RuntimeSession detail 仅作为内部 trace/diagnostic 视角。
+- Canvas authoring/preview 使用 `canvas:{definition_id}` / `canvas://{definition_id}`；共享 runtime renderer 使用 `interaction:{instance_id}` / `interaction://{instance_id}`。WorkspacePanel 不能用 VFS mount、AgentRun 或 RuntimeSession id 合成这两类 identity。
+- Interaction renderer 从后端 canonical state revision/event cursor 投影。iframe observation、component local state、PresentationState 与 RendererLease 只服务渲染，不成为 shared state；renderer reload 重新订阅同一 instance。
+- Canvas/UserWorkshop 在没有 AgentRun/AgentFrame/RuntimeSession 时仍可调用宿主解析后的 Operation/OperationScript。browser/iframe 不提交 principal、Project/backend placement、workspace root、capability 或 trace authority。
 - Feature module 遵循 model / ui 分离，跨 feature 共享能力进入明确的 shared package 或 primitive。
 - Workspace tab、runtime data context 和 tab descriptor contract 放在 `features/workspace-runtime`，原因是 extension-runtime、workspace-panel 与 canvas-panel 都需要消费同一 workspace runtime surface，但不应形成 feature 间双向依赖。
 
@@ -45,7 +48,7 @@
 - Assets Extension 类目消费 Project extension management API，原因是安装、来源状态、package mode 与卸载/下载动作的事实源是 `ProjectExtensionInstallation`，runtime projection 只服务 WorkspacePanel 与 Gateway admission。
 - Marketplace Extension 卡片和详情抽屉使用 `LibraryAssetDto.extension_package_artifact` 判断 packaged template 可安装性，原因是浏览、安装与发布后的 package 可用状态需要共享同一 Shared Library 合同。
 - WorkspacePanel 是 extension/canvas tab 的 composition root；extension-runtime 与 canvas-panel 不反向依赖 workspace-panel，原因是插件 tab 注册、Canvas 预览和 workspace runtime context 需要保持单向装配关系。
-- WorkspacePanel 打开 Canvas tab 使用 `workspace_module_presented.presentation_uri = canvas://{canvas_mount_id}`，原因是 Canvas 展示身份属于 workspace module UI entry；`{canvas_mount_id}://...` 保留给 Agent/runtime VFS 编辑面。
+- WorkspacePanel 打开 Canvas authoring tab 使用 `canvas://{definition_id}`，打开 shared runtime 使用 `interaction://{instance_id}`；VFS mount URI 只服务文件访问，不作为 presentation identity。
 - Workflow 资产入口是 `WorkflowGraph` 定义态入口；Agent Activity 关联的 `AgentProcedure` contract 可以作为编辑器配套 draft 一起维护。运行态观察进入 `lifecycleStore`，原因是 graph definition 与 lifecycle projection 的变化节奏不同。
 - VFS Browser 和 Extension webview 的 runtime VFS 读写入口共享 `vfs-browser-panel-policy.ts` 的 `selectDefaultVfsMount` / `selectVfsBackendTarget` 解析 mount/backend 选择，原因是 `runtime_surface` 是同一份 UI 输入，VFS tab 和插件 iframe 不能各自推断默认 mount 或本机 backend。
 

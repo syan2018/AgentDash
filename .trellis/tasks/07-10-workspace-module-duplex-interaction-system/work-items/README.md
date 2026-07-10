@@ -14,7 +14,7 @@ Parent task: `.trellis/tasks/07-10-workspace-module-duplex-interaction-system`
 
 | ID | File | Status | Depends On | Last Evidence |
 | --- | --- | --- | --- | --- |
-| WI-00 | `WI-00-architecture-contract-gate.md` | planned | 已确认产品决策 | freeze review 已固定 V1 version、identity、SourceBundle、state/effect 与 RuntimeGateway 边界 |
+| WI-00 | `WI-00-architecture-contract-gate.md` | ready_for_integration | 已确认产品决策 | 权威 specs 已固定 Interaction V1、OperationScript async bridge、identity、SourceBundle、state/effect 与 RuntimeSession removal 边界 |
 | WI-01 | `WI-01-runtime-gateway-operation-core.md` | planned | WI-00 | 现行 Session-bound actor/context 与重复 admission 路径已核实 |
 | WI-02 | `WI-02-user-workshop-canvas-standalone.md` | planned | WI-01 | Project Canvas 仍请求已删除 endpoint；目标 bridge 已固定 |
 | WI-03 | `WI-03-operation-script.md` | planned | WI-01 | Rhai 1.24 同步 evaluator 通过 bounded worker/async bridge 承载 `rhai_v1` |

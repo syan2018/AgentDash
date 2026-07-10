@@ -27,6 +27,9 @@ Workflow 子系统表达可执行 graph definition、编排运行态和状态推
 ## Invariants
 
 - `WorkflowGraph` 是 workflow 运行、编辑和观察的主模型。
+- `OperationScript` 是当前调用内的一次性 Rhai 组合执行，不拥有 plan、node、attempt、claim、gate、retry 或 recovery。需要 durable multi-step、human gate、自动重试或跨会话恢复时必须编译/启动 Workflow。
+- Workflow 可以把 inline Rhai source 保存为 definition 输入，并调用公共 async OperationScriptExecutor；它不复制 Rhai host API、Operation catalog 或 nested admission。OperationScript 的 partial-call evidence 可以成为 Workflow node output，但不能直接推进其它 node state。
+- Interaction command 的可靠单步副作用使用 replay-safe `OperationEffectIntent`；复杂副作用通过一个 canonical `workflow.start` Operation 进入 Workflow，不能把任意 OperationScript 写进 durable outbox。
 - `LifecycleRun` 是 tracked life process / control ledger；同一 run 可以包含 0..N 个 `OrchestrationInstance`。
 - `LifecycleRun.orchestrations`、`LifecycleRun.tasks`、`LifecycleRun.execution_log` 是 Lifecycle control ledger 的 owning aggregate 字段；command/service 通过 aggregate 写入这些字段，repository 只做整体持久化。
 - `OrchestrationInstance.orchestration_id` 是唯一运行实例身份；definition source / asset provenance 只能作为 plan metadata 或审计信息，不参与 scheduler、terminal callback、trace anchor 的节点坐标。

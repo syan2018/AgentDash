@@ -4,6 +4,48 @@
 
 前后端契约层定义浏览器、云端 API、本机 runtime 和桌面壳共同消费的 wire DTO、事件 envelope 与生成产物。它的目标是让 JSON/NDJSON 形态由 Rust contract 明确表达，并由生成文件进入前端，而不是让前端长期手写后端 DTO。
 
+## Canvas / Interaction V1 Contract
+
+Canvas V1 的跨层身份分为 authoring definition 与 shared runtime：
+
+```text
+canvas:{definition_id}       canvas://{definition_id}
+interaction:{instance_id}   interaction://{instance_id}
+```
+
+Generated contracts 必须覆盖：
+
+- `InteractionDefinitionRevisionDto`：owner/scope、immutable revision、format/contract version、SourceBundle
+  digest、resource slots、lineage、component/command bindings 与 effective access；
+- `SourceBundleDto` / changeset command：entry/files/sandbox/import map/digest、base revision CAS；
+- `InteractionInstanceDto`：owner、pinned definition revision/artifact digest、state/state revision、status/retention；
+- typed command request/result：command id、handler version、expected revision、actor policy、event/state revision、
+  conflict/idempotency outcome；
+- Attachment、RuntimeBinding、PresentationState、RendererLease 与 event/subscription cursor；
+- `OperationDescriptorDto`、actor-neutral invocation request/result、OperationScript preflight/run/diagnostic/call evidence；
+- `ComponentDescriptorV1` 与 structured unavailable。
+
+Browser request 不携带 principal、capability、Project/backend placement、workspace root、RuntimeSession 或 trace
+authority。AgentRun route 可以使用 `run_id + agent_id` 作为宿主解析入口；standalone UserWorkshop、Canvas/
+Interaction 与 Workflow 走同一 RuntimeGateway 而不要求 AgentRun/RuntimeSession。
+
+`state_patch_v1` wire payload 只包含 allowlisted `add/remove/replace` patch。Component event 只携带 versioned
+component/event identity 与 schema-valid payload；canonical state transition、revision/CAS 和 event ordering 在
+后端完成。前端 runtime observation、local component state 和 PresentationState 不进入 instance canonical state。
+
+OperationScript wire contract 固定 `dialect=rhai_v1`、`host_api_version=1`、inline source/input、allowed exact
+Operation manifest、limits、preflight token 与 bounded result/diagnostic。`ops.invoke` / `ops.invoke_all` 是
+服务端 host API；浏览器不执行 Rhai，也不上传 nested invocation authority。
+
+Personal publish、Project unpublish、copy-to-personal、lineage、VFS changeset、resource binding 与 Extension
+promotion 全部转为 definition/revision contract；旧 Canvas aggregate、AgentRun-scoped observation/interaction
+snapshot 与 Canvas submit DTO 在最终 migration 同步删除。未来 breaking behavior 新增 V2 discriminator 与
+显式 migration，不能依赖字段猜测或静默 artifact rebind。
+
+Required checks：Rust DTO -> generated TS drift、URI/module identity、CAS/idempotency/error matrix、owner access、
+exact revision/artifact pin、standalone invocation、Rhai preflight token mismatch，以及旧 Canvas/session authority
+DTO 静态扫描。
+
 ## Architecture
 
 标准链路：
@@ -787,7 +829,13 @@ import type {
 } from "@/generated/mcp-preset-contracts";
 ```
 
-## Scenario: Workspace Module Presentation Contract
+## Replacement Source: Legacy Workspace Module Presentation Contract
+
+本节与其后的旧 Canvas runtime observation/distribution 两节只用于实现迁移时核对现有行为覆盖面；其中
+`canvas_mount_id` presentation identity、AgentRun-scoped interaction snapshot、RuntimeSession bridge 和旧
+Canvas CRUD DTO 均由本文顶部 Canvas / Interaction V1 Contract 替代。保留这些 error matrix/tests 是为了
+确保 publish/copy/unpublish、VFS、diagnostic 与 presentation 产品能力不会在替换时遗漏，而不是继续定义
+目标 wire contract。
 
 ### 1. Scope / Trigger
 
@@ -851,7 +899,7 @@ openWorkspaceTab(`canvas://${event.view_key}`);
 openWorkspaceTab(event.presentation_uri);
 ```
 
-## Scenario: Canvas Runtime Observation, Interaction, And Agent Submit Contract
+## Replacement Source: Legacy Canvas Runtime Observation, Interaction, And Agent Submit Contract
 
 ### 1. Scope / Trigger
 
@@ -930,7 +978,7 @@ workspace_module_invoke(module_id="canvas:{canvas_mount_id}", operation_key="can
 - WorkspaceModule test asserts diagnostic operations are discoverable from describe and invoke reads latest facts only.
 - Contract check asserts canvas observation, interaction snapshot, submit DTO, workspace module operation dispatch, and `MailboxSourceIdentity` stay generated in TypeScript.
 
-## Scenario: Canvas Personal And Project Shared Distribution Contract
+## Replacement Source: Legacy Canvas Personal And Project Shared Distribution Contract
 
 ### 1. Scope / Trigger
 
@@ -1056,8 +1104,8 @@ const editable = canvas.access.can_edit_source === true;
 
 ### 1. Scope / Trigger
 
-- Trigger: AgentRun runtime 可以在同一个 delivery session 内采用新的 `AgentFrame` revision，例如 Canvas create/bind/present 写入新的 VFS mount 和 workspace module visibility。
-- Scope: backend runtime-trace-facing frame resolver、AgentRun Workspace projection、Canvas runtime snapshot、AgentRun runtime surface view、WorkspacePanel Canvas tab opening。
+- Trigger: AgentRun runtime 可以在同一个 delivery session 内采用新的 `AgentFrame` revision，例如 Interaction attachment 或 presentation visibility 更新 Agent-facing projection。
+- Scope: backend runtime-trace-facing frame resolver、AgentRun Workspace projection、Interaction attachment projection、AgentRun runtime surface view 与 WorkspacePanel presentation opening。
 
 ### 2. Signatures
 
@@ -1116,7 +1164,7 @@ agent_run_delivery_bindings(
 - `resolve_current_frame_from_delivery_trace_ref` validates anchor -> agent -> run ownership before returning the effective `AgentFrame`.
 - `AgentFrameRepository.get_current(agent_id)` is a repository-level revision lookup used inside resolvers or static non-delivery views. Frontend-facing AgentRun, Canvas, VFS and runtime trace paths resolve through the current delivery binding when a delivery runtime session is available.
 - `AgentRunDeliveryBinding` stores the current delivery binding keyed by `run_id + agent_id`. `LifecycleAgent` does not store current delivery or current frame pointers.
-- Canvas presentation opens from `workspace_module_presented.presentation_uri = canvas://{canvas_mount_id}`. The runtime surface refresh may happen before opening, but the concrete presentation URI is authoritative for tab creation.
+- Presentation opens from concrete `canvas://{definition_id}` or `interaction://{instance_id}` URI. AgentFrame refresh may happen before opening, but VFS mount、RuntimeSession 与 view key 都不能替代该 public identity。
 
 ### 4. Validation & Error Matrix
 
@@ -1125,25 +1173,25 @@ agent_run_delivery_bindings(
 | `runtime_session_id` has no execution anchor | Return not found / no runtime surface projection |
 | Anchor agent does not belong to anchor run | Treat resolver result as unavailable |
 | Effective frame belongs to a different agent | Treat resolver result as unavailable |
-| Effective frame has Canvas mount `{canvas_mount_id}` | AgentRun `resource_surface` exposes the Canvas mount and Canvas snapshot uses the same frame |
+| Effective frame has an Interaction attachment | AgentRun projection exposes the attachment ref while Interaction state remains owned by the instance |
 | `AgentRunView` exposes `current_frame_id` | Contract drift; remove the field and consume `frame_runtime.frame_ref` where a UI needs display-only frame identity |
-| Workspace module event has `presentation_uri=canvas://{canvas_mount_id}` while runtime surface is refreshing | Open or activate the Canvas tab and refresh its content after workspace state update |
+| Workspace module event has a valid Canvas/Interaction URI while runtime surface is refreshing | Open or activate that tab and refresh attachment/resource projections after workspace state update |
 
 ### 5. Reference Cases
 
-- Canvas presentation flow: `workspace_module_present(canvas:{canvas_mount_id}, preview)` creates/adopts a new frame revision; Agent runtime tools, AgentRun Workspace `resource_surface`, Canvas runtime snapshot, and WorkspacePanel tab all observe the same mount.
+- Interaction presentation flow: `workspace_module_present(interaction:{instance_id}, runtime)` may adopt a new frame attachment projection; Agent runtime tools and WorkspacePanel reference the same instance identity, while canonical state remains outside AgentFrame.
 - Runtime trace flow: trace view receives a runtime session id and resolves frame runtime through `resolve_current_frame_from_delivery_trace_ref`.
 - Draft/static run flow: A draft/static run view with no delivery runtime may show the latest frame revision via `AgentFrameRepository.get_current(agent_id)` because no session anchor exists.
 - Frame freshness: Canvas snapshot and AgentRun resource surface resolve from the current adopted frame revision so late Canvas exposure is visible to both runtime and UI.
-- Presentation ordering: WorkspacePanel opens `canvas://{canvas_mount_id}` from the presentation payload while runtime surface refresh catches up.
+- Presentation ordering: WorkspacePanel opens the concrete Canvas/Interaction URI from the payload while attachment/resource projection refresh catches up.
 
 ### 6. Tests Required
 
 - Backend unit test asserts `DeliveryRuntimeSelectionService` returns the effective current frame for the current delivery binding.
-- API/session test asserts Canvas/runtime VFS resolution uses the current adopted frame rather than launch frame evidence.
+- API/session test asserts Interaction attachment/runtime VFS projection uses the current adopted frame rather than launch frame evidence.
 - Contract check asserts `AgentRunView` has no `current_frame_id` field.
-- Frontend Workspace module test asserts `workspace_module_presented.presentation_uri` opens the Canvas tab and does not synthesize a Canvas URI from `view_key`.
-- Frontend WorkspacePanel/store test asserts concrete `canvas://{canvas_mount_id}` can be opened before the refreshed runtime surface has been rendered.
+- Frontend Workspace module test asserts `workspace_module_presented.presentation_uri` opens the Canvas/Interaction tab and does not synthesize a URI from `view_key` or VFS mount.
+- Frontend WorkspacePanel/store test asserts a concrete Canvas/Interaction URI can open before the refreshed runtime surface has rendered.
 
 ### 7. Wrong vs Correct
 

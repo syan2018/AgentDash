@@ -176,7 +176,7 @@ AgentRun workspace panel、context overview 与 VFS tab 以 AgentRun workspace s
 
 Project / Story / Task / Agent knowledge 等预览入口使用 `ResolvedVfsSurfaceSource` 解析 preview surface；AgentRun 入口消费 workspace snapshot 的 `resource_surface`，RuntimeSession detail 才直接消费 `session_runtime` 的 diagnostic surface。两类入口共享 VFS browser 组件，但各自的 surface 来源显式表达，方便在跨层测试里验证 preview、AgentRun workspace 与 trace/detail 语义。
 
-AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 state 以 `run_id + agent_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`workspace_module_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。Canvas 打开动作读取 generated event payload 的 `presentation_uri`，值为 `canvas://{canvas_mount_id}`；`view_key`、`module_id` 与 `{canvas_mount_id}://...` 分别保留 UI entry selection、module ref 与 VFS authoring URI 语义。
+AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 state 以 `run_id + agent_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`workspace_module_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。Canvas/Interaction 打开动作读取 generated event payload 的 `presentation_uri`：`canvas://{definition_id}` 表达 authoring/preview，`interaction://{instance_id}` 表达 shared runtime；`view_key`、module ref 与 VFS mount URI 不能互相替代。
 
 ## AgentRun Conversation DTO
 

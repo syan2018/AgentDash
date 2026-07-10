@@ -2,7 +2,7 @@
 
 ## Role
 
-Session 子系统把来源请求转换为可执行 turn，维护 runtime event、runtime projection、connector input 和终态副作用。目标语义上，当前 `Session` 是 `RuntimeSession`：它只拥有 turn / tool / event / resume / debug / projection / trace lineage，不拥有业务归属、permission scope、Lifecycle progress 或 Agent effective surface。
+Session 子系统把 AgentRun 来源请求转换为可执行 turn，维护 runtime event、runtime projection、connector input 和终态副作用。目标语义上，当前 `Session` 是 `RuntimeSession`：它只拥有 turn / tool / event / resume / debug / projection / trace lineage，不拥有业务归属、permission scope、Lifecycle progress、Agent effective surface、Canvas definition 或 Interaction state。
 
 ## Invariants
 
@@ -31,6 +31,8 @@ LaunchCommand
 - AgentRun workspace 的 message intake、queued work、steering continuation 和 system/hook pending work 统一进入 AgentRun Mailbox；scheduler 再映射到 Codex-compatible `turn/start`、`turn/steer` 或 AgentDash envelope extension。原因是 command 幂等、恢复、hook replay dedup 和前端投影需要同一个 durable control-plane 事实源。
 - 显式业务资源管理仍从 `ExecutionIntent`、`SubjectRef`、run/agent/frame refs 或 graph instance refs 开始；Lifecycle 内 AgentRun 资源管理语境使用 `/lifecycles/{lifecycle_run_id}/agent-runs`。
 - runtime trace 回调以 `RuntimeSessionExecutionAnchor` 建立 delivery evidence，再投影为 run / agent / frame / orchestration node coordinate 进入业务校验；这样 terminal effect、artifact 写入和 node projection 消费同一组 Lifecycle control-plane facts。
+- RuntimeGateway invocation authority 由 principal + authorization scope + origin + placement 构成。AgentRun adapter 可以从 current frame/delivery surface 解析这些 facts，但 `RuntimeSession` 不进入 canonical Operation、Canvas/Interaction、Extension panel 或 Workflow 的公开调用合同。
+- Interaction attachment 只引用 `run_id + agent_id` 等 control-plane identity；RuntimeSession 轮换或结束不改变 InteractionInstance identity、state revision、owner 或 retention。
 - runtime map、active turn、connector live session 是三个不同问题，不能用一个状态互相推断。
 - terminal fact 先持久化为事件，业务副作用进入 durable outbox；副作用失败不回滚 terminal event。
 - pending runtime delivery command 只保存投递指令；`AgentFrameTransitionRecord` 保存可 replay 的 frame surface transition records，不保存完整 `CapabilityState` projection。
@@ -95,8 +97,8 @@ pub enum FrameConstructionCommand {
 }
 
 pub enum RuntimeSurfaceUpdateRequest {
-    CanvasBindingChanged { canvas_mount_id: String },
-    CanvasVisibilityRequested { canvas_mount_id: String, reason: CanvasVisibilityReason },
+    InteractionAttachmentChanged { instance_id: String },
+    InteractionVisibilityRequested { instance_id: String },
     PermissionGrantApplied { grant_id: Uuid },
     PermissionGrantRevoked { grant_id: Uuid },
     McpPresetChanged { preset_key: String },
@@ -122,20 +124,20 @@ pub enum RuntimeSurfaceUpdateRequest {
 | Adapter returns a write role that does not match command kind | Return `AgentRunFrameSurfaceCommandError::RoleMismatch`; do not hide ownership drift. |
 | Runtime update target cannot resolve current AgentFrame / delivery runtime anchor | Return a visible surface update error; do not synthesize a partial projection from local business facts. |
 | Permission grant state is persisted but active-runtime adoption fails | Return visible adoption diagnostics while preserving the durable grant fact. |
-| Canvas visibility request references a different canvas mount than the loaded Canvas domain object | Reject the request before frame write/adoption. |
+| Interaction visibility request references an instance the Agent cannot access | Reject the request before frame write/adoption. |
 | Runtime surface projection after-state equals the current frame surface and the requested visibility refs already exist | Return a no-op projection result without writing or adopting a new AgentFrame revision, because frame revisions and runtime context frames represent observable model-visible changes. |
 | Capability key delta has no added/removed keys | Omit the capability key section so pure runtime surface updates are not labeled as capability-key changes. |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `workspace_module_invoke(canvas.bind_data)` mutates Canvas domain state, then submits `RuntimeSurfaceUpdateRequest::CanvasBindingChanged`; the boundary decides whether frame revision/adoption is required.
+- Good: Interaction attachment use case mutates its own attachment fact, then submits `RuntimeSurfaceUpdateRequest::InteractionAttachmentChanged`; the boundary decides whether AgentFrame projection/adoption is required while canonical Interaction state remains unchanged.
 - Base: Lifecycle Workflow materializes an AgentProcedure node by composing construction input into a pending AgentFrame; this is `Construct`, not runtime surface update.
 - Bad: API route approving a PermissionGrant directly calls an active-runtime adoption primitive with a locally assembled `AgentFrameRuntimeTarget`, because the route lacks full AgentRun projection context.
 
 ### 6. Tests Required
 
 - Unit test the facade routes `Construct` and `Update` commands to matching adapters and rejects role mismatch.
-- Static/behavioral tests assert business owners such as Canvas, WorkspaceModule, Permission, and API route are not AgentFrame write boundary owners.
+- Static/behavioral tests assert business owners such as Interaction, WorkspaceModule, Permission, and API route are not AgentFrame write boundary owners.
 - Runtime skill projection tests assert identity-aware provider discovery and provider/capability-key merge keep external integration skills across Canvas/VFS refresh.
 - Permission tests assert approve/revoke uses the application update path and surfaces adoption failure after grant state changes.
 - Frontend/session delta tests assert empty capability-key deltas are omitted and pure Skill/VFS/MCP/runtime-surface updates do not display as capability-key changes.

@@ -17,7 +17,6 @@ mod provider;
 mod schema;
 mod session_actions;
 mod setup_operations;
-mod tool_adapter;
 mod types;
 
 pub use agentdash_application_ports::extension_runtime::{
@@ -103,7 +102,6 @@ pub use setup_operations::{
     SETUP_OPERATION_NAMESPACE, SETUP_OPERATION_PROVIDER_KEY, SetupOperationAccessPort,
     SetupOperationAuthorityResolver, SetupOperationProvider, setup_operation_ref,
 };
-pub use tool_adapter::{RuntimeActionToolAdapter, RuntimeActionToolSpec};
 pub use types::{
     RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKeyError, RuntimeActionKind,
     RuntimeActor, RuntimeContext, RuntimeInvocationOutput, RuntimeInvocationRequest,

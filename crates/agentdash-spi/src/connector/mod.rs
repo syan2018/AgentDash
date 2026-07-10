@@ -28,6 +28,16 @@ pub use capability_delta::{
 ///
 /// 在当前 turn 内语义上不可变：它是 session 启动时拍下的"身份 + 执行环境"快照。
 /// 下一 turn 若有改动则重新组装，不在 turn 内 mutate 这里的字段。
+/// Frame construction 解析出的 server-owned AgentRun execution identity。
+/// 下游只能消费该引用，不得从 RuntimeSession key 或浏览器输入重新推导。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRunExecutionRef {
+    pub project_id: uuid::Uuid,
+    pub run_id: uuid::Uuid,
+    pub agent_id: uuid::Uuid,
+    pub frame_id: uuid::Uuid,
+}
+
 #[derive(Clone)]
 pub struct ExecutionSessionFrame {
     pub turn_id: String,
@@ -54,6 +64,8 @@ pub struct ExecutionSessionFrame {
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
     pub identity: Option<crate::platform::auth::AuthIdentity>,
+    /// Frame construction 注入的 server-owned AgentRun execution identity。
+    pub agent_run_execution: Option<AgentRunExecutionRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

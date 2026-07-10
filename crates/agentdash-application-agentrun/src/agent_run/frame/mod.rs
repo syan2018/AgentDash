@@ -29,6 +29,6 @@ pub use surface_service::{
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
     AgentRunRuntimeSurfaceUpdateAdapter, AgentRunSurfaceProjectionContext,
     AgentRunSurfaceProjectionContextResolver, AgentRunSurfaceProjectionContextSource,
-    CanvasVisibilityReason, FrameConstructionCommand, RejectingFrameConstructionAdapter,
-    RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest, agent_frame_write_boundaries,
+    FrameConstructionCommand, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
+    RuntimeSurfaceUpdateRequest, agent_frame_write_boundaries,
 };

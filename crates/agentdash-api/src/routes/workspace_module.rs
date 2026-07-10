@@ -9,21 +9,21 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
-use crate::auth::{
-    CurrentUser, ProjectPermission, load_project_with_permission, project_authorization_context,
-};
+use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
-use agentdash_application::canvas::{CanvasListScopeFilter, list_canvases_for_user};
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
+use agentdash_application_runtime_gateway::{OperationDescriptor, OperationPrincipal};
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
 };
+use agentdash_domain::interaction::{InteractionDefinitionStatus, InteractionOwner};
+use agentdash_domain::operation::{OperationOriginRef, OperationScopeRef};
 use agentdash_workspace_module::workspace_module::{
-    WorkspaceModulePresentationError, build_workspace_module_presentation,
-    build_workspace_modules_with_canvas_access,
+    WorkspaceModulePresentationError, build_workspace_module_presentation, build_workspace_modules,
 };
 
 #[derive(Debug, Deserialize)]
@@ -68,16 +68,11 @@ pub async fn get_project_workspace_modules(
         .await
         .map_err(ApiError::from)?;
     let projection = extension_runtime_projection_from_installations(installations)?;
-    let current_user_context = project_authorization_context(&current_user);
-    let canvases = list_canvases_for_user(
-        &state.repos,
-        &current_user_context,
-        project_id,
-        CanvasListScopeFilter::All,
-    )
-    .await
-    .map_err(ApiError::from)?;
-    let modules = build_workspace_modules_with_canvas_access(&projection, &canvases);
+    let definitions =
+        load_visible_canvas_revisions(state.as_ref(), &current_user.user_id, project_id).await?;
+    let operations =
+        load_user_workshop_operations(state.as_ref(), &current_user, project_id).await?;
+    let modules = build_workspace_modules(&projection, &definitions, &operations);
     Ok(Json(modules))
 }
 
@@ -108,9 +103,7 @@ pub async fn present_workspace_module(
             "module_id 与 view_key 不能为空".to_string(),
         ));
     }
-    let current_user_context = project_authorization_context(&current_user);
-    let modules =
-        load_project_workspace_modules(state.as_ref(), &current_user_context, project_id).await?;
+    let modules = load_project_workspace_modules(state.as_ref(), &current_user, project_id).await?;
     let module = modules
         .iter()
         .find(|module| module.summary.module_id == module_id)
@@ -130,7 +123,7 @@ pub async fn present_workspace_module(
 
 async fn load_project_workspace_modules(
     state: &AppState,
-    current_user: &agentdash_domain::project::ProjectAuthorizationContext,
+    current_user: &agentdash_spi::AuthIdentity,
     project_id: Uuid,
 ) -> Result<Vec<WorkspaceModuleDescriptor>, ApiError> {
     let installations = state
@@ -140,16 +133,64 @@ async fn load_project_workspace_modules(
         .await
         .map_err(ApiError::from)?;
     let projection = extension_runtime_projection_from_installations(installations)?;
-    let canvases = list_canvases_for_user(
-        &state.repos,
-        current_user,
-        project_id,
-        CanvasListScopeFilter::All,
-    )
-    .await
-    .map_err(ApiError::from)?;
-    Ok(build_workspace_modules_with_canvas_access(
+    let definitions =
+        load_visible_canvas_revisions(state, &current_user.user_id, project_id).await?;
+    let operations = load_user_workshop_operations(state, current_user, project_id).await?;
+    Ok(build_workspace_modules(
         &projection,
-        &canvases,
+        &definitions,
+        &operations,
     ))
+}
+
+async fn load_user_workshop_operations(
+    state: &AppState,
+    current_user: &agentdash_spi::AuthIdentity,
+    project_id: Uuid,
+) -> Result<Vec<OperationDescriptor>, ApiError> {
+    let surface = state
+        .services
+        .operation_gateway
+        .surface_current(
+            &OperationPrincipal::authenticated_user(current_user.clone()),
+            &OperationScopeRef::Project { project_id },
+            &OperationOriginRef::UserWorkshop,
+            CancellationToken::new(),
+        )
+        .await
+        .map_err(ApiError::from)?;
+    Ok(surface.catalog.descriptors().into_iter().cloned().collect())
+}
+
+async fn load_visible_canvas_revisions(
+    state: &AppState,
+    current_user_id: &str,
+    project_id: Uuid,
+) -> Result<Vec<agentdash_domain::interaction::InteractionDefinitionRevision>, ApiError> {
+    let definitions = state
+        .repos
+        .interaction_definition_repo
+        .list_canvas_by_project(project_id)
+        .await
+        .map_err(ApiError::from)?;
+    let mut revisions = Vec::new();
+    for definition in definitions {
+        if definition.status != InteractionDefinitionStatus::Active {
+            continue;
+        }
+        if matches!(&definition.owner, InteractionOwner::User(owner) if owner != current_user_id) {
+            continue;
+        }
+        let revision = state
+            .repos
+            .interaction_definition_repo
+            .get_revision(definition.current_revision_id)
+            .await
+            .map_err(ApiError::from)?
+            .ok_or_else(|| {
+                ApiError::Internal("InteractionDefinition current revision 缺失".to_string())
+            })?;
+        revisions.push(revision);
+    }
+    Ok(revisions)
 }

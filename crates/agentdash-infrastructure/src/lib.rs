@@ -27,8 +27,6 @@ pub use persistence::postgres::PostgresAgentRuntimeHostRepository;
 pub use persistence::postgres::PostgresAuthSessionRepository;
 pub use persistence::postgres::PostgresBackendExecutionLeaseRepository;
 pub use persistence::postgres::PostgresBackendRepository;
-pub use persistence::postgres::PostgresCanvasRepository;
-pub use persistence::postgres::PostgresCanvasRuntimeStateRepository;
 pub use persistence::postgres::PostgresExtensionPackageArtifactRepository;
 pub use persistence::postgres::PostgresInlineFileRepository;
 pub use persistence::postgres::PostgresInteractionRepository;

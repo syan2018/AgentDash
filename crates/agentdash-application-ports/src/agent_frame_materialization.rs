@@ -1,4 +1,3 @@
-use agentdash_domain::canvas::CanvasDataBinding;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -42,14 +41,6 @@ impl FrameConstructionCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeSurfaceUpdateRequest {
-    CanvasBindingChanged {
-        canvas_mount_id: String,
-        binding: CanvasDataBinding,
-    },
-    CanvasVisibilityRequested {
-        canvas_mount_id: String,
-        reason: CanvasVisibilityReason,
-    },
     PermissionGrantApplied {
         grant_id: Uuid,
     },
@@ -80,9 +71,6 @@ pub enum RuntimeSurfaceUpdateRequest {
 impl RuntimeSurfaceUpdateRequest {
     pub fn surface_kind(&self) -> RuntimeSurfaceKind {
         match self {
-            Self::CanvasBindingChanged { .. } | Self::CanvasVisibilityRequested { .. } => {
-                RuntimeSurfaceKind::Canvas
-            }
             Self::PermissionGrantApplied { .. } | Self::PermissionGrantRevoked { .. } => {
                 RuntimeSurfaceKind::Permission
             }
@@ -95,16 +83,8 @@ impl RuntimeSurfaceUpdateRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CanvasVisibilityReason {
-    Created,
-    Presented,
-    ExplicitRefresh,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSurfaceKind {
-    Canvas,
     Permission,
     Mcp,
     Vfs,

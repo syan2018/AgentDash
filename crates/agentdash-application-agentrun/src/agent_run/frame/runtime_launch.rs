@@ -208,6 +208,7 @@ pub struct FrameLaunchRuntimeSurface {
 /// - `diagnostics` : resolution trace
 #[derive(Debug, Clone)]
 pub struct FrameLaunchEnvelope {
+    pub agent_run_execution: Option<agentdash_spi::AgentRunExecutionRef>,
     pub frame: FrameLaunchFrameRef,
     pub command: FrameLaunchIntent,
     pub runtime: FrameLaunchRuntimeSurface,
@@ -244,6 +245,7 @@ impl FrameLaunchEnvelope {
     /// 需要投影为不含 draft 的 ports runtime surface。
     pub fn into_runtime_session_launch_envelope(self) -> launch_port::FrameLaunchEnvelope {
         launch_port::FrameLaunchEnvelope {
+            agent_run_execution: self.agent_run_execution,
             frame: self.frame,
             command: self.command,
             runtime: launch_port::FrameLaunchRuntimeSurface {
@@ -519,6 +521,7 @@ mod tests {
             content: "使用中文交流".to_string(),
         };
         FrameLaunchEnvelope {
+            agent_run_execution: None,
             frame: FrameLaunchFrameRef {
                 surface: FrameRuntimeSurface::from_frame(
                     &AgentFrame::new_revision(Uuid::new_v4(), 1, "test"),

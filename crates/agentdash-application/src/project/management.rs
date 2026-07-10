@@ -296,10 +296,6 @@ pub async fn delete_project_aggregate(
             .await?;
     }
 
-    for canvas in repos.canvas_repo.list_by_project(project_id).await? {
-        repos.canvas_repo.delete(canvas.id).await?;
-    }
-
     for mount in repos
         .project_vfs_mount_repo
         .list_by_project(project_id)

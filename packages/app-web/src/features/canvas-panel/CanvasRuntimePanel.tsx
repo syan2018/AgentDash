@@ -3,7 +3,7 @@ import {
   fetchCanvas,
   fetchAgentRunCanvasRuntimeSnapshot,
   fetchCanvasByMountId,
-  fetchCanvasRuntimeSnapshot,
+  buildStandaloneCanvasPreviewSnapshot,
   upsertAgentRunCanvasRuntimeBinding,
   updateCanvas,
   type AgentRunCanvasBridgeIdentity,
@@ -70,13 +70,10 @@ export function CanvasRuntimePanel({
       const canvasRequest = canvasId
         ? fetchCanvas(canvasId)
         : fetchCanvasByMountId(projectId ?? "", canvasMountId ?? "");
-      const snapshotCanvasId = canvasId ?? (await canvasRequest).canvas_id;
-      const [nextCanvas, nextSnapshot] = await Promise.all([
-        canvasRequest,
-        agentRunBridge
-          ? fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
-          : fetchCanvasRuntimeSnapshot(snapshotCanvasId),
-      ]);
+      const nextCanvas = await canvasRequest;
+      const nextSnapshot = agentRunBridge
+        ? await fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
+        : buildStandaloneCanvasPreviewSnapshot(nextCanvas);
       setCanvas(nextCanvas);
       setSnapshot((current) =>
         areCanvasRuntimeSnapshotsEquivalent(current, nextSnapshot) ? current : nextSnapshot,
@@ -137,7 +134,7 @@ export function CanvasRuntimePanel({
       setCanvas(nextCanvas);
       const nextSnapshot = agentRunBridge
         ? await fetchAgentRunCanvasRuntimeSnapshot(agentRunBridge)
-        : await fetchCanvasRuntimeSnapshot(nextCanvas.canvas_id);
+        : buildStandaloneCanvasPreviewSnapshot(nextCanvas);
       setSnapshot((current) =>
         areCanvasRuntimeSnapshotsEquivalent(current, nextSnapshot) ? current : nextSnapshot,
       );

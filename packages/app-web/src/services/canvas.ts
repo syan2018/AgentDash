@@ -151,12 +151,30 @@ export async function unpublishCanvas(canvasId: string): Promise<UnpublishCanvas
   );
 }
 
-export async function fetchCanvasRuntimeSnapshot(
-  canvasId: string,
-): Promise<CanvasRuntimeSnapshot> {
-  return api.get<CanvasRuntimeSnapshot>(
-    `/canvases/${encodeURIComponent(canvasId)}/runtime-snapshot`,
-  );
+export function buildStandaloneCanvasPreviewSnapshot(canvas: Canvas): CanvasRuntimeSnapshot {
+  return {
+    canvas_id: canvas.canvas_id,
+    canvas_mount_id: canvas.canvas_mount_id,
+    vfs_mount_id: canvas.vfs_mount_id,
+    entry: canvas.entry_file,
+    files: canvas.files.map((file) => ({
+      path: file.path,
+      content: file.content,
+      file_type: canvasRuntimeFileType(file.path),
+    })),
+    bindings: [],
+    import_map: canvas.sandbox_config.import_map,
+    libraries: canvas.sandbox_config.libraries,
+    runtime_bridge: {
+      enabled: false,
+      disabled_reason: "Standalone Canvas preview 尚未绑定运行期 Operation surface。",
+    },
+  };
+}
+
+function canvasRuntimeFileType(path: string): string {
+  const extension = path.split(".").pop()?.toLowerCase();
+  return extension && extension !== path ? extension : "text";
 }
 
 export interface PromoteCanvasToExtensionInput {

@@ -18,8 +18,8 @@ vi.mock("../api/client", () => ({
 
 import {
   copyCanvasToPersonal,
+  buildStandaloneCanvasPreviewSnapshot,
   fetchAgentRunCanvasRuntimeSnapshot,
-  fetchCanvasRuntimeSnapshot,
   fetchProjectCanvases,
   invokeCanvasRuntimeAction,
   publishCanvasToProject,
@@ -100,14 +100,40 @@ describe("canvas service", () => {
     expect(result).toBe(response);
   });
 
-  it("fetches standalone runtime snapshot without session query", async () => {
-    const response = { canvas_id: "canvas-1" };
-    mocks.get.mockResolvedValueOnce(response);
+  it("builds standalone preview directly from immutable Canvas source", () => {
+    const result = buildStandaloneCanvasPreviewSnapshot({
+      canvas_id: "canvas-1",
+      project_id: "project-1",
+      owner_user_id: "user-1",
+      scope: "personal",
+      access: {
+        can_view: true,
+        can_edit_source: true,
+        can_publish: true,
+        can_manage_shared: false,
+        can_copy: false,
+        runtime_write_allowed: true,
+      },
+      canvas_mount_id: "cvs-1",
+      vfs_mount_id: "canvas:cvs-1",
+      title: "Demo",
+      description: "",
+      entry_file: "src/main.tsx",
+      sandbox_config: { libraries: ["react"], import_map: { imports: {} } },
+      files: [{ path: "src/main.tsx", content: "export default 1" }],
+      published_from_canvas_id: null,
+      shared_canvas_id: null,
+      cloned_from_canvas_id: null,
+      published_at: null,
+      published_by_user_id: null,
+      created_at: "2026-07-10T00:00:00Z",
+      updated_at: "2026-07-10T00:00:00Z",
+    });
 
-    const result = await fetchCanvasRuntimeSnapshot("canvas 1");
-
-    expect(mocks.get).toHaveBeenCalledWith("/canvases/canvas%201/runtime-snapshot");
-    expect(result).toBe(response);
+    expect(result.entry).toBe("src/main.tsx");
+    expect(result.files[0]?.file_type).toBe("tsx");
+    expect(result.runtime_bridge.enabled).toBe(false);
+    expect(mocks.get).not.toHaveBeenCalled();
   });
 
   it("fetches AgentRun-scoped runtime snapshot by Canvas mount", async () => {

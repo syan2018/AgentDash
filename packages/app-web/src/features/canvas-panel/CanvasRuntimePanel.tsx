@@ -19,6 +19,11 @@ import type { ExtensionUiComponentProjectionResponse } from "../../generated/ext
 import type { JsonValue } from "../../generated/common-contracts";
 import { ExtensionInteractionComponent } from "../extension-runtime";
 import type { ExtensionUiComponentDescriptor } from "../extension-runtime";
+import {
+  fetchOperationWorkshopSurface,
+  preflightWorkshopOperationScript,
+  runWorkshopOperationScript,
+} from "../../services/operationWorkshop";
 
 export interface CanvasRuntimePanelProps {
   projectId: string | null;
@@ -41,6 +46,7 @@ export function CanvasRuntimePanel({
   const [entrySource, setEntrySource] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scriptResult, setScriptResult] = useState<unknown>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -108,6 +114,47 @@ export function CanvasRuntimePanel({
     }
   }, [definition, onOpenInteraction]);
 
+  const rhaiSource = definition?.source_bundle.files.find((file) => file.path.endsWith(".rhai")) ?? null;
+  const handleRunScript = useCallback(async () => {
+    if (!projectId || !definition || !rhaiSource) return;
+    setBusy(true);
+    setError(null);
+    setScriptResult(null);
+    try {
+      const context = instance
+        ? { kind: "interaction" as const, instance_id: instance.instance.instance_id }
+        : { kind: "canvas" as const, definition_id: definition.definition_id };
+      const surface = await fetchOperationWorkshopSurface(projectId, { context });
+      const program = {
+        language: "rhai_v1",
+        host_api_version: 1,
+        source: rhaiSource.content,
+        input: instance?.instance.state ?? {},
+        requested_operations: surface.operations.filter((operation) => operation.ready).map((operation) => operation.operation_ref),
+        limits: {
+          timeout_ms: 30_000,
+          max_source_bytes: 262_144,
+          max_input_bytes: 1_048_576,
+          max_output_bytes: 1_048_576,
+          max_rhai_operations: 100_000,
+          max_call_levels: 32,
+          max_string_size: 1_048_576,
+          max_array_size: 1_000,
+          max_map_size: 500,
+          max_operation_calls: 32,
+          max_parallel_operations: 4,
+        },
+      };
+      const preflight = await preflightWorkshopOperationScript(projectId, { context, program });
+      const output = await runWorkshopOperationScript(projectId, { context, program, token: preflight.token });
+      setScriptResult(output.outcome);
+    } catch (scriptError) {
+      setError(scriptError instanceof Error ? scriptError.message : "OperationScript 执行失败");
+    } finally {
+      setBusy(false);
+    }
+  }, [definition, instance, projectId, rhaiSource]);
+
   const preview = useMemo(() => {
     if (!entrySource) return null;
     return (
@@ -145,6 +192,11 @@ export function CanvasRuntimePanel({
               启动 Interaction
             </button>
           )}
+          {rhaiSource && (
+            <button className="agentdash-button-secondary" disabled={busy} onClick={() => void handleRunScript()}>
+              运行 {rhaiSource.path}
+            </button>
+          )}
         </div>
       </header>
 
@@ -180,6 +232,11 @@ export function CanvasRuntimePanel({
             />
           ))}
         </section>
+      )}
+      {scriptResult !== null && (
+        <pre className="max-h-52 overflow-auto rounded-[8px] border border-border bg-secondary/30 p-3 text-xs">
+          {JSON.stringify(scriptResult, null, 2)}
+        </pre>
       )}
     </div>
   );

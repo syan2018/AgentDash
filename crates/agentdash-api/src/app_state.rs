@@ -39,6 +39,7 @@ use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_lifecycle::run_view_builder::LifecycleReadModelQueryAdapter;
 use agentdash_application_ports::agent_run_surface::AgentRunResourceSurfaceQueryPort;
 use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
+use agentdash_application_ports::operation_script::OperationScriptEngine;
 use agentdash_application_runtime_gateway::{
     CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeProtocolInvoker, OperationGateway,
     RuntimeGateway,
@@ -56,6 +57,7 @@ use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
+use agentdash_infrastructure::{RhaiOperationScriptConfig, RhaiOperationScriptEngine};
 use agentdash_integration_api::AgentDashIntegration;
 use agentdash_integration_api::AuthMode;
 use agentdash_integration_api::MarketplaceSourceProvider;
@@ -146,6 +148,8 @@ pub struct ServiceSet {
     pub runtime_gateway: Arc<RuntimeGateway>,
     /// actor-neutral canonical Operation gateway；Setup caller 已迁入，Session caller 随 host adapter 收敛。
     pub operation_gateway: Arc<OperationGateway>,
+    /// Ephemeral async Rhai V1 engine shared by trusted UserWorkshop/Canvas/Workflow hosts.
+    pub operation_script_engine: Arc<dyn OperationScriptEngine>,
     pub extension_runtime_protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
     /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
@@ -358,6 +362,16 @@ impl AppState {
             backend_registry.clone(),
             setup_action_transport,
         )?;
+        let mut operation_script_signing_secret = [0_u8; 32];
+        operation_script_signing_secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        operation_script_signing_secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        let operation_script_engine: Arc<dyn OperationScriptEngine> = Arc::new(
+            RhaiOperationScriptEngine::new(
+                &operation_script_signing_secret,
+                RhaiOperationScriptConfig::default(),
+            )
+            .map_err(|error| anyhow::anyhow!("OperationScript engine 初始化失败: {error}"))?,
+        );
         workspace_module_operation_gateway
             .set(operation_gateway.clone())
             .await;
@@ -525,6 +539,7 @@ impl AppState {
                 audit_bus,
                 runtime_gateway,
                 operation_gateway,
+                operation_script_engine,
                 extension_runtime_protocol_invoker,
                 extension_package_artifact_storage,
                 function_runner,

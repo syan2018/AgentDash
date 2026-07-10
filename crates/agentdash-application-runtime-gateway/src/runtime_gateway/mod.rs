@@ -74,8 +74,9 @@ pub use operation_gateway::{
     InMemoryOperationResultStore, OperationGateway, TracingOperationAuditSink,
 };
 pub use operation_hosts::{
-    AgentRunOperationHost, BoundOperationHost, ExtensionServiceOperationHost,
-    HostInvocationOptions, HostOperationInvocation, UserWorkshopOperationHost,
+    AgentRunOperationHost, BoundOperationHost, BoundOperationScriptHost,
+    ExtensionServiceOperationHost, HostInvocationOptions, HostOperationInvocation,
+    HostOperationScriptProgram, UserWorkshopOperationHost,
 };
 pub use operation_provider::{
     DynamicOperationProvider, OperationAuthorityGrant, OperationAuthorityResolver,

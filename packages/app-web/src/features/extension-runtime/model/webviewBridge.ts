@@ -1,15 +1,14 @@
 import type { JsonValue } from "../../../generated/common-contracts";
 import type {
   ExtensionFetchRouteProjectionResponse,
-  ExtensionRuntimeInvokeActionRequest,
-  ExtensionRuntimeInvokeActionResponse,
-  ExtensionRuntimeInvokeBackendServiceRequest,
-  ExtensionRuntimeInvokeBackendServiceResponse,
-  ExtensionRuntimeInvokeProtocolRequest,
-  ExtensionRuntimeInvokeProtocolResponse,
+  ExtensionGeneratedOperationDispatchResponse,
+  ExtensionGeneratedOperationProjectionResponse,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../generated/extension-runtime-contracts";
-import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type {
+  OperationWorkshopInvokeRequestDto,
+  OperationWorkshopInvokeResponseDto,
+} from "../../../generated/interaction-contracts";
 import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
 import type { WorkspaceBackendTarget, WorkspaceData } from "../../workspace-runtime";
 import { selectDefaultVfsMount, selectVfsBackendTarget } from "../../vfs/vfs-browser-panel-policy";
@@ -31,18 +30,10 @@ export interface ExtensionWebviewAvailability {
 
 export interface ExtensionWebviewBridgeServices {
   openTab(typeId: string, uri: string): void;
-  invokeAction(
-    target: AgentRunRuntimeTarget,
-    request: ExtensionRuntimeInvokeActionRequest,
-  ): Promise<ExtensionRuntimeInvokeActionResponse>;
-  invokeProtocol(
-    target: AgentRunRuntimeTarget,
-    request: ExtensionRuntimeInvokeProtocolRequest,
-  ): Promise<ExtensionRuntimeInvokeProtocolResponse>;
-  invokeBackendService(
-    target: AgentRunRuntimeTarget,
-    request: ExtensionRuntimeInvokeBackendServiceRequest,
-  ): Promise<ExtensionRuntimeInvokeBackendServiceResponse>;
+  invokeOperation(
+    projectId: string,
+    request: OperationWorkshopInvokeRequestDto,
+  ): Promise<OperationWorkshopInvokeResponseDto>;
   readFile(request: { surfaceRef: string; mountId: string; path: string }): Promise<{ content: string }>;
   writeFile(
     request: { surfaceRef: string; mountId: string; path: string; content: string },
@@ -54,24 +45,22 @@ export async function handleExtensionWebviewBridgeRequest({
   workspaceData,
   tab,
   uri,
-  backend,
   services,
 }: {
   message: ExtensionBridgeRequestMessage;
   workspaceData: WorkspaceData;
   tab: ExtensionWorkspaceTabProjectionResponse;
   uri: string;
-  backend: BackendTarget | null;
   services: ExtensionWebviewBridgeServices;
 }): Promise<JsonValue> {
   const projectId = workspaceData.projectId;
-  const agentRunTarget = workspaceData.agentRunRuntimeTarget ?? null;
-  if (!projectId || !agentRunTarget) {
-    throw new Error("Extension panel 缺少 Project 或 AgentRun context");
+  if (!projectId) {
+    throw new Error("Extension panel 缺少 Project context");
   }
-  if (!backend) {
-    throw new Error("Extension panel 缺少可用 backend");
-  }
+  const installation = workspaceData.extensionRuntime.projection.installations.find(
+    (item) => item.extension_key === tab.extension_key,
+  );
+  if (!installation) throw new Error("Extension installation 不存在");
 
   switch (message.method) {
     case "metadata.get_context":
@@ -96,11 +85,9 @@ export async function handleExtensionWebviewBridgeRequest({
       if (!actionKey) {
         throw new Error("runtime.invoke_action 缺少 action_key");
       }
-      const result = await services.invokeAction(agentRunTarget, {
-        action_key: actionKey,
-        input: toJsonValue(message.params.input),
-      });
-      return result.output.output;
+      const operation = findOperation(workspaceData, tab.extension_key, (dispatch) =>
+        dispatch.kind === "runtime_action" && dispatch.action_key === actionKey);
+      return invokeExtensionOperation(services, projectId, installation.installation_id, tab.extension_key, operation.operation_key, toJsonValue(message.params.input));
     }
     case "extension.invoke_protocol": {
       const protocolKey = bridgeParamString(message.params, "protocol_key");
@@ -108,22 +95,18 @@ export async function handleExtensionWebviewBridgeRequest({
       if (!protocolKey || !method) {
         throw new Error("extension.invoke_protocol 参数非法");
       }
-      const dependencyAlias = bridgeParamString(message.params, "dependency_alias");
-      const result = await services.invokeProtocol(agentRunTarget, {
-        protocol_key: protocolKey,
-        method,
-        input: toJsonValue(message.params.input),
-        consumer_extension_key: tab.extension_key,
-        dependency_alias: dependencyAlias || null,
-      });
-      return result.output.output;
+      const operation = findOperation(workspaceData, tab.extension_key, (dispatch) =>
+        dispatch.kind === "protocol_method"
+        && dispatch.protocol_key === protocolKey
+        && dispatch.method === method);
+      return invokeExtensionOperation(services, projectId, installation.installation_id, tab.extension_key, operation.operation_key, toJsonValue(message.params.input));
     }
     case "fetch.request":
       return invokeBackendServiceFetchRoute({
         params: message.params,
         workspaceData,
         tab,
-        target: agentRunTarget,
+        installationId: installation.installation_id,
         services,
       });
     case "vfs.read": {
@@ -175,8 +158,8 @@ export function resolveExtensionWebviewAvailability(
       workspaceData.extensionRuntime.error ?? "Project extension runtime projection 不可用。",
     );
   }
-  if (!workspaceData.projectId || !workspaceData.agentRunRuntimeTarget) {
-    return unavailable("Extension panel 不可用", "当前页面缺少 Project 或 AgentRun context。");
+  if (!workspaceData.projectId) {
+    return unavailable("Extension panel 不可用", "当前页面缺少 Project context。");
   }
   if (!tab.loadability.available) {
     return unavailable(
@@ -191,15 +174,6 @@ export function resolveExtensionWebviewAvailability(
     return unavailable("Extension 已停用", "当前 Project 没有启用这个插件。");
   }
   const backend = selectExtensionBackendTarget(workspaceData);
-  if (!backend) {
-    return unavailable("Backend 不可用", "当前 Project workspace 没有可用 backend。");
-  }
-  if (!backend.online) {
-    return {
-      ...unavailable("Backend 离线", `${backend.label} 当前离线。`),
-      backend,
-    };
-  }
   const entry = tab.renderer.entry.trim();
 
   return {
@@ -222,6 +196,51 @@ export function selectExtensionBackendTarget(
   return runtimeBackend ?? workspaceData.workspaceBackend;
 }
 
+function findOperation(
+  workspaceData: WorkspaceData,
+  extensionKey: string,
+  predicate: (dispatch: ExtensionGeneratedOperationDispatchResponse) => boolean,
+): ExtensionGeneratedOperationProjectionResponse {
+  const operation = (workspaceData.extensionRuntime.projection.operation_catalog ?? []).find(
+    (item) => item.extension_key === extensionKey && predicate(item.dispatch),
+  );
+  if (!operation) throw new Error("Extension capability 没有 canonical Operation exposure");
+  return operation;
+}
+
+async function invokeExtensionOperation(
+  services: ExtensionWebviewBridgeServices,
+  projectId: string,
+  installationId: string,
+  extensionKey: string,
+  operationKey: string,
+  input: JsonValue,
+): Promise<JsonValue> {
+  const response = await services.invokeOperation(projectId, {
+    context: { kind: "extension_panel", installation_id: installationId },
+    operation_ref: {
+      namespace: "extension",
+      provider_key: extensionKey,
+      operation_key: operationKey,
+      contract_version: 1,
+    },
+    input,
+    idempotency_key: null,
+  });
+  const result = asRecord(response.result);
+  const value = asRecord(result?.value);
+  if (value?.kind !== "inline") {
+    throw new Error("Extension Operation 返回了需要 host resolve 的 result ref");
+  }
+  return toJsonValue(value.value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
 function bridgeParamRawString(
   params: Record<string, unknown>,
   key: string,
@@ -234,13 +253,13 @@ async function invokeBackendServiceFetchRoute({
   params,
   workspaceData,
   tab,
-  target,
+  installationId,
   services,
 }: {
   params: Record<string, unknown>;
   workspaceData: WorkspaceData;
   tab: ExtensionWorkspaceTabProjectionResponse;
-  target: AgentRunRuntimeTarget;
+  installationId: string;
   services: ExtensionWebviewBridgeServices;
 }): Promise<JsonValue> {
   const url = bridgeParamString(params, "url");
@@ -263,26 +282,29 @@ async function invokeBackendServiceFetchRoute({
   }
 
   const body = params.body;
-  const result = await services.invokeBackendService(target, {
-    extension_key: tab.extension_key,
-    service_key: matchedRoute.target.service_key,
-    route: routePath,
+  const routeTarget = matchedRoute.target;
+  const operation = findOperation(workspaceData, tab.extension_key, (dispatch) =>
+    dispatch.kind === "backend_service"
+    && dispatch.service_key === routeTarget.service_key
+    && dispatch.route === routeTarget.route);
+  const output = await invokeExtensionOperation(services, workspaceData.projectId!, installationId, tab.extension_key, operation.operation_key, {
     method: bridgeParamString(params, "method") || "GET",
     headers: stringRecord(params.headers),
-    body: typeof body === "string" ? Array.from(new TextEncoder().encode(body)) : null,
+    body: typeof body === "string" ? body : null,
   });
-  if (result.diagnostic) {
-    throw new Error(`Extension backendService 不可用: ${result.diagnostic.message}`);
-  }
-  if (!result.response) {
+  const result = asRecord(output);
+  const response = asRecord(result?.response);
+  const diagnostic = asRecord(result?.diagnostic);
+  if (diagnostic) throw new Error(`Extension backendService 不可用: ${String(diagnostic.message ?? "unknown")}`);
+  if (!response) {
     throw new Error("Extension backendService 缺少 HTTP response");
   }
   return {
-    status: result.response.status,
-    headers: stringRecord(result.response.headers),
-    body: noBodyStatus(result.response.status)
+    status: Number(response.status),
+    headers: stringRecord(response.headers),
+    body: noBodyStatus(Number(response.status))
       ? null
-      : bytesToString(result.response.body ?? null),
+      : bytesToString(Array.isArray(response.body) ? response.body as number[] : null),
   };
 }
 

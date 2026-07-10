@@ -1,17 +1,40 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::operation_script::{
+    OperationScriptAllowedOperation, OperationScriptEngine, OperationScriptError,
+    OperationScriptLimits, OperationScriptPreflightRequest, OperationScriptPreflightResult,
+    OperationScriptPreflightToken, OperationScriptProgram, OperationScriptRunOutcome,
+    OperationScriptRunRequest,
+};
 use agentdash_domain::operation::OperationRef;
 use agentdash_spi::AuthIdentity;
 use chrono::{Duration, Utc};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    ActorOperationSurface, OperationExecutionError, OperationExecutionResult, OperationGateway,
-    OperationInvocationCommand, OperationOriginRef, OperationPrincipal, OperationPrincipalRef,
-    OperationScopeRef, OperationTraceContext,
+    ActorOperationSurface, GatewayOperationScriptExecutor, OperationExecutionError,
+    OperationExecutionResult, OperationGateway, OperationInvocationCommand, OperationOriginRef,
+    OperationPrincipal, OperationPrincipalRef, OperationScopeRef, OperationTraceContext,
 };
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostOperationScriptProgram {
+    pub language: String,
+    pub host_api_version: u16,
+    pub source: String,
+    pub input: Value,
+    pub requested_operations: Vec<OperationRef>,
+    pub limits: OperationScriptLimits,
+}
+
+pub struct BoundOperationScriptHost {
+    host: BoundOperationHost,
+    engine: Arc<dyn OperationScriptEngine>,
+    executor: Arc<GatewayOperationScriptExecutor>,
+}
 
 /// Untrusted caller-controlled portion of a host invocation.
 ///
@@ -141,6 +164,126 @@ impl BoundOperationHost {
 
     pub fn origin(&self) -> &OperationOriginRef {
         &self.origin
+    }
+
+    pub fn operation_script(
+        self,
+        engine: Arc<dyn OperationScriptEngine>,
+    ) -> BoundOperationScriptHost {
+        BoundOperationScriptHost {
+            executor: Arc::new(GatewayOperationScriptExecutor::new(self.gateway.clone())),
+            host: self,
+            engine,
+        }
+    }
+}
+
+impl BoundOperationScriptHost {
+    pub async fn preflight(
+        &self,
+        program: HostOperationScriptProgram,
+        cancel: CancellationToken,
+    ) -> Result<OperationScriptPreflightResult, OperationScriptError> {
+        let (program, context) = self.resolve(program, cancel.clone()).await?;
+        self.engine
+            .preflight(OperationScriptPreflightRequest { program, context }, cancel)
+            .await
+    }
+
+    pub async fn run(
+        &self,
+        program: HostOperationScriptProgram,
+        token: OperationScriptPreflightToken,
+        cancel: CancellationToken,
+    ) -> Result<OperationScriptRunOutcome, OperationScriptError> {
+        let (program, context) = self.resolve(program, cancel.clone()).await?;
+        self.engine
+            .run(
+                OperationScriptRunRequest {
+                    program,
+                    context,
+                    token,
+                },
+                self.executor.clone(),
+                cancel,
+            )
+            .await
+    }
+
+    async fn resolve(
+        &self,
+        program: HostOperationScriptProgram,
+        cancel: CancellationToken,
+    ) -> Result<
+        (
+            OperationScriptProgram,
+            agentdash_application_ports::operation_script::OperationScriptExecutionContext,
+        ),
+        OperationScriptError,
+    > {
+        let surface =
+            self.host
+                .discover(cancel)
+                .await
+                .map_err(|error| OperationScriptError::Internal {
+                    code: gateway_script_error_code(&error),
+                })?;
+        let mut allowed_operations = Vec::with_capacity(program.requested_operations.len());
+        for operation_ref in &program.requested_operations {
+            let descriptor = surface.catalog.get(operation_ref).ok_or_else(|| {
+                OperationScriptError::OperationDenied {
+                    operation_key: operation_key(operation_ref),
+                }
+            })?;
+            let encoded =
+                serde_json::to_vec(descriptor).map_err(|_| OperationScriptError::Internal {
+                    code: "descriptor_serialization_failed",
+                })?;
+            allowed_operations.push(OperationScriptAllowedOperation {
+                operation_ref: descriptor.operation_ref.clone(),
+                descriptor_digest: format!("sha256:{:x}", Sha256::digest(encoded)),
+                effect: descriptor.effect.clone(),
+                replay_policy: descriptor.replay_policy,
+                recursive_operation_script: false,
+            });
+        }
+        Ok((
+            OperationScriptProgram {
+                dialect: program.language,
+                host_api_version: program.host_api_version,
+                source: program.source,
+                input: program.input,
+                allowed_operations,
+                limits: program.limits,
+            },
+            agentdash_application_ports::operation_script::OperationScriptExecutionContext {
+                principal: self.host.principal.principal_ref().clone(),
+                scope: self.host.scope_ref.clone(),
+                authority_revision: surface.authority_revision,
+                granted_capabilities: surface.granted_capabilities,
+                origin: self.host.origin.clone(),
+                trace_id: OperationTraceContext::root().trace_id,
+                attachment_ref: self.host.attachment_ref.clone(),
+            },
+        ))
+    }
+}
+
+fn operation_key(operation_ref: &OperationRef) -> String {
+    format!(
+        "{}:{}:{}:v{}",
+        operation_ref.provider.namespace,
+        operation_ref.provider.provider_key,
+        operation_ref.operation_key,
+        operation_ref.contract_version
+    )
+}
+
+fn gateway_script_error_code(error: &OperationExecutionError) -> &'static str {
+    match error.kind() {
+        super::OperationExecutionErrorKind::Cancelled => "surface_cancelled",
+        super::OperationExecutionErrorKind::DeadlineExceeded => "surface_deadline_exceeded",
+        _ => "surface_unavailable",
     }
 }
 

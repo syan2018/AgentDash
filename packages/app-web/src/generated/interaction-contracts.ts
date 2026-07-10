@@ -70,3 +70,29 @@ export type InteractionSourceSandboxDto = { libraries: Array<string>, import_map
 export type InteractionStatePatchV1ContractDto = { allowed_paths: Array<string>, max_operations: bigint, max_state_bytes: bigint, };
 
 export type ListCanvasDefinitionsQuery = { scope?: CanvasDefinitionListScopeDto, };
+
+export type OperationScriptLimitsDto = { timeout_ms: number, max_source_bytes: number, max_input_bytes: number, max_output_bytes: number, max_rhai_operations: number, max_call_levels: number, max_string_size: number, max_array_size: number, max_map_size: number, max_operation_calls: number, max_parallel_operations: number, };
+
+export type OperationScriptPreflightTokenDto = { plan_id: string, binding_digest: string, issued_at: string, expires_at: string, signature: string, };
+
+export type OperationScriptProgramDto = { language: string, host_api_version: number, source: string, input: JsonValue, requested_operations: Array<InteractionOperationRefDto>, limits: OperationScriptLimitsDto, };
+
+export type OperationWorkshopContextDto = { "kind": "project" } | { "kind": "canvas", definition_id: string, } | { "kind": "interaction", instance_id: string, } | { "kind": "extension_panel", installation_id: string, };
+
+export type OperationWorkshopDescriptorDto = { operation_ref: InteractionOperationRefDto, title: string, description: string | null, input_schema: JsonValue, output_schema: JsonValue, effect: string, replay_policy: string, required_capabilities: Array<string>, ready: boolean, unavailable_reason: string | null, };
+
+export type OperationWorkshopInvokeRequestDto = { context: OperationWorkshopContextDto, operation_ref: InteractionOperationRefDto, input: JsonValue, idempotency_key: string | null, };
+
+export type OperationWorkshopInvokeResponseDto = { result: JsonValue, };
+
+export type OperationWorkshopScriptPreflightRequestDto = { context: OperationWorkshopContextDto, program: OperationScriptProgramDto, };
+
+export type OperationWorkshopScriptPreflightResponseDto = { token: OperationScriptPreflightTokenDto, source_digest: string, manifest_digest: string, };
+
+export type OperationWorkshopScriptRunRequestDto = { context: OperationWorkshopContextDto, program: OperationScriptProgramDto, token: OperationScriptPreflightTokenDto, };
+
+export type OperationWorkshopScriptRunResponseDto = { outcome: JsonValue, };
+
+export type OperationWorkshopSurfaceDto = { authority_revision: string, operations: Array<OperationWorkshopDescriptorDto>, };
+
+export type OperationWorkshopSurfaceRequestDto = { context: OperationWorkshopContextDto, };

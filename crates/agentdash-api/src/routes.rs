@@ -19,6 +19,7 @@ pub mod llm_providers;
 pub mod marketplace;
 pub mod mcp_presets;
 pub mod me;
+pub mod operation_workshop;
 pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
@@ -84,6 +85,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(routines::router())
         .merge(runner_registration_tokens::router())
         .merge(interactions::router())
+        .merge(operation_workshop::router())
         .merge(companion_gates::router())
         .merge(mcp_presets::router())
         .merge(skill_assets::router())

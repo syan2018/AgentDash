@@ -332,3 +332,111 @@ pub struct InteractionCommandResponseDto {
     pub event_sequence: u64,
     pub duplicate: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OperationWorkshopContextDto {
+    Project,
+    Canvas { definition_id: String },
+    Interaction { instance_id: String },
+    ExtensionPanel { installation_id: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopSurfaceRequestDto {
+    pub context: OperationWorkshopContextDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopDescriptorDto {
+    pub operation_ref: InteractionOperationRefDto,
+    pub title: String,
+    pub description: Option<String>,
+    pub input_schema: Value,
+    pub output_schema: Value,
+    pub effect: String,
+    pub replay_policy: String,
+    pub required_capabilities: Vec<String>,
+    pub ready: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopSurfaceDto {
+    pub authority_revision: String,
+    pub operations: Vec<OperationWorkshopDescriptorDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopInvokeRequestDto {
+    pub context: OperationWorkshopContextDto,
+    pub operation_ref: InteractionOperationRefDto,
+    #[serde(default)]
+    pub input: Value,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopInvokeResponseDto {
+    pub result: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationScriptLimitsDto {
+    pub timeout_ms: u32,
+    pub max_source_bytes: u32,
+    pub max_input_bytes: u32,
+    pub max_output_bytes: u32,
+    pub max_rhai_operations: u32,
+    pub max_call_levels: u32,
+    pub max_string_size: u32,
+    pub max_array_size: u32,
+    pub max_map_size: u32,
+    pub max_operation_calls: u32,
+    pub max_parallel_operations: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationScriptProgramDto {
+    pub language: String,
+    pub host_api_version: u16,
+    pub source: String,
+    #[serde(default)]
+    pub input: Value,
+    pub requested_operations: Vec<InteractionOperationRefDto>,
+    pub limits: OperationScriptLimitsDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationScriptPreflightTokenDto {
+    pub plan_id: String,
+    pub binding_digest: String,
+    pub issued_at: String,
+    pub expires_at: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopScriptPreflightRequestDto {
+    pub context: OperationWorkshopContextDto,
+    pub program: OperationScriptProgramDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopScriptPreflightResponseDto {
+    pub token: OperationScriptPreflightTokenDto,
+    pub source_digest: String,
+    pub manifest_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopScriptRunRequestDto {
+    pub context: OperationWorkshopContextDto,
+    pub program: OperationScriptProgramDto,
+    pub token: OperationScriptPreflightTokenDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct OperationWorkshopScriptRunResponseDto {
+    pub outcome: Value,
+}

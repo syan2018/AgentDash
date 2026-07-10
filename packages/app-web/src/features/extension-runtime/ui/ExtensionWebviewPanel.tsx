@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import {
-  invokeAgentRunExtensionBackendService,
-  invokeAgentRunExtensionRuntimeAction,
-  invokeAgentRunExtensionRuntimeProtocol,
-} from "../../../services/extensionRuntime";
+import { invokeWorkshopOperation } from "../../../services/operationWorkshop";
 import { readSurfaceFile, writeSurfaceFile } from "../../../services/vfs";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 import type { ExtensionWorkspaceTabProjectionResponse } from "../../../types";
@@ -31,9 +27,7 @@ const webviewBridgeServices: ExtensionWebviewBridgeServices = {
   openTab(typeId, uri) {
     useWorkspaceTabStore.getState().openOrActivate(typeId, uri);
   },
-  invokeAction: invokeAgentRunExtensionRuntimeAction,
-  invokeProtocol: invokeAgentRunExtensionRuntimeProtocol,
-  invokeBackendService: invokeAgentRunExtensionBackendService,
+  invokeOperation: invokeWorkshopOperation,
   readFile: readSurfaceFile,
   writeFile: writeSurfaceFile,
 };
@@ -57,10 +51,9 @@ export function ExtensionWebviewPanel({
       workspaceData,
       tab,
       uri,
-      backend: availability.backend,
       services: webviewBridgeServices,
     }),
-    [availability.backend, tab, uri, workspaceData],
+    [tab, uri, workspaceData],
   );
 
   useEffect(() => {

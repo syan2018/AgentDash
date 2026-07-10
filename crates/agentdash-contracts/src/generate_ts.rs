@@ -118,6 +118,12 @@ use agentdash_contracts::interaction::{
     InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
     InteractionSourceChangesetDto, InteractionSourceFileChangeDto, InteractionSourceFileDto,
     InteractionSourceSandboxDto, InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
+    OperationScriptLimitsDto, OperationScriptPreflightTokenDto, OperationScriptProgramDto,
+    OperationWorkshopContextDto, OperationWorkshopDescriptorDto, OperationWorkshopInvokeRequestDto,
+    OperationWorkshopInvokeResponseDto, OperationWorkshopScriptPreflightRequestDto,
+    OperationWorkshopScriptPreflightResponseDto, OperationWorkshopScriptRunRequestDto,
+    OperationWorkshopScriptRunResponseDto, OperationWorkshopSurfaceDto,
+    OperationWorkshopSurfaceRequestDto,
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthCredentialTargetDto, CodexOAuthFlowStatusDto, CodexOAuthStatusResponse,
@@ -892,6 +898,19 @@ fn main() {
             export_all::<CloseInteractionInstanceRequestDto>(dir);
             export_all::<InteractionCommandRequestDto>(dir);
             export_all::<InteractionCommandResponseDto>(dir);
+            export_all::<OperationWorkshopContextDto>(dir);
+            export_all::<OperationWorkshopSurfaceRequestDto>(dir);
+            export_all::<OperationWorkshopDescriptorDto>(dir);
+            export_all::<OperationWorkshopSurfaceDto>(dir);
+            export_all::<OperationWorkshopInvokeRequestDto>(dir);
+            export_all::<OperationWorkshopInvokeResponseDto>(dir);
+            export_all::<OperationScriptLimitsDto>(dir);
+            export_all::<OperationScriptProgramDto>(dir);
+            export_all::<OperationScriptPreflightTokenDto>(dir);
+            export_all::<OperationWorkshopScriptPreflightRequestDto>(dir);
+            export_all::<OperationWorkshopScriptPreflightResponseDto>(dir);
+            export_all::<OperationWorkshopScriptRunRequestDto>(dir);
+            export_all::<OperationWorkshopScriptRunResponseDto>(dir);
         },
     );
 

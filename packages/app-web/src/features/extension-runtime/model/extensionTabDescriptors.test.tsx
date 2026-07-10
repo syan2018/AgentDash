@@ -42,6 +42,7 @@ describe("createExtensionTabDescriptors", () => {
           reason: "extension host bundle 缺失",
         },
       }],
+      ui_components: [],
       permissions: [],
       bundles: [],
     };

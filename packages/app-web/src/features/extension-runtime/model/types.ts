@@ -16,6 +16,7 @@ export function emptyExtensionRuntimeProjection(): ExtensionRuntimeProjectionRes
     protocols: [],
     extension_dependencies: [],
     workspace_tabs: [],
+    ui_components: [],
     permissions: [],
     bundles: [],
   };

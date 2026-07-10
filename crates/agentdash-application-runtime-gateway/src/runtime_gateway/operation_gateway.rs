@@ -9,13 +9,13 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    ActorOperationSurface, OperationAuditEvent, OperationAuditSink, OperationAuthorizationScope,
-    OperationCatalog, OperationDescriptor, OperationDispatcher, OperationExecutionCore,
-    OperationExecutionError, OperationExecutionRequest, OperationExecutionResult,
-    OperationInvocationCommand, OperationInvocationEnvelope, OperationOriginRef,
-    OperationPlacement, OperationPlacementResolver, OperationPrincipal, OperationProvider,
-    OperationResultRef, OperationResultStore, OperationSurfaceResolver, ScopedOperationResult,
-    result_access_matches,
+    ActorOperationSurface, DynamicOperationProvider, OperationAuditEvent, OperationAuditSink,
+    OperationAuthorizationScope, OperationCatalog, OperationDescriptor, OperationDispatcher,
+    OperationExecutionCore, OperationExecutionError, OperationExecutionRequest,
+    OperationExecutionResult, OperationInvocationCommand, OperationInvocationEnvelope,
+    OperationOriginRef, OperationPlacement, OperationPlacementResolver, OperationPrincipal,
+    OperationProvider, OperationResultRef, OperationResultStore, OperationSurfaceResolver,
+    ScopedOperationResult, result_access_matches,
 };
 use crate::runtime_gateway::OperationAuthorityResolver;
 
@@ -29,12 +29,14 @@ impl OperationGateway {
     pub fn try_new(
         authority_resolver: Arc<dyn OperationAuthorityResolver>,
         providers: impl IntoIterator<Item = Arc<dyn OperationProvider>>,
+        dynamic_providers: impl IntoIterator<Item = Arc<dyn DynamicOperationProvider>>,
         result_store: Arc<dyn OperationResultStore>,
         audit_sink: Arc<dyn OperationAuditSink>,
     ) -> Result<Self, OperationExecutionError> {
         let runtime = Arc::new(OperationProviderRuntime::try_new(
             authority_resolver,
             providers,
+            dynamic_providers,
         )?);
         let core = OperationExecutionCore::new(
             runtime.clone(),
@@ -166,12 +168,14 @@ impl OperationGateway {
 struct OperationProviderRuntime {
     authority_resolver: Arc<dyn OperationAuthorityResolver>,
     providers: HashMap<OperationProviderRef, Arc<dyn OperationProvider>>,
+    dynamic_providers: Vec<Arc<dyn DynamicOperationProvider>>,
 }
 
 impl OperationProviderRuntime {
     fn try_new(
         authority_resolver: Arc<dyn OperationAuthorityResolver>,
         providers: impl IntoIterator<Item = Arc<dyn OperationProvider>>,
+        dynamic_providers: impl IntoIterator<Item = Arc<dyn DynamicOperationProvider>>,
     ) -> Result<Self, OperationExecutionError> {
         let mut by_ref = HashMap::new();
         for provider in providers {
@@ -186,6 +190,7 @@ impl OperationProviderRuntime {
         Ok(Self {
             authority_resolver,
             providers: by_ref,
+            dynamic_providers: dynamic_providers.into_iter().collect(),
         })
     }
 
@@ -199,6 +204,24 @@ impl OperationProviderRuntime {
             .ok_or_else(|| OperationExecutionError::OperationUnavailable {
                 operation_ref: descriptor.operation_ref.clone(),
             })
+    }
+
+    fn dynamic_provider_for(
+        &self,
+        provider_ref: &OperationProviderRef,
+    ) -> Result<Option<Arc<dyn DynamicOperationProvider>>, OperationExecutionError> {
+        let mut matches = self
+            .dynamic_providers
+            .iter()
+            .filter(|provider| provider.owns_provider(provider_ref));
+        let first = matches.next().cloned();
+        if matches.next().is_some() {
+            return Err(OperationExecutionError::invalid_request(format!(
+                "Operation provider ownership 重复: {}:{}",
+                provider_ref.namespace, provider_ref.provider_key
+            )));
+        }
+        Ok(first)
     }
 }
 
@@ -223,6 +246,35 @@ impl OperationSurfaceResolver for OperationProviderRuntime {
                     .await?,
             );
         }
+        for provider in &self.dynamic_providers {
+            match provider
+                .discover(principal, scope, origin, cancel.clone())
+                .await
+            {
+                Ok(discovered) => match OperationCatalog::try_new(discovered.clone()) {
+                    Ok(_) => descriptors.extend(discovered),
+                    Err(error) => {
+                        diag!(
+                            Warn,
+                            Subsystem::Infra,
+                            error = error.to_string(),
+                            "Dynamic Operation provider descriptor set isolated"
+                        );
+                    }
+                },
+                Err(OperationExecutionError::Cancelled) => {
+                    return Err(OperationExecutionError::Cancelled);
+                }
+                Err(error) => {
+                    diag!(
+                        Warn,
+                        Subsystem::Infra,
+                        error = error.to_string(),
+                        "Dynamic Operation provider discovery isolated"
+                    );
+                }
+            }
+        }
         Ok(ActorOperationSurface {
             authority_revision: grant.authority_revision,
             granted_capabilities: grant.capabilities,
@@ -240,7 +292,15 @@ impl OperationPlacementResolver for OperationProviderRuntime {
         scope: &OperationAuthorizationScope,
         cancel: CancellationToken,
     ) -> Result<OperationPlacement, OperationExecutionError> {
-        self.provider_for(descriptor)?
+        if let Ok(provider) = self.provider_for(descriptor) {
+            return provider
+                .resolve_placement(descriptor, principal, scope, cancel)
+                .await;
+        }
+        self.dynamic_provider_for(&descriptor.operation_ref.provider)?
+            .ok_or_else(|| OperationExecutionError::OperationUnavailable {
+                operation_ref: descriptor.operation_ref.clone(),
+            })?
             .resolve_placement(descriptor, principal, scope, cancel)
             .await
     }
@@ -254,7 +314,13 @@ impl OperationDispatcher for OperationProviderRuntime {
         envelope: OperationInvocationEnvelope,
         cancel: CancellationToken,
     ) -> Result<Value, OperationExecutionError> {
-        self.provider_for(descriptor)?
+        if let Ok(provider) = self.provider_for(descriptor) {
+            return provider.invoke(descriptor, envelope, cancel).await;
+        }
+        self.dynamic_provider_for(&descriptor.operation_ref.provider)?
+            .ok_or_else(|| OperationExecutionError::OperationUnavailable {
+                operation_ref: descriptor.operation_ref.clone(),
+            })?
             .invoke(descriptor, envelope, cancel)
             .await
     }
@@ -293,6 +359,158 @@ impl OperationResultStore for InMemoryOperationResultStore {
 fn prune_expired(results: &mut HashMap<uuid::Uuid, ScopedOperationResult>) {
     let now = chrono::Utc::now();
     results.retain(|_, result| result.access.expires_at > now);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use agentdash_domain::operation::{OperationEffect, OperationRef, OperationReplayPolicy};
+    use agentdash_spi::{AuthIdentity, AuthMode};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::runtime_gateway::{
+        OperationActorKind, OperationAuthorityGrant, OperationDispatch, OperationExecutionPolicy,
+        OperationOriginRef, OperationProvenance, OperationReadiness, OperationScopeRef,
+    };
+
+    struct AllowAuthority;
+
+    #[async_trait]
+    impl OperationAuthorityResolver for AllowAuthority {
+        async fn resolve(
+            &self,
+            _: &OperationPrincipal,
+            _: &OperationAuthorizationScope,
+            _: &OperationOriginRef,
+            _: CancellationToken,
+        ) -> Result<OperationAuthorityGrant, OperationExecutionError> {
+            Ok(OperationAuthorityGrant {
+                authority_revision: "rev-1".to_string(),
+                capabilities: BTreeSet::new(),
+            })
+        }
+    }
+
+    struct FixtureDynamicProvider {
+        provider_key: &'static str,
+        invalid: bool,
+    }
+
+    #[async_trait]
+    impl DynamicOperationProvider for FixtureDynamicProvider {
+        fn owns_provider(&self, provider: &OperationProviderRef) -> bool {
+            provider.namespace == "dynamic" && provider.provider_key == self.provider_key
+        }
+
+        async fn discover(
+            &self,
+            _: &OperationPrincipal,
+            _: &OperationAuthorizationScope,
+            _: &OperationOriginRef,
+            _: CancellationToken,
+        ) -> Result<Vec<OperationDescriptor>, OperationExecutionError> {
+            Ok(vec![descriptor(self.provider_key, self.invalid)])
+        }
+
+        async fn resolve_placement(
+            &self,
+            _: &OperationDescriptor,
+            _: &OperationPrincipal,
+            _: &OperationAuthorizationScope,
+            _: CancellationToken,
+        ) -> Result<OperationPlacement, OperationExecutionError> {
+            Ok(OperationPlacement::Cloud)
+        }
+
+        async fn invoke(
+            &self,
+            _: &OperationDescriptor,
+            _: OperationInvocationEnvelope,
+            _: CancellationToken,
+        ) -> Result<Value, OperationExecutionError> {
+            Ok(json!({ "ok": true }))
+        }
+    }
+
+    fn descriptor(provider_key: &str, invalid: bool) -> OperationDescriptor {
+        let operation_ref = OperationRef::new("dynamic", provider_key, "echo", 1).expect("ref");
+        OperationDescriptor {
+            operation_ref: operation_ref.clone(),
+            title: if invalid { "" } else { "Echo" }.to_string(),
+            description: None,
+            input_schema: json!({ "type": "object" }),
+            output_schema: json!({ "type": "object" }),
+            effect: OperationEffect::Read,
+            replay_policy: OperationReplayPolicy::ReplaySafe,
+            required_capabilities: BTreeSet::new(),
+            actor_visibility: BTreeSet::from([OperationActorKind::User]),
+            execution_policy: OperationExecutionPolicy::default(),
+            readiness: OperationReadiness::Ready,
+            provenance: OperationProvenance {
+                source: "fixture".to_string(),
+                artifact_digest: None,
+            },
+            dispatch: OperationDispatch {
+                provider: operation_ref.provider,
+                route: "echo".to_string(),
+            },
+        }
+    }
+
+    fn principal() -> OperationPrincipal {
+        OperationPrincipal::authenticated_user(AuthIdentity {
+            auth_mode: AuthMode::Personal,
+            user_id: "user-1".to_string(),
+            subject: "user-1".to_string(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin: false,
+            provider: None,
+            extra: Value::Null,
+        })
+    }
+
+    #[tokio::test]
+    async fn invalid_dynamic_descriptor_is_isolated_from_valid_provider() {
+        let gateway = OperationGateway::try_new(
+            Arc::new(AllowAuthority),
+            [],
+            [
+                Arc::new(FixtureDynamicProvider {
+                    provider_key: "invalid",
+                    invalid: true,
+                }) as Arc<dyn DynamicOperationProvider>,
+                Arc::new(FixtureDynamicProvider {
+                    provider_key: "valid",
+                    invalid: false,
+                }),
+            ],
+            Arc::new(InMemoryOperationResultStore::default()),
+            Arc::new(TracingOperationAuditSink),
+        )
+        .expect("gateway");
+
+        let surface = gateway
+            .surface_current(
+                &principal(),
+                &OperationScopeRef::Project {
+                    project_id: Uuid::new_v4(),
+                },
+                &OperationOriginRef::UserWorkshop,
+                CancellationToken::new(),
+            )
+            .await
+            .expect("surface");
+
+        let descriptors = surface.catalog.descriptors();
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].operation_ref.provider.provider_key, "valid");
+    }
 }
 
 pub struct TracingOperationAuditSink;

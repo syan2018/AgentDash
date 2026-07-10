@@ -70,7 +70,8 @@ pub use operation_hosts::{
     HostInvocationOptions, HostOperationInvocation, UserWorkshopOperationHost,
 };
 pub use operation_provider::{
-    OperationAuthorityGrant, OperationAuthorityResolver, OperationProvider,
+    DynamicOperationProvider, OperationAuthorityGrant, OperationAuthorityResolver,
+    OperationProvider,
 };
 pub use operation_script_adapter::GatewayOperationScriptExecutor;
 pub use operation_types::{

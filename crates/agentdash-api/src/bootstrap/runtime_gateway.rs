@@ -89,6 +89,7 @@ pub(crate) fn build_operation_gateway(
             surface_authority,
         )),
         [setup_provider as Arc<dyn agentdash_application_runtime_gateway::OperationProvider>],
+        [],
         Arc::new(InMemoryOperationResultStore::default()),
         Arc::new(TracingOperationAuditSink),
     )

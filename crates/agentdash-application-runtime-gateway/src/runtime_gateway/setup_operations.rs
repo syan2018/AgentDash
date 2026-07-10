@@ -652,6 +652,7 @@ mod tests {
         OperationGateway::try_new(
             Arc::new(SetupOperationAuthorityResolver::new(access)),
             [provider(ports) as Arc<dyn OperationProvider>],
+            [],
             Arc::new(InMemoryOperationResultStore::default()),
             Arc::new(TracingOperationAuditSink),
         )

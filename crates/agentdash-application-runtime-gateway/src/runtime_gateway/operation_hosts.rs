@@ -317,6 +317,7 @@ mod tests {
             OperationGateway::try_new(
                 Arc::new(AllowAuthority),
                 [],
+                [],
                 Arc::new(InMemoryOperationResultStore::default()),
                 Arc::new(TracingOperationAuditSink),
             )

@@ -7,10 +7,9 @@ use agentdash_agent_protocol::{
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::MailboxSourceIdentity;
 use agentdash_domain::channel::{
-    Channel, ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryStatus,
-    ChannelDeliveryTarget, ChannelKey, ChannelMessage, ChannelMessageOrigin, ChannelOwner,
-    ChannelParticipant, ChannelParticipantRef, ChannelPayload, ChannelRecord, ChannelRole,
-    MaterializedDeliveryRef,
+    Channel, ChannelDeliveryState, ChannelDeliveryStatus, ChannelKey, ChannelMessage,
+    ChannelMessageOrigin, ChannelOwner, ChannelParticipant, ChannelParticipantRef, ChannelPayload,
+    ChannelRecord, ChannelRole, MaterializedDeliveryRef,
 };
 #[cfg(test)]
 use agentdash_domain::workflow::LifecycleGateRepository;
@@ -356,15 +355,13 @@ fn channel_message_origin_from_mailbox_source(
     address
 }
 
-fn companion_channel_delivery_intent(
+fn companion_channel_message(
     channel_id: Uuid,
-    run_id: Uuid,
-    agent_id: Uuid,
     sender: ChannelParticipantRef,
     source: &MailboxSourceIdentity,
     payload_kind: &'static str,
     input_text: &str,
-) -> ChannelDeliveryIntent {
+) -> ChannelMessage {
     let address = channel_message_origin_from_mailbox_source(source);
     let mut message = ChannelMessage::new(
         channel_id,
@@ -373,7 +370,7 @@ fn companion_channel_delivery_intent(
         address,
     );
     message.correlation_ref = source.correlation_ref.clone();
-    ChannelDeliveryIntent::new(message, ChannelDeliveryTarget::Mailbox { run_id, agent_id })
+    message
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1015,17 +1012,28 @@ async fn deliver_companion_mailbox_message(
     {
         return Ok(skipped);
     }
-    let channel_intent = companion_channel_delivery_intent(
+    let channel_message = companion_channel_message(
         input.channel_id,
-        input.run_id,
-        input.agent_id,
-        input.sender,
+        input.sender.clone(),
         &input.source,
         input.payload_kind,
         &input.input_text,
     );
-    let materialized =
-        companion_channel_service(repos).materialize_delivery_to_mailbox(&channel_intent)?;
+    let channel_service = companion_channel_service(repos);
+    let channel_intent = channel_service
+        .plan_participant_delivery(
+            &ChannelOwner::LifecycleRun {
+                run_id: input.run_id,
+            },
+            channel_message,
+            ChannelParticipantRef::Agent {
+                run_id: input.run_id,
+                agent_id: input.agent_id,
+            },
+            agentdash_domain::channel::ChannelOperation::Publish,
+        )
+        .await?;
+    let materialized = channel_service.materialize_delivery_to_mailbox(&channel_intent)?;
     let source_dedup_key = mailbox_source_identity_dedup_key(&materialized.message.source)
         .unwrap_or_else(|| format!("channel_delivery:{}", materialized.delivery_id));
     let mailbox_result = companion_mailbox_service_from_runtime(
@@ -1049,7 +1057,7 @@ async fn deliver_companion_mailbox_message(
         executor_config: None,
         backend_selection: None,
         identity: None,
-        delivery_intent: Some(format!("channel_delivery:{}", channel_intent.id)),
+        delivery_intent: Some(format!("channel_delivery:{}", channel_intent.intent().id)),
     })
     .await
     .map_err(map_companion_mailbox_error)?;
@@ -1091,9 +1099,9 @@ async fn deliver_companion_mailbox_message(
                 },
                 input.channel_id,
                 ChannelDeliveryState {
-                    delivery_id: channel_intent.id,
-                    message_id: channel_intent.message.id,
-                    target: channel_intent.target.clone(),
+                    delivery_id: channel_intent.intent().id,
+                    message_id: channel_intent.intent().message.id,
+                    target: channel_intent.intent().target.clone(),
                     status: ChannelDeliveryStatus::Materialized,
                     materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
                         message_id: mailbox_message_id,
@@ -1634,10 +1642,8 @@ impl CompanionRequestTool {
         .map_err(|error| {
             AgentToolError::ExecutionFailed(format!("companion channel 创建失败: {error}"))
         })?;
-        let channel_intent = companion_channel_delivery_intent(
+        let channel_message = companion_channel_message(
             channel_id,
-            dispatch_result.run_ref,
-            dispatch_result.agent_ref,
             ChannelParticipantRef::Agent {
                 run_id: parent_run_id,
                 agent_id: parent_agent_id,
@@ -1646,7 +1652,26 @@ impl CompanionRequestTool {
             "companion_dispatch",
             &dispatch_result.launch_source.dispatch_prompt,
         );
-        let materialized = companion_channel_service(&self.repos)
+        let channel_service = companion_channel_service(&self.repos);
+        let channel_intent = channel_service
+            .plan_participant_delivery(
+                &ChannelOwner::LifecycleRun {
+                    run_id: parent_run_id,
+                },
+                channel_message,
+                ChannelParticipantRef::Agent {
+                    run_id: parent_run_id,
+                    agent_id: dispatch_result.agent_ref,
+                },
+                agentdash_domain::channel::ChannelOperation::Publish,
+            )
+            .await
+            .map_err(|error| {
+                AgentToolError::ExecutionFailed(format!(
+                    "companion channel admission 失败: {error}"
+                ))
+            })?;
+        let materialized = channel_service
             .materialize_delivery_to_mailbox(&channel_intent)
             .map_err(|error| {
                 AgentToolError::ExecutionFailed(format!(
@@ -1678,7 +1703,7 @@ impl CompanionRequestTool {
                 ),
                 backend_selection: None,
                 identity: self.tool_context.identity().cloned(),
-                delivery_intent: Some(format!("channel_delivery:{}", channel_intent.id)),
+                delivery_intent: Some(format!("channel_delivery:{}", channel_intent.intent().id)),
             })
             .await
             .map_err(|error| {
@@ -1712,9 +1737,9 @@ impl CompanionRequestTool {
                     },
                     channel_id,
                     ChannelDeliveryState {
-                        delivery_id: channel_intent.id,
-                        message_id: channel_intent.message.id,
-                        target: channel_intent.target.clone(),
+                        delivery_id: channel_intent.intent().id,
+                        message_id: channel_intent.intent().message.id,
+                        target: channel_intent.intent().target.clone(),
                         status: ChannelDeliveryStatus::Materialized,
                         materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
                             message_id: mailbox_message.id,

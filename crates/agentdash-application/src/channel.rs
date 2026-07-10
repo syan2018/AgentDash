@@ -173,6 +173,21 @@ pub struct ChannelGateMaterializationCommand {
     pub origin: ChannelMessageOrigin,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdmittedChannelDelivery {
+    intent: ChannelDeliveryIntent,
+}
+
+impl AdmittedChannelDelivery {
+    fn new(intent: ChannelDeliveryIntent) -> Self {
+        Self { intent }
+    }
+
+    pub fn intent(&self) -> &ChannelDeliveryIntent {
+        &self.intent
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelBindingResolution {
     Resolved {
@@ -554,7 +569,7 @@ impl ChannelService {
         &self,
         owner: &ChannelOwner,
         message: ChannelMessage,
-    ) -> Result<Vec<ChannelDeliveryIntent>, ApplicationError> {
+    ) -> Result<Vec<AdmittedChannelDelivery>, ApplicationError> {
         let registry = self.owner_store.load_registry(owner).await?;
         let record = registry
             .channel(message.channel_id)
@@ -572,8 +587,64 @@ impl ChannelService {
         Ok(active_participants
             .into_iter()
             .filter_map(participant_to_delivery_target)
-            .map(|target| ChannelDeliveryIntent::new(message.clone(), target))
+            .map(|target| {
+                AdmittedChannelDelivery::new(ChannelDeliveryIntent::new(message.clone(), target))
+            })
             .collect())
+    }
+
+    pub async fn plan_participant_delivery(
+        &self,
+        owner: &ChannelOwner,
+        mut message: ChannelMessage,
+        recipient_ref: ChannelParticipantRef,
+        operation: ChannelOperation,
+    ) -> Result<AdmittedChannelDelivery, ApplicationError> {
+        if !matches!(
+            operation,
+            ChannelOperation::Publish | ChannelOperation::Reply
+        ) {
+            return Err(ApplicationError::BadRequest(format!(
+                "participant channel delivery does not support {operation:?}"
+            )));
+        }
+        message.audience = agentdash_domain::channel::ChannelAudience::Participants {
+            participant_refs: vec![recipient_ref.clone()],
+        };
+        let registry = self.owner_store.load_registry(owner).await?;
+        let record = registry
+            .channel(message.channel_id)
+            .map_err(ApplicationError::from)?;
+        if &record.channel.owner != owner {
+            return Err(ApplicationError::Conflict(format!(
+                "channel {} does not belong to owner {}",
+                message.channel_id,
+                owner.stable_key()
+            )));
+        }
+        validate_message_admission(record, &message, operation)?;
+        let recipient = record
+            .participants
+            .iter()
+            .find(|participant| {
+                participant.left_at.is_none() && participant.participant_ref == recipient_ref
+            })
+            .cloned()
+            .ok_or_else(|| {
+                ApplicationError::Conflict(format!(
+                    "channel recipient {} is not an active participant",
+                    recipient_ref.stable_key()
+                ))
+            })?;
+        let target = participant_to_delivery_target(recipient).ok_or_else(|| {
+            ApplicationError::InvalidConfig(format!(
+                "channel recipient {} has no internal delivery target",
+                recipient_ref.stable_key()
+            ))
+        })?;
+        Ok(AdmittedChannelDelivery::new(ChannelDeliveryIntent::new(
+            message, target,
+        )))
     }
 
     pub async fn record_delivery_state(
@@ -778,8 +849,9 @@ impl ChannelService {
 
     pub fn materialize_delivery_to_mailbox(
         &self,
-        intent: &ChannelDeliveryIntent,
+        delivery: &AdmittedChannelDelivery,
     ) -> Result<ChannelMailboxMaterializationCommand, ApplicationError> {
+        let intent = delivery.intent();
         let (run_id, agent_id) = match &intent.target {
             ChannelDeliveryTarget::Mailbox { run_id, agent_id } => (*run_id, *agent_id),
             _ => {
@@ -831,8 +903,9 @@ impl ChannelService {
 
     pub fn materialize_delivery_to_gate(
         &self,
-        intent: &ChannelDeliveryIntent,
+        delivery: &AdmittedChannelDelivery,
     ) -> Result<ChannelGateMaterializationCommand, ApplicationError> {
+        let intent = delivery.intent();
         let gate_id = match &intent.target {
             ChannelDeliveryTarget::LifecycleGate { gate_id } => *gate_id,
             _ => {
@@ -1123,6 +1196,14 @@ mod tests {
             ChannelPayload::text("request", "hello"),
             ChannelMessageOrigin::new("companion", "dispatch", "agent"),
         );
+        let direct = service
+            .plan_participant_delivery(&owner, message.clone(), receiver, ChannelOperation::Publish)
+            .await
+            .expect("plan participant delivery");
+        assert!(matches!(
+            direct.intent().target,
+            ChannelDeliveryTarget::Mailbox { .. }
+        ));
         let intents = service
             .plan_broadcast_deliveries(&owner, message)
             .await
@@ -1130,7 +1211,7 @@ mod tests {
 
         assert_eq!(intents.len(), 1);
         assert!(matches!(
-            intents[0].target,
+            intents[0].intent().target,
             ChannelDeliveryTarget::Mailbox { .. }
         ));
         let registry = service.load_registry(&owner).await.expect("load registry");
@@ -1693,10 +1774,10 @@ mod tests {
             ChannelMessageOrigin::new("companion", "dispatch", "agent")
                 .with_source_ref("dispatch-1"),
         );
-        let intent = ChannelDeliveryIntent::new(
+        let intent = AdmittedChannelDelivery::new(ChannelDeliveryIntent::new(
             message,
             ChannelDeliveryTarget::Mailbox { run_id, agent_id },
-        );
+        ));
 
         let command = service
             .materialize_delivery_to_mailbox(&intent)
@@ -1707,7 +1788,7 @@ mod tests {
         assert_eq!(command.message.origin, MailboxMessageOrigin::Companion);
         assert_eq!(
             command.message.source_dedup_key,
-            Some(format!("channel_delivery:{}", intent.id))
+            Some(format!("channel_delivery:{}", intent.intent().id))
         );
         let payload = command.message.payload_json.expect("payload refs");
         assert_eq!(
@@ -1731,10 +1812,10 @@ mod tests {
             ChannelMessageOrigin::new("companion", "result", "agent"),
         );
         message.correlation_ref = Some("gate-correlation".to_string());
-        let intent = ChannelDeliveryIntent::new(
+        let intent = AdmittedChannelDelivery::new(ChannelDeliveryIntent::new(
             message.clone(),
             ChannelDeliveryTarget::LifecycleGate { gate_id },
-        );
+        ));
 
         let command = service
             .materialize_delivery_to_gate(&intent)

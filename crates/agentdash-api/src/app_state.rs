@@ -456,8 +456,13 @@ impl AppState {
                     channel_binding_index.clone(),
                 )),
             )
-            .with_provider_registry(channel_binding_provider_registry.clone()),
+            .with_provider_registry(channel_binding_provider_registry.clone())
+            .with_binding_index(channel_binding_index.clone()),
         );
+        channel_service
+            .rebuild_binding_index()
+            .await
+            .map_err(|error| anyhow::anyhow!("Channel binding index 重建失败: {error}"))?;
 
         let terminal_cancel_coordinator = Arc::new(
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(

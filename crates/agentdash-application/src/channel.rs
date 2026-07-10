@@ -23,7 +23,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use provider::{ChannelBindingProviderRegistry, map_provider_error};
+use provider::{ChannelBindingIndex, ChannelBindingProviderRegistry, map_provider_error};
 
 pub mod provider;
 
@@ -39,6 +39,10 @@ pub trait ChannelOwnerStore: Send + Sync {
         owner: &ChannelOwner,
         mutation: ChannelRegistryMutation,
     ) -> Result<ChannelRegistryDocument, ApplicationError>;
+
+    async fn list_binding_registries(
+        &self,
+    ) -> Result<Vec<(ChannelOwner, ChannelRegistryDocument)>, ApplicationError>;
 }
 
 pub struct LifecycleRunChannelOwnerStore {
@@ -94,6 +98,19 @@ impl ChannelOwnerStore for LifecycleRunChannelOwnerStore {
             .mutate_channel_registry(*run_id, mutation)
             .await
             .map_err(ApplicationError::from)
+    }
+
+    async fn list_binding_registries(
+        &self,
+    ) -> Result<Vec<(ChannelOwner, ChannelRegistryDocument)>, ApplicationError> {
+        Ok(self
+            .lifecycle_run_repo
+            .list_channel_registries_with_bindings()
+            .await
+            .map_err(ApplicationError::from)?
+            .into_iter()
+            .map(|(run_id, registry)| (ChannelOwner::LifecycleRun { run_id }, registry))
+            .collect())
     }
 }
 
@@ -221,6 +238,8 @@ pub struct ChannelService {
     owner_store: Arc<dyn ChannelOwnerStore>,
     binding_resolver: Arc<dyn ChannelBindingResolver>,
     provider_registry: Option<Arc<ChannelBindingProviderRegistry>>,
+    binding_index: Option<Arc<dyn ChannelBindingIndex>>,
+    binding_mutation_lock: tokio::sync::Mutex<()>,
 }
 
 impl ChannelService {
@@ -232,6 +251,8 @@ impl ChannelService {
             owner_store,
             binding_resolver,
             provider_registry: None,
+            binding_index: None,
+            binding_mutation_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -241,6 +262,52 @@ impl ChannelService {
     ) -> Self {
         self.provider_registry = Some(provider_registry);
         self
+    }
+
+    pub fn with_binding_index(mut self, binding_index: Arc<dyn ChannelBindingIndex>) -> Self {
+        self.binding_index = Some(binding_index);
+        self
+    }
+
+    pub async fn rebuild_binding_index(&self) -> Result<(), ApplicationError> {
+        let binding_index = self.binding_index.as_ref().ok_or_else(|| {
+            ApplicationError::InvalidConfig(
+                "channel binding index is not configured for rebuild".to_string(),
+            )
+        })?;
+        binding_index.clear().await?;
+        for (owner, registry) in self.owner_store.list_binding_registries().await? {
+            if let Err(error) = binding_index.replace_owner(&owner, &registry).await {
+                binding_index.clear().await?;
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    async fn mutate_registry(
+        &self,
+        owner: &ChannelOwner,
+        mutation: ChannelRegistryMutation,
+    ) -> Result<ChannelRegistryDocument, ApplicationError> {
+        let Some(binding_index) = &self.binding_index else {
+            return self.owner_store.mutate_registry(owner, mutation).await;
+        };
+        let _guard = self.binding_mutation_lock.lock().await;
+        let mut candidate = self.owner_store.load_registry(owner).await?;
+        candidate
+            .apply(mutation.clone())
+            .map_err(ApplicationError::from)?;
+        binding_index
+            .validate_owner_replacement(owner, &candidate)
+            .await?;
+
+        let registry = self.owner_store.mutate_registry(owner, mutation).await?;
+        if let Err(error) = binding_index.replace_owner(owner, &registry).await {
+            let _ = binding_index.remove_owner(owner).await;
+            return Err(error);
+        }
+        Ok(registry)
     }
 
     pub async fn load_registry(
@@ -255,8 +322,7 @@ impl ChannelService {
         record: ChannelRecord,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
         let owner = record.channel.owner.clone();
-        self.owner_store
-            .mutate_registry(&owner, ChannelRegistryMutation::UpsertChannel(record))
+        self.mutate_registry(&owner, ChannelRegistryMutation::UpsertChannel(record))
             .await
     }
 
@@ -278,7 +344,6 @@ impl ChannelService {
         let owner = record.channel.owner.clone();
         let channel_key = record.channel.key.clone();
         let registry = self
-            .owner_store
             .mutate_registry(
                 &owner,
                 ChannelRegistryMutation::CreateChannelIfAbsent(record),
@@ -303,12 +368,11 @@ impl ChannelService {
         channel_id: Uuid,
         reason: Option<String>,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
-        self.owner_store
-            .mutate_registry(
-                owner,
-                ChannelRegistryMutation::CloseChannel { channel_id, reason },
-            )
-            .await
+        self.mutate_registry(
+            owner,
+            ChannelRegistryMutation::CloseChannel { channel_id, reason },
+        )
+        .await
     }
 
     pub async fn update_policy(
@@ -317,12 +381,11 @@ impl ChannelService {
         channel_id: Uuid,
         policy: ChannelPolicy,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
-        self.owner_store
-            .mutate_registry(
-                owner,
-                ChannelRegistryMutation::UpdateChannelPolicy { channel_id, policy },
-            )
-            .await
+        self.mutate_registry(
+            owner,
+            ChannelRegistryMutation::UpdateChannelPolicy { channel_id, policy },
+        )
+        .await
     }
 
     pub async fn add_participant(
@@ -331,15 +394,14 @@ impl ChannelService {
         channel_id: Uuid,
         participant: ChannelParticipant,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
-        self.owner_store
-            .mutate_registry(
-                owner,
-                ChannelRegistryMutation::AddParticipant {
-                    channel_id,
-                    participant,
-                },
-            )
-            .await
+        self.mutate_registry(
+            owner,
+            ChannelRegistryMutation::AddParticipant {
+                channel_id,
+                participant,
+            },
+        )
+        .await
     }
 
     pub async fn remove_participant(
@@ -348,15 +410,14 @@ impl ChannelService {
         channel_id: Uuid,
         participant_ref: ChannelParticipantRef,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
-        self.owner_store
-            .mutate_registry(
-                owner,
-                ChannelRegistryMutation::RemoveParticipant {
-                    channel_id,
-                    participant_ref,
-                },
-            )
-            .await
+        self.mutate_registry(
+            owner,
+            ChannelRegistryMutation::RemoveParticipant {
+                channel_id,
+                participant_ref,
+            },
+        )
+        .await
     }
 
     pub async fn update_participant_policy(
@@ -368,18 +429,17 @@ impl ChannelService {
         ingress_policy: ChannelIngressPolicy,
         egress_policy: ChannelEgressPolicy,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
-        self.owner_store
-            .mutate_registry(
-                owner,
-                ChannelRegistryMutation::UpdateParticipantPolicy {
-                    channel_id,
-                    participant_ref,
-                    operations,
-                    ingress_policy,
-                    egress_policy,
-                },
-            )
-            .await
+        self.mutate_registry(
+            owner,
+            ChannelRegistryMutation::UpdateParticipantPolicy {
+                channel_id,
+                participant_ref,
+                operations,
+                ingress_policy,
+                egress_policy,
+            },
+        )
+        .await
     }
 
     pub async fn bind_external_room(
@@ -388,15 +448,14 @@ impl ChannelService {
         channel_id: Uuid,
         binding: ChannelBinding,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
-        self.owner_store
-            .mutate_registry(
-                owner,
-                ChannelRegistryMutation::UpsertBinding {
-                    channel_id,
-                    binding,
-                },
-            )
-            .await
+        self.mutate_registry(
+            owner,
+            ChannelRegistryMutation::UpsertBinding {
+                channel_id,
+                binding,
+            },
+        )
+        .await
     }
 
     pub async fn unbind_external_room(
@@ -405,15 +464,14 @@ impl ChannelService {
         channel_id: Uuid,
         binding_ref: ChannelBindingId,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
-        self.owner_store
-            .mutate_registry(
-                owner,
-                ChannelRegistryMutation::RemoveBinding {
-                    channel_id,
-                    binding_ref,
-                },
-            )
-            .await
+        self.mutate_registry(
+            owner,
+            ChannelRegistryMutation::RemoveBinding {
+                channel_id,
+                binding_ref,
+            },
+        )
+        .await
     }
 
     pub async fn ingest_external_event(
@@ -540,12 +598,11 @@ impl ChannelService {
         channel_id: Uuid,
         state: ChannelDeliveryState,
     ) -> Result<ChannelRegistryDocument, ApplicationError> {
-        self.owner_store
-            .mutate_registry(
-                owner,
-                ChannelRegistryMutation::RecordDeliveryState { channel_id, state },
-            )
-            .await
+        self.mutate_registry(
+            owner,
+            ChannelRegistryMutation::RecordDeliveryState { channel_id, state },
+        )
+        .await
     }
 
     pub async fn project_participant_capability(
@@ -969,6 +1026,8 @@ fn validate_non_empty(field: &'static str, value: &str) -> Result<(), Applicatio
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use agentdash_domain::channel::{
         ChannelAudience, ChannelEgressPolicy, ChannelIngressPolicy, ChannelOperation,
         ChannelPayload, ChannelPolicy, ChannelReplyTarget, ChannelRole,
@@ -982,8 +1041,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::provider::{
-        ChannelBindingIndexEntry, ChannelBindingProviderRegistry, InMemoryChannelBindingIndex,
-        IndexedChannelBindingResolver,
+        ChannelBindingProviderRegistry, InMemoryChannelBindingIndex, IndexedChannelBindingResolver,
     };
     use super::*;
 
@@ -1309,7 +1367,8 @@ mod tests {
             Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
             Arc::new(IndexedChannelBindingResolver::new(index.clone())),
         )
-        .with_provider_registry(provider_registry);
+        .with_provider_registry(provider_registry)
+        .with_binding_index(index.clone());
         let record = service
             .create_if_absent(locator(owner.clone(), "im:test:room-1"), vec![])
             .await
@@ -1338,15 +1397,6 @@ mod tests {
             .bind_external_room(&owner, record.channel.id, binding.clone())
             .await
             .expect("bind room");
-        index
-            .index(ChannelBindingIndexEntry {
-                owner: owner.clone(),
-                channel_id: record.channel.id,
-                binding: binding.clone(),
-            })
-            .await
-            .expect("index binding");
-
         let outcome = service
             .ingest_provider_event(ChannelProviderInboundEvent {
                 provider: "test".to_string(),
@@ -1435,18 +1485,209 @@ mod tests {
         ));
 
         let index = InMemoryChannelBindingIndex::default();
+        let owner = ChannelOwner::Project {
+            project_id: Uuid::new_v4(),
+        };
         let mut binding = ChannelBinding::new("test", "workspace-1");
         binding.status = ChannelBindingStatus::Disabled;
-        let result = index
-            .index(ChannelBindingIndexEntry {
-                owner: ChannelOwner::Project {
-                    project_id: Uuid::new_v4(),
-                },
-                channel_id: Uuid::new_v4(),
-                binding,
-            })
-            .await;
-        assert!(matches!(result, Err(ApplicationError::Conflict(_))));
+        let mut record = ChannelRecord::new(Channel::new(
+            owner.clone(),
+            agentdash_domain::channel::ChannelKey::parse("im:test:disabled").unwrap(),
+        ));
+        record.bindings.push(binding);
+        let registry = ChannelRegistryDocument {
+            channels: vec![record],
+            ..ChannelRegistryDocument::default()
+        };
+        index
+            .replace_owner(&owner, &registry)
+            .await
+            .expect("project disabled binding");
+        assert!(
+            index
+                .resolve(&ProviderEventKey {
+                    provider: "test".to_string(),
+                    external_workspace_ref: "workspace-1".to_string(),
+                    external_room_ref: None,
+                    external_thread_ref: None,
+                    provider_event_ref: None,
+                })
+                .await
+                .expect("resolve disabled binding")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_index_rebuilds_after_restart_and_tracks_remove_or_disable() {
+        let repo = Arc::new(MemoryLifecycleRunRepository::default());
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        LifecycleRunRepository::create(repo.as_ref(), &run)
+            .await
+            .expect("create run");
+        let owner = ChannelOwner::LifecycleRun { run_id: run.id };
+        let first_index = Arc::new(InMemoryChannelBindingIndex::default());
+        let first_service = ChannelService::new(
+            Arc::new(LifecycleRunChannelOwnerStore::new(repo.clone())),
+            Arc::new(IndexedChannelBindingResolver::new(first_index.clone())),
+        )
+        .with_binding_index(first_index);
+        let record = first_service
+            .create_if_absent(locator(owner.clone(), "im:test:restart"), vec![])
+            .await
+            .expect("create channel");
+        let mut binding = ChannelBinding::new("test", "workspace-1");
+        binding.external_room_ref = Some("room-restart".to_string());
+        first_service
+            .bind_external_room(&owner, record.channel.id, binding.clone())
+            .await
+            .expect("bind room");
+
+        let lookup = ProviderEventKey {
+            provider: "test".to_string(),
+            external_workspace_ref: "workspace-1".to_string(),
+            external_room_ref: Some("room-restart".to_string()),
+            external_thread_ref: None,
+            provider_event_ref: None,
+        };
+        let restarted_index = Arc::new(InMemoryChannelBindingIndex::default());
+        let restarted_resolver =
+            Arc::new(IndexedChannelBindingResolver::new(restarted_index.clone()));
+        let restarted_service = ChannelService::new(
+            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
+            restarted_resolver.clone(),
+        )
+        .with_binding_index(restarted_index);
+        restarted_service
+            .rebuild_binding_index()
+            .await
+            .expect("rebuild binding index");
+        assert!(matches!(
+            restarted_resolver.resolve_binding(&lookup).await.unwrap(),
+            ChannelBindingResolution::Resolved { channel_id, .. }
+                if channel_id == record.channel.id
+        ));
+
+        restarted_service
+            .unbind_external_room(&owner, record.channel.id, binding.binding_id)
+            .await
+            .expect("remove binding");
+        assert_eq!(
+            restarted_resolver.resolve_binding(&lookup).await.unwrap(),
+            ChannelBindingResolution::Unresolved
+        );
+
+        binding.status = ChannelBindingStatus::Disabled;
+        restarted_service
+            .bind_external_room(&owner, record.channel.id, binding)
+            .await
+            .expect("store disabled binding");
+        assert_eq!(
+            restarted_resolver.resolve_binding(&lookup).await.unwrap(),
+            ChannelBindingResolution::Unresolved
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_cross_owner_binding_keeps_one_canonical_owner() {
+        let repo = Arc::new(MemoryLifecycleRunRepository::default());
+        let first_run = LifecycleRun::new_plain(Uuid::new_v4());
+        let second_run = LifecycleRun::new_plain(Uuid::new_v4());
+        for run in [&first_run, &second_run] {
+            LifecycleRunRepository::create(repo.as_ref(), run)
+                .await
+                .expect("create run");
+        }
+        let index = Arc::new(InMemoryChannelBindingIndex::default());
+        let service = ChannelService::new(
+            Arc::new(LifecycleRunChannelOwnerStore::new(repo)),
+            Arc::new(IndexedChannelBindingResolver::new(index.clone())),
+        )
+        .with_binding_index(index);
+        let first_owner = ChannelOwner::LifecycleRun {
+            run_id: first_run.id,
+        };
+        let second_owner = ChannelOwner::LifecycleRun {
+            run_id: second_run.id,
+        };
+        let first_channel = service
+            .create_if_absent(locator(first_owner.clone(), "im:test:first"), vec![])
+            .await
+            .expect("create first channel");
+        let second_channel = service
+            .create_if_absent(locator(second_owner.clone(), "im:test:second"), vec![])
+            .await
+            .expect("create second channel");
+        let mut first_binding = ChannelBinding::new("test", "workspace-shared");
+        first_binding.external_room_ref = Some("room-shared".to_string());
+        let mut second_binding = ChannelBinding::new("test", "workspace-shared");
+        second_binding.external_room_ref = Some("room-shared".to_string());
+
+        let (first_result, second_result) = tokio::join!(
+            service.bind_external_room(&first_owner, first_channel.channel.id, first_binding,),
+            service.bind_external_room(&second_owner, second_channel.channel.id, second_binding,),
+        );
+        assert!(first_result.is_ok() ^ second_result.is_ok());
+        assert!(matches!(
+            first_result.as_ref().err().or(second_result.as_ref().err()),
+            Some(ApplicationError::Conflict(message)) if message.contains("already owned")
+        ));
+
+        let first_registry = service.load_registry(&first_owner).await.unwrap();
+        let second_registry = service.load_registry(&second_owner).await.unwrap();
+        let binding_count =
+            first_registry.channels[0].bindings.len() + second_registry.channels[0].bindings.len();
+        assert_eq!(binding_count, 1);
+    }
+
+    #[tokio::test]
+    async fn failed_registry_mutation_preserves_existing_binding_projection() {
+        let repo = Arc::new(MemoryLifecycleRunRepository::default());
+        let run = LifecycleRun::new_plain(Uuid::new_v4());
+        LifecycleRunRepository::create(repo.as_ref(), &run)
+            .await
+            .expect("create run");
+        let owner = ChannelOwner::LifecycleRun { run_id: run.id };
+        let owner_store = Arc::new(FailingChannelOwnerStore::new(repo));
+        let index = Arc::new(InMemoryChannelBindingIndex::default());
+        let resolver = Arc::new(IndexedChannelBindingResolver::new(index.clone()));
+        let service =
+            ChannelService::new(owner_store.clone(), resolver.clone()).with_binding_index(index);
+        let record = service
+            .create_if_absent(locator(owner.clone(), "im:test:persist-failure"), vec![])
+            .await
+            .expect("create channel");
+        let mut binding = ChannelBinding::new("test", "workspace-failure");
+        binding.external_room_ref = Some("room-failure".to_string());
+        service
+            .bind_external_room(&owner, record.channel.id, binding.clone())
+            .await
+            .expect("bind room");
+        let lookup = ProviderEventKey {
+            provider: "test".to_string(),
+            external_workspace_ref: "workspace-failure".to_string(),
+            external_room_ref: Some("room-failure".to_string()),
+            external_thread_ref: None,
+            provider_event_ref: None,
+        };
+
+        owner_store.fail_next();
+        assert!(matches!(
+            service
+                .unbind_external_room(&owner, record.channel.id, binding.binding_id)
+                .await,
+            Err(ApplicationError::Internal(message)) if message.contains("injected")
+        ));
+        assert!(matches!(
+            resolver.resolve_binding(&lookup).await.unwrap(),
+            ChannelBindingResolution::Resolved { .. }
+        ));
+        assert_eq!(
+            service.load_registry(&owner).await.unwrap().channels[0]
+                .bindings
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -1670,6 +1911,53 @@ mod tests {
 
     struct UnsupportedOwnerStore;
 
+    struct FailingChannelOwnerStore {
+        inner: LifecycleRunChannelOwnerStore,
+        fail_next_mutation: AtomicBool,
+    }
+
+    impl FailingChannelOwnerStore {
+        fn new(repo: Arc<MemoryLifecycleRunRepository>) -> Self {
+            Self {
+                inner: LifecycleRunChannelOwnerStore::new(repo),
+                fail_next_mutation: AtomicBool::new(false),
+            }
+        }
+
+        fn fail_next(&self) {
+            self.fail_next_mutation.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl ChannelOwnerStore for FailingChannelOwnerStore {
+        async fn load_registry(
+            &self,
+            owner: &ChannelOwner,
+        ) -> Result<ChannelRegistryDocument, ApplicationError> {
+            self.inner.load_registry(owner).await
+        }
+
+        async fn mutate_registry(
+            &self,
+            owner: &ChannelOwner,
+            mutation: ChannelRegistryMutation,
+        ) -> Result<ChannelRegistryDocument, ApplicationError> {
+            if self.fail_next_mutation.swap(false, Ordering::SeqCst) {
+                return Err(ApplicationError::Internal(
+                    "injected channel registry persistence failure".to_string(),
+                ));
+            }
+            self.inner.mutate_registry(owner, mutation).await
+        }
+
+        async fn list_binding_registries(
+            &self,
+        ) -> Result<Vec<(ChannelOwner, ChannelRegistryDocument)>, ApplicationError> {
+            self.inner.list_binding_registries().await
+        }
+    }
+
     #[async_trait]
     impl ChannelOwnerStore for UnsupportedOwnerStore {
         async fn load_registry(
@@ -1685,6 +1973,14 @@ mod tests {
             _mutation: ChannelRegistryMutation,
         ) -> Result<ChannelRegistryDocument, ApplicationError> {
             Err(ApplicationError::InvalidConfig(owner.stable_key()))
+        }
+
+        async fn list_binding_registries(
+            &self,
+        ) -> Result<Vec<(ChannelOwner, ChannelRegistryDocument)>, ApplicationError> {
+            Err(ApplicationError::InvalidConfig(
+                "unsupported owner store".to_string(),
+            ))
         }
     }
 }

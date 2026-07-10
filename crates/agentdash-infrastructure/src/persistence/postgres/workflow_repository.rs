@@ -531,6 +531,26 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         parse_json_value_column(raw_document, "lifecycle_runs.channel_registry")
     }
 
+    async fn list_channel_registries_with_bindings(
+        &self,
+    ) -> Result<Vec<(uuid::Uuid, ChannelRegistryDocument)>, DomainError> {
+        let rows = sqlx::query_as::<_, (String, serde_json::Value)>(
+            "SELECT id,channel_registry FROM lifecycle_runs \
+             WHERE jsonb_path_exists(channel_registry, '$.channels[*].bindings[*]')",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?;
+        rows.into_iter()
+            .map(|(run_id, raw_document)| {
+                let run_id = parse_uuid(&run_id, "lifecycle_run")?;
+                let registry =
+                    parse_json_value_column(raw_document, "lifecycle_runs.channel_registry")?;
+                Ok((run_id, registry))
+            })
+            .collect()
+    }
+
     async fn mutate_channel_registry(
         &self,
         run_id: uuid::Uuid,

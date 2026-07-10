@@ -75,7 +75,9 @@ pub trait ChannelBindingProvider {
 }
 ```
 
-provider adapter 负责外部事件规范化、provider event replay 识别和物理发送；`ChannelService` 负责 binding resolution、membership/policy admission、canonical message 与 bounded delivery state。provider registry 按唯一 `provider_key` 选择 adapter；reverse index 以 provider/workspace/room/thread exact key 映射 owner、channel 与 binding，可从 owner documents 重建，不能在 ingress 时扫描 owner documents。outbound planning 与 dispatch 都重新读取 registry 并 admission，原因是两阶段之间 binding、membership 或 Channel status 可能失效。
+provider adapter 负责外部事件规范化、provider event replay 识别和物理发送；`ChannelService` 负责 binding resolution、membership/policy admission、canonical message 与 bounded delivery state。provider registry 按唯一 `provider_key` 选择 adapter；reverse index 以 provider/workspace/room/thread exact key 映射 owner、channel 与 binding。
+
+reverse index 是 owner documents 的 derived projection：启动期一次性枚举含 binding 的 owner documents 并在开放 ingress 前重建；每次 canonical registry mutation 先在 singleton mutation coordinator 内对 candidate document 做跨 owner exact-key preflight，持久化成功后 atomic replace owner projection，持久化失败则保留原 projection。这样当前单进程写入拓扑可以同时保证 canonical document 与 projection 一致，ingress 热路径只做 exact lookup。outbound planning 与 dispatch 都重新读取 registry 并 admission，原因是两阶段之间 binding、membership 或 Channel status 可能失效。
 
 Extension package 可以同时贡献 `OperationProvider` 和 `ChannelBindingProvider`，两类 contribution 保持独立注册。Extension protocol 若被 provider adapter 用于物理调用，也只属于 adapter 内部实现，不改变 ChannelService authority。
 

@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use agentdash_domain::channel::{ChannelBinding, ChannelBindingStatus, ChannelOwner};
+use agentdash_domain::channel::{
+    ChannelBinding, ChannelBindingStatus, ChannelOwner, ChannelRegistryDocument,
+};
 use agentdash_spi::channel_binding::{ChannelBindingError, ChannelBindingProvider};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -74,6 +76,22 @@ pub trait ChannelBindingIndex: Send + Sync {
         &self,
         key: &ProviderEventKey,
     ) -> Result<Option<ChannelBindingIndexEntry>, ApplicationError>;
+
+    async fn replace_owner(
+        &self,
+        owner: &ChannelOwner,
+        registry: &ChannelRegistryDocument,
+    ) -> Result<(), ApplicationError>;
+
+    async fn validate_owner_replacement(
+        &self,
+        owner: &ChannelOwner,
+        registry: &ChannelRegistryDocument,
+    ) -> Result<(), ApplicationError>;
+
+    async fn remove_owner(&self, owner: &ChannelOwner) -> Result<(), ApplicationError>;
+
+    async fn clear(&self) -> Result<(), ApplicationError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -109,40 +127,6 @@ pub struct InMemoryChannelBindingIndex {
     entries: RwLock<BTreeMap<ChannelBindingIndexKey, ChannelBindingIndexEntry>>,
 }
 
-impl InMemoryChannelBindingIndex {
-    pub async fn index(&self, entry: ChannelBindingIndexEntry) -> Result<(), ApplicationError> {
-        entry.binding.validate().map_err(ApplicationError::from)?;
-        if entry.binding.status != ChannelBindingStatus::Active {
-            return Err(ApplicationError::Conflict(format!(
-                "channel binding {} must be active before indexing",
-                entry.binding.binding_id
-            )));
-        }
-        let key = ChannelBindingIndexKey::from_binding(&entry.binding);
-        let mut entries = self.entries.write().await;
-        if let Some(existing) = entries.get(&key)
-            && (existing.owner != entry.owner
-                || existing.channel_id != entry.channel_id
-                || existing.binding.binding_id != entry.binding.binding_id)
-        {
-            return Err(ApplicationError::Conflict(format!(
-                "external channel binding key is already owned by {}:{}",
-                existing.owner.stable_key(),
-                existing.channel_id
-            )));
-        }
-        entries.insert(key, entry);
-        Ok(())
-    }
-
-    pub async fn remove(&self, binding: &ChannelBinding) {
-        self.entries
-            .write()
-            .await
-            .remove(&ChannelBindingIndexKey::from_binding(binding));
-    }
-}
-
 #[async_trait]
 impl ChannelBindingIndex for InMemoryChannelBindingIndex {
     async fn resolve(
@@ -157,6 +141,79 @@ impl ChannelBindingIndex for InMemoryChannelBindingIndex {
             .get(&ChannelBindingIndexKey::from_event(key))
             .cloned())
     }
+
+    async fn replace_owner(
+        &self,
+        owner: &ChannelOwner,
+        registry: &ChannelRegistryDocument,
+    ) -> Result<(), ApplicationError> {
+        let mut entries = self.entries.write().await;
+        let next = owner_replacement(&entries, owner, registry)?;
+        *entries = next;
+        Ok(())
+    }
+
+    async fn validate_owner_replacement(
+        &self,
+        owner: &ChannelOwner,
+        registry: &ChannelRegistryDocument,
+    ) -> Result<(), ApplicationError> {
+        let entries = self.entries.read().await;
+        owner_replacement(&entries, owner, registry).map(|_| ())
+    }
+
+    async fn remove_owner(&self, owner: &ChannelOwner) -> Result<(), ApplicationError> {
+        self.entries
+            .write()
+            .await
+            .retain(|_, entry| &entry.owner != owner);
+        Ok(())
+    }
+
+    async fn clear(&self) -> Result<(), ApplicationError> {
+        self.entries.write().await.clear();
+        Ok(())
+    }
+}
+
+fn owner_replacement(
+    entries: &BTreeMap<ChannelBindingIndexKey, ChannelBindingIndexEntry>,
+    owner: &ChannelOwner,
+    registry: &ChannelRegistryDocument,
+) -> Result<BTreeMap<ChannelBindingIndexKey, ChannelBindingIndexEntry>, ApplicationError> {
+    registry.validate().map_err(ApplicationError::from)?;
+    let mut next = entries.clone();
+    next.retain(|_, entry| &entry.owner != owner);
+    for record in &registry.channels {
+        if &record.channel.owner != owner {
+            return Err(ApplicationError::Conflict(format!(
+                "channel {} owner {} does not match projection owner {}",
+                record.channel.id,
+                record.channel.owner.stable_key(),
+                owner.stable_key()
+            )));
+        }
+        for binding in &record.bindings {
+            if binding.status != ChannelBindingStatus::Active {
+                continue;
+            }
+            let entry = ChannelBindingIndexEntry {
+                owner: owner.clone(),
+                channel_id: record.channel.id,
+                binding: binding.clone(),
+            };
+            let key = ChannelBindingIndexKey::from_binding(binding);
+            if let Some(existing) = next.get(&key) {
+                return Err(ApplicationError::Conflict(format!(
+                    "external channel binding key is already owned by {}:{}",
+                    existing.owner.stable_key(),
+                    existing.channel_id
+                )));
+            }
+            next.insert(key, entry);
+        }
+    }
+    Ok(next)
 }
 
 pub struct IndexedChannelBindingResolver {

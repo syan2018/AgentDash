@@ -253,6 +253,30 @@ pub struct ArchiveInteractionDefinitionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct PromoteInteractionDefinitionExtensionRequestDto {
+    pub source_revision_id: String,
+    pub package_version: Option<String>,
+    pub asset_version: Option<String>,
+    pub extension_key: Option<String>,
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct PromoteInteractionDefinitionExtensionResponseDto {
+    pub definition_id: String,
+    pub definition_revision_id: String,
+    pub source_bundle_digest: String,
+    pub installation_id: String,
+    pub extension_key: String,
+    pub extension_id: String,
+    pub artifact_id: String,
+    pub archive_digest: String,
+    pub manifest_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct InteractionInstanceDto {
     pub instance_id: String,
     pub owner: InteractionOwnerDto,

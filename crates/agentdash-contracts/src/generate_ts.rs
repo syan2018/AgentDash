@@ -119,7 +119,8 @@ use agentdash_contracts::interaction::{
     OperationWorkshopInvokeResponseDto, OperationWorkshopScriptPreflightRequestDto,
     OperationWorkshopScriptPreflightResponseDto, OperationWorkshopScriptRunRequestDto,
     OperationWorkshopScriptRunResponseDto, OperationWorkshopSurfaceDto,
-    OperationWorkshopSurfaceRequestDto, ReleaseInteractionRendererLeaseRequestDto,
+    OperationWorkshopSurfaceRequestDto, PromoteInteractionDefinitionExtensionRequestDto,
+    PromoteInteractionDefinitionExtensionResponseDto, ReleaseInteractionRendererLeaseRequestDto,
     ReplaceInteractionPresentationRequestDto, UpsertInteractionRendererLeaseRequestDto,
 };
 use agentdash_contracts::llm_provider::{
@@ -886,6 +887,8 @@ fn main() {
             export_all::<CommitCanvasDefinitionRequest>(dir);
             export_all::<DistributeCanvasDefinitionRequest>(dir);
             export_all::<ArchiveInteractionDefinitionResponse>(dir);
+            export_all::<PromoteInteractionDefinitionExtensionRequestDto>(dir);
+            export_all::<PromoteInteractionDefinitionExtensionResponseDto>(dir);
             export_all::<InteractionInstanceDto>(dir);
             export_all::<InteractionPinnedArtifactDto>(dir);
             export_all::<InteractionRuntimeBindingTargetDto>(dir);

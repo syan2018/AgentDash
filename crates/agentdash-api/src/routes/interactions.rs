@@ -1,5 +1,10 @@
 use std::sync::Arc;
 
+use agentdash_application::extension_package::{
+    ExtensionPackageArtifactUseCaseError, InstallExtensionPackageArtifactInput,
+    StoreExtensionPackageArchiveInput, build_interaction_definition_extension_package,
+    install_extension_package_artifact, store_extension_package_archive,
+};
 use agentdash_application::interaction::{
     CanvasDefinitionAccessResolver, CanvasDefinitionListScope, CanvasDefinitionService,
     CanvasDefinitionView, CanvasProjectAccess, CommitCanvasDefinitionInput,
@@ -30,8 +35,9 @@ use agentdash_contracts::interaction::{
     InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto, InteractionSourceChangesetDto,
     InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
     InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery, ListInteractionEventsQueryDto,
-    ReleaseInteractionRendererLeaseRequestDto, ReplaceInteractionPresentationRequestDto,
-    UpsertInteractionRendererLeaseRequestDto,
+    PromoteInteractionDefinitionExtensionRequestDto,
+    PromoteInteractionDefinitionExtensionResponseDto, ReleaseInteractionRendererLeaseRequestDto,
+    ReplaceInteractionPresentationRequestDto, UpsertInteractionRendererLeaseRequestDto,
 };
 use agentdash_domain::interaction::{
     CommandActorPolicy, ComponentBinding, ComponentEventCommandBinding, DefinitionLineageKind,
@@ -52,7 +58,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
-use crate::auth::{CurrentUser, project_authorization_context};
+use crate::auth::{
+    CurrentUser, ProjectPermission, load_project_with_permission, project_authorization_context,
+};
 use crate::dto::{InteractionDefinitionPath, ProjectInteractionDefinitionsPath};
 use crate::rpc::ApiError;
 
@@ -85,6 +93,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/interaction-definitions/{definition_id}/archive",
             axum::routing::post(archive_canvas_definition),
+        )
+        .route(
+            "/interaction-definitions/{definition_id}/promote-extension",
+            axum::routing::post(promote_canvas_definition_extension),
         )
         .route(
             "/interaction-definitions/{definition_id}/instances",
@@ -315,6 +327,91 @@ async fn archive_canvas_definition(
         )
         .await?;
     Ok(Json(archive_response(definition)))
+}
+
+async fn promote_canvas_definition_extension(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<InteractionDefinitionPath>,
+    Json(request): Json<PromoteInteractionDefinitionExtensionRequestDto>,
+) -> Result<Json<PromoteInteractionDefinitionExtensionResponseDto>, ApiError> {
+    let definition_id = parse_uuid(&path.definition_id, "definition_id")?;
+    let source_revision_id = parse_uuid(&request.source_revision_id, "source_revision_id")?;
+    let view = definition_service(&state, &current_user)
+        .get(definition_id, &current_user.user_id)
+        .await?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        view.revision.project_id,
+        ProjectPermission::Configure,
+    )
+    .await?;
+    let revision = state
+        .repos
+        .interaction_definition_repo
+        .get_revision(source_revision_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Interaction definition revision 不存在".into()))?;
+    if revision.definition_id != definition_id || revision.project_id != view.revision.project_id {
+        return Err(ApiError::Conflict(
+            "source revision 不属于目标 Interaction definition".into(),
+        ));
+    }
+    let package = build_interaction_definition_extension_package(
+        &revision,
+        request.package_version.as_deref(),
+        request.asset_version.as_deref(),
+    )?;
+    let artifact = store_extension_package_archive(
+        &state.repos,
+        state.services.extension_package_artifact_storage.as_ref(),
+        StoreExtensionPackageArchiveInput {
+            project_id: revision.project_id,
+            archive_bytes: package.archive_bytes,
+            expected_archive_digest: Some(package.archive_digest.clone()),
+        },
+    )
+    .await
+    .map_err(interaction_extension_package_error_to_api)?;
+    let installation = install_extension_package_artifact(
+        &state.repos,
+        InstallExtensionPackageArtifactInput {
+            project_id: revision.project_id,
+            artifact_id: artifact.id,
+            extension_key: request.extension_key,
+            display_name: request.display_name,
+            overwrite: request.overwrite,
+        },
+    )
+    .await?;
+    Ok(Json(PromoteInteractionDefinitionExtensionResponseDto {
+        definition_id: package.definition_id.to_string(),
+        definition_revision_id: package.definition_revision_id.to_string(),
+        source_bundle_digest: package.source_bundle_digest,
+        installation_id: installation.id.to_string(),
+        extension_key: installation.extension_key,
+        extension_id: installation.manifest.extension_id,
+        artifact_id: artifact.id.to_string(),
+        archive_digest: artifact.archive_digest,
+        manifest_digest: package.manifest_digest,
+    }))
+}
+
+fn interaction_extension_package_error_to_api(
+    error: ExtensionPackageArtifactUseCaseError,
+) -> ApiError {
+    match error {
+        ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
+        ExtensionPackageArtifactUseCaseError::Storage(error) => {
+            ApiError::Internal(format!("Extension package storage error: {error}"))
+        }
+        ExtensionPackageArtifactUseCaseError::BadRequest(message) => ApiError::BadRequest(message),
+        ExtensionPackageArtifactUseCaseError::NotFound(message) => ApiError::NotFound(message),
+        ExtensionPackageArtifactUseCaseError::Forbidden(message) => ApiError::Forbidden(message),
+        ExtensionPackageArtifactUseCaseError::Conflict(message) => ApiError::Conflict(message),
+        ExtensionPackageArtifactUseCaseError::Integrity(message) => ApiError::Internal(message),
+    }
 }
 
 async fn create_interaction_instance(

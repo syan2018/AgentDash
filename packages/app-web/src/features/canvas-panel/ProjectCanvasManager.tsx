@@ -8,6 +8,7 @@ import {
   createDefaultCanvasSourceBundle,
   fetchProjectCanvases,
   publishCanvasToProject,
+  promoteCanvasToExtension,
   unpublishCanvas,
 } from "../../services/canvas";
 import { CanvasRuntimePanel } from "./CanvasRuntimePanel";
@@ -20,7 +21,11 @@ export interface ProjectCanvasManagerProps {
 
 type View = "mine" | "shared";
 
-export function ProjectCanvasManager({ projectId, projectName }: ProjectCanvasManagerProps) {
+export function ProjectCanvasManager({
+  projectId,
+  projectName,
+  onExtensionRuntimeRefresh,
+}: ProjectCanvasManagerProps) {
   const [definitions, setDefinitions] = useState<CanvasDefinitionDto[]>([]);
   const [view, setView] = useState<View>("mine");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -79,7 +84,7 @@ export function ProjectCanvasManager({ projectId, projectName }: ProjectCanvasMa
     }
   }, [description, load, projectId, title]);
 
-  const runAction = useCallback(async (action: "publish" | "copy" | "archive" | "unpublish") => {
+  const runAction = useCallback(async (action: "publish" | "copy" | "archive" | "unpublish" | "promote") => {
     if (!selected) return;
     setBusy(true);
     setError(null);
@@ -93,6 +98,16 @@ export function ProjectCanvasManager({ projectId, projectName }: ProjectCanvasMa
         return;
       } else if (action === "unpublish") {
         await unpublishCanvas(selected.definition_id);
+      } else if (action === "promote") {
+        await promoteCanvasToExtension(selected.definition_id, {
+          source_revision_id: selected.current_revision_id,
+          package_version: null,
+          asset_version: null,
+          extension_key: null,
+          display_name: selected.title,
+          overwrite: true,
+        });
+        await onExtensionRuntimeRefresh?.(projectId);
       } else {
         await archiveCanvas(selected.definition_id);
       }
@@ -102,7 +117,7 @@ export function ProjectCanvasManager({ projectId, projectName }: ProjectCanvasMa
     } finally {
       setBusy(false);
     }
-  }, [load, selected]);
+  }, [load, onExtensionRuntimeRefresh, projectId, selected]);
 
   return (
     <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
@@ -141,6 +156,7 @@ export function ProjectCanvasManager({ projectId, projectName }: ProjectCanvasMa
             {selected.access.can_copy && selected.owner.kind === "project" && <button className="agentdash-button-secondary" disabled={busy} onClick={() => void runAction("copy")}>复制</button>}
             {selected.access.can_manage_shared && <button className="agentdash-button-secondary" disabled={busy} onClick={() => void runAction("unpublish")}>取消发布</button>}
             {(selected.access.can_edit_source || selected.access.can_manage_shared) && <button className="agentdash-button-secondary" disabled={busy} onClick={() => void runAction("archive")}>归档</button>}
+            {(selected.access.can_edit_source || selected.access.can_manage_shared) && <button className="agentdash-button-secondary" disabled={busy} onClick={() => void runAction("promote")}>生成扩展</button>}
           </div>
         )}
       </aside>

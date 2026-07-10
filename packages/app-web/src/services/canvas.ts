@@ -11,6 +11,8 @@ import type {
   InteractionInstanceDto,
   InteractionInstanceViewDto,
   InteractionSourceBundleDto,
+  PromoteInteractionDefinitionExtensionRequestDto,
+  PromoteInteractionDefinitionExtensionResponseDto,
 } from "../generated/interaction-contracts";
 
 export type CanvasListScope = "all" | "mine" | "shared";
@@ -66,6 +68,16 @@ export async function copyCanvasToPersonal(
 export async function unpublishCanvas(definitionId: string) {
   return api.post<ArchiveInteractionDefinitionResponse>(
     `/interaction-definitions/${encodeURIComponent(definitionId)}/unpublish`, {},
+  );
+}
+
+export async function promoteCanvasToExtension(
+  definitionId: string,
+  input: PromoteInteractionDefinitionExtensionRequestDto,
+) {
+  return api.post<PromoteInteractionDefinitionExtensionResponseDto>(
+    `/interaction-definitions/${encodeURIComponent(definitionId)}/promote-extension`,
+    input,
   );
 }
 

@@ -107,6 +107,10 @@ export type OperationWorkshopSurfaceDto = { authority_revision: string, operatio
 
 export type OperationWorkshopSurfaceRequestDto = { context: OperationWorkshopContextDto, };
 
+export type PromoteInteractionDefinitionExtensionRequestDto = { source_revision_id: string, package_version: string | null, asset_version: string | null, extension_key: string | null, display_name: string | null, overwrite: boolean, };
+
+export type PromoteInteractionDefinitionExtensionResponseDto = { definition_id: string, definition_revision_id: string, source_bundle_digest: string, installation_id: string, extension_key: string, extension_id: string, artifact_id: string, archive_digest: string, manifest_digest: string, };
+
 export type ReleaseInteractionRendererLeaseRequestDto = { expected_revision: bigint, };
 
 export type ReplaceInteractionPresentationRequestDto = { presentation_key: string, value: JsonValue, expected_revision: bigint | null, };

@@ -3,15 +3,7 @@
 
 import type { JsonValue } from "./common-contracts";
 
-export type ExtensionBackendServiceDiagnosticResponse = { readiness: ExtensionBackendServiceReadinessResponse, code: string, message: string, retryable: boolean, details?: JsonValue | null, };
-
-export type ExtensionBackendServiceHttpResponse = { status: number, headers?: { [key in string]?: string }, body?: Array<number> | null, };
-
-export type ExtensionBackendServiceInvokeMetadataResponse = { project_id: string, backend_id: string, extension_key: string, extension_id: string, service_key: string, route: string, trace_id: string, invocation_id: string, };
-
 export type ExtensionBackendServiceProjectionResponse = { extension_key: string, extension_id: string, service_key: string, runtime: string, entry: string, routes: Array<string>, health_path?: string | null, };
-
-export type ExtensionBackendServiceReadinessResponse = "ready" | "missing_artifact" | "materialize_failed" | "starting" | "health_failed" | "process_exited" | "unsupported_runtime" | "service_unavailable";
 
 export type ExtensionBundleKindResponse = "extension_host" | "backend_service";
 
@@ -71,23 +63,7 @@ export type ExtensionRuntimeActionKindResponse = "session_runtime" | "setup";
 
 export type ExtensionRuntimeActionProjectionResponse = { extension_key: string, extension_id: string, action_key: string, kind: ExtensionRuntimeActionKindResponse, description: string, input_schema: JsonValue, output_schema: JsonValue, permissions: Array<string>, };
 
-export type ExtensionRuntimeInvocationOutputResponse = { output: JsonValue, metadata?: { [key in string]?: JsonValue }, };
-
-export type ExtensionRuntimeInvokeActionRequest = { action_key: string, input: JsonValue, };
-
-export type ExtensionRuntimeInvokeActionResponse = { action_key: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
-
-export type ExtensionRuntimeInvokeBackendServiceRequest = { extension_key: string, service_key: string, route: string, method: string, headers?: { [key in string]?: string }, body?: Array<number> | null, };
-
-export type ExtensionRuntimeInvokeBackendServiceResponse = { trace: ExtensionRuntimeTraceResponse, metadata: ExtensionBackendServiceInvokeMetadataResponse, response?: ExtensionBackendServiceHttpResponse | null, diagnostic?: ExtensionBackendServiceDiagnosticResponse | null, };
-
-export type ExtensionRuntimeInvokeProtocolRequest = { provider_extension_key?: string | null, protocol_key: string, protocol_version?: string | null, method: string, input: JsonValue, consumer_extension_key?: string | null, dependency_alias?: string | null, };
-
-export type ExtensionRuntimeInvokeProtocolResponse = { provider_extension_key: string, provider_extension_id: string, protocol_key: string, protocol_version: string, method: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
-
 export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocols: Array<ExtensionProtocolProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, ui_components: Array<ExtensionUiComponentProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, fetch_routes?: Array<ExtensionFetchRouteProjectionResponse>, operation_catalog?: Array<ExtensionGeneratedOperationProjectionResponse>, backend_services?: Array<ExtensionBackendServiceProjectionResponse>, };
-
-export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: string, parent_trace_id?: string | null, created_at: string, };
 
 export type ExtensionUiComponentProjectionResponse = { extension_key: string, extension_id: string, component_key: string, contract_version: number, renderer: ExtensionUiComponentRendererResponse, props_schema: JsonValue, events_schema: { [key in string]?: JsonValue }, state_projection_schema: JsonValue, slots: Array<string>, sizing: ExtensionUiComponentSizingResponse, sandbox_profile: ExtensionUiComponentSandboxProfileResponse, package_artifact: ExtensionPackageArtifactRefResponse | null, available: boolean, reason: string | null, };
 

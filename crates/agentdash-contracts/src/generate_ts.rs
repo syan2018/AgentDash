@@ -69,9 +69,7 @@ use agentdash_contracts::extension_package::{
     ImportExtensionPackageResponse, InstallExtensionPackageArtifactRequest,
 };
 use agentdash_contracts::extension_runtime::{
-    ExtensionBackendServiceDiagnosticResponse, ExtensionBackendServiceHttpResponse,
-    ExtensionBackendServiceInvokeMetadataResponse, ExtensionBackendServiceProjectionResponse,
-    ExtensionBackendServiceReadinessResponse, ExtensionBundleKindResponse,
+    ExtensionBackendServiceProjectionResponse, ExtensionBundleKindResponse,
     ExtensionBundleProjectionResponse, ExtensionCommandHandlerResponse,
     ExtensionCommandProjectionResponse, ExtensionDependencyDeclarationResponse,
     ExtensionDependencyProjectionResponse, ExtensionFetchRouteProjectionResponse,
@@ -84,11 +82,7 @@ use agentdash_contracts::extension_runtime::{
     ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
     ExtensionProcessPermissionAccessResponse, ExtensionProtocolMethodProjectionResponse,
     ExtensionProtocolProjectionResponse, ExtensionRuntimeActionKindResponse,
-    ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeInvocationOutputResponse,
-    ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
-    ExtensionRuntimeInvokeBackendServiceRequest, ExtensionRuntimeInvokeBackendServiceResponse,
-    ExtensionRuntimeInvokeProtocolRequest, ExtensionRuntimeInvokeProtocolResponse,
-    ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeProjectionResponse,
     ExtensionUiComponentProjectionResponse, ExtensionUiComponentRendererResponse,
     ExtensionUiComponentSandboxProfileResponse, ExtensionUiComponentSizingResponse,
     ExtensionWorkspaceTabLoadabilityModeResponse, ExtensionWorkspaceTabLoadabilityResponse,
@@ -969,18 +963,6 @@ fn main() {
             export_all::<ExtensionPermissionProjectionResponse>(dir);
             export_all::<ExtensionBundleProjectionResponse>(dir);
             export_all::<ExtensionRuntimeProjectionResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
-            export_all::<ExtensionRuntimeInvokeProtocolRequest>(dir);
-            export_all::<ExtensionRuntimeInvokeBackendServiceRequest>(dir);
-            export_all::<ExtensionRuntimeTraceResponse>(dir);
-            export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeProtocolResponse>(dir);
-            export_all::<ExtensionBackendServiceInvokeMetadataResponse>(dir);
-            export_all::<ExtensionBackendServiceHttpResponse>(dir);
-            export_all::<ExtensionBackendServiceReadinessResponse>(dir);
-            export_all::<ExtensionBackendServiceDiagnosticResponse>(dir);
-            export_all::<ExtensionRuntimeInvokeBackendServiceResponse>(dir);
             export_all::<UninstallExtensionInstallationResponse>(dir);
         },
     );

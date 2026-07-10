@@ -19,13 +19,7 @@ export type {
   ExtensionProtocolProjectionResponse,
   ExtensionRuntimeActionKindResponse,
   ExtensionRuntimeActionProjectionResponse,
-  ExtensionRuntimeInvocationOutputResponse,
-  ExtensionRuntimeInvokeActionRequest,
-  ExtensionRuntimeInvokeActionResponse,
-  ExtensionRuntimeInvokeProtocolRequest,
-  ExtensionRuntimeInvokeProtocolResponse,
   ExtensionRuntimeProjectionResponse,
-  ExtensionRuntimeTraceResponse,
   ExtensionWorkspaceTabProjectionResponse,
   ExtensionWorkspaceTabRendererResponse,
 } from "../generated/extension-runtime-contracts";

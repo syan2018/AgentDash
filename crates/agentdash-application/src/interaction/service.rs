@@ -25,6 +25,8 @@ pub enum InteractionApplicationError {
     InvalidCommand { field: &'static str, reason: String },
     #[error("Interaction contract 不可用: {reason}")]
     ContractUnavailable { reason: String },
+    #[error("Interaction access 被拒绝: {reason}")]
+    AccessDenied { reason: String },
 }
 
 pub type InteractionApplicationResult<T> = Result<T, InteractionApplicationError>;
@@ -495,6 +497,12 @@ mod tests {
         ) -> Result<Vec<InteractionDefinition>, InteractionError> {
             Ok(vec![])
         }
+        async fn list_canvas_by_project(
+            &self,
+            _: Uuid,
+        ) -> Result<Vec<InteractionDefinition>, InteractionError> {
+            Ok(vec![])
+        }
         async fn commit_revision(
             &self,
             _: Uuid,
@@ -671,7 +679,7 @@ mod tests {
             SourceSandboxConfig::default(),
         )
         .expect("source");
-        let mut revision=InteractionDefinitionRevision::new_canvas_v1(definition_id,1,owner.clone(),"test","",source,serde_json::json!({"count":0}),serde_json::json!({"type":"object","properties":{"count":{"type":"integer"}},"additionalProperties":false}),"u").expect("revision");
+        let mut revision=InteractionDefinitionRevision::new_canvas_v1(definition_id,1,Uuid::new_v4(),owner.clone(),"test","",source,serde_json::json!({"count":0}),serde_json::json!({"type":"object","properties":{"count":{"type":"integer"}},"additionalProperties":false}),"u").expect("revision");
         revision
             .command_definitions
             .push(InteractionCommandDefinition {

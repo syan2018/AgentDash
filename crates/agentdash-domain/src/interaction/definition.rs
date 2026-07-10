@@ -50,6 +50,15 @@ pub enum InteractionDefinitionStatus {
     Archived,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractionDefinitionAccess {
+    pub can_view: bool,
+    pub can_edit_source: bool,
+    pub can_publish: bool,
+    pub can_manage_shared: bool,
+    pub can_copy: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandActorPolicy {
@@ -135,6 +144,7 @@ pub struct DefinitionLineage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InteractionDefinition {
     pub id: Uuid,
+    pub project_id: Uuid,
     pub owner: InteractionOwner,
     pub kind: InteractionDefinitionKind,
     pub current_revision_id: Uuid,
@@ -148,6 +158,7 @@ pub struct InteractionDefinitionRevision {
     pub definition_id: Uuid,
     pub revision_id: Uuid,
     pub revision_number: u64,
+    pub project_id: Uuid,
     pub owner: InteractionOwner,
     pub kind: InteractionDefinitionKind,
     pub definition_format_version: u16,
@@ -173,6 +184,7 @@ impl InteractionDefinitionRevision {
     pub fn new_canvas_v1(
         definition_id: Uuid,
         revision_number: u64,
+        project_id: Uuid,
         owner: InteractionOwner,
         title: impl Into<String>,
         description: impl Into<String>,
@@ -185,6 +197,7 @@ impl InteractionDefinitionRevision {
             definition_id,
             revision_id: Uuid::new_v4(),
             revision_number,
+            project_id,
             owner,
             kind: InteractionDefinitionKind::Canvas,
             definition_format_version: DEFINITION_FORMAT_V1,
@@ -206,7 +219,11 @@ impl InteractionDefinitionRevision {
     }
 
     pub fn validate(&self) -> InteractionResult<()> {
-        if self.definition_id.is_nil() || self.revision_id.is_nil() || self.revision_number == 0 {
+        if self.definition_id.is_nil()
+            || self.revision_id.is_nil()
+            || self.revision_number == 0
+            || self.project_id.is_nil()
+        {
             return Err(InteractionError::InvalidField {
                 field: "definition_revision.identity",
                 reason: "definition/revision id 与 revision number 必须有效",
@@ -221,6 +238,7 @@ impl InteractionDefinitionRevision {
             });
         }
         self.owner.validate()?;
+        validate_project_owner(self.project_id, &self.owner)?;
         require_non_empty("definition_revision.title", &self.title)?;
         require_non_empty("definition_revision.created_by", &self.created_by)?;
         self.source_bundle.verify_digest()?;
@@ -323,6 +341,7 @@ impl InteractionDefinitionRevision {
         let now = self.created_at;
         let definition = InteractionDefinition {
             id: self.definition_id,
+            project_id: self.project_id,
             owner: self.owner.clone(),
             kind: self.kind,
             current_revision_id: self.revision_id,
@@ -330,6 +349,7 @@ impl InteractionDefinitionRevision {
             created_at: now,
             updated_at: now,
         };
+        definition.validate()?;
         Ok((definition, self))
     }
 
@@ -351,6 +371,30 @@ impl InteractionDefinitionRevision {
             handler: definition.handler.clone(),
             actor_policy: definition.actor_policy,
         })
+    }
+}
+
+impl InteractionDefinition {
+    pub fn validate(&self) -> InteractionResult<()> {
+        if self.id.is_nil() || self.current_revision_id.is_nil() || self.project_id.is_nil() {
+            return Err(InteractionError::InvalidField {
+                field: "interaction_definition.identity",
+                reason: "definition/project/current revision id 必须有效",
+            });
+        }
+        self.owner.validate()?;
+        validate_project_owner(self.project_id, &self.owner)
+    }
+}
+
+fn validate_project_owner(project_id: Uuid, owner: &InteractionOwner) -> InteractionResult<()> {
+    if matches!(owner, InteractionOwner::Project(owner_id) if *owner_id != project_id) {
+        Err(InteractionError::InvalidField {
+            field: "interaction_definition.project_owner",
+            reason: "Project owner id 必须等于 definition project_id",
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -415,10 +459,12 @@ mod tests {
     #[test]
     fn initial_definition_pins_v1_contracts() {
         let definition_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
         let revision = InteractionDefinitionRevision::new_canvas_v1(
             definition_id,
             1,
-            InteractionOwner::Project(Uuid::new_v4()),
+            project_id,
+            InteractionOwner::Project(project_id),
             "Dashboard",
             "",
             source_bundle(),
@@ -442,6 +488,7 @@ mod tests {
         let mut revision = InteractionDefinitionRevision::new_canvas_v1(
             Uuid::new_v4(),
             1,
+            Uuid::new_v4(),
             InteractionOwner::User("user-1".to_string()),
             "Personal",
             "",
@@ -477,6 +524,7 @@ mod tests {
         let mut revision = InteractionDefinitionRevision::new_canvas_v1(
             Uuid::new_v4(),
             1,
+            Uuid::new_v4(),
             InteractionOwner::User("user-1".into()),
             "Personal",
             "",
@@ -513,5 +561,29 @@ mod tests {
             })
             .expect("resolved command");
         assert_eq!(resolved.handler, PlatformCommandHandler::StatePatchV1);
+    }
+
+    #[test]
+    fn project_owner_must_match_workshop_project() {
+        let error = InteractionDefinitionRevision::new_canvas_v1(
+            Uuid::new_v4(),
+            1,
+            Uuid::new_v4(),
+            InteractionOwner::Project(Uuid::new_v4()),
+            "Shared",
+            "",
+            source_bundle(),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            "user-1",
+        )
+        .expect_err("project owner mismatch");
+        assert!(matches!(
+            error,
+            InteractionError::InvalidField {
+                field: "interaction_definition.project_owner",
+                ..
+            }
+        ));
     }
 }

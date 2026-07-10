@@ -2,6 +2,7 @@ mod command;
 mod definition;
 mod error;
 mod instance;
+mod presentation;
 mod repository;
 mod source;
 
@@ -9,6 +10,7 @@ pub use command::*;
 pub use definition::*;
 pub use error::{InteractionError, InteractionResult};
 pub use instance::*;
+pub use presentation::*;
 pub use repository::*;
 pub use source::*;
 

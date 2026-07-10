@@ -3,8 +3,9 @@ use uuid::Uuid;
 
 use super::{
     InteractionAttachment, InteractionDefinition, InteractionDefinitionRevision, InteractionError,
-    InteractionEvent, InteractionInstance, InteractionOwner, InteractionRuntimeBinding,
-    OperationEffectIntent, ResolvedInteractionCommand,
+    InteractionEvent, InteractionInstance, InteractionOwner, InteractionPresentationState,
+    InteractionRendererLease, InteractionRuntimeBinding, OperationEffectIntent,
+    ResolvedInteractionCommand,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +29,10 @@ pub trait InteractionDefinitionRepository: Send + Sync {
     async fn list_by_owner(
         &self,
         owner: &InteractionOwner,
+    ) -> Result<Vec<InteractionDefinition>, InteractionError>;
+    async fn list_canvas_by_project(
+        &self,
+        project_id: Uuid,
     ) -> Result<Vec<InteractionDefinition>, InteractionError>;
     async fn commit_revision(
         &self,
@@ -105,6 +110,31 @@ pub trait InteractionEventRepository: Send + Sync {
         instance_id: Uuid,
         after_sequence: u64,
     ) -> Result<Vec<InteractionEvent>, InteractionError>;
+}
+
+#[async_trait::async_trait]
+pub trait InteractionPresentationRepository: Send + Sync {
+    async fn get_presentation_state(
+        &self,
+        instance_id: Uuid,
+        user_id: &str,
+        presentation_key: &str,
+    ) -> Result<Option<InteractionPresentationState>, InteractionError>;
+    async fn upsert_presentation_state(
+        &self,
+        state: &InteractionPresentationState,
+        expected_revision: Option<u64>,
+    ) -> Result<(), InteractionError>;
+    async fn upsert_renderer_lease(
+        &self,
+        lease: &InteractionRendererLease,
+    ) -> Result<(), InteractionError>;
+    async fn release_renderer_lease(&self, lease_id: Uuid) -> Result<(), InteractionError>;
+    async fn list_active_renderer_leases(
+        &self,
+        instance_id: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<InteractionRendererLease>, InteractionError>;
 }
 
 #[async_trait::async_trait]

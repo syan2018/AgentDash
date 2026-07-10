@@ -44,6 +44,19 @@ pub struct SourceBundle {
     pub digest: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceFileChange {
+    Upsert(SourceFile),
+    Delete { path: String },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceBundleChangeset {
+    pub entry_file: Option<String>,
+    pub sandbox: Option<SourceSandboxConfig>,
+    pub file_changes: Vec<SourceFileChange>,
+}
+
 impl SourceBundle {
     pub fn new(
         entry_file: impl Into<String>,
@@ -106,6 +119,53 @@ impl SourceBundle {
                 field: "source_bundle.digest",
             })
         }
+    }
+
+    pub fn apply_changeset(&self, changeset: SourceBundleChangeset) -> InteractionResult<Self> {
+        self.verify_digest()?;
+        let mut files = self
+            .files
+            .iter()
+            .cloned()
+            .map(|file| (file.path.clone(), file))
+            .collect::<BTreeMap<_, _>>();
+        let mut changed_paths = std::collections::HashSet::new();
+        for change in changeset.file_changes {
+            match change {
+                SourceFileChange::Upsert(mut file) => {
+                    file.path = normalize_source_path(&file.path)?;
+                    if !changed_paths.insert(file.path.clone()) {
+                        return Err(InteractionError::InvalidSourcePath {
+                            path: file.path,
+                            reason: "changeset 中 path 只能出现一次",
+                        });
+                    }
+                    files.insert(file.path.clone(), file);
+                }
+                SourceFileChange::Delete { path } => {
+                    let path = normalize_source_path(&path)?;
+                    if !changed_paths.insert(path.clone()) {
+                        return Err(InteractionError::InvalidSourcePath {
+                            path,
+                            reason: "changeset 中 path 只能出现一次",
+                        });
+                    }
+                    if files.remove(&path).is_none() {
+                        return Err(InteractionError::InvalidSourcePath {
+                            path,
+                            reason: "changeset 不能删除不存在的 source path",
+                        });
+                    }
+                }
+            }
+        }
+        Self::new(
+            changeset
+                .entry_file
+                .unwrap_or_else(|| self.entry_file.clone()),
+            files.into_values().collect(),
+            changeset.sandbox.unwrap_or_else(|| self.sandbox.clone()),
+        )
     }
 }
 
@@ -269,5 +329,78 @@ mod tests {
         .expect("bundle");
         assert_eq!(first.sandbox.libraries, vec!["a", "z"]);
         assert_eq!(first.digest, second.digest);
+    }
+
+    #[test]
+    fn changeset_rebuilds_one_immutable_bundle() {
+        let bundle = SourceBundle::new(
+            "main.tsx",
+            vec![
+                SourceFile::new("main.tsx", "old", None).expect("entry"),
+                SourceFile::new("unused.ts", "remove", None).expect("unused"),
+            ],
+            SourceSandboxConfig::default(),
+        )
+        .expect("bundle");
+        let next = bundle
+            .apply_changeset(SourceBundleChangeset {
+                entry_file: None,
+                sandbox: None,
+                file_changes: vec![
+                    SourceFileChange::Upsert(
+                        SourceFile::new("main.tsx", "next", None).expect("next"),
+                    ),
+                    SourceFileChange::Delete {
+                        path: "unused.ts".into(),
+                    },
+                ],
+            })
+            .expect("changeset");
+        assert_ne!(next.digest, bundle.digest);
+        assert_eq!(next.files.len(), 1);
+        assert_eq!(next.files[0].content, "next");
+    }
+
+    #[test]
+    fn changeset_rejects_duplicate_path_mutations() {
+        let bundle = SourceBundle::new(
+            "main.tsx",
+            vec![SourceFile::new("main.tsx", "old", None).expect("entry")],
+            SourceSandboxConfig::default(),
+        )
+        .expect("bundle");
+        let error = bundle
+            .apply_changeset(SourceBundleChangeset {
+                file_changes: vec![
+                    SourceFileChange::Delete {
+                        path: "main.tsx".into(),
+                    },
+                    SourceFileChange::Delete {
+                        path: "main.tsx".into(),
+                    },
+                ],
+                ..SourceBundleChangeset::default()
+            })
+            .expect_err("duplicate mutation");
+        assert!(matches!(error, InteractionError::InvalidSourcePath { .. }));
+    }
+
+    #[test]
+    fn changeset_rejects_deleting_missing_path() {
+        let bundle = SourceBundle::new(
+            "main.tsx",
+            vec![SourceFile::new("main.tsx", "old", None).expect("entry")],
+            SourceSandboxConfig::default(),
+        )
+        .expect("bundle");
+        let error = bundle
+            .apply_changeset(SourceBundleChangeset {
+                file_changes: vec![SourceFileChange::Delete {
+                    path: "missing.ts".into(),
+                }],
+                ..SourceBundleChangeset::default()
+            })
+            .expect_err("missing delete");
+        assert!(matches!(error, InteractionError::InvalidSourcePath { .. }));
     }
 }

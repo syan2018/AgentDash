@@ -52,8 +52,10 @@ impl InteractionDefinitionRepository for PostgresInteractionRepository {
         initial_revision: &InteractionDefinitionRevision,
     ) -> Result<(), InteractionError> {
         initial_revision.validate()?;
+        definition.validate()?;
         if definition.id != initial_revision.definition_id
             || definition.current_revision_id != initial_revision.revision_id
+            || definition.project_id != initial_revision.project_id
             || definition.owner != initial_revision.owner
             || definition.kind != initial_revision.kind
         {
@@ -117,6 +119,20 @@ impl InteractionDefinitionRepository for PostgresInteractionRepository {
             .collect()
     }
 
+    async fn list_canvas_by_project(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<InteractionDefinition>, InteractionError> {
+        let rows = sqlx::query("SELECT document FROM interaction_definitions WHERE project_id=$1 AND kind='canvas' ORDER BY created_at,id")
+            .bind(project_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_error("interaction_definitions"))?;
+        rows.into_iter()
+            .map(|row| decode_row(&row, "interaction_definitions.document"))
+            .collect()
+    }
+
     async fn commit_revision(
         &self,
         definition_id: Uuid,
@@ -133,6 +149,7 @@ impl InteractionDefinitionRepository for PostgresInteractionRepository {
             .ok_or_else(|| InteractionError::NotFound { entity: "interaction_definition", id: definition_id.to_string() })?;
         let mut definition: InteractionDefinition =
             decode_row(&row, "interaction_definitions.document")?;
+        definition.validate()?;
         let actual = parse_uuid(
             row.try_get::<String, _>("current_revision_id")
                 .map_err(db_error("interaction_definitions.current_revision_id"))?,
@@ -148,6 +165,7 @@ impl InteractionDefinitionRepository for PostgresInteractionRepository {
         if commit.revision.definition_id != definition_id
             || commit.revision.owner != definition.owner
             || commit.revision.kind != definition.kind
+            || commit.revision.project_id != definition.project_id
         {
             return Err(InteractionError::InvalidField {
                 field: "definition_revision.identity",

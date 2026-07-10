@@ -172,7 +172,7 @@ pub enum ExecutionIntent {
     AgentLaunch(AgentLaunchIntent),
     SubjectExecution(SubjectExecutionIntent),
     LifecycleRunStart(LifecycleRunStartIntent),
-    InteractionDispatch(InteractionDispatchIntent),
+    InteractionDispatch(Box<InteractionDispatchIntent>),
 }
 
 // ─── Result ──────────────────────────────────────────────────────────────────

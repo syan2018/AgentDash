@@ -58,7 +58,7 @@ impl FunctionNodeRunner {
                     code: "running_node_view_unavailable".to_string(),
                     message: error.to_string(),
                     retryable: false,
-                    detail: Some(coordinate.detail()),
+                    detail: Some(Box::new(coordinate.detail())),
                 }
             })?;
             (
@@ -73,7 +73,7 @@ impl FunctionNodeRunner {
                 code: "executor_spec_missing".to_string(),
                 message: "Function/LocalEffect node 缺少 executor spec".to_string(),
                 retryable: false,
-                detail: Some(coordinate.detail()),
+                detail: Some(Box::new(coordinate.detail())),
             });
         };
         let spec = match executor {
@@ -88,10 +88,10 @@ impl FunctionNodeRunner {
                         "LocalEffect capability `{capability_key}` 尚未接入具体 effect executor"
                     ),
                     retryable: false,
-                    detail: Some(coordinate.detail_with([
+                    detail: Some(Box::new(coordinate.detail_with([
                         ("capability_key", json!(capability_key)),
                         ("input", json!(input)),
-                    ])),
+                    ]))),
                 });
             }
             _ => {
@@ -99,7 +99,7 @@ impl FunctionNodeRunner {
                     code: "executor_spec_mismatch".to_string(),
                     message: "Function/LocalEffect node 的 executor spec 类型不匹配".to_string(),
                     retryable: false,
-                    detail: Some(coordinate.detail()),
+                    detail: Some(Box::new(coordinate.detail())),
                 });
             }
         };
@@ -120,11 +120,11 @@ impl FunctionNodeRunner {
                         code: "api_request_status_failed".to_string(),
                         message: format!("API request 返回非成功状态: {}", outcome.status),
                         retryable: false,
-                        detail: Some(json!({
+                        detail: Some(Box::new(json!({
                             "status": outcome.status,
                             "body_text": outcome.body_text,
                             "body_json": outcome.body_json,
-                        })),
+                        }))),
                     });
                 }
                 Ok(api_request_outputs(&plan_node, outcome))
@@ -151,11 +151,11 @@ impl FunctionNodeRunner {
                             outcome.exit_code, outcome.stderr
                         ),
                         retryable: false,
-                        detail: Some(json!({
+                        detail: Some(Box::new(json!({
                             "exit_code": outcome.exit_code,
                             "stdout": outcome.stdout,
                             "stderr": outcome.stderr,
-                        })),
+                        }))),
                     })
                 }
             }
@@ -168,7 +168,7 @@ impl FunctionNodeRunner {
                             message: "orchestration executor 缺少 Workflow OperationScript caller"
                                 .to_string(),
                             retryable: true,
-                            detail: Some(coordinate.detail()),
+                            detail: Some(Box::new(coordinate.detail())),
                         })?;
                 let script_input = match spec.input_binding {
                     OperationScriptInputBinding::NodeInput => node_input,
@@ -260,7 +260,7 @@ fn checked_limit(field: &'static str, value: u64) -> Result<usize, RuntimeNodeEr
         code: "operation_script_limit_out_of_range".to_string(),
         message: format!("OperationScript limit `{field}` 超出当前 executor 可表示范围"),
         retryable: false,
-        detail: Some(json!({ "field": field, "value": value })),
+        detail: Some(Box::new(json!({ "field": field, "value": value }))),
     })
 }
 
@@ -307,7 +307,7 @@ fn operation_script_node_error(error: WorkflowOperationScriptCallerError) -> Run
         code,
         message: error.to_string(),
         retryable,
-        detail,
+        detail: detail.map(Box::new),
     }
 }
 

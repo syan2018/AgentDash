@@ -376,7 +376,7 @@ pub struct RuntimeNodeError {
     #[serde(default)]
     pub retryable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<Value>,
+    pub detail: Option<Box<Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

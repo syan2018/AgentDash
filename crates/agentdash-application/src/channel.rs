@@ -210,7 +210,7 @@ pub trait ChannelBindingResolver: Send + Sync {
 pub enum ChannelIngressOutcome {
     Resolved {
         owner: ChannelOwner,
-        message: ChannelMessage,
+        message: Box<ChannelMessage>,
     },
     Unresolved,
 }
@@ -531,7 +531,10 @@ impl ChannelService {
                     )));
                 }
                 validate_message_admission(record, &message, ChannelOperation::Publish)?;
-                Ok(ChannelIngressOutcome::Resolved { owner, message })
+                Ok(ChannelIngressOutcome::Resolved {
+                    owner,
+                    message: Box::new(message),
+                })
             }
             ChannelBindingResolution::Unresolved => Ok(ChannelIngressOutcome::Unresolved),
         }

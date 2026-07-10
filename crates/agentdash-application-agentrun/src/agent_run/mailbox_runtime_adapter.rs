@@ -232,7 +232,7 @@ impl MailboxBoundaryStage<'_> {
             _ => ControlPlaneProjectionChangeReason::MailboxStateChanged,
         };
         let envelope = BackboneEnvelope::new(
-            BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
+            BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(Box::new(
                 ControlPlaneProjectionChanged {
                     projection: ControlPlaneProjection::Mailbox,
                     reason,
@@ -244,7 +244,7 @@ impl MailboxBoundaryStage<'_> {
                     delivery_runtime_session_id: Some(self.runtime_session_id.to_string()),
                     workspace_module_presentation: None,
                 },
-            )),
+            ))),
             self.runtime_session_id,
             SourceInfo {
                 connector_id: "mailbox".to_string(),

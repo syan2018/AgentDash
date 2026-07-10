@@ -68,7 +68,7 @@ fn mailbox_projection_changed_envelope(
     message: &AgentRunMailboxMessage,
 ) -> BackboneEnvelope {
     BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
+        BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(Box::new(
             ControlPlaneProjectionChanged {
                 projection: ControlPlaneProjection::Mailbox,
                 reason: ControlPlaneProjectionChangeReason::MailboxStateChanged,
@@ -80,7 +80,7 @@ fn mailbox_projection_changed_envelope(
                 delivery_runtime_session_id: Some(runtime_session_id.to_string()),
                 workspace_module_presentation: None,
             },
-        )),
+        ))),
         runtime_session_id,
         SourceInfo {
             connector_id: "agent_run_mailbox".to_string(),

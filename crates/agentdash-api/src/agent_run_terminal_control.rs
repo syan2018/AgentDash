@@ -111,9 +111,7 @@ impl ApiWaitProducerTerminalConvergenceAdapter {
         } = &event.producer;
         let run_id = *run_id;
         let agent_id = *agent_id;
-        let Some(delivery_runtime_session_id) = event.trace_ref.as_deref() else {
-            return None;
-        };
+        let delivery_runtime_session_id = event.trace_ref.as_deref()?;
         let journal_service = AgentRunJournalService::new(
             self.session_branching.clone(),
             self.agent_run_eventing.clone(),
@@ -165,9 +163,7 @@ impl ApiWaitProducerTerminalConvergenceAdapter {
                 ))
             })
             .max_by_key(|(_, journal_seq, _)| *journal_seq);
-        let Some((projection, _, source_event_seq)) = selected else {
-            return None;
-        };
+        let (projection, _, source_event_seq) = selected?;
         producer_last_message_from_projection(run_id, agent_id, projection, source_event_seq)
     }
 }

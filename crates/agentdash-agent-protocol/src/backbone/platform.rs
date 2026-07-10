@@ -37,7 +37,7 @@ pub enum PlatformEvent {
     SessionRewound(SessionRewound),
 
     /// AgentRun control-plane projection invalidation hint.
-    ControlPlaneProjectionChanged(ControlPlaneProjectionChanged),
+    ControlPlaneProjectionChanged(Box<ControlPlaneProjectionChanged>),
 
     /// 交互式终端输出流数据（路由到前端 xterm.js，不作为 chat entry 展示）。
     TerminalOutput { terminal_id: String, data: String },

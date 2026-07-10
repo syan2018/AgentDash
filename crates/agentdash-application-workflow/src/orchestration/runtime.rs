@@ -716,10 +716,10 @@ fn mark_runtime_node_blocked(
         code: diagnostic.code.clone(),
         message: diagnostic.message.clone(),
         retryable: false,
-        detail: Some(serde_json::json!({
+        detail: Some(Box::new(serde_json::json!({
             "rule_id": diagnostic.rule_id,
             "node_id": diagnostic.node_id,
-        })),
+        }))),
     });
     Ok(())
 }

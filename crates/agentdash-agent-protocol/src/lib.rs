@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn control_plane_projection_changed_platform_event_uses_typed_contract() {
         let event = BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
-            ControlPlaneProjectionChanged {
+            Box::new(ControlPlaneProjectionChanged {
                 projection: ControlPlaneProjection::Workspace,
                 reason: ControlPlaneProjectionChangeReason::MailboxStateChanged,
                 run_id: "run-1".to_string(),
@@ -129,7 +129,7 @@ mod tests {
                 mailbox_message_id: Some("mailbox-1".to_string()),
                 delivery_runtime_session_id: Some("session-1".to_string()),
                 workspace_module_presentation: None,
-            },
+            }),
         ));
 
         let value =

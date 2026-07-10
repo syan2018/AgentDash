@@ -2235,7 +2235,7 @@ impl CompanionRequestTool {
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
 
-        Ok(workflow_script_preflight_agent_tool_result(output)?)
+        workflow_script_preflight_agent_tool_result(output)
     }
 
     async fn preflight_selected_companion_model(

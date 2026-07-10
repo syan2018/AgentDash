@@ -217,7 +217,7 @@ impl<'a> LifecycleDispatchService<'a> {
                 .await
                 .map(ExecutionDispatchResult::LifecycleRunStart),
             ExecutionIntent::InteractionDispatch(intent) => self
-                .open_interaction_gate(intent)
+                .open_interaction_gate(intent.as_ref())
                 .await
                 .map(ExecutionDispatchResult::InteractionGateOpened),
         }

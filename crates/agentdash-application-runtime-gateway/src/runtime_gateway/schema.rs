@@ -1,7 +1,102 @@
 use serde_json::Value;
 
+pub fn validate_json_schema_definition(schema: &Value) -> Result<(), String> {
+    validate_schema_definition_at(schema, "$schema")
+}
+
 pub fn validate_json_schema_subset(schema: &Value, value: &Value) -> Result<(), String> {
+    validate_json_schema_definition(schema)?;
     validate_schema_value(schema, value, "$")
+}
+
+fn validate_schema_definition_at(schema: &Value, path: &str) -> Result<(), String> {
+    match schema {
+        Value::Bool(_) => return Ok(()),
+        Value::Object(object) => {
+            const ALLOWED_KEYS: [&str; 7] = [
+                "type",
+                "required",
+                "properties",
+                "additionalProperties",
+                "items",
+                "enum",
+                "const",
+            ];
+            if let Some(key) = object
+                .keys()
+                .find(|key| !ALLOWED_KEYS.contains(&key.as_str()))
+            {
+                return Err(format!(
+                    "{path}.{key} 不属于 Gateway 支持的 JSON Schema 子集"
+                ));
+            }
+        }
+        _ => return Err(format!("{path} 必须是对象或布尔值")),
+    }
+
+    if let Some(type_schema) = schema.get("type") {
+        let validate_type_name = |value: &Value| -> Result<(), String> {
+            let name = value
+                .as_str()
+                .ok_or_else(|| format!("{path}.type 必须是字符串或字符串数组"))?;
+            if matches!(
+                name,
+                "array" | "boolean" | "integer" | "null" | "number" | "object" | "string"
+            ) {
+                Ok(())
+            } else {
+                Err(format!("{path}.type 包含未知 JSON 类型: {name}"))
+            }
+        };
+        match type_schema {
+            Value::String(_) => validate_type_name(type_schema)?,
+            Value::Array(items) if !items.is_empty() => {
+                for item in items {
+                    validate_type_name(item)?;
+                }
+            }
+            _ => return Err(format!("{path}.type 必须是字符串或非空字符串数组")),
+        }
+    }
+
+    if let Some(required) = schema.get("required") {
+        let items = required
+            .as_array()
+            .ok_or_else(|| format!("{path}.required 必须是字符串数组"))?;
+        if items.iter().any(|item| item.as_str().is_none()) {
+            return Err(format!("{path}.required 必须是字符串数组"));
+        }
+    }
+
+    if let Some(properties) = schema.get("properties") {
+        let properties = properties
+            .as_object()
+            .ok_or_else(|| format!("{path}.properties 必须是对象"))?;
+        for (key, property_schema) in properties {
+            validate_schema_definition_at(property_schema, &format!("{path}.properties.{key}"))?;
+        }
+    }
+
+    if let Some(additional) = schema.get("additionalProperties")
+        && !additional.is_boolean()
+    {
+        return Err(format!("{path}.additionalProperties 暂只支持布尔值"));
+    }
+
+    if let Some(items) = schema.get("items") {
+        if items.is_array() {
+            return Err(format!("{path}.items 暂不支持 tuple schema"));
+        }
+        validate_schema_definition_at(items, &format!("{path}.items"))?;
+    }
+
+    if let Some(values) = schema.get("enum")
+        && !values.is_array()
+    {
+        return Err(format!("{path}.enum 必须是数组"));
+    }
+
+    Ok(())
 }
 
 fn validate_schema_value(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
@@ -173,7 +268,7 @@ fn json_value_matches_type(value: &Value, expected: &str) -> bool {
 mod tests {
     use serde_json::json;
 
-    use super::validate_json_schema_subset;
+    use super::{validate_json_schema_definition, validate_json_schema_subset};
 
     #[test]
     fn rejects_additional_properties_and_enum_mismatch() {
@@ -190,6 +285,19 @@ mod tests {
         assert!(validate_json_schema_subset(&schema, &json!({"mode": "admin"})).is_err());
         assert!(
             validate_json_schema_subset(&schema, &json!({"mode": "read", "extra": true})).is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_or_malformed_schema_definitions() {
+        assert!(validate_json_schema_definition(&json!({ "oneOf": [] })).is_err());
+        assert!(validate_json_schema_definition(&json!({ "type": "timestamp" })).is_err());
+        assert!(
+            validate_json_schema_definition(&json!({
+                "type": "object",
+                "properties": { "nested": { "items": [] } }
+            }))
+            .is_err()
         );
     }
 }

@@ -3,6 +3,9 @@ mod extension_actions;
 mod extension_workspace;
 mod gateway;
 mod mcp_access;
+mod operation_core;
+mod operation_error;
+mod operation_types;
 mod provider;
 mod schema;
 mod session_actions;
@@ -44,8 +47,22 @@ pub use extension_workspace::{
 };
 pub use gateway::RuntimeGateway;
 pub use mcp_access::CurrentSurfaceRuntimeMcpAccess;
+pub use operation_core::{
+    OperationAuditSink, OperationDispatcher, OperationExecutionCore, OperationPlacementResolver,
+    OperationResultStore, OperationSurfaceResolver, result_access_matches, scope_project_id,
+};
+pub use operation_error::{OperationExecutionError, OperationExecutionErrorKind};
+pub use operation_types::{
+    ActorOperationSurface, OperationActorKind, OperationAuditEvent, OperationAuditStage,
+    OperationAuthorizationScope, OperationCatalog, OperationDescriptor, OperationDispatch,
+    OperationEffect, OperationExecutionPolicy, OperationExecutionRequest, OperationExecutionResult,
+    OperationInvocationEnvelope, OperationOrigin, OperationPlacement, OperationPrincipal,
+    OperationProvenance, OperationReadiness, OperationReplayPolicy, OperationResultAccess,
+    OperationResultRef, OperationResultValue, OperationScopeRef, OperationTraceContext,
+    ScopedOperationResult,
+};
 pub use provider::RuntimeProvider;
-pub use schema::validate_json_schema_subset;
+pub use schema::{validate_json_schema_definition, validate_json_schema_subset};
 pub(crate) use session_actions::execute_runtime_mcp_tool;
 pub use session_actions::{
     MCP_CALL_TOOL_ACTION, MCP_LIST_TOOLS_ACTION, McpCallToolInput, McpCallToolProvider,

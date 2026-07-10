@@ -8,15 +8,15 @@ use agentdash_application::workspace::WorkspaceDetectionError;
 use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
 use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_application_runtime_gateway::{
-    ExtensionRuntimeActionProvider, InMemoryOperationResultStore, McpCallToolProvider,
-    McpListToolsProvider, McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput,
-    McpProbeTransportInput, McpProbeTransportOutput, OperationGateway, RuntimeGateway,
-    RuntimeGatewaySetupError, RuntimeSessionMcpAccess, SetupOperationAccessPort,
-    SetupOperationAuthorityResolver, SetupOperationProvider, TracingOperationAuditSink,
-    WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
-    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
-    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
-    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    CompositeOperationAuthorityResolver, ExtensionRuntimeActionProvider,
+    InMemoryOperationResultStore, McpCallToolProvider, McpListToolsProvider, McpProbeSetupPort,
+    McpProbeTarget, McpProbeToolOutput, McpProbeTransportInput, McpProbeTransportOutput,
+    OperationGateway, RuntimeGateway, RuntimeGatewaySetupError, RuntimeSessionMcpAccess,
+    SetupOperationAccessPort, SetupOperationAuthorityResolver, SetupOperationProvider,
+    TracingOperationAuditSink, WorkspaceBrowseDirectoryEntry, WorkspaceBrowseDirectoryInput,
+    WorkspaceBrowseDirectoryOutput, WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput,
+    WorkspaceDetectGitOutput, WorkspaceDetectGitSetupPort, WorkspaceDetectInput,
+    WorkspaceDetectOutput, WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
     WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
     WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
 };
@@ -70,10 +70,24 @@ pub(crate) fn build_operation_gateway(
         workspace_setup.clone(),
         workspace_setup,
     ));
+    let setup_authority: Arc<
+        dyn agentdash_application_runtime_gateway::OperationAuthorityResolver,
+    > = Arc::new(SetupOperationAuthorityResolver::new(Arc::new(
+        ApplicationSetupOperationAccess {
+            repos: repos.clone(),
+        },
+    )));
+    let surface_authority: Arc<
+        dyn agentdash_application_runtime_gateway::OperationAuthorityResolver,
+    > = Arc::new(ApplicationSurfaceOperationAuthority { repos });
     OperationGateway::try_new(
-        Arc::new(SetupOperationAuthorityResolver::new(Arc::new(
-            ApplicationSetupOperationAccess { repos },
-        ))),
+        Arc::new(CompositeOperationAuthorityResolver::new(
+            setup_authority,
+            surface_authority.clone(),
+            surface_authority.clone(),
+            surface_authority.clone(),
+            surface_authority,
+        )),
         [setup_provider as Arc<dyn agentdash_application_runtime_gateway::OperationProvider>],
         Arc::new(InMemoryOperationResultStore::default()),
         Arc::new(TracingOperationAuditSink),
@@ -83,6 +97,292 @@ pub(crate) fn build_operation_gateway(
 
 struct ApplicationSetupOperationAccess {
     repos: RepositorySet,
+}
+
+struct ApplicationSurfaceOperationAuthority {
+    repos: RepositorySet,
+}
+
+#[async_trait]
+impl agentdash_application_runtime_gateway::OperationAuthorityResolver
+    for ApplicationSurfaceOperationAuthority
+{
+    async fn resolve(
+        &self,
+        principal: &agentdash_application_runtime_gateway::OperationPrincipal,
+        scope: &agentdash_application_runtime_gateway::OperationAuthorizationScope,
+        origin: &agentdash_application_runtime_gateway::OperationOriginRef,
+        cancel: CancellationToken,
+    ) -> Result<
+        agentdash_application_runtime_gateway::OperationAuthorityGrant,
+        agentdash_application_runtime_gateway::OperationExecutionError,
+    > {
+        use agentdash_application_runtime_gateway::{
+            OperationExecutionError, OperationOriginRef, OperationPrincipalRef, OperationScopeRef,
+        };
+        use agentdash_domain::interaction::InteractionOwner;
+
+        if cancel.is_cancelled() {
+            return Err(OperationExecutionError::Cancelled);
+        }
+        let mut facts = Vec::new();
+        let mut capabilities = std::collections::BTreeSet::from(["operation.invoke".to_string()]);
+        match principal.principal_ref() {
+            OperationPrincipalRef::User { user_id } => {
+                let identity = principal.user_identity().ok_or_else(|| {
+                    OperationExecutionError::invalid_request("User principal 缺少认证 identity")
+                })?;
+                if identity.user_id != *user_id {
+                    return Err(OperationExecutionError::CapabilitiesDenied {
+                        missing: vec!["principal.user_identity_match".to_string()],
+                    });
+                }
+                match &scope.scope_ref {
+                    OperationScopeRef::Project { project_id }
+                    | OperationScopeRef::WorkspaceBinding { project_id, .. } => {
+                        self.require_project_use(identity, *project_id, &mut facts)
+                            .await?;
+                    }
+                    OperationScopeRef::InteractionInstance { instance_id } => {
+                        let instance = self
+                            .repos
+                            .interaction_instance_repo
+                            .get(*instance_id)
+                            .await
+                            .map_err(|error| {
+                                OperationExecutionError::provider_failed(error.to_string())
+                            })?
+                            .ok_or_else(|| OperationExecutionError::NotReady {
+                                code: "interaction_not_found".to_string(),
+                                message: format!("InteractionInstance 不存在: {instance_id}"),
+                            })?;
+                        match &instance.owner {
+                            InteractionOwner::User(owner) if owner == user_id => {}
+                            InteractionOwner::Project(project_id) => {
+                                self.require_project_use(identity, *project_id, &mut facts)
+                                    .await?;
+                            }
+                            _ => {
+                                return Err(OperationExecutionError::CapabilitiesDenied {
+                                    missing: vec!["interaction.use".to_string()],
+                                });
+                            }
+                        }
+                        facts.push(format!(
+                            "interaction:{}:{}:{}:{}",
+                            instance.id,
+                            instance.state_revision,
+                            instance.status.as_str(),
+                            instance.updated_at
+                        ));
+                        capabilities.insert("interaction.use".to_string());
+                    }
+                    OperationScopeRef::EnvironmentSetup { .. } => {
+                        return Err(OperationExecutionError::invalid_request(
+                            "Setup scope 不能进入 standalone authority",
+                        ));
+                    }
+                }
+                if let OperationOriginRef::ExtensionPanel { installation_id } = origin {
+                    let project_id =
+                        agentdash_application_runtime_gateway::scope_project_id(&scope.scope_ref)
+                            .ok_or_else(|| {
+                            OperationExecutionError::invalid_request(
+                                "Extension panel 需要 Project scope",
+                            )
+                        })?;
+                    self.require_installation(project_id, *installation_id, &mut facts)
+                        .await?;
+                }
+                if let OperationOriginRef::Canvas { definition_id } = origin {
+                    let definition = self
+                        .repos
+                        .interaction_definition_repo
+                        .get(*definition_id)
+                        .await
+                        .map_err(|error| {
+                            OperationExecutionError::provider_failed(error.to_string())
+                        })?
+                        .ok_or_else(|| OperationExecutionError::NotReady {
+                            code: "canvas_definition_not_found".to_string(),
+                            message: format!("Canvas definition 不存在: {definition_id}"),
+                        })?;
+                    match &definition.owner {
+                        InteractionOwner::User(owner) if owner == user_id => {}
+                        InteractionOwner::Project(project_id) => {
+                            self.require_project_use(identity, *project_id, &mut facts)
+                                .await?;
+                            if agentdash_application_runtime_gateway::scope_project_id(
+                                &scope.scope_ref,
+                            ) != Some(*project_id)
+                            {
+                                return Err(OperationExecutionError::CapabilitiesDenied {
+                                    missing: vec!["canvas.project_scope".to_string()],
+                                });
+                            }
+                        }
+                        _ => {
+                            return Err(OperationExecutionError::CapabilitiesDenied {
+                                missing: vec!["canvas.definition.use".to_string()],
+                            });
+                        }
+                    }
+                    facts.push(format!(
+                        "canvas-definition:{}:{}:{}",
+                        definition.id, definition.current_revision_id, definition.updated_at
+                    ));
+                }
+                facts.push(format!("user:{user_id}"));
+            }
+            OperationPrincipalRef::AgentRunAgent { run_id, agent_id } => {
+                let run = self
+                    .repos
+                    .lifecycle_run_repo
+                    .get_by_id(*run_id)
+                    .await
+                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                    .ok_or_else(|| OperationExecutionError::NotReady {
+                        code: "agent_run_missing".to_string(),
+                        message: format!("AgentRun 不存在: {run_id}"),
+                    })?;
+                let agent = self
+                    .repos
+                    .lifecycle_agent_repo
+                    .get(*agent_id)
+                    .await
+                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                    .filter(|agent| agent.run_id == run.id && agent.project_id == run.project_id)
+                    .ok_or_else(|| OperationExecutionError::CapabilitiesDenied {
+                        missing: vec!["agent_run.membership".to_string()],
+                    })?;
+                if agent.project_id
+                    != agentdash_application_runtime_gateway::scope_project_id(&scope.scope_ref)
+                        .ok_or_else(|| {
+                            OperationExecutionError::invalid_request(
+                                "AgentRun Operation 需要 Project scope",
+                            )
+                        })?
+                {
+                    return Err(OperationExecutionError::CapabilitiesDenied {
+                        missing: vec!["agent_run.project_scope".to_string()],
+                    });
+                }
+                let frame = self
+                    .repos
+                    .agent_frame_repo
+                    .get_current(*agent_id)
+                    .await
+                    .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+                    .ok_or_else(|| OperationExecutionError::NotReady {
+                        code: "agent_frame_missing".to_string(),
+                        message: format!("Agent current frame 不存在: {agent_id}"),
+                    })?;
+                facts.push(format!(
+                    "agent:{run_id}:{agent_id}:{}:{}",
+                    frame.id, frame.revision
+                ));
+                capabilities.insert("agent.operation.invoke".to_string());
+            }
+            OperationPrincipalRef::ExtensionInstallation { installation_id } => {
+                let project_id =
+                    agentdash_application_runtime_gateway::scope_project_id(&scope.scope_ref)
+                        .ok_or_else(|| {
+                            OperationExecutionError::invalid_request(
+                                "Extension service 需要 Project scope",
+                            )
+                        })?;
+                self.require_installation(project_id, *installation_id, &mut facts)
+                    .await?;
+                capabilities.insert("extension.operation.invoke".to_string());
+            }
+            OperationPrincipalRef::WorkflowNode { .. } => {
+                return Err(OperationExecutionError::NotReady {
+                    code: "workflow_operation_authority_unavailable".to_string(),
+                    message: "Workflow Operation authority 尚未装配".to_string(),
+                });
+            }
+        }
+        Ok(
+            agentdash_application_runtime_gateway::OperationAuthorityGrant {
+                authority_revision: authority_revision(facts),
+                capabilities,
+            },
+        )
+    }
+}
+
+impl ApplicationSurfaceOperationAuthority {
+    async fn require_project_use(
+        &self,
+        identity: &AuthIdentity,
+        project_id: uuid::Uuid,
+        facts: &mut Vec<String>,
+    ) -> Result<(), agentdash_application_runtime_gateway::OperationExecutionError> {
+        use agentdash_application::project::{
+            ProjectAuthorizationService, ProjectPermission,
+            project_authorization_context_from_identity,
+        };
+        use agentdash_application_runtime_gateway::OperationExecutionError;
+        let project = self
+            .repos
+            .project_repo
+            .get_by_id(project_id)
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+            .ok_or_else(|| OperationExecutionError::NotReady {
+                code: "project_not_found".to_string(),
+                message: format!("Project 不存在: {project_id}"),
+            })?;
+        let allowed = ProjectAuthorizationService::new(self.repos.project_repo.as_ref())
+            .can_access_project(
+                &project_authorization_context_from_identity(identity),
+                &project,
+                ProjectPermission::Use,
+            )
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?;
+        if !allowed {
+            return Err(OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["project.use".to_string()],
+            });
+        }
+        facts.push(format!("project:{project_id}:{}", project.updated_at));
+        Ok(())
+    }
+
+    async fn require_installation(
+        &self,
+        project_id: uuid::Uuid,
+        installation_id: uuid::Uuid,
+        facts: &mut Vec<String>,
+    ) -> Result<(), agentdash_application_runtime_gateway::OperationExecutionError> {
+        use agentdash_application_runtime_gateway::OperationExecutionError;
+        let installation = self
+            .repos
+            .project_extension_installation_repo
+            .get_by_project_and_id(project_id, installation_id)
+            .await
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))?
+            .filter(|installation| installation.enabled)
+            .ok_or_else(|| OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["extension.installation.enabled".to_string()],
+            })?;
+        facts.push(format!(
+            "extension:{}:{}:{}",
+            installation.id, installation.enabled, installation.updated_at
+        ));
+        Ok(())
+    }
+}
+
+fn authority_revision(mut facts: Vec<String>) -> String {
+    facts.sort();
+    let mut digest = Sha256::new();
+    for fact in facts {
+        digest.update(fact.as_bytes());
+        digest.update([0]);
+    }
+    format!("sha256:{:x}", digest.finalize())
 }
 
 #[async_trait]

@@ -8,9 +8,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    ActorOperationSurface, OperationAuthorizationScope, OperationExecutionError,
-    OperationExecutionResult, OperationGateway, OperationInvocationCommand, OperationOriginRef,
-    OperationPrincipal, OperationPrincipalRef, OperationScopeRef, OperationTraceContext,
+    ActorOperationSurface, OperationExecutionError, OperationExecutionResult, OperationGateway,
+    OperationInvocationCommand, OperationOriginRef, OperationPrincipal, OperationPrincipalRef,
+    OperationScopeRef, OperationTraceContext,
 };
 
 /// Untrusted caller-controlled portion of a host invocation.
@@ -291,7 +291,7 @@ mod tests {
     use super::*;
     use crate::runtime_gateway::{
         InMemoryOperationResultStore, OperationAuthorityGrant, OperationAuthorityResolver,
-        TracingOperationAuditSink,
+        OperationAuthorizationScope, TracingOperationAuditSink,
     };
 
     struct AllowAuthority;

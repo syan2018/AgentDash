@@ -456,15 +456,14 @@ fn validate_transaction(
             reason: "request/event/state revision identity 必须一致且单调递增",
         });
     }
-    if let Some(effect) = &transaction.effect_intent {
-        if effect.instance_id != request.instance_id
-            || effect.source_event_id != transaction.event.id
-        {
-            return Err(InteractionError::InvalidField {
-                field: "operation_effect_intent.source",
-                reason: "effect 必须关联本事务 instance/event",
-            });
-        }
+    if let Some(effect) = &transaction.effect_intent
+        && (effect.instance_id != request.instance_id
+            || effect.source_event_id != transaction.event.id)
+    {
+        return Err(InteractionError::InvalidField {
+            field: "operation_effect_intent.source",
+            reason: "effect 必须关联本事务 instance/event",
+        });
     }
     Ok(())
 }

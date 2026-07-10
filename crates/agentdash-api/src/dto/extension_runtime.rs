@@ -177,18 +177,12 @@ pub fn extension_runtime_projection_response(
                     ExtensionWorkspaceTabRendererDeclaration::Webview { entry } => {
                         ExtensionWorkspaceTabRendererResponse::Webview { entry }
                     }
-                    ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => {
-                        ExtensionWorkspaceTabRendererResponse::CanvasPanel { entry }
-                    }
                 },
                 loadability: ExtensionWorkspaceTabLoadabilityResponse {
                     available: tab.loadability.available,
                     mode: match tab.loadability.mode {
                         ExtensionWorkspaceTabLoadabilityMode::ExtensionHost => {
                             ExtensionWorkspaceTabLoadabilityModeResponse::ExtensionHost
-                        }
-                        ExtensionWorkspaceTabLoadabilityMode::UiOnly => {
-                            ExtensionWorkspaceTabLoadabilityModeResponse::UiOnly
                         }
                     },
                     reason: tab.loadability.reason,

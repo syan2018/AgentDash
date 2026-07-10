@@ -1751,16 +1751,12 @@ impl ExtensionWorkspaceTabDefinition {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionWorkspaceTabRendererDeclaration {
     Webview { entry: String },
-    CanvasPanel { entry: String },
 }
 
 impl ExtensionWorkspaceTabRendererDeclaration {
     fn validate(&self) -> Result<(), DomainError> {
         match self {
             Self::Webview { entry } => {
-                require_non_empty("extension_template.workspace_tabs[].renderer.entry", entry)
-            }
-            Self::CanvasPanel { entry } => {
                 require_non_empty("extension_template.workspace_tabs[].renderer.entry", entry)
             }
         }

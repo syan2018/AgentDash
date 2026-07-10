@@ -1,68 +1,41 @@
 /* eslint-disable react-refresh/only-export-components */
-import { useCallback } from "react";
 import { CanvasRuntimePanel } from "../../canvas-panel";
-import { useWorkspaceData } from "../workspace-data-context";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
+import { useWorkspaceData } from "../workspace-data-context";
 import type { TabContentRenderProps, TabTypeDescriptor } from "../tab-type-registry";
 import { CanvasIcon } from "./icons";
 
-const SCHEME = "canvas://";
+type ParsedCanvasUri =
+  | { kind: "definition"; id: string }
+  | { kind: "interaction"; id: string };
 
-function parseCanvasUri(uri: string): { canvasMountId: string } | null {
-  if (!uri.startsWith(SCHEME)) return null;
-  const canvasMountId = uri.slice(SCHEME.length);
-  return canvasMountId ? { canvasMountId } : null;
-}
-
-function isConcreteCanvasUri(uri: string): boolean {
-  return parseCanvasUri(uri) !== null;
+function parseCanvasUri(uri: string): ParsedCanvasUri | null {
+  if (uri.startsWith("canvas://")) {
+    const id = uri.slice("canvas://".length).trim();
+    return id ? { kind: "definition", id } : null;
+  }
+  if (uri.startsWith("interaction://")) {
+    const id = uri.slice("interaction://".length).trim();
+    return id ? { kind: "interaction", id } : null;
+  }
+  return null;
 }
 
 function CanvasTabContent({ uri, refreshRevision }: TabContentRenderProps) {
-  const {
-    projectId,
-    agentRunCanvasBridgeBase,
-    refreshAgentRunWorkspace,
-  } = useWorkspaceData();
+  const { projectId } = useWorkspaceData();
   const parsed = parseCanvasUri(uri);
-  const canvasMountId = parsed?.canvasMountId || null;
-  const agentRunBridge = agentRunCanvasBridgeBase && canvasMountId
-    ? {
-        ...agentRunCanvasBridgeBase,
-        canvas_mount_id: canvasMountId,
-      }
-    : null;
-
-  const handleBrowseFiles = useCallback((mountId: string) => {
-    const uri = `${mountId}://`;
-    useWorkspaceTabStore.getState().openOrActivate("vfs", uri);
-  }, []);
-
-  if (!canvasMountId) {
-    return (
-      <div className="flex h-full min-h-[200px] flex-col items-center justify-center gap-3 px-6">
-        <CanvasIcon className="h-8 w-8 text-muted-foreground/40" />
-        <div className="text-center">
-          <p className="text-sm font-medium text-muted-foreground">当前会话还没有关联的 Canvas</p>
-          <p className="mt-1 text-xs text-muted-foreground/70">
-            Canvas 展示会通过 workspace_module_present 打开具体视图
-          </p>
-        </div>
-      </div>
-    );
+  if (!parsed) {
+    return <div className="p-6 text-sm text-muted-foreground">请选择具体 Canvas definition 或 Interaction instance。</div>;
   }
-
   return (
     <CanvasRuntimePanel
-      canvasId={null}
-      canvasMountId={canvasMountId}
       projectId={projectId}
-      agentRunBridge={agentRunBridge}
-      showBridgeUnavailable={agentRunCanvasBridgeBase === null}
-      onAgentRunWorkspaceRefresh={refreshAgentRunWorkspace}
+      definitionId={parsed.kind === "definition" ? parsed.id : null}
+      instanceId={parsed.kind === "interaction" ? parsed.id : null}
       refreshRevision={refreshRevision}
-      onClose={() => {}}
-      onBrowseFiles={handleBrowseFiles}
+      onOpenInteraction={(instanceId) => {
+        useWorkspaceTabStore.getState().openOrActivate("canvas", `interaction://${instanceId}`);
+      }}
     />
   );
 }
@@ -74,27 +47,20 @@ export const canvasTabType: TabTypeDescriptor = {
   allowMultiple: true,
   pinned: false,
   defaultUri: "canvas://",
-
   renderContent: (props) => <CanvasTabContent {...props} />,
-
   resolveTitle: (uri) => {
     const parsed = parseCanvasUri(uri);
     if (!parsed) return "Canvas";
-    const shortId = parsed.canvasMountId.length > 8
-      ? `${parsed.canvasMountId.slice(0, 8)}…`
-      : parsed.canvasMountId;
-    return `Canvas: ${shortId}`;
+    const shortId = parsed.id.length > 8 ? `${parsed.id.slice(0, 8)}…` : parsed.id;
+    return parsed.kind === "interaction" ? `Interaction: ${shortId}` : `Canvas: ${shortId}`;
   },
-
   parseUri: (uri) => {
     const parsed = parseCanvasUri(uri);
-    return parsed ? { canvasMountId: parsed.canvasMountId } : null;
+    return parsed ? { kind: parsed.kind, id: parsed.id } : null;
   },
-  canCreateUri: isConcreteCanvasUri,
-
-  buildUri: (params) => {
-    const canvasMountId = params?.canvasMountId;
-    return canvasMountId ? `${SCHEME}${canvasMountId}` : "canvas://";
-  },
+  canCreateUri: (uri) => parseCanvasUri(uri) !== null,
+  buildUri: (params) => params.id
+    ? `${params.kind === "interaction" ? "interaction" : "canvas"}://${params.id}`
+    : "canvas://",
   menuOrder: 10,
 };

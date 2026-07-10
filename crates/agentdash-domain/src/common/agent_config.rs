@@ -76,7 +76,7 @@ pub struct AgentPresetConfig {
     /// 调用侧额外加入的非默认 companion agent 名称。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra_companions: Option<Vec<String>>,
-    /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{canvas_mount_id}`）。
+    /// 此 Agent 可见的 Workspace Module ref 白名单（形如 `ext:{key}` / `canvas:{definition_id}`）。
     ///
     /// 事实源为 ProjectAgent 定义，frame construction 据此填充
     /// `AgentFrame.visible_workspace_module_refs_json`。`None`/空 → 全集可见；非空 → 仅白名单。

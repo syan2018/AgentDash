@@ -74,7 +74,6 @@ fn build_extension_modules(
                     view_key: tab.type_id.clone(),
                     renderer_kind: match tab.renderer {
                         agentdash_domain::shared_library::ExtensionWorkspaceTabRendererDeclaration::Webview { .. } => "webview",
-                        agentdash_domain::shared_library::ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { .. } => "canvas_panel",
                     }
                     .to_string(),
                     presentation_uri: Some(format!("{}://panel", tab.uri_scheme)),

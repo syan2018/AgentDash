@@ -30,21 +30,9 @@ export interface WorkspaceBackendTarget {
   online: boolean;
 }
 
-export interface AgentRunCanvasBridgeBase {
-  run_id: string;
-  agent_id: string;
-  project_id: string;
-}
-
-export interface AgentRunCanvasBridgeIdentity extends AgentRunCanvasBridgeBase {
-  canvas_mount_id: string;
-}
-
 export interface WorkspaceRuntimeData {
   projectId: string | null;
   agentRunRuntimeTarget?: AgentRunRuntimeTarget | null;
-  agentRunCanvasBridgeBase?: AgentRunCanvasBridgeBase | null;
-  refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;
   lifecycleRun: LifecycleRunView | null;
   lifecycleAgent: AgentRunView | null;
   frameRuntime: AgentFrameRuntimeView | null;

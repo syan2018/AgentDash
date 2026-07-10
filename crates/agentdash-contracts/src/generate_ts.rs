@@ -116,9 +116,8 @@ use agentdash_contracts::interaction::{
     InteractionInstanceViewDto, InteractionOperationRefDto, InteractionOwnerDto,
     InteractionPinnedArtifactDto, InteractionResourceSlotDto, InteractionResourceSlotKindDto,
     InteractionRuntimeBindingDto, InteractionRuntimeBindingTargetDto, InteractionSourceBundleDto,
-    InteractionSourceChangesetDto,
-    InteractionSourceFileChangeDto, InteractionSourceFileDto, InteractionSourceSandboxDto,
-    InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
+    InteractionSourceChangesetDto, InteractionSourceFileChangeDto, InteractionSourceFileDto,
+    InteractionSourceSandboxDto, InteractionStatePatchV1ContractDto, ListCanvasDefinitionsQuery,
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthCredentialTargetDto, CodexOAuthFlowStatusDto, CodexOAuthStatusResponse,

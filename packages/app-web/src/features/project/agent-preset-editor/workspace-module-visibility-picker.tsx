@@ -15,7 +15,7 @@ const KIND_LABEL: Record<WorkspaceModuleKind, string> = {
  * ProjectAgent 可见 Workspace Module 白名单选择器。
  *
  * 复用 Child 3 的 `useProjectWorkspaceModules` 与生成类型，勾选写回 `module_id`
- * 数组（形如 `ext:{key}` / `canvas:{canvas_mount_id}`）。空选 = 全部可见。
+ * 数组（形如 `ext:{key}` / `canvas:{definition_id}`）。空选 = 全部可见。
  */
 export function WorkspaceModuleVisibilityPicker({
   projectId,

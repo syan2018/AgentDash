@@ -636,8 +636,7 @@ fn validate_ui_component_entries(
 
 fn workspace_tab_renderer_entry(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &str {
     match renderer {
-        ExtensionWorkspaceTabRendererDeclaration::Webview { entry }
-        | ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => entry,
+        ExtensionWorkspaceTabRendererDeclaration::Webview { entry } => entry,
     }
 }
 
@@ -843,7 +842,7 @@ mod tests {
         );
     }
 
-    fn canvas_panel_manifest() -> Value {
+    fn webview_manifest() -> Value {
         serde_json::json!({
             "manifest_version": "2",
             "extension_id": "canvas-demo",
@@ -857,8 +856,8 @@ mod tests {
                 "label": "Canvas Demo",
                 "uri_scheme": "canvas-demo",
                 "renderer": {
-                    "kind": "canvas_panel",
-                    "entry": "dist/canvas/runtime-snapshot.json"
+                    "kind": "webview",
+                    "entry": "dist/panel/index.html"
                 }
             }]
         })
@@ -985,11 +984,11 @@ mod tests {
     }
 
     #[test]
-    fn validates_canvas_panel_renderer_entry() {
+    fn validates_webview_renderer_entry() {
         let bytes = archive_bytes(vec![
             (
                 EXTENSION_MANIFEST_PATH,
-                serde_json::to_vec(&canvas_panel_manifest()).expect("manifest bytes"),
+                serde_json::to_vec(&webview_manifest()).expect("manifest bytes"),
             ),
             (
                 PACKAGE_JSON_PATH,
@@ -999,10 +998,7 @@ mod tests {
                 }))
                 .expect("package bytes"),
             ),
-            (
-                "dist/canvas/runtime-snapshot.json",
-                br#"{"canvas_id":"00000000-0000-0000-0000-000000000000"}"#.to_vec(),
-            ),
+            ("dist/panel/index.html", b"<!doctype html>".to_vec()),
         ]);
 
         let validated = validate_extension_package_archive(&bytes, None).expect("valid");
@@ -1015,7 +1011,7 @@ mod tests {
         let bytes = archive_bytes(vec![
             (
                 EXTENSION_MANIFEST_PATH,
-                serde_json::to_vec(&canvas_panel_manifest()).expect("manifest bytes"),
+                serde_json::to_vec(&webview_manifest()).expect("manifest bytes"),
             ),
             (
                 PACKAGE_JSON_PATH,

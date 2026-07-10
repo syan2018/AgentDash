@@ -1,286 +1,141 @@
 import { api } from "../api/client";
-import type { AgentRunMessageCommandResponse } from "../generated/agent-run-mailbox-contracts";
-import type { UserInput } from "../generated/backbone-protocol";
-import type { JsonValue } from "../generated/common-contracts";
 import type {
-  CanvasAgentInputSubmitRequest,
-  CanvasAgentRunRuntimeSnapshotDto,
-  CanvasInteractionEventDto,
-  CanvasInteractionSnapshot,
-  CanvasInteractionSnapshotUpsertRequest,
-  CanvasRuntimeDiagnosticDto,
-  CanvasRuntimeBindingUpsertRequest,
-  CanvasRuntimeInvokeRequest,
-  CanvasRuntimeObservation,
-  CanvasRuntimeObservationUpsertRequest,
-} from "../generated/canvas-contracts";
-import type { ExtensionPackageInstallationResponse } from "../generated/extension-package-contracts";
-import type {
-  Canvas,
-  CanvasListScope,
-  CanvasRuntimeSnapshot,
-  CopyCanvasToPersonalInput,
-  CreateCanvasInput,
-  DeleteCanvasResult,
-  PublishCanvasToProjectInput,
-  RuntimeInvocationResult,
-  UnpublishCanvasResult,
-  UpdateCanvasInput,
-} from "../types";
+  ArchiveInteractionDefinitionResponse,
+  CanvasDefinitionDto,
+  CommitCanvasDefinitionRequest,
+  CreateCanvasDefinitionRequest,
+  CreateInteractionInstanceRequestDto,
+  DistributeCanvasDefinitionRequest,
+  InteractionCommandRequestDto,
+  InteractionCommandResponseDto,
+  InteractionInstanceDto,
+  InteractionInstanceViewDto,
+  InteractionSourceBundleDto,
+} from "../generated/interaction-contracts";
 
-export interface AgentRunCanvasBridgeIdentity {
-  run_id: string;
-  agent_id: string;
-  canvas_mount_id: string;
-  project_id: string;
-}
+export type CanvasListScope = "all" | "mine" | "shared";
 
-export type CanvasRuntimeDiagnosticEntry = CanvasRuntimeDiagnosticDto;
-
-export type UploadCanvasRenderObservationInput = CanvasRuntimeObservationUpsertRequest;
-
-export type CanvasInteractionEventInput = CanvasInteractionEventDto;
-
-export type UploadCanvasInteractionSnapshotInput = CanvasInteractionSnapshotUpsertRequest;
-
-export interface SubmitCanvasAgentInput {
-  text?: string;
-  input?: UserInput[];
-  include_interaction_state?: boolean;
-  include_render_observation?: boolean;
-  delivery_intent?: "queue" | "steer";
-  client_command_id?: string;
-  interaction_snapshot_id?: string;
-  render_observation_id?: string;
-}
-
-export interface CanvasRuntimeInvokeInput extends Omit<CanvasRuntimeInvokeRequest, "input"> {
-  input?: JsonValue;
-}
-
-export type UpsertCanvasRuntimeBindingInput = CanvasRuntimeBindingUpsertRequest & {
-  alias: string;
-};
-
-function agentRunCanvasPath(
-  bridge: AgentRunCanvasBridgeIdentity,
-  route: string,
-): string {
-  return `/agent-runs/${encodeURIComponent(bridge.run_id)}`
-    + `/agents/${encodeURIComponent(bridge.agent_id)}`
-    + `/canvases/${encodeURIComponent(bridge.canvas_mount_id)}${route}`;
-}
-
-export async function fetchProjectCanvases(
-  projectId: string,
-  scope?: CanvasListScope,
-): Promise<Canvas[]> {
-  const params = new URLSearchParams();
-  if (scope) {
-    params.set("scope", scope);
-  }
-  const query = params.toString();
-  return api.get<Canvas[]>(
-    query
-      ? `/projects/${encodeURIComponent(projectId)}/canvases?${query}`
-      : `/projects/${encodeURIComponent(projectId)}/canvases`,
+export async function fetchProjectCanvases(projectId: string, scope: CanvasListScope = "all") {
+  return api.get<CanvasDefinitionDto[]>(
+    `/projects/${encodeURIComponent(projectId)}/interaction-definitions/canvas?scope=${scope}`,
   );
 }
 
-export async function createCanvas(
-  projectId: string,
-  input: CreateCanvasInput,
-): Promise<Canvas> {
-  return api.post<Canvas>(
-    `/projects/${encodeURIComponent(projectId)}/canvases`,
-    input,
+export async function createCanvas(projectId: string, input: CreateCanvasDefinitionRequest) {
+  return api.post<CanvasDefinitionDto>(
+    `/projects/${encodeURIComponent(projectId)}/interaction-definitions/canvas`, input,
   );
 }
 
-export async function fetchCanvas(canvasId: string): Promise<Canvas> {
-  return api.get<Canvas>(`/canvases/${encodeURIComponent(canvasId)}`);
-}
-
-export async function fetchCanvasByMountId(
-  projectId: string,
-  canvasMountId: string,
-): Promise<Canvas> {
-  return api.get<Canvas>(
-    `/projects/${encodeURIComponent(projectId)}/canvases/by-mount/${encodeURIComponent(canvasMountId)}`,
+export async function fetchCanvas(definitionId: string) {
+  return api.get<CanvasDefinitionDto>(
+    `/interaction-definitions/${encodeURIComponent(definitionId)}`,
   );
 }
 
-export async function updateCanvas(
-  canvasId: string,
-  input: UpdateCanvasInput,
-): Promise<Canvas> {
-  return api.put<Canvas>(
-    `/canvases/${encodeURIComponent(canvasId)}`,
-    input,
+export async function commitCanvas(definitionId: string, input: CommitCanvasDefinitionRequest) {
+  return api.post<CanvasDefinitionDto>(
+    `/interaction-definitions/${encodeURIComponent(definitionId)}/revisions`, input,
   );
 }
 
-export async function deleteCanvas(canvasId: string): Promise<DeleteCanvasResult> {
-  return api.delete<DeleteCanvasResult>(`/canvases/${encodeURIComponent(canvasId)}`);
+export async function archiveCanvas(definitionId: string) {
+  return api.post<ArchiveInteractionDefinitionResponse>(
+    `/interaction-definitions/${encodeURIComponent(definitionId)}/archive`, {},
+  );
 }
 
 export async function publishCanvasToProject(
-  canvasId: string,
-  input: PublishCanvasToProjectInput = {},
-): Promise<Canvas> {
-  return api.post<Canvas>(
-    `/canvases/${encodeURIComponent(canvasId)}/publish-to-project`,
-    input,
+  definitionId: string,
+  input: DistributeCanvasDefinitionRequest,
+) {
+  return api.post<CanvasDefinitionDto>(
+    `/interaction-definitions/${encodeURIComponent(definitionId)}/publish`, input,
   );
 }
 
 export async function copyCanvasToPersonal(
-  canvasId: string,
-  input: CopyCanvasToPersonalInput = {},
-): Promise<Canvas> {
-  return api.post<Canvas>(
-    `/canvases/${encodeURIComponent(canvasId)}/copy-to-personal`,
-    input,
+  definitionId: string,
+  input: DistributeCanvasDefinitionRequest,
+) {
+  return api.post<CanvasDefinitionDto>(
+    `/interaction-definitions/${encodeURIComponent(definitionId)}/copy`, input,
   );
 }
 
-export async function unpublishCanvas(canvasId: string): Promise<UnpublishCanvasResult> {
-  return api.post<UnpublishCanvasResult>(
-    `/canvases/${encodeURIComponent(canvasId)}/unpublish`,
-    {},
+export async function unpublishCanvas(definitionId: string) {
+  return api.post<ArchiveInteractionDefinitionResponse>(
+    `/interaction-definitions/${encodeURIComponent(definitionId)}/unpublish`, {},
   );
 }
 
-export function buildStandaloneCanvasPreviewSnapshot(canvas: Canvas): CanvasRuntimeSnapshot {
-  return {
-    canvas_id: canvas.canvas_id,
-    canvas_mount_id: canvas.canvas_mount_id,
-    vfs_mount_id: canvas.vfs_mount_id,
-    entry: canvas.entry_file,
-    files: canvas.files.map((file) => ({
-      path: file.path,
-      content: file.content,
-      file_type: canvasRuntimeFileType(file.path),
-    })),
-    bindings: [],
-    import_map: canvas.sandbox_config.import_map,
-    libraries: canvas.sandbox_config.libraries,
-    runtime_bridge: {
-      enabled: false,
-      disabled_reason: "Standalone Canvas preview 尚未绑定运行期 Operation surface。",
-    },
+export async function createInteractionInstance(
+  definitionId: string,
+  input: CreateInteractionInstanceRequestDto,
+) {
+  return api.post<InteractionInstanceViewDto>(
+    `/interaction-definitions/${encodeURIComponent(definitionId)}/instances`, input,
+  );
+}
+
+export async function fetchInteractionInstance(instanceId: string) {
+  return api.get<InteractionInstanceViewDto>(
+    `/interaction-instances/${encodeURIComponent(instanceId)}`,
+  );
+}
+
+export async function fetchProjectInteractionInstances(projectId: string) {
+  return api.get<InteractionInstanceViewDto[]>(
+    `/projects/${encodeURIComponent(projectId)}/interaction-instances`,
+  );
+}
+
+export async function executeInteractionCommand(
+  instanceId: string,
+  input: InteractionCommandRequestDto,
+) {
+  return api.post<InteractionCommandResponseDto>(
+    `/interaction-instances/${encodeURIComponent(instanceId)}/commands`, input,
+  );
+}
+
+export async function closeInteractionInstance(instanceId: string, expectedStateRevision: number) {
+  return api.post<InteractionInstanceDto>(
+    `/interaction-instances/${encodeURIComponent(instanceId)}/close`,
+    { expected_state_revision: expectedStateRevision },
+  );
+}
+
+export async function createDefaultCanvasSourceBundle(): Promise<InteractionSourceBundleDto> {
+  return canonicalSourceBundle({
+    format_version: 1,
+    entry_file: "index.html",
+    files: [{
+      path: "index.html",
+      content: "<!doctype html><html><body><main><h1>New Canvas</h1></main></body></html>",
+      media_type: "text/html",
+    }],
+    sandbox: { libraries: [], import_map: {} },
+    digest: "",
+  });
+}
+
+export async function canonicalSourceBundle(
+  bundle: Omit<InteractionSourceBundleDto, "digest"> & { digest?: string },
+): Promise<InteractionSourceBundleDto> {
+  const files = [...bundle.files].sort((left, right) => left.path.localeCompare(right.path));
+  const libraries = [...new Set(bundle.sandbox.libraries.map((value) => value.trim()))].sort();
+  const importMap = Object.fromEntries(
+    Object.entries(bundle.sandbox.import_map).sort(([left], [right]) => left.localeCompare(right)),
+  );
+  const canonical = {
+    format_version: 1,
+    entry_file: bundle.entry_file,
+    files,
+    sandbox: { libraries, import_map: importMap },
   };
-}
-
-function canvasRuntimeFileType(path: string): string {
-  const extension = path.split(".").pop()?.toLowerCase();
-  return extension && extension !== path ? extension : "text";
-}
-
-export interface PromoteCanvasToExtensionInput {
-  extension_key?: string;
-  display_name?: string;
-  package_version?: string;
-  asset_version?: string;
-  overwrite?: boolean;
-}
-
-export async function invokeCanvasRuntimeAction(
-  bridge: AgentRunCanvasBridgeIdentity,
-  input: CanvasRuntimeInvokeInput,
-): Promise<RuntimeInvocationResult> {
-  const request: CanvasRuntimeInvokeRequest = {
-    action_key: input.action_key,
-    input: input.input ?? {},
-  };
-  return api.post<RuntimeInvocationResult>(
-    agentRunCanvasPath(bridge, "/runtime-invoke"),
-    request,
-  );
-}
-
-export async function fetchAgentRunCanvasRuntimeSnapshot(
-  bridge: AgentRunCanvasBridgeIdentity,
-): Promise<CanvasAgentRunRuntimeSnapshotDto> {
-  return api.get<CanvasAgentRunRuntimeSnapshotDto>(agentRunCanvasPath(bridge, "/runtime-snapshot"));
-}
-
-export async function upsertAgentRunCanvasRuntimeBinding(
-  bridge: AgentRunCanvasBridgeIdentity,
-  input: UpsertCanvasRuntimeBindingInput,
-): Promise<CanvasAgentRunRuntimeSnapshotDto> {
-  return api.put<CanvasAgentRunRuntimeSnapshotDto>(
-    agentRunCanvasPath(bridge, `/runtime-bindings/${encodeURIComponent(input.alias)}`),
-    {
-      source_uri: input.source_uri,
-      content_type: input.content_type,
-    },
-  );
-}
-
-export async function uploadCanvasRenderObservation(
-  bridge: AgentRunCanvasBridgeIdentity,
-  input: UploadCanvasRenderObservationInput,
-): Promise<CanvasRuntimeObservation> {
-  return api.post<CanvasRuntimeObservation>(agentRunCanvasPath(bridge, "/runtime-observation"), input);
-}
-
-export async function uploadCanvasInteractionSnapshot(
-  bridge: AgentRunCanvasBridgeIdentity,
-  input: UploadCanvasInteractionSnapshotInput,
-): Promise<CanvasInteractionSnapshot> {
-  return api.post<CanvasInteractionSnapshot>(agentRunCanvasPath(bridge, "/interaction-snapshot"), input);
-}
-
-export async function submitCanvasAgentInput(
-  bridge: AgentRunCanvasBridgeIdentity,
-  input: SubmitCanvasAgentInput,
-): Promise<AgentRunMessageCommandResponse> {
-  const request = toCanvasAgentInputSubmitRequest(input);
-  return api.post<AgentRunMessageCommandResponse>(
-    agentRunCanvasPath(bridge, "/agent-input-submit"),
-    request,
-  );
-}
-
-export async function promoteCanvasToExtension(
-  canvasId: string,
-  input: PromoteCanvasToExtensionInput = {},
-): Promise<ExtensionPackageInstallationResponse> {
-  return api.post<ExtensionPackageInstallationResponse>(
-    `/canvases/${encodeURIComponent(canvasId)}/promote-extension`,
-    input,
-  );
-}
-
-function toCanvasAgentInputSubmitRequest(input: SubmitCanvasAgentInput): CanvasAgentInputSubmitRequest {
-  const userInput = normalizeCanvasAgentInput(input);
-  if (userInput.length === 0) {
-    throw new Error("Canvas Agent submit 需要 input 或 text");
-  }
-  return {
-    input: userInput,
-    client_command_id: input.client_command_id ?? createCanvasClientCommandId(),
-    delivery_intent: input.delivery_intent,
-    interaction_snapshot_id: input.interaction_snapshot_id,
-    render_observation_id: input.render_observation_id,
-  };
-}
-
-function normalizeCanvasAgentInput(input: SubmitCanvasAgentInput): UserInput[] {
-  if (input.input && input.input.length > 0) {
-    return input.input;
-  }
-  const text = input.text?.trim();
-  if (!text) {
-    return [];
-  }
-  return [{ type: "text", text, text_elements: [] }];
-}
-
-function createCanvasClientCommandId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `canvas-agent-${crypto.randomUUID()}`;
-  }
-  return `canvas-agent-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const bytes = new TextEncoder().encode(JSON.stringify(canonical));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return { ...canonical, digest: `sha256:${hex}` };
 }

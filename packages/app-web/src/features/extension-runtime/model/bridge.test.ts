@@ -19,7 +19,6 @@ import {
   resolveExtensionWebviewAvailability,
   type ExtensionWebviewBridgeServices,
 } from "./webviewBridge";
-import { invokeExtensionProtocolFromCanvas } from "./canvasBridge";
 
 describe("extension bridge message validation", () => {
   it("只接受 agentdash extension request message", () => {
@@ -500,56 +499,6 @@ describe("extension bridge message validation", () => {
     });
   });
 
-  it("为 Canvas-like consumer 组装 extension protocol request", async () => {
-    const calls: Array<{
-      target: AgentRunRuntimeTarget;
-      request: ExtensionRuntimeInvokeProtocolRequest;
-    }> = [];
-    const result = await invokeExtensionProtocolFromCanvas({
-      workspaceData: workspaceRuntimeData(),
-      tab: canvasTab(),
-      request: {
-        protocol_key: "api",
-        method: "greet",
-        input: { value: Number.NaN },
-        dependency_alias: "demo",
-      },
-      async invokeProtocol(target, request) {
-        calls.push({ target, request });
-        return protocolResponse(request.protocol_key, request.method, { ok: true });
-      },
-    });
-
-    expect(result).toEqual({ ok: true });
-    expect(calls).toEqual([{
-      target: { runId: "run-1", agentId: "agent-1" },
-      request: {
-        protocol_key: "api",
-        method: "greet",
-        input: { value: null },
-        consumer_extension_key: "protocol-demo",
-        dependency_alias: "demo",
-      },
-    }]);
-
-    await expect(invokeExtensionProtocolFromCanvas({
-      workspaceData: workspaceRuntimeData({
-        runtimeSurface: {
-          ...runtimeSurface(),
-          mounts: [{ ...runtimeMount(), provider: "relay_fs", backend_online: false }],
-        },
-      }),
-      tab: canvasTab(),
-      request: {
-        protocol_key: "api",
-        method: "greet",
-        input: null,
-      },
-      async invokeProtocol() {
-        throw new Error("unexpected invoke");
-      },
-    })).rejects.toThrow("Canvas extension protocol 缺少可用 backend");
-  });
 });
 
 function bridgeRequest(
@@ -693,12 +642,6 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
       runId: "run-1",
       agentId: "agent-1",
     },
-    agentRunCanvasBridgeBase: {
-      run_id: "run-1",
-      agent_id: "agent-1",
-      project_id: "project-1",
-    },
-    refreshAgentRunWorkspace: null,
     runtimeStatus: "ready",
     runtimeError: null,
     extensionRuntime: {
@@ -801,21 +744,6 @@ function webviewTab(): ExtensionWorkspaceTabProjectionResponse {
     loadability: {
       available: true,
       mode: "extension_host",
-      reason: null,
-    },
-  };
-}
-
-function canvasTab(): ExtensionWorkspaceTabProjectionResponse {
-  return {
-    ...webviewTab(),
-    renderer: {
-      kind: "canvas_panel",
-      entry: "dist/canvas/runtime.json",
-    },
-    loadability: {
-      available: true,
-      mode: "ui_only",
       reason: null,
     },
   };

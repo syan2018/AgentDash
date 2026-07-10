@@ -20,6 +20,7 @@
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别 / 字段 / 脱敏通用约定 |
 | [Runtime Gateway](./runtime-gateway.md) | runtime action 调用边界 |
 | [Managed Agent Runtime Kernel](./agent-runtime-kernel.md) | operation/journal/projection/outbox原子事务、幂等、cursor与Lost收敛合同 |
+| [Managed Agent Runtime Context](./agent-runtime-context.md) | ContextRecipe/checkpoint/head fidelity与managed compaction activation/recovery合同 |
 | [Embedded Skill Bundles](./embedded-skill-bundles.md) | 源码内嵌 skill bundle 契约 |
 
 ## 模块 Architecture

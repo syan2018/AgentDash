@@ -517,8 +517,22 @@
             "thread_id": {
               "type": "string"
             },
-            "base_checkpoint_id": {
+            "compaction_id": {
               "type": "string"
+            },
+            "trigger": {
+              "$ref": "#/$defs/ContextCompactionTrigger"
+            },
+            "base_checkpoint_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "expected_context_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
             },
             "kind": {
               "type": "string",
@@ -528,7 +542,9 @@
           "required": [
             "kind",
             "thread_id",
-            "base_checkpoint_id"
+            "compaction_id",
+            "trigger",
+            "expected_context_revision"
           ]
         },
         {
@@ -720,23 +736,63 @@
         }
       ]
     },
+    "ContextCompactionTrigger": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "automatic"
+      ]
+    },
     "RuntimeSnapshotQuery": {
-      "type": "object",
-      "properties": {
-        "thread_id": {
-          "type": "string"
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "at_revision": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "thread"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id"
+          ]
         },
-        "at_revision": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
+        {
+          "type": "object",
+          "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "at_context_revision": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "context"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id"
+          ]
         }
-      },
-      "required": [
-        "thread_id"
       ]
     },
     "RuntimeEventSubscription": {
@@ -1153,6 +1209,22 @@
         {
           "type": "object",
           "properties": {
+            "operation_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_compaction_in_progress"
+            }
+          },
+          "required": [
+            "kind",
+            "operation_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "reason": {
               "type": "string"
             },
@@ -1353,6 +1425,15 @@
             }
           },
           "additionalProperties": false
+        },
+        "transcript": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuntimeTranscriptItem"
+          }
+        },
+        "transcript_fidelity": {
+          "$ref": "#/$defs/ContextFidelity"
         }
       },
       "required": [
@@ -1366,7 +1447,9 @@
         "settings_revision",
         "tool_set_revision",
         "pending_interactions",
-        "command_availability"
+        "command_availability",
+        "transcript",
+        "transcript_fidelity"
       ]
     },
     "RuntimeThreadStatus": {
@@ -1374,6 +1457,7 @@
       "enum": [
         "active",
         "suspended",
+        "desynchronized",
         "closed",
         "lost"
       ]
@@ -1901,6 +1985,167 @@
         }
       ]
     },
+    "RuntimeTranscriptItem": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "final_content": {
+          "$ref": "#/$defs/RuntimeItemContent"
+        }
+      },
+      "required": [
+        "turn_id",
+        "item_id",
+        "final_content"
+      ]
+    },
+    "RuntimeItemContent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeInput"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_message"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "agent_message"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "arguments": true,
+            "kind": {
+              "type": "string",
+              "const": "tool_call"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "arguments"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "output": true,
+            "kind": {
+              "type": "string",
+              "const": "tool_result"
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "checkpoint_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "system_context_change"
+            }
+          },
+          "required": [
+            "kind",
+            "checkpoint_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "checkpoint_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_compaction"
+            }
+          },
+          "required": [
+            "kind",
+            "checkpoint_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "reasoning"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "plan"
+            }
+          },
+          "required": [
+            "kind",
+            "steps"
+          ]
+        }
+      ]
+    },
     "RuntimeSnapshotError": {
       "oneOf": [
         {
@@ -1942,6 +2187,46 @@
         {
           "type": "object",
           "properties": {
+            "requested": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "current": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_revision_unavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "current"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/ContextSnapshotConsistencyCode"
+            },
+            "kind": {
+              "type": "string",
+              "const": "inconsistent_context"
+            }
+          },
+          "required": [
+            "kind",
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "reason": {
               "type": "string"
             },
@@ -1955,6 +2240,14 @@
             "reason"
           ]
         }
+      ]
+    },
+    "ContextSnapshotConsistencyCode": {
+      "type": "string",
+      "enum": [
+        "projection_head_revision_mismatch",
+        "head_checkpoint_missing",
+        "head_checkpoint_mismatch"
       ]
     },
     "RuntimeSubscribeResult": {
@@ -2841,6 +3134,12 @@
             "checkpoint_id": {
               "type": "string"
             },
+            "candidate_id": {
+              "type": "string"
+            },
+            "compaction_id": {
+              "type": "string"
+            },
             "kind": {
               "type": "string",
               "const": "context_checkpoint_prepared"
@@ -2848,13 +3147,90 @@
           },
           "required": [
             "kind",
-            "checkpoint_id"
+            "checkpoint_id",
+            "candidate_id",
+            "compaction_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "activation_id": {
+              "type": "string"
+            },
+            "candidate_id": {
+              "type": "string"
+            },
+            "digest": {
+              "type": "string"
+            },
+            "driver_context_revision": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_activation_applied"
+            }
+          },
+          "required": [
+            "kind",
+            "activation_id",
+            "candidate_id",
+            "digest",
+            "driver_context_revision"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "compaction_id": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "terminal": {
+              "$ref": "#/$defs/RuntimeOperationTerminal"
+            },
+            "context_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "context_compaction_terminal"
+            }
+          },
+          "required": [
+            "kind",
+            "compaction_id",
+            "operation_id",
+            "terminal",
+            "context_revision"
           ]
         },
         {
           "type": "object",
           "properties": {
             "checkpoint_id": {
+              "type": "string"
+            },
+            "candidate_id": {
+              "type": "string"
+            },
+            "activation_id": {
+              "type": "string"
+            },
+            "compaction_id": {
+              "type": "string"
+            },
+            "context_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "digest": {
               "type": "string"
             },
             "kind": {
@@ -2864,7 +3240,24 @@
           },
           "required": [
             "kind",
-            "checkpoint_id"
+            "checkpoint_id",
+            "candidate_id",
+            "activation_id",
+            "compaction_id",
+            "context_revision",
+            "digest"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "driver_context_compacted_opaque"
+            }
+          },
+          "required": [
+            "kind"
           ]
         }
       ]
@@ -2933,6 +3326,7 @@
       "type": "string",
       "enum": [
         "driver_operation_acceptance",
+        "driver_runtime_owned_context_event",
         "invalid_lifecycle_transition",
         "duplicate_terminal"
       ]
@@ -3018,148 +3412,6 @@
           },
           "required": [
             "kind"
-          ]
-        }
-      ]
-    },
-    "RuntimeItemContent": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "input": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/RuntimeInput"
-              }
-            },
-            "kind": {
-              "type": "string",
-              "const": "user_message"
-            }
-          },
-          "required": [
-            "kind",
-            "input"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "agent_message"
-            }
-          },
-          "required": [
-            "kind",
-            "text"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "arguments": true,
-            "kind": {
-              "type": "string",
-              "const": "tool_call"
-            }
-          },
-          "required": [
-            "kind",
-            "name",
-            "arguments"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "output": true,
-            "kind": {
-              "type": "string",
-              "const": "tool_result"
-            }
-          },
-          "required": [
-            "kind",
-            "name",
-            "output"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "checkpoint_id": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "system_context_change"
-            }
-          },
-          "required": [
-            "kind",
-            "checkpoint_id"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "checkpoint_id": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "context_compaction"
-            }
-          },
-          "required": [
-            "kind",
-            "checkpoint_id"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "reasoning"
-            }
-          },
-          "required": [
-            "kind",
-            "text"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "steps": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "kind": {
-              "type": "string",
-              "const": "plan"
-            }
-          },
-          "required": [
-            "kind",
-            "steps"
           ]
         }
       ]

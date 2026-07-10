@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-use crate::{EventSequence, RuntimeCommandKind, RuntimeOperationId, RuntimeRevision};
+use crate::{
+    ContextRevision, EventSequence, RuntimeCommandKind, RuntimeOperationId, RuntimeRevision,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +34,8 @@ pub enum RuntimeExecuteError {
         existing_operation_id: RuntimeOperationId,
         conflict: OperationConflictKind,
     },
+    #[error("context compaction operation {operation_id} is already active")]
+    ContextCompactionInProgress { operation_id: RuntimeOperationId },
     #[error("command is invalid: {reason}")]
     InvalidCommand { reason: String },
     #[error("runtime binding is incompatible: {reason}")]
@@ -50,8 +54,27 @@ pub enum RuntimeSnapshotError {
         requested: RuntimeRevision,
         current: RuntimeRevision,
     },
+    #[error(
+        "context revision {requested:?} is unavailable; current context revision is {current:?}"
+    )]
+    ContextRevisionUnavailable {
+        requested: ContextRevision,
+        current: ContextRevision,
+    },
+    #[error("context snapshot is inconsistent: {code:?}")]
+    InconsistentContext {
+        code: ContextSnapshotConsistencyCode,
+    },
     #[error("snapshot is unavailable: {reason}")]
     Unavailable { reason: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSnapshotConsistencyCode {
+    ProjectionHeadRevisionMismatch,
+    HeadCheckpointMissing,
+    HeadCheckpointMismatch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS, Error)]

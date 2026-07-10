@@ -6,17 +6,27 @@ export type CommandAvailability = { "status": "available" } | { "status": "unava
 
 export type ConfigurationBoundary = "static_service" | "binding" | "thread_start" | "turn_start" | "hot_replace";
 
+export type ContextActivationId = string;
+
 export type ContextCandidateId = string;
 
 export type ContextCapability = "read" | "export" | "import" | "prepare_compaction" | "activate_checkpoint";
 
 export type ContextCheckpointId = string;
 
+export type ContextCompactionId = string;
+
+export type ContextCompactionTrigger = "manual" | "automatic";
+
+export type ContextDigest = string;
+
 export type ContextFidelity = "opaque" | "event_projected" | "agent_replay" | "driver_exact" | "platform_exact";
 
 export type ContextProfile = { capabilities: Array<ContextCapability>, fidelity: ContextFidelity, activation_idempotent: boolean, };
 
 export type ContextRevision = bigint;
+
+export type ContextSnapshotConsistencyCode = "projection_head_revision_mismatch" | "head_checkpoint_missing" | "head_checkpoint_mismatch";
 
 export type DeliveryMechanism = "native" | "host_adapted_exact" | "host_adapted_boundary" | "observed" | "prompt_only";
 
@@ -29,6 +39,8 @@ export type DriverBinding = { driver_binding_id: DriverBindingId, source_thread_
 export type DriverBindingId = string;
 
 export type DriverCommandEnvelope = { request_id: DriverRequestId, binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId, command: RuntimeCommand, };
+
+export type DriverContextRevision = string;
 
 export type DriverDescribeRequest = { service_instance_id: RuntimeServiceInstanceId, };
 
@@ -102,7 +114,7 @@ export type RuntimeActor = { "user": { subject: string, } } | { "agent": { name:
 
 export type RuntimeBindingId = string;
 
-export type RuntimeCommand = { "kind": "thread_start", input: Array<RuntimeInput>, surface_digest: SurfaceDigest, } | { "kind": "thread_resume", thread_id: RuntimeThreadId, } | { "kind": "thread_fork", thread_id: RuntimeThreadId, checkpoint_id: ContextCheckpointId | null, } | { "kind": "thread_settings_update", thread_id: RuntimeThreadId, instructions: Array<string>, } | { "kind": "turn_start", thread_id: RuntimeThreadId, input: Array<RuntimeInput>, } | { "kind": "turn_steer", thread_id: RuntimeThreadId, expected_turn_id: RuntimeTurnId, input: Array<RuntimeInput>, } | { "kind": "turn_interrupt", thread_id: RuntimeThreadId, expected_turn_id: RuntimeTurnId, } | { "kind": "interaction_respond", thread_id: RuntimeThreadId, interaction_id: RuntimeInteractionId, response: InteractionResponse, } | { "kind": "context_compact", thread_id: RuntimeThreadId, base_checkpoint_id: ContextCheckpointId, } | { "kind": "tool_set_replace", thread_id: RuntimeThreadId, expected_tool_set_revision: ToolSetRevision, tool_set_digest: string, };
+export type RuntimeCommand = { "kind": "thread_start", input: Array<RuntimeInput>, surface_digest: SurfaceDigest, } | { "kind": "thread_resume", thread_id: RuntimeThreadId, } | { "kind": "thread_fork", thread_id: RuntimeThreadId, checkpoint_id: ContextCheckpointId | null, } | { "kind": "thread_settings_update", thread_id: RuntimeThreadId, instructions: Array<string>, } | { "kind": "turn_start", thread_id: RuntimeThreadId, input: Array<RuntimeInput>, } | { "kind": "turn_steer", thread_id: RuntimeThreadId, expected_turn_id: RuntimeTurnId, input: Array<RuntimeInput>, } | { "kind": "turn_interrupt", thread_id: RuntimeThreadId, expected_turn_id: RuntimeTurnId, } | { "kind": "interaction_respond", thread_id: RuntimeThreadId, interaction_id: RuntimeInteractionId, response: InteractionResponse, } | { "kind": "context_compact", thread_id: RuntimeThreadId, compaction_id: ContextCompactionId, trigger: ContextCompactionTrigger, base_checkpoint_id: ContextCheckpointId | null, expected_context_revision: ContextRevision, } | { "kind": "tool_set_replace", thread_id: RuntimeThreadId, expected_tool_set_revision: ToolSetRevision, tool_set_digest: string, };
 
 export type RuntimeCommandEnvelope = { meta: OperationMeta, command: RuntimeCommand, };
 
@@ -112,13 +124,13 @@ export type RuntimeDescriptor = { protocol_revision: number, service_instance_id
 
 export type RuntimeDriverGeneration = bigint;
 
-export type RuntimeEvent = { "kind": "operation_accepted", operation_id: RuntimeOperationId, } | { "kind": "operation_terminal", operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, } | { "kind": "binding_established", binding_id: RuntimeBindingId, } | { "kind": "binding_lost", binding_id: RuntimeBindingId, reason: string, } | { "kind": "protocol_violation", code: RuntimeProtocolViolationCode, message: string, critical: boolean, } | { "kind": "thread_status_changed", status: RuntimeThreadStatus, } | { "kind": "turn_started", turn_id: RuntimeTurnId, } | { "kind": "turn_terminal", turn_id: RuntimeTurnId, terminal: RuntimeTurnTerminal, message: string | null, } | { "kind": "item_started", turn_id: RuntimeTurnId, item_id: RuntimeItemId, } | { "kind": "item_delta", turn_id: RuntimeTurnId, item_id: RuntimeItemId, delta: string, } | { "kind": "item_terminal", turn_id: RuntimeTurnId, item_id: RuntimeItemId, terminal: RuntimeItemTerminal, } | { "kind": "interaction_requested", turn_id: RuntimeTurnId, item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId, interaction_kind: RuntimeInteractionKind, prompt: string, } | { "kind": "interaction_terminal", turn_id: RuntimeTurnId, interaction_id: RuntimeInteractionId, terminal: RuntimeInteractionTerminal, } | { "kind": "context_checkpoint_prepared", checkpoint_id: ContextCheckpointId, } | { "kind": "context_checkpoint_activated", checkpoint_id: ContextCheckpointId, };
+export type RuntimeEvent = { "kind": "operation_accepted", operation_id: RuntimeOperationId, } | { "kind": "operation_terminal", operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, } | { "kind": "binding_established", binding_id: RuntimeBindingId, } | { "kind": "binding_lost", binding_id: RuntimeBindingId, reason: string, } | { "kind": "protocol_violation", code: RuntimeProtocolViolationCode, message: string, critical: boolean, } | { "kind": "thread_status_changed", status: RuntimeThreadStatus, } | { "kind": "turn_started", turn_id: RuntimeTurnId, } | { "kind": "turn_terminal", turn_id: RuntimeTurnId, terminal: RuntimeTurnTerminal, message: string | null, } | { "kind": "item_started", turn_id: RuntimeTurnId, item_id: RuntimeItemId, } | { "kind": "item_delta", turn_id: RuntimeTurnId, item_id: RuntimeItemId, delta: string, } | { "kind": "item_terminal", turn_id: RuntimeTurnId, item_id: RuntimeItemId, terminal: RuntimeItemTerminal, } | { "kind": "interaction_requested", turn_id: RuntimeTurnId, item_id: RuntimeItemId | null, interaction_id: RuntimeInteractionId, interaction_kind: RuntimeInteractionKind, prompt: string, } | { "kind": "interaction_terminal", turn_id: RuntimeTurnId, interaction_id: RuntimeInteractionId, terminal: RuntimeInteractionTerminal, } | { "kind": "context_checkpoint_prepared", checkpoint_id: ContextCheckpointId, candidate_id: ContextCandidateId, compaction_id: ContextCompactionId, } | { "kind": "context_activation_applied", activation_id: ContextActivationId, candidate_id: ContextCandidateId, digest: ContextDigest, driver_context_revision: DriverContextRevision, } | { "kind": "context_compaction_terminal", compaction_id: ContextCompactionId, operation_id: RuntimeOperationId, terminal: RuntimeOperationTerminal, context_revision: ContextRevision, } | { "kind": "context_checkpoint_activated", checkpoint_id: ContextCheckpointId, candidate_id: ContextCandidateId, activation_id: ContextActivationId, compaction_id: ContextCompactionId, context_revision: ContextRevision, digest: ContextDigest, } | { "kind": "driver_context_compacted_opaque" };
 
 export type RuntimeEventEnvelope = { thread_id: RuntimeThreadId, sequence: EventSequence | null, revision: RuntimeRevision, event: RuntimeEvent, };
 
 export type RuntimeEventSubscription = { thread_id: RuntimeThreadId, after: EventSequence | null, include_transient: boolean, };
 
-export type RuntimeExecuteError = { "kind": "unsupported", command: RuntimeCommandKind, reason: string, } | { "kind": "unavailable", reason: string, retryable: boolean, } | { "kind": "revision_conflict", expected: RuntimeRevision, actual: RuntimeRevision, } | { "kind": "operation_conflict", existing_operation_id: RuntimeOperationId, conflict: OperationConflictKind, } | { "kind": "invalid_command", reason: string, } | { "kind": "incompatible", reason: string, } | { "kind": "persistence", reason: string, retryable: boolean, };
+export type RuntimeExecuteError = { "kind": "unsupported", command: RuntimeCommandKind, reason: string, } | { "kind": "unavailable", reason: string, retryable: boolean, } | { "kind": "revision_conflict", expected: RuntimeRevision, actual: RuntimeRevision, } | { "kind": "operation_conflict", existing_operation_id: RuntimeOperationId, conflict: OperationConflictKind, } | { "kind": "context_compaction_in_progress", operation_id: RuntimeOperationId, } | { "kind": "invalid_command", reason: string, } | { "kind": "incompatible", reason: string, } | { "kind": "persistence", reason: string, retryable: boolean, };
 
 export type RuntimeExecuteResult = { "status": "ok", "value": OperationReceipt } | { "status": "error", "value": RuntimeExecuteError };
 
@@ -142,17 +154,17 @@ export type RuntimeOperationTerminal = { "kind": "succeeded" } | { "kind": "fail
 
 export type RuntimeProfile = { reference_class: ReferenceRuntimeClass, input: InputProfile, instruction: InstructionProfile, tools: ToolProfile, workspace: WorkspaceProfile, interactions: InteractionProfile, lifecycle: Array<LifecycleCapability>, hooks: HookProfile, context: ContextProfile, telemetry_config: Array<TelemetryCapability>, };
 
-export type RuntimeProtocolViolationCode = "driver_operation_acceptance" | "invalid_lifecycle_transition" | "duplicate_terminal";
+export type RuntimeProtocolViolationCode = "driver_operation_acceptance" | "driver_runtime_owned_context_event" | "invalid_lifecycle_transition" | "duplicate_terminal";
 
 export type RuntimeRevision = bigint;
 
 export type RuntimeServiceInstanceId = string;
 
-export type RuntimeSnapshot = { thread_id: RuntimeThreadId, revision: RuntimeRevision, status: RuntimeThreadStatus, active_turn_id: RuntimeTurnId | null, binding_id: RuntimeBindingId, profile_digest: ProfileDigest, bound_profile: RuntimeProfile, active_checkpoint_id: ContextCheckpointId | null, context_revision: ContextRevision, settings_revision: ThreadSettingsRevision, tool_set_revision: ToolSetRevision, pending_interactions: Array<RuntimeInteractionId>, command_availability: { [key in RuntimeCommandKind]?: CommandAvailability }, };
+export type RuntimeSnapshot = { thread_id: RuntimeThreadId, revision: RuntimeRevision, status: RuntimeThreadStatus, active_turn_id: RuntimeTurnId | null, binding_id: RuntimeBindingId, profile_digest: ProfileDigest, bound_profile: RuntimeProfile, active_checkpoint_id: ContextCheckpointId | null, context_revision: ContextRevision, settings_revision: ThreadSettingsRevision, tool_set_revision: ToolSetRevision, pending_interactions: Array<RuntimeInteractionId>, command_availability: { [key in RuntimeCommandKind]?: CommandAvailability }, transcript: Array<RuntimeTranscriptItem>, transcript_fidelity: ContextFidelity, };
 
-export type RuntimeSnapshotError = { "kind": "not_found" } | { "kind": "revision_unavailable", requested: RuntimeRevision, current: RuntimeRevision, } | { "kind": "unavailable", reason: string, };
+export type RuntimeSnapshotError = { "kind": "not_found" } | { "kind": "revision_unavailable", requested: RuntimeRevision, current: RuntimeRevision, } | { "kind": "context_revision_unavailable", requested: ContextRevision, current: ContextRevision, } | { "kind": "inconsistent_context", code: ContextSnapshotConsistencyCode, } | { "kind": "unavailable", reason: string, };
 
-export type RuntimeSnapshotQuery = { thread_id: RuntimeThreadId, at_revision: RuntimeRevision | null, };
+export type RuntimeSnapshotQuery = { "kind": "thread", thread_id: RuntimeThreadId, at_revision: RuntimeRevision | null, } | { "kind": "context", thread_id: RuntimeThreadId, at_context_revision: ContextRevision | null, };
 
 export type RuntimeSnapshotResult = { "status": "ok", "value": RuntimeSnapshot } | { "status": "error", "value": RuntimeSnapshotError };
 
@@ -162,7 +174,9 @@ export type RuntimeSubscribeResult = { "status": "ok", "value": { accepted_curso
 
 export type RuntimeThreadId = string;
 
-export type RuntimeThreadStatus = "active" | "suspended" | "closed" | "lost";
+export type RuntimeThreadStatus = "active" | "suspended" | "desynchronized" | "closed" | "lost";
+
+export type RuntimeTranscriptItem = { turn_id: RuntimeTurnId, item_id: RuntimeItemId, final_content: RuntimeItemContent, };
 
 export type RuntimeTurnId = string;
 

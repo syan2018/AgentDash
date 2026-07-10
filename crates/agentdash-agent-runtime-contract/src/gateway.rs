@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::{
     OperationReceipt, RuntimeCommandEnvelope, RuntimeEventEnvelope, RuntimeEventSubscription,
-    RuntimeExecuteError, RuntimeSnapshot, RuntimeSnapshotError, RuntimeSnapshotQuery,
+    RuntimeExecuteError, RuntimeSnapshotError, RuntimeSnapshotQuery, RuntimeSnapshotResult,
     RuntimeSubscribeError,
 };
 
@@ -21,7 +21,7 @@ pub trait AgentRuntimeGateway: Send + Sync {
     async fn snapshot(
         &self,
         query: RuntimeSnapshotQuery,
-    ) -> Result<RuntimeSnapshot, RuntimeSnapshotError>;
+    ) -> Result<RuntimeSnapshotResult, RuntimeSnapshotError>;
 
     async fn events(
         &self,

@@ -121,6 +121,23 @@ fn driver(event: RuntimeEvent) -> DriverEventEnvelope {
     }
 }
 
+async fn thread_snapshot(
+    runtime: &ManagedAgentRuntime<InMemoryRuntimeStore>,
+    thread_id: RuntimeThreadId,
+) -> RuntimeSnapshot {
+    match runtime
+        .snapshot(RuntimeSnapshotQuery::Thread {
+            thread_id,
+            at_revision: None,
+        })
+        .await
+        .expect("snapshot")
+    {
+        RuntimeSnapshotResult::Thread { snapshot } => *snapshot,
+        RuntimeSnapshotResult::Context { .. } => panic!("expected thread snapshot"),
+    }
+}
+
 #[tokio::test]
 async fn acceptance_projection_journal_and_outbox_commit_atomically() {
     let (store, runtime) = fixture();
@@ -447,13 +464,8 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
     ));
     assert_eq!(store.quarantined().await.len(), 1);
     assert!(
-        runtime
-            .snapshot(RuntimeSnapshotQuery {
-                thread_id,
-                at_revision: None,
-            })
+        thread_snapshot(&runtime, thread_id)
             .await
-            .expect("snapshot")
             .active_turn_id
             .is_none()
     );
@@ -500,6 +512,43 @@ async fn stale_generation_is_quarantined_without_advancing_cursor() {
             .len(),
         before
     );
+}
+
+#[tokio::test]
+async fn driver_cannot_emit_runtime_owned_context_transitions() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    runtime
+        .ingest_driver_event(driver(RuntimeEvent::ContextCheckpointActivated {
+            checkpoint_id: id("forged-checkpoint"),
+            candidate_id: id("forged-candidate"),
+            activation_id: id("forged-activation"),
+            compaction_id: id("forged-compaction"),
+            context_revision: ContextRevision(1),
+            digest: id("forged-digest"),
+        }))
+        .await
+        .expect("protocol violation persisted");
+    let projection = store
+        .load_thread(&thread_id)
+        .await
+        .expect("thread")
+        .expect("state");
+    assert_eq!(projection.status, RuntimeThreadStatus::Lost);
+    assert!(projection.active_checkpoint_id.is_none());
+    assert!(matches!(
+        store.quarantined().await.as_slice(),
+        [agentdash_agent_runtime::QuarantinedDriverEvent {
+            reason:
+                agentdash_agent_runtime::DriverEventQuarantineReason::DriverRuntimeOwnedContextEvent,
+            ..
+        }]
+    ));
 }
 
 #[tokio::test]
@@ -655,13 +704,8 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
         DriverEventAdmission::Durable { .. }
     ));
     assert!(
-        runtime
-            .snapshot(RuntimeSnapshotQuery {
-                thread_id,
-                at_revision: None,
-            })
+        thread_snapshot(&runtime, thread_id)
             .await
-            .expect("snapshot")
             .pending_interactions
             .is_empty()
     );
@@ -685,14 +729,7 @@ async fn critical_protocol_violation_moves_thread_to_lost() {
         .await
         .expect("violation persisted");
     assert_eq!(
-        runtime
-            .snapshot(RuntimeSnapshotQuery {
-                thread_id,
-                at_revision: None,
-            })
-            .await
-            .expect("snapshot")
-            .status,
+        thread_snapshot(&runtime, thread_id).await.status,
         RuntimeThreadStatus::Lost
     );
 }
@@ -839,13 +876,7 @@ async fn malformed_lifecycle_is_typed_quarantined_and_persists_critical_loss() {
             ..
         }
     )));
-    let snapshot = runtime
-        .snapshot(RuntimeSnapshotQuery {
-            thread_id,
-            at_revision: None,
-        })
-        .await
-        .expect("snapshot");
+    let snapshot = thread_snapshot(&runtime, thread_id).await;
     assert_eq!(snapshot.status, RuntimeThreadStatus::Lost);
     assert!(snapshot.active_turn_id.is_none());
 }

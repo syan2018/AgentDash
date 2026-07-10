@@ -5,7 +5,10 @@ use agentdash_agent_runtime_contract::{
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::{RuntimeOperationRecord, RuntimeThreadState};
+use crate::{
+    ActiveContextHead, ContextActivation, ContextCandidate, ContextCheckpoint, ContextHeadWrite,
+    ContextPreparationWorkItem, RuntimeOperationRecord, RuntimeThreadState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeOutboxEntry {
@@ -16,6 +19,18 @@ pub struct RuntimeOutboxEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextActivationOutboxEntry {
+    pub activation_id: agentdash_agent_runtime_contract::ContextActivationId,
+    pub candidate_id: agentdash_agent_runtime_contract::ContextCandidateId,
+    pub compaction_id: agentdash_agent_runtime_contract::ContextCompactionId,
+    pub thread_id: RuntimeThreadId,
+    pub binding_id: RuntimeBindingId,
+    pub generation: RuntimeDriverGeneration,
+    pub checkpoint_id: agentdash_agent_runtime_contract::ContextCheckpointId,
+    pub digest: agentdash_agent_runtime_contract::ContextDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriverEventQuarantineReason {
     CanonicalThreadNotFound,
     StaleBinding {
@@ -23,6 +38,7 @@ pub enum DriverEventQuarantineReason {
         expected_generation: RuntimeDriverGeneration,
     },
     DriverOperationAcceptance,
+    DriverRuntimeOwnedContextEvent,
     InvalidTransition {
         error: crate::TransitionError,
     },
@@ -58,7 +74,41 @@ pub struct RuntimeCommit {
     )>,
     pub events: Vec<RuntimeEventEnvelope>,
     pub outbox: Vec<RuntimeOutboxEntry>,
+    pub context_activation_outbox: Vec<ContextActivationOutboxEntry>,
+    pub context_preparation_work_items: Vec<ContextPreparationWorkItem>,
+    pub context_checkpoints: Vec<ContextCheckpoint>,
+    pub context_candidates: Vec<ContextCandidate>,
+    pub context_activations: Vec<ContextActivation>,
+    pub context_head: Option<ContextHeadWrite>,
     pub quarantine: Vec<QuarantinedDriverEvent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ContextStoreInvariant {
+    #[error("immutable checkpoint identity changed")]
+    CheckpointIdentity,
+    #[error("checkpoint revision was reused within a thread")]
+    CheckpointRevisionReused,
+    #[error("immutable candidate identity changed")]
+    CandidateIdentity,
+    #[error("candidate id was reused by another compaction")]
+    CandidateIdReused,
+    #[error("candidate coordinates do not match checkpoint or preparation work")]
+    CandidateCoordinates,
+    #[error("immutable activation identity changed")]
+    ActivationIdentity,
+    #[error("activation coordinates do not match its candidate")]
+    ActivationCoordinates,
+    #[error("activation status transition is invalid")]
+    ActivationTransition,
+    #[error("immutable preparation work identity changed")]
+    PreparationIdentity,
+    #[error("preparation work status transition is invalid")]
+    PreparationTransition,
+    #[error("activation dispatch identity changed")]
+    ActivationDispatchIdentity,
+    #[error("context head does not match its immutable checkpoint")]
+    HeadCheckpointMismatch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -70,6 +120,15 @@ pub enum RuntimeStoreError {
         expected: Option<RuntimeRevision>,
         actual: Option<RuntimeRevision>,
     },
+    #[error("active context head changed during commit")]
+    ContextHeadConflict {
+        expected: Option<agentdash_agent_runtime_contract::ContextRevision>,
+        actual: Option<agentdash_agent_runtime_contract::ContextRevision>,
+    },
+    #[error("context store invariant failed: {violation}")]
+    ContextInvariant { violation: ContextStoreInvariant },
+    #[error("context compaction operation {operation_id} is already active")]
+    ContextCompactionConflict { operation_id: RuntimeOperationId },
     #[error("operation id {operation_id} already exists")]
     OperationConflict { operation_id: RuntimeOperationId },
     #[error("idempotency key is already accepted by operation {operation_id}")]
@@ -108,6 +167,43 @@ pub trait RuntimeRepository: Send + Sync {
         thread_id: &RuntimeThreadId,
         after: Option<EventSequence>,
     ) -> Result<RuntimeEventBatch, RuntimeStoreError>;
+
+    async fn load_context_head(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<Option<ActiveContextHead>, RuntimeStoreError>;
+
+    async fn load_context_checkpoint(
+        &self,
+        checkpoint_id: &agentdash_agent_runtime_contract::ContextCheckpointId,
+    ) -> Result<Option<ContextCheckpoint>, RuntimeStoreError>;
+
+    async fn load_context_candidate(
+        &self,
+        compaction_id: &agentdash_agent_runtime_contract::ContextCompactionId,
+    ) -> Result<Option<ContextCandidate>, RuntimeStoreError>;
+
+    async fn load_context_activation(
+        &self,
+        activation_id: &agentdash_agent_runtime_contract::ContextActivationId,
+    ) -> Result<Option<ContextActivation>, RuntimeStoreError>;
+
+    async fn load_context_preparation(
+        &self,
+        compaction_id: &agentdash_agent_runtime_contract::ContextCompactionId,
+    ) -> Result<Option<ContextPreparationWorkItem>, RuntimeStoreError>;
+
+    async fn pending_context_preparations(
+        &self,
+    ) -> Result<Vec<ContextPreparationWorkItem>, RuntimeStoreError>;
+
+    async fn pending_context_activations(
+        &self,
+    ) -> Result<Vec<ContextActivationOutboxEntry>, RuntimeStoreError>;
+
+    async fn recoverable_context_activations(
+        &self,
+    ) -> Result<Vec<ContextActivation>, RuntimeStoreError>;
 }
 
 /// Atomic unit-of-work boundary for journal + projection + operation + outbox.

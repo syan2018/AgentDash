@@ -1,12 +1,12 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeGateway, DriverEventEnvelope, EventSequence, OperationConflictKind,
-    OperationSequence, ProfileDigest, RuntimeBindingId, RuntimeCommand, RuntimeCommandEnvelope,
-    RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope, RuntimeEventStream,
-    RuntimeExecuteError, RuntimeInteractionTerminal, RuntimeProfile, RuntimeProtocolViolationCode,
-    RuntimeRevision, RuntimeSnapshot, RuntimeSnapshotError, RuntimeSnapshotQuery,
-    RuntimeSubscribeError, RuntimeThreadId, RuntimeThreadStatus,
+    AgentRuntimeGateway, ContextRevision, DriverEventEnvelope, EventSequence,
+    OperationConflictKind, OperationSequence, ProfileDigest, RuntimeBindingId, RuntimeCommand,
+    RuntimeCommandEnvelope, RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope,
+    RuntimeEventStream, RuntimeExecuteError, RuntimeInteractionTerminal, RuntimeProfile,
+    RuntimeProtocolViolationCode, RuntimeRevision, RuntimeSnapshotError, RuntimeSnapshotQuery,
+    RuntimeSnapshotResult, RuntimeSubscribeError, RuntimeThreadId, RuntimeThreadStatus,
 };
 use async_trait::async_trait;
 
@@ -33,6 +33,10 @@ pub struct ManagedAgentRuntime<S> {
 impl<S> ManagedAgentRuntime<S> {
     pub fn new(store: Arc<S>, defaults: RuntimeKernelDefaults) -> Self {
         Self { store, defaults }
+    }
+
+    pub(crate) fn store(&self) -> &S {
+        &self.store
     }
 }
 
@@ -84,6 +88,23 @@ where
                 )
                 .await;
         }
+        if matches!(
+            source.event,
+            RuntimeEvent::ContextCheckpointPrepared { .. }
+                | RuntimeEvent::ContextActivationApplied { .. }
+                | RuntimeEvent::ContextCompactionTerminal { .. }
+                | RuntimeEvent::ContextCheckpointActivated { .. }
+        ) {
+            return self
+                .persist_protocol_violation(
+                    state,
+                    source,
+                    DriverEventQuarantineReason::DriverRuntimeOwnedContextEvent,
+                    RuntimeProtocolViolationCode::DriverRuntimeOwnedContextEvent,
+                    "driver attempted to emit a runtime-owned context transition".to_string(),
+                )
+                .await;
+        }
 
         if source.event.is_transient() {
             if let Err(error) = state.apply_authoritative(&source.event) {
@@ -125,6 +146,12 @@ where
                 operation_terminals,
                 events,
                 outbox: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
                 quarantine: Vec::new(),
             })
             .await
@@ -193,6 +220,12 @@ where
                 operation_terminals,
                 events,
                 outbox: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
                 quarantine: vec![QuarantinedDriverEvent {
                     event: source,
                     reason: quarantine_reason,
@@ -291,6 +324,16 @@ where
             });
         }
         validate_command(&state, &envelope.command)?;
+        if let RuntimeCommand::ContextCompact {
+            base_checkpoint_id,
+            expected_context_revision,
+            ..
+        } = &envelope.command
+            && (state.active_checkpoint_id.as_ref() != base_checkpoint_id.as_ref()
+                || state.context_revision != *expected_context_revision)
+        {
+            return invalid("active context head changed before compaction admission");
+        }
 
         state.next_operation_sequence.0 += 1;
         let operation_sequence = state.next_operation_sequence;
@@ -322,11 +365,33 @@ where
             terminal: None,
         };
         let receipt = record.receipt(false);
-        let outbox = RuntimeOutboxEntry {
-            operation_id: record.operation_id.clone(),
-            thread_id: state.thread_id.clone(),
-            generation: state.driver_generation,
-            command: envelope.command,
+        let context_preparation_work_items = match &record.command {
+            RuntimeCommand::ContextCompact {
+                thread_id,
+                compaction_id,
+                trigger,
+                base_checkpoint_id,
+                expected_context_revision,
+            } => vec![crate::ContextPreparationWorkItem {
+                compaction_id: compaction_id.clone(),
+                operation_id: record.operation_id.clone(),
+                thread_id: thread_id.clone(),
+                trigger: *trigger,
+                expected_base_checkpoint_id: base_checkpoint_id.clone(),
+                expected_base_revision: *expected_context_revision,
+                status: crate::ContextPreparationStatus::Pending,
+            }],
+            _ => Vec::new(),
+        };
+        let outbox = if matches!(envelope.command, RuntimeCommand::ContextCompact { .. }) {
+            Vec::new()
+        } else {
+            vec![RuntimeOutboxEntry {
+                operation_id: record.operation_id.clone(),
+                thread_id: state.thread_id.clone(),
+                generation: state.driver_generation,
+                command: envelope.command,
+            }]
         };
         self.store
             .commit(RuntimeCommit {
@@ -335,7 +400,13 @@ where
                 operation: Some(record),
                 operation_terminals: Vec::new(),
                 events,
-                outbox: vec![outbox],
+                outbox,
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items,
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
                 quarantine: Vec::new(),
             })
             .await
@@ -346,16 +417,26 @@ where
     async fn snapshot(
         &self,
         query: RuntimeSnapshotQuery,
-    ) -> Result<RuntimeSnapshot, RuntimeSnapshotError> {
+    ) -> Result<RuntimeSnapshotResult, RuntimeSnapshotError> {
+        let (thread_id, at_revision, at_context_revision, context_query) = match query {
+            RuntimeSnapshotQuery::Thread {
+                thread_id,
+                at_revision,
+            } => (thread_id, at_revision, None, false),
+            RuntimeSnapshotQuery::Context {
+                thread_id,
+                at_context_revision,
+            } => (thread_id, None, at_context_revision, true),
+        };
         let state = self
             .store
-            .load_thread(&query.thread_id)
+            .load_thread(&thread_id)
             .await
             .map_err(|error| RuntimeSnapshotError::Unavailable {
                 reason: error.to_string(),
             })?
             .ok_or(RuntimeSnapshotError::NotFound)?;
-        if let Some(requested) = query.at_revision
+        if let Some(requested) = at_revision
             && requested != state.revision
         {
             return Err(RuntimeSnapshotError::RevisionUnavailable {
@@ -363,7 +444,44 @@ where
                 current: state.revision,
             });
         }
-        Ok(state.snapshot())
+        if context_query {
+            if let Some(requested) = at_context_revision
+                && requested != state.context_revision
+            {
+                return Err(RuntimeSnapshotError::ContextRevisionUnavailable {
+                    requested,
+                    current: state.context_revision,
+                });
+            }
+            let context = self
+                .context_view(&thread_id)
+                .await
+                .map_err(|error| match error {
+                    crate::ContextRuntimeError::InconsistentStore(code) => {
+                        RuntimeSnapshotError::InconsistentContext { code }
+                    }
+                    other => RuntimeSnapshotError::Unavailable {
+                        reason: other.to_string(),
+                    },
+                })?;
+            if context
+                .head
+                .as_ref()
+                .map_or(ContextRevision(0), |head| head.revision)
+                != state.context_revision
+            {
+                return Err(RuntimeSnapshotError::InconsistentContext {
+                    code: agentdash_agent_runtime_contract::ContextSnapshotConsistencyCode::ProjectionHeadRevisionMismatch,
+                });
+            }
+            Ok(RuntimeSnapshotResult::Context {
+                context: Box::new(context),
+            })
+        } else {
+            Ok(RuntimeSnapshotResult::Thread {
+                snapshot: Box::new(state.snapshot()),
+            })
+        }
     }
 
     async fn events(
@@ -436,6 +554,7 @@ impl<S> ManagedAgentRuntime<S> {
             operations: Default::default(),
             turns: Default::default(),
             items: Default::default(),
+            item_order: Vec::new(),
             interactions: Default::default(),
         }
     }
@@ -584,6 +703,9 @@ fn store_execute_error(error: RuntimeStoreError) -> RuntimeExecuteError {
                 existing_operation_id: operation_id,
                 conflict: OperationConflictKind::IdempotencyKeyReused,
             }
+        }
+        RuntimeStoreError::ContextCompactionConflict { operation_id } => {
+            RuntimeExecuteError::ContextCompactionInProgress { operation_id }
         }
         other => RuntimeExecuteError::Persistence {
             reason: other.to_string(),

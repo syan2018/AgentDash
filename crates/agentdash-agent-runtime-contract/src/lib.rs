@@ -4,6 +4,7 @@
 
 pub mod availability;
 pub mod command;
+pub mod context;
 pub mod driver;
 pub mod error;
 pub mod event;
@@ -14,6 +15,7 @@ pub mod snapshot;
 
 pub use availability::*;
 pub use command::*;
+pub use context::*;
 pub use driver::*;
 pub use error::*;
 pub use event::*;
@@ -37,6 +39,7 @@ pub struct RuntimeContractSchema {
     pub event: RuntimeEventEnvelope,
     pub event_subscription: RuntimeEventSubscription,
     pub snapshot: RuntimeSnapshot,
+    pub snapshot_result: RuntimeSnapshotResult,
     pub snapshot_error: RuntimeSnapshotError,
     pub subscribe_error: RuntimeSubscribeError,
     pub availability_state: AvailabilityState,

@@ -7,3 +7,4 @@
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/design-option-minimal-interface.md","reason":"durable operation journal与compaction saga设计依据"}
 {"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"迁移HookRun、ContextFrame、mailbox effect与failure semantics"}
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/hook-runtime-layering.md","reason":"实现Host-owned triggers与durable Hook orchestration"}
+{"file":".trellis/spec/backend/agent-runtime-context.md","reason":"实现Context fidelity、checkpoint/head与managed compaction recovery合同"}

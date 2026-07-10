@@ -22,6 +22,21 @@ struct MemoryState {
     idempotency: BTreeMap<(RuntimeThreadId, IdempotencyKey), RuntimeOperationId>,
     events: BTreeMap<RuntimeThreadId, Vec<RuntimeEventEnvelope>>,
     outbox: Vec<crate::RuntimeOutboxEntry>,
+    context_activation_outbox: BTreeMap<
+        agentdash_agent_runtime_contract::ContextActivationId,
+        crate::ContextActivationOutboxEntry,
+    >,
+    context_preparation_work_items: BTreeMap<
+        agentdash_agent_runtime_contract::ContextCompactionId,
+        crate::ContextPreparationWorkItem,
+    >,
+    context_checkpoints:
+        BTreeMap<agentdash_agent_runtime_contract::ContextCheckpointId, crate::ContextCheckpoint>,
+    context_candidates:
+        BTreeMap<agentdash_agent_runtime_contract::ContextCompactionId, crate::ContextCandidate>,
+    context_activations:
+        BTreeMap<agentdash_agent_runtime_contract::ContextActivationId, crate::ContextActivation>,
+    context_heads: BTreeMap<RuntimeThreadId, crate::ActiveContextHead>,
     quarantine: Vec<QuarantinedDriverEvent>,
     transient: BTreeMap<RuntimeThreadId, Vec<RuntimeEventEnvelope>>,
 }
@@ -41,6 +56,7 @@ pub enum CommitFailurePoint {
     AfterOperation = 3,
     AfterEvents = 4,
     AfterOutbox = 5,
+    AfterContext = 6,
 }
 
 impl InMemoryRuntimeStore {
@@ -59,6 +75,16 @@ impl InMemoryRuntimeStore {
 
     pub async fn quarantined(&self) -> Vec<QuarantinedDriverEvent> {
         self.state.lock().await.quarantine.clone()
+    }
+
+    pub async fn context_activation_outbox(&self) -> Vec<crate::ContextActivationOutboxEntry> {
+        self.state
+            .lock()
+            .await
+            .context_activation_outbox
+            .values()
+            .cloned()
+            .collect()
     }
 
     pub async fn discard_events_through(
@@ -167,6 +193,123 @@ impl RuntimeRepository for InMemoryRuntimeStore {
                 .collect(),
         })
     }
+
+    async fn load_context_head(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> Result<Option<crate::ActiveContextHead>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .context_heads
+            .get(thread_id)
+            .cloned())
+    }
+
+    async fn load_context_checkpoint(
+        &self,
+        checkpoint_id: &agentdash_agent_runtime_contract::ContextCheckpointId,
+    ) -> Result<Option<crate::ContextCheckpoint>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .context_checkpoints
+            .get(checkpoint_id)
+            .cloned())
+    }
+
+    async fn load_context_candidate(
+        &self,
+        compaction_id: &agentdash_agent_runtime_contract::ContextCompactionId,
+    ) -> Result<Option<crate::ContextCandidate>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .context_candidates
+            .get(compaction_id)
+            .cloned())
+    }
+
+    async fn load_context_activation(
+        &self,
+        activation_id: &agentdash_agent_runtime_contract::ContextActivationId,
+    ) -> Result<Option<crate::ContextActivation>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .context_activations
+            .get(activation_id)
+            .cloned())
+    }
+
+    async fn load_context_preparation(
+        &self,
+        compaction_id: &agentdash_agent_runtime_contract::ContextCompactionId,
+    ) -> Result<Option<crate::ContextPreparationWorkItem>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .context_preparation_work_items
+            .get(compaction_id)
+            .cloned())
+    }
+
+    async fn pending_context_preparations(
+        &self,
+    ) -> Result<Vec<crate::ContextPreparationWorkItem>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .context_preparation_work_items
+            .values()
+            .filter(|work| matches!(work.status, crate::ContextPreparationStatus::Pending))
+            .cloned()
+            .collect())
+    }
+
+    async fn pending_context_activations(
+        &self,
+    ) -> Result<Vec<crate::ContextActivationOutboxEntry>, RuntimeStoreError> {
+        let state = self.state.lock().await;
+        Ok(state
+            .context_activation_outbox
+            .values()
+            .filter(|entry| {
+                state
+                    .context_activations
+                    .get(&entry.activation_id)
+                    .is_some_and(|activation| {
+                        matches!(activation.status, crate::ContextActivationStatus::Prepared)
+                    })
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn recoverable_context_activations(
+        &self,
+    ) -> Result<Vec<crate::ContextActivation>, RuntimeStoreError> {
+        Ok(self
+            .state
+            .lock()
+            .await
+            .context_activations
+            .values()
+            .filter(|activation| {
+                !matches!(
+                    activation.status,
+                    crate::ContextActivationStatus::Terminal { .. }
+                )
+            })
+            .cloned()
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -174,6 +317,7 @@ impl RuntimeUnitOfWork for InMemoryRuntimeStore {
     async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError> {
         self.inject_failure(CommitFailurePoint::BeforeWrite)?;
         let mut state = self.state.lock().await;
+        let commit_thread_id = commit.projection.thread_id.clone();
         let current = state
             .threads
             .get(&commit.projection.thread_id)
@@ -256,6 +400,261 @@ impl RuntimeUnitOfWork for InMemoryRuntimeStore {
         }
         self.inject_failure(CommitFailurePoint::AfterEvents)?;
         staged.outbox.extend(commit.outbox);
+        for entry in commit.context_activation_outbox {
+            if let Some(existing) = staged.context_activation_outbox.get(&entry.activation_id)
+                && existing != &entry
+            {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::ActivationDispatchIdentity,
+                });
+            }
+            staged
+                .context_activation_outbox
+                .insert(entry.activation_id.clone(), entry);
+        }
+        for work_item in commit.context_preparation_work_items {
+            if let Some(active) = staged
+                .context_preparation_work_items
+                .values()
+                .find(|existing| {
+                    existing.thread_id == work_item.thread_id
+                        && existing.compaction_id != work_item.compaction_id
+                        && preparation_is_active(existing, &staged.context_activations)
+                })
+            {
+                return Err(RuntimeStoreError::ContextCompactionConflict {
+                    operation_id: active.operation_id.clone(),
+                });
+            }
+            if let Some(existing) = staged
+                .context_preparation_work_items
+                .get(&work_item.compaction_id)
+            {
+                if existing.operation_id != work_item.operation_id
+                    || existing.thread_id != work_item.thread_id
+                    || existing.trigger != work_item.trigger
+                    || existing.expected_base_checkpoint_id != work_item.expected_base_checkpoint_id
+                    || existing.expected_base_revision != work_item.expected_base_revision
+                {
+                    return Err(RuntimeStoreError::ContextInvariant {
+                        violation: crate::ContextStoreInvariant::PreparationIdentity,
+                    });
+                }
+                let legal = matches!(
+                    (&existing.status, &work_item.status),
+                    (
+                        crate::ContextPreparationStatus::Pending,
+                        crate::ContextPreparationStatus::Prepared { .. }
+                    ) | (
+                        crate::ContextPreparationStatus::Prepared { .. },
+                        crate::ContextPreparationStatus::Terminal { .. }
+                    )
+                ) || existing.status == work_item.status;
+                if !legal {
+                    return Err(RuntimeStoreError::ContextInvariant {
+                        violation: crate::ContextStoreInvariant::PreparationTransition,
+                    });
+                }
+            } else if !matches!(work_item.status, crate::ContextPreparationStatus::Pending) {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::PreparationTransition,
+                });
+            }
+            staged
+                .context_preparation_work_items
+                .insert(work_item.compaction_id.clone(), work_item);
+        }
+        for checkpoint in commit.context_checkpoints {
+            if staged.context_checkpoints.values().any(|existing| {
+                existing.thread_id == checkpoint.thread_id
+                    && existing.revision == checkpoint.revision
+                    && existing.checkpoint_id != checkpoint.checkpoint_id
+            }) {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::CheckpointRevisionReused,
+                });
+            }
+            if let Some(existing) = staged.context_checkpoints.get(&checkpoint.checkpoint_id)
+                && existing != &checkpoint
+            {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::CheckpointIdentity,
+                });
+            }
+            staged
+                .context_checkpoints
+                .insert(checkpoint.checkpoint_id.clone(), checkpoint);
+        }
+        for candidate in commit.context_candidates {
+            if staged.context_candidates.values().any(|existing| {
+                existing.candidate_id == candidate.candidate_id
+                    && existing.compaction_id != candidate.compaction_id
+            }) {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::CandidateIdReused,
+                });
+            }
+            let candidate_coordinates_match = candidate.checkpoint.thread_id == candidate.thread_id
+                && candidate.checkpoint.revision
+                    == agentdash_agent_runtime_contract::ContextRevision(
+                        candidate.expected_base_revision.0 + 1,
+                    )
+                && staged
+                    .context_checkpoints
+                    .get(&candidate.checkpoint.checkpoint_id)
+                    == Some(&candidate.checkpoint)
+                && staged
+                    .context_preparation_work_items
+                    .get(&candidate.compaction_id)
+                    .is_some_and(|work| {
+                        work.operation_id == candidate.operation_id
+                            && work.thread_id == candidate.thread_id
+                            && work.trigger == candidate.trigger
+                            && work.expected_base_checkpoint_id
+                                == candidate.expected_base_checkpoint_id
+                            && work.expected_base_revision == candidate.expected_base_revision
+                            && matches!(
+                                &work.status,
+                                crate::ContextPreparationStatus::Prepared {
+                                    candidate_id,
+                                    activation_id,
+                                } if candidate_id == &candidate.candidate_id
+                                    && activation_id == &candidate.activation_id
+                            )
+                    });
+            if !candidate_coordinates_match {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::CandidateCoordinates,
+                });
+            }
+            if let Some(existing) = staged.context_candidates.get(&candidate.compaction_id)
+                && existing != &candidate
+            {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::CandidateIdentity,
+                });
+            }
+            staged
+                .context_candidates
+                .insert(candidate.compaction_id.clone(), candidate);
+        }
+        for activation in commit.context_activations {
+            let activation_coordinates_match = staged
+                .context_candidates
+                .get(&activation.compaction_id)
+                .is_some_and(|candidate| {
+                    candidate.activation_id == activation.activation_id
+                        && candidate.candidate_id == activation.candidate_id
+                        && candidate.thread_id == activation.thread_id
+                });
+            if !activation_coordinates_match {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::ActivationCoordinates,
+                });
+            }
+            if let Some(existing) = staged.context_activations.get(&activation.activation_id) {
+                let mut expected = existing.clone();
+                expected.status = activation.status.clone();
+                if expected != activation {
+                    return Err(RuntimeStoreError::ContextInvariant {
+                        violation: crate::ContextStoreInvariant::ActivationIdentity,
+                    });
+                }
+                if !valid_activation_transition(&existing.status, &activation.status) {
+                    return Err(RuntimeStoreError::ContextInvariant {
+                        violation: crate::ContextStoreInvariant::ActivationTransition,
+                    });
+                }
+            } else if !matches!(activation.status, crate::ContextActivationStatus::Prepared) {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::ActivationTransition,
+                });
+            }
+            staged
+                .context_activations
+                .insert(activation.activation_id.clone(), activation);
+        }
+        for dispatch in staged.context_activation_outbox.values() {
+            let coordinates_match = staged
+                .context_candidates
+                .get(&dispatch.compaction_id)
+                .is_some_and(|candidate| {
+                    candidate.activation_id == dispatch.activation_id
+                        && candidate.candidate_id == dispatch.candidate_id
+                        && candidate.thread_id == dispatch.thread_id
+                        && candidate.checkpoint.checkpoint_id == dispatch.checkpoint_id
+                        && candidate.checkpoint.materialized.digest == dispatch.digest
+                });
+            if !coordinates_match {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::ActivationDispatchIdentity,
+                });
+            }
+        }
+        if let Some(write) = commit.context_head {
+            let actual = staged
+                .context_heads
+                .get(&write.head.thread_id)
+                .map(|head| head.revision);
+            if actual != write.expected_revision {
+                return Err(RuntimeStoreError::ContextHeadConflict {
+                    expected: write.expected_revision,
+                    actual,
+                });
+            }
+            let checkpoint = staged
+                .context_checkpoints
+                .get(&write.head.checkpoint_id)
+                .ok_or(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::HeadCheckpointMismatch,
+                })?;
+            if checkpoint.thread_id != write.head.thread_id
+                || checkpoint.revision != write.head.revision
+                || checkpoint.materialized.digest != write.head.digest
+                || checkpoint.materialized.recipe.provenance != write.head.provenance
+                || checkpoint.materialized.fidelity != write.head.fidelity
+            {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::HeadCheckpointMismatch,
+                });
+            }
+            let expected_next_revision = write
+                .expected_revision
+                .map_or(1, |revision| revision.0.saturating_add(1));
+            if write.head.revision.0 != expected_next_revision
+                || staged
+                    .threads
+                    .get(&write.head.thread_id)
+                    .is_none_or(|thread| {
+                        thread.active_checkpoint_id.as_ref() != Some(&write.head.checkpoint_id)
+                            || thread.context_revision != write.head.revision
+                    })
+            {
+                return Err(RuntimeStoreError::ContextInvariant {
+                    violation: crate::ContextStoreInvariant::HeadCheckpointMismatch,
+                });
+            }
+            staged
+                .context_heads
+                .insert(write.head.thread_id.clone(), write.head);
+        }
+        let projection = staged
+            .threads
+            .get(&commit_thread_id)
+            .expect("projection was staged above");
+        let durable_head = staged.context_heads.get(&commit_thread_id);
+        if projection.active_checkpoint_id.as_ref() != durable_head.map(|head| &head.checkpoint_id)
+            || projection.context_revision
+                != durable_head.map_or(
+                    agentdash_agent_runtime_contract::ContextRevision(0),
+                    |head| head.revision,
+                )
+        {
+            return Err(RuntimeStoreError::ContextInvariant {
+                violation: crate::ContextStoreInvariant::HeadCheckpointMismatch,
+            });
+        }
+        self.inject_failure(CommitFailurePoint::AfterContext)?;
         staged.quarantine.extend(commit.quarantine);
         self.inject_failure(CommitFailurePoint::AfterOutbox)?;
         *state = staged;
@@ -288,5 +687,60 @@ impl RuntimeTransientEvents for InMemoryRuntimeStore {
             .get(thread_id)
             .cloned()
             .unwrap_or_default()
+    }
+}
+
+fn valid_activation_transition(
+    current: &crate::ContextActivationStatus,
+    next: &crate::ContextActivationStatus,
+) -> bool {
+    use crate::ContextActivationStatus::{Applied, Prepared, Terminal};
+
+    if current == next {
+        return true;
+    }
+    match (current, next) {
+        (Prepared, Applied { .. }) => true,
+        (
+            Prepared,
+            Terminal {
+                terminal: crate::CompactionTerminal::Lost { .. },
+                applied: None,
+            },
+        ) => true,
+        (
+            Applied {
+                digest,
+                driver_context_revision,
+            },
+            Terminal {
+                applied: Some(applied),
+                ..
+            },
+        ) => {
+            applied.digest == *digest && applied.driver_context_revision == *driver_context_revision
+        }
+        _ => false,
+    }
+}
+
+fn preparation_is_active(
+    work: &crate::ContextPreparationWorkItem,
+    activations: &BTreeMap<
+        agentdash_agent_runtime_contract::ContextActivationId,
+        crate::ContextActivation,
+    >,
+) -> bool {
+    match &work.status {
+        crate::ContextPreparationStatus::Pending => true,
+        crate::ContextPreparationStatus::Prepared { activation_id, .. } => {
+            activations.get(activation_id).is_none_or(|activation| {
+                !matches!(
+                    activation.status,
+                    crate::ContextActivationStatus::Terminal { .. }
+                )
+            })
+        }
+        crate::ContextPreparationStatus::Terminal { .. } => false,
     }
 }

@@ -76,6 +76,9 @@ runtime_id!(RuntimeServiceInstanceId);
 runtime_id!(ContextCheckpointId);
 runtime_id!(ContextCandidateId);
 runtime_id!(ContextCompactionId);
+runtime_id!(ContextActivationId);
+runtime_id!(ContextDigest);
+runtime_id!(DriverContextRevision);
 runtime_id!(DriverThreadId);
 runtime_id!(DriverTurnId);
 runtime_id!(DriverItemId);
@@ -111,6 +114,7 @@ macro_rules! revision {
 revision!(RuntimeRevision);
 revision!(RuntimeDriverGeneration);
 revision!(ContextRevision);
+revision!(ContextRecipeRevision);
 revision!(ThreadSettingsRevision);
 revision!(ToolSetRevision);
 revision!(SurfaceRevision);

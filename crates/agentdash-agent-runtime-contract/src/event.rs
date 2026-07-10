@@ -3,8 +3,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ContextCheckpointId, EventSequence, RuntimeBindingId, RuntimeInteractionId, RuntimeItemId,
-    RuntimeOperationId, RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
+    ContextActivationId, ContextCandidateId, ContextCheckpointId, ContextCompactionId,
+    ContextDigest, ContextRevision, DriverContextRevision, EventSequence, RuntimeBindingId,
+    RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimeRevision, RuntimeThreadId,
+    RuntimeTurnId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -12,6 +14,7 @@ use crate::{
 pub enum RuntimeThreadStatus {
     Active,
     Suspended,
+    Desynchronized,
     Closed,
     Lost,
 }
@@ -54,6 +57,7 @@ pub enum RuntimeItemTerminal {
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeProtocolViolationCode {
     DriverOperationAcceptance,
+    DriverRuntimeOwnedContextEvent,
     InvalidLifecycleTransition,
     DuplicateTerminal,
 }
@@ -173,10 +177,30 @@ pub enum RuntimeEvent {
     },
     ContextCheckpointPrepared {
         checkpoint_id: ContextCheckpointId,
+        candidate_id: ContextCandidateId,
+        compaction_id: ContextCompactionId,
+    },
+    ContextActivationApplied {
+        activation_id: ContextActivationId,
+        candidate_id: ContextCandidateId,
+        digest: ContextDigest,
+        driver_context_revision: DriverContextRevision,
+    },
+    ContextCompactionTerminal {
+        compaction_id: ContextCompactionId,
+        operation_id: RuntimeOperationId,
+        terminal: RuntimeOperationTerminal,
+        context_revision: ContextRevision,
     },
     ContextCheckpointActivated {
         checkpoint_id: ContextCheckpointId,
+        candidate_id: ContextCandidateId,
+        activation_id: ContextActivationId,
+        compaction_id: ContextCompactionId,
+        context_revision: ContextRevision,
+        digest: ContextDigest,
     },
+    DriverContextCompactedOpaque,
 }
 
 impl RuntimeEvent {

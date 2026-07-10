@@ -76,6 +76,7 @@ pub struct RuntimeThreadState {
     pub operations: BTreeMap<RuntimeOperationId, EntityPhase<RuntimeOperationTerminal>>,
     pub turns: BTreeMap<RuntimeTurnId, RuntimeTurnState>,
     pub items: BTreeMap<RuntimeItemId, RuntimeItemState>,
+    pub item_order: Vec<RuntimeItemId>,
     pub interactions: BTreeMap<RuntimeInteractionId, RuntimeInteractionState>,
 }
 
@@ -130,6 +131,12 @@ pub enum TransitionError {
     #[error("interaction {interaction_id} already reached terminal")]
     DuplicateInteractionTerminal {
         interaction_id: RuntimeInteractionId,
+    },
+    #[error("context revision must advance from {current:?} to {expected:?}, got {actual:?}")]
+    ContextRevisionMismatch {
+        current: ContextRevision,
+        expected: ContextRevision,
+        actual: ContextRevision,
     },
     #[error("binding event references {actual_binding_id}, expected {expected_binding_id}")]
     BindingMismatch {
@@ -240,6 +247,7 @@ impl RuntimeThreadState {
                         phase: EntityPhase::Active,
                     },
                 );
+                self.item_order.push(item_id.clone());
             }
             RuntimeEvent::ItemDelta {
                 turn_id, item_id, ..
@@ -311,9 +319,21 @@ impl RuntimeThreadState {
                 }
                 state.phase = EntityPhase::Terminal(*terminal);
             }
-            RuntimeEvent::ContextCheckpointActivated { checkpoint_id } => {
+            RuntimeEvent::ContextCheckpointActivated {
+                checkpoint_id,
+                context_revision,
+                ..
+            } => {
+                let expected = ContextRevision(self.context_revision.0.saturating_add(1));
+                if *context_revision != expected {
+                    return Err(TransitionError::ContextRevisionMismatch {
+                        current: self.context_revision,
+                        expected,
+                        actual: *context_revision,
+                    });
+                }
                 self.active_checkpoint_id = Some(checkpoint_id.clone());
-                self.context_revision.0 += 1;
+                self.context_revision = *context_revision;
             }
             RuntimeEvent::BindingLost { binding_id, .. } => {
                 self.require_binding(binding_id)?;
@@ -326,7 +346,10 @@ impl RuntimeThreadState {
             RuntimeEvent::ProtocolViolation {
                 critical: false, ..
             }
-            | RuntimeEvent::ContextCheckpointPrepared { .. } => {}
+            | RuntimeEvent::ContextCheckpointPrepared { .. }
+            | RuntimeEvent::ContextActivationApplied { .. }
+            | RuntimeEvent::ContextCompactionTerminal { .. }
+            | RuntimeEvent::DriverContextCompactedOpaque => {}
         }
         Ok(())
     }
@@ -496,6 +519,35 @@ impl RuntimeThreadState {
             tool_set_revision: self.tool_set_revision,
             pending_interactions,
             command_availability,
+            transcript: self
+                .item_order
+                .iter()
+                .filter_map(|item_id| {
+                    let state = self.items.get(item_id)?;
+                    match &state.phase {
+                        EntityPhase::Terminal(
+                            agentdash_agent_runtime_contract::RuntimeItemTerminal::Completed {
+                                final_content,
+                            },
+                        ) => Some(agentdash_agent_runtime_contract::RuntimeTranscriptItem {
+                            turn_id: state.turn_id.clone(),
+                            item_id: item_id.clone(),
+                            final_content: final_content.clone(),
+                        }),
+                        EntityPhase::Active
+                        | EntityPhase::Terminal(
+                            agentdash_agent_runtime_contract::RuntimeItemTerminal::Failed {
+                                ..
+                            }
+                            | agentdash_agent_runtime_contract::RuntimeItemTerminal::Cancelled {
+                                ..
+                            }
+                            | agentdash_agent_runtime_contract::RuntimeItemTerminal::Lost { .. },
+                        ) => None,
+                    }
+                })
+                .collect(),
+            transcript_fidelity: agentdash_agent_runtime_contract::ContextFidelity::EventProjected,
         }
     }
 }

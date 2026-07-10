@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ContextCheckpointId, IdempotencyKey, RuntimeInteractionId, RuntimeOperationId, RuntimeRevision,
-    RuntimeThreadId, RuntimeTurnId, SurfaceDigest, ToolSetRevision,
+    ContextCheckpointId, ContextCompactionId, ContextCompactionTrigger, IdempotencyKey,
+    RuntimeInteractionId, RuntimeOperationId, RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
+    SurfaceDigest, ToolSetRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -109,7 +110,10 @@ pub enum RuntimeCommand {
     },
     ContextCompact {
         thread_id: RuntimeThreadId,
-        base_checkpoint_id: ContextCheckpointId,
+        compaction_id: ContextCompactionId,
+        trigger: ContextCompactionTrigger,
+        base_checkpoint_id: Option<ContextCheckpointId>,
+        expected_context_revision: crate::ContextRevision,
     },
     ToolSetReplace {
         thread_id: RuntimeThreadId,
@@ -153,10 +157,16 @@ pub struct OperationReceipt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct RuntimeSnapshotQuery {
-    pub thread_id: RuntimeThreadId,
-    pub at_revision: Option<RuntimeRevision>,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeSnapshotQuery {
+    Thread {
+        thread_id: RuntimeThreadId,
+        at_revision: Option<RuntimeRevision>,
+    },
+    Context {
+        thread_id: RuntimeThreadId,
+        at_context_revision: Option<crate::ContextRevision>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

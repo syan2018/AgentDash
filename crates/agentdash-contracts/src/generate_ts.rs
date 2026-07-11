@@ -206,14 +206,15 @@ use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
     AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
-    AgentRunCurrentFrameView, AgentRunProductShellView, AgentRunProductView, AgentRunRefDto,
-    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
-    AgentRunRuntimeCommandRequest, AgentRunView, AgentRunWorkspaceControlPlaneStatus,
-    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
-    AgentRunWorkspaceShell, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
-    CapabilityScopeDto, ContinueLifecycleRunResponse, ConversationCommandKind,
-    ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
-    ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
+    AgentRunCurrentFrameView, AgentRunListChildView, AgentRunListEntryView,
+    AgentRunListRuntimeSummaryView, AgentRunListRuntimeThreadStatus, AgentRunProductShellView,
+    AgentRunProductView, AgentRunRefDto, AgentRunResourceSurfaceCoordinateView,
+    AgentRunResourceSurfaceSourceAnchorView, AgentRunRuntimeCommandRequest, AgentRunView,
+    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceShell,
+    CapabilityCatalogEntryDto, CapabilityCatalogResponse, CapabilityScopeDto,
+    ContinueLifecycleRunResponse, ConversationCommandKind, ConversationCommandPlacement,
+    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
+    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
     ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
     ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
     ConversationModelConfigView, ConversationWaitingItemView, DefinitionSource,
@@ -223,8 +224,8 @@ use agentdash_contracts::workflow::{
     LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
     OrchestrationExecutorDrainResultDto, OrchestrationInstanceView, PlatformMcpScopeDto,
     PreflightWorkflowScriptRequest, PreflightWorkflowScriptResponse, ProjectActiveAgentsView,
-    RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionRefDto, RuntimeSessionTraceView,
-    SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
+    ProjectAgentRunListView, RegisterHookPresetResponse, RuntimeNodeView, RuntimeSessionRefDto,
+    RuntimeSessionTraceView, SubjectExecutionView, SubjectRefDto, SubjectRuntimeAttemptView,
     SubmitOrchestrationHumanDecisionRequest, SubmitOrchestrationHumanDecisionResponse,
     ToolClusterDto, ToolDescriptorDto, ToolSourceDto, ValidateHookScriptResponse, ValidationIssue,
     WorkflowGraphResponse, WorkflowHookTrigger, WorkflowScriptApiEndpointDto,
@@ -832,8 +833,11 @@ fn main() {
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
-            export_all::<AgentRunWorkspaceListEntry>(dir);
-            export_all::<AgentRunWorkspaceListView>(dir);
+            export_all::<AgentRunListRuntimeSummaryView>(dir);
+            export_all::<AgentRunListRuntimeThreadStatus>(dir);
+            export_all::<AgentRunListChildView>(dir);
+            export_all::<AgentRunListEntryView>(dir);
+            export_all::<ProjectAgentRunListView>(dir);
             export_all::<DefinitionSource>(dir);
             export_all::<WorkflowTargetKind>(dir);
             export_all::<CapabilityScopeDto>(dir);

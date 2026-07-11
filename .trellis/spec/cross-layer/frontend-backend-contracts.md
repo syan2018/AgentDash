@@ -39,6 +39,7 @@ agentdash-agent-runtime-wire
 ```text
 GET  /agents/discovery
 GET  /agents/discovered-options/stream?executor={PI_AGENT|CODEX}
+GET  /projects/{project_id}/agent-runs?limit={limit}&cursor={cursor}
 POST /projects/{project_id}/agents/{project_agent_id}/agent-runs
 POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
 POST /agent-runs/{run_id}/agents/{agent_id}/cancel
@@ -94,6 +95,8 @@ AgentRunCommandReceipt {
 - `RuntimeGateway::events(RuntimeEventSubscription)` 当前返回有限 replay batch，不是保持连接的 live subscription。轮询消费者必须使用 `include_transient=false`，只按 `EventSequence` 恢复 durable event；无 cursor 的 transient history 不能在批次重连中消费，否则同一 delta 会被重复应用。真正的 token streaming 必须先提供 live broadcast 或稳定 transient identity/sequence，再由 generated contract显式表达。
 - 所有直接使用 `fetch` 的NDJSON客户端必须通过 `buildApiPath(agentRunScopedPath(...))` 构造URL；`resolveApiUrl`只拼origin，不会注入`/api`。
 - AgentRun cutover必须维护route ledger：每个前端service方法都要对应仍注册的HTTP route、application owner、generated contract与至少一个contract test。删除router入口时，必须在同一变更中迁移消费者或删除service/contract；文件级替换router不代表cutover完成。
+- Project AgentRun列表使用generated `ProjectAgentRunListView` / `AgentRunListEntryView` / `AgentRunListChildView`。列表Runtime摘要只包含展示需要的`thread_status`与可选`active_turn_id`；Lifecycle状态决定无活跃turn或closed thread的产品展示，但不能参与命令admission。
+- 列表不复用`AgentRunWorkspaceShell`或手写`delivery_status`。title/activity/subject来自Lifecycle产品事实，children来自canonical `AgentLineage`，Runtime状态来自Managed Runtime inspect；这些来源在application query内组合，前端只做纯presentation映射。
 - AgentRun product projection组合Lifecycle/AgentFrame/Managed Runtime当前事实。某一projection加载失败不能通过`Promise.all`清空其他已经成功的canonical Runtime inspect；错误状态按owner独立呈现。
 - Runtime context、compaction、interaction 与 tool approval 均通过 facade/canonical operation；不存在独立 session command、protocol turn ID 或 vendor DTO 路径。
 - Mailbox 只持久化 queued product intent 与 `accepted_runtime_operation_id`。没有 canonical command 的管理动作不进入 UI，也不保留死 endpoint。
@@ -120,6 +123,9 @@ AgentRunCommandReceipt {
 | NDJSON URL 未经过 `buildApiPath` | frontend contract test失败；不得请求缺少`/api`的同名页面路由 |
 | finite replay请求`include_transient=true`并自动重连 | 拒绝该消费者设计；改为durable cursor轮询，等待live transient contract |
 | workspace/list route在cutover中移除但service仍存在 | route ledger/contract test失败；同一变更迁移projection或删除consumer |
+| Runtime thread为`active`但没有`active_turn_id` | 列表显示idle/ready，不伪造running |
+| Runtime thread为`suspended` | 列表显示独立paused/suspended状态；不得折叠为turn interrupted或据此生成命令权限 |
+| Runtime thread为`closed` | 使用Lifecycle终态区分completed/failed/cancelled，不恒定显示completed |
 
 ### Tests Required
 
@@ -132,6 +138,7 @@ AgentRunCommandReceipt {
 - Feed tests 覆盖 snapshot baseline、durable cursor、duplicate event、reconnect 与 typed stream error。
 - Feed URL test断言完整`/api/agent-runs/{run}/agents/{agent}/runtime/events/stream/ndjson`与`include_transient=false`；Runtime增加live transient contract前不得改回。
 - Route ledger test至少枚举AgentRun list/workspace/composer/cancel/runtime/context/events/approval的前端consumer与Axum route，防止cutover静默删入口。
+- Project列表测试覆盖service URL、generated DTO消费、status presentation与state分页/失效刷新；真实产品验证覆盖侧栏、完整列表及列表行导航。
 - Project Agent create E2E 覆盖 lifecycle facts -> ProductDelivery -> binding/thread -> operation response。
 - Create-run contract generation test断言 generated TypeScript 只暴露 `model_selection`、`runtime_options` 与 `backend_selection`，不重新引入可覆盖 executor 的请求字段。
 
@@ -161,11 +168,13 @@ AgentRunCommandReceipt {
 ## 7. Good / Base / Bad Cases
 
 - Good：Draft 创建返回 run/agent/frame 与 Runtime thread/operation；页面随后从 runtime inspect/events 渲染 transcript，并从 snapshot availability启用 interrupt。
+- Good：Project列表在无active turn时显示就绪，点击generated list entry的run/agent坐标进入同一AgentRun详情。
 - Good：首次运行前 RuntimeOffer 表为空，selector 仍从最终 Host definition inventory 展示 `PI_AGENT`/`CODEX`。
 - Base：没有 executable Provider 时 `PI_AGENT` disabled 并展示凭据诊断，`CODEX` availability 独立计算。
 - Bad：API 读取 composition 前的临时 definition registry，导致动态装配的 Native definition 在真实启动中消失。
 - Base：首条消息排队，响应只有 mailbox identity；worker dispatch 后 workspace refresh 观察 accepted operation 与新 cursor。
 - Bad：前端调用已经没有后端实现的 fork/mailbox endpoint，或根据 `execution_status=running` 自行启用 cancel。
+- Bad：把Runtime `active`直接映射为running，或把`closed`直接映射为completed，会把thread lifecycle误当成turn/产品终态。
 - Bad：有限event batch结束后自动重连并再次消费`cursor=null` transient history，导致相同delta无限追加。
 - Good：Canvas presentation 用 `canvas://{mount_id}` 打开 tab，并通过当前 AgentFrame surface刷新资源。
 - Bad：把 RuntimeWire frame转成 Backbone JSON 再由 UI 推导 Runtime terminal。
@@ -216,4 +225,16 @@ resolveApiUrl(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_
 
 // Correct：统一API前缀；有限batch只消费durable cursor
 buildApiPath(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_transient=false"));
+```
+
+```ts
+// Wrong: thread lifecycle直接伪造turn/product状态。
+const status = runtime.thread_status === "active" ? "running" : "completed";
+
+// Correct: active turn与Lifecycle终态共同形成纯展示状态；命令仍只读availability。
+const status = agentRunListPresentationStatus(
+  runtime?.thread_status,
+  runtime?.active_turn_id,
+  entry.lifecycle_status,
+);
 ```

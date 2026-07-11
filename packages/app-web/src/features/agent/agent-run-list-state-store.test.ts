@@ -5,7 +5,7 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 
 import type { ProjectEventStreamEnvelope } from "../../generated/project-contracts";
 import { fetchProjectAgentRuns } from "../../services/lifecycle";
-import type { AgentRunWorkspaceListEntry, AgentRunWorkspaceListView } from "../../types";
+import type { AgentRunListEntryView, ProjectAgentRunListView } from "../../types";
 import {
   invalidateAgentRunListStateForProjectEvent,
   useAgentRunListStateStore,
@@ -36,18 +36,13 @@ function agentRunEntry(
   agentId: string,
   title: string,
   lastActivityAt: string,
-): AgentRunWorkspaceListEntry {
+): AgentRunListEntryView {
   return {
     run_ref: { run_id: runId },
     agent_ref: { run_id: runId, agent_id: agentId },
-    project_id: "project-1",
-    shell: {
-      display_title: title,
-      title_source: "runtime_session",
-      delivery_status: "idle",
-      last_activity_at: lastActivityAt,
-    },
-    run_status: "ready",
+    title,
+    lifecycle_status: "active",
+    last_activity_at: lastActivityAt,
     project_agent_label: title,
     source: "project_agent",
     subagent_count: 0,
@@ -55,7 +50,7 @@ function agentRunEntry(
   };
 }
 
-function listView(entries: AgentRunWorkspaceListEntry[], nextCursor?: string): AgentRunWorkspaceListView {
+function listView(entries: AgentRunListEntryView[], nextCursor?: string): ProjectAgentRunListView {
   return {
     project_id: "project-1",
     agent_runs: entries,
@@ -177,8 +172,8 @@ describe("agent-run list state store", () => {
   it("first-page refresh in-flight 时收到 AgentRunList invalidation 会串行补一次刷新", async () => {
     const stale = agentRunEntry("run-stale", "agent-stale", "旧快照", "2026-06-25T01:00:00Z");
     const fresh = agentRunEntry("run-fresh", "agent-fresh", "新快照", "2026-06-25T02:00:00Z");
-    const firstRefresh = deferred<AgentRunWorkspaceListView>();
-    const secondRefresh = deferred<AgentRunWorkspaceListView>();
+    const firstRefresh = deferred<ProjectAgentRunListView>();
+    const secondRefresh = deferred<ProjectAgentRunListView>();
     mockedFetchProjectAgentRuns
       .mockReturnValueOnce(firstRefresh.promise)
       .mockReturnValueOnce(secondRefresh.promise);
@@ -212,7 +207,7 @@ describe("agent-run list state store", () => {
 
   it("first-page refresh 失败时不会因 dirty generation 无限重试，下一次失效可恢复", async () => {
     const fresh = agentRunEntry("run-fresh", "agent-fresh", "恢复快照", "2026-06-25T02:00:00Z");
-    const firstRefresh = deferred<AgentRunWorkspaceListView>();
+    const firstRefresh = deferred<ProjectAgentRunListView>();
     mockedFetchProjectAgentRuns
       .mockReturnValueOnce(firstRefresh.promise)
       .mockResolvedValueOnce(listView([fresh]));
@@ -313,10 +308,10 @@ describe("agent-run list state store", () => {
     expect(source).toContain("refreshProjectAgentRuns(projectId, \"agent_run_deleted\")");
     expect(source).toContain("useMatch(\"/agent-runs/:runId/:agentId\")");
     expect(source).toContain("navigate(\"/dashboard/agent\")");
-    expect(source).toContain("onRequestDelete: (entry: AgentRunWorkspaceListEntry) => void");
+    expect(source).toContain("onRequestDelete: (entry: AgentRunListEntryView) => void");
     expect(source).toContain("event.target !== event.currentTarget");
     expect(source).not.toContain("expectedValue={deleteTarget");
     expect(source).not.toContain("onInputValueChange");
-    expect(source).not.toContain("onRequestDelete: (child: AgentRunListChild) => void");
+    expect(source).not.toContain("onRequestDelete: (child: AgentRunListChildView) => void");
   });
 });

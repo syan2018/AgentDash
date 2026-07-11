@@ -1413,58 +1413,63 @@ pub struct AgentRunRuntimeCommandRequest {
     pub client_command_id: String,
 }
 
-/// AgentRun 列表内联的直接子 Agent 节点（一跳），携带真实 shell 状态，免前端懒加载。
-///
-/// 与 run 级 `AgentRunWorkspaceListEntry` 区分：子节点不持有 run_status / subject 等 run 级字段，
-/// 仅承载渲染一行子 Agent 所需信息 + 自身子树规模（供「N sub」深层提示）。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunListChild {
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    /// 面向用户的身份标识：绑定 Project Agent 的显示名（preset.display_name || name）。
-    /// 未绑定 project agent（动态 companion 等）时为 None。
+pub struct AgentRunListRuntimeSummaryView {
+    pub thread_status: AgentRunListRuntimeThreadStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub project_agent_label: Option<String>,
-    /// Agent 创建/启动来源（标准化枚举 slug）。
-    #[serde(default)]
-    pub source: String,
-    /// 含 display_title / delivery_status / last_activity_at 等执行态。
-    pub shell: AgentRunWorkspaceShell,
-    /// 该子自身子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开开关。
-    #[serde(default)]
-    pub subagent_count: u32,
-    /// 递归内联的下一层直接子 Agent，支持列表内任意深度展开（深度上限兜底）。
-    #[serde(default)]
-    pub children: Vec<AgentRunListChild>,
+    pub active_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunListRuntimeThreadStatus {
+    Active,
+    Suspended,
+    Desynchronized,
+    Closed,
+    Lost,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunWorkspaceListEntry {
+pub struct AgentRunListChildView {
     pub run_ref: LifecycleRunRefDto,
     pub agent_ref: AgentRunRefDto,
-    pub project_id: String,
-    pub shell: AgentRunWorkspaceShell,
-    pub run_status: LifecycleRunStatus,
-    /// 面向用户的身份标识：绑定 Project Agent 的显示名（preset.display_name || name）。
-    /// 未绑定 project agent 时为 None。
+    pub title: String,
+    pub lifecycle_status: String,
+    pub last_activity_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub project_agent_label: Option<String>,
-    /// Agent 创建/启动来源（标准化枚举 slug），供列表行展示来源标签。
-    #[serde(default)]
     pub source: String,
-    /// 该主 Run 子树（传递闭包）下的 subagent 总数，0 表示无子。
-    #[serde(default)]
-    pub subagent_count: u32,
-    /// 该主 Run 的直接子 Agent（一跳），已内联 shell 状态，前端免懒加载。
-    #[serde(default)]
-    pub children: Vec<AgentRunListChild>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub frame_ref: Option<AgentFrameRefDto>,
+    pub runtime: Option<AgentRunListRuntimeSummaryView>,
+    #[serde(default)]
+    pub children: Vec<AgentRunListChildView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunListEntryView {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub title: String,
+    pub lifecycle_status: String,
+    pub last_activity_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub project_agent_label: Option<String>,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime: Option<AgentRunListRuntimeSummaryView>,
+    #[serde(default)]
+    pub subagent_count: u32,
+    #[serde(default)]
+    pub children: Vec<AgentRunListChildView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub subject_ref: Option<SubjectRefDto>,
@@ -1475,10 +1480,9 @@ pub struct AgentRunWorkspaceListEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunWorkspaceListView {
+pub struct ProjectAgentRunListView {
     pub project_id: String,
-    pub agent_runs: Vec<AgentRunWorkspaceListEntry>,
-    /// 下一页游标（keyset，不透明）；None 表示已到尾页。
+    pub agent_runs: Vec<AgentRunListEntryView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub next_cursor: Option<String>,

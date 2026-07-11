@@ -16,6 +16,7 @@ import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { InlineBackendSelector, type InlineBackendOption } from "../features/session/ui/composer";
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
 import { agentSourceLabel } from "../lib/agent-source";
+import { agentRunListPresentationStatus } from "../features/agent/agent-run-delivery-status";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
 import { AgentRuntimeCapabilitySummary } from "../features/agent-run-workspace/ui/AgentRuntimeCapabilitySummary";
 import {
@@ -43,8 +44,8 @@ import type {
   BackendConfig,
   RuntimeTraceAgentContext,
   SessionNavigationState,
-  AgentRunListChild,
-  AgentRunWorkspaceListEntry,
+  AgentRunListChildView,
+  AgentRunListEntryView,
   SubjectRunContext,
   ProjectAgentSummary,
   ProjectAgentRunStartResult,
@@ -75,7 +76,7 @@ function backendDisplayLabel(backend: BackendConfig): string {
 }
 
 function collectCompanionSubagentRefs(
-  entries: AgentRunWorkspaceListEntry[],
+  entries: AgentRunListEntryView[],
   currentRunId: string | null,
 ): CompanionSubagentKnownAgentRef[] {
   const refs: CompanionSubagentKnownAgentRef[] = [];
@@ -90,14 +91,18 @@ function collectCompanionSubagentRefs(
 
 function appendCompanionSubagentRef(
   refs: CompanionSubagentKnownAgentRef[],
-  child: AgentRunListChild,
+  child: AgentRunListChildView,
 ): void {
   refs.push({
     run_id: child.run_ref.run_id,
     agent_id: child.agent_ref.agent_id,
-    display_title: child.shell.display_title,
-    delivery_status: child.shell.delivery_status,
-    last_activity_at: child.shell.last_activity_at,
+    display_title: child.title,
+    delivery_status: agentRunListPresentationStatus(
+      child.runtime?.thread_status,
+      child.runtime?.active_turn_id,
+      child.lifecycle_status,
+    ),
+    last_activity_at: child.last_activity_at,
   });
   for (const nested of child.children) {
     appendCompanionSubagentRef(refs, nested);

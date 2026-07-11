@@ -123,7 +123,7 @@
 - [ ] ARD-006 Native/Codex Hook requirements、failure policy、workspace profile 与实际 execution site 一致，新建和复用 offer 共用同一 Surface admission。
 - [x] ARD-006 通过真实 `pnpm dev` Draft create-run 验证 Runtime binding越过 Hook/offer 求交。
 - [x] ARD-008 event stream使用统一 `/api` builder，durable replay不重复追加。
-- [ ] ARD-008 恢复基于当前架构事实的 AgentRun list/workspace product projection，并完成 route-consumer inventory。
+- [x] ARD-008 恢复基于当前架构事实的 AgentRun list/workspace product projection，并完成 route-consumer inventory。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -142,7 +142,7 @@
 | ARD-005 | verified | blocker | canonical descriptor 已解析 `mounts_list`；真实 Draft越过 tool surface并完成回复 |
 | ARD-006 | fixed | blocker | Native action/failure/workspace与新建offer admission已验证；Codex需由真实HookPlan route消除固定`RequestApproval`要求 |
 | ARD-007 | reported | minor | dev server重启期间瞬时 `useContext` null；刷新消失，暂无稳定复现与 stack |
-| ARD-008 | diagnosed | blocker | event与workspace detail已修复并真实验证；Project AgentRun list route仍缺失 |
+| ARD-008 | fixed | blocker | event、workspace detail与Project list已真实验证；delete/detail lineage/mailbox/journal/fork按route ledger继续收束 |
 
 ## Verification Record
 
@@ -160,5 +160,7 @@
 - ARD-008 foundation新增`AgentRunProductQuery`与`AgentRunProductView`，恢复`GET /agent-runs/{run}/agents/{agent}/workspace`；产品投影与Runtime inspect使用独立settle/error state，refresh单路失败保留各owner上一份成功事实。
 - 真实Draft `3240bb88-bbf8-42eb-ba8a-1fc883685e9a` / agent `1a12a893-eed8-4e99-be9f-c0bf3defebe4` 返回`foundation-ok`；workspace投影包含resolved `gpt-5.4-mini`、current frame与default mount `main`，独立Runtime snapshot为active revision 10，浏览器无error日志。侧栏Project AgentRun list仍因缺少route显示Not Found，按route ledger留待下一切片。
 - ARD-008 foundation定向质量门通过：`AgentRunProductQuery` 3项模型投影测试、前端workspace/command/control/compaction 26项测试、app-web typecheck、相关ESLint、contracts check及application/agentrun/API `-D warnings` clippy；删除无消费者的`AgentRunWorkspaceView`与旧command precondition wire合同。
+- ARD-008 list切片新增`ProjectAgentRunListQuery`，以LifecycleRun/LifecycleAgent、ProjectAgent identity、subject association、canonical `AgentLineage` forest与Managed Runtime inspect重建`GET /projects/{project_id}/agent-runs`；新generated wire删除退役workspace shell、delivery/run/frame副本，仅保留当前列表consumer读取的产品与Runtime摘要事实。
+- 真实产品验证中，侧栏与Agent Hub均恢复6条AgentRun，最新行导航到`3240bb88-bbf8-42eb-ba8a-1fc883685e9a` / `1a12a893-eed8-4e99-be9f-c0bf3defebe4`，详情继续显示`foundation-ok`且浏览器error日志为空。route ledger同时补记仍缺owner的delete/detail lineage/mailbox/journal/fork，ARD-008保持fixed直到剩余cutover项分别完成。
 - `cargo test -p agentdash-api agent_runtime_surface::tests` 4项、`cargo test -p agentdash-integration-native-agent` 11项、runtimeEventStream 2项与app-web typecheck通过；目标三crate `--lib` clippy通过。`--all-targets`另暴露`agentdash-agent-runtime-test-support`既有`collapsible_match`，未修改该无关文件。
 - ARD-007 review确认全仓React/ReactDOM均为19.2.4且解析到同一物理文件，Vite预构建只有唯一React source，Draft相关定向ESLint通过，Canvas React 18位于隔离iframe。当前缺少稳定复现、error stack/componentStack与module URL，因此保持`reported`并阻止alias/dedupe、try/catch、强制reload或双React兼容补丁。

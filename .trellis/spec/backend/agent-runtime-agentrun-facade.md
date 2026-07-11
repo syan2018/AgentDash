@@ -2,7 +2,7 @@
 
 ## 1. Scope / Trigger
 
-本规范适用于 AgentRun 产品命令进入 Managed Agent Runtime、Runtime 状态读模型暴露给 API/UI，以及 Runtime service 的生产装配。新增 AgentRun 命令、Runtime 查询、Integration service、数据库 binding 字段或前端命令按钮时必须复核本规范。
+本规范适用于 AgentRun 产品命令进入 Managed Agent Runtime、Runtime 状态读模型暴露给 API/UI、Project AgentRun 列表/详情产品投影，以及 Runtime service 的生产装配。新增 AgentRun 命令、Runtime 查询、列表字段、Integration service、数据库 binding 字段或前端命令按钮时必须复核本规范。
 
 ## 2. Signatures
 
@@ -34,10 +34,18 @@ pub async fn AgentRunProductQuery::get(
 ) -> Result<AgentRunProductModel, ApplicationError>;
 ```
 
+```rust
+pub async fn ProjectAgentRunListQuery::list(
+    &self,
+    input: ProjectAgentRunListInput<'_>,
+) -> Result<ProjectAgentRunListPage, ApplicationError>;
+```
+
 ```text
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/events/stream/ndjson
+GET  /projects/{project_id}/agent-runs?limit={limit}&cursor={cursor}
 POST /agent-runs/{run_id}/agents/{agent_id}/runtime/{compact|cancel|steer}
 POST /agent-runs/{run_id}/agents/{agent_id}/runtime/interactions/{interaction_id}/{approve|reject}
 ```
@@ -48,6 +56,8 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 
 - Application depends on the named `AgentRunRuntime` facade and owned Runtime contract. The facade maps product coordinates and commands; it does not own Thread/Turn/Item/Interaction state.
 - AgentRun详情产品投影由具名`AgentRunProductQuery`组合Lifecycle read model、current AgentFrame/model config与VFS surface；API route只负责鉴权、runtime projection adapter和generated DTO映射，不直接编排repository。
+- Project AgentRun列表由具名`ProjectAgentRunListQuery`组合LifecycleRun/LifecycleAgent、ProjectAgent identity、subject association、canonical `AgentLineage` forest与可选Managed Runtime summary。API route只负责Project Use鉴权、分页输入和generated DTO映射。
+- 列表wire只承载当前consumer读取的title、Lifecycle status、activity time、subject、lineage children与`thread_status + active_turn_id`；不恢复旧`AgentRunWorkspaceShell.delivery_status`，不复制frame/run status，也不从列表状态生成Runtime command availability。
 - `ManagedAgentRuntime` is the only writer of canonical operation, lifecycle event, snapshot, context head and compaction state. Product receipts store the accepted Runtime operation ID without encoding it as a protocol Turn ID.
 - Production composition is built below the API boundary: Business Surface compiles product facts, Driver Host resolves an Integration `RuntimeOffer`, admission persists the bound surface and Host binding, and the facade persists the AgentRun-to-Runtime binding.
 - Agent services enter through trusted Integration contributions. Native, Codex and enterprise remote services have the same definition/instance/offer/factory/binding lifecycle; Relay contributes placement transport only.
@@ -63,6 +73,9 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 | Condition | Result |
 | --- | --- |
 | AgentRun has no durable Runtime binding | typed unavailable/not-found; no driver side effect |
+| 列表项没有Runtime binding | `runtime=None`；Lifecycle产品事实仍可列出 |
+| 列表项Runtime inspect失败 | 整个查询显式失败并携带run/agent坐标；不得静默伪装为idle |
+| lineage包含环、自环或悬空parent | 全局visited forest忽略无效边，并确保每个LifecycleAgent恰好投影一次；不得吞行、无限展开或重复制造子树 |
 | command absent from `command_availability` | typed rejected before mailbox/outbox dispatch |
 | duplicate client command | original receipt returned; no second outbox delivery |
 | Runtime accepts command but product-coordinate persistence fails | binding marked failed and canonical `BindingLost` emitted |
@@ -75,11 +88,11 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 
 ## 5. Good / Base / Bad Cases
 
-**Good:** composer input is durably accepted by the AgentRun mailbox, provisioned through a generic Runtime offer, dispatched over RuntimeWire to a Local Host, and observed through canonical snapshot/events. Compaction and interaction resolution reuse the same facade and operation journal.
+**Good:** composer input is durably accepted by the AgentRun mailbox, provisioned through a generic Runtime offer, dispatched over RuntimeWire to a Local Host, and observed through canonical snapshot/events. Compaction and interaction resolution reuse the same facade and operation journal. Project列表由application query返回最小product DTO，活跃线程只有存在`active_turn_id`时才展示为执行中。
 
 **Base:** retrying the same client command returns a duplicate receipt; reconnecting a healthy service creates a new placement generation without replaying an operation already terminalized as `Lost`.
 
-**Bad:** enabling submit/cancel from a top-level product status, branching on `Pi`/`Codex` in API composition, or injecting a terminal Backbone event into the canonical snapshot creates a second authority and is invalid.
+**Bad:** enabling submit/cancel from a top-level product status, branching on `Pi`/`Codex` in API composition, injecting a terminal Backbone event into the canonical snapshot，或复用退役workspace shell为列表制造`delivery_status`，都会创建第二事实源。
 
 ## 6. Tests Required
 
@@ -90,6 +103,7 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 - Migration tests run `0065` against a fresh PostgreSQL root and assert removed tables/columns are absent; bootstrap tests must use isolated data roots.
 - Contract generation, frontend typecheck/tests, workspace checks, Runtime crate tests and migration guard are required before completion.
 - Product query tests覆盖current Frame execution profile到`model_config`的resolved/model-required投影；前端state测试覆盖workspace/runtime两路独立失败与refresh保留。
+- Project列表测试覆盖run activity keyset cursor、canonical lineage递归/cycle/orphan下每个Agent恰好一次、无binding与Runtime summary；service/UI测试覆盖URL encoding及`thread_status + active_turn_id + lifecycle_status`展示映射。
 
 ## 7. Wrong vs Correct
 
@@ -107,6 +121,14 @@ let frame = state.repos.agent_frame_repo.get_current(agent_id).await?;
 
 // Correct: API鉴权后调用具名application query，再映射generated contract。
 let product = state.services.agent_run_product_query.get(input).await?;
+```
+
+```rust
+// Wrong: route直接拼Lifecycle、lineage和Runtime状态，或复用旧workspace list query。
+let entries = build_agent_run_list_from_repositories(&state.repos).await?;
+
+// Correct: route完成鉴权后调用具名application query。
+let page = state.services.project_agent_run_list_query.list(input).await?;
 ```
 
 ```rust

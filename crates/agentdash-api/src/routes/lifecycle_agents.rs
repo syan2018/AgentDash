@@ -8,6 +8,10 @@ use agentdash_agent_runtime_contract::{
     EventSequence, InteractionResponse, OperationReceipt, RuntimeActor, RuntimeContextView,
     RuntimeEventEnvelope, RuntimeInput, RuntimeInteractionId, RuntimeSnapshot,
 };
+use agentdash_application::agent_run_list::{
+    AgentRunListChildModel, AgentRunListEntryModel, AgentRunListRuntimeSummaryModel,
+    ProjectAgentRunListInput, ProjectAgentRunListPage,
+};
 use agentdash_application::agent_run_product::{
     AgentRunCurrentFrameModel, AgentRunProductModel, AgentRunProductQueryInput,
 };
@@ -25,10 +29,12 @@ use agentdash_application_ports::agent_run_runtime::{
 use agentdash_application_ports::agent_run_surface::AgentRunTerminalLaunchTarget;
 use agentdash_contracts::agent_run_mailbox::AgentRunComposerSubmitRequest;
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentRunCurrentFrameView, AgentRunProductShellView, AgentRunProductView,
-    AgentRunRefDto, AgentRunRuntimeCommandRequest, ConversationEffectiveExecutorConfigView,
-    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
-    LifecycleRunRefDto,
+    AgentFrameRefDto, AgentRunCurrentFrameView, AgentRunListChildView, AgentRunListEntryView,
+    AgentRunListRuntimeSummaryView, AgentRunListRuntimeThreadStatus, AgentRunProductShellView,
+    AgentRunProductView, AgentRunRefDto, AgentRunRuntimeCommandRequest,
+    ConversationEffectiveExecutorConfigView, ConversationModelConfigSource,
+    ConversationModelConfigStatus, ConversationModelConfigView, LifecycleRunRefDto,
+    ProjectAgentRunListView, SubjectRefDto,
 };
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use axum::{
@@ -63,6 +69,10 @@ struct AgentRunDeliveryRuntimeContext {
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .route(
+            "/projects/{project_id}/agent-runs",
+            axum::routing::get(get_project_agent_runs),
+        )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/composer-submit",
             axum::routing::post(submit_agent_run_composer_input),
@@ -108,6 +118,121 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/reject",
             axum::routing::post(reject_agent_run_tool_call),
         )
+}
+
+async fn get_project_agent_runs(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(project_id): Path<String>,
+    Query(query): Query<AgentRunListQuery>,
+) -> Result<Json<ProjectAgentRunListView>, ApiError> {
+    let project_id = parse_uuid(&project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let page = state
+        .services
+        .project_agent_run_list_query
+        .list(ProjectAgentRunListInput {
+            project_id,
+            limit: query.limit.map(|limit| limit as usize),
+            cursor: query.cursor.as_deref(),
+        })
+        .await?;
+    Ok(Json(project_agent_run_list_to_contract(page)))
+}
+
+fn project_agent_run_list_to_contract(page: ProjectAgentRunListPage) -> ProjectAgentRunListView {
+    ProjectAgentRunListView {
+        project_id: page.project_id.to_string(),
+        agent_runs: page
+            .entries
+            .into_iter()
+            .map(agent_run_list_entry_to_contract)
+            .collect(),
+        next_cursor: page.next_cursor,
+    }
+}
+
+fn agent_run_list_entry_to_contract(model: AgentRunListEntryModel) -> AgentRunListEntryView {
+    AgentRunListEntryView {
+        run_ref: LifecycleRunRefDto {
+            run_id: model.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: model.run_id.to_string(),
+            agent_id: model.agent_id.to_string(),
+        },
+        title: model.title,
+        lifecycle_status: model.lifecycle_status,
+        last_activity_at: model.last_activity_at,
+        project_agent_label: model.project_agent_label,
+        source: model.source,
+        runtime: model.runtime.map(agent_run_list_runtime_to_contract),
+        subagent_count: model.subagent_count,
+        children: model
+            .children
+            .into_iter()
+            .map(agent_run_list_child_to_contract)
+            .collect(),
+        subject_ref: model.subject.as_ref().map(|subject| SubjectRefDto {
+            kind: subject.kind.clone(),
+            id: subject.id.to_string(),
+        }),
+        subject_label: model.subject.and_then(|subject| subject.label),
+    }
+}
+
+fn agent_run_list_child_to_contract(model: AgentRunListChildModel) -> AgentRunListChildView {
+    AgentRunListChildView {
+        run_ref: LifecycleRunRefDto {
+            run_id: model.run_id.to_string(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: model.run_id.to_string(),
+            agent_id: model.agent_id.to_string(),
+        },
+        title: model.title,
+        lifecycle_status: model.lifecycle_status,
+        last_activity_at: model.last_activity_at,
+        project_agent_label: model.project_agent_label,
+        source: model.source,
+        runtime: model.runtime.map(agent_run_list_runtime_to_contract),
+        children: model
+            .children
+            .into_iter()
+            .map(agent_run_list_child_to_contract)
+            .collect(),
+    }
+}
+
+fn agent_run_list_runtime_to_contract(
+    model: AgentRunListRuntimeSummaryModel,
+) -> AgentRunListRuntimeSummaryView {
+    AgentRunListRuntimeSummaryView {
+        thread_status: match model.thread_status {
+            agentdash_agent_runtime_contract::RuntimeThreadStatus::Active => {
+                AgentRunListRuntimeThreadStatus::Active
+            }
+            agentdash_agent_runtime_contract::RuntimeThreadStatus::Suspended => {
+                AgentRunListRuntimeThreadStatus::Suspended
+            }
+            agentdash_agent_runtime_contract::RuntimeThreadStatus::Desynchronized => {
+                AgentRunListRuntimeThreadStatus::Desynchronized
+            }
+            agentdash_agent_runtime_contract::RuntimeThreadStatus::Closed => {
+                AgentRunListRuntimeThreadStatus::Closed
+            }
+            agentdash_agent_runtime_contract::RuntimeThreadStatus::Lost => {
+                AgentRunListRuntimeThreadStatus::Lost
+            }
+        },
+        active_turn_id: model.active_turn_id,
+    }
 }
 
 async fn get_agent_run_workspace(

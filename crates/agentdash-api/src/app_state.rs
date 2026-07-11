@@ -8,6 +8,9 @@ use tokio::sync::broadcast;
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::project_projection_notification::ProjectProjectionNotificationPublisher;
 use crate::relay::registry::BackendRegistry;
+use agentdash_application::agent_run_list::{
+    ProjectAgentRunListQuery, ProjectAgentRunListQueryDeps,
+};
 use agentdash_application::agent_run_product::{AgentRunProductQuery, AgentRunProductQueryDeps};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
@@ -90,6 +93,7 @@ pub struct ServiceSet {
     pub agent_run_runtime: Arc<dyn AgentRunRuntime>,
     pub agent_run_product_delivery: Arc<dyn AgentRunProductDeliveryPort>,
     pub agent_run_product_query: AgentRunProductQuery,
+    pub project_agent_run_list_query: ProjectAgentRunListQuery,
     pub agent_runtime_host: Arc<agentdash_agent_runtime_host::IntegrationDriverHost>,
     pub agent_runtime_inventory: Arc<crate::relay::CloudRemoteRuntimeInventory>,
     pub runtime_surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
@@ -441,6 +445,15 @@ impl AppState {
             frame_repo: repos.agent_frame_repo.clone(),
             vfs_surface_resolver: vfs_surface_resolver.clone(),
         });
+        let project_agent_run_list_query =
+            ProjectAgentRunListQuery::new(ProjectAgentRunListQueryDeps {
+                run_repo: repos.lifecycle_run_repo.clone(),
+                agent_repo: repos.lifecycle_agent_repo.clone(),
+                lineage_repo: repos.agent_lineage_repo.clone(),
+                subject_repo: repos.lifecycle_subject_association_repo.clone(),
+                project_agent_repo: repos.project_agent_repo.clone(),
+                runtime: agent_run_runtime.clone(),
+            });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
             runtime_surface_query.clone(),
             mcp_tool_discovery,
@@ -480,6 +493,7 @@ impl AppState {
                 agent_run_runtime,
                 agent_run_product_delivery,
                 agent_run_product_query,
+                project_agent_run_list_query,
                 agent_runtime_host,
                 agent_runtime_inventory,
                 runtime_surface_query: runtime_surface_query_port,

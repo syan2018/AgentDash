@@ -1,20 +1,20 @@
 ﻿/**
- * ActiveAgentRunList — 以后端 AgentRunWorkspaceListView 展示项目 AgentRun。
+ * ActiveAgentRunList — 以后端 ProjectAgentRunListView 展示项目 AgentRun。
  *
- * 主 Run 行内联其直接子 Agent（一跳，含真实 shell 状态），`+N` 药丸就地展开；
+ * 主 Run 行内联 canonical lineage 子树与 Runtime summary，`+N` 药丸就地展开；
  * 按 subject 分组聚合；列表 keyset 游标分页，「加载更多」按需续拉。
  */
 
 import { CardMenu, ConfirmDialog, type CardMenuItem } from "@agentdash/ui";
 import { useCallback, useMemo, useState } from "react";
 import { useMatch, useNavigate } from "react-router-dom";
-import type { AgentRunListChild, AgentRunWorkspaceListEntry } from "../../types";
+import type { AgentRunListChildView, AgentRunListEntryView } from "../../types";
 import { deleteAgentRun } from "../../services/agentRun";
 import { formatRelativeTime } from "../../lib/format";
 import { agentSourceLabel } from "../../lib/agent-source";
 import {
   AGENT_RUN_DELIVERY_STATUS_LABEL,
-  normalizeAgentRunDeliveryStatus,
+  agentRunListPresentationStatus,
   type AgentRunDeliveryStatus,
 } from "./agent-run-delivery-status";
 import {
@@ -34,6 +34,7 @@ const PAGE_SIZE = 30;
 const executionStatusDotColor: Record<AgentRunDeliveryStatus, string> = {
   idle: "bg-gray-400",
   running: "bg-emerald-500 animate-pulse",
+  suspended: "bg-amber-500",
   cancelling: "bg-amber-500 animate-pulse",
   completed: "bg-blue-500",
   failed: "bg-red-500",
@@ -46,7 +47,7 @@ type StatusFilterGroup = "all" | "running" | "idle" | "ended";
 const STATUS_TAB_OPTIONS: Array<{ value: StatusFilterGroup; label: string }> = [
   { value: "all", label: "全部" },
   { value: "running", label: "执行中" },
-  { value: "idle", label: "就绪" },
+  { value: "idle", label: "就绪/暂停" },
   { value: "ended", label: "已结束" },
 ];
 
@@ -54,6 +55,7 @@ function statusGroupOf(status: AgentRunDeliveryStatus): Exclude<StatusFilterGrou
   switch (status) {
     case "running": return "running";
     case "cancelling": return "running";
+    case "suspended": return "idle";
     case "idle": return "idle";
     case "completed":
     case "failed":
@@ -207,7 +209,7 @@ function SourceTag({ source }: { source?: string | null }) {
 }
 
 interface AgentRunChildRowProps {
-  child: AgentRunListChild;
+  child: AgentRunListChildView;
   /** 缩进层级，顶层子 Agent 为 1，逐层递增。 */
   depth: number;
   selectedAgentId: string | null;
@@ -216,9 +218,13 @@ interface AgentRunChildRowProps {
 
 function AgentRunChildRow({ child, depth, selectedAgentId, onOpenAgentRun }: AgentRunChildRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const status = normalizeAgentRunDeliveryStatus(child.shell.delivery_status);
-  const updatedAt = updatedAtTimestamp(child.shell.last_activity_at);
-  const title = child.shell.display_title.trim() || child.project_agent_label?.trim() || "Companion";
+  const status = agentRunListPresentationStatus(
+    child.runtime?.thread_status,
+    child.runtime?.active_turn_id,
+    child.lifecycle_status,
+  );
+  const updatedAt = updatedAtTimestamp(child.last_activity_at);
+  const title = child.title.trim() || child.project_agent_label?.trim() || "Companion";
   const isSelected = selectedAgentId === child.agent_ref.agent_id;
   const nested = child.children ?? [];
 
@@ -277,10 +283,10 @@ function AgentRunChildRow({ child, depth, selectedAgentId, onOpenAgentRun }: Age
 }
 
 interface AgentRunRowProps {
-  entry: AgentRunWorkspaceListEntry;
+  entry: AgentRunListEntryView;
   selectedAgentId: string | null;
   onOpenAgentRun: (runId: string, agentId: string) => void;
-  onRequestDelete: (entry: AgentRunWorkspaceListEntry) => void;
+  onRequestDelete: (entry: AgentRunListEntryView) => void;
 }
 
 function AgentRunRow({
@@ -290,9 +296,13 @@ function AgentRunRow({
   onRequestDelete,
 }: AgentRunRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const status = normalizeAgentRunDeliveryStatus(entry.shell.delivery_status);
-  const updatedAt = updatedAtTimestamp(entry.shell.last_activity_at);
-  const title = entry.shell.display_title.trim() || "AgentRun 加载中...";
+  const status = agentRunListPresentationStatus(
+    entry.runtime?.thread_status,
+    entry.runtime?.active_turn_id,
+    entry.lifecycle_status,
+  );
+  const updatedAt = updatedAtTimestamp(entry.last_activity_at);
+  const title = entry.title.trim() || "AgentRun 加载中...";
   const children = entry.children ?? [];
   const isSelected = selectedAgentId === entry.agent_ref.agent_id;
   const menuItems = useMemo<CardMenuItem[]>(() => [
@@ -446,8 +456,8 @@ export function ActiveAgentRunList({
     });
   };
 
-  const requestDelete = useCallback((entry: AgentRunWorkspaceListEntry) => {
-    const title = entry.shell.display_title.trim() || "AgentRun 加载中...";
+  const requestDelete = useCallback((entry: AgentRunListEntryView) => {
+    const title = entry.title.trim() || "AgentRun 加载中...";
     setDeleteTarget({ runId: entry.run_ref.run_id, title });
     setDeleteError(null);
   }, []);
@@ -474,7 +484,7 @@ export function ActiveAgentRunList({
       setIsDeleting(false);
     }
   }, [
-    agentRunRouteMatch?.params.runId,
+    agentRunRouteMatch,
     deleteTarget,
     isDeleting,
     navigate,
@@ -488,17 +498,21 @@ export function ActiveAgentRunList({
 
     if (statusFilter !== "all") {
       list = list.filter((entry) =>
-        statusGroupOf(normalizeAgentRunDeliveryStatus(entry.shell.delivery_status)) === statusFilter
+        statusGroupOf(agentRunListPresentationStatus(
+          entry.runtime?.thread_status,
+          entry.runtime?.active_turn_id,
+          entry.lifecycle_status,
+        )) === statusFilter
       );
     }
 
     const trimmedKeyword = keyword.trim().toLowerCase();
     if (trimmedKeyword) {
       list = list.filter((entry) => {
-        const title = entry.shell.display_title.toLowerCase();
+        const title = entry.title.toLowerCase();
         const subjectLabel = entry.subject_label?.toLowerCase() ?? "";
         const childMatch = (entry.children ?? []).some((child) =>
-          child.shell.display_title.toLowerCase().includes(trimmedKeyword)
+          child.title.toLowerCase().includes(trimmedKeyword)
         );
         return title.includes(trimmedKeyword) || subjectLabel.includes(trimmedKeyword) || childMatch;
       });
@@ -518,7 +532,7 @@ export function ActiveAgentRunList({
     );
   }
 
-  const renderRow = (entry: AgentRunWorkspaceListEntry) => (
+  const renderRow = (entry: AgentRunListEntryView) => (
     <AgentRunRow
       key={`${entry.run_ref.run_id}:${entry.agent_ref.agent_id}`}
       entry={entry}

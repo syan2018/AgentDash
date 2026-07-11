@@ -113,6 +113,7 @@ function statusFromDeliveryStatus(status: string): CompanionSubagentDispatchStat
   const normalized = normalizeAgentRunDeliveryStatus(status);
   switch (normalized) {
     case "idle":
+    case "suspended":
       return "pending";
     case "running":
     case "cancelling":

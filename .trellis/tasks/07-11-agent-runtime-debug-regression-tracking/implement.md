@@ -62,4 +62,4 @@
 - [x] 建立AgentRun前端service/route/application owner/generated contract inventory，分类迁移、替换与删除项。
 - [x] 以`AgentRunProductQuery`组合Lifecycle、current AgentFrame/model config与VFS surface，恢复workspace detail产品投影且不恢复旧RuntimeSession执行链。
 - [x] 拆分workspace与runtime inspect加载错误归属，验证Runtime成功事实不会被另一projection失败清空。
-- [ ] 从Lifecycle与canonical Runtime summary重建Project AgentRun list projection，关闭侧栏Not Found。
+- [x] 从Lifecycle与canonical Runtime summary重建Project AgentRun list projection，关闭侧栏Not Found。

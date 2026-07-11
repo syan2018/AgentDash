@@ -4,18 +4,19 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_agent_protocol::codex_app_server_protocol::{
+    ThreadItem, Turn, TurnError, TurnPlanStep, TurnPlanStepStatus, TurnStatus, UserInput,
+};
+use agentdash_agent_protocol::{
+    AgentDashThreadItem, BackboneEnvelope, CommandExecutionStatus, McpToolCallStatus,
+    PatchApplyStatus,
+};
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
-    AgentRunContextCompactionCommandOutcome, AgentRunContextCompactionCommandResponse,
-    AgentRunForkLineageView, AgentRunForkOutcomeView, AgentRunForkRequest, AgentRunForkResponse,
-    AgentRunForkSubmitRequest, AgentRunMailboxMessageContentView, AgentRunMailboxMoveRequest,
-    AgentRunMailboxView, AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome,
-    AgentRunMessageCommandResponse, AgentRunToolCallApprovalResponse,
-    AgentRunToolCallRejectionResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
-    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
-    MailboxMessageStatus, MailboxMessageView, MailboxSourceIdentity, MailboxStateView,
-    SteeringStopEffect,
+    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
+    BackendSelectionModeDto, BackendSelectionRequestDto, ConsumptionBarrier, MailboxDelivery,
+    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView,
+    MailboxSourceIdentity, MailboxStateView, SteeringStopEffect,
 };
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
@@ -297,6 +298,17 @@ fn main() {
         check,
         |dir| {
             export_all::<BackboneEnvelope>(dir);
+            export_all::<AgentDashThreadItem>(dir);
+            export_all::<CommandExecutionStatus>(dir);
+            export_all::<McpToolCallStatus>(dir);
+            export_all::<PatchApplyStatus>(dir);
+            export_all::<Turn>(dir);
+            export_all::<ThreadItem>(dir);
+            export_all::<TurnError>(dir);
+            export_all::<TurnPlanStep>(dir);
+            export_all::<TurnPlanStepStatus>(dir);
+            export_all::<TurnStatus>(dir);
+            export_all::<UserInput>(dir);
         },
     );
 
@@ -308,20 +320,11 @@ fn main() {
         check,
         |dir| {
             export_all::<AgentRunComposerSubmitRequest>(dir);
-            export_all::<AgentRunForkLineageView>(dir);
-            export_all::<AgentRunForkOutcomeView>(dir);
-            export_all::<AgentRunForkRequest>(dir);
-            export_all::<AgentRunForkResponse>(dir);
-            export_all::<AgentRunForkSubmitRequest>(dir);
             export_all::<BackendSelectionModeDto>(dir);
             export_all::<BackendSelectionRequestDto>(dir);
             export_all::<AgentRunCommandReceipt>(dir);
-            export_all::<AgentRunContextCompactionCommandOutcome>(dir);
-            export_all::<AgentRunContextCompactionCommandResponse>(dir);
             export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<AgentRunMessageCommandResponse>(dir);
-            export_all::<AgentRunToolCallApprovalResponse>(dir);
-            export_all::<AgentRunToolCallRejectionResponse>(dir);
             export_all::<MailboxMessageStatus>(dir);
             export_all::<MailboxMessageOrigin>(dir);
             export_all::<MailboxSourceIdentity>(dir);
@@ -331,11 +334,8 @@ fn main() {
             export_all::<MailboxDrainMode>(dir);
             export_all::<AgentRunMessageAcceptedRefs>(dir);
             export_all::<MailboxMessageView>(dir);
-            export_all::<AgentRunMailboxMoveRequest>(dir);
-            export_all::<AgentRunMailboxMessageContentView>(dir);
             export_all::<MailboxStateView>(dir);
             export_all::<AgentRunMessageCommandOutcome>(dir);
-            export_all::<AgentRunMailboxView>(dir);
         },
     );
 

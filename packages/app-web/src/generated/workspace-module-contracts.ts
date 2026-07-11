@@ -77,7 +77,7 @@ export type WorkspaceModuleStatusKind = "ready" | "unavailable";
  */
 export type WorkspaceModuleSummary = {
 /**
- * 稳定 id：`ext:{extension_key}` / `canvas:{canvas_mount_id}` / `builtin:{key}`。
+ * 稳定 id：`ext:{extension_key}` / `canvas:{definition_id}` / `builtin:{key}`。
  */
 module_id: string, kind: WorkspaceModuleKind, title: string, description: string,
 /**

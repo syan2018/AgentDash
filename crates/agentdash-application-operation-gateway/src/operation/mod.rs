@@ -7,12 +7,28 @@ mod operation_provider;
 mod operation_script_adapter;
 mod operation_types;
 mod schema;
+mod setup_operations;
 
 pub use agentdash_domain::operation::{
     OperationEffect, OperationOriginRef, OperationPrincipalRef, OperationProviderRef, OperationRef,
     OperationReplayPolicy, OperationScopeRef,
 };
 pub use operation_authority::CompositeOperationAuthorityResolver;
+pub use extension_operations::{
+    EXTENSION_OPERATION_NAMESPACE, ExtensionOperationContextPort, ExtensionOperationProvider,
+    ExtensionOperationRuntimeContext,
+};
+pub use extension_workspace::{
+    ExtensionInvocationWorkspaceContext, ExtensionInvocationWorkspaceResolution,
+    ExtensionInvocationWorkspaceUnavailableReason, resolve_extension_invocation_workspace,
+};
+pub use interaction_operations::{
+    INTERACTION_OPERATION_NAMESPACE, InteractionCommandOperation, InteractionOperationAccess,
+    InteractionOperationProvider,
+};
+pub use mcp_operations::{
+    MCP_OPERATION_NAMESPACE, McpOperationProvider, OperationMcpAccess, OperationMcpTool,
+};
 pub use operation_core::{
     OperationAuditSink, OperationDispatcher, OperationExecutionCore, OperationPlacementResolver,
     OperationResultStore, OperationSurfaceResolver, result_access_matches, scope_project_id,
@@ -40,3 +56,11 @@ pub use operation_types::{
     OperationResultRef, OperationResultValue, OperationTraceContext, ScopedOperationResult,
 };
 pub use schema::{validate_json_schema_definition, validate_json_schema_subset};
+pub use setup_operations::{
+    SETUP_OPERATION_NAMESPACE, SETUP_OPERATION_PROVIDER_KEY, SetupOperationAccessPort,
+    SetupOperationAuthorityResolver, SetupOperationProvider, setup_operation_ref,
+};
+mod extension_operations;
+mod extension_workspace;
+mod interaction_operations;
+mod mcp_operations;

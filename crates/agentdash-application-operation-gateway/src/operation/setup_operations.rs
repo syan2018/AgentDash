@@ -734,10 +734,7 @@ mod tests {
             )
             .await
             .expect_err("revoked setup.workspace must fail before dispatch");
-        assert_eq!(
-            error.kind(),
-            crate::OperationExecutionErrorKind::Denied
-        );
+        assert_eq!(error.kind(), crate::OperationExecutionErrorKind::Denied);
         assert_eq!(ports.browse_calls.load(Ordering::SeqCst), 0);
     }
 

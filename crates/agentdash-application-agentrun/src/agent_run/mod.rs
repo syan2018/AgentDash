@@ -70,11 +70,10 @@ pub use frame::{
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
     AgentRunHookTargetRuntimeAdapter, AgentRunRuntimeSurfaceUpdateAdapter,
     AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
-    AgentRunSurfaceProjectionContextSource, FrameConstructionCommand,
-    FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
-    FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
-    RuntimeSurfaceUpdateRequest, TerminalHookEffectBinding, agent_frame_write_boundaries,
-    hook_target_runtime_port,
+    AgentRunSurfaceProjectionContextSource, FrameConstructionCommand, FrameContextBundleSummary,
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, FrameSurfaceDraft,
+    RejectingFrameConstructionAdapter, RuntimeSurfaceKind, RuntimeSurfaceUpdateRequest,
+    TerminalHookEffectBinding, agent_frame_write_boundaries, hook_target_runtime_port,
 };
 pub use lifecycle_read_model_facade::{
     ActiveRuntimeNodeRefView as PresentationActiveRuntimeNodeRefView,

@@ -1,17 +1,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use agentdash_domain::agent_run_mailbox::{
-    ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
-    NewAgentRunMailboxMessage,
-};
 use agentdash_domain::channel::{
     Channel, ChannelBinding, ChannelBindingId, ChannelBindingStatus, ChannelCapabilityRef,
     ChannelDeliveryIntent, ChannelDeliveryState, ChannelDeliveryTarget, ChannelEgressPolicy,
     ChannelIngressPolicy, ChannelLocator, ChannelMessage, ChannelMessageOrigin, ChannelOperation,
     ChannelOwner, ChannelParticipant, ChannelParticipantRef, ChannelPolicy, ChannelReadiness,
     ChannelRecord, ChannelRef, ChannelRegistryDocument, ChannelRegistryMutation, ChannelStatus,
-    MaterializedDeliveryRef, channel_message_origin_to_mailbox_source_identity,
+    MaterializedDeliveryRef,
 };
 use agentdash_domain::workflow::LifecycleRunRepository;
 use agentdash_spi::channel_binding::{
@@ -25,6 +21,7 @@ use uuid::Uuid;
 use crate::ApplicationError;
 use provider::{ChannelBindingIndex, ChannelBindingProviderRegistry, map_provider_error};
 
+pub mod agent_run_delivery;
 pub mod provider;
 
 #[async_trait]
@@ -158,9 +155,26 @@ pub struct ProviderNeutralInboundEnvelope {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChannelMailboxMaterializationCommand {
-    pub delivery_id: Uuid,
-    pub message: NewAgentRunMailboxMessage,
+pub struct ChannelAgentDeliveryTarget {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelAgentDeliveryReceipt {
+    pub mailbox_message_id: Uuid,
+    pub accepted_runtime_operation_id: Option<String>,
+    pub queued: bool,
+    pub duplicate: bool,
+}
+
+#[async_trait]
+pub trait ChannelAgentDeliveryPort: Send + Sync {
+    async fn deliver(
+        &self,
+        delivery: AdmittedChannelDelivery,
+        target: ChannelAgentDeliveryTarget,
+    ) -> Result<ChannelAgentDeliveryReceipt, ApplicationError>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -850,10 +864,11 @@ impl ChannelService {
             .require(provider_key)
     }
 
-    pub fn materialize_delivery_to_mailbox(
+    pub async fn deliver_to_agent(
         &self,
         delivery: &AdmittedChannelDelivery,
-    ) -> Result<ChannelMailboxMaterializationCommand, ApplicationError> {
+        delivery_port: &dyn ChannelAgentDeliveryPort,
+    ) -> Result<ChannelAgentDeliveryReceipt, ApplicationError> {
         let intent = delivery.intent();
         let (run_id, agent_id) = match &intent.target {
             ChannelDeliveryTarget::Mailbox { run_id, agent_id } => (*run_id, *agent_id),
@@ -864,40 +879,12 @@ impl ChannelService {
                 )));
             }
         };
-        let source = channel_message_origin_to_mailbox_source_identity(&intent.message.origin);
-        let correlation_ref = channel_message_correlation_ref(&intent.message);
-        let payload_json = serde_json::json!({
-            "channel": {
-                "channel_id": intent.message.channel_id,
-                "message_id": intent.message.id,
-                "delivery_id": intent.id,
-                "correlation_ref": correlation_ref,
-                "thread_ref": intent.message.thread_ref,
-                "provider_event_ref": intent.message.provider_event_ref,
-            },
-            "payload": intent.message.payload.clone(),
-            "content_refs": intent.message.content_refs.clone(),
-        });
-        Ok(ChannelMailboxMaterializationCommand {
-            delivery_id: intent.id,
-            message: NewAgentRunMailboxMessage {
-                run_id,
-                agent_id,
-                origin: mailbox_origin_from_channel_message_origin(&intent.message.origin),
-                source,
-                delivery: MailboxDelivery::LaunchOrContinueTurn,
-                barrier: ConsumptionBarrier::ImmediateIfIdle,
-                drain_mode: MailboxDrainMode::One,
-                priority: 0,
-                source_dedup_key: Some(format!("channel_delivery:{}", intent.id)),
-                payload_json: Some(payload_json),
-                executor_config_json: None,
-                launch_planning_input: None,
-                preview: channel_message_preview(&intent.message),
-                has_images: false,
-                retain_payload: true,
-            },
-        })
+        delivery_port
+            .deliver(
+                delivery.clone(),
+                ChannelAgentDeliveryTarget { run_id, agent_id },
+            )
+            .await
     }
 
     pub fn materialize_delivery_to_gate(
@@ -923,28 +910,6 @@ impl ChannelService {
             origin: intent.message.origin.clone(),
         })
     }
-}
-
-fn mailbox_origin_from_channel_message_origin(
-    address: &ChannelMessageOrigin,
-) -> MailboxMessageOrigin {
-    match address.namespace.as_str() {
-        "companion" => MailboxMessageOrigin::Companion,
-        "workflow" => MailboxMessageOrigin::Workflow,
-        "core" => MailboxMessageOrigin::User,
-        namespace if namespace.starts_with("im.") => MailboxMessageOrigin::System,
-        _ => MailboxMessageOrigin::System,
-    }
-}
-
-fn channel_message_preview(message: &ChannelMessage) -> String {
-    let preview = message
-        .payload
-        .text
-        .as_deref()
-        .filter(|text| !text.trim().is_empty())
-        .unwrap_or(message.payload.kind.as_str());
-    preview.chars().take(280).collect()
 }
 
 fn channel_message_correlation_ref(message: &ChannelMessage) -> Option<String> {
@@ -1087,6 +1052,7 @@ mod tests {
     use agentdash_domain::channel::{
         ChannelAudience, ChannelEgressPolicy, ChannelIngressPolicy, ChannelOperation,
         ChannelPayload, ChannelPolicy, ChannelReplyTarget, ChannelRole,
+        channel_message_origin_to_mailbox_source_identity,
     };
     use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository};
     use agentdash_spi::channel_binding::{
@@ -1758,8 +1724,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mailbox_materializer_outputs_message_command_without_queue_state() {
+    struct RecordingAgentDeliveryPort;
+
+    #[async_trait]
+    impl ChannelAgentDeliveryPort for RecordingAgentDeliveryPort {
+        async fn deliver(
+            &self,
+            _delivery: AdmittedChannelDelivery,
+            _target: ChannelAgentDeliveryTarget,
+        ) -> Result<ChannelAgentDeliveryReceipt, ApplicationError> {
+            Ok(ChannelAgentDeliveryReceipt {
+                mailbox_message_id: Uuid::nil(),
+                accepted_runtime_operation_id: Some("operation-1".to_string()),
+                queued: false,
+                duplicate: false,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_delivery_uses_product_port_without_runtime_coordinates() {
         let service = ChannelService::new(Arc::new(UnsupportedOwnerStore));
         let channel_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
@@ -1778,24 +1762,16 @@ mod tests {
             ChannelDeliveryTarget::Mailbox { run_id, agent_id },
         ));
 
-        let command = service
-            .materialize_delivery_to_mailbox(&intent)
-            .expect("mailbox materialization");
+        let receipt = service
+            .deliver_to_agent(&intent, &RecordingAgentDeliveryPort)
+            .await
+            .expect("agent delivery");
 
-        assert_eq!(command.message.run_id, run_id);
-        assert_eq!(command.message.agent_id, agent_id);
-        assert_eq!(command.message.origin, MailboxMessageOrigin::Companion);
+        assert_eq!(receipt.mailbox_message_id, Uuid::nil());
         assert_eq!(
-            command.message.source_dedup_key,
-            Some(format!("channel_delivery:{}", intent.intent().id))
+            receipt.accepted_runtime_operation_id.as_deref(),
+            Some("operation-1")
         );
-        let payload = command.message.payload_json.expect("payload refs");
-        assert_eq!(
-            payload["channel"]["channel_id"],
-            serde_json::json!(channel_id)
-        );
-        assert!(payload.get("mailbox_queue_state").is_none());
-        assert!(payload.get("gate_payload").is_none());
     }
 
     #[test]

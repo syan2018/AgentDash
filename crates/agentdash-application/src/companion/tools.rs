@@ -59,14 +59,12 @@ use super::{
     CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
     ResolveCompanionParentRequestCommand,
 };
+use crate::channel::agent_run_delivery::AgentRunChannelDeliveryAdapter;
 use crate::channel::{ChannelService, LifecycleRunChannelOwnerStore};
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::wait_activity::{WaitActivityService, WaitToolContext};
-use agentdash_agent_runtime_contract::{RuntimeActor, RuntimeInput};
-use agentdash_application_agentrun::agent_run::{
-    AgentRunProductDeliveryPort, DeliverAgentRunProductInput,
-};
+use agentdash_application_agentrun::agent_run::AgentRunProductDeliveryPort;
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 
@@ -919,22 +917,13 @@ async fn deliver_companion_mailbox_message(
             agentdash_domain::channel::ChannelOperation::Publish,
         )
         .await?;
-    let _materialized = service.materialize_delivery_to_mailbox(&admitted)?;
     let client_command_id = input.client_command_id.clone();
-    let delivery = product_delivery
-        .deliver(DeliverAgentRunProductInput {
-            run_id: input.run_id,
-            agent_id: input.agent_id,
-            input: vec![RuntimeInput::Text {
-                text: input.input_text,
-            }],
-            actor: RuntimeActor::System {
-                component: format!("companion:{}", input.payload_kind),
-            },
-            client_command_id: input.client_command_id,
-        })
-        .await
-        .map_err(|error| crate::ApplicationError::Internal(error.to_string()))?;
+    let delivery = service
+        .deliver_to_agent(
+            &admitted,
+            &AgentRunChannelDeliveryAdapter::new(product_delivery),
+        )
+        .await?;
     let mailbox_message_id = Some(delivery.mailbox_message_id);
     companion_channel_service(repos)
         .record_delivery_state(
@@ -957,7 +946,7 @@ async fn deliver_companion_mailbox_message(
 
     Ok(CompanionParentMailboxDeliveryResult {
         mailbox_message_id,
-        accepted_runtime_operation_id: None,
+        accepted_runtime_operation_id: delivery.accepted_runtime_operation_id.clone(),
         command_receipt_client_command_id: client_command_id,
         command_receipt_status: if delivery.queued {
             "queued"
@@ -965,19 +954,14 @@ async fn deliver_companion_mailbox_message(
             "accepted"
         }
         .to_string(),
-        command_receipt_duplicate: delivery
-            .operation_receipt
-            .as_ref()
-            .is_some_and(|receipt| receipt.duplicate),
+        command_receipt_duplicate: delivery.duplicate,
         outcome: if delivery.queued {
             "queued"
         } else {
             "dispatched"
         }
         .to_string(),
-        runtime_operation_id: delivery
-            .operation_receipt
-            .map(|receipt| receipt.operation_id.to_string()),
+        runtime_operation_id: delivery.accepted_runtime_operation_id,
     })
 }
 
@@ -1462,39 +1446,18 @@ impl CompanionRequestTool {
                     "companion channel admission 失败: {error}"
                 ))
             })?;
-        let _materialized = channel_service
-            .materialize_delivery_to_mailbox(&admitted)
-            .map_err(|error| {
-                AgentToolError::ExecutionFailed(format!(
-                    "companion channel materialization 失败: {error}"
-                ))
-            })?;
-        let mailbox_result = session_services
-            .product_delivery
-            .deliver(DeliverAgentRunProductInput {
-                run_id: dispatch_result.run_ref,
-                agent_id: dispatch_result.agent_ref,
-                input: vec![RuntimeInput::Text {
-                    text: dispatch_result.launch_source.dispatch_prompt.clone(),
-                }],
-                actor: RuntimeActor::Agent {
-                    name: parent_agent_id.to_string(),
-                },
-                client_command_id: format!(
-                    "companion-dispatch:{}:{}",
-                    dispatch_plan.dispatch_id, dispatch_result.agent_ref
-                ),
-            })
+        let mailbox_result = channel_service
+            .deliver_to_agent(
+                &admitted,
+                &AgentRunChannelDeliveryAdapter::new(session_services.product_delivery.as_ref()),
+            )
             .await
             .map_err(|error| {
                 AgentToolError::ExecutionFailed(format!(
                     "child companion mailbox dispatch 失败: {error}"
                 ))
             })?;
-        let runtime_operation_id = mailbox_result
-            .operation_receipt
-            .as_ref()
-            .map(|receipt| receipt.operation_id.to_string());
+        let runtime_operation_id = mailbox_result.accepted_runtime_operation_id.clone();
         let mailbox_message_id = Some(mailbox_result.mailbox_message_id.to_string());
         let mailbox_outcome = if mailbox_result.queued {
             "queued"

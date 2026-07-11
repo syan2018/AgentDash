@@ -158,3 +158,4 @@
 - ARD-005/006 真实 Draft `2a977413-7aa3-48d2-b4f6-141eb6046ca9` 建立 active Native binding，HookPlan applied，模型回复 `runtime-ok`，Runtime snapshot revision 10且10条 durable event可读取。
 - 修正 event URL与durable-only replay后，重新打开同一 AgentRun只显示一份`runtime-ok`；workspace/list projection仍因cutover route缺失保持ARD-008 open。
 - `cargo test -p agentdash-api agent_runtime_surface::tests` 4项、`cargo test -p agentdash-integration-native-agent` 11项、runtimeEventStream 2项与app-web typecheck通过；目标三crate `--lib` clippy通过。`--all-targets`另暴露`agentdash-agent-runtime-test-support`既有`collapsible_match`，未修改该无关文件。
+- ARD-007 review确认全仓React/ReactDOM均为19.2.4且解析到同一物理文件，Vite预构建只有唯一React source，Draft相关定向ESLint通过，Canvas React 18位于隔离iframe。当前缺少稳定复现、error stack/componentStack与module URL，因此保持`reported`并阻止alias/dedupe、try/catch、强制reload或双React兼容补丁。

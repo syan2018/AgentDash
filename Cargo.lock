@@ -417,6 +417,7 @@ dependencies = [
 name = "agentdash-application-operation-gateway"
 version = "0.1.0"
 dependencies = [
+ "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-spi",
@@ -424,6 +425,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -446,6 +448,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 

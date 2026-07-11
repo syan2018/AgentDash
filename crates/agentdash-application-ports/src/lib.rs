@@ -10,6 +10,7 @@ pub mod lifecycle_materialization;
 pub mod lifecycle_read_model;
 pub mod lifecycle_surface_projection;
 pub mod mcp_discovery;
+pub mod operation_script;
 pub mod project_projection_notification;
 pub mod runtime_gateway_mcp_surface;
 pub mod runtime_gateway_setup;

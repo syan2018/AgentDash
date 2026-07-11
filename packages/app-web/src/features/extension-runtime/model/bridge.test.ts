@@ -672,7 +672,7 @@ function workspaceRuntimeData(overrides: Partial<WorkspaceData> = {}): Workspace
           extension_key: "protocol-demo",
           extension_id: "protocol-demo",
           action_key: "protocol-demo.greet",
-          kind: "session_runtime",
+          kind: "runtime",
           description: "Greet",
           input_schema: true,
           output_schema: true,

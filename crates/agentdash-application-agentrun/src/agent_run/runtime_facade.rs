@@ -12,6 +12,7 @@ use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
     AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeTarget,
 };
+use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_spi::AuthIdentity;
 use async_trait::async_trait;
 use thiserror::Error;
@@ -37,6 +38,7 @@ pub struct SendAgentRunMessage {
     pub input: Vec<RuntimeInput>,
     pub actor: RuntimeActor,
     pub identity: Option<AuthIdentity>,
+    pub backend_selection: Option<BackendSelectionInput>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -316,6 +318,7 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
                     .provision(&AgentRunRuntimeProvisionRequest {
                         target: command.target.clone(),
                         identity: command.identity.clone(),
+                        backend_selection: command.backend_selection.clone(),
                     })
                     .await?
             }

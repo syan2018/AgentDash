@@ -43,6 +43,16 @@
 - 属于 Agent Runtime PR 的回归应直接修复在当前分支并更新 PR #93。
 - 与本次重构无关的既有问题仍可在本任务登记，但必须明确归属后再决定提交与 PR 边界。
 
+### R5. AgentRun 启动配置与 placement
+
+**问题 ARD-003：Runtime 拒绝单次启动 executor/backend override**
+
+- 现象：从 AgentRun Draft 选择 executor/provider/model/backend 并启动时，API 返回“当前 Runtime surface 不接受单次启动 executor/backend override”。
+- 已确认根因：ProjectAgent create-run contract 仍暴露合法的启动选择，WP08 route 却整体拒绝；同时新的 Runtime admission 没有把选择写入 AgentFrame execution profile 和 provision request。
+- ProjectAgent 保存默认启动模板；AgentRun 启动请求可以覆盖 execution profile、Provider、模型与 backend placement。
+- effective launch profile 必须在 Runtime provision 前持久化到 AgentFrame revision；backend selection 必须进入 Host offer selection并最终由 Runtime binding记录实际 placement。
+- 启动 override 不得只在 HTTP 调用内临时生效，也不得更新 ProjectAgent 默认配置。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -53,6 +63,9 @@
 - [x] ARD-002 修复后，Personal 无 token 可创建全局 openai_codex Provider 并成功取得 OAuth flow；Enterprise 认证和管理员权限仍由服务端裁决。
 - [x] 每项修复具有对应的最小回归测试和真实 `pnpm dev` 验证。
 - [x] 当前已登记的 Agent Runtime PR blocker 在 PR #93 合并前关闭。
+- [x] ARD-003 启动时选择的 executor/provider/model 被写入 AgentFrame effective execution profile，并驱动对应 Integration definition/service instance。
+- [x] ARD-003 explicit backend 只匹配目标 backend 的 activated Runtime offer；无匹配 offer返回精确 unavailable error。
+- [x] ARD-003 通过真实 Draft create-run 验证 override 已穿过 API、Lifecycle 与 Runtime surface compiler；空测试项目随后因缺少 VFS mount 被独立拒绝。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -66,6 +79,7 @@
 | --- | --- | --- | --- |
 | ARD-001 | verified | blocker | discovery/options 已由 canonical Host definitions 与 Provider catalog 恢复；双 registry 视角已删除 |
 | ARD-002 | verified | blocker | 桌面 OAuth token 已改为可选；Personal 无 token 真实 prepare 成功，Enterprise 权限保留 |
+| ARD-003 | verified | blocker | RunLaunchProfile 已进入 AgentFrame、Integration definition 与 backend offer selection |
 
 ## Verification Record
 
@@ -75,3 +89,4 @@
 - Personal 无 Authorization 创建临时 `openai_codex` 全局 Provider并调用 desktop OAuth prepare，成功返回 flow ID 与授权 URL；临时 Provider 已删除。
 - 最终 Host inventory 的真实 PostgreSQL composition 测试覆盖动态 Native definition，防止 pre-composition registry 再次成为 API 事实源。
 - Workspace fmt、check、clippy、contracts、frontend typecheck 与 91 文件/550 项前端测试通过。
+- ARD-003 真实 create-run 不再返回 override 拒绝；请求中的 `CODEX + explicit local backend` 已进入 Runtime surface compiler。临时空 Project 因没有默认 VFS mount在后续 surface 编译阶段失败，测试 Project 已删除。

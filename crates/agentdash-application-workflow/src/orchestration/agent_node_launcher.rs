@@ -132,6 +132,7 @@ impl AgentNodeLauncher {
                     agent_id: materialized.runtime_refs.agent_ref,
                 },
                 identity: None,
+                backend_selection: None,
             })
             .await
             .map_err(|error| {

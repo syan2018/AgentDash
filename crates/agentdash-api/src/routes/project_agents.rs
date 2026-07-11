@@ -6,8 +6,9 @@ use agentdash_agent_runtime_contract::RuntimeActor;
 use agentdash_application_agentrun::agent_run::{
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, DeliverAgentRunProductInput, ResolvedProjectAgentContext,
-    build_project_agent_context,
+    build_project_agent_context, merge_executor_config_fields,
 };
+use agentdash_application_ports::launch::{BackendSelectionInput, BackendSelectionInputMode};
 use agentdash_domain::{
     agent::ProjectAgent, common::AgentPresetConfig, inline_file::InlineFileOwnerKind,
     project::Project,
@@ -20,7 +21,8 @@ use uuid::Uuid;
 
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageAcceptedRefs,
-    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
+    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse, BackendSelectionModeDto,
+    BackendSelectionRequestDto,
 };
 use agentdash_contracts::common_response::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
@@ -134,12 +136,6 @@ pub async fn create_project_agent_run(
             "client_command_id 不能为空".to_string(),
         ));
     }
-    if req.executor_config.is_some() || req.backend_selection.is_some() {
-        return Err(ApiError::BadRequest(
-            "当前 Runtime surface 不接受单次启动 executor/backend override；请更新 Project Agent 配置"
-                .to_string(),
-        ));
-    }
     let project_agent = state
         .repos
         .project_agent_repo
@@ -147,6 +143,42 @@ pub async fn create_project_agent_run(
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent {project_agent_id} 不存在")))?;
+    let project_agent_context = build_project_agent_context(&project_agent)
+        .await
+        .map_err(ApiError::Internal)?;
+    let executor_override = req
+        .executor_config
+        .as_ref()
+        .map(|value| serde_json::from_value::<agentdash_spi::AgentConfig>(value.clone()))
+        .transpose()
+        .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
+    let (effective_executor_config, executor_config_source) = match executor_override {
+        Some(override_config) => (
+            merge_executor_config_fields(
+                project_agent_context.executor_config.clone(),
+                &override_config,
+            ),
+            ConversationModelConfigSourceModel::UserOverride,
+        ),
+        None => (
+            project_agent_context.executor_config.clone(),
+            ConversationModelConfigSourceModel::ProjectAgentPreset,
+        ),
+    };
+    if !crate::routes::execution_profiles::is_known_execution_profile(
+        &state,
+        effective_executor_config.executor.trim(),
+    ) {
+        return Err(ApiError::BadRequest(format!(
+            "未知 execution profile: {}",
+            effective_executor_config.executor.trim()
+        )));
+    }
+    let backend_selection = req
+        .backend_selection
+        .as_ref()
+        .map(backend_selection_input)
+        .transpose()?;
     let subject_ref = req
         .subject_ref
         .map(|subject| {
@@ -166,6 +198,10 @@ pub async fn create_project_agent_run(
             parent_run_id: None,
             parent_agent_id: None,
             project_agent_id: Some(project_agent_id),
+            execution_profile_override: Some(
+                serde_json::to_value(&effective_executor_config)
+                    .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+            ),
             workflow_graph_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
@@ -176,6 +212,19 @@ pub async fn create_project_agent_run(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     let runtime_refs = dispatch.runtime_refs;
+    if let Some(backend_selection) = req.backend_selection.as_ref() {
+        state
+            .repos
+            .agent_run_mailbox_repo
+            .set_backend_selection_preference(
+                runtime_refs.run_ref,
+                runtime_refs.agent_ref,
+                serde_json::to_value(backend_selection)
+                    .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+            )
+            .await
+            .map_err(ApiError::from)?;
+    }
     let input = super::lifecycle_agents::runtime_input_from_codex(req.input)?;
     let delivery = state
         .services
@@ -188,6 +237,8 @@ pub async fn create_project_agent_run(
                 subject: current_user.user_id.clone(),
             },
             client_command_id: req.client_command_id.clone(),
+            backend_selection,
+            identity: Some(current_user.clone()),
         })
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -266,20 +317,17 @@ pub async fn create_project_agent_run(
             runtime_operation_id: operation_id,
         }),
     };
-    let context = build_project_agent_context(&project_agent)
-        .await
-        .map_err(ApiError::Internal)?;
     Ok(Json(ProjectAgentRunStartResult {
         command_receipt: receipt,
         accepted_refs,
         initial_message,
         effective_executor_config: Some(conversation_effective_executor_config_to_contract(
             ConversationModelConfigResolver::view_for_config(
-                &context.executor_config,
-                ConversationModelConfigSourceModel::ProjectAgentPreset,
+                &effective_executor_config,
+                executor_config_source,
             ),
         )),
-        agent: build_project_agent_summary(&project, &context),
+        agent: build_project_agent_summary(&project, &project_agent_context),
         run_ref,
         agent_ref,
         frame_ref,
@@ -288,6 +336,28 @@ pub async fn create_project_agent_run(
             id: subject.id.to_string(),
         }),
     }))
+}
+
+fn backend_selection_input(
+    selection: &BackendSelectionRequestDto,
+) -> Result<BackendSelectionInput, ApiError> {
+    let mode = match selection.mode {
+        BackendSelectionModeDto::Explicit => BackendSelectionInputMode::Explicit,
+        BackendSelectionModeDto::AutoIdle => BackendSelectionInputMode::AutoIdle,
+        BackendSelectionModeDto::WorkspaceBinding => BackendSelectionInputMode::WorkspaceBinding,
+    };
+    let backend_id = selection
+        .backend_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if mode == BackendSelectionInputMode::Explicit && backend_id.is_none() {
+        return Err(ApiError::BadRequest(
+            "explicit backend selection requires backend_id".to_string(),
+        ));
+    }
+    Ok(BackendSelectionInput { mode, backend_id })
 }
 
 pub async fn list_project_agents(

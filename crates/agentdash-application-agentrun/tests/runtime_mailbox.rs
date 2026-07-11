@@ -210,6 +210,7 @@ async fn queued_message_delivers_once_after_canonical_turn_terminal_and_survives
             },
             identity: None,
             source: MailboxSourceIdentity::composer(),
+            backend_selection: None,
         })
         .await
         .expect("enqueue succeeds");
@@ -275,6 +276,8 @@ async fn product_delivery_port_uses_product_coordinates_and_canonical_operation_
                 component: "routine:test".into(),
             },
             client_command_id: "routine-execution-1".into(),
+            backend_selection: None,
+            identity: None,
         },
     )
     .await

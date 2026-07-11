@@ -37,6 +37,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
             agent_id,
             runtime_session_id,
             created_by_id,
+            execution_profile,
             ..
         } = command
         else {
@@ -48,7 +49,11 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
             );
         };
 
-        let frame = AgentFrameBuilder::new_launch_anchor(agent_id, created_by_id)
+        let mut builder = AgentFrameBuilder::new_launch_anchor(agent_id, created_by_id);
+        if let Some(execution_profile) = execution_profile {
+            builder = builder.with_execution_profile_raw(execution_profile);
+        }
+        let frame = builder
             .build(self.frame_repo.as_ref())
             .await
             .map_err(|error| {

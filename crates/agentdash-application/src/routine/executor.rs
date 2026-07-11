@@ -339,6 +339,8 @@ impl RoutineExecutor {
                     component: format!("routine:{}", routine.id),
                 },
                 client_command_id: client_command_id.clone(),
+                backend_selection: None,
+                identity: None,
             })
             .await
             .map_err(|error| ApplicationError::Internal(error.to_string()))?;

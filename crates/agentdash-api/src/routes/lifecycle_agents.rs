@@ -184,6 +184,7 @@ pub async fn submit_agent_run_composer_input(
                 actor: runtime_actor(&current_user),
                 identity: Some(current_user.clone()),
                 source: agentdash_domain::agent_run_mailbox::MailboxSourceIdentity::composer(),
+                backend_selection: None,
             })
             .await
             .map_err(runtime_mailbox_error)?;

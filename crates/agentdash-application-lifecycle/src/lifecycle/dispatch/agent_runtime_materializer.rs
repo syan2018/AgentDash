@@ -49,7 +49,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         orchestration_binding: Option<OrchestrationBindingRefs>,
     ) -> Result<MaterializedAgentRuntime, WorkflowApplicationError> {
         let agent = self.resolve_or_create_agent(run, plan).await?;
-        let frame_id = self.construct_launch_anchor_frame(&agent).await?;
+        let frame_id = self.construct_launch_anchor_frame(&agent, plan).await?;
 
         let runtime_refs = AgentRuntimeRefs::new(run.id, agent.id, frame_id, orchestration_binding);
         Ok(MaterializedAgentRuntime {
@@ -170,6 +170,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
     async fn construct_launch_anchor_frame(
         &self,
         agent: &LifecycleAgent,
+        plan: &DispatchPlan,
     ) -> Result<Uuid, WorkflowApplicationError> {
         let frame_construction = self.frame_construction.ok_or_else(|| {
             WorkflowApplicationError::Internal(
@@ -183,6 +184,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                     agent_id: agent.id,
                     runtime_session_id: None,
                     created_by_id: None,
+                    execution_profile: plan.execution_profile_override.clone(),
                 },
             )
             .await

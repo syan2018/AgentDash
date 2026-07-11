@@ -952,6 +952,8 @@ async fn deliver_companion_mailbox_message(
                 component: format!("companion:{}", input.payload_kind),
             },
             client_command_id: input.client_command_id,
+            backend_selection: None,
+            identity: None,
         })
         .await
         .map_err(|error| crate::ApplicationError::Internal(error.to_string()))?;
@@ -1487,6 +1489,8 @@ impl CompanionRequestTool {
                     "companion-dispatch:{}:{}",
                     dispatch_plan.dispatch_id, dispatch_result.agent_ref
                 ),
+                backend_selection: None,
+                identity: None,
             })
             .await
             .map_err(|error| {

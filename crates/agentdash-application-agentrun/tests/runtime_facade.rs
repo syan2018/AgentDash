@@ -64,6 +64,7 @@ fn profile() -> RuntimeProfile {
 struct CompositionFixture {
     binding: Mutex<Option<AgentRunRuntimeBinding>>,
     provisions: Mutex<usize>,
+    backend_selection: Mutex<Option<agentdash_application_ports::launch::BackendSelectionInput>>,
 }
 
 impl CompositionFixture {
@@ -149,6 +150,7 @@ impl AgentRunRuntimeProvisioner for CompositionFixture {
         request: &AgentRunRuntimeProvisionRequest,
     ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
         *self.provisions.lock().await += 1;
+        *self.backend_selection.lock().await = request.backend_selection.clone();
         self.insert(AgentRunRuntimeBinding {
             target: request.target.clone(),
             thread_id: id("thread-facade"),
@@ -193,6 +195,7 @@ fn send(text: &str) -> SendAgentRunMessage {
             subject: "subject-1".to_string(),
         },
         identity: None,
+        backend_selection: None,
     }
 }
 
@@ -224,4 +227,29 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
         conflict,
         AgentRunRuntimeError::ClientCommandConflict
     ));
+}
+
+#[tokio::test]
+async fn first_send_forwards_explicit_backend_selection_to_runtime_provisioning() {
+    use agentdash_application_ports::launch::{BackendSelectionInput, BackendSelectionInputMode};
+
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let gateway: Arc<dyn AgentRuntimeGateway> = Arc::new(ManagedAgentRuntime::new(store));
+    let composition = Arc::new(CompositionFixture::default());
+    let runtime = ManagedAgentRunRuntime::new(gateway, composition.clone(), composition.clone());
+    let mut command = send("backend selected");
+    command.backend_selection = Some(BackendSelectionInput {
+        mode: BackendSelectionInputMode::Explicit,
+        backend_id: Some("backend-local".to_string()),
+    });
+
+    runtime.send_message(command).await.expect("send succeeds");
+
+    assert_eq!(
+        composition.backend_selection.lock().await.clone(),
+        Some(BackendSelectionInput {
+            mode: BackendSelectionInputMode::Explicit,
+            backend_id: Some("backend-local".to_string()),
+        })
+    );
 }

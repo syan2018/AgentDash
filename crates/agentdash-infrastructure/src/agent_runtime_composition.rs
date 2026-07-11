@@ -31,6 +31,7 @@ use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
     AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeTarget,
 };
+use agentdash_application_ports::launch::{BackendSelectionInput, BackendSelectionInputMode};
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::llm_provider::{
     LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
@@ -57,6 +58,7 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 const NATIVE_DEFINITION_ID: &str = "agentdash.native_agent";
+const CODEX_DEFINITION_ID: &str = "builtin.codex-app-server";
 const NATIVE_CONFORMANCE_SUITE: &str = "agentdash-native-runtime-conformance-v1";
 
 #[async_trait]
@@ -208,8 +210,9 @@ fn map_provider_bridge_error(error: ProviderBridgeResolveError) -> NativeBridgeR
 
 #[derive(Debug, Clone)]
 pub struct NativeAgentRunSurfacePlan {
-    pub provider: String,
-    pub model: String,
+    pub executor: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
     pub surface: MaterializedDriverSurface,
 }
 
@@ -247,6 +250,7 @@ pub struct PreparedAgentRunRuntime {
     pub transport_profile: agentdash_agent_runtime_contract::RuntimeProfile,
     pub host_policy_profile: agentdash_agent_runtime_contract::RuntimeProfile,
     pub conformance: ConformanceEvidence,
+    pub allow_instance_creation: bool,
 }
 
 #[async_trait]
@@ -261,20 +265,31 @@ pub trait AgentRunRuntimeSurfaceSource: Send + Sync {
 
 pub struct NativeAgentRunRuntimeSurfaceSource {
     compiler: Arc<dyn NativeAgentRunSurfaceCompiler>,
-    definition: agentdash_integration_api::AgentServiceDefinition,
+    definitions: BTreeMap<String, agentdash_integration_api::AgentServiceDefinition>,
     profile_digest: ProfileDigest,
 }
 
 impl NativeAgentRunRuntimeSurfaceSource {
     pub fn new(
         compiler: Arc<dyn NativeAgentRunSurfaceCompiler>,
-        definition: agentdash_integration_api::AgentServiceDefinition,
+        native_definition: agentdash_integration_api::AgentServiceDefinition,
+        additional_definitions: Vec<agentdash_integration_api::AgentServiceDefinition>,
     ) -> Result<Self, AgentRuntimeCompositionError> {
         let profile_digest = profile_digest(&native_runtime_profile())
             .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?;
+        let mut definitions = additional_definitions
+            .into_iter()
+            .map(|definition| {
+                (
+                    definition.provenance.definition_id.as_str().to_string(),
+                    definition,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        definitions.insert(NATIVE_DEFINITION_ID.to_string(), native_definition);
         Ok(Self {
             compiler,
-            definition,
+            definitions,
             profile_digest,
         })
     }
@@ -292,12 +307,35 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             .compiler
             .compile(request, thread_id, binding_id)
             .await?;
+        let definition_id = match plan.executor.trim() {
+            "PI_AGENT" => NATIVE_DEFINITION_ID,
+            "CODEX" => CODEX_DEFINITION_ID,
+            executor => {
+                return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+                    reason: format!("unknown execution profile {executor}"),
+                });
+            }
+        };
+        let definition = self.definitions.get(definition_id).ok_or_else(|| {
+            AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: format!("Runtime definition {definition_id} is not installed"),
+                retryable: false,
+            }
+        })?;
         let mut surface = plan.surface;
         surface.runtime_thread_id = thread_id.clone();
         surface.authorization_identity = request.identity.clone();
-        let provider = plan.provider.trim();
-        let model = plan.model.trim();
-        if provider.is_empty() || model.is_empty() {
+        let provider = plan
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        let model = plan
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        if definition_id == NATIVE_DEFINITION_ID && (provider.is_none() || model.is_none()) {
             return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
                 reason: "Native provider and model must be non-empty".to_string(),
             });
@@ -314,21 +352,30 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             }
             None => json!({ "kind": "platform" }),
         };
-        let service_config = json!({
-            "provider": provider,
-            "model": model,
-            "credential_scope": credential_scope,
-        });
+        let service_config = if definition_id == NATIVE_DEFINITION_ID {
+            json!({
+                "provider": provider,
+                "model": model,
+                "credential_scope": credential_scope,
+            })
+        } else {
+            json!({ "executionProfile": plan.executor })
+        };
         let service_instance_id = deterministic_service_instance_id(
-            &self.definition.provenance.definition_id,
+            &definition.provenance.definition_id,
             &service_config,
         )?;
         let bound_surface = bound_surface_reference(&surface);
         let hook_plan = runtime_hook_plan(thread_id, &surface);
-        let profile = native_runtime_profile();
+        let profile = definition.service_profile_upper_bound.clone();
+        let definition_profile_digest = profile_digest(&profile).map_err(|error| {
+            AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: error.to_string(),
+            }
+        })?;
         Ok(PreparedAgentRunRuntime {
             service_instance_id,
-            definition_id: self.definition.provenance.definition_id.clone(),
+            definition_id: definition.provenance.definition_id.clone(),
             service_config,
             placement: AgentRuntimePlacement::InProcess,
             surface,
@@ -337,11 +384,20 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             transport_profile: profile.clone(),
             host_policy_profile: profile,
             conformance: ConformanceEvidence {
-                suite_revision: NATIVE_CONFORMANCE_SUITE.to_string(),
-                driver_build_digest: self.definition.provenance.build_digest.to_string(),
-                verified_profile_digest: self.profile_digest.clone(),
+                suite_revision: if definition_id == NATIVE_DEFINITION_ID {
+                    NATIVE_CONFORMANCE_SUITE.to_string()
+                } else {
+                    "activated-offer-required".to_string()
+                },
+                driver_build_digest: definition.provenance.build_digest.to_string(),
+                verified_profile_digest: if definition_id == NATIVE_DEFINITION_ID {
+                    self.profile_digest.clone()
+                } else {
+                    definition_profile_digest
+                },
                 verified_at: Utc::now(),
             },
+            allow_instance_creation: definition_id == NATIVE_DEFINITION_ID,
         })
     }
 }
@@ -564,6 +620,7 @@ impl HostAgentRunRuntimeProvisioner {
     async fn select_activated_offer(
         &self,
         prepared: &PreparedAgentRunRuntime,
+        backend_selection: Option<&BackendSelectionInput>,
     ) -> Result<Option<agentdash_agent_runtime_host::RuntimeOffer>, AgentRunRuntimeBindingError>
     {
         let mut offers = self
@@ -572,7 +629,12 @@ impl HostAgentRunRuntimeProvisioner {
             .await
             .map_err(host_error)?
             .into_iter()
-            .filter(|offer| offer.available && offer_supports_surface(offer, &prepared.surface))
+            .filter(|offer| {
+                offer.available
+                    && offer.provenance.definition_id == prepared.definition_id
+                    && offer_supports_surface(offer, &prepared.surface)
+                    && offer_matches_backend_selection(offer, backend_selection)
+            })
             .collect::<Vec<_>>();
         offers.sort_by(|left, right| {
             placement_priority(&left.placement)
@@ -585,6 +647,31 @@ impl HostAgentRunRuntimeProvisioner {
                 .then_with(|| left.service_instance_id.cmp(&right.service_instance_id))
         });
         Ok(offers.into_iter().next())
+    }
+}
+
+fn offer_matches_backend_selection(
+    offer: &agentdash_agent_runtime_host::RuntimeOffer,
+    selection: Option<&BackendSelectionInput>,
+) -> bool {
+    placement_matches_backend_selection(&offer.placement, selection)
+}
+
+fn placement_matches_backend_selection(
+    placement: &AgentRuntimePlacement,
+    selection: Option<&BackendSelectionInput>,
+) -> bool {
+    let Some(selection) = selection else {
+        return true;
+    };
+    match selection.mode {
+        BackendSelectionInputMode::AutoIdle | BackendSelectionInputMode::WorkspaceBinding => true,
+        BackendSelectionInputMode::Explicit => match (placement, selection.backend_id.as_deref()) {
+            (AgentRuntimePlacement::Remote { host_id, .. }, Some(backend_id)) => {
+                host_id == backend_id
+            }
+            _ => false,
+        },
     }
 }
 
@@ -661,9 +748,20 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
         self.surfaces
             .put_surface(&binding_id, &prepared.surface)
             .await?;
-        let offer = match self.select_activated_offer(&prepared).await? {
+        let offer = match self
+            .select_activated_offer(&prepared, request.backend_selection.as_ref())
+            .await?
+        {
             Some(offer) => offer,
-            None => self.ensure_offer(&prepared).await?,
+            None if prepared.allow_instance_creation && request.backend_selection.is_none() => {
+                self.ensure_offer(&prepared).await?
+            }
+            None => {
+                return Err(binding_unavailable(
+                    "no activated Runtime offer matches the requested execution profile and backend placement".to_string(),
+                    true,
+                ));
+            }
         };
         let hook_plan = prepared.hook_plan.plan.clone();
         let host_binding = self
@@ -1122,9 +1220,12 @@ pub fn build_native_agent_runtime_composition(
         protocol_revision: trust_manifest.protocol_revision,
         verified_profile_digest,
     };
-    let surface_source: Arc<dyn AgentRunRuntimeSurfaceSource> = Arc::new(
-        NativeAgentRunRuntimeSurfaceSource::new(input.surface_compiler, definition)?,
-    );
+    let surface_source: Arc<dyn AgentRunRuntimeSurfaceSource> =
+        Arc::new(NativeAgentRunRuntimeSurfaceSource::new(
+            input.surface_compiler,
+            definition,
+            input.remote_definitions.clone(),
+        )?);
     let mut runtime_contributions = vec![contribution];
     let mut trusted_manifests = vec![manifest];
     let mut remote_manifests = input
@@ -1509,6 +1610,7 @@ mod tests {
                     verified_profile_digest: digest,
                     verified_at: Utc::now(),
                 },
+                allow_instance_creation: true,
             })
         }
     }
@@ -1524,8 +1626,9 @@ mod tests {
             _binding_id: &RuntimeBindingId,
         ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
             Ok(NativeAgentRunSurfacePlan {
-                provider: "openai".to_string(),
-                model: "gpt-test".to_string(),
+                executor: "PI_AGENT".to_string(),
+                provider: Some("openai".to_string()),
+                model: Some("gpt-test".to_string()),
                 surface: fixture_surface(),
             })
         }
@@ -1536,6 +1639,37 @@ mod tests {
         T::Err: std::fmt::Debug,
     {
         value.parse().expect("valid fixture id")
+    }
+
+    #[test]
+    fn explicit_backend_selection_matches_only_the_requested_remote_host() {
+        let selection = BackendSelectionInput {
+            mode: BackendSelectionInputMode::Explicit,
+            backend_id: Some("backend-a".to_string()),
+        };
+        let matching = AgentRuntimePlacement::Remote {
+            host_id: "backend-a".to_string(),
+            transport_id: agentdash_integration_api::AgentRuntimePlacementId::new("runtime-wire-a")
+                .expect("placement id"),
+        };
+        let other = AgentRuntimePlacement::Remote {
+            host_id: "backend-b".to_string(),
+            transport_id: agentdash_integration_api::AgentRuntimePlacementId::new("runtime-wire-b")
+                .expect("placement id"),
+        };
+
+        assert!(placement_matches_backend_selection(
+            &matching,
+            Some(&selection)
+        ));
+        assert!(!placement_matches_backend_selection(
+            &other,
+            Some(&selection)
+        ));
+        assert!(!placement_matches_backend_selection(
+            &AgentRuntimePlacement::InProcess,
+            Some(&selection)
+        ));
     }
 
     fn fixture_surface() -> MaterializedDriverSurface {
@@ -1718,6 +1852,7 @@ mod tests {
                 provider: Some("enterprise".to_string()),
                 extra: serde_json::Value::Null,
             }),
+            backend_selection: None,
         };
         let first = composition
             .provisioner
@@ -1785,6 +1920,7 @@ mod tests {
                 NativeAgentRunRuntimeSurfaceSource::new(
                     Arc::new(FixtureSurfaceCompiler),
                     definition,
+                    Vec::new(),
                 )
                 .expect("Native surface source"),
             ),
@@ -1819,6 +1955,7 @@ mod tests {
             .provision(&AgentRunRuntimeProvisionRequest {
                 target,
                 identity: None,
+                backend_selection: None,
             })
             .await
             .expect("provision Native tracer");
@@ -2266,6 +2403,7 @@ rl.on('line', line => {
             .provision(&AgentRunRuntimeProvisionRequest {
                 target,
                 identity: None,
+                backend_selection: None,
             })
             .await
             .expect("provision Codex binding");
@@ -2436,9 +2574,12 @@ rl.on('line', line => {
             .agent_runtime_drivers()
             .remove(0)
             .definition;
-        let source =
-            NativeAgentRunRuntimeSurfaceSource::new(Arc::new(FixtureSurfaceCompiler), definition)
-                .expect("Native surface source");
+        let source = NativeAgentRunRuntimeSurfaceSource::new(
+            Arc::new(FixtureSurfaceCompiler),
+            definition,
+            Vec::new(),
+        )
+        .expect("Native surface source");
         let request = AgentRunRuntimeProvisionRequest {
             target: AgentRunRuntimeTarget {
                 run_id: Uuid::new_v4(),
@@ -2456,6 +2597,7 @@ rl.on('line', line => {
                 provider: Some("enterprise".to_string()),
                 extra: serde_json::Value::Null,
             }),
+            backend_selection: None,
         };
         let prepared = source
             .prepare(

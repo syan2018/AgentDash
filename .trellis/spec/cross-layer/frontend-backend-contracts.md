@@ -70,6 +70,7 @@ AgentRunCommandReceipt {
 ### Contracts
 
 - Project Agent create 先建立 Lifecycle run/agent/frame 产品事实，再通过 `AgentRunProductDelivery` 提交首条 canonical Runtime mailbox command。响应返回产品 refs 与可选 Runtime thread/operation refs。
+- ProjectAgent 是启动默认模板；create-run 的 `executor_config` 与 `backend_selection` 是本次 RunLaunchProfile intent。admission 在 provision 前将 effective executor/provider/model 写入 AgentFrame execution profile，并将 backend intent传给 Host offer selection；它们不是无状态 HTTP override，也不改写 ProjectAgent defaults。
 - Composer submit 返回 queued mailbox identity 或 canonical `OperationReceipt`；重复 `client_command_id` 返回同一 operation，不创建第二次 Driver side effect。
 - UI 命令可用性只读取 Runtime snapshot 的 `command_availability`。Lifecycle status、executor kind、Backbone、transcript 或 HTTP success 不能推导 submit/steer/interrupt/compact/resolve 权限。
 - `AgentRunRuntimeBinding` 是 `run_id + agent_id` 到 Runtime thread/Host binding 的唯一产品执行坐标。浏览器不接触 Driver source IDs、Host lease 或 placement credential。
@@ -82,6 +83,9 @@ AgentRunCommandReceipt {
 | Condition | Required behavior |
 | --- | --- |
 | execution profile definition 未进入最终 Host inventory | discovery 保留 profile 并返回 `available=false + unavailable_reason`；ProjectAgent 写入拒绝未知 profile |
+| create-run executor/provider/model override 合法 | 与 ProjectAgent defaults 合并，写入新 AgentFrame revision后再 provision |
+| explicit backend 有匹配 activated offer | 只绑定该 backend placement并持久化 binding coordinates |
+| explicit backend 无匹配 offer | typed unavailable；不得回退任意 backend或 InProcess instance |
 | `PI_AGENT` 没有 executable Provider | profile 可见但 disabled；options 返回 Provider 诊断，不依赖 RuntimeOffer |
 | `CODEX` definition 已注册 | profile 可选；options 不伪造 Native Provider/model |
 | options executor 未知 | `400 Bad Request`，不探测 Connector 或任意 offer |

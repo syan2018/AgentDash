@@ -578,20 +578,26 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                 reason: format!("AgentFrame execution profile is invalid: {error}"),
             }
         })?;
+        let executor_id = executor.executor.trim().to_string();
+        if executor_id.is_empty() {
+            return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "Agent execution profile requires executor".to_string(),
+            });
+        }
         let provider = executor
             .provider_id
             .clone()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: "Native Agent execution profile requires provider_id".to_string(),
-            })?;
+            .filter(|value| !value.trim().is_empty());
         let model = executor
             .model_id
             .clone()
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: "Native Agent execution profile requires model_id".to_string(),
-            })?;
+            .filter(|value| !value.trim().is_empty());
+        if executor_id == "PI_AGENT" && (provider.is_none() || model.is_none()) {
+            return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "Managed Agent execution profile requires provider_id and model_id"
+                    .to_string(),
+            });
+        }
         let working_directory = surface
             .vfs
             .default_mount()
@@ -774,6 +780,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             reason: error.to_string(),
         })?;
         Ok(NativeAgentRunSurfacePlan {
+            executor: executor_id,
             provider,
             model,
             surface: MaterializedDriverSurface {

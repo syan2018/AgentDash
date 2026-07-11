@@ -22,3 +22,12 @@
 - [x] 使用 `pnpm dev` 验证执行器 discovery/options 与 Personal 无 token Provider OAuth prepare。
 - [x] 独立 check Agent 复核架构边界与断链零残留。
 - [x] 更新相关 Trellis spec；提交与推送由主会话完成。
+
+## ARD-003
+
+- [x] 保留 create-run executor/provider/model/backend 启动合同并删除整体拒绝门禁。
+- [x] 合并 ProjectAgent defaults 与启动 override，写入 AgentFrame effective execution profile。
+- [x] 将 backend selection 与 identity随 Runtime mailbox 传到 provision request。
+- [x] Host offer selection 按 execution profile definition 和 explicit backend placement过滤。
+- [x] Native/Codex source preparation按 execution profile选择 definition，Codex要求已有 activated offer。
+- [x] 完成前后端、Runtime与真实 `pnpm dev` Draft 启动边界验证；提交推送由主会话完成。

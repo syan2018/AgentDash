@@ -24,6 +24,7 @@ pub enum FrameConstructionCommand {
         agent_id: Uuid,
         runtime_session_id: Option<String>,
         created_by_id: Option<String>,
+        execution_profile: Option<serde_json::Value>,
     },
     CommitAcceptedLaunch {
         runtime_session_id: String,

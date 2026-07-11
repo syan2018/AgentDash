@@ -110,6 +110,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                 .launch_agent(&AgentLaunchIntent {
                     project_id: request.project_id,
                     project_agent_id: None,
+                    execution_profile_override: None,
                     source: ExecutionSource::ParentAgent,
                     created_by_user_id: None,
                     subject_ref: None,
@@ -216,6 +217,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                     agent_id: refs.agent_ref,
                 },
                 identity: None,
+                backend_selection: None,
             })
             .await
             .map(|binding| binding.thread_id.to_string())

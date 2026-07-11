@@ -4,6 +4,7 @@ use agentdash_agent_runtime_contract::{
     CommandAvailability, OperationReceipt, RuntimeActor, RuntimeCommandKind, RuntimeInput,
 };
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_domain::agent_run_mailbox::{
     AgentRunMailboxClaimRequest, AgentRunMailboxMessage, AgentRunMailboxRepository,
     ConsumptionBarrier, MailboxDelivery, MailboxDrainMode, MailboxMessageOrigin,
@@ -27,6 +28,7 @@ pub struct EnqueueRuntimeMailboxMessage {
     pub actor: RuntimeActor,
     pub identity: Option<AuthIdentity>,
     pub source: MailboxSourceIdentity,
+    pub backend_selection: Option<BackendSelectionInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,6 +38,7 @@ struct StoredRuntimeMailboxCommand {
     input: Vec<RuntimeInput>,
     actor: RuntimeActor,
     identity: Option<AuthIdentity>,
+    backend_selection: Option<BackendSelectionInput>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +59,8 @@ pub struct DeliverAgentRunProductInput {
     pub input: Vec<RuntimeInput>,
     pub actor: RuntimeActor,
     pub client_command_id: String,
+    pub backend_selection: Option<BackendSelectionInput>,
+    pub identity: Option<AuthIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +116,7 @@ impl RuntimeAgentRunMailbox {
             input: command.input.clone(),
             actor: command.actor.clone(),
             identity: command.identity.clone(),
+            backend_selection: command.backend_selection.clone(),
         })
         .map_err(|error| RuntimeMailboxError::InvalidPayload(error.to_string()))?;
         let visible_input = serde_json::to_value(&command.input)
@@ -232,6 +238,7 @@ impl RuntimeAgentRunMailbox {
                 input: command.input,
                 actor: command.actor,
                 identity: command.identity,
+                backend_selection: command.backend_selection,
             })
             .await
         {
@@ -288,8 +295,9 @@ impl AgentRunProductDeliveryPort for RuntimeAgentRunMailbox {
                 client_command_id: command.client_command_id,
                 input: command.input,
                 actor: command.actor,
-                identity: None,
+                identity: command.identity,
                 source,
+                backend_selection: command.backend_selection,
             })
             .await?;
         Ok(match outcome {

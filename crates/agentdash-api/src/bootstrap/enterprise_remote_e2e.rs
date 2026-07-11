@@ -455,6 +455,7 @@ impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
                     .expect("profile digest"),
                 verified_at: Utc::now(),
             },
+            allow_instance_creation: false,
         })
     }
 }
@@ -711,6 +712,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
             },
             identity: None,
             source: MailboxSourceIdentity::composer(),
+            backend_selection: None,
         }),
     )
     .await
@@ -893,6 +895,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                     subject: "enterprise-user".to_string(),
                 },
                 identity: None,
+                backend_selection: None,
             },
         )
         .await
@@ -920,6 +923,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                     subject: "enterprise-user".to_string(),
                 },
                 identity: None,
+                backend_selection: None,
             },
         )
         .await
@@ -1026,6 +1030,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                     subject: "enterprise-user".to_string(),
                 },
                 identity: None,
+                backend_selection: None,
             },
         )
         .await

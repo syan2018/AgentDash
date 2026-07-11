@@ -9,6 +9,8 @@ use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::launch::BackendSelectionInput;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AgentRunRuntimeTarget {
     pub run_id: Uuid,
@@ -19,6 +21,7 @@ pub struct AgentRunRuntimeTarget {
 pub struct AgentRunRuntimeProvisionRequest {
     pub target: AgentRunRuntimeTarget,
     pub identity: Option<AuthIdentity>,
+    pub backend_selection: Option<BackendSelectionInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

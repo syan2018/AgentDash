@@ -103,6 +103,9 @@ pub struct AgentLaunchIntent {
     pub project_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_agent_id: Option<Uuid>,
+    /// 本次 AgentRun 的 effective execution profile；缺失时使用 ProjectAgent 默认配置。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_profile_override: Option<serde_json::Value>,
     pub source: ExecutionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_user_id: Option<String>,

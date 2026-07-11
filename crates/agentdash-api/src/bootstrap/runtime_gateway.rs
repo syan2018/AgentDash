@@ -40,7 +40,7 @@ impl SharedOperationGatewayHandle {
         *self.inner.write().await = Some(gateway);
     }
 
-    async fn get(&self) -> Option<Arc<OperationGateway>> {
+    pub(crate) async fn get(&self) -> Option<Arc<OperationGateway>> {
         self.inner.read().await.clone()
     }
 }
@@ -374,7 +374,7 @@ impl agentdash_application::interaction::InteractionCommandAdmissionPort
                     .into_iter().find(|attachment| {
                         attachment.detached_at.is_none()
                             && attachment.capabilities.can_submit_commands
-                            && matches!(attachment.subject, AttachmentSubject::AgentRun { run_id: attached } if attached == *run_id)
+                            && matches!(attachment.subject, AttachmentSubject::AgentRun { run_id: attached_run, agent_id: attached_agent } if attached_run == *run_id && attached_agent == *agent_id)
                     }).ok_or_else(|| InteractionApplicationError::AccessDenied {
                         reason: "AgentRun 没有可提交 command 的 active Interaction attachment".into(),
                     })?;

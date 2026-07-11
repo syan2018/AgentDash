@@ -100,7 +100,7 @@ impl InteractionInstance {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttachmentSubject {
-    AgentRun { run_id: Uuid },
+    AgentRun { run_id: Uuid, agent_id: Uuid },
     UserWorkshop { user_id: String },
     WorkflowRun { run_id: Uuid },
 }
@@ -179,9 +179,15 @@ impl InteractionAttachment {
             });
         }
         match &self.subject {
-            AttachmentSubject::AgentRun { run_id } | AttachmentSubject::WorkflowRun { run_id }
-                if run_id.is_nil() =>
+            AttachmentSubject::AgentRun { run_id, agent_id }
+                if run_id.is_nil() || agent_id.is_nil() =>
             {
+                Err(InteractionError::InvalidField {
+                    field: "interaction_attachment.subject",
+                    reason: "AgentRun subject run_id/agent_id 不能为空",
+                })
+            }
+            AttachmentSubject::WorkflowRun { run_id } if run_id.is_nil() => {
                 Err(InteractionError::InvalidField {
                     field: "interaction_attachment.subject",
                     reason: "run id 不能为空",

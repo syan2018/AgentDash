@@ -1060,7 +1060,9 @@ fn owner_parts(owner: &InteractionOwner) -> (&'static str, String) {
 }
 fn attachment_subject_parts(attachment: &InteractionAttachment) -> (&'static str, String) {
     match &attachment.subject {
-        AttachmentSubject::AgentRun { run_id } => ("agent_run", run_id.to_string()),
+        AttachmentSubject::AgentRun { run_id, agent_id } => {
+            ("agent_run", format!("{run_id}:{agent_id}"))
+        }
         AttachmentSubject::UserWorkshop { user_id } => ("user_workshop", user_id.clone()),
         AttachmentSubject::WorkflowRun { run_id } => ("workflow_run", run_id.to_string()),
     }

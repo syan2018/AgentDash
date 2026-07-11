@@ -354,7 +354,7 @@ fn profile_from_activation(activation: &LocalExtensionHostActivation) -> LocalEx
         arch: std::env::consts::ARCH.to_string(),
         backend_id: activation.backend_id.clone(),
         project_id: activation.project_id.clone(),
-        session_id: activation.session_id.clone(),
+        execution_id: activation.execution_id.clone(),
         workspace_roots: activation
             .workspace_roots
             .iter()

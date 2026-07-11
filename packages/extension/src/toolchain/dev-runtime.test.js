@@ -84,19 +84,19 @@ async function fixtureProject(options = {}) {
   }));
   const runtimeActions = [{
     action_key: "demo.greet",
-    kind: "session_runtime",
+    kind: "runtime",
     description: "Greet through action",
     input_schema: true,
     output_schema: true,
   }, {
     action_key: "demo.self",
-    kind: "session_runtime",
+    kind: "runtime",
     description: "Greet through self channel",
     input_schema: true,
     output_schema: true,
   }, {
     action_key: "demo.alias",
-    kind: "session_runtime",
+    kind: "runtime",
     description: "Greet through dependency alias",
     input_schema: true,
     output_schema: true,
@@ -179,7 +179,7 @@ export default defineExtension({
     });
     ctx.runtime.registerAction({
       action_key: "demo.greet",
-      kind: "session_runtime",
+      kind: "runtime",
       description: "Greet through action",
       input_schema: true,
       output_schema: true,
@@ -189,7 +189,7 @@ export default defineExtension({
     });
     ctx.runtime.registerAction({
       action_key: "demo.self",
-      kind: "session_runtime",
+      kind: "runtime",
       description: "Greet through self channel",
       input_schema: true,
       output_schema: true,
@@ -199,7 +199,7 @@ export default defineExtension({
     });
     ctx.runtime.registerAction({
       action_key: "demo.alias",
-      kind: "session_runtime",
+      kind: "runtime",
       description: "Greet through dependency alias",
       input_schema: true,
       output_schema: true,

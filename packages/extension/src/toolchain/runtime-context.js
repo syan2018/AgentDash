@@ -3,7 +3,7 @@
 /**
  * @typedef {unknown} JsonValue
  * @typedef {Record<string, unknown>} JsonObject
- * @typedef {"session_runtime" | "setup"} ExtensionRuntimeActionKind
+ * @typedef {"runtime" | "setup"} ExtensionRuntimeActionKind
  * @typedef {JsonObject | boolean} JsonSchemaValue
  * @typedef {{ action_key: string, kind: ExtensionRuntimeActionKind, description: string, input_schema: JsonSchemaValue, output_schema: JsonSchemaValue, permissions?: string[], invoke(input: JsonValue): JsonValue | Promise<JsonValue> }} ExtensionRuntimeActionDefinition
  * @typedef {{ name: string, description: string, input_schema: JsonSchemaValue, output_schema: JsonSchemaValue, permissions?: string[], invoke(input: JsonValue): JsonValue | Promise<JsonValue> }} ExtensionProtocolMethodDefinition

@@ -96,7 +96,7 @@ function manifestJson(packageName, extensionId) {
       runtime_actions: [
         {
           action_key: `${extensionId}.profile`,
-          kind: "session_runtime",
+          kind: "runtime",
           description: "Read local profile",
           input_schema: {},
           output_schema: {},
@@ -143,7 +143,7 @@ export default defineExtension({
   activate(ctx) {
     ctx.runtime.registerAction({
       action_key: ${JSON.stringify(`${extensionId}.profile`)},
-      kind: "session_runtime",
+      kind: "runtime",
       description: "Read local profile",
       input_schema: {},
       output_schema: {},
@@ -258,8 +258,8 @@ export function App({ actionKey }: AppProps) {
         <dd>{textField(state.profile.platform)}</dd>
         <dt>Backend</dt>
         <dd>{textField(state.profile.backend_id)}</dd>
-        <dt>Session</dt>
-        <dd>{textField(state.profile.session_id)}</dd>
+        <dt>Execution</dt>
+        <dd>{textField(state.profile.execution_id)}</dd>
       </dl>
     </main>
   );

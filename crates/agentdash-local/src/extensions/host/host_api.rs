@@ -105,14 +105,14 @@ fn default_workspace_root(active: &ActiveExtension) -> Result<String, LocalExten
         .as_ref()
         .map(|root| root.to_string_lossy().to_string())
         .ok_or_else(|| {
-            LocalExtensionHostError::Host("extension host 未绑定 session workspace root".into())
+            LocalExtensionHostError::Host("extension host 未绑定 execution workspace root".into())
         })
 }
 
 fn reject_workspace_root_override(params: &Value) -> Result<(), LocalExtensionHostError> {
     if params.get("workspace_root").is_some() {
         return Err(LocalExtensionHostError::Host(
-            "host api 不接受 workspace_root 覆盖；workspace 由当前 session context 决定"
+            "host api 不接受 workspace_root 覆盖；workspace 由当前 execution context 决定"
                 .to_string(),
         ));
     }
@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_host_apis_use_session_root_without_registered_roots() {
+    async fn workspace_host_apis_use_execution_root_without_registered_roots() {
         let temp = tempfile::tempdir().expect("tempdir");
         let active = active_extension_with_roots(
             Some(temp.path()),
@@ -482,7 +482,7 @@ mod tests {
             })),
         )
         .await
-        .expect("write through session root");
+        .expect("write through execution root");
 
         let text = resolve_host_api(
             Some(&active),
@@ -490,7 +490,7 @@ mod tests {
             &action_params(json!({ "path": "notes/session-root.txt" })),
         )
         .await
-        .expect("read through session root");
+        .expect("read through execution root");
 
         assert_eq!(text, "session-root");
     }
@@ -511,9 +511,9 @@ mod tests {
             &action_params(json!({ "path": "." })),
         )
         .await
-        .expect_err("missing session root");
+        .expect_err("missing execution root");
 
-        assert_contains(&error, "extension host 未绑定 session workspace root");
+        assert_contains(&error, "extension host 未绑定 execution workspace root");
     }
 
     #[tokio::test]
@@ -638,7 +638,7 @@ mod tests {
                 arch: "x64".to_string(),
                 backend_id: "backend-1".to_string(),
                 project_id: Some("project-1".to_string()),
-                session_id: Some("session-1".to_string()),
+                execution_id: Some("session-1".to_string()),
                 workspace_roots: profile_workspace_roots,
             },
             default_workspace_root: default_workspace_root.map(Path::to_path_buf),
@@ -665,7 +665,7 @@ mod tests {
             asset_refs: vec![],
             runtime_actions: vec![ExtensionRuntimeActionDefinition {
                 action_key: "local-hello.profile".to_string(),
-                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                kind: ExtensionRuntimeActionKind::Runtime,
                 description: "Profile".to_string(),
                 input_schema: json!(true),
                 output_schema: json!(true),

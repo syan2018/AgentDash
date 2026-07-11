@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 agentdash-diagnostics = { workspace = true }
 tracing = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
+tokio = { workspace = true, features = ["sync"] }
 uuid = { workspace = true }
 
 [dev-dependencies]

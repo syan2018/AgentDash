@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    WorkflowOperationScriptCallContext, WorkflowOperationScriptCaller,
+    SharedWorkflowOperationScriptCaller, WorkflowOperationScriptCallContext,
     WorkflowOperationScriptCallerError, WorkflowOperationScriptProgram,
 };
 
@@ -22,14 +22,14 @@ use super::ready_node::{RunningNodeView, RuntimeNodeCoordinate};
 #[derive(Clone, Default)]
 pub(super) struct FunctionNodeRunner {
     runner: Option<Arc<dyn FunctionRunner>>,
-    operation_script_caller: Option<Arc<WorkflowOperationScriptCaller>>,
+    operation_script_caller: SharedWorkflowOperationScriptCaller,
 }
 
 impl FunctionNodeRunner {
     pub(super) fn new() -> Self {
         Self {
             runner: None,
-            operation_script_caller: None,
+            operation_script_caller: SharedWorkflowOperationScriptCaller::default(),
         }
     }
 
@@ -40,9 +40,9 @@ impl FunctionNodeRunner {
 
     pub(super) fn with_operation_script_caller(
         mut self,
-        caller: Arc<WorkflowOperationScriptCaller>,
+        caller: SharedWorkflowOperationScriptCaller,
     ) -> Self {
-        self.operation_script_caller = Some(caller);
+        self.operation_script_caller = caller;
         self
     }
 
@@ -162,7 +162,8 @@ impl FunctionNodeRunner {
             FunctionActivityExecutorSpec::OperationScript(spec) => {
                 let caller =
                     self.operation_script_caller
-                        .as_ref()
+                        .get()
+                        .await
                         .ok_or_else(|| RuntimeNodeError {
                             code: "operation_script_caller_unavailable".to_string(),
                             message: "orchestration executor 缺少 Workflow OperationScript caller"
@@ -287,7 +288,7 @@ fn operation_script_node_error(error: WorkflowOperationScriptCallerError) -> Run
             surface.code().to_string(),
             matches!(
                 surface.kind(),
-                agentdash_application_runtime_gateway::OperationExecutionErrorKind::ProviderFailed
+                agentdash_application_operation_gateway::OperationExecutionErrorKind::ProviderFailed
             ),
             None,
         ),

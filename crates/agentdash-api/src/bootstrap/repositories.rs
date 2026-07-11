@@ -210,6 +210,8 @@ pub(crate) async fn build_repositories(
         inline_file_repo: inline_file_repo.clone(),
         permission_grant_repo: permission_grant_repo.clone(),
         project_projection_notifications: project_projection_notifications.clone(),
+        workflow_operation_script_caller:
+            agentdash_application_workflow::SharedWorkflowOperationScriptCaller::default(),
     };
 
     let integration_asset_count = integration_library_asset_seeds.len();

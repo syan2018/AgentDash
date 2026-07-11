@@ -543,6 +543,7 @@ pub async fn submit_orchestration_human_decision(
 
     let lifecycle_repos = state.repos.lifecycle_read_model_repos();
     let launcher = OrchestrationExecutorLauncher::new(state.repos.to_workflow_repository_set())
+        .with_operation_script_caller(state.repos.workflow_operation_script_caller.clone())
         .with_function_runner(state.services.function_runner.clone());
     let result = launcher
         .submit_human_gate_decision(SubmitHumanGateDecisionInput {

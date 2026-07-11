@@ -530,8 +530,8 @@ name = "agentdash-application-workflow"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-runtime-contract",
+ "agentdash-application-operation-gateway",
  "agentdash-application-ports",
- "agentdash-application-runtime-gateway",
  "agentdash-diagnostics",
  "agentdash-domain",
  "agentdash-infrastructure",

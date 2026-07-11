@@ -114,6 +114,8 @@ pub struct RepositorySet {
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
     pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
     pub project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
+    pub workflow_operation_script_caller:
+        agentdash_application_workflow::SharedWorkflowOperationScriptCaller,
 }
 
 impl RepositorySet {
@@ -163,7 +165,8 @@ impl RepositorySet {
             inline_file_repo: self.inline_file_repo.clone(),
             orchestration_launcher: OrchestrationExecutorLauncher::new(
                 self.to_workflow_repository_set(),
-            ),
+            )
+            .with_operation_script_caller(self.workflow_operation_script_caller.clone()),
         }
     }
 
@@ -179,7 +182,8 @@ impl RepositorySet {
             frame_construction: self.agent_frame_construction.clone(),
             orchestration_launcher: OrchestrationExecutorLauncher::new(
                 self.to_workflow_repository_set(),
-            ),
+            )
+            .with_operation_script_caller(self.workflow_operation_script_caller.clone()),
         }
     }
 

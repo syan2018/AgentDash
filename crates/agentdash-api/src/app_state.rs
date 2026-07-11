@@ -477,6 +477,15 @@ impl AppState {
         operation_script_engine_handle
             .set(operation_script_engine.clone())
             .await;
+        repos
+            .workflow_operation_script_caller
+            .set(Arc::new(
+                agentdash_application_workflow::WorkflowOperationScriptCaller::new(
+                    operation_script_engine.clone(),
+                    operation_gateway.clone(),
+                ),
+            ))
+            .await;
 
         let auth_mode = crate::bootstrap::auth::validate_auth_provider_registered(
             crate::bootstrap::auth::resolve_configured_auth_mode()?,

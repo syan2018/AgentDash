@@ -1,14 +1,15 @@
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
+use agentdash_application_operation_gateway::{
+    GatewayOperationScriptExecutor, OperationExecutionError, OperationGateway, OperationOriginRef,
+    OperationPrincipal, OperationPrincipalRef, OperationScopeRef,
+};
 use agentdash_application_ports::operation_script::{
     OperationScriptAllowedOperation, OperationScriptEngine, OperationScriptError,
     OperationScriptLimits, OperationScriptPreflightRequest, OperationScriptPreflightResult,
     OperationScriptPreflightToken, OperationScriptProgram, OperationScriptRunOutcome,
     OperationScriptRunRequest,
-};
-use agentdash_application_operation_gateway::{
-    GatewayOperationScriptExecutor, OperationExecutionError, OperationGateway, OperationOriginRef,
-    OperationPrincipal, OperationPrincipalRef, OperationScopeRef,
 };
 use agentdash_domain::operation::OperationRef;
 use serde_json::Value;
@@ -53,6 +54,21 @@ pub struct WorkflowOperationScriptCaller {
     engine: Arc<dyn OperationScriptEngine>,
     gateway: Arc<OperationGateway>,
     operation_executor: Arc<GatewayOperationScriptExecutor>,
+}
+
+#[derive(Clone, Default)]
+pub struct SharedWorkflowOperationScriptCaller {
+    inner: Arc<RwLock<Option<Arc<WorkflowOperationScriptCaller>>>>,
+}
+
+impl SharedWorkflowOperationScriptCaller {
+    pub async fn set(&self, caller: Arc<WorkflowOperationScriptCaller>) {
+        *self.inner.write().await = Some(caller);
+    }
+
+    pub async fn get(&self) -> Option<Arc<WorkflowOperationScriptCaller>> {
+        self.inner.read().await.clone()
+    }
 }
 
 impl WorkflowOperationScriptCaller {
@@ -181,15 +197,15 @@ mod tests {
     use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use agentdash_application_ports::operation_script::{
-        OPERATION_SCRIPT_HOST_API_V1, OperationScriptResultValue, RHAI_V1_DIALECT,
-    };
     use agentdash_application_operation_gateway::{
-        InMemoryOperationResultStore, OperationActorKind, OperationAuthorityGrant,
+        EphemeralOperationResultStore, OperationActorKind, OperationAuthorityGrant,
         OperationAuthorityResolver, OperationAuthorizationScope, OperationDescriptor,
         OperationDispatch, OperationExecutionPolicy, OperationInvocationEnvelope,
         OperationPlacement, OperationProvenance, OperationProvider, OperationReadiness,
         TracingOperationAuditSink,
+    };
+    use agentdash_application_ports::operation_script::{
+        OPERATION_SCRIPT_HOST_API_V1, OperationScriptResultValue, RHAI_V1_DIALECT,
     };
     use agentdash_domain::operation::{
         OperationEffect, OperationProviderRef, OperationReplayPolicy,
@@ -327,7 +343,7 @@ mod tests {
                 }),
                 [provider.clone() as Arc<dyn OperationProvider>],
                 [],
-                Arc::new(InMemoryOperationResultStore::default()),
+                Arc::new(EphemeralOperationResultStore::default()),
                 Arc::new(TracingOperationAuditSink),
             )
             .expect("gateway"),

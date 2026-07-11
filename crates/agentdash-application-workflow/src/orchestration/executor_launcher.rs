@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{WorkflowApplicationError, WorkflowOperationScriptCaller, WorkflowRepositorySet};
+use crate::{WorkflowApplicationError, WorkflowRepositorySet};
 
 use super::agent_node_launcher::{AgentNodeLaunchOutcome, AgentNodeLauncher};
 use super::function_node_runner::FunctionNodeRunner;
@@ -120,7 +120,7 @@ impl OrchestrationExecutorLauncher {
 
     pub fn with_operation_script_caller(
         mut self,
-        caller: Arc<WorkflowOperationScriptCaller>,
+        caller: crate::SharedWorkflowOperationScriptCaller,
     ) -> Self {
         self.function_node_runner = self
             .function_node_runner

@@ -22,8 +22,9 @@ pub use error::WorkflowApplicationError;
 pub use graph_planner::ApplicationWorkflowGraphPlanner;
 pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use operation_script_caller::{
-    WorkflowOperationScriptCallContext, WorkflowOperationScriptCaller,
-    WorkflowOperationScriptCallerError, WorkflowOperationScriptProgram,
+    SharedWorkflowOperationScriptCaller, WorkflowOperationScriptCallContext,
+    WorkflowOperationScriptCaller, WorkflowOperationScriptCallerError,
+    WorkflowOperationScriptProgram,
 };
 pub use orchestration::{
     OrchestrationExecutorDrainResult, OrchestrationExecutorLauncher, SubmitHumanGateDecisionInput,

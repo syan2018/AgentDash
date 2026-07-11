@@ -5,7 +5,7 @@
 mod auth;
 mod backend;
 mod backend_access;
-mod canvas;
+mod interaction;
 mod extension_management;
 mod extension_runtime;
 mod file_picker;
@@ -32,7 +32,7 @@ pub use agentdash_contracts::workspace::{WorkspaceBindingResponse, WorkspaceResp
 pub use auth::*;
 pub use backend::*;
 pub use backend_access::*;
-pub use canvas::*;
+pub use interaction::*;
 pub use extension_management::*;
 pub use extension_runtime::*;
 pub use file_picker::*;

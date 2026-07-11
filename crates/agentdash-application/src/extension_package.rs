@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Component, Path};
 
+use flate2::Compression;
 use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -13,20 +15,24 @@ use agentdash_domain::extension_package::{
     ExtensionPackageArtifact, ExtensionPackageArtifactOwner, ExtensionPackageArtifactRef,
     validate_sha256_digest,
 };
-use agentdash_domain::interaction::{InteractionOwner, RuntimeBindingTarget};
+use agentdash_domain::interaction::{
+    InteractionDefinitionRevision, InteractionOwner, RuntimeBindingTarget,
+};
 use agentdash_domain::shared_library::{
-    ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
-    ProjectExtensionInstallation,
+    ExtensionTemplatePayload, ExtensionWorkspaceTabDefinition,
+    ExtensionWorkspaceTabRendererDeclaration, ProjectExtensionInstallation,
 };
 pub use agentdash_spi::extension_package::{
     ExtensionPackageArtifactStorage, ExtensionPackageArtifactStorageError,
 };
+use tar::{Builder, Header};
 
 use crate::repository_set::RepositorySet;
 
 const EXTENSION_MANIFEST_PATH: &str = "agentdash.extension.json";
 const PACKAGE_JSON_PATH: &str = "package.json";
 const INSTALL_LIFECYCLE_SCRIPTS: &[&str] = &["preinstall", "install", "postinstall", "prepare"];
+const INTERACTION_SOURCE_METADATA_PATH: &str = "agentdash.interaction-source.json";
 
 #[derive(Debug, Clone)]
 pub struct ValidatedExtensionPackageArchive {
@@ -34,6 +40,143 @@ pub struct ValidatedExtensionPackageArchive {
     pub manifest_digest: String,
     pub manifest: ExtensionTemplatePayload,
     pub byte_size: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct InteractionDefinitionExtensionPackage {
+    pub archive_bytes: Vec<u8>,
+    pub archive_digest: String,
+    pub manifest_digest: String,
+    pub manifest: ExtensionTemplatePayload,
+    pub definition_id: Uuid,
+    pub definition_revision_id: Uuid,
+    pub source_bundle_digest: String,
+}
+
+pub fn build_interaction_definition_extension_package(
+    revision: &InteractionDefinitionRevision,
+    package_version: Option<&str>,
+    asset_version: Option<&str>,
+) -> Result<InteractionDefinitionExtensionPackage, DomainError> {
+    revision
+        .validate()
+        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+    let package_version = package_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("0.1.0")
+        .to_string();
+    let asset_version = asset_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&package_version)
+        .to_string();
+    let extension_id = format!("canvas-{}", revision.definition_id);
+    let entry = format!("dist/canvas/{}", revision.source_bundle.entry_file);
+    let manifest = ExtensionTemplatePayload {
+        manifest_version: "2".into(),
+        extension_id: extension_id.clone(),
+        package: agentdash_domain::extension_package::ExtensionPackageMetadata {
+            name: format!("@agentdash/{extension_id}"),
+            version: package_version.clone(),
+        },
+        asset_version,
+        commands: vec![],
+        flags: vec![],
+        message_renderers: vec![],
+        capability_directives: vec![],
+        asset_refs: vec![],
+        runtime_actions: vec![],
+        protocols: vec![],
+        extension_dependencies: vec![],
+        workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
+            type_id: format!("{extension_id}.panel"),
+            label: revision.title.clone(),
+            uri_scheme: extension_id.clone(),
+            renderer: ExtensionWorkspaceTabRendererDeclaration::Webview {
+                entry: entry.clone(),
+            },
+        }],
+        ui_components: vec![],
+        permissions: vec![],
+        fetch_routes: vec![],
+        operation_catalog: vec![],
+        backend_services: vec![],
+        bundles: vec![],
+    };
+    let package_json = serde_json::json!({
+        "name": manifest.package.name,
+        "version": package_version,
+        "private": true,
+        "type": "module"
+    });
+    let source_metadata = serde_json::json!({
+        "format_version": 1,
+        "definition_id": revision.definition_id,
+        "definition_revision_id": revision.revision_id,
+        "definition_revision_number": revision.revision_number,
+        "source_bundle_digest": revision.source_bundle.digest,
+        "source_bundle_format_version": revision.source_bundle.format_version,
+        "entry": entry,
+    });
+    let mut files = vec![
+        (
+            EXTENSION_MANIFEST_PATH.to_string(),
+            serde_json::to_vec_pretty(&manifest).map_err(DomainError::Serialization)?,
+        ),
+        (
+            PACKAGE_JSON_PATH.to_string(),
+            serde_json::to_vec_pretty(&package_json).map_err(DomainError::Serialization)?,
+        ),
+        (
+            INTERACTION_SOURCE_METADATA_PATH.to_string(),
+            serde_json::to_vec_pretty(&source_metadata).map_err(DomainError::Serialization)?,
+        ),
+    ];
+    files.extend(revision.source_bundle.files.iter().map(|file| {
+        (
+            format!("dist/canvas/{}", file.path),
+            file.content.as_bytes().to_vec(),
+        )
+    }));
+    let archive_bytes = build_extension_archive(files)?;
+    let validated = validate_extension_package_archive(&archive_bytes, None)?;
+    Ok(InteractionDefinitionExtensionPackage {
+        archive_bytes,
+        archive_digest: validated.archive_digest,
+        manifest_digest: validated.manifest_digest,
+        manifest: validated.manifest,
+        definition_id: revision.definition_id,
+        definition_revision_id: revision.revision_id,
+        source_bundle_digest: revision.source_bundle.digest.clone(),
+    })
+}
+
+fn build_extension_archive(files: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>, DomainError> {
+    let encoder = GzEncoder::new(Vec::new(), Compression::default());
+    let mut builder = Builder::new(encoder);
+    for (path, bytes) in files {
+        let mut header = Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_mtime(0);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, path, bytes.as_slice())
+            .map_err(|error| {
+                DomainError::InvalidConfig(format!("Extension archive 构建失败: {error}"))
+            })?;
+    }
+    builder.finish().map_err(|error| {
+        DomainError::InvalidConfig(format!("Extension archive 构建失败: {error}"))
+    })?;
+    builder
+        .into_inner()
+        .map_err(|error| {
+            DomainError::InvalidConfig(format!("Extension archive 构建失败: {error}"))
+        })?
+        .finish()
+        .map_err(|error| DomainError::InvalidConfig(format!("Extension archive 构建失败: {error}")))
 }
 
 #[derive(Debug, Clone)]
@@ -751,6 +894,10 @@ mod tests {
     use tar::{Builder, Header};
 
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
+    use agentdash_domain::interaction::{
+        InteractionDefinitionRevision, InteractionOwner, SourceBundle, SourceFile,
+        SourceSandboxConfig,
+    };
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionTemplatePayload,
     };
@@ -773,6 +920,57 @@ mod tests {
             builder.finish().expect("finish tar");
         }
         encoder.finish().expect("finish gzip")
+    }
+
+    #[test]
+    fn interaction_promotion_pins_exact_revision_and_source_digest() {
+        let project_id = Uuid::new_v4();
+        let source_bundle = SourceBundle::new(
+            "index.html",
+            vec![
+                SourceFile::new(
+                    "index.html",
+                    "<!doctype html><h1>exact</h1>",
+                    Some("text/html".into()),
+                )
+                .expect("source file"),
+            ],
+            SourceSandboxConfig::default(),
+        )
+        .expect("source bundle");
+        let revision = InteractionDefinitionRevision::new_canvas_v1(
+            Uuid::new_v4(),
+            3,
+            project_id,
+            InteractionOwner::User("user-1".into()),
+            "Exact Canvas",
+            "",
+            source_bundle.clone(),
+            serde_json::json!({}),
+            serde_json::json!({"type":"object"}),
+            "user-1",
+        )
+        .expect("revision");
+
+        let package =
+            build_interaction_definition_extension_package(&revision, Some("1.2.3"), None)
+                .expect("package");
+
+        assert_eq!(package.definition_revision_id, revision.revision_id);
+        assert_eq!(package.source_bundle_digest, source_bundle.digest);
+        assert_eq!(package.manifest.package.version, "1.2.3");
+        let metadata = read_extension_package_archive_file(
+            &package.archive_bytes,
+            INTERACTION_SOURCE_METADATA_PATH,
+        )
+        .expect("metadata read")
+        .expect("metadata exists");
+        let metadata: Value = serde_json::from_slice(&metadata).expect("metadata json");
+        assert_eq!(
+            metadata["definition_revision_id"],
+            revision.revision_id.to_string()
+        );
+        assert_eq!(metadata["source_bundle_digest"], source_bundle.digest);
     }
 
     fn manifest(bundle_digest: String) -> Value {

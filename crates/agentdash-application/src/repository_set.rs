@@ -27,10 +27,13 @@ use agentdash_domain::backend::{
     BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
     ProjectBackendAccessRepository, RunnerRegistrationTokenRepository, RuntimeHealthRepository,
 };
-use agentdash_domain::canvas::{CanvasRepository, CanvasRuntimeStateRepository};
 use agentdash_domain::extension_package::ExtensionPackageArtifactRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
+use agentdash_domain::interaction::{
+    InteractionCommandTransactionPort, InteractionDefinitionRepository, InteractionEventRepository,
+    InteractionInstanceRepository, InteractionPresentationRepository,
+};
 use agentdash_domain::llm_provider::{LlmProviderCredentialRepository, LlmProviderRepository};
 use agentdash_domain::mcp_preset::McpPresetRepository;
 use agentdash_domain::permission::PermissionGrantRepository;
@@ -63,8 +66,11 @@ use crate::wait_activity::WaitActivityRepositories;
 #[derive(Clone)]
 pub struct RepositorySet {
     pub project_repo: Arc<dyn ProjectRepository>,
-    pub canvas_repo: Arc<dyn CanvasRepository>,
-    pub canvas_runtime_state_repo: Arc<dyn CanvasRuntimeStateRepository>,
+    pub interaction_definition_repo: Arc<dyn InteractionDefinitionRepository>,
+    pub interaction_instance_repo: Arc<dyn InteractionInstanceRepository>,
+    pub interaction_command_transaction: Arc<dyn InteractionCommandTransactionPort>,
+    pub interaction_event_repo: Arc<dyn InteractionEventRepository>,
+    pub interaction_presentation_repo: Arc<dyn InteractionPresentationRepository>,
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
@@ -218,16 +224,6 @@ impl RepositorySet {
             story_repo: self.story_repo.clone(),
             inline_file_repo: self.inline_file_repo.clone(),
         })
-    }
-}
-
-impl agentdash_workspace_module::canvas::CanvasRepositorySet for RepositorySet {
-    fn project_repo(&self) -> &dyn ProjectRepository {
-        self.project_repo.as_ref()
-    }
-
-    fn canvas_repo(&self) -> &dyn CanvasRepository {
-        self.canvas_repo.as_ref()
     }
 }
 

@@ -45,3 +45,5 @@ pub mod workflow;
 pub mod workspace;
 #[path = "surface/workspace_module.rs"]
 pub mod workspace_module;
+#[path = "surface/interaction.rs"]
+pub mod interaction;

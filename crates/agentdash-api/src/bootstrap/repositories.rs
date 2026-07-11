@@ -22,7 +22,7 @@ use agentdash_infrastructure::{
     PostgresAgentLineageRepository, PostgresAgentRunLineageRepository,
     PostgresAgentRunMailboxRepository, PostgresAgentRuntimeCompositionRepository,
     PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
-    PostgresBackendRepository, PostgresCanvasRepository, PostgresCanvasRuntimeStateRepository,
+    PostgresBackendRepository, PostgresInteractionRepository,
     PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
     PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
     PostgresLifecycleSubjectAssociationRepository, PostgresLlmProviderCredentialRepository,
@@ -55,9 +55,7 @@ pub(crate) async fn build_repositories(
 
     let project_repo = Arc::new(PostgresProjectRepository::new(pool.clone()));
 
-    let canvas_repo = Arc::new(PostgresCanvasRepository::new(pool.clone()));
-    let canvas_runtime_state_repo =
-        Arc::new(PostgresCanvasRuntimeStateRepository::new(pool.clone()));
+    let interaction_repo = Arc::new(PostgresInteractionRepository::new(pool.clone()));
 
     let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
 
@@ -164,8 +162,11 @@ pub(crate) async fn build_repositories(
 
     let repos = RepositorySet {
         project_repo: project_repo.clone(),
-        canvas_repo: canvas_repo.clone(),
-        canvas_runtime_state_repo: canvas_runtime_state_repo.clone(),
+        interaction_definition_repo: interaction_repo.clone(),
+        interaction_instance_repo: interaction_repo.clone(),
+        interaction_command_transaction: interaction_repo.clone(),
+        interaction_event_repo: interaction_repo.clone(),
+        interaction_presentation_repo: interaction_repo,
         workspace_repo: workspace_repo.clone(),
         story_repo: story_repo.clone(),
         state_change_repo: state_change_repo.clone(),

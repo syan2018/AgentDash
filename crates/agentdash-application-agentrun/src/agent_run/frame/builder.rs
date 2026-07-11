@@ -87,6 +87,7 @@ pub struct AgentFrameBuilder {
     vfs_surface: Option<serde_json::Value>,
     mcp_surface: Option<serde_json::Value>,
     execution_profile: Option<serde_json::Value>,
+    hook_plan: Option<serde_json::Value>,
     created_by_kind: String,
     created_by_id: Option<String>,
 }
@@ -100,6 +101,7 @@ impl AgentFrameBuilder {
             vfs_surface: None,
             mcp_surface: None,
             execution_profile: None,
+            hook_plan: None,
             created_by_kind: "frame_builder".to_string(),
             created_by_id: None,
         }
@@ -176,6 +178,11 @@ impl AgentFrameBuilder {
     /// 从已有 JSON 值填充 execution_profile（用于 frame revision carry-forward）。
     pub fn with_execution_profile_raw(mut self, profile: serde_json::Value) -> Self {
         self.execution_profile = Some(profile);
+        self
+    }
+
+    pub fn with_hook_plan_raw(mut self, hook_plan: serde_json::Value) -> Self {
+        self.hook_plan = Some(hook_plan);
         self
     }
 
@@ -270,6 +277,10 @@ impl AgentFrameBuilder {
                 .as_ref()
                 .and_then(|frame| frame.execution_profile_json.clone())
         });
+        frame.hook_plan = self
+            .hook_plan
+            .clone()
+            .or_else(|| current.as_ref().and_then(|frame| frame.hook_plan.clone()));
         frame.visible_canvas_mount_ids_json = current
             .as_ref()
             .and_then(|frame| frame.visible_canvas_mount_ids_json.clone());

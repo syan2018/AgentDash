@@ -20,9 +20,8 @@ use axum::{
 use uuid::Uuid;
 
 use agentdash_contracts::agent_run_mailbox::{
-    AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageAcceptedRefs,
-    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse, BackendSelectionModeDto,
-    BackendSelectionRequestDto,
+    AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandOutcome,
+    AgentRunMessageCommandResponse, BackendSelectionModeDto, BackendSelectionRequestDto,
 };
 use agentdash_contracts::common_response::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
@@ -348,14 +347,9 @@ pub async fn create_project_agent_run(
         } else {
             AgentRunMessageCommandOutcome::Dispatched
         },
-        mailbox_message: None,
-        accepted_refs: Some(AgentRunMessageAcceptedRefs {
-            run_ref: run_ref.clone(),
-            agent_ref: agent_ref.clone(),
-            frame_ref: Some(frame_ref.clone()),
-            runtime_thread_id,
-            runtime_operation_id: operation_id,
-        }),
+        mailbox_message_id: delivery
+            .queued
+            .then(|| delivery.mailbox_message_id.to_string()),
     };
     Ok(Json(ProjectAgentRunStartResult {
         command_receipt: receipt,

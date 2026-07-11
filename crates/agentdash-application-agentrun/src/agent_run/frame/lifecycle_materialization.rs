@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_frame_hook_plan::{
+    AgentFrameHookPlanCompileQuery, AgentFrameHookPlanCompiler,
+};
 use agentdash_application_ports::agent_frame_materialization as agent_frame_materialization_port;
 use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use agentdash_application_ports::lifecycle_surface_projection as lifecycle_surface_port;
 use agentdash_application_ports::workflow_agent_frame_materialization as workflow_node_frame_port;
-use agentdash_domain::workflow::AgentFrameRepository;
-use agentdash_spi::CapabilityState;
+use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository};
+use agentdash_spi::{CapabilityState, HookControlTarget, RuntimeAdapterProvenance};
 
 use crate::agent_run::frame::builder::{
     AgentFrameActivationSurfaceInput, AgentFrameBuilder, build_lifecycle_activation_surface,
@@ -14,11 +17,18 @@ use crate::agent_run::frame::builder::{
 #[derive(Clone)]
 pub struct AgentRunLaunchAnchorFrameConstructionAdapter {
     frame_repo: Arc<dyn AgentFrameRepository>,
+    hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
 }
 
 impl AgentRunLaunchAnchorFrameConstructionAdapter {
-    pub fn new(frame_repo: Arc<dyn AgentFrameRepository>) -> Self {
-        Self { frame_repo }
+    pub fn new(
+        frame_repo: Arc<dyn AgentFrameRepository>,
+        hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
+    ) -> Self {
+        Self {
+            frame_repo,
+            hook_plan_compiler,
+        }
     }
 }
 
@@ -34,6 +44,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
         agent_frame_materialization_port::AgentRunFrameSurfaceError,
     > {
         let agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
+            run_id,
             agent_id,
             runtime_session_id,
             created_by_id,
@@ -53,14 +64,27 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
         if let Some(execution_profile) = execution_profile {
             builder = builder.with_execution_profile_raw(execution_profile);
         }
-        let frame = builder
-            .build(self.frame_repo.as_ref())
+        let mut frame = builder
+            .build_uncommitted(self.frame_repo.as_ref())
             .await
             .map_err(|error| {
                 agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
                     message: error.to_string(),
                 }
             })?;
+        attach_hook_plan(
+            self.hook_plan_compiler.as_ref(),
+            run_id,
+            agent_id,
+            runtime_session_id.as_deref(),
+            &mut frame,
+        )
+        .await?;
+        self.frame_repo.create(&frame).await.map_err(|error| {
+            agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                message: error.to_string(),
+            }
+        })?;
         let mut outcome = agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome::new(
             agent_frame_materialization_port::AgentFrameWriteRole::FrameConstruction,
         );
@@ -76,6 +100,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
 pub struct AgentRunWorkflowNodeFrameMaterializationAdapter {
     frame_repo: Arc<dyn AgentFrameRepository>,
     lifecycle_surface_projection: Arc<dyn lifecycle_surface_port::LifecycleSurfaceProjectionPort>,
+    hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
 }
 
 impl AgentRunWorkflowNodeFrameMaterializationAdapter {
@@ -84,10 +109,12 @@ impl AgentRunWorkflowNodeFrameMaterializationAdapter {
         lifecycle_surface_projection: Arc<
             dyn lifecycle_surface_port::LifecycleSurfaceProjectionPort,
         >,
+        hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
     ) -> Self {
         Self {
             frame_repo,
             lifecycle_surface_projection,
+            hook_plan_compiler,
         }
     }
 }
@@ -103,17 +130,33 @@ impl workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort
         agent_frame_materialization_port::AgentRunFrameSurfaceCommandOutcome,
         agent_frame_materialization_port::AgentRunFrameSurfaceError,
     > {
-        let anchor_frame = AgentFrameBuilder::new_launch_anchor(
+        let mut anchor_frame = AgentFrameBuilder::new_launch_anchor(
             input.agent_id,
             input.created_by_id.clone(),
         )
-        .build(self.frame_repo.as_ref())
+        .build_uncommitted(self.frame_repo.as_ref())
         .await
         .map_err(|error| {
             agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
                 message: error.to_string(),
             }
         })?;
+        attach_hook_plan(
+            self.hook_plan_compiler.as_ref(),
+            input.run_id,
+            input.agent_id,
+            input.runtime_session_id.as_deref(),
+            &mut anchor_frame,
+        )
+        .await?;
+        self.frame_repo
+            .create(&anchor_frame)
+            .await
+            .map_err(|error| {
+                agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: error.to_string(),
+                }
+            })?;
 
         let node_projection = lifecycle_surface_port::OrchestrationNodeProjectionInput {
             run_id: input.run_id,
@@ -173,10 +216,26 @@ impl workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort
         });
         let mut draft = surface.to_surface_draft();
         draft.execution_profile = input.inherited_executor_config;
-        let _surface_frame = AgentFrameBuilder::new(input.agent_id)
+        let mut surface_frame = AgentFrameBuilder::new(input.agent_id)
             .with_created_by("workflow_agent_node_materialization", input.created_by_id)
             .with_surface_draft(&draft)
-            .build(self.frame_repo.as_ref())
+            .build_uncommitted(self.frame_repo.as_ref())
+            .await
+            .map_err(|error| {
+                agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                    message: error.to_string(),
+                }
+            })?;
+        attach_hook_plan(
+            self.hook_plan_compiler.as_ref(),
+            input.run_id,
+            input.agent_id,
+            input.runtime_session_id.as_deref(),
+            &mut surface_frame,
+        )
+        .await?;
+        self.frame_repo
+            .create(&surface_frame)
             .await
             .map_err(|error| {
                 agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
@@ -193,6 +252,43 @@ impl workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort
         outcome.wrote_frame_revision = true;
         Ok(outcome)
     }
+}
+
+async fn attach_hook_plan(
+    compiler: &dyn AgentFrameHookPlanCompiler,
+    run_id: uuid::Uuid,
+    agent_id: uuid::Uuid,
+    runtime_session_id: Option<&str>,
+    frame: &mut AgentFrame,
+) -> Result<(), agent_frame_materialization_port::AgentRunFrameSurfaceError> {
+    let plan = compiler
+        .compile_agent_frame_hook_plan(AgentFrameHookPlanCompileQuery {
+            target: HookControlTarget {
+                run_id,
+                agent_id,
+                frame_id: frame.id,
+            },
+            provenance: RuntimeAdapterProvenance::runtime_session(
+                runtime_session_id
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("frame-construction-{run_id}-{agent_id}")),
+                None,
+                "agent_frame_hook_plan_construction",
+            ),
+        })
+        .await
+        .map_err(|error| {
+            agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+                message: error.to_string(),
+            }
+        })?;
+    frame.hook_plan = Some(serde_json::to_value(plan).map_err(|error| {
+        agent_frame_materialization_port::AgentRunFrameSurfaceError::ConstructionRejected {
+            message: format!("AgentFrame HookPlan serialization failed: {error}"),
+        }
+    })?);
+    frame.apply_surface_projection();
+    Ok(())
 }
 
 fn kickoff_prompt_for_activity(
@@ -246,4 +342,111 @@ fn render_input_section(
         .collect::<Vec<_>>()
         .join("\n");
     format!("输入端口状态：\n{items}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    use agentdash_agent_runtime_contract::HookPlanRevision;
+    use agentdash_application_ports::agent_frame_hook_plan::{
+        AgentFrameHookPlan, AgentFrameHookPlanCompileError,
+    };
+    use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+    use agentdash_domain::DomainError;
+
+    #[derive(Default)]
+    struct FrameRepo(Mutex<Vec<AgentFrame>>);
+
+    #[async_trait::async_trait]
+    impl AgentFrameRepository for FrameRepo {
+        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+            self.0.lock().unwrap().push(frame.clone());
+            Ok(())
+        }
+
+        async fn get(&self, frame_id: uuid::Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|frame| frame.id == frame_id)
+                .cloned())
+        }
+
+        async fn get_current(
+            &self,
+            agent_id: uuid::Uuid,
+        ) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .max_by_key(|frame| frame.revision)
+                .cloned())
+        }
+
+        async fn list_by_agent(
+            &self,
+            agent_id: uuid::Uuid,
+        ) -> Result<Vec<AgentFrame>, DomainError> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+    }
+
+    struct EmptyPlanCompiler;
+
+    #[async_trait::async_trait]
+    impl AgentFrameHookPlanCompiler for EmptyPlanCompiler {
+        async fn compile_agent_frame_hook_plan(
+            &self,
+            _query: AgentFrameHookPlanCompileQuery,
+        ) -> Result<AgentFrameHookPlan, AgentFrameHookPlanCompileError> {
+            AgentFrameHookPlan::compile(HookPlanRevision(1), Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn generic_launch_anchor_persists_a_valid_hook_plan() {
+        use crate::agent_run::frame::AgentFrameSurfaceExt;
+
+        let repo = Arc::new(FrameRepo::default());
+        let adapter = AgentRunLaunchAnchorFrameConstructionAdapter::new(
+            repo.clone(),
+            Arc::new(EmptyPlanCompiler),
+        );
+        let run_id = uuid::Uuid::new_v4();
+        let agent_id = uuid::Uuid::new_v4();
+        adapter
+            .execute_frame_construction_command(
+                agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
+                    run_id,
+                    agent_id,
+                    subject_ref: None,
+                    runtime_session_id: Some("generic-launch".to_string()),
+                    created_by_id: None,
+                    execution_profile: None,
+                },
+            )
+            .await
+            .expect("construct launch anchor");
+
+        let frame = repo
+            .get_current(agent_id)
+            .await
+            .unwrap()
+            .expect("persisted frame");
+        assert!(frame.validated_hook_plan().unwrap().requirements.is_empty());
+    }
 }

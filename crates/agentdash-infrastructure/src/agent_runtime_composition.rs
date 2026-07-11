@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     PostgresAgentRuntimeCompositionRepository, PostgresAgentRuntimeContextBroker,
@@ -15,10 +12,10 @@ use agentdash_agent_runtime::{
     ToolCallCoordinates,
 };
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeGateway, BoundRuntimeHookEntry, BoundRuntimeHookPlan, DriverBindIntent,
-    DriverCommandEnvelope, DriverError, DriverEventEnvelope, DriverEventSink, DriverRequestId,
-    HookExecutionSite, ProfileDigest, RuntimeBindingId, RuntimeHookPlanBinding,
-    RuntimeServiceInstanceId, RuntimeThreadId,
+    AgentRuntimeGateway, BoundRuntimeHookPlan, DriverBindIntent, DriverCommandEnvelope,
+    DriverError, DriverEventEnvelope, DriverEventSink, DriverRequestId, ProfileDigest,
+    RuntimeBindingId, RuntimeCommand, RuntimeHookPlanBinding, RuntimeServiceInstanceId,
+    RuntimeThreadId,
 };
 use agentdash_agent_runtime_host::{
     ActivateAgentServiceInstance, AgentRuntimeHostRepository, AgentServiceDefinitionId,
@@ -214,6 +211,7 @@ pub struct NativeAgentRunSurfacePlan {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub surface: MaterializedDriverSurface,
+    pub hook_plan: BoundRuntimeHookPlan,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -366,7 +364,10 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             &service_config,
         )?;
         let bound_surface = bound_surface_reference(&surface);
-        let hook_plan = runtime_hook_plan(thread_id, &surface);
+        let hook_plan = RuntimeHookPlanBinding {
+            thread_id: thread_id.clone(),
+            plan: plan.hook_plan,
+        };
         let profile = definition.service_profile_upper_bound.clone();
         let definition_profile_digest = profile_digest(&profile).map_err(|error| {
             AgentRunRuntimeSurfaceSourceError::Invalid {
@@ -399,33 +400,6 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             },
             allow_instance_creation: definition_id == NATIVE_DEFINITION_ID,
         })
-    }
-}
-
-fn runtime_hook_plan(
-    thread_id: &RuntimeThreadId,
-    surface: &MaterializedDriverSurface,
-) -> RuntimeHookPlanBinding {
-    RuntimeHookPlanBinding {
-        thread_id: thread_id.clone(),
-        plan: BoundRuntimeHookPlan {
-            revision: surface.hooks.revision,
-            digest: surface.hooks.digest.clone(),
-            entries: surface
-                .hooks
-                .bindings
-                .iter()
-                .map(|binding| BoundRuntimeHookEntry {
-                    definition_id: binding.definition_id.clone(),
-                    point: binding.point,
-                    actions: binding.actions.iter().copied().collect::<BTreeSet<_>>(),
-                    delivered_strength: binding.strength,
-                    failure_policy: binding.failure_policy,
-                    required: binding.required,
-                    site: HookExecutionSite::AgentCoreCallback,
-                })
-                .collect(),
-        },
     }
 }
 
@@ -996,6 +970,11 @@ impl RuntimeOutboxWorker {
         }
         let request_id = DriverRequestId::new(format!("request-{}", entry.operation_id))
             .map_err(|error| RuntimeOutboxWorkerError::InvalidClaim(error.to_string()))?;
+        let runtime_turn_id = matches!(
+            &entry.command,
+            RuntimeCommand::ThreadStart { .. } | RuntimeCommand::TurnStart { .. }
+        )
+        .then(|| agentdash_agent_runtime::canonical_turn_id(&entry.operation_id));
         let mut lease = self
             .host
             .acquire_driver_lease(&thread.binding_id)
@@ -1011,6 +990,7 @@ impl RuntimeOutboxWorker {
                     binding_id: thread.binding_id.clone(),
                     generation: entry.generation,
                     source_thread_id: thread.source_thread_id.clone(),
+                    runtime_turn_id,
                     command: entry.command.clone(),
                 },
                 lease_owner: lease.owner.clone(),
@@ -1640,6 +1620,11 @@ mod tests {
                 provider: Some("openai".to_string()),
                 model: Some("gpt-test".to_string()),
                 surface: fixture_surface(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: parsed("sha256:production-native-hooks"),
+                    entries: Vec::new(),
+                },
             })
         }
     }
@@ -1680,6 +1665,24 @@ mod tests {
             &AgentRuntimePlacement::InProcess,
             Some(&selection)
         ));
+    }
+
+    #[test]
+    fn codex_admission_accepts_surface_without_driver_owned_hook_requirements() {
+        let mut surface = fixture_surface();
+        surface.hooks.bindings.clear();
+        surface.hooks.configuration_boundary = ConfigurationBoundary::ThreadStart;
+        let default_reference = bound_surface_reference(&surface);
+        assert!(default_reference.required_hooks.is_empty());
+
+        let codex_profile =
+            agentdash_integration_codex::codex_runtime_trust_manifest().verified_profile;
+        assert!(
+            default_reference
+                .required_hooks
+                .iter()
+                .all(|requirement| codex_profile.hooks.satisfies(requirement))
+        );
     }
 
     fn fixture_surface() -> MaterializedDriverSurface {
@@ -1727,6 +1730,8 @@ mod tests {
                         strength: SemanticStrength::ExactSynchronous,
                         failure_policy: HookFailurePolicy::FailClosed,
                         required: true,
+                        site:
+                            agentdash_agent_runtime_contract::HookExecutionSite::AgentCoreCallback,
                     },
                     DriverHookBinding {
                         definition_id: parsed("native-tracer-effect-hook"),
@@ -1735,6 +1740,8 @@ mod tests {
                         strength: SemanticStrength::ExactSynchronous,
                         failure_policy: HookFailurePolicy::FailClosed,
                         required: true,
+                        site:
+                            agentdash_agent_runtime_contract::HookExecutionSite::AgentCoreCallback,
                     },
                 ],
             },

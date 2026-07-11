@@ -431,6 +431,7 @@ async fn unsupported_command_has_no_side_effect() {
         binding_id: id("binding-1"),
         generation: RuntimeDriverGeneration(1),
         source_thread_id: id("source-thread-1"),
+        runtime_turn_id: Some(id("turn-1")),
         command: RuntimeCommand::TurnStart {
             thread_id: id("thread-1"),
             input: vec![RuntimeInput::Text {

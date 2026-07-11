@@ -12,7 +12,12 @@ vi.mock("../api/client", () => ({
   },
 }));
 
-import { compactAgentRunContext, fetchAgentRunRuntimeInspect } from "./agentRunRuntime";
+import {
+  compactAgentRunContext,
+  fetchAgentRunRuntimeContext,
+  fetchAgentRunRuntimeInspect,
+  respondAgentRunInteraction,
+} from "./agentRunRuntime";
 
 describe("AgentRun runtime service", () => {
   beforeEach(() => {
@@ -46,6 +51,26 @@ describe("AgentRun runtime service", () => {
     await fetchAgentRunRuntimeInspect({ runId: "run/1", agentId: "agent/1" });
     expect(mocks.apiGetMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime",
+    );
+  });
+
+  it("loads the canonical Runtime context without a legacy projection fallback", async () => {
+    mocks.apiGetMock.mockResolvedValue({ thread_id: "thread-1", head: null, checkpoint: null, blocks: [], fidelity: "opaque" });
+    await fetchAgentRunRuntimeContext({ runId: "run/1", agentId: "agent/1" });
+    expect(mocks.apiGetMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/context",
+    );
+  });
+
+  it("responds to a typed Runtime interaction", async () => {
+    await respondAgentRunInteraction(
+      { runId: "run/1", agentId: "agent/1" },
+      "interaction/1",
+      { kind: "denied", reason: null },
+    );
+    expect(mocks.apiPostMock).toHaveBeenCalledWith(
+      "/agent-runs/run%2F1/agents/agent%2F1/runtime/interactions/interaction%2F1/respond",
+      { kind: "denied", reason: null },
     );
   });
 });

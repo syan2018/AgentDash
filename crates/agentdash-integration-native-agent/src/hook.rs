@@ -29,6 +29,7 @@ pub(crate) struct NativeHookDelegate {
     runtime_thread_id: RuntimeThreadId,
     authorization_identity: Option<AuthIdentity>,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
+    active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
     surface: DriverHookSurface,
     callback: Arc<dyn AgentRuntimeHookCallback>,
 }
@@ -37,6 +38,7 @@ impl NativeHookDelegate {
     pub(crate) fn delegates(
         binding: NativeBindingContext,
         active_turn: Arc<RwLock<Option<DriverTurnId>>>,
+        active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
         surface: DriverHookSurface,
         callback: Arc<dyn AgentRuntimeHookCallback>,
     ) -> AgentRuntimeDelegateSet {
@@ -47,6 +49,7 @@ impl NativeHookDelegate {
             runtime_thread_id: binding.runtime_thread_id,
             authorization_identity: binding.authorization_identity,
             active_turn,
+            active_runtime_turn,
             surface,
             callback,
         });
@@ -69,9 +72,7 @@ impl NativeHookDelegate {
             .filter(|binding| binding.point == point && supported_hook(binding))
         {
             let source_turn_id = self.active_turn.read().await.clone();
-            let turn_id = source_turn_id
-                .as_ref()
-                .and_then(|value| RuntimeTurnId::new(value.to_string()).ok());
+            let turn_id = self.active_runtime_turn.read().await.clone();
             let item_id = source_item_id
                 .as_ref()
                 .and_then(|value| RuntimeItemId::new(value.to_string()).ok());

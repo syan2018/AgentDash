@@ -4,6 +4,7 @@
 //! 通过 `AgentFrameSurfaceExt` trait 提供类型安全的反序列化读取，
 //! 避免每个消费者各自 parse，替代此前散落在各处的 JSON 反序列化逻辑。
 
+use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{AgentConfig, CapabilityState, RuntimeMcpServer, SessionContextBundle, Vfs};
 use serde::{Deserialize, Serialize};
@@ -73,6 +74,7 @@ pub trait AgentFrameSurfaceExt {
     fn typed_vfs(&self) -> Option<Vfs>;
     fn typed_mcp_servers(&self) -> Vec<RuntimeMcpServer>;
     fn typed_execution_profile(&self) -> Option<AgentConfig>;
+    fn validated_hook_plan(&self) -> Result<AgentFrameHookPlan, String>;
     /// 原始 context_slice JSON value，缺失返回 `Value::Null`。
     fn context_slice_value(&self) -> serde_json::Value;
     /// frame 上记录的 context bundle 摘要 (bundle_id, phase_tag, fragment_count)。
@@ -106,6 +108,17 @@ impl AgentFrameSurfaceExt for AgentFrame {
         self.execution_profile_json
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    fn validated_hook_plan(&self) -> Result<AgentFrameHookPlan, String> {
+        let value = self
+            .hook_plan
+            .as_ref()
+            .ok_or_else(|| "AgentFrame has no immutable HookPlan".to_string())?;
+        let plan: AgentFrameHookPlan = serde_json::from_value(value.clone())
+            .map_err(|error| format!("AgentFrame HookPlan is invalid: {error}"))?;
+        plan.validate().map_err(|error| error.to_string())?;
+        Ok(plan)
     }
 
     fn context_slice_value(&self) -> serde_json::Value {
@@ -313,6 +326,38 @@ mod tests {
                 .context_bundle_summary
                 .map(|summary| summary.bundle_id),
             Some(bundle.bundle_id)
+        );
+    }
+
+    #[test]
+    fn validated_hook_plan_rejects_requirements_that_do_not_match_digest() {
+        use agentdash_agent_runtime_contract::{
+            HookAction, HookDefinitionId, HookExecutionSite, HookFailurePolicy, HookPlanRevision,
+            HookPoint, HookRequirement, SemanticStrength,
+        };
+        use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
+        use std::collections::BTreeSet;
+
+        let mut plan = AgentFrameHookPlan::compile(HookPlanRevision(1), Vec::new()).unwrap();
+        plan.requirements.push(AgentFrameHookRequirement {
+            definition_id: HookDefinitionId::new("tampered.requirement").unwrap(),
+            requirement: HookRequirement {
+                point: HookPoint::BeforeTool,
+                actions: BTreeSet::from([HookAction::Block]),
+                minimum_strength: SemanticStrength::ExactSynchronous,
+                failure_policy: HookFailurePolicy::FailClosed,
+                required: true,
+            },
+            site: HookExecutionSite::ToolBroker,
+        });
+        let mut frame = test_frame();
+        frame.hook_plan = Some(serde_json::to_value(plan).unwrap());
+
+        assert!(
+            frame
+                .validated_hook_plan()
+                .unwrap_err()
+                .contains("do not match the persisted digest")
         );
     }
 }

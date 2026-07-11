@@ -302,6 +302,44 @@ async fn idempotency_expected_revision_and_operation_sequence_are_enforced() {
 }
 
 #[tokio::test]
+async fn driver_turn_started_ack_reuses_the_runtime_owned_turn_identity() {
+    let (_store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    runtime
+        .execute(command(
+            "op-2",
+            "key-2",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("turn");
+    let turn_id: RuntimeTurnId = id("turn-op-2");
+
+    assert_eq!(
+        runtime
+            .ingest_driver_event(driver(RuntimeEvent::TurnStarted {
+                turn_id: turn_id.clone(),
+            }))
+            .await
+            .expect("driver acknowledgement"),
+        DriverEventAdmission::Observed
+    );
+    let snapshot = thread_snapshot(&runtime, thread_id).await;
+    assert_eq!(snapshot.revision, RuntimeRevision(5));
+    assert_eq!(snapshot.active_turn_id, Some(turn_id));
+    assert_eq!(snapshot.status, RuntimeThreadStatus::Active);
+}
+
+#[tokio::test]
 async fn operation_identity_binds_actor_and_thread_scoped_key_to_the_typed_command() {
     let (_store, runtime) = fixture();
     runtime.execute(start()).await.expect("start");

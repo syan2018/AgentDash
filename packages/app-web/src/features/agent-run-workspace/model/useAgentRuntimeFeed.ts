@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   RuntimeEventEnvelope,
+  RuntimeInteractionKind,
+  RuntimeInteractionTerminal,
   RuntimeItemContent,
   RuntimeSnapshot,
 } from "../../../generated/agent-runtime-contracts";
@@ -14,6 +16,11 @@ export interface AgentRuntimeFeedEntry {
   role: "user" | "agent" | "reasoning" | "tool" | "system";
   text: string;
   status: "streaming" | "completed" | "failed" | "cancelled" | "lost";
+  interaction?: {
+    interaction_id: string;
+    interaction_kind: RuntimeInteractionKind;
+    terminal: RuntimeInteractionTerminal | null;
+  };
 }
 
 interface RuntimeFeedState {
@@ -27,6 +34,7 @@ export interface UseAgentRuntimeFeedOptions {
   enabled: boolean;
   onTurnTerminal?: () => void;
   onTaskPlanChanged?: () => void;
+  onRuntimeInspectInvalidated?: () => void;
 }
 
 export interface UseAgentRuntimeFeedResult {
@@ -69,7 +77,7 @@ function seedFromSnapshot(snapshot: RuntimeSnapshot | null): AgentRuntimeFeedEnt
   }));
 }
 
-function applyRuntimeEvent(
+export function applyRuntimeEvent(
   entries: AgentRuntimeFeedEntry[],
   envelope: RuntimeEventEnvelope,
   baselineItemIds: ReadonlySet<string>,
@@ -105,15 +113,59 @@ function applyRuntimeEvent(
     return next;
   }
   if (event.kind === "interaction_requested") {
-    next.push({
+    const interaction = {
+      interaction_id: event.interaction_id,
+      interaction_kind: event.interaction_kind,
+      terminal: null,
+    };
+    const index = next.findIndex((entry) => entry.interaction?.interaction_id === event.interaction_id);
+    const entry: AgentRuntimeFeedEntry = {
       id: `interaction:${event.interaction_id}`,
       turn_id: event.turn_id,
       role: "system",
       text: event.prompt,
       status: "streaming",
-    });
+      interaction,
+    };
+    if (index >= 0) next[index] = entry;
+    else next.push(entry);
+    return next;
+  }
+  if (event.kind === "interaction_terminal") {
+    const index = next.findIndex((entry) => entry.interaction?.interaction_id === event.interaction_id);
+    if (index < 0) {
+      next.push({
+        id: `interaction:${event.interaction_id}`,
+        turn_id: event.turn_id,
+        role: "system",
+        text: `Interaction ${event.interaction_id}: ${event.terminal}`,
+        status: interactionTerminalStatus(event.terminal),
+      });
+      return next;
+    }
+    const current = next[index];
+    if (!current?.interaction) return next;
+    next[index] = {
+      ...current,
+      status: interactionTerminalStatus(event.terminal),
+      interaction: { ...current.interaction, terminal: event.terminal },
+    };
+    return next;
   }
   return next;
+}
+
+function interactionTerminalStatus(
+  terminal: RuntimeInteractionTerminal,
+): AgentRuntimeFeedEntry["status"] {
+  switch (terminal) {
+    case "resolved": return "completed";
+    case "failed": return "failed";
+    case "lost": return "lost";
+    case "cancelled":
+    case "expired":
+      return "cancelled";
+  }
 }
 
 export function useAgentRuntimeFeed(options: UseAgentRuntimeFeedOptions): UseAgentRuntimeFeedResult {
@@ -128,6 +180,7 @@ export function useAgentRuntimeFeed(options: UseAgentRuntimeFeedOptions): UseAge
   const callbackRef = useRef({
     onTurnTerminal: options.onTurnTerminal,
     onTaskPlanChanged: options.onTaskPlanChanged,
+    onRuntimeInspectInvalidated: options.onRuntimeInspectInvalidated,
   });
   const baselineItemIds = useMemo(
     () => new Set((options.snapshot?.transcript ?? []).map((item) => item.item_id)),
@@ -140,8 +193,9 @@ export function useAgentRuntimeFeed(options: UseAgentRuntimeFeedOptions): UseAge
     callbackRef.current = {
       onTurnTerminal: options.onTurnTerminal,
       onTaskPlanChanged: options.onTaskPlanChanged,
+      onRuntimeInspectInvalidated: options.onRuntimeInspectInvalidated,
     };
-  }, [options.onTaskPlanChanged, options.onTurnTerminal]);
+  }, [options.onRuntimeInspectInvalidated, options.onTaskPlanChanged, options.onTurnTerminal]);
 
   useEffect(() => {
     baselineItemIdsRef.current = baselineItemIds;
@@ -149,7 +203,12 @@ export function useAgentRuntimeFeed(options: UseAgentRuntimeFeedOptions): UseAge
     queueMicrotask(() => {
       if (cancelled) return;
       setState((current) => ({
-        entries: seedFromSnapshot(options.snapshot),
+        entries: [
+          ...seedFromSnapshot(options.snapshot),
+          ...(streamTargetKeyRef.current === targetKey
+            ? current.entries.filter((entry) => entry.interaction != null)
+            : []),
+        ],
         cursor: current.cursor,
       }));
     });
@@ -184,6 +243,9 @@ export function useAgentRuntimeFeed(options: UseAgentRuntimeFeedOptions): UseAge
           entries: applyRuntimeEvent(current.entries, envelope, baselineItemIdsRef.current),
         }));
         if (envelope.event.kind === "turn_terminal") callbackRef.current.onTurnTerminal?.();
+        if (runtimeEventRequestsRuntimeInspectRefresh(envelope)) {
+          callbackRef.current.onRuntimeInspectInvalidated?.();
+        }
         if (
           envelope.event.kind === "item_terminal"
           && envelope.event.terminal.kind === "completed"
@@ -218,4 +280,13 @@ export function useAgentRuntimeFeed(options: UseAgentRuntimeFeedOptions): UseAge
     error,
     reconnect,
   };
+}
+
+export function runtimeEventRequestsRuntimeInspectRefresh(
+  envelope: RuntimeEventEnvelope,
+): boolean {
+  return envelope.event.kind === "turn_started"
+    || envelope.event.kind === "turn_terminal"
+    || envelope.event.kind === "interaction_requested"
+    || envelope.event.kind === "interaction_terminal";
 }

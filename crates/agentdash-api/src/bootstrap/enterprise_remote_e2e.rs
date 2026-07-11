@@ -342,6 +342,7 @@ fn materialized_surface(thread_id: RuntimeThreadId) -> MaterializedDriverSurface
                 strength: SemanticStrength::ExactSynchronous,
                 failure_policy: HookFailurePolicy::FailClosed,
                 required: true,
+                site: HookExecutionSite::AgentCoreCallback,
             }],
         },
         workspace: DriverWorkspaceSurface {

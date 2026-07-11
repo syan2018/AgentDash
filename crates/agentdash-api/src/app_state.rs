@@ -217,6 +217,8 @@ impl AppState {
             agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle::default();
         let frame_construction_handle =
             agentdash_application_ports::agent_frame_materialization::SharedAgentRunFrameConstructionHandle::default();
+        let hook_plan_compiler_handle =
+            agentdash_application_ports::agent_frame_hook_plan::SharedAgentFrameHookPlanCompiler::default();
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         let repository_bootstrap = crate::bootstrap::repositories::build_repositories(
             pool,
@@ -224,6 +226,7 @@ impl AppState {
             Some(project_projection_notifications.clone()),
             runtime_provisioner_handle.clone(),
             frame_construction_handle.clone(),
+            hook_plan_compiler_handle.clone(),
         )
         .await?;
         let repos = repository_bootstrap.repos;
@@ -260,6 +263,18 @@ impl AppState {
         let vfs_mutation_dispatcher = vfs_bootstrap.vfs_mutation_dispatcher;
         let vfs_materialization_service = vfs_bootstrap.vfs_materialization_service;
         let mcp_relay_provider = vfs_bootstrap.mcp_relay_provider;
+        let hook_preset_scripts = AppExecutionHookProvider::builtin_preset_scripts();
+        let hook_provider = Arc::new(AppExecutionHookProvider::new(
+            agentdash_application_hooks::AppExecutionHookProviderDeps {
+                workflow_projection: repos.hook_workflow_projection_port(),
+                script_evaluator: Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
+                    &hook_preset_scripts,
+                )),
+            },
+        ));
+        hook_plan_compiler_handle
+            .set(hook_provider.clone())
+            .map_err(|_| anyhow::anyhow!("AgentFrame HookPlan compiler composition 重复绑定"))?;
         frame_construction_handle
             .set(Arc::new(
                 agentdash_application::frame_construction::AgentRunProjectOwnerFrameConstructionAdapter::new(
@@ -270,6 +285,7 @@ impl AppState {
                         platform_config: platform_config.clone(),
                         lifecycle_surface_projection: lifecycle_surface_projection.clone(),
                         audit_bus: audit_bus.clone(),
+                        hook_plan_compiler: hook_provider.clone(),
                     },
                 ),
             ))
@@ -282,15 +298,6 @@ impl AppState {
         let extra_skill_dirs = integration_registration.extra_skill_dirs;
         let skill_discovery_providers = integration_registration.skill_discovery_providers;
         let memory_discovery_providers = integration_registration.memory_discovery_providers;
-        let hook_preset_scripts = AppExecutionHookProvider::builtin_preset_scripts();
-        let hook_provider = Arc::new(AppExecutionHookProvider::new(
-            agentdash_application_hooks::AppExecutionHookProviderDeps {
-                workflow_projection: repos.hook_workflow_projection_port(),
-                script_evaluator: Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
-                    &hook_preset_scripts,
-                )),
-            },
-        ));
         let inline_persister: Arc<
             dyn agentdash_application_vfs::inline_persistence::InlineContentPersister,
         > = Arc::new(
@@ -443,6 +450,10 @@ impl AppState {
         let agent_run_product_query = AgentRunProductQuery::new(AgentRunProductQueryDeps {
             lifecycle_read_model_query: lifecycle_read_model_query.clone(),
             frame_repo: repos.agent_frame_repo.clone(),
+            agent_repo: repos.lifecycle_agent_repo.clone(),
+            lineage_repo: repos.agent_lineage_repo.clone(),
+            project_agent_repo: repos.project_agent_repo.clone(),
+            runtime: agent_run_runtime.clone(),
             vfs_surface_resolver: vfs_surface_resolver.clone(),
         });
         let project_agent_run_list_query =

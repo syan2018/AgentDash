@@ -810,8 +810,15 @@ impl CodexRuntimeDriver {
                 );
             }
         }
-        let runtime_turn = RuntimeTurnId::new(format!("codex:{}", envelope.request_id))
-            .expect("request id is non-empty");
+        let runtime_turn =
+            envelope
+                .runtime_turn_id
+                .clone()
+                .ok_or_else(|| DriverError::ProtocolViolation {
+                    reason: "Codex turn command is missing the Managed Runtime turn identity"
+                        .to_string(),
+                    critical: true,
+                })?;
         let result = self.rpc_request_inner(session, "turn/start", json!({
             "threadId": session.source_thread_id.as_str(), "input": native,
             "additionalContext": (!additional.is_empty()).then_some(additional), "runtimeWorkspaceRoots": effective_workspace_roots(&self.config, &session.surface)

@@ -371,6 +371,9 @@ AgentFrame capability/context/VFS/MCP/execution/profile surface 或 `agent_frame
 ```sql
 ALTER TABLE agent_frames
     ADD COLUMN IF NOT EXISTS surface text;
+
+ALTER TABLE agent_frames
+    ADD COLUMN hook_plan jsonb;
 ```
 
 ```rust
@@ -381,6 +384,7 @@ pub struct AgentFrame {
     pub vfs_surface_json: Option<Value>,
     pub mcp_surface_json: Option<Value>,
     pub execution_profile_json: Option<Value>,
+    pub hook_plan: Option<Value>,
 }
 
 impl AgentFrame {
@@ -394,6 +398,7 @@ impl AgentFrame {
 - `agent_frames.surface` 是 frame revision surface 的 canonical document。
 - `agent_frames.surface` 当前是既有 `TEXT` JSON schema 事实；新增 adjacent document 按 JSONB 文档列规则设计。
 - Split columns 是 repository projection columns；写入从 `surface_document()` 派生，读取时用于迁移物化和 projection 校验。
+- `agent_frames.hook_plan`是新revision的immutable HookPlan projection，使用业务语义列名与`jsonb`。它保持nullable以明确表示历史Frame尚未物化；生产writer必须写入typed plan，Runtime读取缺失值时精确失败。
 - 新 AgentFrame 写入先填 `surface`，再 `apply_surface_projection()`。
 - Backfill migration 从 split columns 物化 `surface`。
 - 无 live repository query 的索引用新 migration 删除。
@@ -406,6 +411,8 @@ impl AgentFrame {
 | row 无 `surface` 但有 split columns | mapper 从 split columns 物化 `surface` |
 | `surface` JSON invalid | mapped `DomainError` 带 `agent_frames.surface` context |
 | split projection serialization fails | insert 前返回 mapped `DomainError` |
+| 新Frame writer没有提供HookPlan | writer/adoption测试失败；该Frame不得进入Runtime materialization |
+| `hook_plan` digest与requirements不匹配 | typed validation error；Host side effect前停止 |
 | index 无 live query path | 新 migration 删除，并记录理由 |
 
 ### 5. Cases
@@ -420,6 +427,7 @@ impl AgentFrame {
 - Mapper: surface-overrides-split、split-to-surface materialization。
 - Migration guard for `agent_frames` schema change。
 - Repository roundtrip preserves canonical surface and projected fields。
+- `hook_plan` roundtrip覆盖空requirements与显式ToolBroker requirement；migration guard断言新增列名为`hook_plan jsonb`。
 
 ### 7. Boundary / Canonical
 

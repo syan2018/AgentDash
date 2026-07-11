@@ -13,7 +13,8 @@ use agentdash_application::agent_run_list::{
     ProjectAgentRunListInput, ProjectAgentRunListPage,
 };
 use agentdash_application::agent_run_product::{
-    AgentRunCurrentFrameModel, AgentRunProductModel, AgentRunProductQueryInput,
+    AgentRunCurrentFrameModel, AgentRunProductLineageAgentModel, AgentRunProductLineageModel,
+    AgentRunProductLineageRuntimeModel, AgentRunProductModel, AgentRunProductQueryInput,
 };
 use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_application_agentrun::agent_run::{
@@ -27,10 +28,14 @@ use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeTarget,
 };
 use agentdash_application_ports::agent_run_surface::AgentRunTerminalLaunchTarget;
-use agentdash_contracts::agent_run_mailbox::AgentRunComposerSubmitRequest;
+use agentdash_contracts::agent_run_mailbox::{
+    AgentRunCommandReceipt, AgentRunComposerDeliveryIntent, AgentRunComposerSubmitRequest,
+    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
+};
 use agentdash_contracts::workflow::{
     AgentFrameRefDto, AgentRunCurrentFrameView, AgentRunListChildView, AgentRunListEntryView,
-    AgentRunListRuntimeSummaryView, AgentRunListRuntimeThreadStatus, AgentRunProductShellView,
+    AgentRunListRuntimeSummaryView, AgentRunListRuntimeThreadStatus,
+    AgentRunProductLineageAgentView, AgentRunProductLineageView, AgentRunProductShellView,
     AgentRunProductView, AgentRunRefDto, AgentRunRuntimeCommandRequest,
     ConversationEffectiveExecutorConfigView, ConversationModelConfigSource,
     ConversationModelConfigStatus, ConversationModelConfigView, LifecycleRunRefDto,
@@ -47,7 +52,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::dto::{ContextAuditQuery, RejectToolApprovalRequest, SpawnTerminalBody};
+use crate::dto::{ContextAuditQuery, SpawnTerminalBody};
 use crate::{
     agent_run_runtime_surface::resolve_terminal_launch_target_for_runtime_session,
     app_state::AppState,
@@ -111,12 +116,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_run_runtime_context_audit),
         )
         .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/approve",
-            axum::routing::post(approve_agent_run_tool_call),
-        )
-        .route(
-            "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/reject",
-            axum::routing::post(reject_agent_run_tool_call),
+            "/agent-runs/{run_id}/agents/{agent_id}/runtime/interactions/{interaction_id}/respond",
+            axum::routing::post(respond_agent_run_interaction),
         )
 }
 
@@ -213,8 +214,15 @@ fn agent_run_list_child_to_contract(model: AgentRunListChildModel) -> AgentRunLi
 fn agent_run_list_runtime_to_contract(
     model: AgentRunListRuntimeSummaryModel,
 ) -> AgentRunListRuntimeSummaryView {
+    agent_run_runtime_summary_to_contract(model.thread_status, model.active_turn_id)
+}
+
+fn agent_run_runtime_summary_to_contract(
+    thread_status: agentdash_agent_runtime_contract::RuntimeThreadStatus,
+    active_turn_id: Option<String>,
+) -> AgentRunListRuntimeSummaryView {
     AgentRunListRuntimeSummaryView {
-        thread_status: match model.thread_status {
+        thread_status: match thread_status {
             agentdash_agent_runtime_contract::RuntimeThreadStatus::Active => {
                 AgentRunListRuntimeThreadStatus::Active
             }
@@ -231,7 +239,7 @@ fn agent_run_list_runtime_to_contract(
                 AgentRunListRuntimeThreadStatus::Lost
             }
         },
-        active_turn_id: model.active_turn_id,
+        active_turn_id,
     }
 }
 
@@ -289,10 +297,57 @@ fn agent_run_product_to_contract(model: AgentRunProductModel) -> AgentRunProduct
             .into_iter()
             .map(super::lifecycle_contracts::subject_association_to_contract)
             .collect(),
+        lineage: agent_run_product_lineage_to_contract(model.lineage),
         resource_surface: model
             .resource_surface
             .map(super::vfs_surfaces::dto::surface_from_application),
     }
+}
+
+fn agent_run_product_lineage_to_contract(
+    model: AgentRunProductLineageModel,
+) -> AgentRunProductLineageView {
+    AgentRunProductLineageView {
+        parent: model
+            .parent
+            .map(agent_run_product_lineage_agent_to_contract),
+        children: model
+            .children
+            .into_iter()
+            .map(agent_run_product_lineage_agent_to_contract)
+            .collect(),
+    }
+}
+
+fn agent_run_product_lineage_agent_to_contract(
+    model: AgentRunProductLineageAgentModel,
+) -> AgentRunProductLineageAgentView {
+    AgentRunProductLineageAgentView {
+        run_ref: LifecycleRunRefDto {
+            run_id: model.run_id.clone(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: model.run_id,
+            agent_id: model.agent_id,
+        },
+        title: model.title,
+        lifecycle_status: model.lifecycle_status,
+        last_activity_at: model.last_activity_at,
+        runtime: model
+            .runtime
+            .map(agent_run_product_lineage_runtime_to_contract),
+        children: model
+            .children
+            .into_iter()
+            .map(agent_run_product_lineage_agent_to_contract)
+            .collect(),
+    }
+}
+
+fn agent_run_product_lineage_runtime_to_contract(
+    model: AgentRunProductLineageRuntimeModel,
+) -> AgentRunListRuntimeSummaryView {
+    agent_run_runtime_summary_to_contract(model.thread_status, model.active_turn_id)
 }
 
 fn agent_run_current_frame_to_contract(
@@ -359,19 +414,12 @@ pub struct AgentRunListQuery {
     pub cursor: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum RuntimeComposerSubmitResponse {
-    Queued { mailbox_message_id: Uuid },
-    Dispatched { receipt: OperationReceipt },
-}
-
 pub async fn submit_agent_run_composer_input(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
     Json(req): Json<AgentRunComposerSubmitRequest>,
-) -> Result<Json<RuntimeComposerSubmitResponse>, ApiError> {
+) -> Result<Json<AgentRunMessageCommandResponse>, ApiError> {
     diag!(Debug, Subsystem::Api,
 
         run_id = %run_id,
@@ -415,7 +463,7 @@ pub async fn submit_agent_run_composer_input(
         .inspect(target.clone())
         .await
         .map_err(agent_run_runtime_error)?;
-    let response = if req.delivery_intent.as_deref() == Some("steer") {
+    let response = if req.delivery_intent == Some(AgentRunComposerDeliveryIntent::Steer) {
         let guard = agent_run_command_guard(&view)?;
         let receipt = state
             .services
@@ -423,7 +471,7 @@ pub async fn submit_agent_run_composer_input(
             .steer_active_turn(SteerAgentRunTurn {
                 command: GuardedAgentRunCommand {
                     target,
-                    client_command_id: req.client_command_id,
+                    client_command_id: req.client_command_id.clone(),
                     guard,
                     actor: runtime_actor(&current_user),
                 },
@@ -431,12 +479,17 @@ pub async fn submit_agent_run_composer_input(
             })
             .await
             .map_err(agent_run_runtime_error)?;
-        RuntimeComposerSubmitResponse::Dispatched { receipt }
+        agent_run_message_command_response(
+            req.client_command_id,
+            AgentRunMessageCommandOutcome::Steered,
+            Some(receipt),
+            None,
+        )
     } else {
         let outcome = runtime_agent_run_mailbox(state.as_ref())
             .submit(EnqueueRuntimeMailboxMessage {
                 target: target.clone(),
-                client_command_id: req.client_command_id,
+                client_command_id: req.client_command_id.clone(),
                 input: runtime_input,
                 actor: runtime_actor(&current_user),
                 identity: Some(current_user.clone()),
@@ -448,12 +501,20 @@ pub async fn submit_agent_run_composer_input(
         match outcome {
             RuntimeMailboxSubmitOutcome::Queued { message } => {
                 spawn_runtime_mailbox_watcher(state.clone(), target);
-                RuntimeComposerSubmitResponse::Queued {
-                    mailbox_message_id: message.id,
-                }
+                agent_run_message_command_response(
+                    req.client_command_id,
+                    AgentRunMessageCommandOutcome::Queued,
+                    None,
+                    Some(message.id.to_string()),
+                )
             }
             RuntimeMailboxSubmitOutcome::Dispatched { receipt, .. } => {
-                RuntimeComposerSubmitResponse::Dispatched { receipt }
+                agent_run_message_command_response(
+                    req.client_command_id,
+                    AgentRunMessageCommandOutcome::Dispatched,
+                    Some(receipt),
+                    None,
+                )
             }
         }
     };
@@ -465,6 +526,33 @@ pub async fn submit_agent_run_composer_input(
         "AgentRun composer submit accepted by managed runtime"
     );
     Ok(Json(response))
+}
+
+fn agent_run_message_command_response(
+    client_command_id: String,
+    outcome: AgentRunMessageCommandOutcome,
+    receipt: Option<OperationReceipt>,
+    mailbox_message_id: Option<String>,
+) -> AgentRunMessageCommandResponse {
+    let accepted_runtime_operation_id = receipt
+        .as_ref()
+        .map(|receipt| receipt.operation_id.to_string());
+    AgentRunMessageCommandResponse {
+        command_receipt: AgentRunCommandReceipt {
+            client_command_id,
+            status: match outcome {
+                AgentRunMessageCommandOutcome::Queued => "queued",
+                AgentRunMessageCommandOutcome::Dispatched
+                | AgentRunMessageCommandOutcome::Steered => "accepted",
+            }
+            .to_string(),
+            duplicate: receipt.as_ref().is_some_and(|receipt| receipt.duplicate),
+            accepted_runtime_operation_id,
+            message: None,
+        },
+        outcome,
+        mailbox_message_id,
+    }
 }
 
 async fn cancel_agent_run(
@@ -754,11 +842,12 @@ async fn get_agent_run_runtime_context_audit(
     ))
 }
 
-async fn approve_agent_run_tool_call(
+async fn respond_agent_run_interaction(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
+    Path((run_id, agent_id, interaction_id)): Path<(String, String, String)>,
+    Json(response): Json<InteractionResponse>,
+) -> Result<Json<OperationReceipt>, ApiError> {
     let context = resolve_agent_run_context(
         state.as_ref(),
         &current_user,
@@ -771,33 +860,8 @@ async fn approve_agent_run_tool_call(
         state.as_ref(),
         &context,
         &current_user,
-        tool_call_id,
-        InteractionResponse::Approved,
-    )
-    .await
-    .map(Json)
-}
-
-async fn reject_agent_run_tool_call(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, agent_id, tool_call_id)): Path<(String, String, String)>,
-    Json(req): Json<RejectToolApprovalRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let context = resolve_agent_run_context(
-        state.as_ref(),
-        &current_user,
-        &run_id,
-        &agent_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-    resolve_agent_run_interaction(
-        state.as_ref(),
-        &context,
-        &current_user,
-        tool_call_id,
-        InteractionResponse::Denied { reason: req.reason },
+        interaction_id,
+        response,
     )
     .await
     .map(Json)

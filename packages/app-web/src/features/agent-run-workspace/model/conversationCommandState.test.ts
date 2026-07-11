@@ -1,17 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { RuntimeSnapshot } from "../../../generated/agent-runtime-contracts";
-import type {
-  ConversationMailboxSnapshotView,
-  ConversationModelConfigView,
-} from "../../../generated/workflow-contracts";
-import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationModelConfigView } from "../../../generated/workflow-contracts";
 import type { ProjectAgentSummary } from "../../../types";
 import {
   buildAgentRunConversationCommandState,
   buildDraftConversationCommandState,
   projectAgentRunChatCommandState,
-  projectAgentRunChatMailboxModel,
 } from "./conversationCommandState";
 
 function resolvedModelConfig(): ConversationModelConfigView {
@@ -62,32 +57,6 @@ function runtimeSnapshot(activeTurnId: string | null = "turn-1"): RuntimeSnapsho
   };
 }
 
-function mailboxMessage(): MailboxMessageView {
-  return {
-    id: "mailbox-1",
-    origin: "user",
-    source: {
-      namespace: "core",
-      kind: "composer",
-      actor: "user",
-      display_label_key: "mailbox.source.core.composer",
-    },
-    delivery: { kind: "launch_or_continue_turn" },
-    barrier: "agent_run_turn_boundary",
-    drain_mode: "one",
-    status: "queued",
-    preview: "queued message",
-    has_images: false,
-    attempt_count: 0,
-    created_at: "2026-06-30T00:00:00.000Z",
-    updated_at: "2026-06-30T00:00:00.000Z",
-    can_promote: true,
-    can_delete: true,
-    can_reorder: true,
-    can_recall: true,
-  };
-}
-
 describe("AgentRun conversation command state", () => {
   it("projects Runtime snapshot as the only runtime command authority", () => {
     const commandState = buildAgentRunConversationCommandState({
@@ -106,6 +75,9 @@ describe("AgentRun conversation command state", () => {
       ctrl_enter: undefined,
     });
     expect(model.primaryCommandId).toBe("runtime:turn_steer");
+    expect(model.commands.find((command) => command.command_id === "runtime:turn_steer")).toMatchObject({
+      delivery_intent: "steer",
+    });
     expect(model.cancelCommand).toMatchObject({
       command_id: "runtime:turn_interrupt",
       kind: "cancel",
@@ -225,33 +197,4 @@ describe("AgentRun conversation command state", () => {
     });
   });
 
-  it("projects mailbox facts without reviving retired management commands", () => {
-    const commandState = buildAgentRunConversationCommandState({
-      modelConfig: resolvedModelConfig(),
-      workspaceStateStatus: "ready",
-      workspaceStateError: null,
-      runtimeSnapshot: runtimeSnapshot(),
-    });
-    const mailbox: ConversationMailboxSnapshotView = {
-      visible_message_count: 1,
-      paused: false,
-      user_attention: true,
-      state: {
-        paused: true,
-        can_resume: true,
-        hide_system_steer_messages: true,
-      },
-      messages: [mailboxMessage()],
-      waiting_items: [],
-    };
-
-    const model = projectAgentRunChatMailboxModel(commandState, mailbox);
-
-    expect(model.messages).toEqual([mailboxMessage()]);
-    expect(model.paused).toBe(true);
-    expect(model.can_resume).toBe(false);
-    expect(model.resumeAction).toBeUndefined();
-    expect(model.promoteAction).toBeUndefined();
-    expect(model.deleteAction).toBeUndefined();
-  });
 });

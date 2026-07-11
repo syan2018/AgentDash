@@ -35,8 +35,12 @@ impl<S> ManagedAgentRuntime<S> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriverEventAdmission {
-    Durable { sequence: EventSequence },
+    Durable {
+        sequence: EventSequence,
+    },
     Transient,
+    /// Driver 对 Managed Runtime 已建立的 canonical lifecycle transition 的同身份确认。
+    Observed,
     Quarantined,
 }
 
@@ -101,6 +105,12 @@ where
                     "driver attempted to emit a runtime-owned context transition".to_string(),
                 )
                 .await;
+        }
+
+        if let RuntimeEvent::TurnStarted { turn_id } = &source.event
+            && state.active_turn_id.as_ref() == Some(turn_id)
+        {
+            return Ok(DriverEventAdmission::Observed);
         }
         if matches!(
             source.event,
@@ -727,11 +737,9 @@ fn apply_command_projection(
         }),
         RuntimeCommand::ThreadSettingsUpdate { .. } => state.settings_revision.0 += 1,
         RuntimeCommand::TurnStart { .. } => {
-            let turn_id = agentdash_agent_runtime_contract::RuntimeTurnId::new(format!(
-                "turn-{operation_id}"
-            ))
-            .expect("derived turn id is valid");
-            events.push(RuntimeEvent::TurnStarted { turn_id });
+            events.push(RuntimeEvent::TurnStarted {
+                turn_id: canonical_turn_id(operation_id),
+            });
         }
         RuntimeCommand::InteractionRespond { interaction_id, .. } => {
             let turn_id = state
@@ -753,6 +761,13 @@ fn apply_command_projection(
         | RuntimeCommand::ContextCompact { .. } => {}
     }
     Ok(())
+}
+
+pub fn canonical_turn_id(
+    operation_id: &agentdash_agent_runtime_contract::RuntimeOperationId,
+) -> agentdash_agent_runtime_contract::RuntimeTurnId {
+    agentdash_agent_runtime_contract::RuntimeTurnId::new(format!("turn-{operation_id}"))
+        .expect("derived turn id is valid")
 }
 
 fn duplicate_receipt(

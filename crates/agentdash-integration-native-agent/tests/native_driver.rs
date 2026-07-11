@@ -278,6 +278,7 @@ fn fixture_surface() -> MaterializedDriverSurface {
                 strength: SemanticStrength::ExactSynchronous,
                 failure_policy: HookFailurePolicy::FailClosed,
                 required: true,
+                site: HookExecutionSite::AgentCoreCallback,
             }],
         },
         workspace: DriverWorkspaceSurface {
@@ -390,6 +391,7 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
+                runtime_turn_id: Some(id("turn-request-turn-1")),
                 command: thread_start(vec![RuntimeInput::Text {
                     text: "hello".to_string(),
                 }]),
@@ -456,6 +458,7 @@ async fn native_compaction_activation_is_exact_and_idempotently_inspectable() {
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
+                runtime_turn_id: None,
                 command: RuntimeCommand::ContextCompact {
                     thread_id: id("thread-1"),
                     compaction_id: id("compaction-1"),
@@ -506,6 +509,7 @@ async fn native_fork_imports_the_requested_checkpoint_and_preserves_its_digest()
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
+                runtime_turn_id: None,
                 command: RuntimeCommand::ThreadFork {
                     thread_id: id("thread-1"),
                     checkpoint_id: Some(id("checkpoint-1")),
@@ -568,6 +572,7 @@ async fn native_resume_reuses_the_source_thread_and_materialized_context_digest(
                 binding_id: id("binding-resume"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: source_thread_id.clone(),
+                runtime_turn_id: None,
                 command: RuntimeCommand::ThreadResume {
                     thread_id: id("thread-resume"),
                 },
@@ -600,6 +605,7 @@ async fn native_hot_tool_replace_returns_and_replays_exact_apply_receipt() {
         binding_id: id("binding-1"),
         generation: RuntimeDriverGeneration(4),
         source_thread_id: binding.source_thread_id,
+        runtime_turn_id: None,
         command: RuntimeCommand::ToolSetReplace {
             thread_id: id("thread-1"),
             expected_tool_set_revision: ToolSetRevision(4),
@@ -638,6 +644,7 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
+                runtime_turn_id: Some(id("turn-request-turn-fail")),
                 command: thread_start(vec![RuntimeInput::Text {
                     text: "hello".to_string(),
                 }]),
@@ -654,6 +661,7 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
+                runtime_turn_id: None,
                 command: RuntimeCommand::TurnInterrupt {
                     thread_id: id("thread-1"),
                     expected_turn_id: id("native-turn-request-turn-fail"),
@@ -688,6 +696,7 @@ async fn native_descriptor_does_not_claim_prompt_flattened_input_modalities() {
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
+                runtime_turn_id: Some(id("turn-request-structured-input")),
                 command: thread_start(vec![RuntimeInput::Structured {
                     schema: "example".to_string(),
                     value: json!({"value": 1}),

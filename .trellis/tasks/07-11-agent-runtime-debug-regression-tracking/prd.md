@@ -120,7 +120,7 @@
 - [x] ARD-004 通过定向回归测试与真实 `pnpm dev` create-run验证越过 VFS default mount 断点并进入后续 tool surface compilation。
 - [x] ARD-005 canonical platform tool descriptor 能为 `mounts_list` 等 assembled tools 提供唯一 capability ownership，并保持 capability policy admission。
 - [x] ARD-005 通过真实 `pnpm dev` Draft create-run 验证 Runtime binding继续越过 tool surface compilation。
-- [ ] ARD-006 Native/Codex Hook requirements、failure policy、workspace profile 与实际 execution site 一致，新建和复用 offer 共用同一 Surface admission。
+- [x] ARD-006 Native/Codex Hook requirements、failure policy、workspace profile 与实际 execution site 一致，新建和复用 offer 共用同一 Surface admission。
 - [x] ARD-006 通过真实 `pnpm dev` Draft create-run 验证 Runtime binding越过 Hook/offer 求交。
 - [x] ARD-008 event stream使用统一 `/api` builder，durable replay不重复追加。
 - [x] ARD-008 恢复基于当前架构事实的 AgentRun list/workspace product projection，并完成 route-consumer inventory。
@@ -140,9 +140,9 @@
 | ARD-003 | verified | blocker | RunLaunchProfile 已进入 AgentFrame、Integration definition 与 backend offer selection |
 | ARD-004 | verified | blocker | ProjectAgent launch 在 product delivery 前物化完整 owner surface；真实 Draft 已越过 VFS default mount 断点 |
 | ARD-005 | verified | blocker | canonical descriptor 已解析 `mounts_list`；真实 Draft越过 tool surface并完成回复 |
-| ARD-006 | fixed | blocker | Native action/failure/workspace与新建offer admission已验证；Codex需由真实HookPlan route消除固定`RequestApproval`要求 |
+| ARD-006 | verified | blocker | AgentFrame持久化immutable HookPlan；Runtime按execution site投影requirements，Native/Codex与新建/复用offer共用同一admission |
 | ARD-007 | reported | minor | dev server重启期间瞬时 `useContext` null；刷新消失，暂无稳定复现与 stack |
-| ARD-008 | fixed | blocker | event、workspace detail与Project list已真实验证；delete/detail lineage/mailbox/journal/fork按route ledger继续收束 |
+| ARD-008 | verified | blocker | event、workspace/list/detail lineage、composer/context/interaction与退役consumer均按route ledger完成收束并真实验证 |
 
 ## Verification Record
 
@@ -164,3 +164,8 @@
 - 真实产品验证中，侧栏与Agent Hub均恢复6条AgentRun，最新行导航到`3240bb88-bbf8-42eb-ba8a-1fc883685e9a` / `1a12a893-eed8-4e99-be9f-c0bf3defebe4`，详情继续显示`foundation-ok`且浏览器error日志为空。route ledger同时补记仍缺owner的delete/detail lineage/mailbox/journal/fork，ARD-008保持fixed直到剩余cutover项分别完成。
 - `cargo test -p agentdash-api agent_runtime_surface::tests` 4项、`cargo test -p agentdash-integration-native-agent` 11项、runtimeEventStream 2项与app-web typecheck通过；目标三crate `--lib` clippy通过。`--all-targets`另暴露`agentdash-agent-runtime-test-support`既有`collapsible_match`，未修改该无关文件。
 - ARD-007 review确认全仓React/ReactDOM均为19.2.4且解析到同一物理文件，Vite预构建只有唯一React source，Draft相关定向ESLint通过，Canvas React 18位于隔离iframe。当前缺少稳定复现、error stack/componentStack与module URL，因此保持`reported`并阻止alias/dedupe、try/catch、强制reload或双React兼容补丁。
+- schema 66新增`agent_frames.hook_plan jsonb`；AgentFrame construction统一编译immutable HookPlan，Runtime只将Driver/AgentCoreCallback execution site投影到Driver surface。最终真实Run `48e6b105-37da-47e7-bff4-246ec7dfca88`使用空HookPlan成功binding，证明不再要求offer伪造`BeforeTool`能力。
+- 首轮/第二轮连续会话分别在真实Run中返回`first-turn-ok`与`second-turn-ok`。由此定位并修复Managed Runtime与Driver重复创建Turn identity：`TurnStart`现在唯一拥有canonical Runtime turn，Driver source turn独立映射，matching `TurnStarted`只作为acknowledgement。
+- 工具调用产生业务失败后，Runtime保持active且0 protocol violation；后续同一Run成功返回`after-tool-ok`。最终snapshot revision 29，2个started/2个terminal，证明terminal command已完成outbox ack且未被重复派发。
+- 最终产品验证覆盖composer、Runtime context、generic interaction availability与工具后follow-up；浏览器error日志为空，未复现`useContext`异常。ARD-007仍按独立证据边界保持reported。
+- 质量门通过：migration guard、contracts generation/check、app-web typecheck、87文件/451项前端测试、changed-files ESLint、workspace `cargo check --all-targets`、相关Rust tests与目标crate strict clippy。全仓frontend lint仍命中32个本次未改文件中的既有`react-hooks/set-state-in-effect`错误，changed-files lint为0。

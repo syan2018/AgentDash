@@ -25,6 +25,15 @@ impl AgentRuntimeDriver for NativeAgentDriver {
     async fn inspect(&self, request: DriverInspectRequest)
         -> Result<DriverInspectResult, DriverError>;
 }
+
+DriverCommandEnvelope {
+    request_id,
+    binding_id,
+    generation,
+    source_thread_id,
+    runtime_turn_id: Option<RuntimeTurnId>,
+    command,
+}
 ```
 
 Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver只解析真实Native bridge；生产composition显式构造Integration，不使用全局静态connector。
@@ -40,6 +49,9 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - AgentCore callback facets只表达真实inner-loop Hook点，业务Hook plan/rule仍由Runtime拥有。Native driver不得查询workflow/project/repository。
 - Context read/Thread projection使用typed inspect。Managed compaction只接受Runtime已durable candidate activation，验证activation/checkpoint/digest后幂等应用；Native Core不拥有AgentDash自动压缩策略或checkpoint事实源。
 - Turn、steer、interrupt、settings与tool replace按binding/request维度幂等。Active-turn fence在成功、mapper error、sink error、Agent task error与cancel所有路径都必须finally清理；失败turn不能继续被steer/interrupt命中。
+- `ThreadStart`/`TurnStart` 的 canonical Turn identity 由 Managed Runtime 根据 accepted operation分配，并通过`DriverCommandEnvelope.runtime_turn_id`交给Driver。Native只生成`DriverTurnId`作为source coordinate；普通事件、Tool callback与Hook callback都必须同时保留这两套坐标，不能把source ID转换成Runtime ID。
+- `TurnStart` acceptance已经把canonical `TurnStarted`写入Runtime projection；Driver回报相同`runtime_turn_id`的`TurnStarted`是同身份ack，不新增第二条lifecycle transition。不同identity仍属于critical protocol violation。
+- Driver一旦已经发送`TurnTerminal`，底层Agent task返回同一失败只能形成成功的dispatch completion；否则durable outbox会把已终态命令当成“acceptance前拒绝”重派。只有尚未产生authoritative terminal的Rejected/Lost才向dispatch caller返回错误。
 - Driver使用`Arc<dyn DriverEventSink>`，streaming和terminal可以异步送达；authoritative sink failure必须向上返回，不能静默丢事件后报告成功。
 - Clean Agent Core只拥有provider-neutral inference/stream/tool loop。它不依赖Application、Domain、Codex/Backbone/vendor DTO、AgentDash lifecycle prompt、runtime compaction policy或repository。
 - Provider-specific DTO放在protocol/adapter；`ThinkingLevel`是provider-neutral Core type。Core不公开RuntimeCompactionDelegate，也不执行pre-provider/compact-only/manual AgentDash policy。
@@ -58,17 +70,21 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 | compaction activation重复 | exact idempotent receipt |
 | compaction activation digest不匹配 | reject，不改变live context |
 | mapper/sink/Agent task失败 | error传播且active-turn fence清理 |
+| Turn命令缺少`runtime_turn_id` | side effect前critical protocol error |
+| Tool/Hook callback把source turn作为Runtime turn | Runtime transition拒绝；不得写第二套坐标 |
+| canonical Turn已accepted后Driver回报同identity `TurnStarted` | `Observed` ack；revision/cursor不推进 |
+| 已发送`TurnTerminal`后Agent task返回错误 | dispatch成功收口并ack outbox，不重派命令 |
 | 失败后steer/interrupt旧turn | Rejected |
 | stale binding/generation | fence，不发送Core command/event |
 | Core依赖domain/vendor/application | dependency/spec gate失败 |
 
 ## 5. Good / Base / Bad Cases
 
-**Good case:** Host用Native contribution激活service，Fork bind从Context Broker取得指定checkpoint并验证digest，surface/tool/hook ack后启动Turn；Direct Callback工具经Broker执行，流式事件通过Arc sink持续进入Runtime，终态清理active fence。
+**Good case:** Host用Native contribution激活service，Fork bind从Context Broker取得指定checkpoint并验证digest，surface/tool/hook ack后以Managed分配的Turn ID启动；Direct Callback工具经Broker执行，Runtime/source坐标同时保留，流式事件通过Arc sink持续进入Runtime，终态清理active fence并ack outbox。
 
 **Base case:** 相同request重放返回原binding/receipt，ToolSet revision和compaction activation不会重复产生副作用。
 
-**Bad case:** Adapter把Structured序列化成普通文本却在profile声明Structured Native，或Core自行根据token阈值压缩context。这会产生虚假能力和双context authority，必须拒绝。
+**Bad case:** Adapter把Structured序列化成普通文本却在profile声明Structured Native，或把`DriverTurnId`直接作为`RuntimeTurnId`发给Tool/Hook callback。这会产生虚假能力或第二Turn identity，必须拒绝。
 
 ## 6. Tests Required
 
@@ -76,6 +92,7 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 - 覆盖surface/tool/hook applied receipts、hot ToolSetReplace、Direct Callback、approval Interaction与typed inspect。
 - 覆盖managed compaction exact activation、wrong digest/checkpoint、duplicate replay和digest选择不依赖map ordering。
 - 覆盖unsupported modality在任何副作用前拒绝，以及mapper/sink/task error的active fence清理。
+- Runtime interface覆盖matching Driver `TurnStarted`只得到`Observed`且revision不变；Native工具轮次覆盖Tool/Hook使用canonical Turn、terminal后task error不触发同request重派。
 - Contract/Wire/TestSupport/Host conformance与generated TS/schema check必须通过。
 - Agent Core dependency tree与source scan必须证明无Application/Domain/Codex/Backbone/repository依赖；Core/Native strict clippy与tests通过。
 - WP08必须验证provider registry抽离后legacy Pi与dead runtime-session compaction SPI物理删除、生产Host composition使用Native Integration。
@@ -100,4 +117,17 @@ self.active_turn.remove(&turn_id);
 let result = run_agent(...).await;
 self.active_turn.remove(&turn_id);
 result
+```
+
+```rust
+// Wrong: source coordinate成为第二套Runtime identity。
+let turn_id = RuntimeTurnId::new(source_turn_id.to_string())?;
+
+// Correct: Runtime identity由accepted operation分配，source coordinate只用于Driver映射。
+let turn_id = envelope.runtime_turn_id.clone().ok_or(DriverError::ProtocolViolation { .. })?;
+tool_callback.invoke(DriverToolInvocation {
+    turn_id,
+    source_turn_id,
+    ..
+}).await?;
 ```

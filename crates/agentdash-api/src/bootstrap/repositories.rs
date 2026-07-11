@@ -12,6 +12,7 @@ use agentdash_application_agentrun::agent_run::frame::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
+use agentdash_application_ports::agent_frame_hook_plan::SharedAgentFrameHookPlanCompiler;
 use agentdash_application_ports::agent_frame_materialization::{
     AgentRunFrameConstructionPort, SharedAgentRunFrameConstructionHandle,
 };
@@ -54,6 +55,7 @@ pub(crate) async fn build_repositories(
     project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
     runtime_provisioner_handle: agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle,
     frame_construction_handle: SharedAgentRunFrameConstructionHandle,
+    hook_plan_compiler_handle: SharedAgentFrameHookPlanCompiler,
 ) -> Result<RepositoryBootstrapOutput> {
     agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
         .await
@@ -141,9 +143,11 @@ pub(crate) async fn build_repositories(
     let agent_run_runtime_binding_repo =
         Arc::new(PostgresAgentRuntimeCompositionRepository::new(pool.clone()));
     let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
-    let agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort> = Arc::new(
-        AgentRunLaunchAnchorFrameConstructionAdapter::new(agent_frame_repo.clone()),
-    );
+    let agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort> =
+        Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
+            agent_frame_repo.clone(),
+            Arc::new(hook_plan_compiler_handle.clone()),
+        ));
     let project_agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort> =
         Arc::new(frame_construction_handle);
     let lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort> = Arc::new(
@@ -153,6 +157,7 @@ pub(crate) async fn build_repositories(
         Arc::new(AgentRunWorkflowNodeFrameMaterializationAdapter::new(
             agent_frame_repo.clone(),
             lifecycle_surface_projection.clone(),
+            Arc::new(hook_plan_compiler_handle),
         ));
     let project_agent_lifecycle_launch = Arc::new(LifecycleProjectAgentLaunchAdapter::new(
         LifecycleProjectAgentLaunchDeps {
@@ -263,6 +268,8 @@ mod tests {
     use agentdash_application::platform_config::PlatformConfig;
     use agentdash_application::repository_set::RepositorySet;
     use agentdash_application_agentrun::agent_run::frame::AgentFrameSurfaceExt;
+    use agentdash_application_hooks::AppExecutionHookProvider;
+    use agentdash_application_ports::agent_frame_hook_plan::SharedAgentFrameHookPlanCompiler;
     use agentdash_application_ports::agent_frame_materialization::SharedAgentRunFrameConstructionHandle;
     use agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle;
     use agentdash_domain::agent::ProjectAgent;
@@ -417,12 +424,14 @@ mod tests {
     async fn lifecycle_launch_persists_canonical_workspace_surface_before_product_delivery() {
         let runtime = migrated_runtime("ard004_launch_surface").await;
         let frame_construction_handle = SharedAgentRunFrameConstructionHandle::default();
+        let hook_plan_compiler_handle = SharedAgentFrameHookPlanCompiler::default();
         let bootstrap = build_repositories(
             runtime.pool.clone(),
             Vec::new(),
             None,
             SharedAgentRunRuntimeProvisionerHandle::default(),
             frame_construction_handle.clone(),
+            hook_plan_compiler_handle.clone(),
         )
         .await
         .expect("repository bootstrap");
@@ -435,6 +444,21 @@ mod tests {
             Vec::new(),
         );
         let audit_bus = Arc::new(InMemoryContextAuditBus::new(32));
+        let hook_scripts = AppExecutionHookProvider::builtin_preset_scripts();
+        let hook_plan_compiler = Arc::new(AppExecutionHookProvider::new(
+            agentdash_application_hooks::AppExecutionHookProviderDeps {
+                workflow_projection: repos.hook_workflow_projection_port(),
+                script_evaluator: Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
+                    &hook_scripts,
+                )),
+            },
+        ));
+        assert!(
+            hook_plan_compiler_handle
+                .set(hook_plan_compiler.clone())
+                .is_ok(),
+            "bind HookPlan compiler"
+        );
         let frame_construction_bound = frame_construction_handle
             .set(Arc::new(AgentRunProjectOwnerFrameConstructionAdapter::new(
                 AgentRunProjectOwnerFrameConstructionDeps {
@@ -444,6 +468,7 @@ mod tests {
                     platform_config: Arc::new(PlatformConfig { mcp_base_url: None }),
                     lifecycle_surface_projection: bootstrap.lifecycle_surface_projection,
                     audit_bus: audit_bus.clone(),
+                    hook_plan_compiler,
                 },
             )))
             .is_ok();
@@ -504,6 +529,20 @@ mod tests {
                 .and_then(|profile| profile.model_id),
             Some("gpt-5.1-codex".to_string())
         );
+        let hook_plan = frame
+            .validated_hook_plan()
+            .expect("launch frame must persist immutable HookPlan");
+        assert!(
+            hook_plan.requirements.is_empty(),
+            "default Codex launch must not manufacture a BeforeTool requirement"
+        );
+        let reloaded = repos
+            .agent_frame_repo
+            .get(frame.id)
+            .await
+            .expect("reload launch frame")
+            .expect("persisted launch frame");
+        assert_eq!(reloaded.validated_hook_plan(), Ok(hook_plan));
         let story_context_events = audit_bus.query(
             &launched.runtime_refs.run_ref.to_string(),
             &launched.runtime_refs.agent_ref.to_string(),

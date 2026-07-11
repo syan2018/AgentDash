@@ -4,10 +4,10 @@ use agentdash_agent_runtime_contract::{
     AgentRuntimeDriver, ConfigurationBoundary, ContextBlock, ContextCandidateId,
     ContextCheckpointId, ContextCompactionId, ContextDigest, ContextFidelity, ContextRecipe,
     ContextRevision, DriverItemId, DriverThreadId, DriverTurnId, HookAction, HookDefinitionId,
-    HookFailurePolicy, HookPlanDigest, HookPlanRevision, HookPoint, InstructionChannel,
-    MaterializedContext, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
-    RuntimeItemId, RuntimeProfile, RuntimeServiceInstanceId, RuntimeThreadId, RuntimeTurnId,
-    SemanticStrength, SurfaceDigest, SurfaceRevision, ToolChannel, ToolSetRevision,
+    HookExecutionSite, HookFailurePolicy, HookPlanDigest, HookPlanRevision, HookPoint,
+    InstructionChannel, MaterializedContext, RuntimeBindingId, RuntimeDriverGeneration,
+    RuntimeInteractionId, RuntimeItemId, RuntimeProfile, RuntimeServiceInstanceId, RuntimeThreadId,
+    RuntimeTurnId, SemanticStrength, SurfaceDigest, SurfaceRevision, ToolChannel, ToolSetRevision,
     WorkspaceCapability,
 };
 use async_trait::async_trait;
@@ -249,6 +249,7 @@ pub struct DriverHookBinding {
     pub strength: SemanticStrength,
     pub failure_policy: HookFailurePolicy,
     pub required: bool,
+    pub site: HookExecutionSite,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

@@ -6,8 +6,9 @@ use std::{
 
 use agentdash_agent_runtime_contract::*;
 use agentdash_application_agentrun::agent_run::{
-    BusinessFrameSurfaceQuery, RuntimeSurfaceQueryPurpose,
+    AgentFrameSurfaceExt, BusinessFrameSurfaceQuery, RuntimeSurfaceQueryPurpose,
 };
+use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
 use agentdash_application_ports::agent_run_surface::{
     AgentRunAdmissionRequest, AgentRunEffectiveCapabilityPort,
 };
@@ -753,13 +754,12 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             .map_err(|error| AgentRunRuntimeSurfaceSourceError::Invalid {
             reason: error.to_string(),
         })?;
-        let hook_bindings = platform_driver_hook_bindings();
-        let hook_digest =
-            HookPlanDigest::new(digest_json(&(revision, &hook_bindings))?).map_err(|error| {
-                AgentRunRuntimeSurfaceSourceError::Invalid {
-                    reason: error.to_string(),
-                }
-            })?;
+        let hook_plan = frame
+            .validated_hook_plan()
+            .map_err(|reason| AgentRunRuntimeSurfaceSourceError::Invalid { reason })?;
+        let (runtime_hook_plan, hook_bindings, hook_configuration_boundary) =
+            materialize_hook_plan(&hook_plan);
+        let hook_digest = hook_plan.digest;
         let workspace_capabilities = workspace_capabilities(&surface.vfs);
         let workspace_roots = surface
             .vfs
@@ -783,6 +783,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             executor: executor_id,
             provider,
             model,
+            hook_plan: runtime_hook_plan,
             surface: MaterializedDriverSurface {
                 runtime_thread_id: thread_id.clone(),
                 revision: surface_revision,
@@ -804,10 +805,10 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                     tools: driver_tools,
                 },
                 hooks: DriverHookSurface {
-                    revision: HookPlanRevision(1),
+                    revision: hook_plan.revision,
                     digest: hook_digest,
                     artifact_digest: None,
-                    configuration_boundary: ConfigurationBoundary::Binding,
+                    configuration_boundary: hook_configuration_boundary,
                     bindings: hook_bindings,
                 },
                 workspace: DriverWorkspaceSurface {
@@ -817,6 +818,62 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             },
         })
     }
+}
+
+fn materialize_hook_plan(
+    hook_plan: &AgentFrameHookPlan,
+) -> (
+    BoundRuntimeHookPlan,
+    Vec<DriverHookBinding>,
+    ConfigurationBoundary,
+) {
+    let runtime_hook_plan = BoundRuntimeHookPlan {
+        revision: hook_plan.revision,
+        digest: hook_plan.digest.clone(),
+        entries: hook_plan
+            .requirements
+            .iter()
+            .map(|entry| BoundRuntimeHookEntry {
+                definition_id: entry.definition_id.clone(),
+                point: entry.requirement.point,
+                actions: entry.requirement.actions.clone(),
+                delivered_strength: entry.requirement.minimum_strength,
+                failure_policy: entry.requirement.failure_policy,
+                required: entry.requirement.required,
+                site: entry.site,
+            })
+            .collect(),
+    };
+    let bindings = hook_plan
+        .requirements
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.site,
+                HookExecutionSite::AgentCoreCallback | HookExecutionSite::DriverNative
+            )
+        })
+        .map(|entry| DriverHookBinding {
+            definition_id: entry.definition_id.clone(),
+            point: entry.requirement.point,
+            actions: entry.requirement.actions.iter().copied().collect(),
+            strength: entry.requirement.minimum_strength,
+            failure_policy: entry.requirement.failure_policy,
+            required: entry.requirement.required,
+            site: entry.site,
+        })
+        .collect::<Vec<_>>();
+    let boundary =
+        bindings
+            .iter()
+            .fold(ConfigurationBoundary::StaticService, |boundary, binding| {
+                boundary.max(match binding.site {
+                    HookExecutionSite::AgentCoreCallback => ConfigurationBoundary::Binding,
+                    HookExecutionSite::DriverNative => ConfigurationBoundary::ThreadStart,
+                    _ => ConfigurationBoundary::StaticService,
+                })
+            });
+    (runtime_hook_plan, bindings, boundary)
 }
 
 fn capability_for_tool(
@@ -876,33 +933,6 @@ fn capability_for_tool(
     })
 }
 
-fn platform_driver_hook_bindings() -> Vec<DriverHookBinding> {
-    vec![
-        DriverHookBinding {
-            definition_id: HookDefinitionId::new("agentdash.platform.before_tool")
-                .expect("static hook definition"),
-            point: HookPoint::BeforeTool,
-            actions: vec![
-                HookAction::RewriteInput,
-                HookAction::Block,
-                HookAction::RequestApproval,
-            ],
-            strength: SemanticStrength::ExactSynchronous,
-            failure_policy: HookFailurePolicy::FailClosed,
-            required: true,
-        },
-        DriverHookBinding {
-            definition_id: HookDefinitionId::new("agentdash.platform.after_tool")
-                .expect("static hook definition"),
-            point: HookPoint::AfterTool,
-            actions: vec![HookAction::RewriteResult, HookAction::EmitEffect],
-            strength: SemanticStrength::ExactSynchronous,
-            failure_policy: HookFailurePolicy::FailOpenWithDiagnostic,
-            required: true,
-        },
-    ]
-}
-
 fn workspace_capabilities(vfs: &agentdash_spi::Vfs) -> Vec<WorkspaceCapability> {
     let mut values = BTreeSet::new();
     for mount in &vfs.mounts {
@@ -943,6 +973,7 @@ fn digest_json(value: &impl serde::Serialize) -> Result<String, AgentRunRuntimeS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
     use agentdash_spi::{
         CapabilityState, ToolCapability, ToolCapabilityFilter, ToolCluster,
         platform::tool_capability::{CAP_FILE_READ, CAP_WORKSPACE_MODULE},
@@ -1000,21 +1031,41 @@ mod tests {
     }
 
     #[test]
-    fn native_offer_profile_satisfies_platform_driver_hook_bindings() {
+    fn native_offer_profile_satisfies_supervised_frame_hook_requirement() {
         let profile = agentdash_integration_native_agent::native_runtime_profile();
+        let requirement = HookRequirement {
+            point: HookPoint::BeforeTool,
+            actions: BTreeSet::from([HookAction::RequestApproval]),
+            minimum_strength: SemanticStrength::ExactSynchronous,
+            failure_policy: HookFailurePolicy::FailClosed,
+            required: true,
+        };
+        assert!(
+            profile.hooks.satisfies(&requirement),
+            "native profile must satisfy {requirement:?}"
+        );
+    }
 
-        for binding in platform_driver_hook_bindings() {
-            let requirement = HookRequirement {
-                point: binding.point,
-                actions: binding.actions.into_iter().collect(),
-                minimum_strength: binding.strength,
-                failure_policy: binding.failure_policy,
-                required: binding.required,
-            };
-            assert!(
-                profile.hooks.satisfies(&requirement),
-                "native profile must satisfy {requirement:?}"
-            );
-        }
+    #[test]
+    fn tool_broker_hook_remains_in_runtime_plan_but_not_driver_admission() {
+        let requirement = AgentFrameHookRequirement {
+            definition_id: HookDefinitionId::new("workflow.supervised_tool_gate").unwrap(),
+            requirement: HookRequirement {
+                point: HookPoint::BeforeTool,
+                actions: BTreeSet::from([HookAction::RequestApproval]),
+                minimum_strength: SemanticStrength::ExactSynchronous,
+                failure_policy: HookFailurePolicy::FailClosed,
+                required: true,
+            },
+            site: HookExecutionSite::ToolBroker,
+        };
+        let plan = AgentFrameHookPlan::compile(HookPlanRevision(1), vec![requirement]).unwrap();
+        let (runtime, driver, boundary) = materialize_hook_plan(&plan);
+
+        assert_eq!(runtime.digest, plan.digest);
+        assert_eq!(runtime.entries.len(), 1);
+        assert_eq!(runtime.entries[0].site, HookExecutionSite::ToolBroker);
+        assert!(driver.is_empty());
+        assert_eq!(boundary, ConfigurationBoundary::StaticService);
     }
 }

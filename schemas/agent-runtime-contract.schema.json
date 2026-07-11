@@ -3424,6 +3424,13 @@
         "source_thread_id": {
           "type": "string"
         },
+        "runtime_turn_id": {
+          "description": "Managed Runtime 为会产生新 Turn 的命令分配的 canonical identity。\nDriver 只把自己的 source turn 映射到该 identity，不再创建第二个 Runtime Turn。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "command": {
           "$ref": "#/$defs/RuntimeCommand"
         }

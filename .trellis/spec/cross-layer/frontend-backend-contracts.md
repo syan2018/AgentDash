@@ -47,7 +47,7 @@ GET  /agent-runs/{run_id}/agents/{agent_id}/runtime
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/events/stream/ndjson
 POST /agent-runs/{run_id}/agents/{agent_id}/runtime/context/compact
-POST /agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{id}/{approve|reject}
+POST /agent-runs/{run_id}/agents/{agent_id}/runtime/interactions/{interaction_id}/respond
 ```
 
 ```rust
@@ -99,6 +99,9 @@ AgentRunCommandReceipt {
 - 列表不复用`AgentRunWorkspaceShell`或手写`delivery_status`。title/activity/subject来自Lifecycle产品事实，children来自canonical `AgentLineage`，Runtime状态来自Managed Runtime inspect；这些来源在application query内组合，前端只做纯presentation映射。
 - AgentRun product projection组合Lifecycle/AgentFrame/Managed Runtime当前事实。某一projection加载失败不能通过`Promise.all`清空其他已经成功的canonical Runtime inspect；错误状态按owner独立呈现。
 - Runtime context、compaction、interaction 与 tool approval 均通过 facade/canonical operation；不存在独立 session command、protocol turn ID 或 vendor DTO 路径。
+- Interaction response使用generated `InteractionResponse` union；approval、user input、MCP elicitation与dynamic tool result共用一个`/respond` route。UI只有在刷新后的Runtime snapshot声明`interaction_respond=available`时才启用对应控件。
+- Runtime context popup直接读取`RuntimeContextView`的active head、materialized checkpoint、blocks与fidelity；target切换以`run_id + agent_id`为request generation，旧target迟到响应不能覆盖当前popup。
+- RuntimeWire `DriverCommandEnvelope.runtime_turn_id`携带Managed Runtime为`ThreadStart`/`TurnStart`分配的canonical Turn identity。Driver source turn只用于Host/adapter correlation，不进入浏览器合同或Runtime command authority。
 - Mailbox 只持久化 queued product intent 与 `accepted_runtime_operation_id`。没有 canonical command 的管理动作不进入 UI，也不保留死 endpoint。
 
 ### Validation & Error Matrix
@@ -116,6 +119,9 @@ AgentRunCommandReceipt {
 | AgentRun target 不存在或跨 Project | not found/authorization error before Runtime side effect |
 | client command id 为空 | `400 Bad Request` |
 | stale Runtime revision/active turn | typed stale error；前端刷新 snapshot |
+| interaction event已到但Runtime inspect尚未刷新 | 控件保持disabled；`interaction_requested`触发inspect refresh后按availability启用 |
+| context target A响应晚于target B | A响应丢弃；popup只提交与当前target key匹配的结果 |
+| Driver回报与`runtime_turn_id`不同的Turn | critical protocol violation；matching identity只作为Observed ack |
 | command availability=false | UI 禁用且 API 在副作用前拒绝 |
 | command queued | 返回 mailbox message identity；worker 后续写 accepted operation |
 | command duplicate | 返回原 operation receipt |
@@ -133,9 +139,10 @@ AgentRunCommandReceipt {
 - Production composition test 断言最终 `IntegrationDriverHost` inventory 包含动态装配的 Native definition 和已注册的 Codex definition。
 - Discovery/API tests 覆盖 Native/Codex 独立 availability、未知 profile、Provider diagnostic 与 options NDJSON。
 - Selector tests 断言不可用 profile/Provider 保持可见、disabled 且展示原因。
-- Service tests 覆盖 URL encoding、create/composer/cancel/context/approval endpoints。
+- Service tests 覆盖 URL encoding、create/composer/cancel/context/generic interaction endpoints。
 - Command-state tests 证明 availability 只取 Runtime snapshot。
 - Feed tests 覆盖 snapshot baseline、durable cursor、duplicate event、reconnect 与 typed stream error。
+- Interaction feed tests保留`interaction_id/kind/prompt/terminal`并证明response控件只消费刷新后的availability；context popup tests覆盖target切换迟到响应。
 - Feed URL test断言完整`/api/agent-runs/{run}/agents/{agent}/runtime/events/stream/ndjson`与`include_transient=false`；Runtime增加live transient contract前不得改回。
 - Route ledger test至少枚举AgentRun list/workspace/composer/cancel/runtime/context/events/approval的前端consumer与Axum route，防止cutover静默删入口。
 - Project列表测试覆盖service URL、generated DTO消费、status presentation与state分页/失效刷新；真实产品验证覆盖侧栏、完整列表及列表行导航。
@@ -225,6 +232,16 @@ resolveApiUrl(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_
 
 // Correct：统一API前缀；有限batch只消费durable cursor
 buildApiPath(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_transient=false"));
+```
+
+```ts
+// Wrong: approval卡片调用独立vendor/tool route并从event存在推断可响应。
+approveToolCall(interactionId);
+
+// Correct: event提供identity，canonical snapshot提供命令authority。
+if (runtimeSnapshot.command_availability.interaction_respond?.status === "available") {
+  await respondAgentRunInteraction(target, interactionId, { kind: "approved" });
+}
 ```
 
 ```ts

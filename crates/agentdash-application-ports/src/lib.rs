@@ -1,3 +1,4 @@
+pub mod agent_frame_hook_plan;
 pub mod agent_frame_materialization;
 pub mod agent_run_runtime;
 pub mod agent_run_surface;

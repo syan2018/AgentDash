@@ -1,5 +1,4 @@
 ﻿import type {
-  ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
@@ -7,13 +6,15 @@ import type { ProjectAgentSummary } from "../../../types";
 import type {
   SessionChatCommandModel,
   SessionChatCommandState,
-  SessionChatMailboxModel,
   SessionChatModel,
   SessionChatModelConfig,
   SessionChatSubmitIntent,
   SessionChatViewIntents,
 } from "../../session";
 import type { ExecutorConfig } from "../../../services/executor";
+import type {
+  AgentRunComposerDeliveryIntent,
+} from "../../../generated/agent-run-mailbox-contracts";
 import type {
   RuntimeCommandKind,
   RuntimeSnapshot,
@@ -22,7 +23,6 @@ import type {
 // Adapter boundary to the reusable SessionChatView shell; AgentRun command authority stays in the Runtime snapshot.
 export type AgentRunChatCommandModel = SessionChatCommandModel;
 export type AgentRunChatCommandState = SessionChatCommandState;
-export type AgentRunChatMailboxModel = SessionChatMailboxModel;
 export type AgentRunChatModel = SessionChatModel;
 export type AgentRunChatModelConfig = SessionChatModelConfig;
 export type AgentRunChatSubmitIntent = SessionChatSubmitIntent;
@@ -48,6 +48,7 @@ export interface RuntimeAgentRunAction {
   unavailable_reason?: string;
   disabled_code?: string;
   shortcut?: "enter" | "ctrl_enter";
+  delivery_intent?: AgentRunComposerDeliveryIntent;
   requires_input: boolean;
   executor_config_policy: "forbidden";
 }
@@ -288,6 +289,7 @@ export function buildAgentRunConversationCommandState(input: {
           : "Agent Runtime snapshot 尚未声明该命令可用。",
       disabled_code: available ? undefined : "runtime_command_unavailable",
       shortcut,
+      delivery_intent: runtimeKind === "turn_steer" ? "steer" : undefined,
       requires_input: requiresInput,
       executor_config_policy: "forbidden",
     };
@@ -331,6 +333,7 @@ function projectCommand(command: AgentRunConversationCommand): AgentRunChatComma
     requires_input: command.requires_input,
     executor_config_policy: normalizeExecutorConfigPolicy(command.executor_config_policy),
     shortcut: normalizeShortcut(command.shortcut),
+    delivery_intent: command.source === "runtime_snapshot" ? command.delivery_intent : undefined,
   };
 }
 
@@ -376,23 +379,5 @@ export function projectAgentRunChatCommandState(
     cancelCommand: cancelCommand ? projectCommand(cancelCommand) : undefined,
     modelConfig: projectModelConfig(commandState.modelConfig),
     helperText: commandState.helperText,
-  };
-}
-
-export function projectAgentRunChatMailboxModel(
-  _commandState: AgentRunConversationCommandState,
-  mailbox: ConversationMailboxSnapshotView | null | undefined,
-): AgentRunChatMailboxModel {
-  return {
-    messages: mailbox?.messages ?? [],
-    waiting_items: mailbox?.waiting_items ?? [],
-    state: mailbox?.state,
-    paused: Boolean(mailbox?.paused || mailbox?.state?.paused),
-    user_attention: Boolean(mailbox?.user_attention),
-    hide_system_steer_messages: Boolean(mailbox?.state?.hide_system_steer_messages),
-    can_resume: false,
-    resumeAction: undefined,
-    promoteAction: undefined,
-    deleteAction: undefined,
   };
 }

@@ -16,14 +16,12 @@ import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { InlineBackendSelector, type InlineBackendOption } from "../features/session/ui/composer";
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
 import { agentSourceLabel } from "../lib/agent-source";
-import { agentRunListPresentationStatus } from "../features/agent/agent-run-delivery-status";
+import { collectAgentRunProductCompanionRefs } from "../features/agent-run-workspace/model/agentRunProductLineage";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
 import { AgentRuntimeCapabilitySummary } from "../features/agent-run-workspace/ui/AgentRuntimeCapabilitySummary";
 import {
   refreshAgentRunListState,
-  useAgentRunListState,
 } from "../features/agent/agent-run-list-state-store";
-import type { CompanionSubagentKnownAgentRef } from "../features/session/model/companionSubagentDispatch";
 import {
   WorkspacePanel,
   type WorkspacePanelHandle,
@@ -44,8 +42,6 @@ import type {
   BackendConfig,
   RuntimeTraceAgentContext,
   SessionNavigationState,
-  AgentRunListChildView,
-  AgentRunListEntryView,
   SubjectRunContext,
   ProjectAgentSummary,
   ProjectAgentRunStartResult,
@@ -73,40 +69,6 @@ function backendDisplayLabel(backend: BackendConfig): string {
     || backend.machine_label?.trim()
     || machineLabelFromDevice(backend.device)
     || "未命名 Backend";
-}
-
-function collectCompanionSubagentRefs(
-  entries: AgentRunListEntryView[],
-  currentRunId: string | null,
-): CompanionSubagentKnownAgentRef[] {
-  const refs: CompanionSubagentKnownAgentRef[] = [];
-  for (const entry of entries) {
-    if (currentRunId && entry.run_ref.run_id !== currentRunId) continue;
-    for (const child of entry.children) {
-      appendCompanionSubagentRef(refs, child);
-    }
-  }
-  return refs;
-}
-
-function appendCompanionSubagentRef(
-  refs: CompanionSubagentKnownAgentRef[],
-  child: AgentRunListChildView,
-): void {
-  refs.push({
-    run_id: child.run_ref.run_id,
-    agent_id: child.agent_ref.agent_id,
-    display_title: child.title,
-    delivery_status: agentRunListPresentationStatus(
-      child.runtime?.thread_status,
-      child.runtime?.active_turn_id,
-      child.lifecycle_status,
-    ),
-    last_activity_at: child.last_activity_at,
-  });
-  for (const nested of child.children) {
-    appendCompanionSubagentRef(refs, nested);
-  }
 }
 
 export function AgentRunWorkspacePage({
@@ -302,10 +264,9 @@ export function AgentRunWorkspacePage({
       ? (ownerProject?.name?.trim() || "")
     : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
-  const agentRunListState = useAgentRunListState(ownerProjectId);
   const companionSubagents = useMemo(
-    () => collectCompanionSubagentRefs(agentRunListState.entries, currentRunId),
-    [agentRunListState.entries, currentRunId],
+    () => collectAgentRunProductCompanionRefs(workspaceControl?.lineage),
+    [workspaceControl?.lineage],
   );
   const refreshAgentRunList = useCallback((reason: string) => {
     refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, reason);
@@ -485,16 +446,17 @@ export function AgentRunWorkspacePage({
     submitComposer: (intent: Parameters<typeof controlPlaneChatIntents.submitComposer>[0]) =>
       controlPlaneChatIntents.submitComposer({
         ...intent,
-        backendSelection: selectedBackendSelection,
+        backendSelection: isProjectAgentDraft ? selectedBackendSelection : undefined,
       }),
-  }), [controlPlaneChatIntents, selectedBackendSelection]);
+  }), [controlPlaneChatIntents, isProjectAgentDraft, selectedBackendSelection]);
 
   const chatModel = useMemo(() => ({
     ...controlPlaneChatModel,
     agentRunTarget: agentRunRuntimeTarget,
     companionSubagents,
+    showExecutorSelector: isProjectAgentDraft,
     workspaceId: chatWorkspaceId,
-  }), [agentRunRuntimeTarget, chatWorkspaceId, companionSubagents, controlPlaneChatModel]);
+  }), [agentRunRuntimeTarget, chatWorkspaceId, companionSubagents, controlPlaneChatModel, isProjectAgentDraft]);
 
   const handleBackToOwner = useCallback(() => {
     if (!effectiveReturnTarget) return;
@@ -595,7 +557,7 @@ export function AgentRunWorkspacePage({
       )}
     </div>
   ) : null;
-  const backendSelectionBar = activeBackendAccesses.length > 0 ? (
+  const backendSelectionBar = isProjectAgentDraft && activeBackendAccesses.length > 0 ? (
     <InlineBackendSelector
       value={effectiveSelectedBackendId}
       options={backendSelectorOptions}

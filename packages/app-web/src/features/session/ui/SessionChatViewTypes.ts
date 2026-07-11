@@ -1,12 +1,11 @@
 import type { ReactNode } from "react";
 
+import type { InteractionResponse } from "../../../generated/agent-runtime-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
+  AgentRunComposerDeliveryIntent,
   BackendSelectionRequestDto,
-  MailboxMessageView,
-  MailboxStateView,
 } from "../../../generated/agent-run-mailbox-contracts";
-import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { AgentRunRuntimeInspectResponse } from "../../../services/agentRunRuntime";
@@ -38,6 +37,7 @@ export interface SessionChatCommandModel {
   requires_input: boolean;
   executor_config_policy: "required" | "optional" | "forbidden";
   shortcut?: "enter" | "ctrl_enter";
+  delivery_intent?: AgentRunComposerDeliveryIntent;
 }
 
 export interface SessionChatCommandState {
@@ -55,19 +55,6 @@ export interface SessionChatCommandState {
   helperText?: string;
 }
 
-export interface SessionChatMailboxModel {
-  messages: MailboxMessageView[];
-  waiting_items: ConversationWaitingItemView[];
-  state?: MailboxStateView;
-  paused: boolean;
-  user_attention: boolean;
-  hide_system_steer_messages: boolean;
-  can_resume: boolean;
-  resumeAction?: SessionChatCommandModel;
-  promoteAction?: SessionChatCommandModel;
-  deleteAction?: SessionChatCommandModel;
-}
-
 export interface SessionChatModel {
   agentRunTarget?: AgentRunRuntimeTarget | null;
   runtimeInspect?: AgentRunRuntimeInspectResponse | null;
@@ -79,9 +66,6 @@ export interface SessionChatModel {
   showExecutorSelector?: boolean;
   commandState: SessionChatCommandState;
   compactContextCommand?: SessionChatCommandModel;
-  mailbox?: SessionChatMailboxModel;
-  statusBarRunId?: string | null;
-  statusBarAgentId?: string | null;
   injectedInputValue?: string | null;
 }
 
@@ -91,18 +75,15 @@ export interface SessionChatSubmitIntent {
   executorConfig?: ExecutorConfig;
   backendSelection?: BackendSelectionRequestDto;
   imageAttachments?: ImageAttachment[];
-  deliveryIntent?: string;
+  deliveryIntent?: AgentRunComposerDeliveryIntent;
 }
 
 export interface SessionChatViewIntents {
   submitComposer: (intent: SessionChatSubmitIntent) => Promise<void>;
   cancelAction?: () => Promise<void>;
+  resolveInteraction?: (interactionId: string, response: InteractionResponse) => Promise<void>;
+  runtimeInteractionRequested?: () => void;
   setExecutorConfigOverride?: (config: ExecutorConfig | null) => void;
-  promoteMailboxMessage?: (messageId: string) => void;
-  deleteMailboxMessage?: (messageId: string) => void;
-  resumeMailbox?: () => void;
-  recallMailboxMessage?: (messageId: string) => void;
-  moveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
   injectedInputConsumed?: () => void;
 }
 

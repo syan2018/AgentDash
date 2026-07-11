@@ -61,7 +61,12 @@ export type DriverBinding = { driver_binding_id: DriverBindingId, source_thread_
 
 export type DriverBindingId = string;
 
-export type DriverCommandEnvelope = { request_id: DriverRequestId, binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId, command: RuntimeCommand, };
+export type DriverCommandEnvelope = { request_id: DriverRequestId, binding_id: RuntimeBindingId, generation: RuntimeDriverGeneration, source_thread_id: DriverThreadId,
+/**
+ * Managed Runtime 为会产生新 Turn 的命令分配的 canonical identity。
+ * Driver 只把自己的 source turn 映射到该 identity，不再创建第二个 Runtime Turn。
+ */
+runtime_turn_id: RuntimeTurnId | null, command: RuntimeCommand, };
 
 export type DriverContextRevision = string;
 

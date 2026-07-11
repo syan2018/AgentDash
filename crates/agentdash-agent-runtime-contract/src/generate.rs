@@ -67,6 +67,7 @@ fn collect_typescript(directory: &Path, declarations: &mut Vec<String>) {
             let declaration = source
                 .lines()
                 .filter(|line| !line.starts_with("// ") && !line.starts_with("import "))
+                .map(str::trim_end)
                 .collect::<Vec<_>>()
                 .join("\n")
                 .trim()

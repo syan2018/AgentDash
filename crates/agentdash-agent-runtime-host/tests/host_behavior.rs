@@ -134,6 +134,7 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             binding_id: binding.id.clone(),
             generation: binding.driver_generation,
             source_thread_id,
+            runtime_turn_id: Some(id("turn-coordinate-health")),
             command: RuntimeCommand::TurnStart {
                 thread_id: binding.thread_id.clone(),
                 input: Vec::new(),
@@ -900,6 +901,7 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
         binding_id: binding.id.clone(),
         generation: binding.driver_generation,
         source_thread_id: binding.source_thread_id.clone().expect("source"),
+        runtime_turn_id: Some(id("turn-1")),
         command: RuntimeCommand::TurnStart {
             thread_id: binding.thread_id.clone(),
             input: vec![],
@@ -1018,6 +1020,7 @@ async fn event_sink_revalidates_lease_after_takeover() {
                     binding_id: dispatch_binding_id,
                     generation,
                     source_thread_id: binding.source_thread_id.expect("source"),
+                    runtime_turn_id: Some(id("turn-event-fence")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id,
                         input: vec![],
@@ -1368,6 +1371,7 @@ async fn old_binding_recovers_from_activation_snapshot_after_instance_config_upd
                     binding_id: binding.id,
                     generation: binding.driver_generation,
                     source_thread_id: binding.source_thread_id.expect("source"),
+                    runtime_turn_id: Some(id("turn-snapshot")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id,
                         input: vec![],

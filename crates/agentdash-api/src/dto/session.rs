@@ -1,23 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
-pub struct AgentRunJournalStreamQuery {
-    pub since_id: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AgentRunJournalEventsQuery {
-    pub after_seq: Option<u64>,
-    pub limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RejectToolApprovalRequest {
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ContextAuditQuery {
     pub since_ms: Option<u64>,
     pub scope: Option<String>,

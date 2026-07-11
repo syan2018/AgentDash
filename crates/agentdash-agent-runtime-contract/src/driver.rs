@@ -10,7 +10,7 @@ use crate::{
     ContextCandidateId, ContextCheckpointId, DriverBindingId, DriverItemId, DriverRequestId,
     DriverThreadId, DriverTurnId, HookPlanDigest, HookPlanRevision, HookPoint, ProfileDigest,
     RuntimeBindingId, RuntimeCommand, RuntimeEvent, RuntimeProfile, RuntimeServiceInstanceId,
-    SurfaceDigest, SurfaceRevision, ToolSetRevision,
+    RuntimeTurnId, SurfaceDigest, SurfaceRevision, ToolSetRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -80,6 +80,9 @@ pub struct DriverCommandEnvelope {
     pub binding_id: RuntimeBindingId,
     pub generation: crate::RuntimeDriverGeneration,
     pub source_thread_id: DriverThreadId,
+    /// Managed Runtime 为会产生新 Turn 的命令分配的 canonical identity。
+    /// Driver 只把自己的 source turn 映射到该 identity，不再创建第二个 Runtime Turn。
+    pub runtime_turn_id: Option<RuntimeTurnId>,
     pub command: RuntimeCommand,
 }
 

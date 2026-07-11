@@ -1,9 +1,9 @@
 mod business_frame_surface_query;
-mod conversation_snapshot;
 mod execution_state;
 pub mod frame;
 pub(crate) mod lifecycle_read_model_facade;
 pub mod message_delivery;
+mod model_config;
 mod presentation_read_model;
 mod project_agent_context;
 pub mod runtime_capability;
@@ -36,7 +36,6 @@ pub trait ProjectAgentLifecycleLaunchPort: Send + Sync {
 }
 mod runtime_target;
 pub mod terminal_registry;
-pub mod workspace;
 
 pub use agentdash_application_ports::agent_run_surface::{
     AgentRunEffectiveCapabilityView, AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure,
@@ -46,22 +45,6 @@ pub use agentdash_application_ports::agent_run_surface::{
 pub use business_frame_surface_query::{
     BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps, BusinessResourceSurfaceQuery,
     BusinessResourceSurfaceQueryDeps,
-};
-pub use conversation_snapshot::{
-    AgentConversationFrameRefModel, AgentConversationIdentityModel,
-    AgentConversationLifecycleContextModel, AgentConversationSnapshotInput,
-    AgentConversationSnapshotModel, AgentConversationSnapshotResolver, AgentRunOwnershipModel,
-    ConversationCommandAvailability, ConversationCommandAvailabilityInput,
-    ConversationCommandAvailabilityResolver, ConversationCommandKindModel,
-    ConversationCommandModel, ConversationCommandPlacementModel, ConversationCommandSetModel,
-    ConversationCommandStaleGuardModel, ConversationDiagnosticModel,
-    ConversationEffectiveExecutorConfigModel, ConversationExecutionModel,
-    ConversationExecutionStatusModel, ConversationKeyboardMapModel,
-    ConversationMailboxSnapshotModel, ConversationModelConfigInput, ConversationModelConfigModel,
-    ConversationModelConfigResolution, ConversationModelConfigResolver,
-    ConversationModelConfigSourceModel, ConversationModelConfigStatusModel,
-    ConversationWaitingItemModel, ValidationSeverityModel, conversation_command_id_for,
-    conversation_execution_state_code, conversation_snapshot_id, merge_executor_config_fields,
 };
 pub use execution_state::AgentRunExecutionState;
 pub use frame::{
@@ -95,6 +78,12 @@ pub use lifecycle_read_model_facade::{
 };
 pub use message_delivery::{
     AgentRunMessageDelivery, AgentRunMessageDeliveryPort, SessionTurnMessageDeliveryPort,
+};
+pub use model_config::{
+    ConversationEffectiveExecutorConfigModel, ConversationModelConfigInput,
+    ConversationModelConfigModel, ConversationModelConfigResolution,
+    ConversationModelConfigResolver, ConversationModelConfigSourceModel,
+    ConversationModelConfigStatusModel, merge_executor_config_fields,
 };
 pub use presentation_read_model::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,

@@ -8,7 +8,7 @@ use agentdash_agent_runtime_contract::RuntimeThreadStatus;
 use agentdash_application_agentrun::agent_run::AgentRunRuntime;
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_domain::{
-    agent::{ProjectAgent, ProjectAgentRepository},
+    agent::ProjectAgentRepository,
     workflow::{
         AgentLineage, AgentLineageRepository, LifecycleAgent, LifecycleAgentRepository,
         LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
@@ -17,10 +17,12 @@ use agentdash_domain::{
 use uuid::Uuid;
 
 use crate::ApplicationError;
+use crate::agent_run_projection::{
+    MAX_AGENT_LINEAGE_DEPTH, lifecycle_agent_title, project_agent_label,
+};
 
 const DEFAULT_PAGE_LIMIT: usize = 30;
 const MAX_PAGE_LIMIT: usize = 100;
-const MAX_LINEAGE_DEPTH: usize = 16;
 
 #[derive(Clone)]
 pub struct ProjectAgentRunListQuery {
@@ -210,11 +212,7 @@ impl ProjectAgentRunListQuery {
         let project_agent_label = agent
             .project_agent_id
             .and_then(|id| project_agents.get(&id).cloned());
-        let title = agent
-            .workspace_title
-            .clone()
-            .or_else(|| project_agent_label.clone())
-            .unwrap_or_else(|| agent.source.as_str().to_string());
+        let title = lifecycle_agent_title(agent, project_agents);
         let runtime_view = self
             .runtime
             .inspect(AgentRunRuntimeTarget {
@@ -276,7 +274,7 @@ fn project_children(
     depth: usize,
     projected_agent_ids: &mut HashSet<Uuid>,
 ) -> Vec<AgentRunListChildModel> {
-    if depth >= MAX_LINEAGE_DEPTH {
+    if depth >= MAX_AGENT_LINEAGE_DEPTH {
         return Vec::new();
     }
     children
@@ -333,15 +331,6 @@ fn lineage_forest(
         }
     }
     (children, child_ids)
-}
-
-fn project_agent_label(agent: &ProjectAgent) -> String {
-    agent
-        .preset_config()
-        .ok()
-        .and_then(|config| config.display_name)
-        .filter(|label| !label.trim().is_empty())
-        .unwrap_or_else(|| agent.name.clone())
 }
 
 fn projected_descendant_count(children: &[AgentRunListChildModel]) -> u32 {

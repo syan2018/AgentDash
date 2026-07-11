@@ -47,10 +47,12 @@ GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/events/stream/ndjson
 GET  /projects/{project_id}/agent-runs?limit={limit}&cursor={cursor}
 POST /agent-runs/{run_id}/agents/{agent_id}/runtime/{compact|cancel|steer}
-POST /agent-runs/{run_id}/agents/{agent_id}/runtime/interactions/{interaction_id}/{approve|reject}
+POST /agent-runs/{run_id}/agents/{agent_id}/runtime/interactions/{interaction_id}/respond
 ```
 
 Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-session tables and product execution columns. `agent_run_agent_runtime_binding.runtime_thread_id` is unique but intentionally has no thread foreign key because product binding is persisted before `ThreadStart`; `runtime_binding_id` references the Host binding that already exists.
+
+Migration `0066_agent_frame_hook_plan.sql` adds nullable `agent_frames.hook_plan jsonb`. Existing rows remain explicitly unmaterialized；所有生产Frame writer必须在新的revision中写入可校验的`AgentFrameHookPlan { revision, digest, requirements[] }`，Runtime surface adoption不得从permission policy、executor kind或Driver profile补造计划。
 
 ## 3. Contracts
 
@@ -62,6 +64,7 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 - Production composition is built below the API boundary: Business Surface compiles product facts, Driver Host resolves an Integration `RuntimeOffer`, admission persists the bound surface and Host binding, and the facade persists the AgentRun-to-Runtime binding.
 - Agent services enter through trusted Integration contributions. Native, Codex and enterprise remote services have the same definition/instance/offer/factory/binding lifecycle; Relay contributes placement transport only.
 - `ThreadStart` carries immutable surface settings, tool-set revision and bound Hook plan. It is replayed with identical coordinates after a durable duplicate/retry.
+- `AgentFrameHookPlan.requirements[].site`决定execution route。完整bound plan保留Managed Runtime、Tool Broker、Agent Core Callback与Driver Native entries；`DriverHookSurface`只投影Driver实际执行的site，Tool Broker approval不会成为Driver offer requirement。
 - API/UI command availability comes only from the canonical Runtime view. A product-level status, connector kind or executor kind cannot enable a command.
 - Runtime events use a durable cursor. Authoritative lifecycle events are not reconstructed from Backbone or transient broadcast state.
 - Remote Driver events are ordered within a RuntimeWire stream. Response correlation and reverse HostPort calls may be concurrent, but canonical lifecycle notifications are emitted serially.
@@ -83,6 +86,8 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 | stale binding generation emits an event | event fenced; snapshot and terminal state unchanged |
 | active remote transport disconnects | exactly one `BindingLost`; active Thread/Turn/Operation become `Lost` |
 | required surface/tool/hook revision is not applied | dispatch unavailable; no prompt-only degradation |
+| current AgentFrame没有immutable HookPlan或digest复验失败 | frame/runtime materialization typed reject；不读取旧surface或permission policy补齐 |
+| Tool Broker Hook requirement被投影到Driver admission | contract test失败；Driver surface必须只包含Driver execution sites |
 | migration runs on an empty database | new schema created, old tables/columns absent |
 | migration readiness observes old execution state | readiness fails with explicit diagnostic |
 
@@ -101,6 +106,7 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 - Enterprise remote E2E traverses Cloud generic proxy -> RuntimeWire -> Local PostgreSQL Host -> enterprise Native driver -> production Tool Broker and reverse Hook/HostPort calls.
 - Enterprise remote E2E asserts compaction preparation/activation/recovery, disconnect, exactly-once `BindingLost`, reopen, late-event fencing and no duplicate outbox replay.
 - Migration tests run `0065` against a fresh PostgreSQL root and assert removed tables/columns are absent; bootstrap tests must use isolated data roots.
+- Migration/Frame repository tests断言`0066`使用`agent_frames.hook_plan jsonb`，新建、generic launch、workflow node与runtime surface revision writer都保存并复验相同digest。
 - Contract generation, frontend typecheck/tests, workspace checks, Runtime crate tests and migration guard are required before completion.
 - Product query tests覆盖current Frame execution profile到`model_config`的resolved/model-required投影；前端state测试覆盖workspace/runtime两路独立失败与refresh保留。
 - Project列表测试覆盖run activity keyset cursor、canonical lineage递归/cycle/orphan下每个Agent恰好一次、无binding与Runtime summary；service/UI测试覆盖URL encoding及`thread_status + active_turn_id + lifecycle_status`展示映射。

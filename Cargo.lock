@@ -372,6 +372,7 @@ dependencies = [
 name = "agentdash-application-hooks"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-runtime-contract",
  "agentdash-application-ports",
  "agentdash-diagnostics",
  "agentdash-domain",
@@ -427,6 +428,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "uuid",

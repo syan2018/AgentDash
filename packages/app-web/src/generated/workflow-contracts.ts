@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView } from "./agent-run-mailbox-contracts";
+import type { AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
 import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 import type { ResolvedVfsSurface } from "./vfs-contracts";
@@ -25,12 +25,6 @@ export type ActivityTransitionKind = "flow" | "artifact";
 
 export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
-export type AgentConversationIdentity = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, };
-
-export type AgentConversationLifecycleContext = { frame_ref?: AgentFrameRefDto, subject_associations: Array<LifecycleSubjectAssociationDto>, };
-
-export type AgentConversationSnapshot = { snapshot_id: string, identity: AgentConversationIdentity, lifecycle_context: AgentConversationLifecycleContext, execution: ConversationExecutionView, model_config: ConversationModelConfigView, commands: ConversationCommandSetView, mailbox: ConversationMailboxSnapshotView, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, diagnostics: Array<ConversationDiagnosticView>, };
-
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, effective_executor_config?: ConversationEffectiveExecutorConfigView, };
 
 export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config: CapabilityConfig, output_ports: Array<OutputPortDefinition>, input_ports: Array<InputPortDefinition>, };
@@ -49,7 +43,9 @@ export type AgentRunListRuntimeSummaryView = { thread_status: AgentRunListRuntim
 
 export type AgentRunListRuntimeThreadStatus = "active" | "suspended" | "desynchronized" | "closed" | "lost";
 
-export type AgentRunOwnershipView = { run_created_by_user_id: string, agent_created_by_user_id: string, current_user_controls_run: boolean, };
+export type AgentRunProductLineageAgentView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, title: string, lifecycle_status: string, last_activity_at: string, runtime?: AgentRunListRuntimeSummaryView, children: Array<AgentRunProductLineageAgentView>, };
+
+export type AgentRunProductLineageView = { parent?: AgentRunProductLineageAgentView, children: Array<AgentRunProductLineageAgentView>, };
 
 export type AgentRunProductShellView = { display_title: string, title_source: string, lifecycle_status: string, last_activity_at: string, };
 
@@ -59,11 +55,7 @@ export type AgentRunProductShellView = { display_title: string, title_source: st
  * canonical Runtime 状态通过独立 inspect endpoint 读取，使产品投影失败不会覆盖
  * 已成功加载的 Runtime snapshot。
  */
-export type AgentRunProductView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunProductShellView, agent: AgentRunView, current_frame?: AgentRunCurrentFrameView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, };
-
-export type AgentRunResourceSurfaceCoordinateView = { surface_frame_ref: AgentFrameRefDto, source_anchor?: AgentRunResourceSurfaceSourceAnchorView, };
-
-export type AgentRunResourceSurfaceSourceAnchorView = { runtime_session_ref: RuntimeSessionRefDto, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, delivery_status: string, observed_at: string, };
+export type AgentRunProductView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunProductShellView, agent: AgentRunView, current_frame?: AgentRunCurrentFrameView, subject_associations: Array<LifecycleSubjectAssociationDto>, lineage: AgentRunProductLineageView, resource_surface?: ResolvedVfsSurface, };
 
 export type AgentRunRuntimeCommandRequest = { client_command_id: string, };
 
@@ -76,12 +68,6 @@ source: string, project_agent_id?: string, status: string,
  * agent 最新 execution status（如 running / completed / idle）。
  */
 last_delivery_status?: string, created_at: string, updated_at: string, };
-
-export type AgentRunWorkspaceControlPlaneStatus = "ready" | "running" | "cancelling" | "terminal" | "frame_missing";
-
-export type AgentRunWorkspaceControlPlaneView = { status: AgentRunWorkspaceControlPlaneStatus, reason?: string, ownership: AgentRunOwnershipView, };
-
-export type AgentRunWorkspaceShell = { display_title: string, title_source: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
@@ -103,33 +89,13 @@ export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
 export type ContinueLifecycleRunResponse = { run: LifecycleRunView, drain_result: OrchestrationExecutorDrainResultDto, };
 
-export type ConversationCommandPlacement = "composer_primary" | "composer_secondary" | "mailbox_row" | "mailbox_banner" | "header";
-
-export type ConversationCommandSetView = { ownership: AgentRunOwnershipView, commands: Array<ConversationCommandView>, keyboard: ConversationKeyboardMapView, };
-
-export type ConversationCommandView = { kind: ConversationCommandKind, command_id: string, enabled: boolean, unavailable_reason?: string, disabled_code?: string, shortcut?: string, requires_input: boolean, executor_config_policy: string, placement: Array<ConversationCommandPlacement>, stale_guard: ConversationCommandStaleGuardView, };
-
-export type ConversationDiagnosticView = { code: string, severity: ValidationSeverity, message: string, detail?: JsonValue, };
-
-export type ConversationExecutionStatus = "draft" | "model_required" | "ready" | "starting_claimed" | "running_active" | "cancelling" | "terminal" | "frame_missing";
-
-export type ConversationExecutionView = { status: ConversationExecutionStatus, runtime_session_ref?: RuntimeSessionRefDto, active_turn_id?: string, reason?: string, };
-
-export type ConversationKeyboardMapView = { enter?: string, ctrl_enter?: string, };
-
-export type ConversationMailboxSnapshotView = { visible_message_count: number, paused: boolean, user_attention: boolean, resume_command?: ConversationCommandView, state?: MailboxStateView, messages: Array<MailboxMessageView>, waiting_items: Array<ConversationWaitingItemView>, };
-
 export type ConversationModelConfigStatus = "resolved" | "model_required";
 
 export type ConversationModelConfigView = { status: ConversationModelConfigStatus, effective_executor_config?: ConversationEffectiveExecutorConfigView, missing_fields: Array<string>, message?: string, };
 
-export type ConversationWaitingItemView = { wait_id: string, gate_id: string, kind: string, source_ref?: string, correlation_ref?: string, status: string, source_label?: string, preview?: string, created_at: string, resolved_at?: string, };
-
 export type DefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 
 export type DeleteAgentProcedureResponse = { deleted: boolean, };
-
-export type DeleteAgentRunResponse = { deleted: boolean, project_id: string, run_id: string, };
 
 export type DeleteHookPresetResponse = { removed: boolean, key: string, };
 

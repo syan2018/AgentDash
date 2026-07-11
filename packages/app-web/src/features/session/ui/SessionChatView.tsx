@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { InteractionResponse } from "../../../generated/agent-runtime-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
@@ -30,9 +31,12 @@ import {
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
-import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionChatViewTypes";
+import type {
+  SessionChatCommandModel,
+  SessionChatSubmitIntent,
+  SessionChatViewProps,
+} from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
-import { SessionStatusBar } from "../../agent-run-workspace/ui";
 import { AgentRuntimeFeed } from "../../agent-run-workspace/ui/AgentRuntimeFeed";
 import { useAgentRuntimeFeed } from "../../agent-run-workspace/model/useAgentRuntimeFeed";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
@@ -79,20 +83,14 @@ export function SessionChatView({
     showExecutorSelector = true,
     commandState,
     compactContextCommand,
-    mailbox,
-    statusBarRunId,
-    statusBarAgentId,
     injectedInputValue,
   } = model;
   const {
     submitComposer,
     cancelAction,
+    resolveInteraction,
+    runtimeInteractionRequested,
     setExecutorConfigOverride,
-    promoteMailboxMessage,
-    deleteMailboxMessage,
-    resumeMailbox,
-    recallMailboxMessage,
-    moveMailboxMessage,
     injectedInputConsumed,
   } = intents;
   const [isSending, setIsSending] = useState(false);
@@ -287,6 +285,7 @@ export function SessionChatView({
     enabled: hasRuntimeStreamTarget,
     onTurnTerminal: onTurnEnd,
     onTaskPlanChanged,
+    onRuntimeInspectInvalidated: runtimeInteractionRequested,
   });
   const projectionRefreshKey = durableCursor;
 
@@ -315,7 +314,10 @@ export function SessionChatView({
   const commandActionRef = useRef(submitComposer);
   useEffect(() => { commandActionRef.current = submitComposer; }, [submitComposer]);
 
-  const handleSubmit = useCallback(async (command: SessionChatCommandModel | undefined, deliveryIntent?: string) => {
+  const handleSubmit = useCallback(async (
+    command: SessionChatCommandModel | undefined,
+    deliveryIntent?: SessionChatSubmitIntent["deliveryIntent"],
+  ) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
@@ -344,7 +346,7 @@ export function SessionChatView({
         prompt: trimmed,
         executorConfig,
         imageAttachments: images.length > 0 ? images : undefined,
-        deliveryIntent,
+        deliveryIntent: deliveryIntent ?? command.delivery_intent,
       });
 
       execConfig.recordUsage();
@@ -394,6 +396,14 @@ export function SessionChatView({
     }
   }, [cancelAction, commandState.cancelCommand]);
 
+  const handleResolveInteraction = useCallback(async (
+    interactionId: string,
+    response: InteractionResponse,
+  ) => {
+    if (!resolveInteraction) throw new Error("当前控制面不支持 interaction response。");
+    await resolveInteraction(interactionId, response);
+  }, [resolveInteraction]);
+
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
   const handleKeyDown = useCallback(
@@ -408,17 +418,14 @@ export function SessionChatView({
       if (e.key !== "Enter") return;
       if (e.shiftKey) return; // Shift+Enter = 换行
 
-      const isSteer = e.ctrlKey || e.metaKey;
-      const keyboardCommandId = isSteer
-        ? commandState.keyboard.ctrl_enter
-        : commandState.keyboard.enter;
+      const keyboardCommandId = commandState.keyboard.enter;
       const command = commandById(keyboardCommandId);
       if (!command) return;
 
       e.preventDefault();
-      void handleSubmit(command, isSteer ? "steer" : undefined);
+      void handleSubmit(command);
     },
-    [commandById, commandState.keyboard.ctrl_enter, commandState.keyboard.enter, fileRef, handleSubmit],
+    [commandById, commandState.keyboard.enter, fileRef, handleSubmit],
   );
 
   // 图片粘贴（Ctrl+V 含图片时拦截）
@@ -495,7 +502,6 @@ export function SessionChatView({
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasRuntimeStreamTarget ? runtimeStreamError?.message : null) ?? null;
-  const mailboxMessages = mailbox?.messages ?? [];
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -533,29 +539,18 @@ export function SessionChatView({
       )}
 
       <AgentRuntimeFeed
+        key={agentRunTargetKey ?? "agent-runtime-feed"}
         containerRef={containerRef}
         entries={runtimeEntries}
         isLoading={isLoading}
         streamPrefixContent={streamPrefixContent}
         onScroll={handleScroll}
+        interactionAvailability={runtimeInspect?.snapshot?.command_availability.interaction_respond}
+        onResolveInteraction={handleResolveInteraction}
       />
 
-      {/* Mailbox 消息 + 输入区 */}
+      {/* 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        {mailbox && (
-          <SessionStatusBar
-            runId={statusBarRunId}
-            agentId={statusBarAgentId}
-            messages={mailboxMessages}
-            mailbox={mailbox}
-            onPromote={promoteMailboxMessage ?? (() => {})}
-            onDelete={deleteMailboxMessage ?? (() => {})}
-            onResume={resumeMailbox}
-            onRecall={recallMailboxMessage}
-            onMove={moveMailboxMessage}
-          />
-        )}
-
         <SessionChatComposer
           commandState={commandState}
           discovery={discovery}

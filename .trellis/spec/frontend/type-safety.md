@@ -191,15 +191,19 @@ AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 s
 GET  /agent-runs/{run_id}/agents/{agent_id}/workspace -> AgentRunProductView
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime   -> Managed Runtime inspect
 POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
-     { input, client_command_id, executor_config?, backend_selection?, delivery_intent? }
+     { input, client_command_id, delivery_intent?: "steer" }
 POST .../cancel | .../runtime/context/compact
      { client_command_id }
+POST .../runtime/interactions/{interaction_id}/respond
+     InteractionResponse
 ```
 
 ### 3. Contracts
 
 - `AgentRunProductView` 只包含 Lifecycle identity/shell、current AgentFrame、`model_config`、subject associations 与 `resource_surface`；不嵌入 Runtime snapshot、mailbox command policy或旧 RuntimeSession source anchor。
 - Runtime command enabled 状态只读取 `RuntimeSnapshot.command_availability`。前端 action ID 可以投影 Runtime command kind，但不携带自造 stale guard。
+- Draft create可以携带model/runtime/backend selection；既有Run composer禁止executor/backend override。active turn时command projection只发送generated `delivery_intent="steer"`，idle时省略该字段并进入durable mailbox/TurnStart。
+- Runtime event只提供interaction identity与展示内容；response按钮读取刷新后的`interaction_respond` availability。context popup直接消费`RuntimeContextView`并用target generation丢弃迟到响应。
 - 服务端在 mutating command 前 inspect 当前 Runtime snapshot并生成 `AgentRunCommandGuard`，因此请求只携带幂等 `client_command_id` 与命令 payload。
 - workspace product 与 runtime inspect 独立加载、独立记录错误；refresh 单路失败时保留该 owner 上一份成功事实。
 - ProjectAgent draft start 继续使用 generated `CreateProjectAgentRunRequest` / `ProjectAgentRunStartResult`；HTTP success不等于 turn terminal。
@@ -214,6 +218,9 @@ POST .../cancel | .../runtime/context/compact
 | command availability缺失或unavailable | UI禁用；API在副作用前按当前snapshot拒绝 |
 | current AgentFrame缺少cloud-native provider/model | `model_config.status=model_required`并列出missing fields |
 | 请求携带旧workspace stale guard | generated request不包含该字段；TypeScript/serde拒绝契约漂移 |
+| 既有Run请求携带executor/backend override | TypeScript/serde拒绝；运行配置只来自current AgentFrame |
+| interaction event存在但availability未刷新 | 控件disabled并触发Runtime inspect refresh |
+| context响应target key不匹配 | 不提交到当前popup state |
 
 ### 5. Good / Base / Bad Cases
 
@@ -226,6 +233,7 @@ POST .../cancel | .../runtime/context/compact
 - state model测试首次单路失败与refresh单路失败保留语义。
 - command-state测试submit/steer/interrupt/compact只由`command_availability`决定。
 - service测试URL encoding与request不再发送dead command precondition。
+- service/feed/context测试覆盖generic interaction route、四类Runtime lifecycle invalidation与target-key迟到响应隔离。
 - generated contract check、frontend typecheck及真实Draft create-run验证model/surface/runtime三条事实一致。
 
 ### 7. Wrong vs Correct

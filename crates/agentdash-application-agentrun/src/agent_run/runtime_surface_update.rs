@@ -160,6 +160,12 @@ impl AgentRunRuntimeSurfaceUpdateService {
             RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested { .. } => "canvas_expose",
             _ => "canvas_surface_update",
         };
+        current_frame.validated_hook_plan().map_err(|error| {
+            format!(
+                "AgentFrame `{}` cannot produce a new Runtime surface revision: {error}",
+                current_frame.id
+            )
+        })?;
         let mut next_frame = AgentFrameBuilder::new(current_frame.agent_id)
             .with_capability_state(&after_state)
             .with_created_by(created_by_kind, Some(current_frame.id.to_string()))
@@ -540,6 +546,8 @@ mod tests {
 
     use std::collections::BTreeSet;
 
+    use agentdash_agent_runtime_contract::HookPlanRevision;
+    use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
     use agentdash_domain::canvas::{Canvas, CanvasDataBinding};
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::AgentFrame;
@@ -562,6 +570,12 @@ mod tests {
 
     struct FixedSurfaceQuery {
         surface: AgentRunRuntimeSurface,
+    }
+
+    fn attach_empty_hook_plan(frame: &mut AgentFrame) {
+        let plan = AgentFrameHookPlan::compile(HookPlanRevision(1), Vec::new())
+            .expect("empty HookPlan should compile");
+        frame.hook_plan = Some(serde_json::to_value(plan).expect("HookPlan should serialize"));
     }
 
     #[async_trait::async_trait]
@@ -615,6 +629,7 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
@@ -688,6 +703,7 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
@@ -775,6 +791,7 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
@@ -847,6 +864,7 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =
@@ -943,6 +961,7 @@ mod tests {
         capability_state.vfs.active = Some(active_vfs.clone());
 
         let mut frame = AgentFrame::new_revision(agent_id, 1, "owner_bootstrap");
+        attach_empty_hook_plan(&mut frame);
         frame.effective_capability_json = Some(serde_json::to_value(&capability_state).unwrap());
         frame.vfs_surface_json = Some(serde_json::to_value(&active_vfs).unwrap());
         frame.mcp_surface_json =

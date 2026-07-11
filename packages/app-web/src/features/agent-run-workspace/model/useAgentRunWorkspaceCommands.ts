@@ -1,6 +1,5 @@
 ﻿import { useCallback, useRef } from "react";
 
-import type { JsonValue } from "../../../generated/common-contracts";
 import type { UserInput } from "../../../generated/backbone-protocol";
 import type {
   AgentRunModelSelectionRequest,
@@ -9,7 +8,10 @@ import type {
 import type {
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
-import type { BackendSelectionRequestDto } from "../../../generated/agent-run-mailbox-contracts";
+import type {
+  AgentRunComposerDeliveryIntent,
+  BackendSelectionRequestDto,
+} from "../../../generated/agent-run-mailbox-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   cancelAgentRun,
@@ -70,7 +72,7 @@ export interface UseAgentRunWorkspaceCommandsResult {
     executorConfig?: ExecutorConfig,
     backendSelection?: BackendSelectionRequestDto,
     imageAttachments?: ImageAttachment[],
-    deliveryIntent?: string,
+    deliveryIntent?: AgentRunComposerDeliveryIntent,
   ) => Promise<void>;
   handleCancelAgentRun: () => Promise<void>;
 }
@@ -100,18 +102,6 @@ function apiErrorCode(error: unknown): string | null {
 
 function isStaleAgentRunCommandError(error: unknown): boolean {
   return apiErrorCode(error) === "stale_command";
-}
-
-function executorConfigToJsonValue(config: ExecutorConfig | undefined): JsonValue | undefined {
-  if (!config) return undefined;
-  return {
-    executor: config.executor,
-    provider_id: config.provider_id,
-    model_id: config.model_id,
-    agent_id: config.agent_id,
-    thinking_level: config.thinking_level,
-    permission_policy: config.permission_policy,
-  };
 }
 
 function modelSelectionFromExecutorConfig(
@@ -171,7 +161,7 @@ export function useAgentRunWorkspaceCommands(
     executorConfig?: ExecutorConfig,
     backendSelection?: BackendSelectionRequestDto,
     imageAttachments?: ImageAttachment[],
-    deliveryIntent?: string,
+    deliveryIntent?: AgentRunComposerDeliveryIntent,
   ) => {
     const trimmed = prompt.trim();
     const hasImages = (imageAttachments?.length ?? 0) > 0;
@@ -207,12 +197,13 @@ export function useAgentRunWorkspaceCommands(
       throw new Error("请选择模型配置后再发送。");
     }
 
+    const draftStart = isLocalDraftStartAction(command);
     const commandKey = JSON.stringify({
       command_id: command.command_id,
       kind: command.kind,
       input: inputBlocks,
-      executor_config: commandExecutorConfig ?? null,
-      backend_selection: backendSelection ?? null,
+      executor_config: draftStart ? commandExecutorConfig ?? null : null,
+      backend_selection: draftStart ? backendSelection ?? null : null,
     });
     const resolvedCommand = resolveAgentRunClientCommandId(
       inFlightCommandRef.current,
@@ -222,7 +213,7 @@ export function useAgentRunWorkspaceCommands(
     inFlightCommandRef.current = resolvedCommand.inFlightCommand;
 
     try {
-      if (isLocalDraftStartAction(command)) {
+      if (draftStart) {
         if (!draftProjectId || !draftProjectAgentKey || !draftReady) {
           throw new Error(command.unavailable_reason ?? "当前 Draft 尚未就绪。");
         }
@@ -242,16 +233,12 @@ export function useAgentRunWorkspaceCommands(
         throw new Error("当前 AgentRun 尚未就绪，无法执行控制动作。");
       }
 
-      const response = await submitAgentRunComposerInput(currentRunId, currentAgentId, {
+      await submitAgentRunComposerInput(currentRunId, currentAgentId, {
         input: inputBlocks,
         client_command_id: resolvedCommand.clientCommandId,
-        executor_config: executorConfigToJsonValue(commandExecutorConfig),
-        backend_selection: backendSelection,
         delivery_intent: deliveryIntent,
       });
-      if (response.accepted_refs?.run_ref.run_id) {
-        void fetchAndIngestLifecycleRun(response.accepted_refs.run_ref.run_id);
-      }
+      void fetchAndIngestLifecycleRun(currentRunId);
       refreshWorkspaceStateSilently();
       scheduleHookRuntimeRefresh("agent_run_command_submitted", true);
     } catch (error) {

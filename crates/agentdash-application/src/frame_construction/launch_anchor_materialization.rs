@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_frame_hook_plan::{
+    AgentFrameHookPlanCompileQuery, AgentFrameHookPlanCompiler,
+};
 use agentdash_application_ports::agent_frame_materialization::{
     AgentFrameWriteRole, AgentRunFrameConstructionPort, AgentRunFrameSurfaceCommandOutcome,
     AgentRunFrameSurfaceError, FrameConstructionCommand,
@@ -7,7 +10,7 @@ use agentdash_application_ports::agent_frame_materialization::{
 use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_application_vfs::{VfsService, validate_vfs};
 use agentdash_domain::workflow::AgentFrame;
-use agentdash_spi::AgentConfig;
+use agentdash_spi::{AgentConfig, HookControlTarget, RuntimeAdapterProvenance};
 
 use crate::agent_run::frame::{
     AgentFrameBuilder, AgentFrameSurfaceExt, runtime_backend_anchor_from_vfs,
@@ -31,6 +34,7 @@ pub struct AgentRunProjectOwnerFrameConstructionAdapter {
     platform_config: Arc<PlatformConfig>,
     lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     audit_bus: SharedContextAuditBus,
+    hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
 }
 
 pub struct AgentRunProjectOwnerFrameConstructionDeps {
@@ -40,6 +44,7 @@ pub struct AgentRunProjectOwnerFrameConstructionDeps {
     pub platform_config: Arc<PlatformConfig>,
     pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
     pub audit_bus: SharedContextAuditBus,
+    pub hook_plan_compiler: Arc<dyn AgentFrameHookPlanCompiler>,
 }
 
 impl AgentRunProjectOwnerFrameConstructionAdapter {
@@ -51,6 +56,7 @@ impl AgentRunProjectOwnerFrameConstructionAdapter {
             platform_config: deps.platform_config,
             lifecycle_surface_projection: deps.lifecycle_surface_projection,
             audit_bus: deps.audit_bus,
+            hook_plan_compiler: deps.hook_plan_compiler,
         }
     }
 
@@ -134,10 +140,32 @@ impl AgentRunFrameConstructionPort for AgentRunProjectOwnerFrameConstructionAdap
         )
         .await
         .map_err(construction_rejected)?;
-        let frame = builder
+        let mut frame = builder
             .build_uncommitted(self.repos.agent_frame_repo.as_ref())
             .await
             .map_err(construction_rejected)?;
+        let hook_plan = self
+            .hook_plan_compiler
+            .compile_agent_frame_hook_plan(AgentFrameHookPlanCompileQuery {
+                target: HookControlTarget {
+                    run_id: run.id,
+                    agent_id: agent.id,
+                    frame_id: frame.id,
+                },
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    runtime_session_id
+                        .clone()
+                        .unwrap_or_else(|| format!("frame-construction-{}-{}", run.id, agent.id)),
+                    None,
+                    "agent_frame_hook_plan_construction",
+                ),
+            })
+            .await
+            .map_err(construction_rejected)?;
+        frame.hook_plan = Some(serde_json::to_value(hook_plan).map_err(|error| {
+            construction_rejected(format!("AgentFrame HookPlan 无法序列化: {error}"))
+        })?);
+        frame.apply_surface_projection();
         validate_project_agent_launch_surface(&frame)?;
         self.repos
             .agent_frame_repo
@@ -182,6 +210,7 @@ fn validate_project_agent_launch_surface(
             "ProjectAgent owner workspace default mount 缺少 canonical runtime backend anchor",
         ));
     }
+    frame.validated_hook_plan().map_err(construction_rejected)?;
     Ok(())
 }
 

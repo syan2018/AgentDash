@@ -3,6 +3,7 @@ pub mod agent_run {
 }
 pub mod agent_run_list;
 pub mod agent_run_product;
+mod agent_run_projection;
 pub mod auth;
 pub mod backend;
 pub mod canvas;

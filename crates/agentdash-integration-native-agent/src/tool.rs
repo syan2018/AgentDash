@@ -25,6 +25,7 @@ pub(crate) struct NativeRuntimeTool {
     source_thread_id: DriverThreadId,
     runtime_thread_id: RuntimeThreadId,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
+    active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
     tool_set_revision: ToolSetRevision,
     callback: Arc<dyn AgentRuntimeToolCallback>,
     authorization_identity: Option<AuthIdentity>,
@@ -53,6 +54,7 @@ impl NativeRuntimeTool {
             source_thread_id: binding.source_thread_id,
             runtime_thread_id: binding.runtime_thread_id,
             active_turn: call.active_turn,
+            active_runtime_turn: call.active_runtime_turn,
             tool_set_revision: call.tool_set_revision,
             callback,
             authorization_identity: binding.authorization_identity,
@@ -88,9 +90,16 @@ impl AgentTool for NativeRuntimeTool {
         let source_item_id = tool_call_id.parse::<DriverItemId>().map_err(|error| {
             AgentToolError::ExecutionFailed(format!("invalid native tool call identity: {error}"))
         })?;
-        let turn_id = RuntimeTurnId::new(source_turn_id.to_string()).map_err(|error| {
-            AgentToolError::ExecutionFailed(format!("invalid canonical turn identity: {error}"))
-        })?;
+        let turn_id = self
+            .active_runtime_turn
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "native tool invoked without a canonical Runtime turn".into(),
+                )
+            })?;
         let item_id = RuntimeItemId::new(source_item_id.to_string()).map_err(|error| {
             AgentToolError::ExecutionFailed(format!("invalid canonical item identity: {error}"))
         })?;

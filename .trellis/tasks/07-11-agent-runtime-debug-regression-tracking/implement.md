@@ -53,6 +53,8 @@
 - [x] 让 Native Hook capability、apply acknowledgment与 bound failure policy由同一 profile事实驱动，并支持 `AfterTool` fail-open。
 - [x] 如实声明 Native `HostAdaptedExact` workspace能力，避免完整 VFS surface与空 profile矛盾。
 - [x] 新 activation offer与既有 offer复用同一个 Surface admission，拒绝未经求交的 Host bind。
+- [x] 在AgentFrame construction编译并持久化immutable HookPlan revision/ref/digest/requirements，所有writer共用同一编译入口。
+- [x] Runtime materializer按execution site只投影Driver/AgentCoreCallback routes，Managed Runtime/ToolBroker routes不再进入Driver要求。
 - [x] 使用真实 `pnpm dev` Draft create-run优先验证产品链路；成功后再补定向回归与完整质量检查。
 
 ## ARD-008
@@ -63,3 +65,14 @@
 - [x] 以`AgentRunProductQuery`组合Lifecycle、current AgentFrame/model config与VFS surface，恢复workspace detail产品投影且不恢复旧RuntimeSession执行链。
 - [x] 拆分workspace与runtime inspect加载错误归属，验证Runtime成功事实不会被另一projection失败清空。
 - [x] 从Lifecycle与canonical Runtime summary重建Project AgentRun list projection，关闭侧栏Not Found。
+- [x] 将context读取与interaction response切换到generated Runtime generic contracts，删除旧projection与专用interaction分支。
+- [x] 删除无canonical owner的delete入口及legacy mailbox/journal consumer，Runtime feed成为唯一事件投影入口。
+- [x] detail projection直接读取canonical lineage，并与Project list共用title与递归深度规则。
+- [x] 让Runtime lifecycle事件统一失效runtime inspect，保持turn/interaction availability及时刷新。
+
+## Runtime lifecycle convergence
+
+- [x] `TurnStart`由Managed Runtime唯一创建canonical Turn，并通过Driver command envelope下传identity。
+- [x] Native/Codex adapter分离canonical Runtime turn与Integration source turn，Tool/Hook/terminal均引用前者。
+- [x] matching `Driver TurnStarted`作为acknowledgement接纳，不创建第二个Turn或推进revision/cursor。
+- [x] Driver已经发出terminal后，底层任务的同一失败按成功dispatch完成outbox ack，阻止终态command重派。

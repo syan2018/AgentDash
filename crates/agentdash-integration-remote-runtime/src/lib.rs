@@ -1620,6 +1620,7 @@ mod tests {
                     binding_id: id("binding-1"),
                     generation: RuntimeDriverGeneration(3),
                     source_thread_id: id("source-thread-1"),
+                    runtime_turn_id: None,
                     command: RuntimeCommand::ThreadResume {
                         thread_id: id("runtime-thread-1"),
                     },
@@ -1743,6 +1744,7 @@ mod tests {
                             binding_id: id("binding-epoch-1"),
                             generation: RuntimeDriverGeneration(5),
                             source_thread_id: id("source-epoch-1"),
+                            runtime_turn_id: None,
                             command: RuntimeCommand::ThreadResume {
                                 thread_id: id("thread-epoch-1"),
                             },

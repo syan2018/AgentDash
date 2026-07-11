@@ -53,6 +53,7 @@ const workspace: AgentRunProductView = {
     },
   },
   subject_associations: [],
+  lineage: { children: [] },
   resource_surface: runtimeSurface,
 };
 

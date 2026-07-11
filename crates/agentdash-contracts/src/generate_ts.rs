@@ -13,10 +13,8 @@ use agentdash_agent_protocol::{
 };
 use agentdash_contracts::agent_run_mailbox::{
     AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunComposerSubmitRequest,
-    AgentRunMessageAcceptedRefs, AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse,
-    BackendSelectionModeDto, BackendSelectionRequestDto, ConsumptionBarrier, MailboxDelivery,
-    MailboxDrainMode, MailboxMessageOrigin, MailboxMessageStatus, MailboxMessageView,
-    MailboxSourceIdentity, MailboxStateView, SteeringStopEffect,
+    AgentRunMessageCommandOutcome, AgentRunMessageCommandResponse, BackendSelectionModeDto,
+    BackendSelectionRequestDto,
 };
 use agentdash_contracts::auth::{
     AuthGroup, AuthMode, AuthStartRequest, AuthStartResponse, CurrentUser, DirectoryGroup,
@@ -160,12 +158,7 @@ use agentdash_contracts::routine::{
     RoutineOrchestrationBindingRefsDto, RoutineResponse, RoutineTriggerConfigRequest,
     RoutineTriggerConfigResponse, UpdateRoutineRequest,
 };
-use agentdash_contracts::session::{
-    SessionEventResponse, SessionEventsPageResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
-    SessionProjectionMessageRefResponse, SessionProjectionSegmentProvenanceResponse,
-    SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
-    SessionProjectionViewResponse,
-};
+use agentdash_contracts::session::SessionMessageRefDto;
 use agentdash_contracts::settings::{
     SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
     UpdateSettingsResponse,
@@ -203,22 +196,16 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
-    AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
+    ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
     AgentRunCurrentFrameView, AgentRunListChildView, AgentRunListEntryView,
-    AgentRunListRuntimeSummaryView, AgentRunListRuntimeThreadStatus, AgentRunProductShellView,
-    AgentRunProductView, AgentRunRefDto, AgentRunResourceSurfaceCoordinateView,
-    AgentRunResourceSurfaceSourceAnchorView, AgentRunRuntimeCommandRequest, AgentRunView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceShell,
+    AgentRunListRuntimeSummaryView, AgentRunListRuntimeThreadStatus,
+    AgentRunProductLineageAgentView, AgentRunProductLineageView, AgentRunProductShellView,
+    AgentRunProductView, AgentRunRefDto, AgentRunRuntimeCommandRequest, AgentRunView,
     CapabilityCatalogEntryDto, CapabilityCatalogResponse, CapabilityScopeDto,
-    ContinueLifecycleRunResponse, ConversationCommandKind, ConversationCommandPlacement,
-    ConversationCommandSetView, ConversationCommandStaleGuardView, ConversationCommandView,
-    ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
-    ConversationExecutionStatus, ConversationExecutionView, ConversationKeyboardMapView,
-    ConversationMailboxSnapshotView, ConversationModelConfigSource, ConversationModelConfigStatus,
-    ConversationModelConfigView, ConversationWaitingItemView, DefinitionSource,
-    DeleteAgentProcedureResponse, DeleteAgentRunResponse, DeleteHookPresetResponse,
+    ContinueLifecycleRunResponse, ConversationEffectiveExecutorConfigView,
+    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+    DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
     DeleteWorkflowGraphResponse, EffectiveSessionContract, HookPresetResponse, HookPresetsResponse,
     LaunchedAgentNodeDto, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
     LifecycleRunTopology, LifecycleRunView, LifecycleSubjectAssociationDto, OpenedHumanGateDto,
@@ -320,23 +307,11 @@ fn main() {
         check,
         |dir| {
             export_all::<AgentRunComposerSubmitRequest>(dir);
-            export_all::<ConversationCommandKind>(dir);
-            export_all::<ConversationCommandStaleGuardView>(dir);
             export_all::<BackendSelectionModeDto>(dir);
             export_all::<BackendSelectionRequestDto>(dir);
             export_all::<AgentRunCommandReceipt>(dir);
             export_all::<AgentRunAcceptedRefs>(dir);
             export_all::<AgentRunMessageCommandResponse>(dir);
-            export_all::<MailboxMessageStatus>(dir);
-            export_all::<MailboxMessageOrigin>(dir);
-            export_all::<MailboxSourceIdentity>(dir);
-            export_all::<SteeringStopEffect>(dir);
-            export_all::<MailboxDelivery>(dir);
-            export_all::<ConsumptionBarrier>(dir);
-            export_all::<MailboxDrainMode>(dir);
-            export_all::<AgentRunMessageAcceptedRefs>(dir);
-            export_all::<MailboxMessageView>(dir);
-            export_all::<MailboxStateView>(dir);
             export_all::<AgentRunMessageCommandOutcome>(dir);
         },
     );
@@ -620,14 +595,6 @@ fn main() {
         &mut upstream,
         check,
         |dir| {
-            export_all::<SessionEventResponse>(dir);
-            export_all::<SessionEventsPageResponse>(dir);
-            export_all::<SessionNdjsonEnvelope>(dir);
-            export_all::<SessionProjectionSourceRangeResponse>(dir);
-            export_all::<SessionProjectionMessageRefResponse>(dir);
-            export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
-            export_all::<SessionProjectionSegmentViewResponse>(dir);
-            export_all::<SessionProjectionViewResponse>(dir);
             export_all::<SessionMessageRefDto>(dir);
         },
     );
@@ -803,31 +770,14 @@ fn main() {
             export_all::<OpenedHumanGateDto>(dir);
             export_all::<AgentRunView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
-            export_all::<AgentRunWorkspaceShell>(dir);
-            export_all::<AgentRunWorkspaceControlPlaneStatus>(dir);
-            export_all::<AgentRunWorkspaceControlPlaneView>(dir);
-            export_all::<AgentRunResourceSurfaceSourceAnchorView>(dir);
-            export_all::<AgentRunResourceSurfaceCoordinateView>(dir);
-            export_all::<ConversationExecutionStatus>(dir);
             export_all::<ConversationModelConfigStatus>(dir);
             export_all::<ConversationModelConfigSource>(dir);
             export_all::<ConversationEffectiveExecutorConfigView>(dir);
             export_all::<ConversationModelConfigView>(dir);
-            export_all::<ConversationCommandKind>(dir);
-            export_all::<ConversationCommandPlacement>(dir);
-            export_all::<ConversationCommandStaleGuardView>(dir);
-            export_all::<ConversationCommandView>(dir);
-            export_all::<ConversationKeyboardMapView>(dir);
-            export_all::<ConversationCommandSetView>(dir);
-            export_all::<ConversationExecutionView>(dir);
-            export_all::<ConversationWaitingItemView>(dir);
-            export_all::<ConversationMailboxSnapshotView>(dir);
-            export_all::<ConversationDiagnosticView>(dir);
-            export_all::<AgentConversationIdentity>(dir);
-            export_all::<AgentConversationLifecycleContext>(dir);
-            export_all::<AgentConversationSnapshot>(dir);
             export_all::<AgentRunProductView>(dir);
             export_all::<AgentRunProductShellView>(dir);
+            export_all::<AgentRunProductLineageView>(dir);
+            export_all::<AgentRunProductLineageAgentView>(dir);
             export_all::<AgentRunCurrentFrameView>(dir);
             export_all::<SubjectRuntimeAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);
@@ -849,7 +799,6 @@ fn main() {
             export_all::<CapabilityCatalogResponse>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);
-            export_all::<DeleteAgentRunResponse>(dir);
             export_all::<PreflightWorkflowScriptRequest>(dir);
             export_all::<WorkflowScriptPreflightDiagnosticDto>(dir);
             export_all::<WorkflowScriptPlanPreviewNodeDto>(dir);

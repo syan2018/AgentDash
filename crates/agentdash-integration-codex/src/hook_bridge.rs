@@ -398,6 +398,7 @@ mod tests {
                 strength: SemanticStrength::ExactSynchronous,
                 failure_policy: HookFailurePolicy::FailClosed,
                 required: true,
+                site: agentdash_agent_runtime_contract::HookExecutionSite::DriverNative,
             }],
             RuntimeThreadId::new("runtime-thread-1").unwrap(),
             None,

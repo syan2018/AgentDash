@@ -13,7 +13,7 @@ describe("canonical AgentRun Runtime commands", () => {
     await submitAgentRunComposerInput("run/1", "agent/1", {
       input: [{ type: "text", text: "follow up", text_elements: [] }],
       client_command_id: "command-composer",
-      executor_config: { model_id: "gpt-test" },
+      delivery_intent: "steer",
     });
 
     expect(apiPostMock).toHaveBeenCalledWith(
@@ -21,7 +21,7 @@ describe("canonical AgentRun Runtime commands", () => {
       {
         input: [{ type: "text", text: "follow up", text_elements: [] }],
         client_command_id: "command-composer",
-        executor_config: { model_id: "gpt-test" },
+        delivery_intent: "steer",
       },
     );
   });

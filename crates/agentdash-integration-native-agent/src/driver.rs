@@ -337,6 +337,7 @@ struct NativeBinding {
 struct NativeThread {
     agent: Mutex<Agent>,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
+    active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
     context_revision: RwLock<ContextRevision>,
     tool_events: Arc<RwLock<Option<NativeToolEventContext>>>,
 }
@@ -383,6 +384,7 @@ impl NativeAgentDriver {
         }
         let surface = binding.surface.read().await.clone();
         let active_turn = Arc::new(RwLock::new(None));
+        let active_runtime_turn = Arc::new(RwLock::new(None));
         let tool_events = Arc::new(RwLock::new(None));
         let mut agent = Agent::new(
             self.bridge.clone(),
@@ -399,19 +401,22 @@ impl NativeAgentDriver {
             authorization_identity: surface.authorization_identity.clone(),
         };
         agent.set_runtime_delegates(NativeHookDelegate::delegates(
-            binding_context,
+            binding_context.clone(),
             active_turn.clone(),
+            active_runtime_turn.clone(),
             surface.hooks.clone(),
             self.host.hooks.clone(),
         ));
         agent.set_tools(native_tools(
             &surface,
-            binding_id,
-            self.generation,
-            &binding.source_thread_id,
-            active_turn.clone(),
+            binding_context,
+            NativeToolCallContext {
+                active_turn: active_turn.clone(),
+                active_runtime_turn: active_runtime_turn.clone(),
+                tool_set_revision: surface.tools.revision,
+                events: tool_events.clone(),
+            },
             self.host.tools.clone(),
-            tool_events.clone(),
         ));
         agent
             .replace_messages(context_blocks_to_messages(&surface.context.blocks))
@@ -419,6 +424,7 @@ impl NativeAgentDriver {
         let thread = Arc::new(NativeThread {
             agent: Mutex::new(agent),
             active_turn,
+            active_runtime_turn,
             context_revision: RwLock::new(ContextRevision(0)),
             tool_events,
         });
@@ -436,8 +442,17 @@ impl NativeAgentDriver {
         let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
         let source_turn_id: DriverTurnId =
             parsed_id(format!("native-turn-{}", envelope.request_id))?;
-        let runtime_turn_id: RuntimeTurnId = parsed_id(source_turn_id.to_string())?;
+        let runtime_turn_id =
+            envelope
+                .runtime_turn_id
+                .clone()
+                .ok_or_else(|| DriverError::ProtocolViolation {
+                    reason: "native turn command is missing the Managed Runtime turn identity"
+                        .to_string(),
+                    critical: true,
+                })?;
         *thread.active_turn.write().await = Some(source_turn_id.clone());
+        *thread.active_runtime_turn.write().await = Some(runtime_turn_id.clone());
         *thread.tool_events.write().await = Some(NativeToolEventContext {
             sink: sink.clone(),
             binding_id: envelope.binding_id.clone(),
@@ -484,19 +499,22 @@ impl NativeAgentDriver {
                     break;
                 }
             }
-            handle
-                .await
-                .map_err(|error| DriverError::Lost {
+            let terminal_emitted = mapper.turn_terminal;
+            match handle.await {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(_)) | Err(_) if terminal_emitted => Ok(()),
+                Ok(Err(error)) => Err(DriverError::Rejected {
+                    reason: error.to_string(),
+                }),
+                Err(error) => Err(DriverError::Lost {
                     reason: format!("native Agent Core task join failed: {error}"),
                     retryable: false,
-                })?
-                .map_err(|error| DriverError::Rejected {
-                    reason: error.to_string(),
-                })
-                .map(|_| ())
+                }),
+            }
         }
         .await;
         *thread.active_turn.write().await = None;
+        *thread.active_runtime_turn.write().await = None;
         *thread.tool_events.write().await = None;
         result
     }
@@ -796,12 +814,20 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                 };
                 thread.agent.lock().await.set_tools(native_tools(
                     &updated_surface,
-                    &envelope.binding_id,
-                    envelope.generation,
-                    &binding.source_thread_id,
-                    thread.active_turn.clone(),
+                    NativeBindingContext {
+                        binding_id: envelope.binding_id.clone(),
+                        generation: envelope.generation,
+                        source_thread_id: binding.source_thread_id.clone(),
+                        runtime_thread_id: updated_surface.runtime_thread_id.clone(),
+                        authorization_identity: updated_surface.authorization_identity.clone(),
+                    },
+                    NativeToolCallContext {
+                        active_turn: thread.active_turn.clone(),
+                        active_runtime_turn: thread.active_runtime_turn.clone(),
+                        tool_set_revision: updated_surface.tools.revision,
+                        events: thread.tool_events.clone(),
+                    },
                     self.host.tools.clone(),
-                    thread.tool_events.clone(),
                 ));
                 applied_tool_set = Some(DriverToolSetApplyReceipt {
                     revision: expected_tool_set_revision,
@@ -1099,12 +1125,9 @@ pub(crate) fn native_hook_capabilities() -> Vec<HookPointCapability> {
 
 fn native_tools(
     surface: &MaterializedDriverSurface,
-    binding_id: &RuntimeBindingId,
-    generation: RuntimeDriverGeneration,
-    source_thread_id: &DriverThreadId,
-    active_turn: Arc<RwLock<Option<DriverTurnId>>>,
+    binding: NativeBindingContext,
+    call: NativeToolCallContext,
     callback: Arc<dyn AgentRuntimeToolCallback>,
-    events: Arc<RwLock<Option<NativeToolEventContext>>>,
 ) -> Vec<DynAgentTool> {
     surface
         .tools
@@ -1113,22 +1136,10 @@ fn native_tools(
         .filter(|tool| tool.channels.contains(&ToolChannel::DirectCallback))
         .cloned()
         .map(|tool| {
-            let binding = NativeBindingContext {
-                binding_id: binding_id.clone(),
-                generation,
-                source_thread_id: source_thread_id.clone(),
-                runtime_thread_id: surface.runtime_thread_id.clone(),
-                authorization_identity: surface.authorization_identity.clone(),
-            };
-            let call = NativeToolCallContext {
-                active_turn: active_turn.clone(),
-                tool_set_revision: surface.tools.revision,
-                events: events.clone(),
-            };
             Arc::new(NativeRuntimeTool::new(
                 tool,
-                binding,
-                call,
+                binding.clone(),
+                call.clone(),
                 callback.clone(),
             )) as DynAgentTool
         })
@@ -1139,11 +1150,7 @@ async fn validate_active_turn(
     thread: &NativeThread,
     expected_turn_id: &RuntimeTurnId,
 ) -> Result<(), DriverError> {
-    let active = thread.active_turn.read().await;
-    if active
-        .as_ref()
-        .is_some_and(|active| active.as_str() == expected_turn_id.as_str())
-    {
+    if thread.active_runtime_turn.read().await.as_ref() == Some(expected_turn_id) {
         Ok(())
     } else {
         Err(DriverError::Rejected {

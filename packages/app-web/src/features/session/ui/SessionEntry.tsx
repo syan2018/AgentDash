@@ -164,8 +164,6 @@ export function SingleEntry({
           header={card.header}
           status={card.status}
           isPendingApproval={isPendingApproval}
-          agentRunTarget={agentRunTarget}
-          itemId={threadItem.id}
           durationMs={card.durationMs}
         >
           {card.body}

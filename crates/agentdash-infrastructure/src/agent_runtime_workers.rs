@@ -310,6 +310,7 @@ impl RuntimeDurableWorkers {
                         binding_id: entry.binding_id.clone(),
                         generation: entry.generation,
                         source_thread_id: thread.source_thread_id,
+                        runtime_turn_id: None,
                         command: RuntimeCommand::ContextCompact {
                             thread_id: entry.thread_id.clone(),
                             compaction_id: entry.compaction_id.clone(),

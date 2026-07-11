@@ -12,8 +12,6 @@ export type {
   AgentRunListChildView,
   AgentRunListEntryView,
   AgentRunView,
-  AgentRunWorkspaceControlPlaneStatus,
-  AgentRunWorkspaceControlPlaneView,
   LifecycleRunView,
   LifecycleSubjectAssociationDto,
   OrchestrationInstanceView,

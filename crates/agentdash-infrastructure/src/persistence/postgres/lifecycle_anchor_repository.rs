@@ -189,6 +189,7 @@ struct FrameRow {
     vfs_surface_json: Option<Value>,
     mcp_surface_json: Option<Value>,
     execution_profile_json: Option<Value>,
+    hook_plan: Option<Value>,
     visible_canvas_mount_ids_json: Option<Value>,
     visible_workspace_module_refs_json: Option<Value>,
     created_by_kind: String,
@@ -216,6 +217,7 @@ impl TryFrom<FrameRow> for AgentFrame {
             vfs_surface_json: row.vfs_surface_json,
             mcp_surface_json: row.mcp_surface_json,
             execution_profile_json: row.execution_profile_json,
+            hook_plan: row.hook_plan,
             visible_canvas_mount_ids_json: row.visible_canvas_mount_ids_json,
             visible_workspace_module_refs_json: row.visible_workspace_module_refs_json,
             created_by_kind: row.created_by_kind,
@@ -239,8 +241,9 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                  visible_canvas_mount_ids_json,
                  visible_workspace_module_refs_json,
                  execution_profile_json,
+                 hook_plan,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
@@ -274,6 +277,10 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             surface.execution_profile.as_ref(),
             "agent_frames.execution_profile_json",
         )?)
+        .bind(to_optional_jsonb(
+            surface.hook_plan.as_ref(),
+            "agent_frames.hook_plan",
+        )?)
         .bind(&frame.created_by_kind)
         .bind(&frame.created_by_id)
         .bind(frame.created_at)
@@ -291,6 +298,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                       visible_canvas_mount_ids_json,
                       visible_workspace_module_refs_json,
                       execution_profile_json,
+                      hook_plan,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE id=$1"#,
         )
@@ -310,6 +318,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                       visible_canvas_mount_ids_json,
                       visible_workspace_module_refs_json,
                       execution_profile_json,
+                      hook_plan,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC, created_at DESC LIMIT 1"#,
         )
@@ -329,6 +338,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                       visible_canvas_mount_ids_json,
                       visible_workspace_module_refs_json,
                       execution_profile_json,
+                      hook_plan,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision ASC"#,
         )
@@ -1134,6 +1144,7 @@ mod tests {
             vfs_surface_json: None,
             mcp_surface_json: None,
             execution_profile_json: None,
+            hook_plan: None,
             visible_canvas_mount_ids_json: None,
             visible_workspace_module_refs_json: None,
             created_by_kind: "test".to_string(),

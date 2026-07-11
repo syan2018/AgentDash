@@ -1,6 +1,8 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import type { InteractionResponse } from "../../../generated/agent-runtime-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
+import { respondAgentRunInteraction } from "../../../services/agentRunRuntime";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import type {
@@ -239,6 +241,24 @@ export function useAgentRunWorkspaceControlPlane({
     refreshAgentRunList("agent_run_cancelled");
   }, [handleCancelAgentRun, refreshAgentRunList]);
 
+  const resolveInteraction = useCallback(async (
+    interactionId: string,
+    response: InteractionResponse,
+  ) => {
+    if (!currentRunId || !currentAgentId) {
+      throw new Error("当前 AgentRun Runtime target 不可用。");
+    }
+    await respondAgentRunInteraction(
+      { runId: currentRunId, agentId: currentAgentId },
+      interactionId,
+      response,
+    );
+  }, [currentAgentId, currentRunId]);
+
+  const runtimeInteractionRequested = useCallback(() => {
+    void refreshAgentRunWorkspaceState().catch(() => {});
+  }, [refreshAgentRunWorkspaceState]);
+
   const chatModel = useMemo<AgentRunChatModel>(() => ({
     runtimeInspect: agentRunWorkspaceState.runtime_inspect,
     executorHint,
@@ -248,13 +268,9 @@ export function useAgentRunWorkspaceControlPlane({
     executorStateKey,
     commandState: projectAgentRunChatCommandState(commandState),
     compactContextCommand: conversationCommandByKind(commandState.commands.commands, "compact_context"),
-    statusBarRunId: currentRunId,
-    statusBarAgentId: currentAgentId,
   }), [
     agentRunWorkspaceState.runtime_inspect,
     commandState,
-    currentAgentId,
-    currentRunId,
     draftProjectAgent?.effective_executor_config,
     executorHint,
     executorStateKey,
@@ -265,9 +281,13 @@ export function useAgentRunWorkspaceControlPlane({
   const chatIntents = useMemo<AgentRunChatViewIntents>(() => ({
     submitComposer,
     cancelAction,
+    resolveInteraction,
+    runtimeInteractionRequested,
     setExecutorConfigOverride: setExplicitExecutorConfigOverride,
   }), [
     cancelAction,
+    resolveInteraction,
+    runtimeInteractionRequested,
     setExplicitExecutorConfigOverride,
     submitComposer,
   ]);

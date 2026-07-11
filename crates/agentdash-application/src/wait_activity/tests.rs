@@ -2,9 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 use agentdash_agent_runtime_contract::RuntimeThreadId;
-use agentdash_application_agentrun::agent_run::{
-    AgentRunTerminalRegistry, ConversationWaitingItemModel, TerminalOutputSnapshot,
-};
+use agentdash_application_agentrun::agent_run::{AgentRunTerminalRegistry, TerminalOutputSnapshot};
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
     AgentRunRuntimeTarget,
@@ -697,16 +695,11 @@ async fn wait_and_workspace_gate_projection_share_kind_preview_and_status() {
         .await
         .expect("wait result");
     let wait_item = wait_result.items.first().expect("wait item");
-    let workspace_item = ConversationWaitingItemModel::from_lifecycle_gate(&gate);
     let projection = gate.waiting_projection();
 
     assert_eq!(wait_item.kind, projection.kind);
-    assert_eq!(workspace_item.kind, projection.kind);
     assert_eq!(wait_item.preview, projection.preview);
-    assert_eq!(workspace_item.preview, projection.preview);
-    assert_eq!(workspace_item.source_label, projection.source_label);
     assert_eq!(wait_item.status, "failed");
-    assert_eq!(workspace_item.status, wait_item.status);
 }
 
 #[tokio::test]

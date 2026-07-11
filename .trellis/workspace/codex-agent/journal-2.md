@@ -371,3 +371,38 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 65: 完成 Agent Runtime 与 Workspace 统一架构搬运
+
+**Date**: 2026-07-11
+**Task**: 完成 Agent Runtime 与 Workspace 统一架构搬运
+**Branch**: `codex/agent-runtime-workspace-integration`
+
+### Summary
+
+以 PR #93 为 Runtime 基线完成 WorkspaceModule、Channel、Interaction、OperationScript 与 Extension 搬运，收敛窄桥接接口，关闭 95 个重叠路径审计并通过全量门禁。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f867e42e` | (see git log) |
+| `de95d3fc` | (see git log) |
+| `9fba6fa0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

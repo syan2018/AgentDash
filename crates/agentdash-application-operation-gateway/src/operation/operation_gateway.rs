@@ -362,6 +362,27 @@ fn prune_expired(results: &mut HashMap<uuid::Uuid, ScopedOperationResult>) {
     results.retain(|_, result| result.access.expires_at > now);
 }
 
+pub struct TracingOperationAuditSink;
+
+#[async_trait]
+impl OperationAuditSink for TracingOperationAuditSink {
+    async fn record(&self, event: OperationAuditEvent) {
+        diag!(
+            Info,
+            Subsystem::Infra,
+            operation_namespace = event.operation_ref.provider.namespace.as_str(),
+            operation_provider = event.operation_ref.provider.provider_key.as_str(),
+            operation_key = event.operation_ref.operation_key.as_str(),
+            operation_version = event.operation_ref.contract_version,
+            trace_id = event.trace.trace_id.as_str(),
+            invocation_id = event.trace.invocation_id.as_str(),
+            stage = format!("{:?}", event.stage),
+            outcome_code = event.outcome_code.as_deref().unwrap_or(""),
+            "Operation execution audit"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -512,26 +533,5 @@ mod tests {
         let descriptors = surface.catalog.descriptors();
         assert_eq!(descriptors.len(), 1);
         assert_eq!(descriptors[0].operation_ref.provider.provider_key, "valid");
-    }
-}
-
-pub struct TracingOperationAuditSink;
-
-#[async_trait]
-impl OperationAuditSink for TracingOperationAuditSink {
-    async fn record(&self, event: OperationAuditEvent) {
-        diag!(
-            Info,
-            Subsystem::Infra,
-            operation_namespace = event.operation_ref.provider.namespace.as_str(),
-            operation_provider = event.operation_ref.provider.provider_key.as_str(),
-            operation_key = event.operation_ref.operation_key.as_str(),
-            operation_version = event.operation_ref.contract_version,
-            trace_id = event.trace.trace_id.as_str(),
-            invocation_id = event.trace.invocation_id.as_str(),
-            stage = format!("{:?}", event.stage),
-            outcome_code = event.outcome_code.as_deref().unwrap_or(""),
-            "Operation execution audit"
-        );
     }
 }

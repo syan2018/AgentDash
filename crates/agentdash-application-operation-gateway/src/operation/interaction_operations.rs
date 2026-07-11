@@ -29,6 +29,16 @@ pub struct InteractionCommandOperation {
     pub payload_schema: Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct InteractionCommandInvocation {
+    pub principal: OperationPrincipal,
+    pub scope: OperationAuthorizationScope,
+    pub definition_id: Uuid,
+    pub definition_revision_id: Uuid,
+    pub command_key: String,
+    pub input: Value,
+}
+
 #[async_trait]
 pub trait InteractionOperationAccess: Send + Sync {
     async fn discover_commands(
@@ -40,12 +50,7 @@ pub trait InteractionOperationAccess: Send + Sync {
 
     async fn invoke_command(
         &self,
-        principal: &OperationPrincipal,
-        scope: &OperationAuthorizationScope,
-        definition_id: Uuid,
-        definition_revision_id: Uuid,
-        command_key: &str,
-        input: Value,
+        invocation: InteractionCommandInvocation,
         cancel: CancellationToken,
     ) -> Result<Value, OperationExecutionError>;
 }
@@ -120,12 +125,14 @@ impl DynamicOperationProvider for InteractionOperationProvider {
         })?;
         self.access
             .invoke_command(
-                &envelope.principal,
-                &envelope.scope,
-                definition_id,
-                definition_revision_id,
-                &descriptor.operation_ref.operation_key,
-                envelope.input,
+                InteractionCommandInvocation {
+                    principal: envelope.principal,
+                    scope: envelope.scope,
+                    definition_id,
+                    definition_revision_id,
+                    command_key: descriptor.operation_ref.operation_key.clone(),
+                    input: envelope.input,
+                },
                 cancel,
             )
             .await

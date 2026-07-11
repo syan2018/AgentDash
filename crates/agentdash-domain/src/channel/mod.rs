@@ -664,12 +664,12 @@ impl ChannelParticipant {
                 "channel participant operations must not be empty",
             ));
         }
-        if let Some(left_at) = self.left_at {
-            if left_at < self.joined_at {
-                return Err(invalid_config(
-                    "channel participant left_at must not be before joined_at",
-                ));
-            }
+        if let Some(left_at) = self.left_at
+            && left_at < self.joined_at
+        {
+            return Err(invalid_config(
+                "channel participant left_at must not be before joined_at",
+            ));
         }
         Ok(())
     }

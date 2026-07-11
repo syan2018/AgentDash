@@ -934,7 +934,6 @@ mod tests {
             .expect("project lifecycle surface");
 
         let expected_keys = vec![
-            "canvas-system".to_string(),
             "workspace-module-system".to_string(),
             "companion-system".to_string(),
         ];
@@ -992,7 +991,6 @@ mod tests {
             .expect("project lifecycle surface");
 
         let expected_keys = vec![
-            "canvas-system".to_string(),
             "workspace-module-system".to_string(),
             "companion-system".to_string(),
         ];
@@ -1001,7 +999,7 @@ mod tests {
             .list_by_project(project_id)
             .await
             .expect("list skill assets");
-        assert_eq!(assets.len(), 3);
+        assert_eq!(assets.len(), 2);
         for key in expected_keys {
             let asset = assets
                 .iter()

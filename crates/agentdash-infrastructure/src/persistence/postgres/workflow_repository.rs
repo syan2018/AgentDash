@@ -890,7 +890,7 @@ mod workflow_claim_tests {
             tasks: serde_json::json!([]),
             status: "ready".to_string(),
             execution_log: serde_json::json!([]),
-            channel_registry: serde_json::json!({}),
+            channel_registry: serde_json::json!({"schema_version": 2, "channels": []}),
             created_at: now,
             updated_at: now,
             last_activity_at: now,

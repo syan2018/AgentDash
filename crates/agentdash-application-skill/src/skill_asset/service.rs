@@ -1145,7 +1145,7 @@ mod tests {
         let project_id = Uuid::new_v4();
 
         let first = service
-            .bootstrap_builtins(project_id, Some("canvas-system"))
+            .bootstrap_builtins(project_id, Some("workspace-module-system"))
             .await
             .expect("bootstrap");
         assert_eq!(first.len(), 1);
@@ -1166,7 +1166,7 @@ mod tests {
         assert_eq!(edited.description, edited_description);
 
         let second = service
-            .bootstrap_builtins(project_id, Some("canvas-system"))
+            .bootstrap_builtins(project_id, Some("workspace-module-system"))
             .await
             .expect("bootstrap again");
         assert_ne!(second[0].description, edited_description);

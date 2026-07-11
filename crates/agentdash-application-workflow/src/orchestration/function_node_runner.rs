@@ -201,6 +201,7 @@ impl FunctionNodeRunner {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn require_function_runner(&self) -> Result<&Arc<dyn FunctionRunner>, RuntimeNodeError> {
         self.runner.as_ref().ok_or_else(|| RuntimeNodeError {
             code: "function_runner_unavailable".to_string(),
@@ -221,6 +222,7 @@ fn node_input(view: &RunningNodeView<'_>) -> Value {
     )
 }
 
+#[allow(clippy::result_large_err)]
 fn workflow_script_program(
     spec: &OperationScriptExecutorSpec,
     input: Value,
@@ -235,6 +237,7 @@ fn workflow_script_program(
     })
 }
 
+#[allow(clippy::result_large_err)]
 fn operation_script_limits(
     limits: OperationScriptExecutorLimits,
 ) -> Result<OperationScriptLimits, RuntimeNodeError> {
@@ -256,6 +259,7 @@ fn operation_script_limits(
     })
 }
 
+#[allow(clippy::result_large_err)]
 fn checked_limit(field: &'static str, value: u64) -> Result<usize, RuntimeNodeError> {
     usize::try_from(value).map_err(|_| RuntimeNodeError {
         code: "operation_script_limit_out_of_range".to_string(),

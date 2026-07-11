@@ -35,8 +35,8 @@ pub use extension_workspace::{
     ExtensionInvocationWorkspaceUnavailableReason, resolve_extension_invocation_workspace,
 };
 pub use interaction_operations::{
-    INTERACTION_OPERATION_NAMESPACE, InteractionCommandOperation, InteractionOperationAccess,
-    InteractionOperationProvider,
+    INTERACTION_OPERATION_NAMESPACE, InteractionCommandInvocation, InteractionCommandOperation,
+    InteractionOperationAccess, InteractionOperationProvider,
 };
 pub use mcp_operations::{
     MCP_OPERATION_NAMESPACE, McpOperationProvider, OperationMcpAccess, OperationMcpTool,

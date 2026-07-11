@@ -745,7 +745,7 @@ mod tests {
             InteractionCommandCommit::Committed { instance, .. } => {
                 assert_eq!(instance.state, serde_json::json!({"count":2}))
             }
-            InteractionCommandCommit::Duplicate { .. } => assert!(false, "fixture always commits"),
+            InteractionCommandCommit::Duplicate { .. } => panic!("fixture always commits"),
         }
     }
 
@@ -880,7 +880,7 @@ mod tests {
                 effect_intent: Some(effect),
                 ..
             } => effect,
-            _ => return assert!(false, "effect must exist"),
+            _ => panic!("effect must exist"),
         };
         assert_eq!(effect.effect_id, command_id);
         assert_eq!(effect.safety, OperationEffectSafety::Idempotent);

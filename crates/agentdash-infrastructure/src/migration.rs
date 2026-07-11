@@ -12,8 +12,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "backend_execution_leases",
     "backend_workspace_inventory",
     "backends",
-    "canvas_files",
-    "canvases",
     "extension_package_artifacts",
     "group_memberships",
     "groups",

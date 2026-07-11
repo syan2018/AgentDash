@@ -681,7 +681,7 @@ impl AgentTool for OperationScriptTool {
                     operation_ref: descriptor.operation_ref.clone(),
                     descriptor_digest: format!("sha256:{:x}", Sha256::digest(encoded)),
                     effect: descriptor.effect.clone(),
-                    replay_policy: descriptor.replay_policy.clone(),
+                    replay_policy: descriptor.replay_policy,
                     recursive_operation_script: false,
                 }
             })

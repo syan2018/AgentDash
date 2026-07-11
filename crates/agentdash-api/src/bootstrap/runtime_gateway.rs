@@ -232,12 +232,7 @@ impl InteractionOperationAccess for ApplicationInteractionOperationAccess {
 
     async fn invoke_command(
         &self,
-        principal: &agentdash_application_operation_gateway::OperationPrincipal,
-        scope: &agentdash_application_operation_gateway::OperationAuthorizationScope,
-        definition_id: uuid::Uuid,
-        definition_revision_id: uuid::Uuid,
-        command_key: &str,
-        input: serde_json::Value,
+        invocation: agentdash_application_operation_gateway::InteractionCommandInvocation,
         cancel: CancellationToken,
     ) -> Result<serde_json::Value, agentdash_application_operation_gateway::OperationExecutionError>
     {
@@ -248,7 +243,7 @@ impl InteractionOperationAccess for ApplicationInteractionOperationAccess {
         if cancel.is_cancelled() {
             return Err(OperationExecutionError::Cancelled);
         }
-        let input: InteractionOperationInput = serde_json::from_value(input)
+        let input: InteractionOperationInput = serde_json::from_value(invocation.input)
             .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
         let instance = self
             .repos
@@ -260,17 +255,17 @@ impl InteractionOperationAccess for ApplicationInteractionOperationAccess {
                 code: "interaction_not_found".into(),
                 message: format!("Interaction instance 不存在: {}", input.instance_id),
             })?;
-        if instance.definition_id != definition_id {
+        if instance.definition_id != invocation.definition_id {
             return Err(OperationExecutionError::invalid_request(
                 "Interaction operation 与 instance definition 不一致",
             ));
         }
-        if instance.definition_revision_id != definition_revision_id {
+        if instance.definition_revision_id != invocation.definition_revision_id {
             return Err(OperationExecutionError::invalid_request(
                 "Interaction operation exact revision 与 instance pinned revision 不一致",
             ));
         }
-        let caller = match principal.principal_ref() {
+        let caller = match invocation.principal.principal_ref() {
             agentdash_domain::operation::OperationPrincipalRef::AgentRunAgent {
                 run_id,
                 agent_id,
@@ -299,12 +294,12 @@ impl InteractionOperationAccess for ApplicationInteractionOperationAccess {
             self.repos.interaction_event_repo.clone(),
             Arc::new(InteractionOperationAdmission {
                 repos: self.repos.clone(),
-                scope: scope.clone(),
+                scope: invocation.scope.clone(),
             }),
             Arc::new(InteractionOperationEffectAdmission {
                 gateway_handle: self.gateway_handle.clone(),
-                principal: principal.clone(),
-                scope_ref: scope.scope_ref.clone(),
+                principal: invocation.principal.clone(),
+                scope_ref: invocation.scope.scope_ref.clone(),
             }),
         );
         let commit = service
@@ -312,7 +307,7 @@ impl InteractionOperationAccess for ApplicationInteractionOperationAccess {
                 InteractionCommandInput {
                     instance_id: input.instance_id,
                     command_id: input.command_id,
-                    command_key: command_key.to_string(),
+                    command_key: invocation.command_key,
                     payload: input.payload,
                     expected_state_revision: input.expected_state_revision,
                 },

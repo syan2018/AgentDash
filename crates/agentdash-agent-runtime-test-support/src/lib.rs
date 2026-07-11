@@ -78,7 +78,7 @@ pub struct RuntimeTraceValidator {
 impl RuntimeTraceValidator {
     pub fn observe(&mut self, envelope: &RuntimeEventEnvelope) -> Result<(), ConformanceViolation> {
         match &envelope.event {
-            RuntimeEvent::OperationAccepted { operation_id } => {
+            RuntimeEvent::OperationAccepted { operation_id }
                 if self
                     .operations
                     .insert(
@@ -88,13 +88,13 @@ impl RuntimeTraceValidator {
                             thread_id: envelope.thread_id.clone(),
                         },
                     )
-                    .is_some()
-                {
-                    return Err(ConformanceViolation::DuplicateOperationAcceptance(
-                        operation_id.clone(),
-                    ));
-                }
+                    .is_some() =>
+            {
+                return Err(ConformanceViolation::DuplicateOperationAcceptance(
+                    operation_id.clone(),
+                ));
             }
+            RuntimeEvent::OperationAccepted { .. } => {}
             RuntimeEvent::OperationTerminal { operation_id, .. } => {
                 terminal_scoped(
                     &mut self.operations,

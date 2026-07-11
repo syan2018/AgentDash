@@ -208,9 +208,11 @@ async fn nested_call_cancellation_keeps_outcome_unknown_evidence() {
         .await
         .unwrap();
     let cancel = CancellationToken::new();
+    let executor = executor();
     let task = {
         let engine = engine.clone();
         let cancel = cancel.clone();
+        let executor = executor.clone();
         tokio::spawn(async move {
             engine
                 .run(
@@ -219,13 +221,19 @@ async fn nested_call_cancellation_keeps_outcome_unknown_evidence() {
                         context,
                         token: plan.token,
                     },
-                    executor(),
+                    executor,
                     cancel,
                 )
                 .await
         })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while executor.active.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("nested operation should start before cancellation");
     cancel.cancel();
     let error = task.await.unwrap().unwrap_err();
     assert!(
@@ -266,9 +274,11 @@ async fn failure_keeps_partial_and_outcome_unknown_evidence() {
 
 #[tokio::test]
 async fn ast_cache_evicts_by_entry_and_source_budget() {
-    let mut config = RhaiOperationScriptConfig::default();
-    config.max_ast_cache_entries = 2;
-    config.max_ast_cache_source_bytes = 16;
+    let config = RhaiOperationScriptConfig {
+        max_ast_cache_entries: 2,
+        max_ast_cache_source_bytes: 16,
+        ..Default::default()
+    };
     let engine = RhaiOperationScriptEngine::new(&[7; 32], config).unwrap();
     for source in ["1 + 1", "2 + 2", "3 + 3"] {
         let program = program(source);
@@ -290,8 +300,10 @@ async fn ast_cache_evicts_by_entry_and_source_budget() {
 
 #[tokio::test]
 async fn large_result_ref_is_scoped_and_rechecks_capabilities() {
-    let mut config = RhaiOperationScriptConfig::default();
-    config.max_inline_result_bytes = 4;
+    let config = RhaiOperationScriptConfig {
+        max_inline_result_bytes: 4,
+        ..Default::default()
+    };
     let engine = RhaiOperationScriptEngine::new(&[7; 32], config).unwrap();
     let context = context();
     let outcome = run(
@@ -325,9 +337,11 @@ async fn large_result_ref_is_scoped_and_rechecks_capabilities() {
 
 #[tokio::test]
 async fn scoped_result_ref_expires_without_bearer_access() {
-    let mut config = RhaiOperationScriptConfig::default();
-    config.max_inline_result_bytes = 4;
-    config.result_ttl = Duration::milliseconds(1);
+    let config = RhaiOperationScriptConfig {
+        max_inline_result_bytes: 4,
+        result_ttl: Duration::milliseconds(1),
+        ..Default::default()
+    };
     let engine = RhaiOperationScriptEngine::new(&[7; 32], config).unwrap();
     let context = context();
     let outcome = run(

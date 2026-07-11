@@ -414,6 +414,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-application-operation-gateway"
+version = "0.1.0"
+dependencies = [
+ "agentdash-diagnostics",
+ "agentdash-domain",
+ "agentdash-spi",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "agentdash-application-ports"
 version = "0.1.0"
 dependencies = [

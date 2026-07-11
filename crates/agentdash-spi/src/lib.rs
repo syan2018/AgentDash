@@ -1,3 +1,4 @@
+pub mod channel_binding;
 pub mod connector;
 pub mod context;
 pub mod extension_package;
@@ -149,13 +150,13 @@ pub use platform::tool_capability::{
 };
 
 pub use session_persistence::{
-    AccumulationPolicy, AgentFrameTransitionRecord, ApplyChannelDirectivesEffect,
-    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_CHANNEL,
-    CAPABILITY_DIMENSION_COMPANION, CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_SKILL,
-    CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS, CAPABILITY_DIMENSION_WORKSPACE_MODULE,
-    CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
-    CapabilityDimensionKey, CompactionProjectionCommitResult, EFFECT_TYPE_APPLY_CHANNEL_DIRECTIVES,
-    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    AccumulationPolicy, AgentFrameTransitionRecord, ApplyMountOperationsEffect,
+    ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_CHANNEL, CAPABILITY_DIMENSION_COMPANION,
+    CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_SKILL, CAPABILITY_DIMENSION_TOOL,
+    CAPABILITY_DIMENSION_VFS, CAPABILITY_DIMENSION_WORKSPACE_MODULE, CapabilityArtifactSource,
+    CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
+    CompactionProjectionCommitResult, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
+    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_CHANNEL_PROJECTION,
     EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
     EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, NewCompactionProjectionCommit,
     PendingCapabilityStateTransition, PersistedSessionEvent, RuntimeCapabilityEffectRecord,
@@ -164,6 +165,6 @@ pub use session_persistence::{
     SESSION_PROJECTION_KIND_HANDOFF, SESSION_PROJECTION_KIND_MODEL_CONTEXT,
     SESSION_PROJECTION_KIND_TIMELINE, SessionCompactionRecord, SessionCompactionStatus,
     SessionEventBacklog, SessionEventPage, SessionMeta, SessionProjectionHeadRecord,
-    SessionProjectionSegmentRecord, SetCompanionAgentRosterEffect, SetMcpServerSetEffect,
-    SetToolAccessEffect,
+    SessionProjectionSegmentRecord, SetChannelProjectionEffect, SetCompanionAgentRosterEffect,
+    SetMcpServerSetEffect, SetToolAccessEffect,
 };

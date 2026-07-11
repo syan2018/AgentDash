@@ -81,6 +81,14 @@ pub trait LifecycleRunRepository: Send + Sync {
         };
         Ok(run.channel_registry)
     }
+    async fn list_channel_registries_with_bindings(
+        &self,
+    ) -> Result<Vec<(Uuid, ChannelRegistryDocument)>, DomainError> {
+        Err(DomainError::InvalidConfig(
+            "lifecycle_run.channel_registry binding projection enumeration is not implemented for this repository"
+                .to_string(),
+        ))
+    }
     async fn mutate_channel_registry(
         &self,
         _run_id: Uuid,

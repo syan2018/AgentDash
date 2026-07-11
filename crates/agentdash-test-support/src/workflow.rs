@@ -88,6 +88,24 @@ impl LifecycleRunRepository for MemoryLifecycleRunRepository {
         Ok(run.channel_registry)
     }
 
+    async fn list_channel_registries_with_bindings(
+        &self,
+    ) -> Result<Vec<(Uuid, ChannelRegistryDocument)>, DomainError> {
+        Ok(self
+            .runs
+            .lock()
+            .await
+            .iter()
+            .filter(|run| {
+                run.channel_registry
+                    .channels
+                    .iter()
+                    .any(|record| !record.bindings.is_empty())
+            })
+            .map(|run| (run.id, run.channel_registry.clone()))
+            .collect())
+    }
+
     async fn mutate_channel_registry(
         &self,
         run_id: Uuid,

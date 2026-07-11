@@ -8,17 +8,41 @@ use uuid::Uuid;
 use crate::DomainError;
 use crate::agent_run_mailbox::MailboxSourceIdentity;
 
-pub const CHANNEL_REGISTRY_SCHEMA_VERSION: u32 = 1;
+pub const CHANNEL_REGISTRY_SCHEMA_VERSION: u32 = 2;
 
 pub type ChannelId = Uuid;
 pub type ChannelBindingId = Uuid;
 pub type ChannelMessageId = Uuid;
 pub type ChannelDeliveryId = Uuid;
-pub type ChannelReplyAddressId = Uuid;
+pub type ChannelReplyTargetId = Uuid;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ChannelKey(String);
+
+impl ChannelKey {
+    pub fn parse(value: impl Into<String>) -> Result<Self, DomainError> {
+        let value = value.into();
+        validate_non_empty("channel.key", &value)?;
+        if value.len() > 160 {
+            return Err(invalid_config("channel key must not exceed 160 characters"));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ChannelKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelRegistryDocument {
-    #[serde(default = "default_channel_registry_schema_version")]
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub channels: Vec<ChannelRecord>,
@@ -45,6 +69,15 @@ impl ChannelRegistryDocument {
                 {
                     Some(existing) => *existing = record,
                     None => self.channels.push(record),
+                }
+            }
+            ChannelRegistryMutation::CreateChannelIfAbsent(record) => {
+                record.validate()?;
+                if !self.channels.iter().any(|existing| {
+                    existing.channel.owner == record.channel.owner
+                        && existing.channel.key == record.channel.key
+                }) {
+                    self.channels.push(record);
                 }
             }
             ChannelRegistryMutation::CloseChannel { channel_id, reason } => {
@@ -158,7 +191,7 @@ impl ChannelRegistryDocument {
                     Some(existing) => *existing = state,
                     None => record.delivery_state.push(state),
                 }
-                let max_items = record.channel.policy.delivery.max_delivery_state_items;
+                let max_items = record.channel.retention.max_delivery_state_items;
                 prune_delivery_states(&mut record.delivery_state, None, max_items);
                 record.channel.updated_at = Utc::now();
             }
@@ -183,6 +216,23 @@ impl ChannelRegistryDocument {
             .ok_or_else(|| not_found("channel", channel_id.to_string()))
     }
 
+    pub fn channel_by_locator(
+        &self,
+        locator: &ChannelLocator,
+    ) -> Result<&ChannelRecord, DomainError> {
+        self.channels
+            .iter()
+            .find(|record| {
+                record.channel.owner == locator.owner && record.channel.key == locator.channel_key
+            })
+            .ok_or_else(|| {
+                not_found(
+                    "channel",
+                    format!("{}:{}", locator.owner.stable_key(), locator.channel_key),
+                )
+            })
+    }
+
     pub fn validate(&self) -> Result<(), DomainError> {
         if self.schema_version != CHANNEL_REGISTRY_SCHEMA_VERSION {
             return Err(invalid_config(format!(
@@ -191,12 +241,24 @@ impl ChannelRegistryDocument {
             )));
         }
         let mut channel_ids = BTreeSet::new();
+        let mut channel_keys = BTreeSet::new();
         for record in &self.channels {
             if !channel_ids.insert(record.channel.id) {
                 return Err(conflict(
                     "channel_registry",
                     "channel_id",
                     format!("duplicate channel id {}", record.channel.id),
+                ));
+            }
+            if !channel_keys.insert((record.channel.owner.clone(), record.channel.key.clone())) {
+                return Err(conflict(
+                    "channel_registry",
+                    "owner_channel_key",
+                    format!(
+                        "duplicate channel key {} for owner {}",
+                        record.channel.key,
+                        record.channel.owner.stable_key()
+                    ),
                 ));
             }
             record.validate()?;
@@ -216,6 +278,7 @@ impl ChannelRegistryDocument {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChannelRegistryMutation {
     UpsertChannel(ChannelRecord),
+    CreateChannelIfAbsent(ChannelRecord),
     CloseChannel {
         channel_id: ChannelId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -267,7 +330,7 @@ pub struct ChannelRecord {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bindings: Vec<ChannelBinding>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub reply_addresses: Vec<ChannelReplyAddress>,
+    pub reply_targets: Vec<ChannelReplyTargetRegistration>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub delivery_state: Vec<ChannelDeliveryState>,
 }
@@ -278,7 +341,7 @@ impl ChannelRecord {
             channel,
             participants: Vec::new(),
             bindings: Vec::new(),
-            reply_addresses: Vec::new(),
+            reply_targets: Vec::new(),
             delivery_state: Vec::new(),
         }
     }
@@ -312,14 +375,14 @@ impl ChannelRecord {
             }
         }
 
-        let mut reply_address_ids = BTreeSet::new();
-        for address in &self.reply_addresses {
-            address.validate()?;
-            if !reply_address_ids.insert(address.address_id) {
+        let mut reply_target_ids = BTreeSet::new();
+        for target in &self.reply_targets {
+            target.validate()?;
+            if !reply_target_ids.insert(target.target_id) {
                 return Err(conflict(
                     "channel_record",
-                    "reply_address_id",
-                    format!("duplicate reply address {}", address.address_id),
+                    "reply_target_id",
+                    format!("duplicate reply target {}", target.target_id),
                 ));
             }
         }
@@ -343,9 +406,9 @@ impl ChannelRecord {
 pub struct Channel {
     pub id: ChannelId,
     pub owner: ChannelOwner,
-    pub medium: ChannelMedium,
-    pub topology: ChannelTopology,
-    pub lifecycle: ChannelLifecycle,
+    pub key: ChannelKey,
+    pub lifetime: ChannelLifetimePolicy,
+    pub retention: ChannelRetentionPolicy,
     pub status: ChannelStatus,
     pub policy: ChannelPolicy,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -359,14 +422,14 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn new(owner: ChannelOwner, medium: ChannelMedium, topology: ChannelTopology) -> Self {
+    pub fn new(owner: ChannelOwner, key: ChannelKey) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             owner,
-            medium,
-            topology,
-            lifecycle: ChannelLifecycle::Runtime,
+            key,
+            lifetime: ChannelLifetimePolicy::OwnerBound,
+            retention: ChannelRetentionPolicy::default(),
             status: ChannelStatus::Open,
             policy: ChannelPolicy::default(),
             aliases: Vec::new(),
@@ -379,6 +442,7 @@ impl Channel {
 
     pub fn validate(&self) -> Result<(), DomainError> {
         self.owner.validate()?;
+        self.retention.validate()?;
         self.policy.validate()?;
         if self.status == ChannelStatus::Open && self.closed_at.is_some() {
             return Err(invalid_config("open channel must not have closed_at"));
@@ -394,9 +458,7 @@ impl Channel {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelOwner {
     Project { project_id: Uuid },
-    Story { story_id: Uuid },
     LifecycleRun { run_id: Uuid },
-    System,
 }
 
 impl ChannelOwner {
@@ -407,39 +469,49 @@ impl ChannelOwner {
     pub fn stable_key(&self) -> String {
         match self {
             Self::Project { project_id } => format!("project:{project_id}"),
-            Self::Story { story_id } => format!("story:{story_id}"),
             Self::LifecycleRun { run_id } => format!("lifecycle_run:{run_id}"),
-            Self::System => "system".to_string(),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ChannelMedium {
-    Runtime,
-    Project,
-    Im,
-    Human,
-    Terminal,
-    System,
+pub enum ChannelLifetimePolicy {
+    OwnerBound,
+    ExplicitClose,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelTopology {
-    Direct,
-    Group,
-    Broadcast,
-    Thread,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelRetentionPolicy {
+    #[serde(default = "default_delivery_state_max_items")]
+    pub max_delivery_state_items: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_ttl_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChannelLifecycle {
-    Runtime,
-    Persistent,
-    Ephemeral,
+impl Default for ChannelRetentionPolicy {
+    fn default() -> Self {
+        Self {
+            max_delivery_state_items: default_delivery_state_max_items(),
+            metadata_ttl_seconds: None,
+        }
+    }
+}
+
+impl ChannelRetentionPolicy {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.max_delivery_state_items == 0 {
+            return Err(invalid_config(
+                "channel retention max_delivery_state_items must be greater than zero",
+            ));
+        }
+        if self.metadata_ttl_seconds == Some(0) {
+            return Err(invalid_config(
+                "channel retention metadata_ttl_seconds must be greater than zero",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -493,33 +565,16 @@ impl Default for ChannelBroadcastPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelDeliveryPolicy {
     #[serde(default)]
     pub require_ack: bool,
-    #[serde(default = "default_delivery_state_max_items")]
-    pub max_delivery_state_items: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dedup_key: Option<String>,
 }
 
-impl Default for ChannelDeliveryPolicy {
-    fn default() -> Self {
-        Self {
-            require_ack: false,
-            max_delivery_state_items: default_delivery_state_max_items(),
-            dedup_key: None,
-        }
-    }
-}
-
 impl ChannelDeliveryPolicy {
     pub fn validate(&self) -> Result<(), DomainError> {
-        if self.max_delivery_state_items == 0 {
-            return Err(invalid_config(
-                "channel delivery max_delivery_state_items must be greater than zero",
-            ));
-        }
         if let Some(dedup_key) = &self.dedup_key {
             validate_non_empty("channel.delivery.dedup_key", dedup_key)?;
         }
@@ -530,28 +585,18 @@ impl ChannelDeliveryPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelParticipantRef {
-    AgentRun {
-        run_id: Uuid,
-        agent_id: Uuid,
-    },
-    LifecycleAgent {
+    Agent {
         run_id: Uuid,
         agent_id: Uuid,
     },
     User {
         user_id: String,
     },
-    Human {
-        user_id: String,
-    },
     External {
         provider: String,
         external_user_ref: String,
     },
-    System {
-        key: String,
-    },
-    Platform {
+    Service {
         key: String,
     },
 }
@@ -559,10 +604,8 @@ pub enum ChannelParticipantRef {
 impl ChannelParticipantRef {
     pub fn validate(&self) -> Result<(), DomainError> {
         match self {
-            Self::AgentRun { .. } | Self::LifecycleAgent { .. } => Ok(()),
-            Self::User { user_id } | Self::Human { user_id } => {
-                validate_non_empty("channel.participant.user_id", user_id)
-            }
+            Self::Agent { .. } => Ok(()),
+            Self::User { user_id } => validate_non_empty("channel.participant.user_id", user_id),
             Self::External {
                 provider,
                 external_user_ref,
@@ -570,28 +613,21 @@ impl ChannelParticipantRef {
                 validate_non_empty("channel.participant.provider", provider)?;
                 validate_non_empty("channel.participant.external_user_ref", external_user_ref)
             }
-            Self::System { key } | Self::Platform { key } => {
-                validate_non_empty("channel.participant.key", key)
-            }
+            Self::Service { key } => validate_non_empty("channel.participant.key", key),
         }
     }
 
     pub fn stable_key(&self) -> String {
         match self {
-            Self::AgentRun { run_id, agent_id } => {
-                format!("agent_run:{run_id}:{agent_id}")
-            }
-            Self::LifecycleAgent { run_id, agent_id } => {
-                format!("lifecycle_agent:{run_id}:{agent_id}")
+            Self::Agent { run_id, agent_id } => {
+                format!("agent:{run_id}:{agent_id}")
             }
             Self::User { user_id } => format!("user:{user_id}"),
-            Self::Human { user_id } => format!("human:{user_id}"),
             Self::External {
                 provider,
                 external_user_ref,
             } => format!("external:{provider}:{external_user_ref}"),
-            Self::System { key } => format!("system:{key}"),
-            Self::Platform { key } => format!("platform:{key}"),
+            Self::Service { key } => format!("service:{key}"),
         }
     }
 }
@@ -628,12 +664,12 @@ impl ChannelParticipant {
                 "channel participant operations must not be empty",
             ));
         }
-        if let Some(left_at) = self.left_at
-            && left_at < self.joined_at
-        {
-            return Err(invalid_config(
-                "channel participant left_at must not be before joined_at",
-            ));
+        if let Some(left_at) = self.left_at {
+            if left_at < self.joined_at {
+                return Err(invalid_config(
+                    "channel participant left_at must not be before joined_at",
+                ));
+            }
         }
         Ok(())
     }
@@ -646,7 +682,7 @@ pub enum ChannelRole {
     Member,
     Observer,
     External,
-    System,
+    Service,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -736,46 +772,42 @@ pub enum ChannelBindingStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChannelReplyAddress {
-    pub address_id: ChannelReplyAddressId,
+pub struct ChannelReplyTargetRegistration {
+    pub target_id: ChannelReplyTargetId,
     pub participant_ref: ChannelParticipantRef,
-    pub address: ChannelAddress,
-    pub status: ChannelReplyAddressStatus,
+    pub target: ChannelReplyTarget,
+    pub status: ChannelReplyTargetStatus,
     pub created_at: DateTime<Utc>,
 }
 
-impl ChannelReplyAddress {
+impl ChannelReplyTargetRegistration {
     pub fn validate(&self) -> Result<(), DomainError> {
         self.participant_ref.validate()?;
-        self.address.validate()
+        self.target.validate()
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ChannelReplyAddressStatus {
+pub enum ChannelReplyTargetStatus {
     Active,
     Revoked,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChannelAddress {
+pub struct ChannelMessageOrigin {
     pub namespace: String,
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub correlation_ref: Option<String>,
     pub actor: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub route: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_label_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
 }
 
-impl ChannelAddress {
+impl ChannelMessageOrigin {
     pub fn new(
         namespace: impl Into<String>,
         kind: impl Into<String>,
@@ -785,9 +817,7 @@ impl ChannelAddress {
             namespace: namespace.into(),
             kind: kind.into(),
             source_ref: None,
-            correlation_ref: None,
             actor: actor.into(),
-            route: None,
             display_label_key: None,
             metadata: None,
         }
@@ -795,16 +825,6 @@ impl ChannelAddress {
 
     pub fn with_source_ref(mut self, source_ref: impl Into<String>) -> Self {
         self.source_ref = Some(source_ref.into());
-        self
-    }
-
-    pub fn with_correlation_ref(mut self, correlation_ref: impl Into<String>) -> Self {
-        self.correlation_ref = Some(correlation_ref.into());
-        self
-    }
-
-    pub fn with_route(mut self, route: impl Into<String>) -> Self {
-        self.route = Some(route.into());
         self
     }
 
@@ -819,27 +839,45 @@ impl ChannelAddress {
     }
 
     pub fn validate(&self) -> Result<(), DomainError> {
-        validate_non_empty("channel.address.namespace", &self.namespace)?;
-        validate_non_empty("channel.address.kind", &self.kind)?;
-        validate_non_empty("channel.address.actor", &self.actor)?;
+        validate_non_empty("channel.message_origin.namespace", &self.namespace)?;
+        validate_non_empty("channel.message_origin.kind", &self.kind)?;
+        validate_non_empty("channel.message_origin.actor", &self.actor)?;
         if let Some(source_ref) = &self.source_ref {
-            validate_non_empty("channel.address.source_ref", source_ref)?;
-        }
-        if let Some(correlation_ref) = &self.correlation_ref {
-            validate_non_empty("channel.address.correlation_ref", correlation_ref)?;
-        }
-        if let Some(route) = &self.route {
-            validate_non_empty("channel.address.route", route)?;
+            validate_non_empty("channel.message_origin.source_ref", source_ref)?;
         }
         if let Some(display_label_key) = &self.display_label_key {
-            validate_non_empty("channel.address.display_label_key", display_label_key)?;
+            validate_non_empty(
+                "channel.message_origin.display_label_key",
+                display_label_key,
+            )?;
         }
         Ok(())
     }
 }
 
-pub fn channel_address_to_mailbox_source_identity(
-    address: &ChannelAddress,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelReplyTarget {
+    pub namespace: String,
+    pub route: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+impl ChannelReplyTarget {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        validate_non_empty("channel.reply_target.namespace", &self.namespace)?;
+        validate_non_empty("channel.reply_target.route", &self.route)?;
+        if let Some(target_ref) = &self.target_ref {
+            validate_non_empty("channel.reply_target.target_ref", target_ref)?;
+        }
+        Ok(())
+    }
+}
+
+pub fn channel_message_origin_to_mailbox_source_identity(
+    address: &ChannelMessageOrigin,
 ) -> MailboxSourceIdentity {
     let mut source = MailboxSourceIdentity::new(
         address.namespace.clone(),
@@ -848,12 +886,6 @@ pub fn channel_address_to_mailbox_source_identity(
     );
     if let Some(source_ref) = &address.source_ref {
         source = source.with_source_ref(source_ref.clone());
-    }
-    if let Some(correlation_ref) = &address.correlation_ref {
-        source = source.with_correlation_ref(correlation_ref.clone());
-    }
-    if let Some(route) = &address.route {
-        source = source.with_route(route.clone());
     }
     if let Some(metadata) = &address.metadata {
         source = source.with_metadata(metadata.clone());
@@ -874,7 +906,9 @@ pub struct ChannelMessage {
     pub thread_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_ref: Option<String>,
-    pub address: ChannelAddress,
+    pub origin: ChannelMessageOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_target: Option<ChannelReplyTarget>,
     pub payload: ChannelPayload,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_refs: Vec<ChannelContentRef>,
@@ -888,7 +922,7 @@ impl ChannelMessage {
         channel_id: ChannelId,
         sender: ChannelParticipantRef,
         payload: ChannelPayload,
-        address: ChannelAddress,
+        origin: ChannelMessageOrigin,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -897,7 +931,8 @@ impl ChannelMessage {
             audience: ChannelAudience::AllParticipants,
             thread_ref: None,
             correlation_ref: None,
-            address,
+            origin,
+            reply_target: None,
             payload,
             content_refs: Vec::new(),
             provider_event_ref: None,
@@ -1028,6 +1063,18 @@ pub struct ChannelRef {
     pub channel_id: ChannelId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ChannelLocator {
+    pub owner: ChannelOwner,
+    pub channel_key: ChannelKey,
+}
+
+impl ChannelLocator {
+    pub fn new(owner: ChannelOwner, channel_key: ChannelKey) -> Self {
+        Self { owner, channel_key }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChannelCapabilityRef {
     pub channel_ref: ChannelRef,
@@ -1048,20 +1095,6 @@ pub enum ChannelReadiness {
     Disabled,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ChannelDirective {
-    Expose {
-        channel_ref: ChannelRef,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        aliases: Vec<String>,
-        operations: BTreeSet<ChannelOperation>,
-    },
-    Revoke {
-        channel_ref: ChannelRef,
-    },
-}
-
 fn prune_delivery_states(
     delivery_state: &mut Vec<ChannelDeliveryState>,
     before: Option<DateTime<Utc>>,
@@ -1076,10 +1109,6 @@ fn prune_delivery_states(
     }
 }
 
-fn default_channel_registry_schema_version() -> u32 {
-    CHANNEL_REGISTRY_SCHEMA_VERSION
-}
-
 fn default_delivery_state_max_items() -> usize {
     128
 }
@@ -1090,6 +1119,7 @@ fn default_participant_operations() -> BTreeSet<ChannelOperation> {
         ChannelOperation::Receive,
         ChannelOperation::Reply,
         ChannelOperation::Publish,
+        ChannelOperation::Broadcast,
     ]
     .into_iter()
     .collect()
@@ -1126,11 +1156,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_registry_roundtrips_from_empty_json() {
-        let registry: ChannelRegistryDocument = serde_json::from_value(json!({})).unwrap();
-
-        assert_eq!(registry.schema_version, CHANNEL_REGISTRY_SCHEMA_VERSION);
-        assert!(registry.channels.is_empty());
+    fn registry_requires_explicit_schema_version_and_roundtrips() {
+        assert!(serde_json::from_value::<ChannelRegistryDocument>(json!({})).is_err());
+        let registry = ChannelRegistryDocument::default();
 
         let restored: ChannelRegistryDocument =
             serde_json::from_value(serde_json::to_value(&registry).unwrap()).unwrap();
@@ -1144,8 +1172,7 @@ mod tests {
             ChannelOwner::LifecycleRun {
                 run_id: Uuid::new_v4(),
             },
-            ChannelMedium::Runtime,
-            ChannelTopology::Direct,
+            ChannelKey::parse("runtime:test").unwrap(),
         );
         let channel_id = channel.id;
 
@@ -1170,10 +1197,65 @@ mod tests {
     }
 
     #[test]
+    fn create_if_absent_is_atomic_by_owner_and_channel_key() {
+        let owner = ChannelOwner::LifecycleRun {
+            run_id: Uuid::new_v4(),
+        };
+        let key = ChannelKey::parse("companion:parent:child").unwrap();
+        let first = Channel::new(owner.clone(), key.clone());
+        let second = Channel::new(owner.clone(), key.clone());
+        let first_id = first.id;
+        let mut registry = ChannelRegistryDocument::default();
+
+        registry
+            .apply(ChannelRegistryMutation::CreateChannelIfAbsent(
+                ChannelRecord::new(first),
+            ))
+            .unwrap();
+        registry
+            .apply(ChannelRegistryMutation::CreateChannelIfAbsent(
+                ChannelRecord::new(second),
+            ))
+            .unwrap();
+
+        assert_eq!(registry.channels.len(), 1);
+        let locator = ChannelLocator::new(owner, key);
+        assert_eq!(
+            registry.channel_by_locator(&locator).unwrap().channel.id,
+            first_id
+        );
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_owner_local_keys() {
+        let owner = ChannelOwner::LifecycleRun {
+            run_id: Uuid::new_v4(),
+        };
+        let key = ChannelKey::parse("runtime:duplicate").unwrap();
+        let mut registry = ChannelRegistryDocument {
+            schema_version: CHANNEL_REGISTRY_SCHEMA_VERSION,
+            channels: vec![
+                ChannelRecord::new(Channel::new(owner.clone(), key.clone())),
+                ChannelRecord::new(Channel::new(owner, key)),
+            ],
+        };
+
+        assert!(matches!(
+            registry.validate(),
+            Err(DomainError::Conflict {
+                constraint: "owner_channel_key",
+                ..
+            })
+        ));
+        registry.channels.pop();
+        registry.validate().unwrap();
+    }
+
+    #[test]
     fn mutation_manages_participant_policy() {
         let mut registry = registry_with_channel();
         let channel_id = registry.channels[0].channel.id;
-        let participant_ref = ChannelParticipantRef::AgentRun {
+        let participant_ref = ChannelParticipantRef::Agent {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
         };
@@ -1228,7 +1310,14 @@ mod tests {
         let channel_id = registry.channels[0].channel.id;
         let mut policy = ChannelPolicy::default();
         policy.broadcast.include_sender = true;
-        policy.delivery.max_delivery_state_items = 8;
+        let mut channel = registry.channels[0].channel.clone();
+        channel.retention.max_delivery_state_items = 8;
+        registry
+            .apply(ChannelRegistryMutation::UpsertChannel(ChannelRecord {
+                channel,
+                ..registry.channels[0].clone()
+            }))
+            .unwrap();
 
         registry
             .apply(ChannelRegistryMutation::UpdateChannelPolicy { channel_id, policy })
@@ -1236,7 +1325,7 @@ mod tests {
 
         let record = registry.channel(channel_id).unwrap();
         assert!(record.channel.policy.broadcast.include_sender);
-        assert_eq!(record.channel.policy.delivery.max_delivery_state_items, 8);
+        assert_eq!(record.channel.retention.max_delivery_state_items, 8);
     }
 
     #[test]
@@ -1270,8 +1359,7 @@ mod tests {
         let channel_id = registry.channels[0].channel.id;
         registry.channels[0]
             .channel
-            .policy
-            .delivery
+            .retention
             .max_delivery_state_items = 2;
 
         let message_id = Uuid::new_v4();
@@ -1332,10 +1420,8 @@ mod tests {
 
     #[test]
     fn address_does_not_default_to_mailbox_display_key() {
-        let address = ChannelAddress::new("companion", "dispatch", "agent")
-            .with_source_ref("dispatch-1")
-            .with_correlation_ref("corr-1")
-            .with_route("child");
+        let address = ChannelMessageOrigin::new("companion", "dispatch", "agent")
+            .with_source_ref("dispatch-1");
 
         address.validate().unwrap();
         assert_eq!(address.display_label_key, None);
@@ -1343,12 +1429,11 @@ mod tests {
 
     #[test]
     fn address_mapper_preserves_mailbox_display_key_semantics() {
-        let address = ChannelAddress::new("terminal", "hook_auto_resume", "system")
+        let address = ChannelMessageOrigin::new("terminal", "hook_auto_resume", "system")
             .with_source_ref("effect-1")
-            .with_correlation_ref("runtime:turn:1")
             .with_display_label_key("channel.source.terminal.hook_auto_resume");
 
-        let source = channel_address_to_mailbox_source_identity(&address);
+        let source = channel_message_origin_to_mailbox_source_identity(&address);
 
         assert_eq!(source.namespace, "terminal");
         assert_eq!(source.kind, "hook_auto_resume");
@@ -1362,10 +1447,10 @@ mod tests {
     #[test]
     fn validation_rejects_duplicate_participants() {
         let mut registry = registry_with_channel();
-        let participant_ref = ChannelParticipantRef::System {
+        let participant_ref = ChannelParticipantRef::Service {
             key: "companion".to_string(),
         };
-        let participant = ChannelParticipant::new(participant_ref, ChannelRole::System);
+        let participant = ChannelParticipant::new(participant_ref, ChannelRole::Service);
         registry.channels[0].participants = vec![participant.clone(), participant];
 
         let error = registry.validate().expect_err("duplicate participant");
@@ -1377,8 +1462,7 @@ mod tests {
             ChannelOwner::LifecycleRun {
                 run_id: Uuid::new_v4(),
             },
-            ChannelMedium::Runtime,
-            ChannelTopology::Direct,
+            ChannelKey::parse("runtime:test").unwrap(),
         );
         let mut registry = ChannelRegistryDocument::default();
         registry

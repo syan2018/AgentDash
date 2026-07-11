@@ -14,7 +14,7 @@ const INITIAL_STATE: ExecutorDiscoveryStreamState = {
     model_selector: {
       providers: [],
       models: [],
-      default_model: null,
+      default_model: undefined,
       agents: [],
       permissions: [],
     },
@@ -22,7 +22,7 @@ const INITIAL_STATE: ExecutorDiscoveryStreamState = {
     loading_models: true,
     loading_agents: true,
     loading_slash_commands: true,
-    error: null,
+    error: undefined,
   } satisfies ExecutorDiscoveredOptions,
   commands: [],
   discovering: false,

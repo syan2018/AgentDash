@@ -165,9 +165,6 @@ pub struct AppState {
     /// 身份目录提供者（由 Host Integration 注入，None 表示仅使用本地 projection）
     pub identity_directory_provider:
         Option<Arc<dyn agentdash_integration_api::IdentityDirectoryProvider>>,
-    /// 编译期受信 Agent service definition/factory 注册表。
-    pub runtime_definition_registry:
-        Arc<agentdash_agent_runtime_host::AgentServiceDefinitionRegistry>,
     /// 统一诊断环形缓冲句柄 — 供 `GET /api/diagnostics` 查询"近期"诊断。
     ///
     /// 仅 `agentdash-api` main 把它接进 tracing 订阅器（[`DiagnosticLayer`]）；
@@ -396,7 +393,6 @@ impl AppState {
         let agent_runtime_host = runtime_composition.host;
         let agent_runtime_inventory = Arc::new(crate::relay::CloudRemoteRuntimeInventory::new(
             agent_runtime_host.clone(),
-            runtime_definition_registry.clone(),
         ));
         let lifecycle_read_model_query: Arc<dyn LifecycleReadModelQueryPort> = Arc::new(
             LifecycleReadModelQueryAdapter::new(repos.lifecycle_read_model_repos()),
@@ -496,7 +492,6 @@ impl AppState {
             },
             auth_provider: integration_registration.auth_provider,
             identity_directory_provider: integration_registration.identity_directory_provider,
-            runtime_definition_registry,
             diagnostics,
         };
 

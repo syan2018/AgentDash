@@ -5,8 +5,8 @@ use std::{
 
 use agentdash_agent_runtime_contract::{RuntimeServiceInstanceId, intersect_profile_layers};
 use agentdash_agent_runtime_host::{
-    ActivateAgentServiceInstance, AgentServiceDefinitionRegistry, ConformanceEvidence,
-    IntegrationDriverHost, PutAgentServiceInstance, ServiceInstanceDesiredState, profile_digest,
+    ActivateAgentServiceInstance, ConformanceEvidence, IntegrationDriverHost,
+    PutAgentServiceInstance, ServiceInstanceDesiredState, profile_digest,
 };
 use agentdash_integration_api::AgentRuntimePlacement;
 use agentdash_relay::RuntimeOfferAdvertisement;
@@ -16,20 +16,15 @@ type ActiveRuntimeInstances = BTreeMap<String, BTreeMap<String, (RuntimeServiceI
 
 pub struct CloudRemoteRuntimeInventory {
     host: Arc<IntegrationDriverHost>,
-    trusted_definitions: Arc<AgentServiceDefinitionRegistry>,
     mutation_lock: Mutex<()>,
     active_by_backend: Mutex<ActiveRuntimeInstances>,
     online_backends: Mutex<BTreeSet<String>>,
 }
 
 impl CloudRemoteRuntimeInventory {
-    pub fn new(
-        host: Arc<IntegrationDriverHost>,
-        trusted_definitions: Arc<AgentServiceDefinitionRegistry>,
-    ) -> Self {
+    pub fn new(host: Arc<IntegrationDriverHost>) -> Self {
         Self {
             host,
-            trusted_definitions,
             mutation_lock: Mutex::new(()),
             active_by_backend: Mutex::new(BTreeMap::new()),
             online_backends: Mutex::new(BTreeSet::new()),
@@ -182,7 +177,8 @@ impl CloudRemoteRuntimeInventory {
     }
 
     fn validate(&self, advertisement: &RuntimeOfferAdvertisement) -> anyhow::Result<()> {
-        validate_advertisement(self.trusted_definitions.as_ref(), advertisement)
+        let definition = self.host.definition(&advertisement.definition_id)?;
+        validate_advertisement(&definition, advertisement)
     }
 
     async fn rollback_activations(&self, activations: &[(RuntimeServiceInstanceId, u64)]) {
@@ -193,10 +189,9 @@ impl CloudRemoteRuntimeInventory {
 }
 
 fn validate_advertisement(
-    trusted_definitions: &AgentServiceDefinitionRegistry,
+    definition: &agentdash_integration_api::AgentServiceDefinition,
     advertisement: &RuntimeOfferAdvertisement,
 ) -> anyhow::Result<()> {
-    let definition = trusted_definitions.definition(&advertisement.definition_id)?;
     anyhow::ensure!(
         definition.provenance.publisher_integration == advertisement.publisher_integration
             && definition.provenance.service_version == advertisement.service_version
@@ -256,6 +251,7 @@ mod tests {
         ProfileProvenance, RuntimeDriverGeneration, RuntimeServiceInstanceId,
         intersect_profile_layers,
     };
+    use agentdash_agent_runtime_host::AgentServiceDefinitionRegistry;
     use agentdash_integration_api::AgentRuntimePlacementId;
     use chrono::Utc;
 
@@ -325,10 +321,13 @@ mod tests {
     #[test]
     fn installed_definition_accepts_exact_local_offer_and_rejects_forged_build() {
         let (registry, offer) = advertisement();
-        validate_advertisement(&registry, &offer).expect("exact offer is trusted");
+        let definition = registry
+            .definition(&offer.definition_id)
+            .expect("installed definition");
+        validate_advertisement(&definition, &offer).expect("exact offer is trusted");
 
         let mut forged = offer;
         forged.build_digest = "forged-build".to_string();
-        assert!(validate_advertisement(&registry, &forged).is_err());
+        assert!(validate_advertisement(&definition, &forged).is_err());
     }
 }

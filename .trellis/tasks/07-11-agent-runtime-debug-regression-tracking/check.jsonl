@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"检查 execution profile 未被错误等同于实例级 Runtime offer。"}
+{"file":".trellis/spec/backend/capability/llm-model-config.md","reason":"检查全局 Provider credential 与交互用户身份正确解耦。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 API、授权与真实 PostgreSQL/启动路径验证要求。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查前端、API 与桌面 bridge 契约一致。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 selector 与 OAuth action 的前端测试和错误呈现。"}

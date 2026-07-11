@@ -17,6 +17,22 @@ export type CreateProjectAgentRunRequest = {
  */
 input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, subject_ref?: SubjectRefDto, backend_selection?: BackendSelectionRequestDto, };
 
+export type ExecutionProfileAgentDto = { id: string, label: string, description?: string, is_default: boolean, };
+
+export type ExecutionProfileDiscoveryResponse = { executors: Array<ExecutionProfileDto>, };
+
+export type ExecutionProfileDto = { id: string, name: string, available: boolean, unavailable_reason?: string, };
+
+export type ExecutionProfileModelDto = { id: string, name: string, provider_id: string, reasoning: boolean, supports_image: boolean, context_window: number, blocked: boolean, discovered: boolean, source: string, };
+
+export type ExecutionProfileModelSelectorDto = { providers: Array<ExecutionProfileProviderDto>, models: Array<ExecutionProfileModelDto>, default_model?: string, agents: Array<ExecutionProfileAgentDto>, permissions: Array<string>, };
+
+export type ExecutionProfileOptionsDto = { model_selector: ExecutionProfileModelSelectorDto, slash_commands: Array<ExecutionProfileSlashCommandDto>, loading_models: boolean, loading_agents: boolean, loading_slash_commands: boolean, error?: string, };
+
+export type ExecutionProfileProviderDto = { id: string, name: string, executable: boolean, unavailable_reason?: string, };
+
+export type ExecutionProfileSlashCommandDto = { name: string, description?: string, };
+
 export type ProjectAgent = { id: string, project_id: string, name: string, agent_type: string, config: JsonValue, default_lifecycle_key?: string, knowledge_enabled: boolean, created_at: string, updated_at: string, };
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };

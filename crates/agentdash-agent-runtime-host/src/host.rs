@@ -164,6 +164,15 @@ impl IntegrationDriverHost {
         self.registry.definitions()
     }
 
+    pub fn definition(
+        &self,
+        definition_id: &agentdash_integration_api::AgentServiceDefinitionId,
+    ) -> Result<agentdash_integration_api::AgentServiceDefinition, AgentRuntimeHostError> {
+        self.registry
+            .definition(definition_id)
+            .map_err(AgentRuntimeHostError::from)
+    }
+
     pub async fn service_instance(
         &self,
         instance_id: &RuntimeServiceInstanceId,

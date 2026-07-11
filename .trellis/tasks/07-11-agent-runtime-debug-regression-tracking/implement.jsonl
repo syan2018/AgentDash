@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"约束 Integration definition、instance、offer 与 Driver Host 的职责边界。"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"约束 ProjectAgent、AgentRun facade 与 runtime provision 的控制面边界。"}
+{"file":".trellis/spec/backend/capability/llm-model-config.md","reason":"约束全局 Provider、用户 BYOK、ChatGPT OAuth 与凭据所有权。"}
+{"file":".trellis/spec/backend/capability/integration-api.md","reason":"约束 Integration contribution 与平台装配入口。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"约束 discovery、availability 与认证错误的跨层 DTO。"}
+{"file":".trellis/spec/frontend/architecture.md","reason":"约束前端控制面只消费后端 canonical projection。"}

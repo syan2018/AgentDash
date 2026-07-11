@@ -30,7 +30,8 @@ export function useAgentTypeOptions() {
   const options = useMemo(() => {
     return executors.map((executor) => ({
       value: executor.id,
-      label: `${executor.name}${!executor.available ? " (不可用)" : ""}`,
+      label: `${executor.name}${!executor.available ? ` (不可用：${executor.unavailable_reason ?? "运行条件未满足"})` : ""}`,
+      available: executor.available,
     }));
   }, [executors]);
   return { agentTypeOptions: options, isDiscoveryLoading: isLoading };
@@ -49,7 +50,7 @@ export function PresetFormFields({
 }: {
   form: PresetFormState;
   patchForm: (patch: Partial<PresetFormState>) => void;
-  agentTypeOptions: Array<{ value: string; label: string }>;
+  agentTypeOptions: Array<{ value: string; label: string; available: boolean }>;
   isDiscoveryLoading: boolean;
   siblingAgents?: Array<{ name: string; display_name: string; default_companion_enabled?: boolean }>;
   projectId?: string;
@@ -222,7 +223,7 @@ export function PresetFormFields({
             {isDiscoveryLoading ? "加载执行器列表..." : "选择 Agent 类型"}
           </option>
           {agentTypeOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
+            <option key={opt.value} value={opt.value} disabled={!opt.available}>
               {opt.label}
             </option>
           ))}

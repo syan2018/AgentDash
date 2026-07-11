@@ -42,7 +42,7 @@ export interface DesktopAppBridge {
 
 export interface DesktopCodexOAuthStartRequest {
   api_origin: string;
-  access_token: string;
+  access_token?: string;
   provider_id: string;
   target: 'global_provider' | 'user_byok';
 }

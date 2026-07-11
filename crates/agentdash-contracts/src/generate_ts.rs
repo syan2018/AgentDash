@@ -146,7 +146,10 @@ use agentdash_contracts::project::{
     SchedulingConfig,
 };
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, CreateProjectAgentRunRequest, ProjectAgent, ProjectAgentExecutor,
+    CreateProjectAgentRequest, CreateProjectAgentRunRequest, ExecutionProfileAgentDto,
+    ExecutionProfileDiscoveryResponse, ExecutionProfileDto, ExecutionProfileModelDto,
+    ExecutionProfileModelSelectorDto, ExecutionProfileOptionsDto, ExecutionProfileProviderDto,
+    ExecutionProfileSlashCommandDto, ProjectAgent, ProjectAgentExecutor,
     ProjectAgentRunStartResult, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::routine::{
@@ -343,6 +346,14 @@ fn main() {
         |dir| {
             export_all::<ProjectAgent>(dir);
             export_all::<ProjectAgentExecutor>(dir);
+            export_all::<ExecutionProfileDto>(dir);
+            export_all::<ExecutionProfileDiscoveryResponse>(dir);
+            export_all::<ExecutionProfileProviderDto>(dir);
+            export_all::<ExecutionProfileModelDto>(dir);
+            export_all::<ExecutionProfileAgentDto>(dir);
+            export_all::<ExecutionProfileModelSelectorDto>(dir);
+            export_all::<ExecutionProfileSlashCommandDto>(dir);
+            export_all::<ExecutionProfileOptionsDto>(dir);
             export_all::<ProjectAgentSummary>(dir);
             export_all::<CreateProjectAgentRunRequest>(dir);
             export_all::<ProjectAgentRunStartResult>(dir);

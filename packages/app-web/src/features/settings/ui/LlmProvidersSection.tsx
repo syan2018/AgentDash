@@ -443,8 +443,9 @@ function LlmProviderForm({
         reasoning: true,
         supports_image: true,
         context_window: 200_000,
-        blocked: false,
-        discovered: true,
+          blocked: false,
+          discovered: true,
+          source: "oauth_default",
       }));
     }
     return discoveredModels;

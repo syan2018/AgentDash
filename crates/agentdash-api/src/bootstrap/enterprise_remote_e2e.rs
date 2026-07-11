@@ -603,7 +603,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     let (cloud_pool, _cloud_postgres) = migrated_pool("enterprise-remote-cloud").await;
     let (enterprise, manifest, bridge) = enterprise_contribution();
     let source_definition = enterprise.definition.clone();
-    let (handler, trusted_source_registry) = local_host(local_pool, enterprise, &manifest).await;
+    let (handler, _trusted_source_registry) = local_host(local_pool, enterprise, &manifest).await;
     let advertisements = handler.advertised_offers().await.expect("local offers");
     assert_eq!(advertisements.len(), 1);
 
@@ -679,10 +679,7 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         node_id: "enterprise-cloud-host".to_string(),
     })
     .expect("cloud production composition");
-    let inventory = CloudRemoteRuntimeInventory::new(
-        composition.host.clone(),
-        Arc::new(trusted_source_registry),
-    );
+    let inventory = CloudRemoteRuntimeInventory::new(composition.host.clone());
     inventory.mark_online(BACKEND_ID).await;
     tokio::time::timeout(
         std::time::Duration::from_secs(20),

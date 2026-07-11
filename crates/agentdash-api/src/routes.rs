@@ -4,6 +4,7 @@ pub mod backends;
 pub mod canvases;
 pub mod companion_gates;
 pub mod diagnostics;
+pub mod execution_profiles;
 pub mod extension_package_artifacts;
 pub mod extension_runtime;
 pub mod file_picker;
@@ -105,6 +106,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(vfs_surfaces::router())
         .merge(terminals::router())
         .merge(file_picker::router())
+        .merge(execution_profiles::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             crate::auth::authenticate_request,

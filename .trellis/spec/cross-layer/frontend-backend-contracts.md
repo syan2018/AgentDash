@@ -26,9 +26,19 @@ agentdash-agent-runtime-wire
 
 ## 3. AgentRun Runtime Contract
 
+### Execution Profile discovery
+
+- 执行器选择器读取的是产品级 `ExecutionProfileDto`，其稳定 identity 来自受信 Integration definition；该 DTO 只表达名称、availability 与 unavailable reason，不携带 RuntimeOffer、service instance、generation 或 placement credential。
+- Native `PI_AGENT` 与 Codex `CODEX` 是独立 execution profile。definition 已注册但尚未首次 provision RuntimeOffer 是合法状态；discovery 不以当前 offer 数量决定 profile 是否存在。
+- Native discovered-options 从 LLM Provider effective catalog 投影 provider/model 与精确不可用原因；Codex profile 不伪造 Native Provider/model 列表。
+- ProjectAgent create/update 与 discovery 使用同一 profile-to-definition catalog 校验，避免 UI 可选值与 API 可保存值产生第二套枚举。
+- Rust contracts 及生成 TypeScript 是 discovery/options DTO 的事实源，前端 feature model 不复制同名字段结构。
+
 ### Signatures
 
 ```text
+GET  /agents/discovery
+GET  /agents/discovered-options/stream?executor={PI_AGENT|CODEX}
 POST /projects/{project_id}/agents/{project_agent_id}/agent-runs
 POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
 POST /agent-runs/{run_id}/agents/{agent_id}/cancel
@@ -71,6 +81,10 @@ AgentRunCommandReceipt {
 
 | Condition | Required behavior |
 | --- | --- |
+| execution profile definition 未进入最终 Host inventory | discovery 保留 profile 并返回 `available=false + unavailable_reason`；ProjectAgent 写入拒绝未知 profile |
+| `PI_AGENT` 没有 executable Provider | profile 可见但 disabled；options 返回 Provider 诊断，不依赖 RuntimeOffer |
+| `CODEX` definition 已注册 | profile 可选；options 不伪造 Native Provider/model |
+| options executor 未知 | `400 Bad Request`，不探测 Connector 或任意 offer |
 | AgentRun target 不存在或跨 Project | not found/authorization error before Runtime side effect |
 | client command id 为空 | `400 Bad Request` |
 | stale Runtime revision/active turn | typed stale error；前端刷新 snapshot |
@@ -82,6 +96,9 @@ AgentRunCommandReceipt {
 ### Tests Required
 
 - Contract generation/check 覆盖 product refs、Runtime snapshot/event/profile 与 RuntimeWire。
+- Production composition test 断言最终 `IntegrationDriverHost` inventory 包含动态装配的 Native definition 和已注册的 Codex definition。
+- Discovery/API tests 覆盖 Native/Codex 独立 availability、未知 profile、Provider diagnostic 与 options NDJSON。
+- Selector tests 断言不可用 profile/Provider 保持可见、disabled 且展示原因。
 - Service tests 覆盖 URL encoding、create/composer/cancel/context/approval endpoints。
 - Command-state tests 证明 availability 只取 Runtime snapshot。
 - Feed tests 覆盖 snapshot baseline、durable cursor、duplicate event、reconnect 与 typed stream error。
@@ -113,6 +130,9 @@ AgentRunCommandReceipt {
 ## 7. Good / Base / Bad Cases
 
 - Good：Draft 创建返回 run/agent/frame 与 Runtime thread/operation；页面随后从 runtime inspect/events 渲染 transcript，并从 snapshot availability启用 interrupt。
+- Good：首次运行前 RuntimeOffer 表为空，selector 仍从最终 Host definition inventory 展示 `PI_AGENT`/`CODEX`。
+- Base：没有 executable Provider 时 `PI_AGENT` disabled 并展示凭据诊断，`CODEX` availability 独立计算。
+- Bad：API 读取 composition 前的临时 definition registry，导致动态装配的 Native definition 在真实启动中消失。
 - Base：首条消息排队，响应只有 mailbox identity；worker dispatch 后 workspace refresh 观察 accepted operation 与新 cursor。
 - Bad：前端调用已经没有后端实现的 fork/mailbox endpoint，或根据 `execution_status=running` 自行启用 cancel。
 - Good：Canvas presentation 用 `canvas://{mount_id}` 打开 tab，并通过当前 AgentFrame surface刷新资源。
@@ -136,4 +156,12 @@ let thread_id = request.protocol_turn_id;
 // Correct
 let binding = agent_run_runtime_binding_repo.load(&target).await?;
 let receipt = agent_run_runtime.send_message(command).await?;
+```
+
+```rust
+// Wrong: composition 前 registry 不是生产 Host inventory
+let profiles = app_state.runtime_definition_registry.definitions();
+
+// Correct: discovery、ProjectAgent validation 与 Relay trust 共用最终 Host
+let profiles = app_state.services.agent_runtime_host.definitions();
 ```

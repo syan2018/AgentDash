@@ -482,6 +482,11 @@ pub async fn create_project_agent(
     if agent_type.is_empty() {
         return Err(ApiError::BadRequest("agent_type 不能为空".into()));
     }
+    if !crate::routes::execution_profiles::is_known_execution_profile(&state, &agent_type) {
+        return Err(ApiError::BadRequest(format!(
+            "未知 execution profile: {agent_type}"
+        )));
+    }
     if state
         .repos
         .project_agent_repo
@@ -551,6 +556,11 @@ pub async fn update_project_agent(
         let trimmed = agent_type.trim().to_string();
         if trimmed.is_empty() {
             return Err(ApiError::BadRequest("agent_type 不能为空".into()));
+        }
+        if !crate::routes::execution_profiles::is_known_execution_profile(&state, &trimmed) {
+            return Err(ApiError::BadRequest(format!(
+                "未知 execution profile: {trimmed}"
+            )));
         }
         agent.agent_type = trimmed;
     }

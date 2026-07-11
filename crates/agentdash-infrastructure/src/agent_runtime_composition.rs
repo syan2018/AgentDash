@@ -1698,6 +1698,12 @@ mod tests {
                 node_id: "production-tracer-node".to_string(),
             })
             .expect("build production composition");
+        assert!(
+            composition.host.definitions().iter().any(|definition| {
+                definition.provenance.definition_id.as_str() == NATIVE_DEFINITION_ID
+            }),
+            "the production Host inventory must expose the Native definition added by composition"
+        );
         let request = AgentRunRuntimeProvisionRequest {
             target: AgentRunRuntimeTarget { run_id, agent_id },
             identity: Some(AuthIdentity {

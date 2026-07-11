@@ -89,6 +89,71 @@ DB-backed Key 的加解密通过 `LlmSecretCodec` 端口完成，当前基础设
 
 `openai_codex` 的凭据内容是 ChatGPT OAuth token JSON，不是用户可直接获取的 API Key。管理员全局 Codex 登录写入 Provider 的 `global_api_key_ciphertext`，用户个人 Codex 登录写入 `llm_provider_user_credentials`；两者复用同一套 PKCE 回调与 token exchange，只在保存目标上区分所有权。API 响应对 Codex 凭据只展示 OAuth 状态 preview，不返回 token JSON 或其中任意字段。
 
+桌面 OAuth bridge 的平台 access token 是可选传输字段：Personal 模式没有 Bearer 时由 API AuthProvider 建立固定 local identity；Enterprise 模式缺少有效 token 在统一认证中返回 401，已认证但非管理员访问全局 Provider 管理入口返回 403。OAuth flow 以发起 identity 作为短时 owner 防止劫持，但 global credential 的持久化 ownership 仍属于 Provider catalog，不随 flow owner 转为用户 BYOK。
+
+### Scenario: Desktop ChatGPT OAuth 授权边界
+
+#### 1. Scope / Trigger
+
+- Trigger：桌面端为 `openai_codex` Provider 发起 PKCE OAuth，目标为 `global_provider` 或 `user_byok`。
+
+#### 2. Signatures
+
+```text
+POST /llm-providers/{id}/codex-oauth/desktop/prepare
+POST /llm-providers/{id}/user-credential/codex-oauth/desktop/prepare
+POST /llm-providers/codex-oauth/{flow_id}/{complete|fail|cancel}
+
+DesktopCodexOAuthStartRequest {
+  api_origin: string,
+  access_token?: string,
+  provider_id: string,
+  target: global_provider | user_byok,
+}
+```
+
+#### 3. Contracts
+
+- Desktop bridge 仅在 `access_token` 存在且非空时发送 Bearer；缺失时省略 Authorization。
+- API AuthProvider 是身份事实源。Personal 模式建立 local identity；Enterprise 模式验证真实登录 token。
+- flow owner 仅约束 status/cancel/complete/fail 的短时访问；credential target 决定最终保存到 Provider global ciphertext 或 user credential repository。
+- 全局 Provider 的运行态 credential 不随发起 OAuth 的用户变化。
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Personal + 无平台 token | prepare 成功，flow owner 为 local identity |
+| Enterprise + 无效或缺失 token | 统一认证返回 401 |
+| Enterprise + 已认证非管理员 + global target | `require_system_access` 返回 403 |
+| Enterprise admin + global target | prepare 成功，完成后写 `global_api_key_ciphertext` |
+| 任意身份完成他人 flow | owner 校验拒绝，不交换或保存 credential |
+| user_byok target | 保存到 `provider_id + user_id` 唯一用户凭据 |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：Personal 桌面没有平台登录 token，仍可完成全局 ChatGPT OAuth；凭据成为平台 Provider 配置。
+- Base：Enterprise 桌面透传当前平台 token，由 API 判断管理员权限。
+- Bad：Web 或 Tauri 在请求到达 API 前以“当前会话未登录”拒绝，因为它绕过了 AuthProvider 的模式语义。
+
+#### 6. Tests Required
+
+- Web：无 stored token 仍调用 desktop bridge；有 token 时正确透传。
+- Tauri：`None` 不产生 Authorization，`Some` 产生 Bearer。
+- API：Personal allow、Enterprise non-admin 403、admin allow；flow owner 与 credential target 分离。
+- Product path：无 Bearer 创建临时全局 Codex Provider并调用 desktop prepare，断言返回 flow ID/auth URL。
+
+#### 7. Wrong vs Correct
+
+```ts
+// Wrong
+if (!getStoredToken()) throw new Error("需要当前登录会话")
+
+// Correct
+const token = getStoredToken()
+desktop.startCodexOAuth({ ...request, ...(token ? { access_token: token } : {}) })
+```
+
 ### OpenAI `wire_api` 契约
 
 `llm.openai.wire_api` 控制运行时 bridge 选择：

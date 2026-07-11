@@ -1597,10 +1597,10 @@ mod tests {
             let mut bindings = Vec::new();
             let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
             for frame in frame_repo.frames.lock().unwrap().values() {
-                if let Some(session_ids) = sessions_by_frame.get(&frame.id) {
-                    if let Some(runtime_session_id) = session_ids.last() {
-                        bindings.push(runtime_binding(run_id, frame.agent_id, runtime_session_id));
-                    }
+                if let Some(session_ids) = sessions_by_frame.get(&frame.id)
+                    && let Some(runtime_session_id) = session_ids.last()
+                {
+                    bindings.push(runtime_binding(run_id, frame.agent_id, runtime_session_id));
                 }
             }
             Self {

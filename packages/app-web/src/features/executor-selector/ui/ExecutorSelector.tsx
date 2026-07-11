@@ -105,9 +105,6 @@ export function ExecutorSelector({
     [executors, executor],
   );
 
-  // 只显示可用的执行器
-  const availableExecutors = useMemo(() => executors.filter((e) => e.available), [executors]);
-
   const displayLabel = useMemo(() => {
     if (!executor) return "选择执行器…";
     const info = executors.find((e) => e.id === executor);
@@ -252,9 +249,9 @@ export function ExecutorSelector({
               <option value="">
                 {isLoading ? "加载中…" : "选择执行器…"}
               </option>
-              {availableExecutors.map((info) => (
-                <option key={info.id} value={info.id}>
-                  {info.name}
+              {executors.map((info) => (
+                <option key={info.id} value={info.id} disabled={!info.available}>
+                  {info.name}{info.available ? "" : `（不可用：${info.unavailable_reason ?? "运行条件未满足"}）`}
                 </option>
               ))}
             </select>
@@ -384,8 +381,8 @@ export function ExecutorSelector({
                 >
                   <option value="">默认 / 自动判断</option>
                   {(modelSelector?.providers ?? []).map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
+                    <option key={provider.id} value={provider.id} disabled={provider.executable === false}>
+                      {provider.name}{provider.executable === false ? `（不可用：${provider.unavailable_reason ?? "运行条件未满足"}）` : ""}
                     </option>
                   ))}
                 </select>

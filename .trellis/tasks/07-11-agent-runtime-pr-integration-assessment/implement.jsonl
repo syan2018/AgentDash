@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/prd.md", "reason": "集成目标、搬运优先约束、worktree 与验收边界"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/design.md", "reason": "目标 ownership、Runtime bridge ports 与 physical transplant manifest"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/research/pr93-architecture.md", "reason": "PR #93 不变量、同名领域冲突与目标边界证据"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/research/current-branch-adaptation.md", "reason": "当前 Operation/Interaction/Channel 能力的逐域适配地图"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/research/coupling-root-cause.md", "reason": "冲突根因分类、必要集成面和 before/after 模块独立性指标"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "当前 canonical Operation Gateway 合同"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/research/pr93-conflict-map.md", "reason": "显式冲突、migration、delete/modify 与共享装配热点"}
+{"file": ".trellis/tasks/07-11-agent-runtime-pr-integration-assessment/implement.md", "reason": "依赖顺序、主题提交、source worktree 搬运与阶段门禁"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Runtime、Operation 与 Interaction 跨层合同"}

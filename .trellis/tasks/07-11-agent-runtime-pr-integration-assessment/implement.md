@@ -202,3 +202,13 @@ branch；产品提交按以下四层构造：
 - Runtime-specific 变更若越出 adapter/composition allowlist，必须先回到 design review 判断 port 是否缺失，
   不能以修编译为由直接扩大依赖面。
 - migration 与 generated contracts 在产品代码稳定后统一落地。
+
+## Completion Evidence
+
+- 95 个重叠路径已在 `research/coupling-final-audit.md` 逐项关闭，final tree 与 canonical owner 可复核。
+- Operation Gateway、Interaction、Channel、WorkspaceModule core 的 manifest/source scan 未发现 Managed
+  Runtime、Driver Host 或 RuntimeWire 依赖；具体 Runtime 坐标位于 AgentRun adapter 与 API composition。
+- final PostgreSQL readiness 不再要求 0067 已删除的 Canvas 表；0061–0067 migration guard 与 Runtime
+  repository 集成测试通过。
+- `cargo fmt/check/clippy/test`、migration/test-support/contracts/frontend gates、`check:quick` 与
+  `git diff --check` 全部通过。

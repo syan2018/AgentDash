@@ -172,6 +172,7 @@ pub enum RuntimeEvent {
     ItemStarted {
         turn_id: RuntimeTurnId,
         item_id: RuntimeItemId,
+        initial_content: RuntimeItemContent,
     },
     ItemDelta {
         turn_id: RuntimeTurnId,

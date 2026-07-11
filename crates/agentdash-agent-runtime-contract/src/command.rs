@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ContextCheckpointId, ContextCompactionId, ContextCompactionTrigger, IdempotencyKey,
-    RuntimeInteractionId, RuntimeOperationId, RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
+    BoundRuntimeHookPlan, ContextCheckpointId, ContextCompactionId, ContextCompactionTrigger,
+    IdempotencyKey, ProfileDigest, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
+    RuntimeOperationId, RuntimeProfile, RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
     SurfaceDigest, ToolSetRevision,
 };
 
@@ -76,8 +77,17 @@ pub enum RuntimeCommandKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeCommand {
     ThreadStart {
+        thread_id: RuntimeThreadId,
+        binding_id: RuntimeBindingId,
+        driver_generation: RuntimeDriverGeneration,
+        source_thread_id: crate::DriverThreadId,
+        profile_digest: ProfileDigest,
+        bound_profile: Box<RuntimeProfile>,
         input: Vec<RuntimeInput>,
         surface_digest: SurfaceDigest,
+        settings_revision: crate::ThreadSettingsRevision,
+        tool_set_revision: crate::ToolSetRevision,
+        hook_plan: BoundRuntimeHookPlan,
     },
     ThreadResume {
         thread_id: RuntimeThreadId,
@@ -159,6 +169,9 @@ pub struct OperationReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeSnapshotQuery {
+    Operation {
+        operation_id: RuntimeOperationId,
+    },
     Thread {
         thread_id: RuntimeThreadId,
         at_revision: Option<RuntimeRevision>,

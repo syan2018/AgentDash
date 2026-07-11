@@ -778,6 +778,73 @@ impl AgentRuntimeHostRepository for PostgresAgentRuntimeHostRepository {
         Ok(lease)
     }
 
+    async fn renew_lease(
+        &self,
+        binding_id: &RuntimeBindingId,
+        generation: RuntimeDriverGeneration,
+        owner: &str,
+        token: &str,
+        now: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<DriverLease, HostStoreError> {
+        let duration = expires_at.signed_duration_since(now);
+        let database_now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(sql_error)?;
+        let database_expires_at = database_now + duration;
+        let row = sqlx::query(
+            "UPDATE agent_runtime_driver_lease SET expires_at=$5, \
+             lease=jsonb_set(lease,'{expires_at}',to_jsonb($5::timestamptz),false),updated_at=now() \
+             WHERE binding_id=$1 AND driver_generation=$2 AND owner=$3 AND token=$4 \
+             AND expires_at>clock_timestamp() RETURNING lease",
+        )
+        .bind(binding_id.as_str())
+        .bind(u64_to_i64(generation.0, "lease generation")?)
+        .bind(owner)
+        .bind(token)
+        .bind(database_expires_at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sql_error)?
+        .ok_or_else(|| HostStoreError::Conflict {
+            entity: "agent_runtime_driver_lease",
+            id: binding_id.to_string(),
+            expected: None,
+            actual: None,
+        })?;
+        decode(row.get("lease"), "agent_runtime_driver_lease.lease")
+    }
+
+    async fn release_lease(
+        &self,
+        binding_id: &RuntimeBindingId,
+        generation: RuntimeDriverGeneration,
+        owner: &str,
+        token: &str,
+    ) -> Result<(), HostStoreError> {
+        let result = sqlx::query(
+            "DELETE FROM agent_runtime_driver_lease WHERE binding_id=$1 \
+             AND driver_generation=$2 AND owner=$3 AND token=$4",
+        )
+        .bind(binding_id.as_str())
+        .bind(u64_to_i64(generation.0, "lease generation")?)
+        .bind(owner)
+        .bind(token)
+        .execute(&self.pool)
+        .await
+        .map_err(sql_error)?;
+        if result.rows_affected() != 1 {
+            return Err(HostStoreError::Conflict {
+                entity: "agent_runtime_driver_lease",
+                id: binding_id.to_string(),
+                expected: None,
+                actual: None,
+            });
+        }
+        Ok(())
+    }
+
     async fn record_driver_coordinate(
         &self,
         binding_id: &RuntimeBindingId,

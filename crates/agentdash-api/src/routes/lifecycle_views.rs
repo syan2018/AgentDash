@@ -6,18 +6,11 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application_agentrun::agent_run::{
-    AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
-    AgentRunRuntimeSurfaceQueryError, ConversationEffectiveExecutorConfigModel,
-    ConversationModelConfigSourceModel, RuntimeSessionRefReadModel, RuntimeSessionTraceReadModel,
-};
 use agentdash_application_lifecycle::run_view_builder::{
     self, SubjectExecutionView as SubjectExecutionReadModel,
 };
 use agentdash_contracts::workflow::{
-    AgentFrameRefDto, AgentFrameRuntimeView, ConversationEffectiveExecutorConfigView,
-    ConversationModelConfigSource, LifecycleRunView, ProjectActiveAgentsView, RuntimeSessionRefDto,
-    RuntimeSessionTraceView, SubjectExecutionView,
+    LifecycleRunView, ProjectActiveAgentsView, SubjectExecutionView,
 };
 use agentdash_domain::workflow::{LifecycleRun, SubjectRef};
 
@@ -44,14 +37,6 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/subjects/{kind}/{id}/execution",
             axum::routing::get(get_subject_execution),
-        )
-        .route(
-            "/agent-frames/{id}/runtime",
-            axum::routing::get(get_agent_frame_runtime),
-        )
-        .route(
-            "/runtime-traces/{id}",
-            axum::routing::get(get_runtime_trace),
         )
         .route(
             "/projects/{id}/active-agents",
@@ -90,45 +75,6 @@ pub async fn get_subject_execution(
         run_view_builder::build_subject_execution_view(&lifecycle_repos, subject.clone()).await?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
     Ok(Json(subject_execution_view_to_contract(view)))
-}
-
-pub async fn get_agent_frame_runtime(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(frame_id): Path<String>,
-) -> Result<Json<AgentFrameRuntimeView>, ApiError> {
-    let frame_id = parse_uuid(&frame_id, "frame_id")?;
-    let view = state
-        .services
-        .presentation_read_model_query
-        .agent_frame_runtime(frame_id)
-        .await
-        .map_err(presentation_read_model_error_to_api)?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        view.project_id,
-        ProjectPermission::Use,
-    )
-    .await?;
-
-    Ok(Json(agent_frame_runtime_to_view(view)))
-}
-
-pub async fn get_runtime_trace(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(runtime_session_id): Path<String>,
-) -> Result<Json<RuntimeSessionTraceView>, ApiError> {
-    authorize_runtime_trace(state.as_ref(), &current_user, &runtime_session_id).await?;
-    let view = state
-        .services
-        .presentation_read_model_query
-        .runtime_session_trace(&runtime_session_id)
-        .await
-        .map_err(presentation_read_model_error_to_api)?;
-
-    Ok(Json(runtime_session_trace_to_contract(view)))
 }
 
 pub async fn get_project_active_agents(
@@ -210,168 +156,6 @@ async fn load_lifecycle_run(state: &AppState, run_id: Uuid) -> Result<LifecycleR
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
 }
 
-async fn authorize_runtime_trace(
-    state: &AppState,
-    current_user: &agentdash_integration_api::AuthIdentity,
-    runtime_session_id: &str,
-) -> Result<Uuid, ApiError> {
-    let _meta = state
-        .services
-        .session_core
-        .get_session_meta(runtime_session_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("runtime trace {runtime_session_id} 不存在")))?;
-    let anchor = state
-        .repos
-        .execution_anchor_repo
-        .find_by_session(runtime_session_id)
-        .await?
-        .ok_or_else(|| {
-            ApiError::BadRequest(format!(
-                "runtime trace 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
-            ))
-        })?;
-    let run = load_lifecycle_run(state, anchor.run_id).await?;
-    let project_id = run.project_id;
-    load_project_with_permission(state, current_user, project_id, ProjectPermission::Use).await?;
-    Ok(project_id)
-}
-
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("无效的 {field}: {raw}")))
-}
-
-pub(crate) fn agent_frame_runtime_to_view(
-    frame: AgentFrameRuntimeReadModel,
-) -> AgentFrameRuntimeView {
-    AgentFrameRuntimeView {
-        frame_ref: agent_frame_ref_to_contract(frame.frame_ref),
-        capability_surface: frame.capability_surface,
-        context_slice: frame.context_slice,
-        vfs_surface: frame.vfs_surface,
-        mcp_surface: frame.mcp_surface,
-        runtime_session_refs: frame
-            .runtime_session_refs
-            .into_iter()
-            .map(runtime_session_ref_to_contract)
-            .collect(),
-        execution_profile: frame.execution_profile,
-        effective_executor_config: frame
-            .effective_executor_config
-            .map(conversation_effective_executor_config_to_contract),
-    }
-}
-
-fn conversation_effective_executor_config_to_contract(
-    config: ConversationEffectiveExecutorConfigModel,
-) -> ConversationEffectiveExecutorConfigView {
-    ConversationEffectiveExecutorConfigView {
-        executor: config.executor,
-        provider_id: config.provider_id,
-        model_id: config.model_id,
-        agent_id: config.agent_id,
-        thinking_level: config.thinking_level,
-        permission_policy: config.permission_policy,
-        source: match config.source {
-            ConversationModelConfigSourceModel::ProjectAgentPreset => {
-                ConversationModelConfigSource::ProjectAgentPreset
-            }
-            ConversationModelConfigSourceModel::FrameExecutionProfile => {
-                ConversationModelConfigSource::FrameExecutionProfile
-            }
-            ConversationModelConfigSourceModel::UserOverride => {
-                ConversationModelConfigSource::UserOverride
-            }
-            ConversationModelConfigSourceModel::ExecutorDiscoveryDefault => {
-                ConversationModelConfigSource::ExecutorDiscoveryDefault
-            }
-            ConversationModelConfigSourceModel::Unspecified => {
-                ConversationModelConfigSource::Unspecified
-            }
-        },
-    }
-}
-
-fn agent_frame_ref_to_contract(frame: AgentFrameRefReadModel) -> AgentFrameRefDto {
-    AgentFrameRefDto {
-        agent_id: frame.agent_id,
-        frame_id: frame.frame_id,
-        revision: frame.revision,
-    }
-}
-
-fn runtime_session_ref_to_contract(
-    runtime_ref: RuntimeSessionRefReadModel,
-) -> RuntimeSessionRefDto {
-    RuntimeSessionRefDto {
-        runtime_session_id: runtime_ref.runtime_session_id,
-    }
-}
-
-fn runtime_session_trace_to_contract(
-    trace: RuntimeSessionTraceReadModel,
-) -> RuntimeSessionTraceView {
-    RuntimeSessionTraceView {
-        runtime_session_ref: RuntimeSessionRefDto {
-            runtime_session_id: trace.runtime_session_id,
-        },
-        frame_ref: trace.frame_ref.map(agent_frame_ref_to_contract),
-        events: trace.events,
-        turns: trace.turns,
-    }
-}
-
-pub(crate) fn presentation_read_model_error_to_api(
-    error: AgentRunPresentationReadModelError,
-) -> ApiError {
-    match error {
-        AgentRunPresentationReadModelError::MissingSession { runtime_session_id } => {
-            ApiError::NotFound(format!("runtime trace {runtime_session_id} 不存在"))
-        }
-        AgentRunPresentationReadModelError::MissingLifecycleRun { run_id } => {
-            ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}"))
-        }
-        AgentRunPresentationReadModelError::MissingLifecycleAgent { agent_id } => {
-            ApiError::NotFound(format!("lifecycle_agent 不存在: {agent_id}"))
-        }
-        AgentRunPresentationReadModelError::MissingAgentFrame { frame_id } => {
-            ApiError::NotFound(format!("agent_frame 不存在: {frame_id}"))
-        }
-        AgentRunPresentationReadModelError::ControlPlaneMismatch { message } => {
-            ApiError::BadRequest(message)
-        }
-        AgentRunPresentationReadModelError::RuntimeSurface(error) => match error {
-            AgentRunRuntimeSurfaceQueryError::MissingAnchor {
-                runtime_session_id, ..
-            } => ApiError::NotFound(format!(
-                "runtime trace 缺少 RuntimeSessionExecutionAnchor: {runtime_session_id}"
-            )),
-            AgentRunRuntimeSurfaceQueryError::MissingLifecycleRun { run_id, .. } => {
-                ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}"))
-            }
-            AgentRunRuntimeSurfaceQueryError::MissingLifecycleAgent { agent_id, .. } => {
-                ApiError::NotFound(format!("lifecycle_agent 不存在: {agent_id}"))
-            }
-            AgentRunRuntimeSurfaceQueryError::MissingCurrentFrame { agent_id, .. } => {
-                ApiError::NotFound(format!(
-                    "lifecycle_agent {agent_id} 没有 current AgentFrame"
-                ))
-            }
-            AgentRunRuntimeSurfaceQueryError::AnchorControlPlaneMismatch { .. }
-            | AgentRunRuntimeSurfaceQueryError::MissingSurfaceClosure { .. }
-            | AgentRunRuntimeSurfaceQueryError::MissingRuntimeBackendAnchor { .. }
-            | AgentRunRuntimeSurfaceQueryError::BackendAnchorDerivation { .. } => {
-                ApiError::BadRequest(error.to_string())
-            }
-            AgentRunRuntimeSurfaceQueryError::Repository { message, .. } => {
-                ApiError::Internal(message)
-            }
-        },
-        AgentRunPresentationReadModelError::Application(error) => ApiError::from(error),
-        AgentRunPresentationReadModelError::Domain(error) => ApiError::from(error),
-        AgentRunPresentationReadModelError::SessionStore(error) => ApiError::from(error),
-        AgentRunPresentationReadModelError::Io(error) => ApiError::Internal(format!(
-            "读取 session presentation read model 失败: {error}"
-        )),
-    }
 }

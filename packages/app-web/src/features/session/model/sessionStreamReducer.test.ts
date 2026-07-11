@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type {
   BackboneEnvelope,
   BackboneEvent,
-  ProviderAttemptPhase,
   ThreadItem,
 } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "./types";
@@ -60,51 +59,6 @@ function ephemeralAgentDelta(ephemeralSeq: number, delta: string): SessionEventE
   return { ...agentDelta(ephemeralSeq, delta), ephemeral: true };
 }
 
-function ephemeralProviderAttemptStatus(
-  ephemeralSeq: number,
-  phase: ProviderAttemptPhase = "connected_waiting_first_delta",
-): SessionEventEnvelope {
-  return {
-    ...streamEvent(ephemeralSeq, {
-      type: "platform",
-      payload: {
-        kind: "provider_attempt_status",
-        data: {
-          turn_id: "turn-1",
-          phase,
-          attempt: 1,
-          max_attempts: 3,
-          will_retry: false,
-          delay_ms: null,
-          reason_code: null,
-          message: null,
-          provider: null,
-          model: null,
-        },
-      },
-    }),
-    session_update_type: "provider_attempt_status",
-    ephemeral: true,
-  };
-}
-
-function turnTerminal(event_seq: number): SessionEventEnvelope {
-  return streamEvent(event_seq, {
-    type: "platform",
-    payload: {
-      kind: "session_meta_update",
-      data: {
-        key: "turn_terminal",
-        value: {
-          terminal_type: "turn_completed",
-          turn_id: "turn-1",
-          duration_ms: 100,
-        },
-      },
-    },
-  });
-}
-
 function retryError(event_seq: number): SessionEventEnvelope {
   return streamEvent(event_seq, {
     type: "error",
@@ -116,24 +70,6 @@ function retryError(event_seq: number): SessionEventEnvelope {
         message: "Reconnecting... 1/3",
         codexErrorInfo: null,
         additionalDetails: null,
-      },
-    },
-  });
-}
-
-function sessionRewound(event_seq: number, stableEventSeq: number): SessionEventEnvelope {
-  return streamEvent(event_seq, {
-    type: "platform",
-    payload: {
-      kind: "session_meta_update",
-      data: {
-        key: "session_rewound",
-        value: {
-          discarded_turn_id: "turn-1",
-          stable_event_seq: stableEventSeq,
-          reason: "provider_retry",
-          message: "已丢弃失败轮次，恢复到上一稳定状态",
-        },
       },
     },
   });
@@ -316,31 +252,6 @@ describe("sessionStreamReducer", () => {
     expect(state.rawEvents[0]?.notification.event.type).toBe("error");
     expect(state.entries).toHaveLength(0);
     expect(state.lastAppliedSeq).toBe(1);
-  });
-
-  it("session_rewound 不裁剪前端 rawEvents 或失败轮次展示", () => {
-    const state = reduceStreamState(createInitialStreamState([]), [
-      agentDelta(1, "partial failed output"),
-      streamEvent(2, {
-        type: "platform",
-        payload: {
-          kind: "session_meta_update",
-          data: {
-            key: "turn_terminal",
-            value: {
-              terminal_type: "turn_failed",
-              turn_id: "turn-1",
-              message: "provider disconnected",
-            },
-          },
-        },
-      }),
-      sessionRewound(3, 0),
-    ]);
-
-    expect(state.lastAppliedSeq).toBe(3);
-    expect(state.rawEvents.map((event) => event.event_seq)).toEqual([1, 2, 3]);
-    expect(state.entries.some((entry) => entry.accumulatedText?.includes("partial failed output"))).toBe(true);
   });
 
   it("command completed 后使用 final aggregatedOutput 作为终态 bounded 展示源", () => {
@@ -636,43 +547,6 @@ describe("sessionStreamReducer", () => {
     expect(state.lastEphemeralSeq).toBe(2);
   });
 
-  it("ephemeral provider status 只更新 live waiting 状态，不进 rawEvents 或 entries", () => {
-    const state = reduceStreamState(createInitialStreamState([]), [
-      ephemeralProviderAttemptStatus(1),
-    ]);
-
-    expect(state.rawEvents).toHaveLength(0);
-    expect(state.entries).toHaveLength(0);
-    expect(state.providerWaitingSeqs.get("turn-1")).toBe(1);
-    expect(state.lastAppliedSeq).toBe(0);
-    expect(state.lastEphemeralSeq).toBe(1);
-  });
-
-  it("provider succeeded 清理 live waiting 状态", () => {
-    const waiting = reduceStreamState(createInitialStreamState([]), [
-      ephemeralProviderAttemptStatus(1),
-    ]);
-    const cleared = reduceStreamState(waiting, [
-      ephemeralProviderAttemptStatus(2, "succeeded"),
-    ]);
-
-    expect(cleared.providerWaitingSeqs.size).toBe(0);
-    expect(cleared.rawEvents).toHaveLength(0);
-    expect(cleared.entries).toHaveLength(0);
-    expect(cleared.lastEphemeralSeq).toBe(2);
-  });
-
-  it("turn terminal 清理 live provider waiting 状态", () => {
-    const waiting = reduceStreamState(createInitialStreamState([]), [
-      ephemeralProviderAttemptStatus(1),
-    ]);
-    const cleared = reduceStreamState(waiting, [turnTerminal(2)]);
-
-    expect(cleared.providerWaitingSeqs.size).toBe(0);
-    expect(cleared.rawEvents.map((event) => event.event_seq)).toEqual([2]);
-    expect(cleared.lastAppliedSeq).toBe(2);
-  });
-
   it("durable 事件后再来 ephemeral：dedup 不误杀且不污染 rawEvents", () => {
     const afterDurable = reduceStreamState(createInitialStreamState([]), [
       agentDelta(5, "durable"),
@@ -733,17 +607,6 @@ describe("sessionStreamReducer", () => {
 
     // lastEphemeralSeq 已为 0 时返回原引用（无效更新）。
     expect(resetEphemeralCursor(reset)).toBe(reset);
-  });
-
-  it("P2：resetEphemeralCursor 同时清理 live provider waiting 状态", () => {
-    const before = reduceStreamState(createInitialStreamState([]), [
-      ephemeralProviderAttemptStatus(1),
-    ]);
-    expect(before.providerWaitingSeqs.get("turn-1")).toBe(1);
-
-    const reset = resetEphemeralCursor(before);
-    expect(reset.lastEphemeralSeq).toBe(0);
-    expect(reset.providerWaitingSeqs.size).toBe(0);
   });
 
   it("ephemeral 乱序到达仍按 ephemeral_seq 升序应用", () => {

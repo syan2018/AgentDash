@@ -81,6 +81,23 @@ async fn database() -> (PostgresRuntime, sqlx::PgPool) {
     agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
         .await
         .expect("Host schema readiness");
+    agentdash_infrastructure::migration::assert_postgres_tables_absent(
+        &pool,
+        &[
+            "agent_run_delivery_bindings",
+            "runtime_session_compaction_requests",
+            "runtime_session_execution_anchors",
+            "runtime_session_delivery_commands",
+            "runtime_session_projection_segments",
+            "runtime_session_projection_heads",
+            "runtime_session_lineage",
+            "runtime_session_compactions",
+            "runtime_session_events",
+            "runtime_sessions",
+        ],
+    )
+    .await
+    .expect("legacy RuntimeSession schema is physically absent");
     (runtime, pool)
 }
 

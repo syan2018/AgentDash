@@ -4,6 +4,7 @@
 //! coordinates, and generation-fenced routing. Managed Runtime remains the authority for Thread,
 //! Turn, Item, Interaction, context, hooks, and terminal state.
 
+mod conformance;
 mod host;
 mod memory;
 mod model;
@@ -14,6 +15,7 @@ pub use agentdash_integration_api::{
     AgentRuntimeCredentialRef, AgentRuntimeCredentialSlot, AgentRuntimePlacement,
     AgentServiceBuildDigest, AgentServiceDefinitionId, AgentServiceOfferId, AgentServiceProvenance,
 };
+pub use conformance::*;
 pub use host::*;
 pub use memory::*;
 pub use model::*;

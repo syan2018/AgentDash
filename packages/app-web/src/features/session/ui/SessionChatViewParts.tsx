@@ -3,7 +3,6 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 
 import { SessionProjectionView } from "./SessionProjectionView";
 
-import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
@@ -241,7 +240,6 @@ export function SessionChatStream({
   isLoading,
   streamingEntryId,
   streamPrefixContent,
-  onForkFromMessageRef,
   onScroll,
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -253,7 +251,6 @@ export function SessionChatStream({
   isLoading: boolean;
   streamingEntryId: string | null;
   streamPrefixContent?: ReactNode;
-  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   onScroll: () => void;
 }) {
   return (
@@ -276,7 +273,6 @@ export function SessionChatStream({
                 agentRunTarget={agentRunTarget}
                 companionSubagents={companionSubagents}
                 streamingEntryId={streamingEntryId}
-                onForkFromMessageRef={onForkFromMessageRef}
               />
             ))
           ) : (
@@ -401,13 +397,11 @@ function TurnSection({
   agentRunTarget,
   companionSubagents,
   streamingEntryId,
-  onForkFromMessageRef,
 }: {
   segment: TurnSegment;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   streamingEntryId: string | null;
-  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
 }) {
   const isTerminal = segment.status !== "active";
   const terminalLabel = terminalTurnLabel(segment.status);
@@ -456,10 +450,7 @@ function TurnSection({
             </div>
           );
         })}
-        <RoundActionToolbar
-          actionModel={buildRoundActionModel(segment)}
-          onForkFromMessageRef={onForkFromMessageRef}
-        />
+        <RoundActionToolbar actionModel={buildRoundActionModel(segment)} />
       </div>
     );
   }
@@ -484,10 +475,7 @@ function TurnSection({
           isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
         />
       )}
-      <RoundActionToolbar
-        actionModel={buildRoundActionModel(segment)}
-        onForkFromMessageRef={onForkFromMessageRef}
-      />
+      <RoundActionToolbar actionModel={buildRoundActionModel(segment)} />
     </div>
   );
 }
@@ -501,33 +489,8 @@ function CopyIcon() {
   );
 }
 
-function ForkIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="6" cy="6" r="2" />
-      <circle cx="18" cy="6" r="2" />
-      <circle cx="12" cy="18" r="2" />
-      <path d="M6 8v2a4 4 0 0 0 4 4h2" />
-      <path d="M18 8v2a4 4 0 0 1-4 4h-2" />
-      <path d="M12 14v2" />
-    </svg>
-  );
-}
-
-function RoundActionToolbar({
-  actionModel,
-  onForkFromMessageRef,
-}: {
-  actionModel: RoundActionModel;
-  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
-}) {
+function RoundActionToolbar({ actionModel }: { actionModel: RoundActionModel }) {
   const [copied, setCopied] = useState(false);
-  const [forking, setForking] = useState(false);
-  const forkPointRef = actionModel.forkFromHere.forkPointRef;
-  const canFork = Boolean(actionModel.forkFromHere.enabled && forkPointRef && onForkFromMessageRef);
-  const forkDisabledReason = onForkFromMessageRef
-    ? actionModel.forkFromHere.disabledReason
-    : "当前视图没有 AgentRun fork 入口。";
 
   const handleCopy = async () => {
     if (!actionModel.copyLastAgentReply.enabled) return;
@@ -536,17 +499,7 @@ function RoundActionToolbar({
     window.setTimeout(() => setCopied(false), 1200);
   };
 
-  const handleFork = async () => {
-    if (!canFork || !forkPointRef || !onForkFromMessageRef || forking) return;
-    setForking(true);
-    try {
-      await onForkFromMessageRef(forkPointRef);
-    } finally {
-      setForking(false);
-    }
-  };
-
-  if (!actionModel.copyLastAgentReply.enabled && !actionModel.forkFromHere.forkPointRef) {
+  if (!actionModel.copyLastAgentReply.enabled) {
     return null;
   }
 
@@ -562,16 +515,6 @@ function RoundActionToolbar({
           onClick={() => { void handleCopy(); }}
         >
           {copied ? <span className="text-[10px] font-medium">OK</span> : <CopyIcon />}
-        </button>
-        <button
-          type="button"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          disabled={!canFork || forking}
-          title={canFork ? "从当前稳定轮次 fork AgentRun" : forkDisabledReason ?? "当前轮次不可 fork"}
-          aria-label="从当前稳定轮次 fork AgentRun"
-          onClick={() => { void handleFork(); }}
-        >
-          {forking ? <span className="h-3 w-3 animate-spin rounded-[8px] border border-current border-t-transparent" /> : <ForkIcon />}
         </button>
       </div>
     </div>

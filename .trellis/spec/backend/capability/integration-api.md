@@ -32,7 +32,7 @@
 
 ## 装配顺序
 
-收集集成 → 汇总到 IntegrationRegistry → 冲突检测 → 构建 connector/auth/provider → 构建 AppState → 启动
+收集集成 → 汇总到 IntegrationRegistry → 校验 contribution/trust manifest 与键冲突 → 构建 Agent service definitions/factories 和其他 providers → 构建 AppState → 激活 durable service instances
 
 不允许先构建运行时再塞入集成。
 
@@ -125,10 +125,10 @@ provider.discover_from_vfs(context, mount_summaries, bounded_files).await
 #### Platform-owned
 
 ```text
-active VFS -> bounded file scan -> normalized MemoryDiscoveryOutput -> memory_context ContextFrame -> connector system context
+active VFS -> bounded file scan -> normalized MemoryDiscoveryOutput -> Business Surface context contribution -> immutable AgentSurfaceSnapshot -> BoundAgentSurface -> Driver materialization
 ```
 
-这样分层的原因是不同 integration 可以贡献 memory inventory 识别逻辑，但读写行为、权限边界和 prompt 注入生命周期必须继续由平台的 VFS、ContextFrame 和 connector runtime 统一控制。
+这样分层的原因是不同 Integration 可以贡献 memory inventory 识别逻辑，但读写行为、权限边界和上下文 materialization 生命周期必须继续由平台 VFS、Business Surface 与 Managed Runtime 统一控制。
 
 ## Integration Embedded Shared Library Assets
 
@@ -245,3 +245,61 @@ External listing -> typed import -> LibraryAsset -> Shared Library install -> Pr
 - 让企业仓直接依赖重运行时 crate 来实现轻量扩展
 - 为开源版和企业版维护两套宿主装配逻辑
 - 集成冲突时隐式覆盖
+## Agent Runtime Driver Contribution
+
+### 1. Scope / Trigger
+
+受信 Integration 贡献内建、Codex 或企业 Agent service 时使用本合同。Relay placement 不作为 Agent service definition。
+
+### 2. Signatures
+
+```rust
+fn agent_runtime_drivers(&self) -> Vec<AgentRuntimeDriverContribution>;
+fn agent_runtime_trust_manifests(&self) -> Vec<AgentRuntimeTrustManifest>;
+```
+
+Contribution 包含不可变 `AgentServiceDefinition` 与 factory。运行期按 `definition -> service instance revision -> verified RuntimeOffer -> durable RuntimeBinding -> driver generation` 激活。
+
+### 3. Contracts
+
+- Integration 是编译期受信扩展点；运行期管理的是 service instance、配置、credential refs、placement 和 binding。
+- Contribution 与 trust manifest 必须一一匹配 provenance、build digest、protocol revision、suite revision 与 verified profile；不匹配时宿主启动失败。
+- `RuntimeOffer` 是 service guarantee、transport guarantee 与 host policy 的交集，不能通过 capabilities OR 扩大。
+- Factory 只能解析 definition 声明的 credential slot、purpose 与 scope；secret 不进入 instance JSON、descriptor、日志或 RuntimeWire。
+- Native、Codex 与 enterprise remote 使用同一 Host lifecycle。Unsupported 在副作用前返回 typed error，不 fallback 到 prompt 或另一 Agent。
+- Relay 只提供 placement 与 RuntimeWire guarantee；远端 service 的 provenance、offer 与 source generation 保持可追踪。
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| definition 无 trust manifest | 启动失败 |
+| verified profile 与 definition 上界不一致 | conformance rejection |
+| credential slot 未声明或 scope 不匹配 | factory side effect 前拒绝 |
+| service/transport/host 任一不保证 required feature | admission unavailable |
+| 远端 generation 过期 | fence event/HostPort call |
+| 同一 service identity 重复贡献 | registry conflict |
+
+### 5. Good / Base / Bad Cases
+
+- Good：企业仓新增 Integration crate，贡献 definition/factory/trust manifest，平台无需添加 vendor 分支即可完成 instance、offer 与 binding。
+- Base：service 只支持 conversation 而不支持平台 tool injection；offer 如实声明，相关 AgentRun command/feature 不可用。
+- Bad：API 根据 executor 字符串直接构造 Codex client，或把远端、Native profiles 做并集后宣称完整 L4。
+
+### 6. Tests Required
+
+- Registry 冲突与 contribution/manifest 一致性测试。
+- Host conformance、credential scope、offer intersection 与 binding generation 测试。
+- Native、Codex、enterprise remote 生产 composition E2E。
+- Remote disconnect/reconnect、Lost exactly-once 与 stale generation fencing 测试。
+
+### 7. Wrong vs Correct
+
+```rust
+// Wrong
+match executor_kind { "codex" => build_codex(), _ => build_native() }
+
+// Correct
+let offer = host.resolve_offer(definition_id, requirements).await?;
+let binding = host.bind(offer, bound_surface).await?;
+```

@@ -27,6 +27,7 @@ pub(crate) struct MappedEvent {
 #[derive(Debug)]
 pub(crate) struct MappedInteraction {
     pub source_turn_id: DriverTurnId,
+    pub source_item_id: Option<DriverItemId>,
     pub turn_id: RuntimeTurnId,
     pub interaction_id: RuntimeInteractionId,
     pub event: RuntimeEvent,
@@ -204,6 +205,7 @@ impl SourceCoordinateMap {
             .transpose()?;
         Ok(MappedInteraction {
             source_turn_id: driver_turn(&source_turn)?,
+            source_item_id: source_item.as_deref().map(driver_item).transpose()?,
             turn_id: turn_id.clone(),
             interaction_id: interaction_id.clone(),
             event: RuntimeEvent::InteractionRequested {
@@ -260,7 +262,11 @@ impl SourceCoordinateMap {
                 terminal,
             }
         } else {
-            RuntimeEvent::ItemStarted { turn_id, item_id }
+            RuntimeEvent::ItemStarted {
+                turn_id,
+                item_id,
+                initial_content: item_content(item),
+            }
         };
         Ok(Some(MappedEvent {
             source_turn_id: Some(driver_turn(&source_turn)?),

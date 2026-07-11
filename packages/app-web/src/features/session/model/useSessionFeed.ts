@@ -146,10 +146,6 @@ function classifyEntry(
     return "tool_like";
   }
 
-  if (event.type === "turn_started" || event.type === "turn_completed") {
-    return "neutral";
-  }
-
   if (
     event.type === "reasoning_text_delta" ||
     event.type === "reasoning_summary_delta"
@@ -175,8 +171,6 @@ function classifyEntry(
 
   if (
     event.type === "token_usage_updated" ||
-    event.type === "thread_status_changed" ||
-    event.type === "executor_context_compacted" ||
     event.type === "turn_diff_updated" ||
     event.type === "plan_delta"
   ) {
@@ -647,20 +641,6 @@ function updateTurnMeta(
   if (patch.activity !== undefined) meta.activity = patch.activity;
 }
 
-function turnStartedAtMs(startedAtSeconds: number | null | undefined): number | undefined {
-  if (typeof startedAtSeconds !== "number" || !Number.isFinite(startedAtSeconds)) {
-    return undefined;
-  }
-  return startedAtSeconds * 1000;
-}
-
-function normalizeTurnStatus(status: string): TurnStatus {
-  if (status === "completed") return "completed";
-  if (status === "failed") return "failed";
-  if (status === "interrupted") return "interrupted";
-  return "active";
-}
-
 function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   turnId: string;
   status: TurnStatus;
@@ -668,16 +648,6 @@ function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   durationMs?: number;
 } | null {
   const bbEvent = event.notification.event;
-  if (bbEvent.type === "turn_completed") {
-    const turn = bbEvent.payload.turn;
-    return {
-      turnId: turn.id,
-      status: normalizeTurnStatus(turn.status),
-      startedAtMs: turnStartedAtMs(turn.startedAt),
-      durationMs: turn.durationMs ?? undefined,
-    };
-  }
-
   if (
     bbEvent.type !== "platform" ||
     bbEvent.payload.kind !== "session_meta_update" ||
@@ -713,15 +683,6 @@ export function segmentByTurn(
   const turnMeta = new Map<string, TurnMeta>();
 
   for (const event of rawEvents) {
-    const bbEvent = event.notification.event;
-
-    if (bbEvent.type === "turn_started") {
-      updateTurnMeta(turnMeta, bbEvent.payload.turn.id, event.event_seq, {
-        status: "active",
-        startedAtMs: turnStartedAtMs(bbEvent.payload.turn.startedAt),
-      });
-    }
-
     const terminal = extractTurnTerminalMeta(event);
     if (terminal) {
       updateTurnMeta(turnMeta, terminal.turnId, event.event_seq, {

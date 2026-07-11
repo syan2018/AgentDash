@@ -1,7 +1,5 @@
-use std::path::PathBuf;
-
 use agentdash_domain::workflow::{ActivityDefinition, AgentProcedure, LifecycleRun, WorkflowGraph};
-use agentdash_spi::{AgentConfig, RuntimeMcpServer};
+use agentdash_spi::AgentConfig;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,15 +33,8 @@ pub struct CompanionLaunchSource {
 }
 
 #[derive(Clone)]
-pub struct LocalRelayLaunchPayload {
-    pub mcp_servers: Vec<RuntimeMcpServer>,
-    pub workspace_root: PathBuf,
-}
-
-#[derive(Clone)]
 pub enum LaunchModifier {
     Companion(Box<CompanionLaunchSource>),
     Routine(RoutineLaunchSource),
-    LocalRelay(LocalRelayLaunchPayload),
     HookAutoResume,
 }

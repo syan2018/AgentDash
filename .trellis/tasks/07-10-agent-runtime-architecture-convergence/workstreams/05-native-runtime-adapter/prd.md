@@ -29,10 +29,10 @@
 
 ## Acceptance Criteria
 
-- [ ] Clean Core可在不依赖AgentRun、repository、Codex、Backbone的测试中运行。
-- [ ] Native restart/restore/fork/compaction保持checkpoint revision与digest。
-- [ ] tool surface update返回真实applied revision，不存在default success。
-- [ ] inner hook capability只在实际Core hook point存在时声明。
-- [ ] provider/tool/stop callback在正确因果点等待typed decision；Core不查询Workflow、Rhai、HookDefinition或repository。
-- [ ] old Pi connector和runtime-session launch路径删除。
-- [ ] Native通过common与L4 adapter conformance suite。
+- [x] Clean Core可在不依赖AgentRun、repository、Codex、Backbone的测试中运行。
+- [x] Native restart/restore/fork/compaction保持checkpoint revision与digest。
+- [x] tool surface update返回真实applied revision，不存在default success。
+- [x] inner hook capability只在实际Core hook point存在时声明。
+- [x] provider/tool/stop callback在正确因果点等待typed decision；Core不查询Workflow、Rhai、HookDefinition或repository。
+- [x] old Pi connector和runtime-session launch路径删除。
+- [x] Native通过common与L4 adapter conformance suite。

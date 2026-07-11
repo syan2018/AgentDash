@@ -4,7 +4,7 @@ use agentdash_agent_protocol::UserInputBlock;
 use agentdash_application_ports::launch::{
     LaunchCommand, LaunchInputSource, LaunchPlanningInput, LaunchPromptInput,
 };
-use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
+use agentdash_domain::agent_run_mailbox::MailboxMessageOrigin;
 use agentdash_spi::platform::auth::AuthIdentity;
 use agentdash_spi::{AgentConfig, PromptPayload};
 
@@ -13,7 +13,7 @@ use crate::error::WorkflowApplicationError;
 
 #[derive(Debug, Clone)]
 pub struct AgentRunMessageDelivery {
-    pub delivery_runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub origin: MailboxMessageOrigin,
     pub input: Vec<UserInputBlock>,
     pub input_source: Option<LaunchInputSource>,
@@ -61,7 +61,7 @@ impl AgentRunMessageDeliveryPort for SessionTurnMessageDeliveryPort {
         );
         self.session_launch
             .launch_command_in_task(
-                delivery.delivery_runtime_session_id.clone(),
+                delivery.runtime_thread_id.clone(),
                 command,
                 delivery.planning_input,
             )
@@ -88,21 +88,6 @@ fn launch_command_for_mailbox_origin(
         command.with_input_source(source)
     } else {
         command
-    }
-}
-
-pub(crate) fn launch_input_source_from_mailbox_source(
-    source: &MailboxSourceIdentity,
-) -> LaunchInputSource {
-    LaunchInputSource {
-        namespace: source.namespace.clone(),
-        kind: source.kind.clone(),
-        source_ref: source.source_ref.clone(),
-        correlation_ref: source.correlation_ref.clone(),
-        actor: source.actor.clone(),
-        route: source.route.clone(),
-        display_label_key: source.display_label_key.clone(),
-        metadata: source.metadata.clone(),
     }
 }
 

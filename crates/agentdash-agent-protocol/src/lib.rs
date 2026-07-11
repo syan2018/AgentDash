@@ -13,8 +13,7 @@ pub use backbone::platform::{
     ControlPlaneProjection, ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged,
     ControlPlaneWorkspaceModulePresentation, HookTraceCompletion, HookTraceData,
     HookTraceDiagnostic, HookTraceInjection, HookTracePayload, HookTraceSeverity, HookTraceTrigger,
-    PlatformEvent, ProviderAttemptPhase, ProviderAttemptStatus, RuntimeTerminalDiagnostic,
-    SessionRewindReason, SessionRewound,
+    PlatformEvent,
 };
 pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
@@ -46,8 +45,6 @@ mod tests {
     use super::{
         BackboneEnvelope, BackboneEvent, ControlPlaneProjection,
         ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged, PlatformEvent,
-        ProviderAttemptPhase, ProviderAttemptStatus, RuntimeTerminalDiagnostic,
-        SessionRewindReason, SessionRewound,
     };
 
     #[test]
@@ -66,63 +63,9 @@ mod tests {
     }
 
     #[test]
-    fn provider_status_platform_event_uses_snake_case_contract() {
-        let event = BackboneEvent::Platform(PlatformEvent::ProviderAttemptStatus(
-            ProviderAttemptStatus {
-                turn_id: "turn-1".to_string(),
-                phase: ProviderAttemptPhase::Retrying,
-                attempt: 2,
-                max_attempts: 3,
-                will_retry: true,
-                delay_ms: Some(2_000),
-                reason_code: Some("stream_disconnected".to_string()),
-                message: Some("Reconnecting... 2/3".to_string()),
-                provider: Some("openai".to_string()),
-                model: Some("gpt-4.1".to_string()),
-            },
-        ));
-
-        let value = serde_json::to_value(event).expect("serialize provider platform event");
-        assert_eq!(value["type"], "platform");
-        assert_eq!(value["payload"]["kind"], "provider_attempt_status");
-        assert_eq!(value["payload"]["data"]["turn_id"], "turn-1");
-        assert_eq!(value["payload"]["data"]["phase"], "retrying");
-        assert_eq!(value["payload"]["data"]["max_attempts"], 3);
-        assert_eq!(value["payload"]["data"]["will_retry"], true);
-        assert_eq!(value["payload"]["data"]["delay_ms"], 2_000);
-        assert_eq!(value["payload"]["data"]["provider"], "openai");
-        assert_eq!(value["payload"]["data"]["model"], "gpt-4.1");
-    }
-
-    #[test]
-    fn runtime_terminal_diagnostic_platform_event_uses_typed_contract() {
-        let event = BackboneEvent::Platform(PlatformEvent::RuntimeTerminalDiagnostic(
-            RuntimeTerminalDiagnostic {
-                kind: "provider".to_string(),
-                code: Some("invalid_request".to_string()),
-                http_status: Some(400),
-                provider: Some("Example LLM".to_string()),
-                model: Some("example-chat-large".to_string()),
-                message: "provider returned 400".to_string(),
-                retryable: false,
-            },
-        ));
-
-        let value = serde_json::to_value(event).expect("serialize diagnostic platform event");
-        assert_eq!(value["type"], "platform");
-        assert_eq!(value["payload"]["kind"], "runtime_terminal_diagnostic");
-        assert_eq!(value["payload"]["data"]["kind"], "provider");
-        assert_eq!(value["payload"]["data"]["code"], "invalid_request");
-        assert_eq!(value["payload"]["data"]["http_status"], 400);
-        assert_eq!(value["payload"]["data"]["provider"], "Example LLM");
-        assert_eq!(value["payload"]["data"]["model"], "example-chat-large");
-        assert_eq!(value["payload"]["data"]["retryable"], false);
-    }
-
-    #[test]
     fn control_plane_projection_changed_platform_event_uses_typed_contract() {
         let event = BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
-            ControlPlaneProjectionChanged {
+            Box::new(ControlPlaneProjectionChanged {
                 projection: ControlPlaneProjection::Workspace,
                 reason: ControlPlaneProjectionChangeReason::MailboxStateChanged,
                 run_id: "run-1".to_string(),
@@ -130,9 +73,8 @@ mod tests {
                 frame_id: Some("frame-1".to_string()),
                 gate_id: Some("gate-1".to_string()),
                 mailbox_message_id: Some("mailbox-1".to_string()),
-                delivery_runtime_session_id: Some("session-1".to_string()),
                 workspace_module_presentation: None,
-            },
+            }),
         ));
 
         let value =
@@ -146,31 +88,5 @@ mod tests {
         assert_eq!(value["payload"]["data"]["frame_id"], "frame-1");
         assert_eq!(value["payload"]["data"]["gate_id"], "gate-1");
         assert_eq!(value["payload"]["data"]["mailbox_message_id"], "mailbox-1");
-        assert_eq!(
-            value["payload"]["data"]["delivery_runtime_session_id"],
-            "session-1",
-        );
-    }
-
-    #[test]
-    fn session_rewound_platform_event_uses_stable_boundary_contract() {
-        let event = BackboneEvent::Platform(PlatformEvent::SessionRewound(SessionRewound {
-            discarded_turn_id: "turn-failed".to_string(),
-            discarded_entry_index: Some(1),
-            stable_event_seq: 120,
-            stable_turn_id: Some("turn-stable".to_string()),
-            reason: SessionRewindReason::ProviderFailure,
-            replacement_turn_id: None,
-            message: Some("rewound failed turn".to_string()),
-        }));
-
-        let value = serde_json::to_value(event).expect("serialize rewind platform event");
-        assert_eq!(value["type"], "platform");
-        assert_eq!(value["payload"]["kind"], "session_rewound");
-        assert_eq!(value["payload"]["data"]["discarded_turn_id"], "turn-failed");
-        assert_eq!(value["payload"]["data"]["discarded_entry_index"], 1);
-        assert_eq!(value["payload"]["data"]["stable_event_seq"], 120);
-        assert_eq!(value["payload"]["data"]["stable_turn_id"], "turn-stable");
-        assert_eq!(value["payload"]["data"]["reason"], "provider_failure");
     }
 }

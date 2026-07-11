@@ -39,7 +39,7 @@ pub(crate) struct CompanionChildDispatchOutcome {
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
     pub gate_ref: Option<Uuid>,
-    pub delivery_runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub launch_source: CompanionLaunchSource,
 }
 
@@ -71,7 +71,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                     workflow_graph_ref: None,
                     context_policy,
                     capability_policy: CapabilityPolicy::InheritedSlice,
-                    runtime_policy: RuntimePolicy::CreateRuntimeSession,
+                    runtime_policy: RuntimePolicy::ProvisionRuntimeThread,
                     gate_policy: GatePolicy {
                         gate_kind: gate_kind(request.adoption_mode).to_string(),
                         correlation_id: Some(request.dispatch_id.clone()),
@@ -96,20 +96,20 @@ impl<'a> CompanionChildDispatchService<'a> {
                         "dispatch 失败: {error}"
                     ))
                 })?;
-            let delivery_runtime_session_id =
-                require_delivery_runtime_session(result.delivery_runtime_ref)?;
+            let runtime_thread_id = self.provision_runtime_thread(&result.runtime_refs).await?;
             CompanionChildDispatchOutcome {
                 run_ref: result.runtime_refs.run_ref,
                 agent_ref: result.runtime_refs.agent_ref,
                 frame_ref: result.runtime_refs.frame_ref,
                 gate_ref: Some(result.gate_ref),
-                delivery_runtime_session_id,
+                runtime_thread_id,
                 launch_source: build_launch_source(&request),
             }
         } else {
             let result = dispatch_service
                 .launch_agent(&AgentLaunchIntent {
                     project_id: request.project_id,
+                    project_agent_id: None,
                     source: ExecutionSource::ParentAgent,
                     created_by_user_id: None,
                     subject_ref: None,
@@ -120,7 +120,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                     agent_policy: AgentPolicy::SpawnChild,
                     context_policy,
                     capability_policy: CapabilityPolicy::InheritedSlice,
-                    runtime_policy: RuntimePolicy::CreateRuntimeSession,
+                    runtime_policy: RuntimePolicy::ProvisionRuntimeThread,
                 })
                 .await
                 .map_err(|error| {
@@ -133,9 +133,7 @@ impl<'a> CompanionChildDispatchService<'a> {
                 agent_ref: result.runtime_refs.agent_ref,
                 frame_ref: result.runtime_refs.frame_ref,
                 gate_ref: None,
-                delivery_runtime_session_id: require_delivery_runtime_session(
-                    result.delivery_runtime_ref,
-                )?,
+                runtime_thread_id: self.provision_runtime_thread(&result.runtime_refs).await?,
                 launch_source: build_launch_source(&request),
             }
         };
@@ -174,9 +172,6 @@ impl<'a> CompanionChildDispatchService<'a> {
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),
         )
-        .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
-        .with_delivery_binding_repo(self.repos.agent_run_delivery_binding_repo.as_ref())
-        .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref())
         .with_frame_construction_port(self.repos.agent_frame_construction.as_ref())
         .with_project_projection_notifications(self.repos.project_projection_notifications.clone())
     }
@@ -204,6 +199,31 @@ impl<'a> CompanionChildDispatchService<'a> {
             .await
             .map_err(|error| agentdash_spi::AgentToolError::ExecutionFailed(error.to_string()))?;
         Ok(())
+    }
+
+    async fn provision_runtime_thread(
+        &self,
+        refs: &agentdash_domain::workflow::AgentRuntimeRefs,
+    ) -> Result<String, agentdash_spi::AgentToolError> {
+        use agentdash_application_ports::agent_run_runtime::{
+            AgentRunRuntimeProvisionRequest, AgentRunRuntimeTarget,
+        };
+        self.repos
+            .agent_run_runtime_provisioner
+            .provision(&AgentRunRuntimeProvisionRequest {
+                target: AgentRunRuntimeTarget {
+                    run_id: refs.run_ref,
+                    agent_id: refs.agent_ref,
+                },
+                identity: None,
+            })
+            .await
+            .map(|binding| binding.thread_id.to_string())
+            .map_err(|error| {
+                agentdash_spi::AgentToolError::ExecutionFailed(format!(
+                    "AgentRun Runtime provision 失败: {error}"
+                ))
+            })
     }
 }
 
@@ -238,18 +258,6 @@ fn companion_agent_run_delivery_wait_policy_template(
             client_command_id: "companion-result:{gate_id}".to_string(),
         },
     }
-}
-
-fn require_delivery_runtime_session(
-    delivery_runtime_ref: Option<Uuid>,
-) -> Result<String, agentdash_spi::AgentToolError> {
-    delivery_runtime_ref
-        .ok_or_else(|| {
-            agentdash_spi::AgentToolError::ExecutionFailed(
-                "dispatch 未创建 child delivery runtime session".to_string(),
-            )
-        })
-        .map(|id| id.to_string())
 }
 
 fn build_launch_source(request: &CompanionChildDispatchRequest) -> CompanionLaunchSource {

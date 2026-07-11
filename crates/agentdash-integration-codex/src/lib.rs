@@ -10,4 +10,8 @@ mod hook_bridge;
 mod mapping;
 mod rpc;
 
-pub use contribution::{CodexRuntimeIntegration, codex_runtime_contribution};
+pub use contribution::{
+    CodexRuntimeIntegration, codex_runtime_contribution, codex_runtime_contribution_with_launcher,
+    codex_runtime_trust_manifest,
+};
+pub use driver::{CodexAppServerLauncher, CodexRuntimeDriverFactory};

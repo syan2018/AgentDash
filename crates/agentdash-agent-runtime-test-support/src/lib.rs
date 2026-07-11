@@ -123,7 +123,9 @@ impl RuntimeTraceValidator {
                     ConformanceViolation::TurnThreadMismatch(turn_id.clone()),
                 )?;
             }
-            RuntimeEvent::ItemStarted { turn_id, item_id } => {
+            RuntimeEvent::ItemStarted {
+                turn_id, item_id, ..
+            } => {
                 start_turn_scoped(
                     &mut self.items,
                     item_id,

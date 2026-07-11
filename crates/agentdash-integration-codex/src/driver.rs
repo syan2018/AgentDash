@@ -28,7 +28,6 @@ use agentdash_process::{ProcessDomain, background_tokio_command_with_cwd};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout},
@@ -63,13 +62,46 @@ struct CodexDriverConfig {
     artifact_root: PathBuf,
 }
 
-pub(crate) struct CodexRuntimeDriverFactory {
+pub trait CodexAppServerLauncher: Send + Sync {
+    fn spawn(&self, cwd: &std::path::Path, hook_endpoint: Option<&str>) -> Result<Child, String>;
+}
+
+pub struct ProductionCodexAppServerLauncher;
+
+impl CodexAppServerLauncher for ProductionCodexAppServerLauncher {
+    fn spawn(&self, cwd: &std::path::Path, hook_endpoint: Option<&str>) -> Result<Child, String> {
+        let mut command =
+            background_tokio_command_with_cwd(ProcessDomain::CodexAppServer, "npx", cwd);
+        command
+            .args(["-y", CODEX_APP_SERVER_PACKAGE, "app-server"])
+            .kill_on_drop(true)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .env("NPM_CONFIG_LOGLEVEL", "error")
+            .env("NO_COLOR", "1");
+        if let Some(endpoint) = hook_endpoint {
+            command.env("AGENTDASH_HOOK_ENDPOINT", endpoint);
+        }
+        command.spawn().map_err(|error| error.to_string())
+    }
+}
+
+pub struct CodexRuntimeDriverFactory {
     key: AgentRuntimeFactoryKey,
+    launcher: Arc<dyn CodexAppServerLauncher>,
 }
 
 impl CodexRuntimeDriverFactory {
-    pub(crate) fn new(key: AgentRuntimeFactoryKey) -> Self {
-        Self { key }
+    pub fn new(key: AgentRuntimeFactoryKey) -> Self {
+        Self::with_launcher(key, Arc::new(ProductionCodexAppServerLauncher))
+    }
+
+    pub fn with_launcher(
+        key: AgentRuntimeFactoryKey,
+        launcher: Arc<dyn CodexAppServerLauncher>,
+    ) -> Self {
+        Self { key, launcher }
     }
 }
 
@@ -110,6 +142,7 @@ impl AgentRuntimeDriverFactory for CodexRuntimeDriverFactory {
             host,
             request_counter: AtomicI64::new(1),
             sessions: Mutex::new(BTreeMap::new()),
+            launcher: self.launcher.clone(),
         }))
     }
 }
@@ -120,6 +153,7 @@ struct CodexRuntimeDriver {
     host: RuntimeDriverHostPorts,
     request_counter: AtomicI64,
     sessions: Mutex<BTreeMap<String, Arc<Mutex<CodexSession>>>>,
+    launcher: Arc<dyn CodexAppServerLauncher>,
 }
 
 struct CodexSession {
@@ -240,6 +274,8 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                     request.binding_id.clone(),
                     self.instance.generation,
                     surface.hooks.bindings.clone(),
+                    surface.runtime_thread_id.clone(),
+                    surface.authorization_identity.clone(),
                 )
                 .await
                 .map_err(|error| DriverError::Unavailable {
@@ -469,26 +505,7 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                     })?;
                 let payload = interaction_result(&pending, interaction_response)?;
                 write_value(&session.stdin, &response(pending.rpc_id, payload)).await?;
-                let interaction_id = interaction_id.clone();
-                let sink = {
-                    let mut state = session.state.lock().await;
-                    state.pending_interactions.remove(key);
-                    state.sink.clone()
-                };
-                if let Some(sink) = sink {
-                    sink.emit(DriverEventEnvelope {
-                        binding_id: envelope.binding_id.clone(),
-                        generation: envelope.generation,
-                        source_thread_id: session.source_thread_id.clone(),
-                        source_turn_id: Some(pending.source_turn_id),
-                        source_item_id: None,
-                        event: RuntimeEvent::InteractionTerminal {
-                            turn_id: pending.turn_id,
-                            interaction_id,
-                            terminal: agentdash_agent_runtime_contract::RuntimeInteractionTerminal::Resolved,
-                        },
-                    }).await?;
-                }
+                session.state.lock().await.pending_interactions.remove(key);
             }
             RuntimeCommand::ContextCompact { .. } => {
                 return Err(DriverError::Unsupported {
@@ -528,6 +545,7 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                 Ok(DriverInspection::CompactionActivation {
                     applied: false,
                     digest: None,
+                    driver_context_revision: None,
                 })
             }
             DriverInspectionQuery::Checkpoint { .. } => Ok(DriverInspection::Checkpoint {
@@ -650,26 +668,16 @@ impl CodexRuntimeDriver {
         surface: MaterializedDriverSurface,
         hook_bridge: Option<HookBridgeLease>,
     ) -> Result<CodexSession, DriverError> {
-        let mut command = background_tokio_command_with_cwd(
-            ProcessDomain::CodexAppServer,
-            "npx",
-            &self.config.cwd,
-        );
-        command
-            .args(["-y", CODEX_APP_SERVER_PACKAGE, "app-server"])
-            .kill_on_drop(true)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .env("NPM_CONFIG_LOGLEVEL", "error")
-            .env("NO_COLOR", "1");
-        if let Some(bridge) = hook_bridge.as_ref() {
-            command.env("AGENTDASH_HOOK_ENDPOINT", &bridge.endpoint);
-        }
-        let mut child = command.spawn().map_err(|error| DriverError::Unavailable {
-            reason: error.to_string(),
-            retryable: true,
-        })?;
+        let mut child = self
+            .launcher
+            .spawn(
+                &self.config.cwd,
+                hook_bridge.as_ref().map(|bridge| bridge.endpoint.as_str()),
+            )
+            .map_err(|reason| DriverError::Unavailable {
+                reason,
+                retryable: true,
+            })?;
         let stdin = child.stdin.take().ok_or_else(|| DriverError::Unavailable {
             reason: "Codex app-server has no stdin".to_string(),
             retryable: true,
@@ -912,6 +920,8 @@ impl CodexRuntimeDriver {
         let generation = self.instance.generation;
         let source_thread_id = session.source_thread_id.clone();
         let tool_set_revision = session.surface.tools.revision;
+        let runtime_thread_id = session.surface.runtime_thread_id.clone();
+        let authorization_identity = session.surface.authorization_identity.clone();
         let initial = std::mem::take(&mut session.bootstrap_inbound);
         session.pump = Some(tokio::spawn(async move {
             run_pump(
@@ -924,6 +934,8 @@ impl CodexRuntimeDriver {
                     generation,
                     source_thread_id,
                     tool_set_revision,
+                    runtime_thread_id,
+                    authorization_identity,
                 },
                 initial,
             )
@@ -941,6 +953,8 @@ struct CodexPumpContext {
     generation: agentdash_agent_runtime_contract::RuntimeDriverGeneration,
     source_thread_id: DriverThreadId,
     tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision,
+    runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId,
+    authorization_identity: Option<agentdash_integration_api::AuthIdentity>,
 }
 
 async fn run_pump(
@@ -981,9 +995,12 @@ async fn run_pump(
         };
         match inbound {
             RpcInbound::Response(response) => {
-                if let Some(id) = response.id.as_i64()
-                    && let Some(waiter) = context.state.lock().await.rpc_waiters.remove(&id)
-                {
+                let waiter = if let Some(id) = response.id.as_i64() {
+                    context.state.lock().await.rpc_waiters.remove(&id)
+                } else {
+                    None
+                };
+                if let Some(waiter) = waiter {
                     if let Some(canonical_turn) = waiter.canonical_turn
                         && let Some(source_turn) =
                             response.result.pointer("/turn/id").and_then(Value::as_str)
@@ -1071,7 +1088,7 @@ async fn run_pump(
                                     generation: context.generation,
                                     source_thread_id: context.source_thread_id.clone(),
                                     source_turn_id: Some(mapped.source_turn_id),
-                                    source_item_id: None,
+                                    source_item_id: mapped.source_item_id,
                                     event: mapped.event,
                                 })
                                 .await;
@@ -1170,6 +1187,9 @@ async fn handle_pump_dynamic_tool(
         (canonical_turn, canonical_item)
     };
     let invocation = DriverToolInvocation {
+        thread_id: context.runtime_thread_id.clone(),
+        turn_id: coordinates.0.clone(),
+        item_id: coordinates.1.clone(),
         binding_id: context.binding_id.clone(),
         generation: context.generation,
         source_thread_id: context.source_thread_id.clone(),
@@ -1189,6 +1209,7 @@ async fn handle_pump_dynamic_tool(
             .cloned()
             .unwrap_or(Value::Null),
         timeout_ms: 120_000,
+        authorization_identity: context.authorization_identity.clone(),
     };
     match context.host.tools.invoke(invocation).await {
         Ok(DriverToolOutcome::Completed { output, is_error }) => {
@@ -1432,8 +1453,7 @@ fn dynamic_tool_content(output: &Value) -> Vec<Value> {
 }
 
 fn digest_profile(profile: &RuntimeProfile) -> ProfileDigest {
-    let bytes = serde_json::to_vec(profile).expect("runtime profile serializes");
-    ProfileDigest::new(format!("sha256:{:x}", Sha256::digest(bytes))).expect("digest is non-empty")
+    agentdash_agent_runtime_contract::runtime_profile_digest(profile)
 }
 
 pub(crate) fn codex_runtime_profile() -> RuntimeProfile {

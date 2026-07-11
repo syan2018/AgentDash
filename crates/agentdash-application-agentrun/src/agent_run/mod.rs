@@ -1,50 +1,52 @@
-mod admission;
-mod cancel_command;
-pub(crate) mod command_receipt;
-mod context_compaction_command;
-mod control_effects;
+mod business_frame_surface_query;
 mod conversation_snapshot;
-mod delete_command;
-mod delivery_runtime_selection;
-mod delivery_state;
-mod effective_capability;
 mod execution_state;
-mod fork;
 pub mod frame;
-mod journal;
 pub(crate) mod lifecycle_read_model_facade;
-pub mod mailbox;
-mod mailbox_runtime_adapter;
 pub mod message_delivery;
-mod permission_runtime_surface_update;
 mod presentation_read_model;
 mod project_agent_context;
-pub(crate) mod project_agent_start;
 pub mod runtime_capability;
 pub mod runtime_capability_projection;
-mod runtime_session_boundary;
-pub mod runtime_surface;
+pub mod runtime_facade;
+pub mod runtime_mailbox;
+pub mod runtime_session_boundary;
 mod runtime_surface_update;
+
+pub use runtime_facade::{
+    AgentRunCommandGuard, AgentRunRuntime, AgentRunRuntimeError, AgentRunRuntimeView,
+    GuardedAgentRunCommand, ManagedAgentRunRuntime, ReadAgentRunEvents, ResolveAgentRunInteraction,
+    SendAgentRunMessage, SteerAgentRunTurn,
+};
+pub use runtime_mailbox::{
+    AgentRunProductDelivery, AgentRunProductDeliveryPort, DeliverAgentRunProductInput,
+    EnqueueRuntimeMailboxMessage, RuntimeAgentRunMailbox, RuntimeMailboxError,
+    RuntimeMailboxSubmitOutcome,
+};
+
+#[async_trait::async_trait]
+pub trait ProjectAgentLifecycleLaunchPort: Send + Sync {
+    async fn launch_project_agent(
+        &self,
+        intent: &agentdash_domain::workflow::AgentLaunchIntent,
+    ) -> Result<
+        agentdash_domain::workflow::AgentLaunchDispatchResult,
+        crate::WorkflowApplicationError,
+    >;
+}
 mod runtime_target;
-mod terminal_convergence;
 pub mod terminal_registry;
 pub mod workspace;
-pub mod workspace_title;
 
-pub use admission::AgentRunAdmissionService;
-pub use cancel_command::{
-    AgentRunCancelCommand, AgentRunCancelCommandService, AgentRunCancelRuntimePort,
+pub use agentdash_application_ports::agent_run_surface::{
+    AgentRunEffectiveCapabilityView, AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure,
+    AgentRunRuntimeSurfaceProvenance, AgentRunRuntimeSurfaceQueryError,
+    AgentRunRuntimeSurfaceQueryPort, AgentRunRuntimeSurfaceWithBackend, RuntimeSurfaceQueryPurpose,
 };
-pub use command_receipt::AgentRunCommandReceiptView;
-pub use context_compaction_command::{
-    AgentRunContextCompactionCommand, AgentRunContextCompactionCommandDeps,
-    AgentRunContextCompactionCommandResult, AgentRunContextCompactionCommandService,
-    AgentRunContextCompactionOutcome, AgentRunContextCompactionRuntimeLaunchCommand,
-    AgentRunContextCompactionRuntimeLaunchOutcome, AgentRunContextCompactionRuntimePort,
-    AgentRunContextCompactionRuntimeTodoPort, AgentRunContextCompactionSessionRuntimePort,
-    AgentRunRuntimeCommandFulfillmentDecision, AgentRunRuntimeCommandFulfillmentService,
+pub use business_frame_surface_query::{
+    BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps, BusinessResourceSurfaceQuery,
+    BusinessResourceSurfaceQueryDeps,
 };
-pub use control_effects::{AgentRunControlEffectDeps, AgentRunControlEffectService};
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,
     AgentConversationLifecycleContextModel, AgentConversationSnapshotInput,
@@ -61,31 +63,10 @@ pub use conversation_snapshot::{
     ConversationWaitingItemModel, ValidationSeverityModel, conversation_command_id_for,
     conversation_execution_state_code, conversation_snapshot_id, merge_executor_config_fields,
 };
-pub use delete_command::{
-    AgentRunDeleteCommand, AgentRunDeleteCommandService, AgentRunDeleteOutcome, AgentRunDeleteRepos,
-};
-pub use delivery_runtime_selection::{
-    DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionPolicy,
-    DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
-};
-pub use delivery_state::{
-    AgentRunDeliveryStateRepos, AgentRunDeliveryStateService, AgentRunDeliveryTransition,
-    AgentRunRunningTransitionInput, AgentRunTerminalTransitionInput,
-};
-pub use effective_capability::{
-    AgentRunAdmissionDecision, AgentRunAdmissionRequest, AgentRunEffectiveCapabilityAdapter,
-    AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView, AgentRunGrantProjection,
-    agent_run_effective_capability_port, runtime_session_effective_capability_port,
-};
 pub use execution_state::AgentRunExecutionState;
-pub use fork::{
-    AgentRunForkCommand, AgentRunForkCommandResult, AgentRunForkRepos, AgentRunForkService,
-    AgentRunForkSubmitCommand,
-};
 pub use frame::{
     AGENT_FRAME_WRITE_BOUNDARIES, AgentFrameBuilder, AgentFrameHookRuntime, AgentFrameSurfaceExt,
     AgentFrameWriteBoundary, AgentFrameWritePrimitive, AgentFrameWriteRole,
-    AgentRunAcceptedLaunchCommitAdapter, AgentRunAcceptedLaunchCommitDeps,
     AgentRunFrameConstructionAdapter, AgentRunFrameSurfaceCommand,
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
     AgentRunHookTargetRuntimeAdapter, AgentRunRuntimeSurfaceUpdateAdapter,
@@ -93,14 +74,8 @@ pub use frame::{
     AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
     FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
     FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
-    RuntimeSurfaceUpdateRequest, TerminalHookEffectBinding, accepted_launch_commit_port,
-    agent_frame_write_boundaries, hook_target_runtime_port,
-};
-pub use journal::{
-    AgentRunJournalEvent, AgentRunJournalLiveEvent, AgentRunJournalPage, AgentRunJournalQuery,
-    AgentRunJournalSegment, AgentRunJournalSegmentRole, AgentRunJournalService,
-    AgentRunJournalStreamState, AgentRunJournalStreamSubscription, AgentRunJournalView,
-    agent_run_journal_session_id, project_event_to_agent_run_journal,
+    RuntimeSurfaceUpdateRequest, TerminalHookEffectBinding, agent_frame_write_boundaries,
+    hook_target_runtime_port,
 };
 pub use lifecycle_read_model_facade::{
     ActiveRuntimeNodeRefView as PresentationActiveRuntimeNodeRefView,
@@ -118,23 +93,8 @@ pub use lifecycle_read_model_facade::{
     RuntimeSessionRefView as PresentationRuntimeSessionRefView,
     SubjectRefView as PresentationSubjectRefView,
 };
-pub use mailbox::{
-    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandResult, AgentRunMailboxCommandTarget,
-    AgentRunMailboxControlCommand, AgentRunMailboxControlTargetCommand,
-    AgentRunMailboxIntakeCommand, AgentRunMailboxIntakeTargetCommand,
-    AgentRunMailboxScheduleOutcome, AgentRunMailboxScheduleTrigger, AgentRunMailboxService,
-    AgentRunMailboxUserMessageCommand, AgentRunMailboxUserMessageTargetCommand,
-    mailbox_source_identity_dedup_key,
-};
-pub use mailbox_runtime_adapter::{
-    AgentRunMailboxAutoResumeRequest, AgentRunMailboxRuntimeAdapter,
-    AgentRunMailboxRuntimeBoundaryDeps, mailbox_runtime_port,
-};
 pub use message_delivery::{
     AgentRunMessageDelivery, AgentRunMessageDeliveryPort, SessionTurnMessageDeliveryPort,
-};
-pub use permission_runtime_surface_update::{
-    AgentRunPermissionRuntimeSurfaceUpdateService, PermissionRuntimeSurfaceUpdateOutcome,
 };
 pub use presentation_read_model::{
     AgentFrameRefReadModel, AgentFrameRuntimeReadModel, AgentRunPresentationReadModelError,
@@ -145,10 +105,6 @@ pub use presentation_read_model::{
 pub use project_agent_context::{
     PROJECT_AGENT_BINDING_LABEL_PREFIX, ResolvedProjectAgentContext, build_project_agent_context,
     resolve_project_workspace,
-};
-pub use project_agent_start::{
-    ProjectAgentLifecycleLaunchPort, ProjectAgentRunStartCommand, ProjectAgentRunStartDispatch,
-    ProjectAgentRunStartRepos, ProjectAgentRunStartService,
 };
 pub use runtime_capability::{
     CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta,
@@ -174,20 +130,10 @@ pub use runtime_session_boundary::{
     SessionEventingService, SessionExecutionState, SessionLaunchService, SessionMeta,
     SessionRepositoryRehydrateMode, SessionTurnSteerCommand, resolve_prompt_launch_path,
 };
-pub use runtime_surface::{
-    AgentRunRuntimeSurface, AgentRunRuntimeSurfaceClosure, AgentRunRuntimeSurfaceProvenance,
-    AgentRunRuntimeSurfaceQuery, AgentRunRuntimeSurfaceQueryDeps, AgentRunRuntimeSurfaceQueryError,
-    AgentRunRuntimeSurfaceQueryPort, AgentRunRuntimeSurfaceWithBackend,
-    AgentRunTerminalLaunchTarget, AgentRunTerminalLaunchTargetError, RuntimeSurfaceQueryPurpose,
-    terminal_launch_target_from_current_surface, terminal_launch_target_from_vfs,
-};
 pub use runtime_surface_update::{
     AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
 };
 pub use runtime_target::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};
-pub use terminal_convergence::{
-    AgentRunDeliveryTerminalEvent, AgentRunRuntimeTerminalCommand, AgentRunTerminalConvergenceDeps,
-    AgentRunTerminalConvergenceService,
+pub use terminal_registry::{
+    AgentRunKey, AgentRunTerminalRegistry, TerminalOutputSnapshot, TerminalState,
 };
-pub use terminal_registry::{AgentRunKey, AgentRunTerminalRegistry, TerminalState};
-pub use workspace_title::AgentRunWorkspaceTitleAdapter;

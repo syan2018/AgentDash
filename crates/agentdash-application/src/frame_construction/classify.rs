@@ -120,16 +120,16 @@ async fn has_orchestration_anchor(
     svc: &FrameConstructionService,
     runtime_session_id: &str,
 ) -> Result<bool, ConnectorError> {
-    let anchor = svc
-        .repos
-        .execution_anchor_repo
-        .find_by_session(runtime_session_id)
+    let association = agentdash_application_lifecycle::resolve_activity_runtime_association_from_message_stream_trace(
+        runtime_session_id,
+        svc.repos.agent_frame_repo.as_ref(),
+        svc.repos.lifecycle_agent_repo.as_ref(),
+        svc.repos.lifecycle_run_repo.as_ref(),
+        Some(svc.repos.agent_run_runtime_binding_repo.as_ref()),
+    )
         .await
         .map_err(connector_internal)?;
-    Ok(
-        anchor
-            .is_some_and(|anchor| anchor.orchestration_id.is_some() && anchor.node_path.is_some()),
-    )
+    Ok(association.is_some())
 }
 
 #[cfg(test)]

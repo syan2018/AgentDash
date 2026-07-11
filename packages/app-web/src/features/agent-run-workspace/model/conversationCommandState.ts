@@ -16,6 +16,10 @@ import type {
   SessionChatViewIntents,
 } from "../../session";
 import type { ExecutorConfig } from "../../../services/executor";
+import type {
+  RuntimeCommandKind,
+  RuntimeSnapshot,
+} from "../../../generated/agent-runtime-contracts";
 
 // Adapter boundary to the reusable SessionChatView shell; AgentRun command authority stays in the conversation snapshot.
 export type AgentRunChatCommandModel = SessionChatCommandModel;
@@ -232,6 +236,7 @@ export function buildAgentRunConversationCommandState(input: {
   } | null | undefined;
   workspaceStateStatus: string;
   workspaceStateError: string | null;
+  runtimeSnapshot?: RuntimeSnapshot | null;
 }): AgentRunConversationCommandState {
   if (input.workspaceStateStatus !== "ready") {
     const reason = input.workspaceStateError ?? "当前 AgentRun 工作台状态正在刷新。";
@@ -263,14 +268,46 @@ export function buildAgentRunConversationCommandState(input: {
     };
   }
 
+  const runtimeSnapshot = input.runtimeSnapshot ?? null;
+  const commands = {
+    ...input.conversation.commands,
+    commands: input.conversation.commands.commands.map((command) => {
+      const runtimeKind = runtimeCommandKind(command.kind, runtimeSnapshot);
+      if (!runtimeKind) return command;
+      const availability = runtimeSnapshot?.command_availability[runtimeKind];
+      const available = availability?.status === "available";
+      return {
+        ...command,
+        enabled: command.enabled && available,
+        unavailable_reason: available
+          ? command.unavailable_reason
+          : availability?.status === "unavailable"
+            ? availability.reason
+            : "Agent Runtime snapshot 尚未声明该命令可用。",
+        disabled_code: available ? command.disabled_code : "runtime_command_unavailable",
+      };
+    }),
+  };
   return {
     mode: "runtime",
-    executionStatus: input.conversation.execution.status,
-    activeTurnId: input.conversation.execution.active_turn_id,
-    commands: input.conversation.commands,
+    executionStatus: runtimeSnapshot?.active_turn_id ? "running_active" : "ready",
+    activeTurnId: runtimeSnapshot?.active_turn_id ?? undefined,
+    commands,
     modelConfig: input.conversation.model_config,
     helperText: input.conversation.execution.reason,
   };
+}
+
+function runtimeCommandKind(
+  command: ConversationCommandView["kind"],
+  snapshot: RuntimeSnapshot | null,
+): RuntimeCommandKind | null {
+  if (command === "submit_message") {
+    return snapshot?.active_turn_id ? "turn_steer" : "turn_start";
+  }
+  if (command === "cancel") return "turn_interrupt";
+  if (command === "compact_context") return "context_compact";
+  return null;
 }
 
 function normalizeExecutorConfigPolicy(value: string): AgentRunChatCommandModel["executor_config_policy"] {
@@ -349,12 +386,9 @@ export function projectAgentRunChatCommandState(
 }
 
 export function projectAgentRunChatMailboxModel(
-  commandState: AgentRunConversationCommandState,
+  _commandState: AgentRunConversationCommandState,
   mailbox: ConversationMailboxSnapshotView | null | undefined,
 ): AgentRunChatMailboxModel {
-  const promoteCommand = mailboxRowCommand(commandState.commands.commands, "promote_mailbox_message");
-  const deleteCommand = mailboxRowCommand(commandState.commands.commands, "delete_mailbox_message");
-
   return {
     messages: mailbox?.messages ?? [],
     waiting_items: mailbox?.waiting_items ?? [],
@@ -362,9 +396,9 @@ export function projectAgentRunChatMailboxModel(
     paused: Boolean(mailbox?.paused || mailbox?.state?.paused),
     user_attention: Boolean(mailbox?.user_attention),
     hide_system_steer_messages: Boolean(mailbox?.state?.hide_system_steer_messages),
-    can_resume: Boolean(mailbox?.state?.can_resume),
-    resumeAction: mailbox?.resume_command ? projectCommand(mailbox.resume_command) : undefined,
-    promoteAction: promoteCommand ? projectCommand(promoteCommand) : undefined,
-    deleteAction: deleteCommand ? projectCommand(deleteCommand) : undefined,
+    can_resume: false,
+    resumeAction: undefined,
+    promoteAction: undefined,
+    deleteAction: undefined,
   };
 }

@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
     DriverItemId, DriverThreadId, DriverTurnId, HookPoint, RuntimeBindingId,
-    RuntimeDriverGeneration,
+    RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
 };
 use agentdash_integration_api::{
-    AgentRuntimeHookCallback, DriverHookBinding, DriverHookDecision, DriverHookInvocation,
+    AgentRuntimeHookCallback, AuthIdentity, DriverHookBinding, DriverHookDecision,
+    DriverHookInvocation,
 };
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -45,6 +46,8 @@ pub(crate) async fn start_hook_bridge(
     binding_id: RuntimeBindingId,
     generation: RuntimeDriverGeneration,
     bindings: Vec<DriverHookBinding>,
+    runtime_thread_id: RuntimeThreadId,
+    authorization_identity: Option<AuthIdentity>,
 ) -> Result<HookBridgeLease, HookBridgeError> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
@@ -55,11 +58,13 @@ pub(crate) async fn start_hook_bridge(
     let decisions = Arc::new(Mutex::new(
         std::collections::BTreeMap::<String, Value>::new(),
     ));
-    let context = Arc::new(BridgeContext {
+    let context = Arc::new(HookEvaluationContext {
         callback,
         binding_id,
         generation,
         bindings,
+        runtime_thread_id,
+        authorization_identity,
         source_thread_id: source_thread_id.clone(),
         decisions,
     });
@@ -79,11 +84,13 @@ pub(crate) async fn start_hook_bridge(
     })
 }
 
-struct BridgeContext {
+struct HookEvaluationContext {
     callback: Arc<dyn AgentRuntimeHookCallback>,
     binding_id: RuntimeBindingId,
     generation: RuntimeDriverGeneration,
     bindings: Vec<DriverHookBinding>,
+    runtime_thread_id: RuntimeThreadId,
+    authorization_identity: Option<AuthIdentity>,
     source_thread_id: Arc<RwLock<Option<DriverThreadId>>>,
     decisions: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
 }
@@ -91,22 +98,12 @@ struct BridgeContext {
 async fn serve(
     mut stream: TcpStream,
     expected_path: &str,
-    context: Arc<BridgeContext>,
+    context: Arc<HookEvaluationContext>,
 ) -> Result<(), std::io::Error> {
     let request = read_request(&mut stream).await?;
     let (status, body) = match request {
         Some(request) if request.path == expected_path => {
-            match evaluate(
-                context.callback.clone(),
-                context.binding_id.clone(),
-                context.generation,
-                context.bindings.clone(),
-                context.source_thread_id.clone(),
-                context.decisions.clone(),
-                request.body,
-            )
-            .await
-            {
+            match evaluate(context.as_ref(), request.body).await {
                 Ok(value) => (200, value.to_string()),
                 Err(message) => (500, json!({ "error": message }).to_string()),
             }
@@ -167,29 +164,13 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<HttpRequest>, std
     Ok(body.map(|body| HttpRequest { path, body }))
 }
 
-async fn evaluate(
-    callback: Arc<dyn AgentRuntimeHookCallback>,
-    binding_id: RuntimeBindingId,
-    generation: RuntimeDriverGeneration,
-    bindings: Vec<DriverHookBinding>,
-    source_thread_id: Arc<RwLock<Option<DriverThreadId>>>,
-    decisions: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
-    payload: Value,
-) -> Result<Value, String> {
+async fn evaluate(context: &HookEvaluationContext, payload: Value) -> Result<Value, String> {
     let key = decision_key(&payload);
-    let mut decisions = decisions.lock().await;
+    let mut decisions = context.decisions.lock().await;
     if let Some(decision) = decisions.get(&key) {
         return Ok(decision.clone());
     }
-    let decision = evaluate_uncached(
-        callback,
-        binding_id,
-        generation,
-        bindings,
-        source_thread_id,
-        payload,
-    )
-    .await?;
+    let decision = evaluate_uncached(context, payload).await?;
     if decisions.len() >= 1024
         && let Some(oldest) = decisions.keys().next().cloned()
     {
@@ -200,11 +181,7 @@ async fn evaluate(
 }
 
 async fn evaluate_uncached(
-    callback: Arc<dyn AgentRuntimeHookCallback>,
-    binding_id: RuntimeBindingId,
-    generation: RuntimeDriverGeneration,
-    bindings: Vec<DriverHookBinding>,
-    source_thread_id: Arc<RwLock<Option<DriverThreadId>>>,
+    context: &HookEvaluationContext,
     payload: Value,
 ) -> Result<Value, String> {
     let event_name = payload
@@ -214,14 +191,16 @@ async fn evaluate_uncached(
         .ok_or_else(|| "hook payload misses event name".to_string())?;
     let point =
         point(event_name).ok_or_else(|| format!("unsupported Codex hook event {event_name}"))?;
-    let selected = bindings
-        .into_iter()
+    let selected = context
+        .bindings
+        .iter()
         .filter(|binding| binding.point == point)
         .collect::<Vec<_>>();
     if selected.is_empty() {
         return Ok(json!({ "continue": true }));
     }
-    let source_thread_id = source_thread_id
+    let source_thread_id = context
+        .source_thread_id
         .read()
         .await
         .clone()
@@ -232,16 +211,25 @@ async fn evaluate_uncached(
         .and_then(|value| DriverItemId::new(value).ok());
     let mut merged = Value::Object(serde_json::Map::new());
     for binding in selected {
-        let decision = callback
+        let decision = context
+            .callback
             .execute(DriverHookInvocation {
-                binding_id: binding_id.clone(),
-                generation,
+                thread_id: context.runtime_thread_id.clone(),
+                turn_id: source_turn_id
+                    .as_ref()
+                    .and_then(|value| RuntimeTurnId::new(value.to_string()).ok()),
+                item_id: source_item_id
+                    .as_ref()
+                    .and_then(|value| RuntimeItemId::new(value.to_string()).ok()),
+                binding_id: context.binding_id.clone(),
+                generation: context.generation,
                 source_thread_id: source_thread_id.clone(),
                 source_turn_id: source_turn_id.clone(),
                 source_item_id: source_item_id.clone(),
-                definition_id: binding.definition_id,
+                definition_id: binding.definition_id.clone(),
                 point,
                 payload: payload.clone(),
+                authorization_identity: context.authorization_identity.clone(),
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -411,6 +399,8 @@ mod tests {
                 failure_policy: HookFailurePolicy::FailClosed,
                 required: true,
             }],
+            RuntimeThreadId::new("runtime-thread-1").unwrap(),
+            None,
         )
         .await
         .expect("bridge");

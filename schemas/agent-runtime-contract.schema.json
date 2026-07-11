@@ -215,6 +215,26 @@
         {
           "type": "object",
           "properties": {
+            "thread_id": {
+              "type": "string"
+            },
+            "binding_id": {
+              "type": "string"
+            },
+            "driver_generation": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "source_thread_id": {
+              "type": "string"
+            },
+            "profile_digest": {
+              "type": "string"
+            },
+            "bound_profile": {
+              "$ref": "#/$defs/RuntimeProfile"
+            },
             "input": {
               "type": "array",
               "items": {
@@ -224,6 +244,19 @@
             "surface_digest": {
               "type": "string"
             },
+            "settings_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "tool_set_revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "hook_plan": {
+              "$ref": "#/$defs/BoundRuntimeHookPlan"
+            },
             "kind": {
               "type": "string",
               "const": "thread_start"
@@ -231,8 +264,17 @@
           },
           "required": [
             "kind",
+            "thread_id",
+            "binding_id",
+            "driver_generation",
+            "source_thread_id",
+            "profile_digest",
+            "bound_profile",
             "input",
-            "surface_digest"
+            "surface_digest",
+            "settings_revision",
+            "tool_set_revision",
+            "hook_plan"
           ]
         },
         {
@@ -454,6 +496,406 @@
         }
       ]
     },
+    "RuntimeProfile": {
+      "type": "object",
+      "properties": {
+        "reference_class": {
+          "$ref": "#/$defs/ReferenceRuntimeClass"
+        },
+        "input": {
+          "$ref": "#/$defs/InputProfile"
+        },
+        "instruction": {
+          "$ref": "#/$defs/InstructionProfile"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolProfile"
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceProfile"
+        },
+        "interactions": {
+          "$ref": "#/$defs/InteractionProfile"
+        },
+        "lifecycle": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/LifecycleCapability"
+          }
+        },
+        "hooks": {
+          "$ref": "#/$defs/HookProfile"
+        },
+        "context": {
+          "$ref": "#/$defs/ContextProfile"
+        },
+        "telemetry_config": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/TelemetryCapability"
+          }
+        }
+      },
+      "required": [
+        "reference_class",
+        "input",
+        "instruction",
+        "tools",
+        "workspace",
+        "interactions",
+        "lifecycle",
+        "hooks",
+        "context",
+        "telemetry_config"
+      ]
+    },
+    "ReferenceRuntimeClass": {
+      "type": "string",
+      "enum": [
+        "turn",
+        "conversation",
+        "interactive",
+        "managed_thread"
+      ]
+    },
+    "InputProfile": {
+      "type": "object",
+      "properties": {
+        "modalities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/InputModality"
+          }
+        }
+      },
+      "required": [
+        "modalities"
+      ]
+    },
+    "InputModality": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "audio",
+        "file_reference",
+        "resource",
+        "skill",
+        "mention",
+        "structured"
+      ]
+    },
+    "InstructionProfile": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/InstructionChannel"
+          }
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/ConfigurationBoundary"
+        }
+      },
+      "required": [
+        "channels",
+        "configuration_boundary"
+      ]
+    },
+    "InstructionChannel": {
+      "type": "string",
+      "enum": [
+        "system",
+        "developer",
+        "additional_context"
+      ]
+    },
+    "ConfigurationBoundary": {
+      "type": "string",
+      "enum": [
+        "static_service",
+        "binding",
+        "thread_start",
+        "turn_start",
+        "hot_replace"
+      ]
+    },
+    "ToolProfile": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ToolChannel"
+          }
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/ConfigurationBoundary"
+        },
+        "cancellation": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "channels",
+        "configuration_boundary",
+        "cancellation"
+      ]
+    },
+    "ToolChannel": {
+      "type": "string",
+      "enum": [
+        "direct_callback",
+        "mcp_facade",
+        "driver_native"
+      ]
+    },
+    "WorkspaceProfile": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/WorkspaceCapability"
+          }
+        },
+        "mechanism": {
+          "$ref": "#/$defs/DeliveryMechanism"
+        }
+      },
+      "required": [
+        "capabilities",
+        "mechanism"
+      ]
+    },
+    "WorkspaceCapability": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write",
+        "search",
+        "multiple_roots",
+        "virtual_file_system"
+      ]
+    },
+    "DeliveryMechanism": {
+      "type": "string",
+      "enum": [
+        "native",
+        "host_adapted_exact",
+        "host_adapted_boundary",
+        "observed",
+        "prompt_only"
+      ]
+    },
+    "InteractionProfile": {
+      "type": "object",
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/RuntimeInteractionKind"
+          }
+        },
+        "durable_correlation": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kinds",
+        "durable_correlation"
+      ]
+    },
+    "RuntimeInteractionKind": {
+      "type": "string",
+      "enum": [
+        "command_approval",
+        "file_change_approval",
+        "permission_approval",
+        "user_input_request",
+        "mcp_elicitation",
+        "dynamic_tool_execution"
+      ]
+    },
+    "LifecycleCapability": {
+      "type": "string",
+      "enum": [
+        "thread_start",
+        "thread_resume",
+        "thread_fork",
+        "thread_read",
+        "turn_start",
+        "turn_steer",
+        "turn_interrupt",
+        "tool_set_replace"
+      ]
+    },
+    "HookProfile": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HookPointCapability"
+          }
+        },
+        "configuration_boundary": {
+          "$ref": "#/$defs/ConfigurationBoundary"
+        }
+      },
+      "required": [
+        "points",
+        "configuration_boundary"
+      ]
+    },
+    "HookPointCapability": {
+      "type": "object",
+      "properties": {
+        "point": {
+          "$ref": "#/$defs/HookPoint"
+        },
+        "actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/HookAction"
+          }
+        },
+        "strength": {
+          "$ref": "#/$defs/SemanticStrength"
+        },
+        "mechanism": {
+          "$ref": "#/$defs/DeliveryMechanism"
+        },
+        "failure_policies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/HookFailurePolicy"
+          }
+        },
+        "acknowledged": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "point",
+        "actions",
+        "strength",
+        "mechanism",
+        "failure_policies",
+        "acknowledged"
+      ]
+    },
+    "HookPoint": {
+      "type": "string",
+      "enum": [
+        "before_thread_start",
+        "after_thread_start",
+        "before_turn",
+        "after_turn",
+        "before_provider_request",
+        "before_tool",
+        "after_tool",
+        "before_context_compact",
+        "after_context_compact",
+        "before_stop",
+        "after_item"
+      ]
+    },
+    "HookAction": {
+      "type": "string",
+      "enum": [
+        "observe",
+        "add_context",
+        "block",
+        "rewrite_input",
+        "rewrite_result",
+        "request_approval",
+        "continue_turn",
+        "refresh_surface",
+        "emit_effect"
+      ]
+    },
+    "SemanticStrength": {
+      "type": "string",
+      "enum": [
+        "observed_only",
+        "boundary_adapted",
+        "exact_durable_boundary",
+        "exact_synchronous"
+      ]
+    },
+    "HookFailurePolicy": {
+      "type": "string",
+      "enum": [
+        "fail_closed",
+        "fail_open_with_diagnostic",
+        "retry_durable_effect",
+        "observe_only"
+      ]
+    },
+    "ContextProfile": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ContextCapability"
+          }
+        },
+        "fidelity": {
+          "$ref": "#/$defs/ContextFidelity"
+        },
+        "activation_idempotent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "capabilities",
+        "fidelity",
+        "activation_idempotent"
+      ]
+    },
+    "ContextCapability": {
+      "type": "string",
+      "enum": [
+        "read",
+        "export",
+        "import",
+        "prepare_compaction",
+        "activate_checkpoint"
+      ]
+    },
+    "ContextFidelity": {
+      "type": "string",
+      "enum": [
+        "opaque",
+        "event_projected",
+        "agent_replay",
+        "driver_exact",
+        "platform_exact"
+      ]
+    },
+    "TelemetryCapability": {
+      "type": "string",
+      "enum": [
+        "usage",
+        "reasoning",
+        "deltas",
+        "diagnostics",
+        "configuration_evidence"
+      ]
+    },
     "RuntimeInput": {
       "oneOf": [
         {
@@ -532,6 +974,79 @@
             "value"
           ]
         }
+      ]
+    },
+    "BoundRuntimeHookPlan": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "digest": {
+          "type": "string"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BoundRuntimeHookEntry"
+          }
+        }
+      },
+      "required": [
+        "revision",
+        "digest",
+        "entries"
+      ]
+    },
+    "BoundRuntimeHookEntry": {
+      "type": "object",
+      "properties": {
+        "definition_id": {
+          "type": "string"
+        },
+        "point": {
+          "$ref": "#/$defs/HookPoint"
+        },
+        "actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/HookAction"
+          }
+        },
+        "delivered_strength": {
+          "$ref": "#/$defs/SemanticStrength"
+        },
+        "failure_policy": {
+          "$ref": "#/$defs/HookFailurePolicy"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "site": {
+          "$ref": "#/$defs/HookExecutionSite"
+        }
+      },
+      "required": [
+        "definition_id",
+        "point",
+        "actions",
+        "delivered_strength",
+        "failure_policy",
+        "required",
+        "site"
+      ]
+    },
+    "HookExecutionSite": {
+      "type": "string",
+      "enum": [
+        "managed_runtime",
+        "tool_broker",
+        "agent_core_callback",
+        "driver_native",
+        "observed_event_reaction"
       ]
     },
     "InteractionResponse": {
@@ -838,6 +1353,22 @@
         {
           "type": "object",
           "properties": {
+            "operation_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "operation"
+            }
+          },
+          "required": [
+            "kind",
+            "operation_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "thread_id": {
               "type": "string"
             },
@@ -1079,6 +1610,9 @@
             "item_id": {
               "type": "string"
             },
+            "initial_content": {
+              "$ref": "#/$defs/RuntimeItemContent"
+            },
             "kind": {
               "type": "string",
               "const": "item_started"
@@ -1087,7 +1621,8 @@
           "required": [
             "kind",
             "turn_id",
-            "item_id"
+            "item_id",
+            "initial_content"
           ]
         },
         {
@@ -1554,80 +2089,6 @@
         "lost"
       ]
     },
-    "RuntimeItemTerminal": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "final_content": {
-              "$ref": "#/$defs/RuntimeItemContent"
-            },
-            "kind": {
-              "type": "string",
-              "const": "completed"
-            }
-          },
-          "required": [
-            "kind",
-            "final_content"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "kind": {
-              "type": "string",
-              "const": "failed"
-            }
-          },
-          "required": [
-            "kind"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "kind": {
-              "type": "string",
-              "const": "cancelled"
-            }
-          },
-          "required": [
-            "kind"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "message": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "kind": {
-              "type": "string",
-              "const": "lost"
-            }
-          },
-          "required": [
-            "kind"
-          ]
-        }
-      ]
-    },
     "RuntimeItemContent": {
       "oneOf": [
         {
@@ -1770,15 +2231,78 @@
         }
       ]
     },
-    "RuntimeInteractionKind": {
-      "type": "string",
-      "enum": [
-        "command_approval",
-        "file_change_approval",
-        "permission_approval",
-        "user_input_request",
-        "mcp_elicitation",
-        "dynamic_tool_execution"
+    "RuntimeItemTerminal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "final_content": {
+              "$ref": "#/$defs/RuntimeItemContent"
+            },
+            "kind": {
+              "type": "string",
+              "const": "completed"
+            }
+          },
+          "required": [
+            "kind",
+            "final_content"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "lost"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
       ]
     },
     "RuntimeInteractionTerminal": {
@@ -1789,22 +2313,6 @@
         "cancelled",
         "failed",
         "lost"
-      ]
-    },
-    "HookPoint": {
-      "type": "string",
-      "enum": [
-        "before_thread_start",
-        "after_thread_start",
-        "before_turn",
-        "after_turn",
-        "before_provider_request",
-        "before_tool",
-        "after_tool",
-        "before_context_compact",
-        "after_context_compact",
-        "before_stop",
-        "after_item"
       ]
     },
     "HookRunTerminal": {
@@ -1966,379 +2474,6 @@
         "transcript_fidelity"
       ]
     },
-    "RuntimeProfile": {
-      "type": "object",
-      "properties": {
-        "reference_class": {
-          "$ref": "#/$defs/ReferenceRuntimeClass"
-        },
-        "input": {
-          "$ref": "#/$defs/InputProfile"
-        },
-        "instruction": {
-          "$ref": "#/$defs/InstructionProfile"
-        },
-        "tools": {
-          "$ref": "#/$defs/ToolProfile"
-        },
-        "workspace": {
-          "$ref": "#/$defs/WorkspaceProfile"
-        },
-        "interactions": {
-          "$ref": "#/$defs/InteractionProfile"
-        },
-        "lifecycle": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/LifecycleCapability"
-          }
-        },
-        "hooks": {
-          "$ref": "#/$defs/HookProfile"
-        },
-        "context": {
-          "$ref": "#/$defs/ContextProfile"
-        },
-        "telemetry_config": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/TelemetryCapability"
-          }
-        }
-      },
-      "required": [
-        "reference_class",
-        "input",
-        "instruction",
-        "tools",
-        "workspace",
-        "interactions",
-        "lifecycle",
-        "hooks",
-        "context",
-        "telemetry_config"
-      ]
-    },
-    "ReferenceRuntimeClass": {
-      "type": "string",
-      "enum": [
-        "turn",
-        "conversation",
-        "interactive",
-        "managed_thread"
-      ]
-    },
-    "InputProfile": {
-      "type": "object",
-      "properties": {
-        "modalities": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/InputModality"
-          }
-        }
-      },
-      "required": [
-        "modalities"
-      ]
-    },
-    "InputModality": {
-      "type": "string",
-      "enum": [
-        "text",
-        "image",
-        "audio",
-        "file_reference",
-        "resource",
-        "skill",
-        "mention",
-        "structured"
-      ]
-    },
-    "InstructionProfile": {
-      "type": "object",
-      "properties": {
-        "channels": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/InstructionChannel"
-          }
-        },
-        "configuration_boundary": {
-          "$ref": "#/$defs/ConfigurationBoundary"
-        }
-      },
-      "required": [
-        "channels",
-        "configuration_boundary"
-      ]
-    },
-    "InstructionChannel": {
-      "type": "string",
-      "enum": [
-        "system",
-        "developer",
-        "additional_context"
-      ]
-    },
-    "ConfigurationBoundary": {
-      "type": "string",
-      "enum": [
-        "static_service",
-        "binding",
-        "thread_start",
-        "turn_start",
-        "hot_replace"
-      ]
-    },
-    "ToolProfile": {
-      "type": "object",
-      "properties": {
-        "channels": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/ToolChannel"
-          }
-        },
-        "configuration_boundary": {
-          "$ref": "#/$defs/ConfigurationBoundary"
-        },
-        "cancellation": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "channels",
-        "configuration_boundary",
-        "cancellation"
-      ]
-    },
-    "ToolChannel": {
-      "type": "string",
-      "enum": [
-        "direct_callback",
-        "mcp_facade",
-        "driver_native"
-      ]
-    },
-    "WorkspaceProfile": {
-      "type": "object",
-      "properties": {
-        "capabilities": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/WorkspaceCapability"
-          }
-        },
-        "mechanism": {
-          "$ref": "#/$defs/DeliveryMechanism"
-        }
-      },
-      "required": [
-        "capabilities",
-        "mechanism"
-      ]
-    },
-    "WorkspaceCapability": {
-      "type": "string",
-      "enum": [
-        "read",
-        "write",
-        "search",
-        "multiple_roots",
-        "virtual_file_system"
-      ]
-    },
-    "DeliveryMechanism": {
-      "type": "string",
-      "enum": [
-        "native",
-        "host_adapted_exact",
-        "host_adapted_boundary",
-        "observed",
-        "prompt_only"
-      ]
-    },
-    "InteractionProfile": {
-      "type": "object",
-      "properties": {
-        "kinds": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/RuntimeInteractionKind"
-          }
-        },
-        "durable_correlation": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "kinds",
-        "durable_correlation"
-      ]
-    },
-    "LifecycleCapability": {
-      "type": "string",
-      "enum": [
-        "thread_start",
-        "thread_resume",
-        "thread_fork",
-        "thread_read",
-        "turn_start",
-        "turn_steer",
-        "turn_interrupt",
-        "tool_set_replace"
-      ]
-    },
-    "HookProfile": {
-      "type": "object",
-      "properties": {
-        "points": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/HookPointCapability"
-          }
-        },
-        "configuration_boundary": {
-          "$ref": "#/$defs/ConfigurationBoundary"
-        }
-      },
-      "required": [
-        "points",
-        "configuration_boundary"
-      ]
-    },
-    "HookPointCapability": {
-      "type": "object",
-      "properties": {
-        "point": {
-          "$ref": "#/$defs/HookPoint"
-        },
-        "actions": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/HookAction"
-          }
-        },
-        "strength": {
-          "$ref": "#/$defs/SemanticStrength"
-        },
-        "mechanism": {
-          "$ref": "#/$defs/DeliveryMechanism"
-        },
-        "failure_policies": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/HookFailurePolicy"
-          }
-        },
-        "acknowledged": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "point",
-        "actions",
-        "strength",
-        "mechanism",
-        "failure_policies",
-        "acknowledged"
-      ]
-    },
-    "HookAction": {
-      "type": "string",
-      "enum": [
-        "observe",
-        "add_context",
-        "block",
-        "rewrite_input",
-        "rewrite_result",
-        "request_approval",
-        "continue_turn",
-        "refresh_surface",
-        "emit_effect"
-      ]
-    },
-    "SemanticStrength": {
-      "type": "string",
-      "enum": [
-        "observed_only",
-        "boundary_adapted",
-        "exact_durable_boundary",
-        "exact_synchronous"
-      ]
-    },
-    "HookFailurePolicy": {
-      "type": "string",
-      "enum": [
-        "fail_closed",
-        "fail_open_with_diagnostic",
-        "retry_durable_effect",
-        "observe_only"
-      ]
-    },
-    "ContextProfile": {
-      "type": "object",
-      "properties": {
-        "capabilities": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/ContextCapability"
-          }
-        },
-        "fidelity": {
-          "$ref": "#/$defs/ContextFidelity"
-        },
-        "activation_idempotent": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "capabilities",
-        "fidelity",
-        "activation_idempotent"
-      ]
-    },
-    "ContextCapability": {
-      "type": "string",
-      "enum": [
-        "read",
-        "export",
-        "import",
-        "prepare_compaction",
-        "activate_checkpoint"
-      ]
-    },
-    "ContextFidelity": {
-      "type": "string",
-      "enum": [
-        "opaque",
-        "event_projected",
-        "agent_replay",
-        "driver_exact",
-        "platform_exact"
-      ]
-    },
-    "TelemetryCapability": {
-      "type": "string",
-      "enum": [
-        "usage",
-        "reasoning",
-        "deltas",
-        "diagnostics",
-        "configuration_evidence"
-      ]
-    },
     "CommandAvailability": {
       "oneOf": [
         {
@@ -2490,6 +2625,22 @@
         {
           "type": "object",
           "properties": {
+            "operation": {
+              "$ref": "#/$defs/RuntimeOperationView"
+            },
+            "kind": {
+              "type": "string",
+              "const": "operation"
+            }
+          },
+          "required": [
+            "kind",
+            "operation"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "snapshot": {
               "$ref": "#/$defs/RuntimeSnapshot"
             },
@@ -2519,6 +2670,43 @@
             "context"
           ]
         }
+      ]
+    },
+    "RuntimeOperationView": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "actor": {
+          "$ref": "#/$defs/RuntimeActor"
+        },
+        "command": {
+          "$ref": "#/$defs/RuntimeCommand"
+        },
+        "receipt": {
+          "$ref": "#/$defs/OperationReceipt"
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeOperationTerminal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "operation_id",
+        "idempotency_key",
+        "actor",
+        "command",
+        "receipt"
       ]
     },
     "RuntimeContextView": {
@@ -3436,6 +3624,12 @@
               "type": "boolean"
             },
             "digest": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "driver_context_revision": {
               "type": [
                 "string",
                 "null"

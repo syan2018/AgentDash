@@ -136,6 +136,7 @@ pub enum DriverInspection {
     CompactionActivation {
         applied: bool,
         digest: Option<String>,
+        driver_context_revision: Option<crate::DriverContextRevision>,
     },
     Checkpoint {
         available: bool,

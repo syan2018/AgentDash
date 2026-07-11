@@ -1,5 +1,4 @@
 pub mod agent_run_runtime_surface;
-mod agent_run_terminal_control;
 pub mod app_state;
 pub mod auth;
 pub mod bootstrap;

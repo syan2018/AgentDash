@@ -37,12 +37,12 @@ impl SharedWorkspaceModuleRuntimeGatewayHandle {
 pub trait WorkspaceModuleAgentRunBridge: Send + Sync {
     async fn effective_capability_view_for_agent_run_delivery(
         &self,
-        delivery_runtime_session_id: &str,
+        runtime_thread_id: &str,
     ) -> Result<AgentRunEffectiveCapabilityView, String>;
 
     async fn apply_canvas_runtime_surface_update_to_agent_run(
         &self,
-        delivery_runtime_session_id: &str,
+        runtime_thread_id: &str,
         canvas: &Canvas,
         current_user: Option<&ProjectAuthorizationContext>,
         request: RuntimeSurfaceUpdateRequest,
@@ -50,7 +50,7 @@ pub trait WorkspaceModuleAgentRunBridge: Send + Sync {
 
     async fn inject_agent_run_notification(
         &self,
-        delivery_runtime_session_id: &str,
+        runtime_thread_id: &str,
         notification: BackboneEnvelope,
     ) -> Result<(), String>;
 }
@@ -118,7 +118,7 @@ pub fn shared_runtime_vfs_from_context(
     Ok(SharedRuntimeVfs::new_with_policy(vfs, access_policy))
 }
 
-pub fn delivery_runtime_session_id_from_context(context: &ExecutionContext) -> String {
+pub fn runtime_thread_id_from_context(context: &ExecutionContext) -> String {
     context
         .turn
         .hook_runtime
@@ -167,7 +167,7 @@ pub fn resolve_invocation_backend(
 pub async fn submit_canvas_runtime_surface_update(
     vfs: Option<&SharedRuntimeVfs>,
     agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
     current_user: Option<&ProjectAuthorizationContext>,
     canvas: &Canvas,
     request: RuntimeSurfaceUpdateRequest,
@@ -178,14 +178,14 @@ pub async fn submit_canvas_runtime_surface_update(
             "Workspace module AgentRun bridge 尚未完成初始化，无法提交 Canvas runtime surface request: {request:?}"
         ))
     })?;
-    let delivery_runtime_session_id = delivery_runtime_session_id.ok_or_else(|| {
+    let runtime_thread_id = runtime_thread_id.ok_or_else(|| {
         WorkspaceModuleRuntimeBridgeError::ExecutionFailed(format!(
             "当前工具调用缺少 AgentRun delivery runtime id，无法提交 Canvas runtime surface request: {request:?}"
         ))
     })?;
     let active_vfs_state = bridge
         .apply_canvas_runtime_surface_update_to_agent_run(
-            delivery_runtime_session_id,
+            runtime_thread_id,
             canvas,
             current_user,
             request.clone(),
@@ -209,14 +209,14 @@ pub async fn request_existing_canvas_visibility_for_runtime(
     canvas_mount_id: &str,
     vfs: Option<&SharedRuntimeVfs>,
     agent_run_bridge_handle: &SharedWorkspaceModuleAgentRunBridgeHandle,
-    delivery_runtime_session_id: Option<&str>,
+    runtime_thread_id: Option<&str>,
     current_user: Option<&ProjectAuthorizationContext>,
 ) -> Result<Canvas, WorkspaceModuleRuntimeBridgeError> {
     let canvas = load_canvas_by_project_mount_id(canvas_repo, project_id, canvas_mount_id).await?;
     submit_canvas_runtime_surface_update(
         vfs,
         agent_run_bridge_handle,
-        delivery_runtime_session_id,
+        runtime_thread_id,
         current_user,
         &canvas,
         RuntimeSurfaceUpdateRequest::CanvasVisibilityRequested {
@@ -400,14 +400,14 @@ mod tests {
     impl WorkspaceModuleAgentRunBridge for ReturningCanvasBridge {
         async fn effective_capability_view_for_agent_run_delivery(
             &self,
-            _delivery_runtime_session_id: &str,
+            _runtime_thread_id: &str,
         ) -> Result<AgentRunEffectiveCapabilityView, String> {
             Err("not used".to_string())
         }
 
         async fn apply_canvas_runtime_surface_update_to_agent_run(
             &self,
-            _delivery_runtime_session_id: &str,
+            _runtime_thread_id: &str,
             _canvas: &Canvas,
             _current_user: Option<&ProjectAuthorizationContext>,
             _request: RuntimeSurfaceUpdateRequest,
@@ -417,7 +417,7 @@ mod tests {
 
         async fn inject_agent_run_notification(
             &self,
-            _delivery_runtime_session_id: &str,
+            _runtime_thread_id: &str,
             _notification: BackboneEnvelope,
         ) -> Result<(), String> {
             Ok(())

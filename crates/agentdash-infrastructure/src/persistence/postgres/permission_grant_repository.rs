@@ -28,7 +28,7 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
     async fn create(&self, grant: &PermissionGrant) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO permission_grants \
-             (id, run_id, effect_frame_id, source_runtime_session_id, \
+             (id, run_id, effect_frame_id, source_runtime_operation_id, \
               source_turn_id, source_tool_call_id, \
               requested_paths, requested_vfs_access, reason, grant_scope, expires_at, \
               scope_escalation_intent, status, policy_decision, approved_by, \
@@ -38,7 +38,7 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         .bind(grant.id.to_string())
         .bind(grant.run_id.to_string())
         .bind(grant.effect_frame_id.map(|id| id.to_string()))
-        .bind(&grant.source_runtime_session_id)
+        .bind(&grant.source_runtime_operation_id)
         .bind(&grant.source_turn_id)
         .bind(&grant.source_tool_call_id)
         .bind(serde_json::to_value(&grant.requested_paths).map_err(DomainError::Serialization)?)
@@ -252,7 +252,7 @@ struct GrantRow {
     id: String,
     run_id: String,
     effect_frame_id: Option<String>,
-    source_runtime_session_id: String,
+    source_runtime_operation_id: Option<String>,
     source_turn_id: Option<String>,
     source_tool_call_id: Option<String>,
     requested_paths: serde_json::Value,
@@ -311,7 +311,7 @@ impl TryFrom<GrantRow> for PermissionGrant {
             id,
             run_id,
             effect_frame_id,
-            source_runtime_session_id: row.source_runtime_session_id,
+            source_runtime_operation_id: row.source_runtime_operation_id,
             source_turn_id: row.source_turn_id,
             source_tool_call_id: row.source_tool_call_id,
             requested_paths,

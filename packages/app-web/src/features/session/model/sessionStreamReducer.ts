@@ -178,35 +178,8 @@ function eventTurnId(event: SessionEventEnvelope): string | undefined {
   return event.turn_id ?? event.notification.trace.turnId ?? undefined;
 }
 
-function extractProviderAttemptStatus(event: SessionEventEnvelope): { turnId?: string; phase: string } | null {
-  const bbEvent = event.notification.event;
-  if (bbEvent.type !== "platform" || !isRecord(bbEvent.payload)) {
-    return null;
-  }
-
-  const platform: Record<string, unknown> = bbEvent.payload;
-  const kind = readStringField(platform, "kind");
-  if (kind !== "provider_attempt_status" || !isRecord(platform.data)) {
-    return null;
-  }
-
-  const phase = readStringField(platform.data, "phase");
-  if (!phase) {
-    return null;
-  }
-
-  return {
-    turnId: readStringField(platform.data, "turn_id") ?? eventTurnId(event),
-    phase,
-  };
-}
-
 export function extractTerminalTurnId(event: SessionEventEnvelope): string | null {
   const bbEvent = event.notification.event;
-  if (bbEvent.type === "turn_completed") {
-    return bbEvent.payload.turn.id;
-  }
-
   if (
     bbEvent.type !== "platform" ||
     bbEvent.payload.kind !== "session_meta_update" ||
@@ -217,32 +190,6 @@ export function extractTerminalTurnId(event: SessionEventEnvelope): string | nul
   }
 
   return readStringField(bbEvent.payload.data.value, "turn_id") ?? eventTurnId(event) ?? null;
-}
-
-function updateProviderWaitingSeqs(
-  current: ReadonlyMap<string, number>,
-  event: SessionEventEnvelope,
-): ReadonlyMap<string, number> {
-  const terminalTurnId = extractTerminalTurnId(event);
-  if (terminalTurnId) {
-    if (!current.has(terminalTurnId)) return current;
-    const next = new Map(current);
-    next.delete(terminalTurnId);
-    return next;
-  }
-
-  const status = extractProviderAttemptStatus(event);
-  if (!status?.turnId) {
-    return current;
-  }
-
-  const next = new Map(current);
-  if (status.phase === "connected_waiting_first_delta") {
-    next.set(status.turnId, event.event_seq);
-  } else {
-    next.delete(status.turnId);
-  }
-  return next;
 }
 
 function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): string {
@@ -576,10 +523,6 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return prev;
   }
 
-  if (bbEvent.type === "turn_started" || bbEvent.type === "turn_completed") {
-    return prev;
-  }
-
   if (bbEvent.type === "turn_plan_updated") {
     return [...prev, makeDisplayEntry(event, bbEvent)];
   }
@@ -624,10 +567,6 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   if (bbEvent.type === "platform") {
     const platform = bbEvent.payload;
 
-    if (platform.kind === "provider_attempt_status") {
-      return prev;
-    }
-
     if (platform.kind === "terminal_output" || platform.kind === "pty_terminal_state_changed") {
       return prev;
     }
@@ -643,8 +582,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
-  if (bbEvent.type === "thread_status_changed" || bbEvent.type === "executor_context_compacted" ||
-      bbEvent.type === "turn_diff_updated") {
+  if (bbEvent.type === "turn_diff_updated") {
     return prev;
   }
 
@@ -684,7 +622,7 @@ export function reduceStreamState(
   let entries = prev.entries;
   let rawEvents = prev.rawEvents;
   let tokenUsage = prev.tokenUsage;
-  let providerWaitingSeqs = prev.providerWaitingSeqs;
+  const providerWaitingSeqs = prev.providerWaitingSeqs;
   let lastAppliedSeq = prev.lastAppliedSeq;
   let lastEphemeralSeq = prev.lastEphemeralSeq;
 
@@ -695,7 +633,6 @@ export function reduceStreamState(
       if (event.event_seq <= lastEphemeralSeq) {
         continue;
       }
-      providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
       entries = applyEventToEntries(entries, event);
       lastEphemeralSeq = event.event_seq;
       continue;
@@ -706,7 +643,6 @@ export function reduceStreamState(
     }
 
     rawEvents = [...rawEvents, event];
-    providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
     entries = applyEventToEntries(entries, event);
     const usage = extractTokenUsageFromEvent(event.notification.event);
     if (usage) {

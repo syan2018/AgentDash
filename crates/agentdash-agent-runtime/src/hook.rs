@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
 
 pub use agentdash_agent_runtime_contract::HookRunDecision as HookGateDecision;
+pub use agentdash_agent_runtime_contract::{
+    BoundRuntimeHookEntry, BoundRuntimeHookPlan, HookExecutionSite, RuntimeHookPlanBinding,
+};
 use agentdash_agent_runtime_contract::{
     HookAction, HookDefinitionId, HookEffectId, HookFailurePolicy, HookPlanDigest,
     HookPlanRevision, HookPoint, HookRunId, HookRunTerminal, RuntimeInteractionId, RuntimeItemId,
@@ -9,40 +12,6 @@ use agentdash_agent_runtime_contract::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HookExecutionSite {
-    ManagedRuntime,
-    ToolBroker,
-    AgentCoreCallback,
-    DriverNative,
-    ObservedEventReaction,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BoundRuntimeHookEntry {
-    pub definition_id: HookDefinitionId,
-    pub point: HookPoint,
-    pub actions: BTreeSet<HookAction>,
-    pub delivered_strength: SemanticStrength,
-    pub failure_policy: HookFailurePolicy,
-    pub required: bool,
-    pub site: HookExecutionSite,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BoundRuntimeHookPlan {
-    pub revision: HookPlanRevision,
-    pub digest: HookPlanDigest,
-    pub entries: Vec<BoundRuntimeHookEntry>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeHookPlanBinding {
-    pub thread_id: RuntimeThreadId,
-    pub plan: BoundRuntimeHookPlan,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookCorrelation {
@@ -189,47 +158,45 @@ pub enum HookOrchestrationError {
     RunConflict,
 }
 
-impl BoundRuntimeHookPlan {
-    pub fn admit(
-        &self,
-        invocation: RuntimeHookInvocation,
-    ) -> Result<HookAdmission, HookRuntimeError> {
-        let entry = self
-            .entries
-            .iter()
-            .find(|entry| {
-                entry.definition_id == invocation.definition_id && entry.point == invocation.point
-            })
-            .ok_or_else(|| HookRuntimeError::DefinitionNotBound {
-                definition_id: invocation.definition_id.clone(),
-                point: invocation.point,
-            })?;
-        let silent = entry
-            .actions
-            .iter()
-            .all(|action| *action == HookAction::Observe)
-            && entry.failure_policy == HookFailurePolicy::ObserveOnly;
-        if silent {
-            return Ok(HookAdmission::SilentObserver);
-        }
-        Ok(HookAdmission::Durable(Box::new(HookRun {
-            hook_run_id: invocation.hook_run_id,
-            thread_id: invocation.thread_id,
-            definition_id: invocation.definition_id,
+fn admit_hook(
+    plan: &BoundRuntimeHookPlan,
+    invocation: RuntimeHookInvocation,
+) -> Result<HookAdmission, HookRuntimeError> {
+    let entry = plan
+        .entries
+        .iter()
+        .find(|entry| {
+            entry.definition_id == invocation.definition_id && entry.point == invocation.point
+        })
+        .ok_or_else(|| HookRuntimeError::DefinitionNotBound {
+            definition_id: invocation.definition_id.clone(),
             point: invocation.point,
-            plan_revision: self.revision,
-            plan_digest: self.digest.clone(),
-            actions: entry.actions.clone(),
-            delivered_strength: entry.delivered_strength,
-            failure_policy: entry.failure_policy,
-            site: entry.site,
-            correlation: invocation.correlation,
-            input: invocation.input,
-            status: HookRunStatus::Accepted,
-            decision: None,
-            terminal_message: None,
-        })))
+        })?;
+    let silent = entry
+        .actions
+        .iter()
+        .all(|action| *action == HookAction::Observe)
+        && entry.failure_policy == HookFailurePolicy::ObserveOnly;
+    if silent {
+        return Ok(HookAdmission::SilentObserver);
     }
+    Ok(HookAdmission::Durable(Box::new(HookRun {
+        hook_run_id: invocation.hook_run_id,
+        thread_id: invocation.thread_id,
+        definition_id: invocation.definition_id,
+        point: invocation.point,
+        plan_revision: plan.revision,
+        plan_digest: plan.digest.clone(),
+        actions: entry.actions.clone(),
+        delivered_strength: entry.delivered_strength,
+        failure_policy: entry.failure_policy,
+        site: entry.site,
+        correlation: invocation.correlation,
+        input: invocation.input,
+        status: HookRunStatus::Accepted,
+        decision: None,
+        terminal_message: None,
+    })))
 }
 
 impl HookRun {
@@ -371,19 +338,7 @@ where
         &self,
         binding: RuntimeHookPlanBinding,
     ) -> Result<RuntimeHookPlanBinding, HookOrchestrationError> {
-        let mut coordinates = BTreeSet::new();
-        if binding.plan.entries.iter().any(|entry| {
-            entry.actions.is_empty()
-                || !coordinates.insert((entry.definition_id.clone(), entry.point))
-        }) {
-            return Err(HookRuntimeError::InvalidPlan.into());
-        }
-        if binding.plan.entries.iter().any(|entry| {
-            entry.failure_policy == HookFailurePolicy::RetryDurableEffect
-                && !entry.actions.contains(&HookAction::EmitEffect)
-        }) {
-            return Err(HookRuntimeError::RetryPolicyWithoutEffect.into());
-        }
+        validate_bound_hook_plan(&binding.plan)?;
         let mut thread = self
             .store()
             .load_thread(&binding.thread_id)
@@ -439,7 +394,7 @@ where
             .load_hook_plan(&invocation.thread_id)
             .await?
             .ok_or(HookOrchestrationError::RunConflict)?;
-        let admission = durable_plan.plan.admit(invocation)?;
+        let admission = admit_hook(&durable_plan.plan, invocation)?;
         let HookAdmission::Durable(run) = admission else {
             return Ok(HookAdmission::SilentObserver);
         };
@@ -532,6 +487,64 @@ where
             return Err(error.into());
         }
         Ok(HookAdmission::Durable(run))
+    }
+
+    pub async fn request_hook_interaction(
+        &self,
+        hook_run_id: &HookRunId,
+        interaction_id: RuntimeInteractionId,
+        prompt: String,
+    ) -> Result<(), HookOrchestrationError> {
+        let run = self
+            .store()
+            .load_hook_run(hook_run_id)
+            .await?
+            .ok_or(HookOrchestrationError::RunNotFound)?;
+        let mut thread = self
+            .store()
+            .load_thread(&run.thread_id)
+            .await?
+            .ok_or(HookOrchestrationError::ThreadNotFound)?;
+        if thread.interactions.contains_key(&interaction_id) {
+            return Ok(());
+        }
+        let turn_id = run
+            .correlation
+            .turn_id
+            .clone()
+            .ok_or(HookRuntimeError::InvalidCorrelation)?;
+        let expected = thread.revision;
+        let events = thread.append_events([
+            agentdash_agent_runtime_contract::RuntimeEvent::InteractionRequested {
+                turn_id,
+                item_id: run.correlation.item_id.clone(),
+                interaction_id,
+                interaction_kind:
+                    agentdash_agent_runtime_contract::RuntimeInteractionKind::PermissionApproval,
+                prompt,
+            },
+        ])?;
+        self.store()
+            .commit(crate::RuntimeCommit {
+                expected_projection_revision: Some(expected),
+                projection: thread,
+                operation: None,
+                operation_terminals: Vec::new(),
+                events,
+                outbox: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn start_hook(
@@ -704,6 +717,24 @@ where
     }
 }
 
+pub(crate) fn validate_bound_hook_plan(
+    plan: &BoundRuntimeHookPlan,
+) -> Result<(), HookRuntimeError> {
+    let mut coordinates = BTreeSet::new();
+    if plan.entries.iter().any(|entry| {
+        entry.actions.is_empty() || !coordinates.insert((entry.definition_id.clone(), entry.point))
+    }) {
+        return Err(HookRuntimeError::InvalidPlan);
+    }
+    if plan.entries.iter().any(|entry| {
+        entry.failure_policy == HookFailurePolicy::RetryDurableEffect
+            && !entry.actions.contains(&HookAction::EmitEffect)
+    }) {
+        return Err(HookRuntimeError::RetryPolicyWithoutEffect);
+    }
+    Ok(())
+}
+
 pub fn failure_completion(policy: HookFailurePolicy, message: String) -> HookCompletion {
     match policy {
         HookFailurePolicy::FailClosed => HookCompletion {
@@ -771,19 +802,21 @@ mod tests {
 
     #[test]
     fn silent_observer_does_not_create_a_durable_run() {
-        let admitted = plan([HookAction::Observe].into(), HookFailurePolicy::ObserveOnly)
-            .admit(invocation())
-            .expect("admit observer");
+        let admitted = admit_hook(
+            &plan([HookAction::Observe].into(), HookFailurePolicy::ObserveOnly),
+            invocation(),
+        )
+        .expect("admit observer");
         assert!(matches!(admitted, HookAdmission::SilentObserver));
     }
 
     #[test]
     fn actionful_run_has_exact_terminal_and_failure_policy() {
-        let HookAdmission::Durable(mut run) =
-            plan([HookAction::Block].into(), HookFailurePolicy::FailClosed)
-                .admit(invocation())
-                .expect("admit run")
-        else {
+        let HookAdmission::Durable(mut run) = admit_hook(
+            &plan([HookAction::Block].into(), HookFailurePolicy::FailClosed),
+            invocation(),
+        )
+        .expect("admit run") else {
             panic!("actionful hook must be durable")
         };
         run.start().expect("start");
@@ -799,11 +832,11 @@ mod tests {
 
     #[test]
     fn failure_policy_validates_the_terminal_status_and_decision_together() {
-        let HookAdmission::Durable(mut fail_closed) =
-            plan([HookAction::Block].into(), HookFailurePolicy::FailClosed)
-                .admit(invocation())
-                .expect("admit fail-closed hook")
-        else {
+        let HookAdmission::Durable(mut fail_closed) = admit_hook(
+            &plan([HookAction::Block].into(), HookFailurePolicy::FailClosed),
+            invocation(),
+        )
+        .expect("admit fail-closed hook") else {
             panic!("fail-closed hook is durable")
         };
         fail_closed.start().expect("start fail-closed hook");
@@ -816,11 +849,13 @@ mod tests {
             Err(HookRuntimeError::CompletionPolicy)
         ));
 
-        let HookAdmission::Durable(mut fail_open) = plan(
-            [HookAction::AddContext].into(),
-            HookFailurePolicy::FailOpenWithDiagnostic,
+        let HookAdmission::Durable(mut fail_open) = admit_hook(
+            &plan(
+                [HookAction::AddContext].into(),
+                HookFailurePolicy::FailOpenWithDiagnostic,
+            ),
+            invocation(),
         )
-        .admit(invocation())
         .expect("admit fail-open hook") else {
             panic!("fail-open hook is durable")
         };
@@ -852,8 +887,7 @@ mod tests {
             HookFailurePolicy::FailClosed,
         );
         callback_plan.entries[0].site = HookExecutionSite::DriverNative;
-        let HookAdmission::Durable(run) = callback_plan
-            .admit(invocation())
+        let HookAdmission::Durable(run) = admit_hook(&callback_plan, invocation())
             .expect("driver-native route is admitted by the runtime journal")
         else {
             panic!("actionful driver hook is durable")

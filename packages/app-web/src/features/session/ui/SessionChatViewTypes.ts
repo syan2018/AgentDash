@@ -1,12 +1,10 @@
 import type { ReactNode } from "react";
 
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
   BackendSelectionRequestDto,
   MailboxMessageView,
   MailboxStateView,
-  SessionMessageRefDto,
 } from "../../../generated/agent-run-mailbox-contracts";
 import type {
   ConversationCommandView,
@@ -14,6 +12,7 @@ import type {
 } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { AgentRunRuntimeInspectResponse } from "../../../services/agentRunRuntime";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
@@ -74,6 +73,7 @@ export interface SessionChatMailboxModel {
 
 export interface SessionChatModel {
   agentRunTarget?: AgentRunRuntimeTarget | null;
+  runtimeInspect?: AgentRunRuntimeInspectResponse | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   workspaceId?: string | null;
   executorHint?: string | null;
@@ -106,7 +106,6 @@ export interface SessionChatViewIntents {
   resumeMailbox?: () => void;
   recallMailboxMessage?: (messageId: string) => void;
   moveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
-  forkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   injectedInputConsumed?: () => void;
 }
 
@@ -123,9 +122,6 @@ export interface SessionChatViewProps {
 
   /** Agent turn 结束时回调（turn_completed / turn_failed） */
   onTurnEnd?: () => void;
-
-  /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
-  onSystemEvent?: (eventType: string, event: BackboneEvent) => void;
 
   /** task_write 工具完成时回调；用于刷新外部 Task plan 展示。 */
   onTaskPlanChanged?: () => void;

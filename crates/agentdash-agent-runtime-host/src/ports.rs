@@ -2,7 +2,7 @@ use agentdash_agent_runtime_contract::{
     AgentRuntimeDriver, ProfileDigest, RuntimeBindingId, RuntimeDescriptor,
     RuntimeDriverGeneration, RuntimeServiceInstanceId, RuntimeThreadId,
 };
-use agentdash_integration_api::AgentServiceOfferId;
+use agentdash_integration_api::{AgentServiceDefinition, AgentServiceOfferId};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -23,6 +23,8 @@ pub trait DriverConformanceVerifier: Send + Sync {
     async fn verify(
         &self,
         driver: &dyn AgentRuntimeDriver,
+        definition: &AgentServiceDefinition,
+        expected_service_instance_id: &RuntimeServiceInstanceId,
         descriptor: &RuntimeDescriptor,
         evidence: &ConformanceEvidence,
     ) -> Result<(), ConformanceVerificationError>;
@@ -163,6 +165,24 @@ pub trait AgentRuntimeHostRepository: Send + Sync {
         token: &str,
         now: DateTime<Utc>,
     ) -> Result<DriverLease, HostStoreError>;
+
+    async fn renew_lease(
+        &self,
+        binding_id: &RuntimeBindingId,
+        generation: RuntimeDriverGeneration,
+        owner: &str,
+        token: &str,
+        now: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<DriverLease, HostStoreError>;
+
+    async fn release_lease(
+        &self,
+        binding_id: &RuntimeBindingId,
+        generation: RuntimeDriverGeneration,
+        owner: &str,
+        token: &str,
+    ) -> Result<(), HostStoreError>;
 
     async fn mark_binding_lost(
         &self,

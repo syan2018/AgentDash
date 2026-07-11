@@ -258,7 +258,7 @@ impl ToolExecutionPort for RecordingExecutor {
 
 struct Fixture {
     broker: PlatformToolBroker,
-    repository: Arc<InMemoryToolBrokerRepository>,
+    repository: Arc<ToolBrokerRepositoryFixture>,
     journal: Arc<RecordingJournal>,
     policy: Arc<RecordingPolicy>,
     credentials: Arc<RecordingCredentials>,
@@ -266,7 +266,7 @@ struct Fixture {
 }
 
 fn fixture(delay: Duration) -> Fixture {
-    let repository = Arc::new(InMemoryToolBrokerRepository::default());
+    let repository = Arc::new(ToolBrokerRepositoryFixture::default());
     let policy = Arc::new(RecordingPolicy::default());
     let journal = Arc::new(RecordingJournal::default());
     let credentials = Arc::new(RecordingCredentials::default());
@@ -690,4 +690,174 @@ fn catalog_cannot_publish_unknown_channel() {
         .map(|tool| tool.name)
         .collect();
     assert!(channels.is_empty());
+}
+
+fn runtime_profile() -> RuntimeProfile {
+    RuntimeProfile {
+        reference_class: ReferenceRuntimeClass::ManagedThread,
+        input: InputProfile {
+            modalities: BTreeSet::new(),
+        },
+        instruction: InstructionProfile {
+            channels: BTreeSet::new(),
+            configuration_boundary: ConfigurationBoundary::Binding,
+        },
+        tools: ToolProfile {
+            channels: [ToolChannel::DirectCallback].into(),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            cancellation: true,
+        },
+        workspace: WorkspaceProfile {
+            capabilities: BTreeSet::new(),
+            mechanism: DeliveryMechanism::Native,
+        },
+        interactions: InteractionProfile {
+            kinds: [RuntimeInteractionKind::PermissionApproval].into(),
+            durable_correlation: true,
+        },
+        lifecycle: [
+            LifecycleCapability::ThreadStart,
+            LifecycleCapability::TurnStart,
+        ]
+        .into(),
+        hooks: HookProfile {
+            points: Vec::new(),
+            configuration_boundary: ConfigurationBoundary::Binding,
+        },
+        context: ContextProfile {
+            capabilities: BTreeSet::new(),
+            fidelity: ContextFidelity::Opaque,
+            activation_idempotent: false,
+        },
+        telemetry_config: BTreeSet::new(),
+    }
+}
+
+#[tokio::test]
+async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_result() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let runtime = ManagedAgentRuntime::new(store.clone());
+    runtime
+        .execute(RuntimeCommandEnvelope {
+            meta: OperationMeta {
+                operation_id: id("broker-thread-start"),
+                idempotency_key: id("broker-thread-start-key"),
+                expected_thread_revision: None,
+                actor: RuntimeActor::System {
+                    component: "tool-broker-test".to_string(),
+                },
+            },
+            command: RuntimeCommand::ThreadStart {
+                thread_id: id("thread-broker"),
+                binding_id: id("binding-broker"),
+                driver_generation: RuntimeDriverGeneration(3),
+                source_thread_id: id("source-thread-broker"),
+                profile_digest: id("profile-broker"),
+                bound_profile: Box::new(runtime_profile()),
+                input: Vec::new(),
+                surface_digest: id("surface-broker"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(4),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: id("hook-plan-broker"),
+                    entries: Vec::new(),
+                },
+            },
+        })
+        .await
+        .expect("start thread");
+    runtime
+        .execute(RuntimeCommandEnvelope {
+            meta: OperationMeta {
+                operation_id: id("broker-turn-start"),
+                idempotency_key: id("broker-turn-start-key"),
+                expected_thread_revision: Some(RuntimeRevision(3)),
+                actor: RuntimeActor::System {
+                    component: "tool-broker-test".to_string(),
+                },
+            },
+            command: RuntimeCommand::TurnStart {
+                thread_id: id("thread-broker"),
+                input: Vec::new(),
+            },
+        })
+        .await
+        .expect("start turn");
+    let turn_id: RuntimeTurnId = id("turn-broker-turn-start");
+    let item_id: RuntimeItemId = id("item-runtime-journal");
+    let arguments = serde_json::json!({"path":"crates"});
+    runtime
+        .ingest_driver_event(DriverEventEnvelope {
+            binding_id: id("binding-broker"),
+            generation: RuntimeDriverGeneration(3),
+            source_thread_id: id("source-thread-broker"),
+            source_turn_id: Some(id("source-turn-broker")),
+            source_item_id: Some(id("source-item-broker")),
+            event: RuntimeEvent::ItemStarted {
+                turn_id: turn_id.clone(),
+                item_id: item_id.clone(),
+                initial_content: RuntimeItemContent::ToolCall {
+                    name: "code_scan".to_string(),
+                    arguments: arguments.clone(),
+                },
+            },
+        })
+        .await
+        .expect("authoritative item start");
+
+    let invocation = ToolBrokerInvocation {
+        coordinates: ToolCallCoordinates {
+            thread_id: id("thread-broker"),
+            turn_id: turn_id.clone(),
+            item_id: item_id.clone(),
+            binding_id: id("binding-broker"),
+            binding_generation: RuntimeDriverGeneration(3),
+            tool_set_revision: ToolSetRevision(4),
+        },
+        tool_name: "code_scan".to_string(),
+        arguments,
+        timeout_ms: 1_000,
+    };
+    let journal = ManagedRuntimeToolJournal::new(store.clone());
+    journal
+        .accept_tool_call(&invocation, &catalog().tools[0])
+        .await
+        .expect("started item matches broker invocation");
+    let call = ToolBrokerCall {
+        invocation,
+        invocation_digest: "sha256:runtime-journal".to_string(),
+        capability_key: "mcp:code".to_string(),
+        tool_path: "mcp:code::scan".to_string(),
+        channel: ToolChannel::DirectCallback,
+        status: ToolBrokerCallStatus::Completed,
+        effective_arguments: Some(serde_json::json!({"path":"crates"})),
+        pending_interaction_id: None,
+        result: Some(ToolBrokerResult {
+            output: serde_json::json!({"matches": 2}),
+            is_error: false,
+        }),
+        terminal_message: None,
+    };
+    journal
+        .record_tool_terminal(&call)
+        .await
+        .expect("first terminal");
+    journal
+        .record_tool_terminal(&call)
+        .await
+        .expect("terminal replay converges");
+
+    let events = store
+        .events_after(&id("thread-broker"), None)
+        .await
+        .expect("events")
+        .events;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event.event, RuntimeEvent::ItemTerminal { .. }))
+            .count(),
+        1
+    );
 }

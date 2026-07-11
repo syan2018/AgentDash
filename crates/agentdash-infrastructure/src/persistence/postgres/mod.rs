@@ -1,8 +1,8 @@
 mod agent_repository;
-mod agent_run_command_receipt_repository;
-mod agent_run_delivery_binding_repository;
 mod agent_run_lineage_repository;
 mod agent_run_mailbox_repository;
+mod agent_runtime_composition_repository;
+mod agent_runtime_context_broker;
 mod auth_session_repository;
 mod backend_execution_lease_repository;
 mod backend_repository;
@@ -13,7 +13,6 @@ mod inline_file_repository;
 mod json_document;
 mod lifecycle_anchor_repository;
 mod llm_provider_repository;
-mod manual_context_compaction_request_repository;
 mod mcp_preset_repository;
 mod owner_document;
 mod permission_grant_repository;
@@ -26,7 +25,6 @@ mod runner_registration_token_repository;
 mod runtime_health_repository;
 mod runtime_host_repository;
 mod runtime_repository;
-mod session_repository;
 mod settings_repository;
 mod shared_library_repository;
 mod skill_asset_repository;
@@ -152,12 +150,10 @@ fn database_constraint_message(
 }
 
 pub use agent_repository::PostgresProjectAgentRepository;
-pub use agent_run_command_receipt_repository::PostgresAgentRunCommandReceiptRepository;
-pub use agent_run_delivery_binding_repository::PostgresAgentRunDeliveryBindingRepository;
-pub use agent_run_lineage_repository::{
-    PostgresAgentRunForkMaterialization, PostgresAgentRunLineageRepository,
-};
+pub use agent_run_lineage_repository::PostgresAgentRunLineageRepository;
 pub use agent_run_mailbox_repository::PostgresAgentRunMailboxRepository;
+pub use agent_runtime_composition_repository::PostgresAgentRuntimeCompositionRepository;
+pub use agent_runtime_context_broker::PostgresAgentRuntimeContextBroker;
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;
@@ -168,12 +164,10 @@ pub use inline_file_repository::PostgresInlineFileRepository;
 pub use lifecycle_anchor_repository::{
     PostgresAgentFrameRepository, PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
     PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
-    PostgresRuntimeSessionExecutionAnchorRepository,
 };
 pub use llm_provider_repository::{
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
 };
-pub use manual_context_compaction_request_repository::PostgresManualContextCompactionRequestRepository;
 pub use mcp_preset_repository::PostgresMcpPresetRepository;
 pub use permission_grant_repository::PostgresPermissionGrantRepository;
 pub use project_backend_access_repository::PostgresProjectBackendAccessRepository;
@@ -185,7 +179,6 @@ pub use runner_registration_token_repository::PostgresRunnerRegistrationTokenRep
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
 pub use runtime_host_repository::PostgresAgentRuntimeHostRepository;
 pub use runtime_repository::PostgresRuntimeRepository;
-pub use session_repository::PostgresSessionRepository;
 pub use settings_repository::PostgresSettingsRepository;
 pub use shared_library_repository::PostgresSharedLibraryRepository;
 pub use skill_asset_repository::PostgresSkillAssetRepository;

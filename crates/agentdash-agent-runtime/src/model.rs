@@ -24,6 +24,7 @@ pub struct RuntimeTurnState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeItemState {
     pub turn_id: RuntimeTurnId,
+    pub initial_content: agentdash_agent_runtime_contract::RuntimeItemContent,
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeItemTerminal>,
 }
 
@@ -236,7 +237,11 @@ impl RuntimeThreadState {
                     self.active_turn_id = None;
                 }
             }
-            RuntimeEvent::ItemStarted { turn_id, item_id } => {
+            RuntimeEvent::ItemStarted {
+                turn_id,
+                item_id,
+                initial_content,
+            } => {
                 self.require_active_turn(turn_id)?;
                 if self.items.contains_key(item_id) {
                     return Err(TransitionError::ItemAlreadyStarted {
@@ -247,6 +252,7 @@ impl RuntimeThreadState {
                     item_id.clone(),
                     RuntimeItemState {
                         turn_id: turn_id.clone(),
+                        initial_content: initial_content.clone(),
                         phase: EntityPhase::Active,
                     },
                 );

@@ -49,7 +49,6 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
         };
 
         let frame = AgentFrameBuilder::new_launch_anchor(agent_id, created_by_id)
-            .with_runtime_session(runtime_session_id.clone())
             .build(self.frame_repo.as_ref())
             .await
             .map_err(|error| {
@@ -62,7 +61,7 @@ impl agent_frame_materialization_port::AgentRunFrameConstructionPort
         );
         outcome.frame_id = Some(frame.id);
         outcome.agent_id = Some(frame.agent_id);
-        outcome.runtime_session_id = Some(runtime_session_id);
+        outcome.runtime_session_id = runtime_session_id;
         outcome.wrote_frame_revision = true;
         Ok(outcome)
     }
@@ -103,7 +102,6 @@ impl workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort
             input.agent_id,
             input.created_by_id.clone(),
         )
-        .with_runtime_session(input.runtime_session_id.clone())
         .build(self.frame_repo.as_ref())
         .await
         .map_err(|error| {
@@ -172,7 +170,6 @@ impl workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort
         draft.execution_profile = input.inherited_executor_config;
         let _surface_frame = AgentFrameBuilder::new(input.agent_id)
             .with_created_by("workflow_agent_node_materialization", input.created_by_id)
-            .with_runtime_session(input.runtime_session_id.clone())
             .with_surface_draft(&draft)
             .build(self.frame_repo.as_ref())
             .await
@@ -187,7 +184,7 @@ impl workflow_node_frame_port::WorkflowAgentNodeFrameMaterializationPort
         );
         outcome.frame_id = Some(anchor_frame.id);
         outcome.agent_id = Some(input.agent_id);
-        outcome.runtime_session_id = Some(input.runtime_session_id);
+        outcome.runtime_session_id = input.runtime_session_id;
         outcome.wrote_frame_revision = true;
         Ok(outcome)
     }

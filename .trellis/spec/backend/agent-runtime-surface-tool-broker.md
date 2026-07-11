@@ -41,6 +41,7 @@ impl PlatformToolBroker {
 ## 3. Contracts
 
 - Business Surface 以 protocol-neutral contribution 为输入，稳定展开 Instruction、Context、Tool、MCP、Skill、Workflow、Permission 与 Hook；按 priority和稳定key确定性排序，同key不同定义必须typed conflict。
+- API composition通过`NativeAgentRunSurfaceCompiler`等显式production source取得AgentRun/AgentFrame/workspace/tool/Hook业务事实；provisioner只接受编译完成且带真实revision/digest的`MaterializedDriverSurface`，不构造默认或空surface。immutable surface必须先持久化，再进入Host bind，产品binding最后落库；确定性Thread/Binding ID保证中途崩溃后可重放。
 - `AgentSurfaceSnapshot` 是业务期望的immutable事实，`BoundAgentSurface`是与实际RuntimeProfile求交后的业务admission结果。Driver Host只能持久化revision/digest/hook refs等轻量reference，不得复制或重新编译contribution。
 - Required contribution不满足即typed incompatible；只有显式optional贡献可以省略。`PromptOnly`不满足callable Tool、exact Workspace/Skill或required Hook语义。
 - Tool需要真实callable route：Direct Callback、session-scoped MCP façade或Driver Native。runtime tool name、tool path、MCP server identity、configuration boundary和schema/provenance必须无冲突。

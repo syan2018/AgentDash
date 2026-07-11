@@ -15,7 +15,7 @@ pub(crate) struct CompanionLifecycleAnchor {
 
 #[derive(Clone)]
 pub(crate) struct CompanionToolContext {
-    delivery_runtime_session_id: Option<String>,
+    runtime_thread_id: Option<String>,
     turn_id: String,
     identity: Option<AuthIdentity>,
     hook_runtime: Option<SharedHookRuntime>,
@@ -23,14 +23,14 @@ pub(crate) struct CompanionToolContext {
 
 impl CompanionToolContext {
     pub(crate) fn from_execution_context(context: &ExecutionContext) -> Self {
-        let delivery_runtime_session_id = context
+        let runtime_thread_id = context
             .turn
             .hook_runtime
             .as_ref()
             .map(|session| session.session_id().to_string());
 
         Self {
-            delivery_runtime_session_id,
+            runtime_thread_id,
             turn_id: context.session.turn_id.clone(),
             identity: context.session.identity.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
@@ -41,8 +41,8 @@ impl CompanionToolContext {
         &self.turn_id
     }
 
-    pub(crate) fn delivery_runtime_session_id(&self) -> Option<&str> {
-        self.delivery_runtime_session_id.as_deref()
+    pub(crate) fn runtime_thread_id(&self) -> Option<&str> {
+        self.runtime_thread_id.as_deref()
     }
 
     pub(crate) fn hook_runtime(&self) -> Option<&SharedHookRuntime> {
@@ -62,11 +62,8 @@ impl CompanionToolContext {
         })
     }
 
-    pub(crate) fn require_delivery_runtime_session_id(
-        &self,
-        action: &str,
-    ) -> Result<&str, AgentToolError> {
-        self.delivery_runtime_session_id.as_deref().ok_or_else(|| {
+    pub(crate) fn require_runtime_thread_id(&self, action: &str) -> Result<&str, AgentToolError> {
+        self.runtime_thread_id.as_deref().ok_or_else(|| {
             AgentToolError::ExecutionFailed(format!(
                 "当前缺少 delivery runtime session id，无法{action}"
             ))
@@ -78,9 +75,7 @@ impl CompanionToolContext {
         action: &str,
         repos: &RepositorySet,
     ) -> Result<CompanionLifecycleAnchor, AgentToolError> {
-        let session_id = self
-            .require_delivery_runtime_session_id(action)?
-            .to_string();
+        let session_id = self.require_runtime_thread_id(action)?.to_string();
         resolve_lifecycle_anchor(&session_id, repos)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(format!("{error}，无法{action}")))
@@ -93,18 +88,18 @@ async fn resolve_lifecycle_anchor(
 ) -> Result<CompanionLifecycleAnchor, String> {
     let (_anchor, agent, frame) = resolve_current_frame_from_delivery_trace_ref(
         runtime_session_id,
-        repos.execution_anchor_repo.as_ref(),
+        repos.agent_run_runtime_binding_repo.as_ref(),
         repos.lifecycle_agent_repo.as_ref(),
         repos.agent_frame_repo.as_ref(),
     )
     .await
     .map_err(|error| {
         format!(
-            "通过 RuntimeSessionExecutionAnchor 查询 runtime session `{runtime_session_id}` 当前 AgentFrame 失败: {error}"
+            "通过 AgentRun Runtime binding 查询 runtime thread `{runtime_session_id}` 当前 AgentFrame 失败: {error}"
         )
     })?
     .ok_or_else(|| {
-        format!("runtime session `{runtime_session_id}` 缺少可用 RuntimeSessionExecutionAnchor/AgentFrame")
+        format!("runtime thread `{runtime_session_id}` 缺少可用 AgentRun Runtime binding/AgentFrame")
     })?;
 
     Ok(CompanionLifecycleAnchor {

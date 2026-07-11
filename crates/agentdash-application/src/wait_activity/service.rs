@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use agentdash_agent_types::AgentToolError;
 use agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry;
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
 use agentdash_domain::agent_run_mailbox::AgentRunMailboxRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleGateRepository,
-    RuntimeSessionExecutionAnchorRepository,
 };
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -28,7 +28,7 @@ use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
 pub struct WaitActivityRepositories {
     pub lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
 }
@@ -43,7 +43,7 @@ pub struct WaitActivityDeps {
 pub struct WaitActivityService {
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     agent_frame_repo: Arc<dyn AgentFrameRepository>,
-    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     terminal_registry: Arc<AgentRunTerminalRegistry>,
@@ -58,7 +58,7 @@ impl WaitActivityService {
     pub fn from_repositories(
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_frame_repo: Arc<dyn AgentFrameRepository>,
-        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
         lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
         mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
         terminal_registry: Arc<AgentRunTerminalRegistry>,
@@ -66,7 +66,7 @@ impl WaitActivityService {
         Self {
             lifecycle_agent_repo,
             agent_frame_repo,
-            execution_anchor_repo,
+            agent_run_runtime_binding_repo,
             lifecycle_gate_repo,
             mailbox_repo,
             terminal_registry,
@@ -80,7 +80,7 @@ impl WaitActivityService {
         Self {
             lifecycle_agent_repo: repositories.lifecycle_agent_repo,
             agent_frame_repo: repositories.agent_frame_repo,
-            execution_anchor_repo: repositories.execution_anchor_repo,
+            agent_run_runtime_binding_repo: repositories.agent_run_runtime_binding_repo,
             lifecycle_gate_repo: repositories.lifecycle_gate_repo,
             mailbox_repo: repositories.mailbox_repo,
             terminal_registry,
@@ -137,18 +137,18 @@ impl WaitActivityService {
         context: &WaitToolContext,
     ) -> Result<ResolvedWaitScope, AgentToolError> {
         let mut scope = ResolvedWaitScope {
-            delivery_runtime_session_id: context.delivery_runtime_session_id.clone(),
+            runtime_thread_id: context.runtime_thread_id.clone(),
             run_id: None,
             agent_id: None,
             frame_id: None,
         };
-        let Some(runtime_session_id) = context.delivery_runtime_session_id.as_deref() else {
+        let Some(runtime_thread_id) = context.runtime_thread_id.as_ref() else {
             return Ok(scope);
         };
 
         let resolved = resolve_current_frame_from_delivery_trace_ref(
-            runtime_session_id,
-            self.execution_anchor_repo.as_ref(),
+            runtime_thread_id.as_str(),
+            self.agent_run_runtime_binding_repo.as_ref(),
             self.lifecycle_agent_repo.as_ref(),
             self.agent_frame_repo.as_ref(),
         )
@@ -156,7 +156,7 @@ impl WaitActivityService {
         .map_err(|error| {
             AgentToolError::ExecutionFailed(format!("wait 解析 AgentRun owner 失败: {error}"))
         })?;
-        if let Some((_anchor, agent, frame)) = resolved {
+        if let Some((_binding, agent, frame)) = resolved {
             scope.run_id = Some(agent.run_id);
             scope.agent_id = Some(agent.id);
             scope.frame_id = Some(frame.id);

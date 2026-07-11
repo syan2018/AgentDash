@@ -21,8 +21,8 @@ pub struct PermissionGrant {
     pub run_id: Uuid,
     /// 生效目标：关联的 AgentFrame（主查询锚点）
     pub effect_frame_id: Option<Uuid>,
-    /// 来源 runtime session（审计追溯用，不再作为主查询路径）
-    pub source_runtime_session_id: String,
+    /// 触发权限申请的 canonical Runtime Operation；非运行期管理操作为空。
+    pub source_runtime_operation_id: Option<String>,
     /// 触发该申请的 turn（审计追溯用）
     pub source_turn_id: Option<String>,
     /// 触发该申请的 tool call（审计追溯用）
@@ -53,7 +53,7 @@ impl PermissionGrant {
     /// 创建新的权限申请。初始状态为 Created。
     pub fn new(
         run_id: Uuid,
-        source_runtime_session_id: impl Into<String>,
+        source_runtime_operation_id: Option<String>,
         requested_paths: Vec<ToolCapabilityPath>,
         reason: impl Into<String>,
         grant_scope: GrantScope,
@@ -66,7 +66,7 @@ impl PermissionGrant {
             id: Uuid::new_v4(),
             run_id,
             effect_frame_id: None,
-            source_runtime_session_id: source_runtime_session_id.into(),
+            source_runtime_operation_id,
             source_turn_id: None,
             source_tool_call_id: None,
             requested_paths,
@@ -226,7 +226,7 @@ mod tests {
     fn sample_grant() -> PermissionGrant {
         PermissionGrant::new(
             Uuid::new_v4(),
-            "session-1",
+            Some("operation-1".to_string()),
             vec![ToolCapabilityPath::parse("story_management").unwrap()],
             "需要创建 Story",
             GrantScope::AgentFrame,

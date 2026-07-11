@@ -1,7 +1,5 @@
-use agentdash_application_agentrun::agent_run::{
-    AgentFrameSurfaceExt, DeliveryRuntimeSelectionPolicy, DeliveryRuntimeSelectionRepositories,
-    DeliveryRuntimeSelectionService,
-};
+use agentdash_application_agentrun::agent_run::AgentFrameSurfaceExt;
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_application_vfs::PROVIDER_CANVAS_FS;
 use agentdash_domain::canvas::{
     Canvas, CanvasInteractionEvent, CanvasInteractionSnapshot, CanvasRuntimeDiagnostic,
@@ -96,22 +94,22 @@ pub async fn resolve_agent_run_canvas_context(
         )));
     }
 
-    let delivery = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-        lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
-        lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
-        agent_frames: repos.agent_frame_repo.as_ref(),
-        execution_anchors: repos.execution_anchor_repo.as_ref(),
-        delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
-    })
-    .select(DeliveryRuntimeSelectionPolicy::CurrentDelivery { run_id, agent_id })
-    .await
-    .map_err(agent_run_selection_error)?;
+    let delivery = repos
+        .agent_run_runtime_binding_repo
+        .load(&AgentRunRuntimeTarget { run_id, agent_id })
+        .await
+        .map_err(|error| ApplicationError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            ApplicationError::NotFound(format!(
+                "AgentRun Runtime binding 不存在: run={run_id}, agent={agent_id}"
+            ))
+        })?;
     let current_agent_frame = repos
         .agent_frame_repo
-        .get(delivery.current_frame_id)
+        .get_current(agent_id)
         .await?
         .ok_or_else(|| {
-            ApplicationError::NotFound(format!("AgentFrame 不存在: {}", delivery.current_frame_id))
+            ApplicationError::NotFound(format!("LifecycleAgent {agent_id} 没有 current AgentFrame"))
         })?;
     ensure_canvas_visible_in_frame(&current_agent_frame, canvas_mount_id)?;
 
@@ -119,8 +117,8 @@ pub async fn resolve_agent_run_canvas_context(
         run,
         agent,
         canvas,
-        delivery_trace_ref: Some(format!("runtime_session:{}", delivery.runtime_session_id)),
-        runtime_session_id: delivery.runtime_session_id,
+        delivery_trace_ref: Some(format!("runtime_thread:{}", delivery.thread_id)),
+        runtime_session_id: delivery.thread_id.to_string(),
         current_agent_frame,
         agent_run_canvas_ref: format!("{run_id}:{agent_id}:{}", canvas_mount_id),
     })
@@ -229,30 +227,4 @@ fn ensure_canvas_visible_in_frame(
     Err(ApplicationError::Forbidden(format!(
         "Canvas {canvas_mount_id} 不在当前 AgentRun delivery frame 的可见 Canvas/module surface 中"
     )))
-}
-
-fn agent_run_selection_error(
-    error: agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError,
-) -> ApplicationError {
-    match error {
-        agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::RunNotFound {
-            ..
-        }
-        | agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::AgentNotFound {
-            ..
-        }
-        | agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::CurrentFrameNotFound {
-            ..
-        }
-        | agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::LaunchFrameNotFound {
-            ..
-        }
-        | agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::SubjectNotFound {
-            ..
-        } => ApplicationError::NotFound(error.to_string()),
-        agentdash_application_agentrun::agent_run::DeliveryRuntimeSelectionError::Repository(
-            source,
-        ) => ApplicationError::from(source),
-        other => ApplicationError::Conflict(other.to_string()),
-    }
 }

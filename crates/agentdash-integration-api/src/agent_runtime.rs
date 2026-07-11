@@ -6,13 +6,45 @@ use agentdash_agent_runtime_contract::{
     ContextRevision, DriverItemId, DriverThreadId, DriverTurnId, HookAction, HookDefinitionId,
     HookFailurePolicy, HookPlanDigest, HookPlanRevision, HookPoint, InstructionChannel,
     MaterializedContext, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
-    RuntimeProfile, RuntimeServiceInstanceId, SemanticStrength, SurfaceDigest, SurfaceRevision,
-    ToolChannel, ToolSetRevision, WorkspaceCapability,
+    RuntimeItemId, RuntimeProfile, RuntimeServiceInstanceId, RuntimeThreadId, RuntimeTurnId,
+    SemanticStrength, SurfaceDigest, SurfaceRevision, ToolChannel, ToolSetRevision,
+    WorkspaceCapability,
 };
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+use ts_rs::TS;
+
+pub fn agent_service_schema_digest(value: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+
+    fn canonicalize(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(object) => {
+                let mut entries = object.iter().collect::<Vec<_>>();
+                entries.sort_by(|left, right| left.0.cmp(right.0));
+                serde_json::Value::Object(
+                    entries
+                        .into_iter()
+                        .map(|(key, value)| (key.clone(), canonicalize(value)))
+                        .collect(),
+                )
+            }
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.iter().map(canonicalize).collect())
+            }
+            other => other.clone(),
+        }
+    }
+
+    let canonical = serde_json::to_vec(&canonicalize(value))
+        .expect("JSON value canonical serialization cannot fail");
+    format!("sha256:{:x}", Sha256::digest(canonical))
+}
+
+use crate::AuthIdentity;
 
 macro_rules! integration_id {
     ($name:ident) => {
@@ -66,6 +98,20 @@ pub struct AgentServiceProvenance {
     pub publisher_integration: String,
     pub service_version: String,
     pub build_digest: AgentServiceBuildDigest,
+}
+
+/// Integration 随 driver definition 一并交给宿主的静态信任声明。
+///
+/// 该声明只描述由集成构建、测试并签入的事实，不携带运行期配置或凭据。宿主会据此
+/// 构造自己的 conformance verifier，并在 service instance 激活时校验实际证据。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRuntimeTrustManifest {
+    pub provenance: AgentServiceProvenance,
+    pub suite_revision: String,
+    pub driver_build_digest: String,
+    pub protocol_revision: u32,
+    pub verified_profile: RuntimeProfile,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -152,7 +198,7 @@ pub trait AgentRuntimeCredentialBroker: Send + Sync {
     ) -> Result<CredentialLease, CredentialResolveError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverSurfaceRequest {
     pub binding_id: RuntimeBindingId,
@@ -160,14 +206,14 @@ pub struct DriverSurfaceRequest {
     pub surface_digest: SurfaceDigest,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverInstructionSet {
     pub channel: InstructionChannel,
     pub entries: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverContextSurface {
     pub recipe: ContextRecipe,
@@ -177,7 +223,7 @@ pub struct DriverContextSurface {
     pub fidelity: ContextFidelity,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverToolDefinition {
     pub name: String,
@@ -186,7 +232,7 @@ pub struct DriverToolDefinition {
     pub channels: Vec<ToolChannel>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverToolSurface {
     pub revision: ToolSetRevision,
@@ -194,7 +240,7 @@ pub struct DriverToolSurface {
     pub tools: Vec<DriverToolDefinition>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverHookBinding {
     pub definition_id: HookDefinitionId,
@@ -205,7 +251,7 @@ pub struct DriverHookBinding {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverHookSurface {
     pub revision: HookPlanRevision,
@@ -215,7 +261,7 @@ pub struct DriverHookSurface {
     pub bindings: Vec<DriverHookBinding>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverWorkspaceSurface {
     pub capabilities: Vec<WorkspaceCapability>,
@@ -226,11 +272,13 @@ pub struct DriverWorkspaceSurface {
 ///
 /// Drivers may cache this value, but must acknowledge exactly the revisions and digests they
 /// actually installed. The Integration host never treats a requested digest as proof of apply.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct MaterializedDriverSurface {
+    pub runtime_thread_id: RuntimeThreadId,
     pub revision: SurfaceRevision,
     pub digest: SurfaceDigest,
+    pub authorization_identity: Option<AuthIdentity>,
     pub context: DriverContextSurface,
     pub tools: DriverToolSurface,
     pub hooks: DriverHookSurface,
@@ -262,7 +310,7 @@ pub trait AgentRuntimeSurfaceBroker: Send + Sync {
     ) -> Result<DriverToolSurface, DriverSurfaceError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverContextCheckpointRequest {
     pub binding_id: RuntimeBindingId,
@@ -270,7 +318,7 @@ pub struct DriverContextCheckpointRequest {
     pub checkpoint_id: ContextCheckpointId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverCompactionActivationRequest {
     pub binding_id: RuntimeBindingId,
@@ -278,7 +326,7 @@ pub struct DriverCompactionActivationRequest {
     pub compaction_id: ContextCompactionId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverContextActivation {
     pub candidate_id: ContextCandidateId,
@@ -312,9 +360,12 @@ pub trait AgentRuntimeContextBroker: Send + Sync {
     ) -> Result<DriverContextActivation, DriverContextError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverToolInvocation {
+    pub thread_id: RuntimeThreadId,
+    pub turn_id: RuntimeTurnId,
+    pub item_id: RuntimeItemId,
     pub binding_id: RuntimeBindingId,
     pub generation: RuntimeDriverGeneration,
     pub source_thread_id: DriverThreadId,
@@ -324,9 +375,10 @@ pub struct DriverToolInvocation {
     pub tool_name: String,
     pub arguments: Value,
     pub timeout_ms: u64,
+    pub authorization_identity: Option<AuthIdentity>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DriverToolOutcome {
     Completed {
@@ -360,9 +412,12 @@ pub trait AgentRuntimeToolCallback: Send + Sync {
     ) -> Result<DriverToolOutcome, DriverToolCallbackError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverHookInvocation {
+    pub thread_id: RuntimeThreadId,
+    pub turn_id: Option<RuntimeTurnId>,
+    pub item_id: Option<RuntimeItemId>,
     pub binding_id: RuntimeBindingId,
     pub generation: RuntimeDriverGeneration,
     pub source_thread_id: DriverThreadId,
@@ -371,9 +426,10 @@ pub struct DriverHookInvocation {
     pub definition_id: HookDefinitionId,
     pub point: HookPoint,
     pub payload: Value,
+    pub authorization_identity: Option<AuthIdentity>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DriverHookDecision {
     Continue {

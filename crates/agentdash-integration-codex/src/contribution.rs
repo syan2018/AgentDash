@@ -3,8 +3,8 @@ use std::sync::{Arc, LazyLock};
 use agentdash_agent_runtime_contract::RuntimeProfile;
 use agentdash_integration_api::{
     AgentDashIntegration, AgentRuntimeDriverContribution, AgentRuntimeFactoryKey,
-    AgentServiceBuildDigest, AgentServiceDefinition, AgentServiceDefinitionId,
-    AgentServiceProvenance, AgentServiceSchemaDigest,
+    AgentRuntimeTrustManifest, AgentServiceBuildDigest, AgentServiceDefinition,
+    AgentServiceDefinitionId, AgentServiceProvenance, AgentServiceSchemaDigest,
 };
 use serde_json::json;
 
@@ -28,17 +28,57 @@ impl AgentDashIntegration for CodexRuntimeIntegration {
     fn agent_runtime_drivers(&self) -> Vec<AgentRuntimeDriverContribution> {
         vec![codex_runtime_contribution()]
     }
+
+    fn agent_runtime_trust_manifests(&self) -> Vec<AgentRuntimeTrustManifest> {
+        vec![codex_runtime_trust_manifest()]
+    }
 }
 
 pub fn codex_runtime_contribution() -> AgentRuntimeDriverContribution {
+    codex_runtime_contribution_with_launcher(Arc::new(
+        crate::driver::ProductionCodexAppServerLauncher,
+    ))
+}
+
+pub fn codex_runtime_contribution_with_launcher(
+    launcher: Arc<dyn crate::driver::CodexAppServerLauncher>,
+) -> AgentRuntimeDriverContribution {
     let profile = codex_runtime_profile();
     AgentRuntimeDriverContribution {
         definition: definition(profile),
-        factory: Arc::new(CodexRuntimeDriverFactory::new(FACTORY_KEY.clone())),
+        factory: Arc::new(CodexRuntimeDriverFactory::with_launcher(
+            FACTORY_KEY.clone(),
+            launcher,
+        )),
+    }
+}
+
+pub fn codex_runtime_trust_manifest() -> AgentRuntimeTrustManifest {
+    let contribution = codex_runtime_contribution();
+    AgentRuntimeTrustManifest {
+        provenance: contribution.definition.provenance.clone(),
+        suite_revision: "codex-app-server-runtime-v1".to_string(),
+        driver_build_digest: contribution.definition.provenance.build_digest.to_string(),
+        protocol_revision: CODEX_PROTOCOL_REVISION,
+        verified_profile: contribution.definition.service_profile_upper_bound,
     }
 }
 
 fn definition(profile: RuntimeProfile) -> AgentServiceDefinition {
+    let config_schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "cwd": { "type": "string", "minLength": 1 },
+            "model": { "type": "string", "minLength": 1 },
+            "modelProvider": { "type": "string", "minLength": 1 },
+            "baseInstructions": { "type": "string" },
+            "developerInstructions": { "type": "string" },
+            "runtimeWorkspaceRoots": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "artifactRoot": { "type": "string", "minLength": 1 }
+        },
+        "required": ["cwd", "artifactRoot"]
+    });
     AgentServiceDefinition {
         provenance: AgentServiceProvenance {
             definition_id: AgentServiceDefinitionId::new("builtin.codex-app-server")
@@ -53,22 +93,11 @@ fn definition(profile: RuntimeProfile) -> AgentServiceDefinition {
         },
         factory_key: FACTORY_KEY.clone(),
         supported_protocol_revisions: vec![CODEX_PROTOCOL_REVISION],
-        config_schema: json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "cwd": { "type": "string", "minLength": 1 },
-                "model": { "type": "string", "minLength": 1 },
-                "modelProvider": { "type": "string", "minLength": 1 },
-                "baseInstructions": { "type": "string" },
-                "developerInstructions": { "type": "string" },
-                "runtimeWorkspaceRoots": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-                "artifactRoot": { "type": "string", "minLength": 1 }
-            },
-            "required": ["cwd", "artifactRoot"]
-        }),
-        config_schema_digest: AgentServiceSchemaDigest::new("sha256:codex-runtime-config-v1")
-            .expect("static schema digest is valid"),
+        config_schema_digest: AgentServiceSchemaDigest::new(
+            agentdash_integration_api::agent_service_schema_digest(&config_schema),
+        )
+        .expect("computed schema digest is valid"),
+        config_schema,
         credential_slots: Vec::new(),
         service_profile_upper_bound: profile,
     }
@@ -89,6 +118,13 @@ mod tests {
         assert_eq!(
             contribution.definition.provenance.service_version,
             CODEX_PROTOCOL_REVISION.to_string()
+        );
+        let manifest = codex_runtime_trust_manifest();
+        assert_eq!(manifest.provenance, contribution.definition.provenance);
+        assert_eq!(manifest.protocol_revision, CODEX_PROTOCOL_REVISION);
+        assert_eq!(
+            manifest.verified_profile,
+            contribution.definition.service_profile_upper_bound
         );
     }
 }

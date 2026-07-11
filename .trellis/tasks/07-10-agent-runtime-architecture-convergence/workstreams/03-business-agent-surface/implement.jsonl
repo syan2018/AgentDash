@@ -1,6 +1,6 @@
 {"file":".trellis/spec/backend/capability/architecture.md","reason":"收敛AgentFrame与Capability Pack业务surface"}
 {"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"重建ToolCatalog与Tool Broker调用链"}
-{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"定义protocol-neutral ContextEnvelope与delivery fidelity"}
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"定义protocol-neutral ContextEnvelope与delivery fidelity"}
 {"file":".trellis/spec/backend/vfs/architecture.md","reason":"Tool Broker与VFS policy/materialization边界"}
 {"file":".trellis/spec/backend/permission/architecture.md","reason":"tool approval与policy enforcement"}
 {"file":".trellis/tasks/07-10-agent-runtime-architecture-convergence/research/external-agent-feature-integration-matrix.md","reason":"工具、MCP、VFS、Skill与Hook适配矩阵"}

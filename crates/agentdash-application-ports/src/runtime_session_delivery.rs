@@ -1,20 +1,5 @@
 use agentdash_agent_protocol::UserInputBlock;
-use agentdash_domain::workflow::ExecutionSource;
 use async_trait::async_trait;
-use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeSessionCreationRequest {
-    pub project_id: Uuid,
-    pub run_id: Uuid,
-    pub agent_id: Uuid,
-    pub source: ExecutionSource,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeSessionCreationResult {
-    pub runtime_session_id: Uuid,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSessionDeliveryRef {
@@ -45,14 +30,6 @@ pub enum RuntimeSessionDeliveryError {
     Unavailable { message: String },
     #[error("runtime session delivery failed: {message}")]
     Internal { message: String },
-}
-
-#[async_trait]
-pub trait RuntimeSessionCreationPort: Send + Sync {
-    async fn create_runtime_session(
-        &self,
-        request: RuntimeSessionCreationRequest,
-    ) -> Result<RuntimeSessionCreationResult, RuntimeSessionDeliveryError>;
 }
 
 #[async_trait]

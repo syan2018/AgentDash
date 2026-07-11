@@ -32,16 +32,17 @@ impl RuntimeToolProvider for WaitRuntimeToolProvider {
         &self,
         context: &ExecutionContext,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
-        let delivery_runtime_session_id = context
+        let runtime_thread_id = context
             .turn
             .hook_runtime
             .as_ref()
             .map(|runtime| runtime.session_id().to_string())
-            .or_else(|| Some(runtime_session_id_from_context(context)));
+            .or_else(|| Some(runtime_session_id_from_context(context)))
+            .and_then(|value| agentdash_agent_runtime_contract::RuntimeThreadId::new(value).ok());
         Ok(vec![Arc::new(WaitTool::new(
             self.service.clone(),
             WaitToolContext {
-                delivery_runtime_session_id,
+                runtime_thread_id,
                 turn_id: context.session.turn_id.clone(),
             },
         ))])

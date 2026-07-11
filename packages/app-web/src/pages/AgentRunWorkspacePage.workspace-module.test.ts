@@ -376,7 +376,7 @@ describe("AgentRun workspace conversation command authority", () => {
   it("does not infer command enablement from top-level control_plane status", () => {
     const state = commandState("ready", workspaceView("running"));
 
-    expect(state.executionStatus).toBe("running_active");
+    expect(state.executionStatus).toBe("ready");
     expect(state.commands.commands).toHaveLength(0);
     expect(state.commands.keyboard.enter).toBeUndefined();
     expect(state.commands.keyboard.ctrl_enter).toBeUndefined();

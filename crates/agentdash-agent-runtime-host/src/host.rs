@@ -6,6 +6,7 @@ use agentdash_agent_runtime_contract::{
     ProfileProvenance, RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeProfile,
     RuntimeServiceInstanceId, RuntimeThreadId, intersect_profile_layers,
 };
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_integration_api::{
     ActivatedAgentServiceInstance, AgentRuntimeCredentialBroker, AgentRuntimeCredentialRef,
     AgentRuntimeCredentialSlot, AgentServiceOfferId, CredentialLease, CredentialResolveError,
@@ -14,7 +15,6 @@ use agentdash_integration_api::{
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Utc};
 use jsonschema::validator_for;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
@@ -24,7 +24,7 @@ use crate::{
     DriverConformanceVerifier, DriverLease, HookApplyStatus, HostStoreError,
     PutAgentServiceInstance, RuntimeBinding, RuntimeBindingState, RuntimeDriverCoordinate,
     RuntimeOffer, RuntimeSourceCoordinate, ServiceInstanceDesiredState,
-    ServiceInstanceObservedState, canonical_json,
+    ServiceInstanceObservedState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -162,6 +162,16 @@ impl IntegrationDriverHost {
 
     pub fn definitions(&self) -> Vec<agentdash_integration_api::AgentServiceDefinition> {
         self.registry.definitions()
+    }
+
+    pub async fn service_instance(
+        &self,
+        instance_id: &RuntimeServiceInstanceId,
+    ) -> Result<Option<AgentServiceInstance>, AgentRuntimeHostError> {
+        self.repository
+            .load_instance(instance_id)
+            .await
+            .map_err(AgentRuntimeHostError::from)
     }
 
     pub async fn put_instance(
@@ -333,7 +343,13 @@ impl IntegrationDriverHost {
             });
         }
         self.conformance
-            .verify(driver.as_ref(), &descriptor, &request.conformance)
+            .verify(
+                driver.as_ref(),
+                &definition,
+                &instance.id,
+                &descriptor,
+                &request.conformance,
+            )
             .await
             .map_err(|error| AgentRuntimeHostError::ConformanceRejected {
                 reason: error.to_string(),
@@ -673,6 +689,45 @@ impl IntegrationDriverHost {
             .map_err(Into::into)
     }
 
+    pub async fn renew_driver_lease(
+        &self,
+        lease: &DriverLease,
+    ) -> Result<DriverLease, AgentRuntimeHostError> {
+        let now = Utc::now();
+        let expires_at = now
+            + ChronoDuration::from_std(self.lease_duration).map_err(|error| {
+                AgentRuntimeHostError::DispatchRejected {
+                    reason: error.to_string(),
+                }
+            })?;
+        self.repository
+            .renew_lease(
+                &lease.binding_id,
+                lease.generation,
+                &lease.owner,
+                &lease.token,
+                now,
+                expires_at,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn release_driver_lease(
+        &self,
+        lease: &DriverLease,
+    ) -> Result<(), AgentRuntimeHostError> {
+        self.repository
+            .release_lease(
+                &lease.binding_id,
+                lease.generation,
+                &lease.owner,
+                &lease.token,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn dispatch(
         &self,
         command: RouteDriverCommand,
@@ -708,7 +763,8 @@ impl IntegrationDriverHost {
                 reason: "surface or required hook application is not acknowledged".to_string(),
             });
         }
-        self.repository
+        let lease = self
+            .repository
             .validate_lease(
                 &binding.id,
                 binding.driver_generation,
@@ -722,8 +778,7 @@ impl IntegrationDriverHost {
             binding_id: binding.id,
             generation: binding.driver_generation,
             source_thread_id: source.source_thread_id,
-            lease_owner: command.lease_owner,
-            lease_token: command.lease_token,
+            lease_epoch: lease.epoch,
             repository: self.repository.clone(),
             inner: sink,
         });
@@ -749,6 +804,36 @@ impl IntegrationDriverHost {
             })
     }
 
+    /// Inspects the driver currently owning a durable binding coordinate.
+    ///
+    /// Recovery workers use this read path after a crash to reconcile side effects whose dispatch
+    /// receipt may have been lost. The durable binding/offer lookup keeps inspection generation-
+    /// fenced without inventing a second driver registry.
+    pub async fn inspect_binding_driver(
+        &self,
+        binding_id: &RuntimeBindingId,
+        query: agentdash_agent_runtime_contract::DriverInspectionQuery,
+    ) -> Result<agentdash_agent_runtime_contract::DriverInspection, AgentRuntimeHostError> {
+        let binding = self.binding(binding_id).await?;
+        let offer = self
+            .repository
+            .load_offer(&binding.offer_id)
+            .await?
+            .ok_or_else(|| AgentRuntimeHostError::OfferUnavailable {
+                reason: "bound offer is missing".to_string(),
+            })?;
+        if offer.generation != binding.driver_generation || !offer.available {
+            return Err(AgentRuntimeHostError::OfferUnavailable {
+                reason: "bound driver generation is unavailable".to_string(),
+            });
+        }
+        self.driver_for_offer(&offer)
+            .await?
+            .inspect(query)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Resolves the single activated driver endpoint owned by a durable service offer.
     ///
     /// Transport adapters use this method to terminate Runtime Wire at the Integration Host;
@@ -759,7 +844,8 @@ impl IntegrationDriverHost {
         generation: RuntimeDriverGeneration,
     ) -> Result<Arc<dyn AgentRuntimeDriver>, AgentRuntimeHostError> {
         let offer = self
-            .offers()
+            .repository
+            .list_offers()
             .await?
             .into_iter()
             .find(|offer| {
@@ -767,7 +853,7 @@ impl IntegrationDriverHost {
             })
             .ok_or_else(|| AgentRuntimeHostError::OfferUnavailable {
                 reason: format!(
-                    "service instance {service_instance_id} has no available offer for generation {}",
+                    "service instance {service_instance_id} has no durable offer for generation {}",
                     generation.0
                 ),
             })?;
@@ -904,8 +990,7 @@ struct GenerationFencedEventSink {
     binding_id: RuntimeBindingId,
     generation: RuntimeDriverGeneration,
     source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
-    lease_owner: String,
-    lease_token: String,
+    lease_epoch: u64,
     repository: Arc<dyn AgentRuntimeHostRepository>,
     inner: Arc<dyn DriverEventSink>,
 }
@@ -919,24 +1004,22 @@ impl DriverEventSink for GenerationFencedEventSink {
         {
             return Err(DriverError::StaleGeneration);
         }
-        self.repository
-            .validate_lease(
-                &self.binding_id,
-                self.generation,
-                &self.lease_owner,
-                &self.lease_token,
-                Utc::now(),
-            )
+        let binding = self
+            .repository
+            .load_binding(&self.binding_id)
             .await
-            .map_err(|error| match error {
-                HostStoreError::Conflict { .. } | HostStoreError::Invariant { .. } => {
-                    DriverError::StaleGeneration
-                }
-                other => DriverError::Unavailable {
-                    reason: other.to_string(),
-                    retryable: true,
-                },
-            })?;
+            .map_err(|error| DriverError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })?
+            .ok_or(DriverError::StaleGeneration)?;
+        if binding.driver_generation != self.generation
+            || binding.state != crate::RuntimeBindingState::Active
+            || binding.source_thread_id.as_ref() != Some(&self.source_thread_id)
+            || binding.lease_epoch != self.lease_epoch
+        {
+            return Err(DriverError::StaleGeneration);
+        }
         let mut coordinates = Vec::new();
         match &event.event {
             RuntimeEvent::TurnStarted { turn_id } | RuntimeEvent::TurnTerminal { turn_id, .. } => {
@@ -954,7 +1037,9 @@ impl DriverEventSink for GenerationFencedEventSink {
                     source_turn_id,
                 });
             }
-            RuntimeEvent::ItemStarted { turn_id, item_id }
+            RuntimeEvent::ItemStarted {
+                turn_id, item_id, ..
+            }
             | RuntimeEvent::ItemDelta {
                 turn_id, item_id, ..
             }
@@ -990,16 +1075,50 @@ impl DriverEventSink for GenerationFencedEventSink {
             }
             _ => {}
         }
+        self.inner.emit(event).await?;
         for coordinate in coordinates {
-            self.repository
+            if let Err(error) = self
+                .repository
                 .record_driver_coordinate(&self.binding_id, self.generation, coordinate)
                 .await
-                .map_err(|error| DriverError::ProtocolViolation {
-                    reason: error.to_string(),
-                    critical: true,
-                })?;
+            {
+                // The authoritative Runtime event has already committed. Asking the Driver to
+                // replay it would risk a second lifecycle fact, so coordinate persistence failure
+                // is isolated as Host health degradation. Canonical callback requests carry
+                // Runtime ids directly and do not depend on this secondary lookup index.
+                let health_error = self
+                    .repository
+                    .fail_binding(&self.binding_id, self.generation)
+                    .await
+                    .err();
+                diag!(
+                    Error,
+                    Subsystem::AgentRun,
+                    binding_id = self.binding_id.to_string(),
+                    generation = self.generation.0,
+                    error = error.to_string(),
+                    health_error = health_error.as_ref().map(ToString::to_string),
+                    "Runtime event committed but Host driver-coordinate indexing failed"
+                );
+                self.inner
+                    .emit(DriverEventEnvelope {
+                        binding_id: self.binding_id.clone(),
+                        generation: self.generation,
+                        source_thread_id: self.source_thread_id.clone(),
+                        source_turn_id: None,
+                        source_item_id: None,
+                        event: RuntimeEvent::BindingLost {
+                            binding_id: self.binding_id.clone(),
+                            reason: format!(
+                                "Host driver-coordinate indexing failed after Runtime acceptance: {error}"
+                            ),
+                        },
+                    })
+                    .await?;
+                break;
+            }
         }
-        self.inner.emit(event).await
+        Ok(())
     }
 }
 
@@ -1052,18 +1171,9 @@ fn validate_credentials(
 }
 
 pub fn profile_digest(profile: &RuntimeProfile) -> Result<ProfileDigest, AgentRuntimeHostError> {
-    let value = serde_json::to_value(profile).map_err(|error| {
-        AgentRuntimeHostError::InvalidDescriptor {
-            reason: error.to_string(),
-        }
-    })?;
-    ProfileDigest::new(format!(
-        "sha256:{:x}",
-        Sha256::digest(canonical_json(&value))
+    Ok(agentdash_agent_runtime_contract::runtime_profile_digest(
+        profile,
     ))
-    .map_err(|error| AgentRuntimeHostError::InvalidDescriptor {
-        reason: error.to_string(),
-    })
 }
 
 pub fn empty_hook_apply() -> Vec<HookApplyStatus> {

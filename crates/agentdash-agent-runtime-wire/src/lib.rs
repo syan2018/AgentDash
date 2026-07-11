@@ -7,6 +7,11 @@ use agentdash_agent_runtime_contract::{
     RuntimeEventEnvelope, RuntimeEventSubscription, RuntimeExecuteError, RuntimeSnapshot,
     RuntimeSnapshotError, RuntimeSnapshotQuery, RuntimeSubscribeError,
 };
+use agentdash_integration_api::{
+    DriverCompactionActivationRequest, DriverContextActivation, DriverContextCheckpointRequest,
+    DriverHookDecision, DriverHookInvocation, DriverSurfaceRequest, DriverToolInvocation,
+    DriverToolOutcome, DriverToolSurface, MaterializedDriverSurface,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -21,7 +26,7 @@ pub const RUNTIME_WIRE_PROTOCOL_REVISION: u32 = 1;
 #[schemars(transparent)]
 pub struct RuntimeWireFrameId(pub u64);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeWireEnvelope {
     pub protocol_revision: u32,
@@ -30,19 +35,19 @@ pub struct RuntimeWireEnvelope {
     pub frame: RuntimeWireFrame,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum RuntimeWireFrame {
-    Request(RuntimeWireRequest),
+    Request(Box<RuntimeWireRequest>),
     Response {
         request_frame_id: RuntimeWireFrameId,
         response: RuntimeWireResponse,
     },
-    Notification(RuntimeWireNotification),
+    Notification(Box<RuntimeWireNotification>),
     Ack(RuntimeWireAck),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum RuntimeWireRequest {
     Execute(RuntimeCommandEnvelope),
@@ -52,37 +57,73 @@ pub enum RuntimeWireRequest {
     DriverBind(DriverBindRequest),
     DriverDispatch(DriverCommandEnvelope),
     DriverInspect(DriverInspectionQuery),
+    HostPort(Box<RuntimeWireHostPortRequest>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "method", content = "result", rename_all = "snake_case")]
+pub enum RuntimeWireResponse {
+    Execute(RuntimeWireExecuteResult),
+    Snapshot(RuntimeWireSnapshotResult),
+    Events(RuntimeWireSubscribeResult),
+    DriverDescribe(RuntimeWireDriverDescribeResult),
+    DriverBind(RuntimeWireDriverBindResult),
+    DriverDispatch(RuntimeWireDriverDispatchResult),
+    DriverInspect(RuntimeWireDriverInspectResult),
+    HostPort(RuntimeWireHostPortResponse),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "port", content = "request", rename_all = "snake_case")]
+pub enum RuntimeWireHostPortRequest {
+    SurfaceMaterialize(DriverSurfaceRequest),
+    ToolSetMaterialize {
+        binding_id: agentdash_agent_runtime_contract::RuntimeBindingId,
+        revision: agentdash_agent_runtime_contract::ToolSetRevision,
+        digest: String,
+    },
+    ContextCheckpoint(DriverContextCheckpointRequest),
+    CompactionActivation(DriverCompactionActivationRequest),
+    ToolInvoke(DriverToolInvocation),
+    HookExecute(DriverHookInvocation),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(tag = "method", content = "result", rename_all = "snake_case")]
-pub enum RuntimeWireResponse {
-    Execute(RuntimeExecuteResult),
-    Snapshot(RuntimeSnapshotResult),
-    Events(RuntimeSubscribeResult),
-    DriverDescribe(DriverDescribeResult),
-    DriverBind(DriverBindResult),
-    DriverDispatch(DriverDispatchResult),
-    DriverInspect(DriverInspectResult),
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeWireHostPortError {
+    pub reason: String,
+    pub retryable: bool,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "port", content = "result", rename_all = "snake_case")]
+pub enum RuntimeWireHostPortResponse {
+    SurfaceMaterialize(Result<Box<MaterializedDriverSurface>, RuntimeWireHostPortError>),
+    ToolSetMaterialize(Result<Box<DriverToolSurface>, RuntimeWireHostPortError>),
+    ContextCheckpoint(Result<Box<DriverContextActivation>, RuntimeWireHostPortError>),
+    CompactionActivation(Result<Box<DriverContextActivation>, RuntimeWireHostPortError>),
+    ToolInvoke(Result<Box<DriverToolOutcome>, RuntimeWireHostPortError>),
+    HookExecute(Result<Box<DriverHookDecision>, RuntimeWireHostPortError>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "status", content = "value", rename_all = "snake_case")]
-pub enum RuntimeExecuteResult {
+pub enum RuntimeWireExecuteResult {
     Ok(OperationReceipt),
     Error(RuntimeExecuteError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "status", content = "value", rename_all = "snake_case")]
-pub enum RuntimeSnapshotResult {
+pub enum RuntimeWireSnapshotResult {
     Ok(Box<RuntimeSnapshot>),
     Error(RuntimeSnapshotError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "status", content = "value", rename_all = "snake_case")]
-pub enum RuntimeSubscribeResult {
+pub enum RuntimeWireSubscribeResult {
     Ok { accepted_cursor: u64 },
     Error(RuntimeSubscribeError),
 }
@@ -98,10 +139,10 @@ macro_rules! driver_result {
     };
 }
 
-driver_result!(DriverDescribeResult, RuntimeDescriptor);
-driver_result!(DriverBindResult, DriverBinding);
-driver_result!(DriverDispatchResult, DriverDispatchReceipt);
-driver_result!(DriverInspectResult, DriverInspection);
+driver_result!(RuntimeWireDriverDescribeResult, RuntimeDescriptor);
+driver_result!(RuntimeWireDriverBindResult, DriverBinding);
+driver_result!(RuntimeWireDriverDispatchResult, DriverDispatchReceipt);
+driver_result!(RuntimeWireDriverInspectResult, DriverInspection);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
@@ -230,7 +271,7 @@ mod tests {
                 critical: true,
                 frame: RuntimeWireFrame::Response {
                     request_frame_id: RuntimeWireFrameId(request_frame_id),
-                    response: RuntimeWireResponse::Snapshot(RuntimeSnapshotResult::Error(
+                    response: RuntimeWireResponse::Snapshot(RuntimeWireSnapshotResult::Error(
                         RuntimeSnapshotError::NotFound,
                     )),
                 },

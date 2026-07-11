@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeBindingRepository, AgentRunRuntimeTarget,
+};
 use agentdash_application_workflow::gate::{
     CompleteChildResultGateCommand, GateDeliveryIntent, LifecycleGateResolver,
     OpenParentRequestGateCommand, ResolveParentRequestGateCommand, RespondHumanGateCommand,
@@ -9,19 +12,14 @@ use agentdash_application_workflow::gate::{
     GateProducerTerminalConvergenceResult, GateProducerTerminalEvent,
 };
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, AgentRunDeliveryBindingRepository,
-    LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleRunRepository,
-    RuntimeSessionExecutionAnchorRepository,
+    AgentFrameRepository, AgentLineageRepository, LifecycleAgentRepository, LifecycleGate,
+    LifecycleGateRepository,
 };
 use async_trait::async_trait;
 use uuid::Uuid;
 
 use super::{PayloadTypeRegistry, payload_types};
 use crate::ApplicationError;
-use crate::agent_run::{
-    DeliveryRuntimeSelection, DeliveryRuntimeSelectionError, DeliveryRuntimeSelectionRepositories,
-    DeliveryRuntimeSelectionService,
-};
 #[cfg(test)]
 use crate::gate_wait_policy::GateProducerTerminalConvergencePort;
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
@@ -51,7 +49,7 @@ pub struct RespondCompanionGateCommand {
 pub struct CompanionGateRespondResult {
     pub gate_id: Uuid,
     pub request_id: String,
-    pub delivery_runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub gate_resolved: bool,
 }
 
@@ -78,10 +76,10 @@ pub struct CompanionParentRequestOpenResult {
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
     pub parent_frame_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
     pub child_frame_id: Uuid,
-    pub child_delivery_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub companion_label: String,
     pub parent_mailbox_delivery: CompanionParentMailboxDeliveryResult,
     pub payload: serde_json::Value,
@@ -100,10 +98,10 @@ pub struct CompanionParentRequestResolveResult {
     pub gate_id: Uuid,
     pub parent_agent_id: Uuid,
     pub parent_frame_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
     pub child_frame_id: Uuid,
-    pub child_delivery_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub child_mailbox_delivery: CompanionParentMailboxDeliveryResult,
     pub payload: serde_json::Value,
 }
@@ -112,8 +110,8 @@ pub struct CompanionParentRequestResolveResult {
 pub struct CompanionChildResultCompleteResult {
     pub gate_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub parent_delivery_runtime_session_id: Option<String>,
-    pub child_delivery_runtime_session_id: Option<String>,
+    pub parent_runtime_thread_id: Option<String>,
+    pub child_runtime_thread_id: Option<String>,
     pub parent_mailbox_delivery: CompanionParentMailboxDeliveryResult,
     pub payload: serde_json::Value,
 }
@@ -123,9 +121,9 @@ struct ChildResultPayloadDeliveryInput {
     request_id: String,
     run_id: Uuid,
     parent_agent_id: Uuid,
-    parent_delivery_runtime_session_id: String,
+    parent_runtime_thread_id: String,
     child_agent_id: Uuid,
-    child_delivery_runtime_session_id: Option<String>,
+    child_runtime_thread_id: Option<String>,
     resolved_turn_id: String,
     companion_label: String,
     payload: serde_json::Value,
@@ -135,11 +133,16 @@ struct ResolvedChildResultDeliveryInput {
     gate: LifecycleGate,
     expected_request_id: Option<String>,
     parent_agent_id: Uuid,
-    parent_delivery_runtime_session_id: String,
+    parent_runtime_thread_id: String,
     child_agent_id: Uuid,
-    child_delivery_runtime_session_id: Option<String>,
+    child_runtime_thread_id: Option<String>,
     fallback_resolved_turn_id: String,
     companion_label: String,
+}
+
+struct CurrentRuntimeBindingSelection {
+    current_frame_id: Uuid,
+    runtime_session_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -148,9 +151,9 @@ pub struct CompanionParentMailboxDeliveryCommand {
     pub request_id: String,
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
-    pub child_delivery_runtime_session_id: Option<String>,
+    pub child_runtime_thread_id: Option<String>,
     pub resolved_turn_id: String,
     pub payload: serde_json::Value,
     pub input_text: String,
@@ -162,9 +165,9 @@ pub struct CompanionParentRequestMailboxDeliveryCommand {
     pub request_id: String,
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
-    pub child_delivery_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub turn_id: String,
     pub wait: bool,
     pub payload: serde_json::Value,
@@ -177,9 +180,9 @@ pub struct CompanionParentResponseMailboxDeliveryCommand {
     pub request_id: String,
     pub run_id: Uuid,
     pub parent_agent_id: Uuid,
-    pub parent_delivery_runtime_session_id: String,
+    pub parent_runtime_thread_id: String,
     pub child_agent_id: Uuid,
-    pub child_delivery_runtime_session_id: String,
+    pub child_runtime_thread_id: String,
     pub resolved_turn_id: String,
     pub payload: serde_json::Value,
     pub input_text: String,
@@ -191,7 +194,7 @@ pub struct CompanionHumanResponseMailboxDeliveryCommand {
     pub request_id: String,
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub delivery_runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub turn_id: Option<String>,
     pub request_type: Option<String>,
     pub payload: serde_json::Value,
@@ -201,13 +204,12 @@ pub struct CompanionHumanResponseMailboxDeliveryCommand {
 #[derive(Debug, Clone)]
 pub struct CompanionParentMailboxDeliveryResult {
     pub mailbox_message_id: Option<Uuid>,
-    pub command_receipt_id: Option<Uuid>,
+    pub accepted_runtime_operation_id: Option<String>,
     pub command_receipt_client_command_id: String,
     pub command_receipt_status: String,
     pub command_receipt_duplicate: bool,
     pub outcome: String,
-    pub accepted_agent_run_turn_id: Option<String>,
-    pub accepted_protocol_turn_id: Option<String>,
+    pub runtime_operation_id: Option<String>,
 }
 
 #[async_trait]
@@ -287,11 +289,9 @@ impl CompanionHumanResponseMailboxDelivery for NoopCompanionHumanResponseMailbox
 pub struct CompanionGateControlService {
     gate_repo: Arc<dyn LifecycleGateRepository>,
     gate_resolver: LifecycleGateResolver,
-    run_repo: Arc<dyn LifecycleRunRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
-    anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     lineage_repo: Arc<dyn AgentLineageRepository>,
     parent_mailbox_delivery: Arc<dyn CompanionParentMailboxDelivery>,
     human_response_mailbox_delivery: Arc<dyn CompanionHumanResponseMailboxDelivery>,
@@ -300,11 +300,9 @@ pub struct CompanionGateControlService {
 #[derive(Clone)]
 pub struct CompanionGateControlRepos {
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
-    pub run_repo: Arc<dyn LifecycleRunRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
-    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
-    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    pub runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     pub lineage_repo: Arc<dyn AgentLineageRepository>,
 }
 
@@ -318,11 +316,9 @@ impl CompanionGateControlService {
         Self {
             gate_resolver: LifecycleGateResolver::new(repos.gate_repo.clone()),
             gate_repo: repos.gate_repo,
-            run_repo: repos.run_repo,
             frame_repo: repos.frame_repo,
             agent_repo: repos.agent_repo,
-            anchor_repo: repos.anchor_repo,
-            delivery_binding_repo: repos.delivery_binding_repo,
+            runtime_binding_repo: repos.runtime_binding_repo,
             lineage_repo: repos.lineage_repo,
             parent_mailbox_delivery: Arc::new(NoopCompanionParentMailboxDelivery),
             human_response_mailbox_delivery: Arc::new(NoopCompanionHumanResponseMailboxDelivery),
@@ -380,10 +376,10 @@ impl CompanionGateControlService {
             return Err(ApplicationError::BadRequest(error));
         }
 
-        let delivery_runtime_session_id = self.resolve_delivery_runtime_session_id(&gate).await?;
+        let runtime_thread_id = self.resolve_runtime_thread_id(&gate).await?;
         let request_id = gate.id.to_string();
 
-        let Some(delivery_runtime_session_id) = delivery_runtime_session_id.clone() else {
+        let Some(runtime_thread_id) = runtime_thread_id.clone() else {
             let error =
                 "requesting agent 缺少 current delivery runtime session，无法投递 human response"
                     .to_string();
@@ -424,7 +420,7 @@ impl CompanionGateControlService {
                     request_id: human_response_intent.request_id.clone(),
                     run_id: human_response_intent.run_id,
                     agent_id: human_response_intent.agent_id,
-                    delivery_runtime_session_id: delivery_runtime_session_id.clone(),
+                    runtime_thread_id: runtime_thread_id.clone(),
                     turn_id: human_response_intent.turn_id.clone(),
                     request_type: human_response_intent.request_type.clone(),
                     payload: human_response_intent.payload.clone(),
@@ -436,7 +432,7 @@ impl CompanionGateControlService {
         Ok(CompanionGateRespondResult {
             gate_id: gate.id,
             request_id,
-            delivery_runtime_session_id: Some(delivery_runtime_session_id),
+            runtime_thread_id: Some(runtime_thread_id),
             gate_resolved: true,
         })
     }
@@ -472,9 +468,9 @@ impl CompanionGateControlService {
             request_id,
             run_id: input.gate.run_id,
             parent_agent_id: input.parent_agent_id,
-            parent_delivery_runtime_session_id: input.parent_delivery_runtime_session_id,
+            parent_runtime_thread_id: input.parent_runtime_thread_id,
             child_agent_id: input.child_agent_id,
-            child_delivery_runtime_session_id: input.child_delivery_runtime_session_id,
+            child_runtime_thread_id: input.child_runtime_thread_id,
             resolved_turn_id,
             companion_label: input.companion_label,
             payload,
@@ -513,11 +509,9 @@ impl CompanionGateControlService {
                 request_id: input.request_id,
                 run_id: input.run_id,
                 parent_agent_id: input.parent_agent_id,
-                parent_delivery_runtime_session_id: input
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: input.parent_runtime_thread_id.clone(),
                 child_agent_id: input.child_agent_id,
-                child_delivery_runtime_session_id: input.child_delivery_runtime_session_id.clone(),
+                child_runtime_thread_id: input.child_runtime_thread_id.clone(),
                 resolved_turn_id: input.resolved_turn_id,
                 payload: input.payload.clone(),
                 input_text,
@@ -527,8 +521,8 @@ impl CompanionGateControlService {
         Ok(CompanionChildResultCompleteResult {
             gate_id: input.gate_id,
             parent_agent_id: input.parent_agent_id,
-            parent_delivery_runtime_session_id: Some(input.parent_delivery_runtime_session_id),
-            child_delivery_runtime_session_id: input.child_delivery_runtime_session_id,
+            parent_runtime_thread_id: Some(input.parent_runtime_thread_id),
+            child_runtime_thread_id: input.child_runtime_thread_id,
             parent_mailbox_delivery: mailbox_result,
             payload: input.payload,
         })
@@ -548,7 +542,7 @@ impl CompanionGateControlService {
 
         let child_frame = match resolve_current_frame_from_delivery_trace_ref(
             &command.child_runtime_session_id,
-            self.anchor_repo.as_ref(),
+            self.runtime_binding_repo.as_ref(),
             self.agent_repo.as_ref(),
             self.frame_repo.as_ref(),
         )
@@ -585,19 +579,18 @@ impl CompanionGateControlService {
             .and_then(|metadata| metadata.get("companion_label"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or("companion");
-        let parent_delivery_runtime_session_id = self
-            .select_bound_delivery_runtime_session_id(lineage.run_id, parent_agent_id)
+        let parent_runtime_thread_id = self
+            .select_bound_runtime_thread_id(lineage.run_id, parent_agent_id)
             .await?;
-        let child_delivery_runtime_session_id = self
-            .validate_bound_delivery_runtime_session_id(
+        let child_runtime_thread_id = self
+            .validate_bound_runtime_thread_id(
                 lineage.run_id,
                 child_frame.agent_id,
                 &child_runtime_session_id,
             )
             .await?;
 
-        let Some(parent_delivery_runtime_session_id) = parent_delivery_runtime_session_id.clone()
-        else {
+        let Some(parent_runtime_thread_id) = parent_runtime_thread_id.clone() else {
             let error =
                 "parent agent 缺少 current delivery runtime session，无法投递 companion result"
                     .to_string();
@@ -610,9 +603,9 @@ impl CompanionGateControlService {
                     gate,
                     expected_request_id: Some(command.request_id.clone()),
                     parent_agent_id,
-                    parent_delivery_runtime_session_id,
+                    parent_runtime_thread_id,
                     child_agent_id: child_frame.agent_id,
-                    child_delivery_runtime_session_id,
+                    child_runtime_thread_id,
                     fallback_resolved_turn_id: resolved_turn_id,
                     companion_label: companion_label.to_string(),
                 })
@@ -624,9 +617,9 @@ impl CompanionGateControlService {
             request_id: command.request_id.clone(),
             run_id: lineage.run_id,
             parent_agent_id,
-            parent_delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
+            parent_runtime_thread_id: parent_runtime_thread_id.clone(),
             child_agent_id: child_frame.agent_id,
-            child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
+            child_runtime_thread_id: child_runtime_thread_id.clone(),
             resolved_turn_id: resolved_turn_id.clone(),
             companion_label: companion_label.to_string(),
             payload: command.payload.clone(),
@@ -653,9 +646,9 @@ impl CompanionGateControlService {
                         gate: latest_gate,
                         expected_request_id: Some(command.request_id.clone()),
                         parent_agent_id,
-                        parent_delivery_runtime_session_id,
+                        parent_runtime_thread_id,
                         child_agent_id: child_frame.agent_id,
-                        child_delivery_runtime_session_id,
+                        child_runtime_thread_id,
                         fallback_resolved_turn_id: resolved_turn_id,
                         companion_label: companion_label.to_string(),
                     })
@@ -682,13 +675,9 @@ impl CompanionGateControlService {
                 request_id: result_intent.request_id.clone(),
                 run_id: result_intent.run_id,
                 parent_agent_id: result_intent.parent_agent_id,
-                parent_delivery_runtime_session_id: result_intent
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: result_intent.parent_runtime_thread_id.clone(),
                 child_agent_id: result_intent.child_agent_id,
-                child_delivery_runtime_session_id: result_intent
-                    .child_delivery_runtime_session_id
-                    .clone(),
+                child_runtime_thread_id: result_intent.child_runtime_thread_id.clone(),
                 resolved_turn_id: result_intent.resolved_turn_id.clone(),
                 companion_label: companion_label.to_string(),
                 payload: result_intent.payload.clone(),
@@ -705,7 +694,7 @@ impl CompanionGateControlService {
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
         crate::gate_wait_policy::GateProducerTerminalConvergenceServiceAdapter::with_mailbox_wake_delivery(
             self.gate_repo.clone(),
-            self.delivery_binding_repo.clone(),
+            self.runtime_binding_repo.clone(),
             Arc::new(crate::gate_wait_policy::CompanionGateMailboxWakeDelivery::new(
                 self.parent_mailbox_delivery.clone(),
             )),
@@ -731,7 +720,7 @@ impl CompanionGateControlService {
 
         let (child_anchor, _agent, child_frame) = resolve_current_frame_from_delivery_trace_ref(
             &command.child_runtime_session_id,
-            self.anchor_repo.as_ref(),
+            self.runtime_binding_repo.as_ref(),
             self.agent_repo.as_ref(),
             self.frame_repo.as_ref(),
         )
@@ -753,9 +742,9 @@ impl CompanionGateControlService {
         let parent_agent_id = lineage.parent_agent_id.ok_or_else(|| {
             ApplicationError::Conflict("lineage 中 parent_agent_id 为空".to_string())
         })?;
-        let child_delivery_runtime_session_id = self
-            .validate_bound_delivery_runtime_session_id(
-                child_anchor.run_id,
+        let child_runtime_thread_id = self
+            .validate_bound_runtime_thread_id(
+                child_anchor.target.run_id,
                 child_frame.agent_id,
                 &command.child_runtime_session_id,
             )
@@ -775,7 +764,7 @@ impl CompanionGateControlService {
                 )
             })?;
         let parent_frame_id = parent_selection.current_frame_id;
-        let parent_delivery_runtime_session_id = parent_selection.runtime_session_id;
+        let parent_runtime_thread_id = parent_selection.runtime_session_id;
 
         let companion_label = format!("child:{}", child_frame.agent_id);
         let outcome = self
@@ -784,10 +773,10 @@ impl CompanionGateControlService {
                 run_id: lineage.run_id,
                 parent_agent_id,
                 parent_frame_id,
-                parent_delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
+                parent_runtime_thread_id: parent_runtime_thread_id.clone(),
                 child_agent_id: child_frame.agent_id,
                 child_frame_id: child_frame.id,
-                child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
+                child_runtime_thread_id: child_runtime_thread_id.clone(),
                 turn_id: command.turn_id.clone(),
                 wait: command.wait,
                 companion_label: companion_label.clone(),
@@ -829,13 +818,9 @@ impl CompanionGateControlService {
                 request_id: parent_request_intent.request_id.clone(),
                 run_id: parent_request_intent.run_id,
                 parent_agent_id: parent_request_intent.parent_agent_id,
-                parent_delivery_runtime_session_id: parent_request_intent
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: parent_request_intent.parent_runtime_thread_id.clone(),
                 child_agent_id: parent_request_intent.child_agent_id,
-                child_delivery_runtime_session_id: parent_request_intent
-                    .child_delivery_runtime_session_id
-                    .clone(),
+                child_runtime_thread_id: parent_request_intent.child_runtime_thread_id.clone(),
                 turn_id: parent_request_intent.turn_id.clone(),
                 wait: parent_request_intent.wait,
                 payload: parent_request_intent.payload.clone(),
@@ -849,10 +834,10 @@ impl CompanionGateControlService {
             run_id: gate.run_id,
             parent_agent_id,
             parent_frame_id,
-            parent_delivery_runtime_session_id,
+            parent_runtime_thread_id,
             child_agent_id: child_frame.agent_id,
             child_frame_id: child_frame.id,
-            child_delivery_runtime_session_id,
+            child_runtime_thread_id,
             companion_label,
             parent_mailbox_delivery: mailbox_result,
             payload: review_payload,
@@ -884,7 +869,7 @@ impl CompanionGateControlService {
 
         let (parent_anchor, _agent, parent_frame) = resolve_current_frame_from_delivery_trace_ref(
             &command.parent_runtime_session_id,
-            self.anchor_repo.as_ref(),
+            self.runtime_binding_repo.as_ref(),
             self.agent_repo.as_ref(),
             self.frame_repo.as_ref(),
         )
@@ -907,9 +892,9 @@ impl CompanionGateControlService {
                 gate.id
             )));
         }
-        let parent_delivery_runtime_session_id = self
-            .validate_bound_delivery_runtime_session_id(
-                parent_anchor.run_id,
+        let parent_runtime_thread_id = self
+            .validate_bound_runtime_thread_id(
+                parent_anchor.target.run_id,
                 parent_frame.agent_id,
                 &command.parent_runtime_session_id,
             )
@@ -925,9 +910,9 @@ impl CompanionGateControlService {
         })?;
         let child_agent_id = payload_uuid(&request_payload, "child_agent_id")?;
         let child_frame_id = payload_uuid(&request_payload, "child_frame_id")?;
-        let child_delivery_runtime_session_id = request_payload
+        let child_runtime_thread_id = request_payload
             .get("companion_session_id")
-            .or_else(|| request_payload.get("child_delivery_runtime_session_id"))
+            .or_else(|| request_payload.get("child_runtime_thread_id"))
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
             .ok_or_else(|| {
@@ -936,11 +921,11 @@ impl CompanionGateControlService {
                     gate.id
                 ))
             })?;
-        let child_delivery_runtime_session_id = self
-            .validate_bound_delivery_runtime_session_id(
-                parent_anchor.run_id,
+        let child_runtime_thread_id = self
+            .validate_bound_runtime_thread_id(
+                parent_anchor.target.run_id,
                 child_agent_id,
-                &child_delivery_runtime_session_id,
+                &child_runtime_thread_id,
             )
             .await?
             .ok_or_else(|| {
@@ -954,13 +939,13 @@ impl CompanionGateControlService {
             .gate_resolver
             .resolve_parent_request(ResolveParentRequestGateCommand {
                 gate_id: gate.id,
-                run_id: parent_anchor.run_id,
+                run_id: parent_anchor.target.run_id,
                 parent_agent_id: parent_frame.agent_id,
                 parent_frame_id: parent_frame.id,
-                parent_delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
+                parent_runtime_thread_id: parent_runtime_thread_id.clone(),
                 child_agent_id,
                 child_frame_id,
-                child_delivery_runtime_session_id: child_delivery_runtime_session_id.clone(),
+                child_runtime_thread_id: child_runtime_thread_id.clone(),
                 resolved_turn_id: command.resolved_turn_id.clone(),
                 payload: command.payload.clone(),
                 resolved_by: format!("parent_agent:{}", parent_frame.agent_id),
@@ -994,13 +979,9 @@ impl CompanionGateControlService {
                 request_id: parent_response_intent.request_id.clone(),
                 run_id: parent_response_intent.run_id,
                 parent_agent_id: parent_response_intent.parent_agent_id,
-                parent_delivery_runtime_session_id: parent_response_intent
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: parent_response_intent.parent_runtime_thread_id.clone(),
                 child_agent_id: parent_response_intent.child_agent_id,
-                child_delivery_runtime_session_id: parent_response_intent
-                    .child_delivery_runtime_session_id
-                    .clone(),
+                child_runtime_thread_id: parent_response_intent.child_runtime_thread_id.clone(),
                 resolved_turn_id: parent_response_intent.resolved_turn_id.clone(),
                 payload: parent_response_intent.payload.clone(),
                 input_text,
@@ -1011,16 +992,16 @@ impl CompanionGateControlService {
             gate_id: gate.id,
             parent_agent_id: parent_frame.agent_id,
             parent_frame_id: parent_frame.id,
-            parent_delivery_runtime_session_id,
+            parent_runtime_thread_id,
             child_agent_id,
             child_frame_id,
-            child_delivery_runtime_session_id,
+            child_runtime_thread_id,
             child_mailbox_delivery: mailbox_result,
             payload: resolution_payload,
         }))
     }
 
-    async fn resolve_delivery_runtime_session_id(
+    async fn resolve_runtime_thread_id(
         &self,
         gate: &agentdash_domain::workflow::LifecycleGate,
     ) -> Result<Option<String>, ApplicationError> {
@@ -1051,11 +1032,11 @@ impl CompanionGateControlService {
             )));
         }
 
-        self.select_bound_delivery_runtime_session_id(gate.run_id, frame.agent_id)
+        self.select_bound_runtime_thread_id(gate.run_id, frame.agent_id)
             .await
     }
 
-    async fn select_bound_delivery_runtime_session_id(
+    async fn select_bound_runtime_thread_id(
         &self,
         run_id: Uuid,
         agent_id: Uuid,
@@ -1066,7 +1047,7 @@ impl CompanionGateControlService {
             .map(|selection| selection.runtime_session_id))
     }
 
-    async fn validate_bound_delivery_runtime_session_id(
+    async fn validate_bound_runtime_thread_id(
         &self,
         run_id: Uuid,
         agent_id: Uuid,
@@ -1088,37 +1069,35 @@ impl CompanionGateControlService {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-    ) -> Result<Option<DeliveryRuntimeSelection>, ApplicationError> {
-        match DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-            lifecycle_runs: self.run_repo.as_ref(),
-            lifecycle_agents: self.agent_repo.as_ref(),
-            agent_frames: self.frame_repo.as_ref(),
-            execution_anchors: self.anchor_repo.as_ref(),
-            delivery_bindings: self.delivery_binding_repo.as_ref(),
-        })
-        .select_current_delivery(run_id, agent_id)
-        .await
-        {
-            Ok(selection) => Ok(Some(selection)),
-            Err(DeliveryRuntimeSelectionError::CurrentDeliveryMissing { .. }) => Ok(None),
-            Err(error) => Err(application_error_from_selection_error(error)),
+    ) -> Result<Option<CurrentRuntimeBindingSelection>, ApplicationError> {
+        let target = AgentRunRuntimeTarget { run_id, agent_id };
+        let Some(binding) = self
+            .runtime_binding_repo
+            .load(&target)
+            .await
+            .map_err(|error| ApplicationError::Internal(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let Some(agent) = self.agent_repo.get(agent_id).await? else {
+            return Err(ApplicationError::NotFound(format!(
+                "LifecycleAgent 不存在: {agent_id}"
+            )));
+        };
+        if agent.run_id != run_id {
+            return Err(ApplicationError::Conflict(format!(
+                "LifecycleAgent {agent_id} 不属于 LifecycleRun {run_id}"
+            )));
         }
-    }
-}
-
-fn application_error_from_selection_error(
-    error: DeliveryRuntimeSelectionError,
-) -> ApplicationError {
-    match error {
-        DeliveryRuntimeSelectionError::RunNotFound { .. }
-        | DeliveryRuntimeSelectionError::AgentNotFound { .. }
-        | DeliveryRuntimeSelectionError::CurrentFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::LaunchFrameNotFound { .. }
-        | DeliveryRuntimeSelectionError::SubjectNotFound { .. } => {
-            ApplicationError::NotFound(error.to_string())
-        }
-        DeliveryRuntimeSelectionError::Repository(source) => ApplicationError::from(source),
-        other => ApplicationError::Conflict(other.to_string()),
+        let Some(frame) = self.frame_repo.get_current(agent_id).await? else {
+            return Err(ApplicationError::NotFound(format!(
+                "LifecycleAgent {agent_id} 没有 current AgentFrame"
+            )));
+        };
+        Ok(Some(CurrentRuntimeBindingSelection {
+            current_frame_id: frame.id,
+            runtime_session_id: binding.thread_id.to_string(),
+        }))
     }
 }
 
@@ -1310,17 +1289,20 @@ fn payload_uuid(payload: &serde_json::Value, key: &str) -> Result<Uuid, Applicat
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{HashMap, HashSet},
+        collections::{BTreeSet, HashMap, HashSet},
+        str::FromStr,
         sync::{Arc, Mutex},
     };
 
+    use agentdash_agent_runtime_contract::*;
+    use agentdash_application_ports::agent_run_runtime::{
+        AgentRunRuntimeBinding, AgentRunRuntimeBindingError,
+    };
     use agentdash_domain::{
         DomainError,
         workflow::{
-            AgentFrame, AgentLineage, AgentRunDeliveryBinding, AgentRunDeliveryBindingRepository,
-            AgentSource, DeliveryBindingStatus, GateWaitPolicy, GateWaitPolicyEnvelope,
-            LifecycleAgent, LifecycleGate, LifecycleRun, LifecycleRunRepository,
-            RuntimeSessionExecutionAnchor, WaitExpectedResult, WaitProducerRef,
+            AgentFrame, AgentLineage, AgentSource, GateWaitPolicy, GateWaitPolicyEnvelope,
+            LifecycleAgent, LifecycleGate, WaitExpectedResult, WaitProducerRef,
             WaitTerminalOutcome, WaitTerminalPolicy, WaitWakeTarget,
         },
     };
@@ -1606,151 +1588,20 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FixtureAnchorRepo {
-        anchors: Mutex<HashMap<String, RuntimeSessionExecutionAnchor>>,
+    struct FixtureRuntimeBindingRepo {
+        bindings: Mutex<Vec<AgentRunRuntimeBinding>>,
     }
 
-    impl FixtureAnchorRepo {
+    impl FixtureRuntimeBindingRepo {
         fn from_frame_repo(frame_repo: &FixtureFrameRepo, run_id: Uuid) -> Self {
-            let mut anchors = HashMap::new();
+            let mut bindings = Vec::new();
             let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
             for frame in frame_repo.frames.lock().unwrap().values() {
                 if let Some(session_ids) = sessions_by_frame.get(&frame.id) {
-                    for runtime_session_id in session_ids {
-                        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-                            runtime_session_id.clone(),
-                            run_id,
-                            frame.id,
-                            frame.agent_id,
-                        );
-                        anchors.insert(runtime_session_id.clone(), anchor);
+                    if let Some(runtime_session_id) = session_ids.last() {
+                        bindings.push(runtime_binding(run_id, frame.agent_id, runtime_session_id));
                     }
                 }
-            }
-            Self {
-                anchors: Mutex::new(anchors),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for FixtureAnchorRepo {
-        async fn create_once(
-            &self,
-            anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
-            let mut anchors = self.anchors.lock().unwrap();
-            if let Some(existing) = anchors.get(&anchor.runtime_session_id) {
-                if existing.has_same_launch_coordinates_as(anchor) {
-                    return Ok(());
-                }
-                return Err(existing.immutable_conflict(anchor));
-            }
-            anchors.insert(anchor.runtime_session_id.clone(), anchor.clone());
-            Ok(())
-        }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.anchors.lock().unwrap().remove(runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_by_session(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .get(runtime_session_id)
-                .cloned())
-        }
-
-        async fn list_by_run(
-            &self,
-            run_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|anchor| anchor.run_id == run_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_agent(
-            &self,
-            agent_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|anchor| anchor.agent_id == agent_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project_session_ids(
-            &self,
-            runtime_session_ids: &[String],
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            let anchors = self.anchors.lock().unwrap();
-            Ok(runtime_session_ids
-                .iter()
-                .filter_map(|id| anchors.get(id).cloned())
-                .collect())
-        }
-    }
-
-    #[derive(Default)]
-    struct FixtureDeliveryBindingRepo {
-        bindings: Mutex<HashMap<(Uuid, Uuid), AgentRunDeliveryBinding>>,
-    }
-
-    impl FixtureDeliveryBindingRepo {
-        fn from_frame_repo(frame_repo: &FixtureFrameRepo, run_id: Uuid) -> Self {
-            let frames: Vec<_> = frame_repo
-                .frames
-                .lock()
-                .unwrap()
-                .values()
-                .cloned()
-                .collect();
-            let sessions_by_frame = frame_repo.runtime_sessions_by_frame.lock().unwrap();
-            let mut latest_frames: HashMap<Uuid, AgentFrame> = HashMap::new();
-            for frame in frames {
-                let should_replace = latest_frames
-                    .get(&frame.agent_id)
-                    .is_none_or(|current| frame.revision > current.revision);
-                if should_replace {
-                    latest_frames.insert(frame.agent_id, frame);
-                }
-            }
-            let mut bindings = HashMap::new();
-            for frame in latest_frames.values() {
-                let Some(runtime_session_id) = sessions_by_frame
-                    .get(&frame.id)
-                    .and_then(|session_ids| session_ids.last())
-                else {
-                    continue;
-                };
-                let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-                    runtime_session_id.clone(),
-                    run_id,
-                    frame.id,
-                    frame.agent_id,
-                );
-                let binding = AgentRunDeliveryBinding::from_anchor(
-                    &anchor,
-                    DeliveryBindingStatus::Running,
-                    anchor.updated_at,
-                );
-                bindings.insert((binding.run_id, binding.agent_id), binding);
             }
             Self {
                 bindings: Mutex::new(bindings),
@@ -1759,128 +1610,128 @@ mod tests {
     }
 
     #[async_trait]
-    impl AgentRunDeliveryBindingRepository for FixtureDeliveryBindingRepo {
-        async fn upsert(&self, binding: &AgentRunDeliveryBinding) -> Result<(), DomainError> {
-            self.bindings
-                .lock()
-                .unwrap()
-                .insert((binding.run_id, binding.agent_id), binding.clone());
-            Ok(())
-        }
-
-        async fn upsert_if_current_runtime_session(
+    impl AgentRunRuntimeBindingRepository for FixtureRuntimeBindingRepo {
+        async fn load(
             &self,
-            binding: &AgentRunDeliveryBinding,
-        ) -> Result<bool, DomainError> {
-            let mut bindings = self.bindings.lock().unwrap();
-            if let Some(existing) = bindings.get_mut(&(binding.run_id, binding.agent_id)) {
-                if existing.runtime_session_id != binding.runtime_session_id {
-                    return Ok(false);
-                }
-                *existing = binding.clone();
-            } else {
-                bindings.insert((binding.run_id, binding.agent_id), binding.clone());
-            }
-            Ok(true)
-        }
-
-        async fn get_current(
-            &self,
-            run_id: Uuid,
-            agent_id: Uuid,
-        ) -> Result<Option<AgentRunDeliveryBinding>, DomainError> {
+            target: &AgentRunRuntimeTarget,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
             Ok(self
                 .bindings
                 .lock()
                 .unwrap()
-                .get(&(run_id, agent_id))
+                .iter()
+                .find(|binding| &binding.target == target)
                 .cloned())
         }
-
+        async fn load_by_thread_id(
+            &self,
+            thread_id: &RuntimeThreadId,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok(self
+                .bindings
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|binding| &binding.thread_id == thread_id)
+                .cloned())
+        }
         async fn list_by_run(
             &self,
             run_id: Uuid,
-        ) -> Result<Vec<AgentRunDeliveryBinding>, DomainError> {
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
             Ok(self
                 .bindings
                 .lock()
                 .unwrap()
-                .values()
-                .filter(|binding| binding.run_id == run_id)
+                .iter()
+                .filter(|binding| binding.target.run_id == run_id)
                 .cloned()
                 .collect())
         }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.bindings
-                .lock()
-                .unwrap()
-                .retain(|_, binding| binding.runtime_session_id != runtime_session_id);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
-    struct FixtureRunRepo {
-        runs: Mutex<HashMap<Uuid, LifecycleRun>>,
-    }
-
-    impl FixtureRunRepo {
-        fn with_run(run_id: Uuid, project_id: Uuid) -> Self {
-            let mut run = LifecycleRun::new_plain(project_id);
-            run.id = run_id;
-            let mut runs = HashMap::new();
-            runs.insert(run.id, run);
-            Self {
-                runs: Mutex::new(runs),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl LifecycleRunRepository for FixtureRunRepo {
-        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            self.runs.lock().unwrap().insert(run.id, run.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-            Ok(self.runs.lock().unwrap().get(&id).cloned())
-        }
-
-        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .unwrap()
-                .values()
-                .filter(|run| ids.contains(&run.id))
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project(
+        async fn list_by_agent(
             &self,
-            project_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
+            agent_id: Uuid,
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
             Ok(self
-                .runs
+                .bindings
                 .lock()
                 .unwrap()
-                .values()
-                .filter(|run| run.project_id == project_id)
+                .iter()
+                .filter(|binding| binding.target.agent_id == agent_id)
                 .cloned()
                 .collect())
         }
-
-        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            self.runs.lock().unwrap().insert(run.id, run.clone());
-            Ok(())
+        async fn insert(
+            &self,
+            binding: AgentRunRuntimeBinding,
+        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+            self.bindings.lock().unwrap().push(binding.clone());
+            Ok(binding)
         }
+    }
 
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.runs.lock().unwrap().remove(&id);
-            Ok(())
+    fn runtime_id<T: FromStr>(value: &str) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        value.parse().expect("valid runtime id")
+    }
+
+    fn runtime_binding(run_id: Uuid, agent_id: Uuid, thread_id: &str) -> AgentRunRuntimeBinding {
+        AgentRunRuntimeBinding {
+            target: AgentRunRuntimeTarget { run_id, agent_id },
+            thread_id: runtime_id(thread_id),
+            binding_id: runtime_id(&format!("binding-{thread_id}")),
+            driver_generation: RuntimeDriverGeneration(1),
+            source_thread_id: runtime_id(&format!("source-{thread_id}")),
+            profile_digest: runtime_id("profile-gate-control"),
+            profile_provenance: ProfileProvenance {
+                service_digest: runtime_id("service-gate-control"),
+                transport_digest: runtime_id("transport-gate-control"),
+                host_policy_digest: runtime_id("policy-gate-control"),
+            },
+            bound_profile: RuntimeProfile {
+                reference_class: ReferenceRuntimeClass::ManagedThread,
+                input: InputProfile {
+                    modalities: BTreeSet::new(),
+                },
+                instruction: InstructionProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                tools: ToolProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                    cancellation: true,
+                },
+                workspace: WorkspaceProfile {
+                    capabilities: BTreeSet::new(),
+                    mechanism: DeliveryMechanism::Native,
+                },
+                interactions: InteractionProfile {
+                    kinds: BTreeSet::new(),
+                    durable_correlation: true,
+                },
+                lifecycle: BTreeSet::new(),
+                hooks: HookProfile {
+                    points: Vec::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                context: ContextProfile {
+                    capabilities: BTreeSet::new(),
+                    fidelity: ContextFidelity::Opaque,
+                    activation_idempotent: false,
+                },
+                telemetry_config: BTreeSet::new(),
+            },
+            surface_digest: runtime_id("surface-gate-control"),
+            settings_revision: ThreadSettingsRevision(0),
+            tool_set_revision: ToolSetRevision(0),
+            hook_plan: BoundRuntimeHookPlan {
+                revision: HookPlanRevision(1),
+                digest: runtime_id("hook-gate-control"),
+                entries: Vec::new(),
+            },
         }
     }
 
@@ -1935,22 +1786,16 @@ mod tests {
             run_id,
             project_id,
         ));
-        let anchor_repo = Arc::new(FixtureAnchorRepo::from_frame_repo(
-            frame_repo.as_ref(),
-            run_id,
-        ));
-        let delivery_binding_repo = Arc::new(FixtureDeliveryBindingRepo::from_frame_repo(
+        let runtime_binding_repo = Arc::new(FixtureRuntimeBindingRepo::from_frame_repo(
             frame_repo.as_ref(),
             run_id,
         ));
         CompanionGateControlService::new(CompanionGateControlDeps {
             repos: CompanionGateControlRepos {
                 gate_repo,
-                run_repo: Arc::new(FixtureRunRepo::with_run(run_id, project_id)),
                 frame_repo,
                 agent_repo,
-                anchor_repo,
-                delivery_binding_repo,
+                runtime_binding_repo,
                 lineage_repo,
             },
         })
@@ -2068,13 +1913,12 @@ mod tests {
     ) -> CompanionParentMailboxDeliveryResult {
         CompanionParentMailboxDeliveryResult {
             mailbox_message_id: Some(Uuid::new_v4()),
-            command_receipt_id: Some(Uuid::new_v4()),
+            accepted_runtime_operation_id: Some("operation-test".to_string()),
             command_receipt_client_command_id: client_command_id.into(),
             command_receipt_status: "accepted".to_string(),
             command_receipt_duplicate: duplicate,
             outcome: "queued".to_string(),
-            accepted_agent_run_turn_id: Some("parent-turn-1".to_string()),
-            accepted_protocol_turn_id: Some("protocol-turn-1".to_string()),
+            runtime_operation_id: Some("operation-parent-1".to_string()),
         }
     }
 
@@ -2130,10 +1974,7 @@ mod tests {
             .expect("respond");
 
         assert!(result.gate_resolved);
-        assert_eq!(
-            result.delivery_runtime_session_id.as_deref(),
-            Some("session-latest")
-        );
+        assert_eq!(result.runtime_thread_id.as_deref(), Some("session-latest"));
         let stored = gate_repo
             .get(gate_id)
             .await
@@ -2163,7 +2004,7 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].gate_id, gate_id);
         assert_eq!(commands[0].agent_id, agent_id);
-        assert_eq!(commands[0].delivery_runtime_session_id, "session-latest");
+        assert_eq!(commands[0].runtime_thread_id, "session-latest");
         assert_eq!(commands[0].turn_id.as_deref(), Some("turn-1"));
         assert_eq!(commands[0].request_id, gate_id.to_string());
     }
@@ -2363,11 +2204,11 @@ mod tests {
         assert_eq!(result.gate_id, gate_id);
         assert_eq!(result.parent_agent_id, parent_agent_id);
         assert_eq!(
-            result.parent_delivery_runtime_session_id.as_deref(),
+            result.parent_runtime_thread_id.as_deref(),
             Some("parent-session")
         );
         assert_eq!(
-            result.child_delivery_runtime_session_id.as_deref(),
+            result.child_runtime_thread_id.as_deref(),
             Some("child-session")
         );
         assert_eq!(result.parent_mailbox_delivery.outcome, "queued");
@@ -2410,7 +2251,7 @@ mod tests {
             assert_eq!(mailbox_commands[0].parent_agent_id, parent_agent_id);
             assert_eq!(mailbox_commands[0].child_agent_id, child_agent_id);
             assert_eq!(
-                mailbox_commands[0].parent_delivery_runtime_session_id,
+                mailbox_commands[0].parent_runtime_thread_id,
                 "parent-session"
             );
             assert!(
@@ -2701,8 +2542,8 @@ mod tests {
         assert_eq!(result.parent_frame_id, parent_frame_id);
         assert_eq!(result.child_agent_id, child_agent_id);
         assert_eq!(result.child_frame_id, child_frame_id);
-        assert_eq!(result.parent_delivery_runtime_session_id, "parent-session");
-        assert_eq!(result.child_delivery_runtime_session_id, "child-session");
+        assert_eq!(result.parent_runtime_thread_id, "parent-session");
+        assert_eq!(result.child_runtime_thread_id, "child-session");
 
         let stored = gate_repo
             .get(result.gate_id)
@@ -2746,11 +2587,11 @@ mod tests {
         assert_eq!(parent_request_commands[0].parent_agent_id, parent_agent_id);
         assert_eq!(parent_request_commands[0].child_agent_id, child_agent_id);
         assert_eq!(
-            parent_request_commands[0].parent_delivery_runtime_session_id,
+            parent_request_commands[0].parent_runtime_thread_id,
             "parent-session"
         );
         assert_eq!(
-            parent_request_commands[0].child_delivery_runtime_session_id,
+            parent_request_commands[0].child_runtime_thread_id,
             "child-session"
         );
 
@@ -3069,10 +2910,7 @@ mod tests {
             result.parent_frame_id, parent_launch_frame.id,
             "parent request gate must bind to parent AgentRun current frame"
         );
-        assert_eq!(
-            result.parent_delivery_runtime_session_id,
-            "parent-current-session"
-        );
+        assert_eq!(result.parent_runtime_thread_id, "parent-current-session");
 
         let stored = gate_repo
             .get(result.gate_id)
@@ -3161,10 +2999,10 @@ mod tests {
         assert_eq!(result.gate_id, gate_id);
         assert_eq!(result.parent_agent_id, parent_agent_id);
         assert_eq!(result.parent_frame_id, parent_frame_id);
-        assert_eq!(result.parent_delivery_runtime_session_id, "parent-session");
+        assert_eq!(result.parent_runtime_thread_id, "parent-session");
         assert_eq!(result.child_agent_id, child_agent_id);
         assert_eq!(result.child_frame_id, child_frame_id);
-        assert_eq!(result.child_delivery_runtime_session_id, "child-session");
+        assert_eq!(result.child_runtime_thread_id, "child-session");
         assert_eq!(
             result
                 .child_mailbox_delivery
@@ -3202,7 +3040,7 @@ mod tests {
             stored
                 .payload_json
                 .as_ref()
-                .and_then(|payload| payload.get("child_delivery_runtime_session_id"))
+                .and_then(|payload| payload.get("child_runtime_thread_id"))
                 .and_then(serde_json::Value::as_str),
             Some("child-session")
         );
@@ -3218,7 +3056,7 @@ mod tests {
             assert_eq!(parent_response_commands[0].parent_agent_id, parent_agent_id);
             assert_eq!(parent_response_commands[0].child_agent_id, child_agent_id);
             assert_eq!(
-                parent_response_commands[0].child_delivery_runtime_session_id,
+                parent_response_commands[0].child_runtime_thread_id,
                 "child-session"
             );
         }

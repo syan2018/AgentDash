@@ -29,11 +29,11 @@
 
 ## Acceptance Criteria
 
-- [ ] mutation durable accept 后才触发 driver side effect。
-- [ ] event append、projection/head 与 terminal persistence 不再分叉。
-- [ ] database failure 不会产生假 Completed。
-- [ ] candidate persist、driver apply、head CAS 三个 crash point均可恢复。
-- [ ] active context head 使用 expected revision CAS，并发不能回退。
-- [ ] `thread/read` 与 `thread/context/read` 的 fidelity 明确不同。
-- [ ] Actionful HookRun/effect在crash/replay后幂等；silent observer不推进durable cursor。
-- [ ] 空库与代表性预研数据 migration tests 通过，旧 active state不冒充可恢复。
+- [x] mutation durable accept 后才触发 driver side effect。
+- [x] event append、projection/head 与 terminal persistence 不再分叉。
+- [x] database failure 不会产生假 Completed。
+- [x] candidate persist、driver apply、head CAS 三个 crash point均可恢复。
+- [x] active context head 使用 expected revision CAS，并发不能回退。
+- [x] `thread/read` 与 `thread/context/read` 的 fidelity 明确不同。
+- [x] Actionful HookRun/effect在crash/replay后幂等；silent observer不推进durable cursor。
+- [x] 空库与代表性预研数据 migration tests 通过，旧 active state不冒充可恢复。

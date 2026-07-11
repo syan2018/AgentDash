@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeTarget,
+};
 use agentdash_application_ports::lifecycle_materialization::{
     WorkflowAgentNodeMaterializationPort, WorkflowAgentNodeMaterializationRequest,
 };
@@ -18,16 +21,19 @@ use super::runtime::OrchestrationRuntimeEvent;
 pub(super) struct AgentNodeLauncher {
     agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
+    runtime_provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
 }
 
 impl AgentNodeLauncher {
     pub(super) fn new(
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
         workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
+        runtime_provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
     ) -> Self {
         Self {
             agent_procedure_repo,
             workflow_agent_node_materialization,
+            runtime_provisioner,
         }
     }
 
@@ -79,7 +85,7 @@ impl AgentNodeLauncher {
 
         let runtime_policy = match (agent_reuse_policy, runtime_session_policy) {
             (AgentReusePolicy::CreateActivityAgent, RuntimeSessionPolicy::CreateNew) => {
-                RuntimePolicy::CreateRuntimeSession
+                RuntimePolicy::ProvisionRuntimeThread
             }
             (
                 AgentReusePolicy::ContinueCurrentAgent,
@@ -118,7 +124,22 @@ impl AgentNodeLauncher {
                 workflow_contract,
             })
             .await?;
-        let session_id = materialized.delivery_runtime_ref.to_string();
+        let binding = self
+            .runtime_provisioner
+            .provision(&AgentRunRuntimeProvisionRequest {
+                target: AgentRunRuntimeTarget {
+                    run_id: materialized.runtime_refs.run_ref,
+                    agent_id: materialized.runtime_refs.agent_ref,
+                },
+                identity: None,
+            })
+            .await
+            .map_err(|error| {
+                WorkflowApplicationError::Internal(format!(
+                    "AgentRun Runtime provision 失败: {error}"
+                ))
+            })?;
+        let session_id = binding.thread_id.to_string();
 
         Ok(AgentNodeLaunchOutcome::Launched {
             launched: LaunchedAgentNode {

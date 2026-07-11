@@ -602,7 +602,7 @@ async fn pre_delta_retryable_error_exhaustion_emits_single_final_failure_without
         tools: vec![],
     };
 
-    let new_messages = agentdash_agent::agent_loop::agent_loop(
+    let error = agentdash_agent::agent_loop::agent_loop(
         vec![AgentMessage::user("hello")],
         &mut context,
         &[],
@@ -612,7 +612,9 @@ async fn pre_delta_retryable_error_exhaustion_emits_single_final_failure_without
         CancellationToken::new(),
     )
     .await
-    .expect("agent loop should resolve exhausted retry as final assistant failure");
+    .expect_err("exhausted provider retry must remain a typed failure");
+
+    assert!(matches!(error, AgentError::Bridge(_)));
 
     let snapshots = bridge.message_snapshots().await;
     assert_eq!(snapshots.len(), 3);
@@ -621,23 +623,14 @@ async fn pre_delta_retryable_error_exhaustion_emits_single_final_failure_without
             .iter()
             .all(|snapshot| snapshot == &vec!["hello".to_string()])
     );
-    assert_eq!(new_messages.len(), 2);
-    assert_eq!(context.messages.len(), 2);
-    assert!(matches!(
-        context.messages.last(),
-        Some(AgentMessage::Assistant {
+    assert_eq!(context.messages.len(), 1);
+    assert!(!context.messages.iter().any(|message| matches!(
+        message,
+        AgentMessage::Assistant {
             stop_reason: Some(StopReason::Error),
             ..
-        })
-    ));
-    assert_eq!(
-        context
-            .messages
-            .iter()
-            .filter(|message| message.first_text() == Some("upstream unavailable"))
-            .count(),
-        1
-    );
+        }
+    )));
 
     let collected = events.lock().await.clone();
     let statuses = provider_statuses(&collected);
@@ -685,7 +678,7 @@ async fn retryable_error_after_visible_delta_does_not_retry() {
         tools: vec![],
     };
 
-    let new_messages = agentdash_agent::agent_loop::agent_loop(
+    let error = agentdash_agent::agent_loop::agent_loop(
         vec![AgentMessage::user("hello")],
         &mut context,
         &[],
@@ -695,17 +688,11 @@ async fn retryable_error_after_visible_delta_does_not_retry() {
         CancellationToken::new(),
     )
     .await
-    .expect("agent loop should surface post-delta provider error without retrying");
+    .expect_err("post-delta provider failure must remain typed");
 
+    assert!(matches!(error, AgentError::Bridge(_)));
     assert_eq!(bridge.message_snapshots().await.len(), 1);
-    assert!(matches!(
-        new_messages.last(),
-        Some(AgentMessage::Assistant {
-            stop_reason: Some(StopReason::Error),
-            ..
-        })
-    ));
-    assert_eq!(
+    assert_ne!(
         context.messages.last().and_then(AgentMessage::first_text),
         Some("upstream 503 after delta")
     );
@@ -745,7 +732,7 @@ async fn provider_abort_error_does_not_retry() {
         tools: vec![],
     };
 
-    let new_messages = agentdash_agent::agent_loop::agent_loop(
+    let error = agentdash_agent::agent_loop::agent_loop(
         vec![AgentMessage::user("hello")],
         &mut context,
         &[],
@@ -755,10 +742,10 @@ async fn provider_abort_error_does_not_retry() {
         CancellationToken::new(),
     )
     .await
-    .expect("agent loop should surface provider abort without retrying");
+    .expect_err("provider abort must remain a typed failure");
 
+    assert!(matches!(error, AgentError::Bridge(ref error) if error.is_aborted()));
     assert_eq!(bridge.message_snapshots().await.len(), 1);
-    assert!(!new_messages.iter().any(|message| message.is_aborted()));
     assert!(!context.messages.iter().any(|message| message.is_aborted()));
 
     let collected = events.lock().await.clone();
@@ -792,7 +779,7 @@ async fn fatal_provider_error_does_not_retry() {
         tools: vec![],
     };
 
-    let new_messages = agentdash_agent::agent_loop::agent_loop(
+    let error = agentdash_agent::agent_loop::agent_loop(
         vec![AgentMessage::user("hello")],
         &mut context,
         &[],
@@ -802,17 +789,11 @@ async fn fatal_provider_error_does_not_retry() {
         CancellationToken::new(),
     )
     .await
-    .expect("agent loop should surface fatal provider error without retrying");
+    .expect_err("fatal provider failure must remain typed");
 
+    assert!(matches!(error, AgentError::Bridge(_)));
     assert_eq!(bridge.message_snapshots().await.len(), 1);
-    assert!(matches!(
-        new_messages.last(),
-        Some(AgentMessage::Assistant {
-            stop_reason: Some(StopReason::Error),
-            ..
-        })
-    ));
-    assert_eq!(
+    assert_ne!(
         context.messages.last().and_then(AgentMessage::first_text),
         Some("invalid request schema")
     );
@@ -1910,11 +1891,11 @@ async fn abort_does_not_append_aborted_assistant_message() {
     agent.abort();
     release_stream.notify_waiters();
 
-    let new_messages = handle
+    let error = handle
         .await
         .expect("task should not panic")
-        .expect("run should succeed");
-    assert!(!new_messages.iter().any(|message| message.is_aborted()));
+        .expect_err("abort must remain a typed failure");
+    assert!(matches!(error, AgentError::Bridge(ref error) if error.is_aborted()));
 
     let state = agent.state().await;
     assert!(!state.messages.iter().any(|message| message.is_aborted()));
@@ -1952,11 +1933,11 @@ async fn abort_interrupts_pending_provider_stream_and_waits_for_idle() {
         .expect("wait_for_idle should complete after aborting a pending provider stream");
     release_provider_task.notify_waiters();
 
-    let first_messages = first_handle
+    let first_error = first_handle
         .await
         .expect("first task should not panic")
-        .expect("first run should resolve after abort");
-    assert!(!first_messages.iter().any(|message| message.is_aborted()));
+        .expect_err("aborted provider stream must remain a typed failure");
+    assert!(matches!(first_error, AgentError::Bridge(ref error) if error.is_aborted()));
 
     let (_rx, second_handle) = agent
         .prompt(AgentMessage::user("second"))

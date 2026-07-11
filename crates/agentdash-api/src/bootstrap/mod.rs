@@ -1,11 +1,14 @@
+pub mod agent_runtime;
+pub mod agent_runtime_surface;
 pub mod auth;
 pub mod background_workers;
-pub mod frame_launch_envelope_provider;
 pub mod relay;
 pub mod repositories;
 pub mod runtime_gateway;
-pub mod session;
 pub mod vfs;
+
+#[cfg(test)]
+mod enterprise_remote_e2e;
 
 #[cfg(test)]
 mod tests {

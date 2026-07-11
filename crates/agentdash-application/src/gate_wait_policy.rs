@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
 use agentdash_application_workflow::gate::{
     GateDeliveryIntent, GateMailboxWakeIntent, GateProducerTerminalConvergenceResult,
     GateProducerTerminalConvergenceService, GateProducerTerminalEvent,
 };
 use agentdash_diagnostics::{Subsystem, diag};
-use agentdash_domain::workflow::{AgentRunDeliveryBindingRepository, LifecycleGateRepository};
+use agentdash_domain::workflow::LifecycleGateRepository;
 use async_trait::async_trait;
 
 use crate::ApplicationError;
@@ -25,7 +26,7 @@ pub trait GateProducerTerminalConvergencePort: Send + Sync {
 #[derive(Clone)]
 pub struct GateProducerTerminalConvergenceDeps {
     pub gate_repo: Arc<dyn LifecycleGateRepository>,
-    pub delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+    pub runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     pub mailbox_wake_delivery: Arc<dyn GateMailboxWakeDelivery>,
 }
 
@@ -41,12 +42,12 @@ impl GateProducerTerminalConvergenceServiceAdapter {
 
     pub fn with_mailbox_wake_delivery(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
         mailbox_wake_delivery: Arc<dyn GateMailboxWakeDelivery>,
     ) -> Self {
         Self::new(GateProducerTerminalConvergenceDeps {
             gate_repo,
-            delivery_binding_repo,
+            runtime_binding_repo,
             mailbox_wake_delivery,
         })
     }
@@ -54,11 +55,11 @@ impl GateProducerTerminalConvergenceServiceAdapter {
     #[cfg(test)]
     pub fn noop(
         gate_repo: Arc<dyn LifecycleGateRepository>,
-        delivery_binding_repo: Arc<dyn AgentRunDeliveryBindingRepository>,
+        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     ) -> Self {
         Self::with_mailbox_wake_delivery(
             gate_repo,
-            delivery_binding_repo,
+            runtime_binding_repo,
             Arc::new(NoopGateMailboxWakeDelivery),
         )
     }
@@ -69,7 +70,7 @@ impl GateProducerTerminalConvergenceServiceAdapter {
     ) -> Result<GateProducerTerminalConvergenceResult, ApplicationError> {
         let result = GateProducerTerminalConvergenceService::new(
             self.deps.gate_repo.clone(),
-            self.deps.delivery_binding_repo.clone(),
+            self.deps.runtime_binding_repo.clone(),
         )
         .observe_producer_terminal(event.clone())
         .await
@@ -222,9 +223,9 @@ async fn deliver_companion_child_result_to_parent(
             request_id: intent.request_id.clone(),
             run_id: intent.target_run_id,
             parent_agent_id: intent.target_agent_id,
-            parent_delivery_runtime_session_id: intent.target_delivery_runtime_session_id.clone(),
+            parent_runtime_thread_id: intent.target_runtime_thread_id.clone(),
             child_agent_id: intent.producer_agent_id,
-            child_delivery_runtime_session_id: intent.producer_delivery_runtime_session_id.clone(),
+            child_runtime_thread_id: intent.producer_runtime_thread_id.clone(),
             resolved_turn_id: intent.resolved_turn_id.clone(),
             payload: intent.payload.clone(),
             input_text,

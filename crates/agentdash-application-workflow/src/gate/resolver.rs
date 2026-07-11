@@ -222,10 +222,10 @@ impl LifecycleGateResolver {
             "parent_agent_id": command.parent_agent_id.to_string(),
             "parent_frame_id": command.parent_frame_id.to_string(),
             "companion_label": command.companion_label,
-            "companion_session_id": command.child_delivery_runtime_session_id,
-            "child_delivery_runtime_session_id": command.child_delivery_runtime_session_id,
-            "parent_session_id": command.parent_delivery_runtime_session_id,
-            "parent_delivery_runtime_session_id": command.parent_delivery_runtime_session_id,
+            "companion_session_id": command.child_runtime_thread_id,
+            "child_runtime_thread_id": command.child_runtime_thread_id,
+            "parent_session_id": command.parent_runtime_thread_id,
+            "parent_runtime_thread_id": command.parent_runtime_thread_id,
             "request_type": "review",
             "adoption_mode": agentdash_spi::action_type::FOLLOW_UP_REQUIRED,
             "status": "pending",
@@ -243,11 +243,9 @@ impl LifecycleGateResolver {
                 request_id: gate.id.to_string(),
                 run_id: command.run_id,
                 parent_agent_id: command.parent_agent_id,
-                parent_delivery_runtime_session_id: command
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: command.parent_runtime_thread_id.clone(),
                 child_agent_id: command.child_agent_id,
-                child_delivery_runtime_session_id: command.child_delivery_runtime_session_id,
+                child_runtime_thread_id: command.child_runtime_thread_id,
                 turn_id: command.turn_id.clone(),
                 wait: command.wait,
                 payload: payload.clone(),
@@ -299,8 +297,8 @@ impl LifecycleGateResolver {
             json!(command.parent_frame_id.to_string()),
         );
         object.insert(
-            "parent_delivery_runtime_session_id".to_string(),
-            json!(command.parent_delivery_runtime_session_id.clone()),
+            "parent_runtime_thread_id".to_string(),
+            json!(command.parent_runtime_thread_id.clone()),
         );
         object.insert(
             "child_agent_id".to_string(),
@@ -311,8 +309,8 @@ impl LifecycleGateResolver {
             json!(command.child_frame_id.to_string()),
         );
         object.insert(
-            "child_delivery_runtime_session_id".to_string(),
-            json!(command.child_delivery_runtime_session_id.clone()),
+            "child_runtime_thread_id".to_string(),
+            json!(command.child_runtime_thread_id.clone()),
         );
 
         gate.payload_json = Some(payload.clone());
@@ -325,11 +323,9 @@ impl LifecycleGateResolver {
                 request_id: gate.id.to_string(),
                 run_id: command.run_id,
                 parent_agent_id: command.parent_agent_id,
-                parent_delivery_runtime_session_id: command
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: command.parent_runtime_thread_id.clone(),
                 child_agent_id: command.child_agent_id,
-                child_delivery_runtime_session_id: command.child_delivery_runtime_session_id,
+                child_runtime_thread_id: command.child_runtime_thread_id,
                 resolved_turn_id: command.resolved_turn_id.clone(),
                 payload: payload.clone(),
             },
@@ -380,7 +376,7 @@ impl LifecycleGateResolver {
             command.run_id,
             command.child_agent_id,
             gate.frame_id,
-            command.child_delivery_runtime_session_id.as_deref(),
+            command.child_runtime_thread_id.as_deref(),
         );
         let mut payload = json!({
             "gate_id": gate.id.to_string(),
@@ -413,13 +409,9 @@ impl LifecycleGateResolver {
                 request_id: command.request_id,
                 run_id: command.run_id,
                 parent_agent_id: command.parent_agent_id,
-                parent_delivery_runtime_session_id: command
-                    .parent_delivery_runtime_session_id
-                    .clone(),
+                parent_runtime_thread_id: command.parent_runtime_thread_id.clone(),
                 child_agent_id: command.child_agent_id,
-                child_delivery_runtime_session_id: command
-                    .child_delivery_runtime_session_id
-                    .clone(),
+                child_runtime_thread_id: command.child_runtime_thread_id.clone(),
                 resolved_turn_id: command.resolved_turn_id.clone(),
                 payload: payload.clone(),
             });
@@ -728,10 +720,10 @@ mod tests {
                 run_id,
                 parent_agent_id,
                 parent_frame_id,
-                parent_delivery_runtime_session_id: "parent-session".to_string(),
+                parent_runtime_thread_id: "parent-session".to_string(),
                 child_agent_id,
                 child_frame_id,
-                child_delivery_runtime_session_id: "child-session".to_string(),
+                child_runtime_thread_id: "child-session".to_string(),
                 turn_id: "turn-1".to_string(),
                 wait: true,
                 companion_label: "child:test".to_string(),
@@ -772,9 +764,9 @@ mod tests {
                 request_id: "dispatch-1".to_string(),
                 run_id,
                 parent_agent_id,
-                parent_delivery_runtime_session_id: "parent-session".to_string(),
+                parent_runtime_thread_id: "parent-session".to_string(),
                 child_agent_id,
-                child_delivery_runtime_session_id: Some("child-session".to_string()),
+                child_runtime_thread_id: Some("child-session".to_string()),
                 resolved_turn_id: "child-turn".to_string(),
                 companion_label: "reviewer".to_string(),
                 payload: json!({
@@ -804,7 +796,7 @@ mod tests {
             json!(child_frame_id.to_string())
         );
         assert_eq!(
-            payload["result_refs"]["child"]["delivery_runtime_session_id"],
+            payload["result_refs"]["child"]["runtime_thread_id"],
             json!("child-session")
         );
         let evidence = payload["result_refs"]["evidence"]

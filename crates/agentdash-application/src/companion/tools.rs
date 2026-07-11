@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use crate::session::build_hook_trace_envelope;
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo, text_user_input_blocks,
+    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
 use agentdash_domain::agent_run_mailbox::MailboxSourceIdentity;
@@ -16,17 +15,19 @@ use agentdash_domain::channel::{
 use agentdash_domain::workflow::LifecycleGateRepository;
 use agentdash_domain::workflow::{
     ClaimGateResultParentContinuationRequest, ClaimGateResultWaiterRequest,
-    CompleteGateResultParentContinuationRequest, DeliveryBindingStatus, GateResultDeliveryClaim,
-    GateResultDeliveryMarker, LifecycleTaskPlanItem, RegisterGateResultWaiterRequest,
+    CompleteGateResultParentContinuationRequest, GateResultDeliveryClaim, GateResultDeliveryMarker,
+    LifecycleTaskPlanItem, RegisterGateResultWaiterRequest,
 };
 use agentdash_spi::CapabilityScope;
+#[cfg(test)]
+use agentdash_spi::RuntimeEventSource;
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::capability::CompanionAgentEntry;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::hooks::{HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery};
 use agentdash_spi::{
     AgentConfig, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookTraceEntry, HookTrigger, MountCapability, RuntimeEventSource, Vfs,
+    HookTraceEntry, HookTrigger, MountCapability, Vfs,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -59,22 +60,16 @@ use super::{
     CompleteCompanionChildResultCommand, OpenCompanionParentRequestCommand,
     ResolveCompanionParentRequestCommand,
 };
-use crate::agent_run::{
-    AgentFrameRuntimeTarget, AgentRunMailboxCommandOutcome, AgentRunMailboxIntakeCommand,
-    AgentRunMailboxService, DeliveryRuntimeSelectionRepositories, DeliveryRuntimeSelectionService,
-    SessionControlService, SessionCoreService, SessionEventingService, SessionExecutionState,
-    SessionLaunchService, mailbox_source_identity_dedup_key,
-};
 use crate::channel::{
     ChannelService, LifecycleRunChannelOwnerStore, UnsupportedChannelBindingResolver,
 };
 use crate::lifecycle::resolve_current_frame_from_delivery_trace_ref;
-use crate::runtime_session_agent_run_bridge::{
-    agent_run_session_control, agent_run_session_core, agent_run_session_eventing,
-    agent_run_session_launch,
-};
 use crate::runtime_tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::wait_activity::{WaitActivityService, WaitToolContext};
+use agentdash_agent_runtime_contract::{RuntimeActor, RuntimeInput};
+use agentdash_application_agentrun::agent_run::{
+    AgentRunProductDeliveryPort, DeliverAgentRunProductInput,
+};
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 
@@ -136,43 +131,6 @@ async fn require_session_services(
     })
 }
 
-fn companion_mailbox_service<'a>(
-    repos: &'a crate::repository_set::RepositorySet,
-    session_services: &'a SessionToolServices,
-) -> AgentRunMailboxService<'a> {
-    companion_mailbox_service_from_runtime(
-        repos,
-        agent_run_session_core(session_services.core.clone()),
-        agent_run_session_control(session_services.control.clone()),
-        agent_run_session_eventing(session_services.eventing.clone()),
-        agent_run_session_launch(session_services.launch.clone()),
-    )
-}
-
-fn companion_mailbox_service_from_runtime(
-    repos: &crate::repository_set::RepositorySet,
-    session_core: SessionCoreService,
-    session_control: SessionControlService,
-    session_eventing: SessionEventingService,
-    session_launch: SessionLaunchService,
-) -> AgentRunMailboxService<'_> {
-    AgentRunMailboxService::new(
-        repos.lifecycle_run_repo.as_ref(),
-        repos.lifecycle_agent_repo.as_ref(),
-        repos.project_agent_repo.as_ref(),
-        repos.agent_frame_repo.as_ref(),
-        repos.execution_anchor_repo.as_ref(),
-        repos.agent_run_delivery_binding_repo.as_ref(),
-        repos.project_backend_access_repo.as_ref(),
-        repos.agent_run_command_receipt_repo.as_ref(),
-        repos.agent_run_mailbox_repo.as_ref(),
-        session_core,
-        session_control,
-        session_eventing,
-        session_launch,
-    )
-}
-
 struct CompanionGateControlFactory<'a> {
     repos: &'a crate::repository_set::RepositorySet,
 }
@@ -188,11 +146,9 @@ impl<'a> CompanionGateControlFactory<'a> {
     ) -> CompanionGateControlService {
         CompanionGateControlService::with_agent_run_projection(CompanionGateControlRepos {
             gate_repo: self.repos.lifecycle_gate_repo.clone(),
-            run_repo: self.repos.lifecycle_run_repo.clone(),
             frame_repo: self.repos.agent_frame_repo.clone(),
             agent_repo: self.repos.lifecycle_agent_repo.clone(),
-            anchor_repo: self.repos.execution_anchor_repo.clone(),
-            delivery_binding_repo: self.repos.agent_run_delivery_binding_repo.clone(),
+            runtime_binding_repo: self.repos.agent_run_runtime_binding_repo.clone(),
             lineage_repo: self.repos.agent_lineage_repo.clone(),
         })
         .with_parent_mailbox_delivery(Arc::new(AgentRunCompanionMailboxDelivery::new(
@@ -208,10 +164,7 @@ impl<'a> CompanionGateControlFactory<'a> {
 #[derive(Clone)]
 pub struct AgentRunCompanionMailboxDelivery {
     repos: crate::repository_set::RepositorySet,
-    session_core: SessionCoreService,
-    session_control: SessionControlService,
-    session_eventing: SessionEventingService,
-    session_launch: SessionLaunchService,
+    product_delivery: Arc<dyn AgentRunProductDeliveryPort>,
 }
 
 impl AgentRunCompanionMailboxDelivery {
@@ -219,28 +172,9 @@ impl AgentRunCompanionMailboxDelivery {
         repos: crate::repository_set::RepositorySet,
         session_services: SessionToolServices,
     ) -> Self {
-        Self::from_runtime_services(
-            repos,
-            agent_run_session_core(session_services.core),
-            agent_run_session_control(session_services.control),
-            agent_run_session_eventing(session_services.eventing),
-            agent_run_session_launch(session_services.launch),
-        )
-    }
-
-    pub fn from_runtime_services(
-        repos: crate::repository_set::RepositorySet,
-        session_core: SessionCoreService,
-        session_control: SessionControlService,
-        session_eventing: SessionEventingService,
-        session_launch: SessionLaunchService,
-    ) -> Self {
         Self {
             repos,
-            session_core,
-            session_control,
-            session_eventing,
-            session_launch,
+            product_delivery: session_services.product_delivery,
         }
     }
 }
@@ -474,6 +408,7 @@ fn bounded_json_preview(payload: &serde_json::Value, max_chars: usize) -> String
     preview
 }
 
+#[cfg(test)]
 fn merge_gate_result_refs(
     mut base_refs: serde_json::Value,
     gate_payload: &serde_json::Value,
@@ -527,12 +462,12 @@ fn agent_visible_value_without_runtime_session_refs(
 fn is_agent_hidden_runtime_session_key(key: &str) -> bool {
     matches!(
         key,
-        "delivery_runtime_session_id"
+        "runtime_thread_id"
             | "runtime_session_id"
             | "parent_session_id"
             | "child_session_id"
-            | "parent_delivery_runtime_session_id"
-            | "child_delivery_runtime_session_id"
+            | "parent_runtime_thread_id"
+            | "child_runtime_thread_id"
     ) || key.ends_with("_runtime_session_id")
 }
 
@@ -730,13 +665,12 @@ fn companion_parent_mailbox_delivery_details(
 ) -> serde_json::Value {
     serde_json::json!({
         "mailbox_message_id": delivery.mailbox_message_id.map(|id| id.to_string()),
-        "command_receipt_id": delivery.command_receipt_id.map(|id| id.to_string()),
+        "runtime_operation_id": delivery.accepted_runtime_operation_id,
         "command_receipt_client_command_id": delivery.command_receipt_client_command_id.clone(),
         "command_receipt_status": delivery.command_receipt_status.clone(),
         "command_receipt_duplicate": delivery.command_receipt_duplicate,
         "outcome": delivery.outcome.clone(),
-        "accepted_agent_run_turn_id": delivery.accepted_agent_run_turn_id.clone(),
-        "accepted_protocol_turn_id": delivery.accepted_protocol_turn_id.clone(),
+        "runtime_operation_id": delivery.runtime_operation_id.clone(),
     })
 }
 
@@ -792,21 +726,17 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "run_id": command.run_id.to_string(),
                 "parent_agent_id": command.parent_agent_id.to_string(),
                 "child_agent_id": command.child_agent_id.to_string(),
-                "child_delivery_runtime_session_id": command.child_delivery_runtime_session_id.clone(),
+                "child_runtime_thread_id": command.child_runtime_thread_id.clone(),
                 "resolved_turn_id": command.resolved_turn_id.clone(),
             }),
         );
         let mailbox_result = deliver_companion_mailbox_message(
             &self.repos,
-            self.session_core.clone(),
-            self.session_control.clone(),
-            self.session_eventing.clone(),
-            self.session_launch.clone(),
+            self.product_delivery.as_ref(),
             CompanionMailboxDeliveryInput {
                 channel_id,
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
-                runtime_session_id: command.parent_delivery_runtime_session_id,
                 sender: ChannelParticipantRef::LifecycleAgent {
                     run_id: command.run_id,
                     agent_id: command.child_agent_id,
@@ -829,7 +759,7 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 result_attempt: GATE_RESULT_DELIVERY_ATTEMPT,
                 claim_token: marker_claim_token,
                 mailbox_message_id: mailbox_result.mailbox_message_id,
-                command_receipt_id: mailbox_result.command_receipt_id,
+                accepted_runtime_operation_id: mailbox_result.accepted_runtime_operation_id.clone(),
                 dispatched_to_parent,
             })
             .await?;
@@ -860,22 +790,18 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "run_id": command.run_id.to_string(),
                 "parent_agent_id": command.parent_agent_id.to_string(),
                 "child_agent_id": command.child_agent_id.to_string(),
-                "child_delivery_runtime_session_id": command.child_delivery_runtime_session_id.clone(),
+                "child_runtime_thread_id": command.child_runtime_thread_id.clone(),
                 "turn_id": command.turn_id.clone(),
                 "wait": command.wait,
             }),
         );
         deliver_companion_mailbox_message(
             &self.repos,
-            self.session_core.clone(),
-            self.session_control.clone(),
-            self.session_eventing.clone(),
-            self.session_launch.clone(),
+            self.product_delivery.as_ref(),
             CompanionMailboxDeliveryInput {
                 channel_id,
                 run_id: command.run_id,
                 agent_id: command.parent_agent_id,
-                runtime_session_id: command.parent_delivery_runtime_session_id,
                 sender: ChannelParticipantRef::LifecycleAgent {
                     run_id: command.run_id,
                     agent_id: command.child_agent_id,
@@ -912,22 +838,18 @@ impl CompanionParentMailboxDelivery for AgentRunCompanionMailboxDelivery {
                 "request_id": command.request_id.clone(),
                 "run_id": command.run_id.to_string(),
                 "parent_agent_id": command.parent_agent_id.to_string(),
-                "parent_delivery_runtime_session_id": command.parent_delivery_runtime_session_id.clone(),
+                "parent_runtime_thread_id": command.parent_runtime_thread_id.clone(),
                 "child_agent_id": command.child_agent_id.to_string(),
                 "resolved_turn_id": command.resolved_turn_id.clone(),
             }),
         );
         deliver_companion_mailbox_message(
             &self.repos,
-            self.session_core.clone(),
-            self.session_control.clone(),
-            self.session_eventing.clone(),
-            self.session_launch.clone(),
+            self.product_delivery.as_ref(),
             CompanionMailboxDeliveryInput {
                 channel_id,
                 run_id: command.run_id,
                 agent_id: command.child_agent_id,
-                runtime_session_id: command.child_delivery_runtime_session_id,
                 sender: ChannelParticipantRef::LifecycleAgent {
                     run_id: command.run_id,
                     agent_id: command.parent_agent_id,
@@ -966,22 +888,18 @@ impl CompanionHumanResponseMailboxDelivery for AgentRunCompanionMailboxDelivery 
                 "request_id": command.request_id.clone(),
                 "run_id": command.run_id.to_string(),
                 "agent_id": command.agent_id.to_string(),
-                "delivery_runtime_session_id": command.delivery_runtime_session_id.clone(),
+                "runtime_thread_id": command.runtime_thread_id.clone(),
                 "turn_id": command.turn_id.clone(),
                 "request_type": command.request_type.clone(),
             }),
         );
         deliver_companion_mailbox_message(
             &self.repos,
-            self.session_core.clone(),
-            self.session_control.clone(),
-            self.session_eventing.clone(),
-            self.session_launch.clone(),
+            self.product_delivery.as_ref(),
             CompanionMailboxDeliveryInput {
                 channel_id,
                 run_id: command.run_id,
                 agent_id: command.agent_id,
-                runtime_session_id: command.delivery_runtime_session_id,
                 sender: ChannelParticipantRef::Human {
                     user_id: "human".to_string(),
                 },
@@ -999,7 +917,6 @@ struct CompanionMailboxDeliveryInput {
     channel_id: Uuid,
     run_id: Uuid,
     agent_id: Uuid,
-    runtime_session_id: String,
     sender: ChannelParticipantRef,
     source: MailboxSourceIdentity,
     payload_kind: &'static str,
@@ -1007,42 +924,11 @@ struct CompanionMailboxDeliveryInput {
     client_command_id: String,
 }
 
-fn companion_delivery_projection_input_blocks(
-    projection_text: String,
-) -> Vec<agentdash_agent_protocol::UserInputBlock> {
-    // companion mailbox 的结构化事实在 source / dedup / gate refs 中；这里的文本只用于续跑投影。
-    text_user_input_blocks(projection_text)
-}
-
 async fn deliver_companion_mailbox_message(
     repos: &crate::repository_set::RepositorySet,
-    session_core: SessionCoreService,
-    session_control: SessionControlService,
-    session_eventing: SessionEventingService,
-    session_launch: SessionLaunchService,
+    product_delivery: &dyn AgentRunProductDeliveryPort,
     input: CompanionMailboxDeliveryInput,
 ) -> Result<CompanionParentMailboxDeliveryResult, crate::ApplicationError> {
-    let delivery = DeliveryRuntimeSelectionService::new(DeliveryRuntimeSelectionRepositories {
-        lifecycle_runs: repos.lifecycle_run_repo.as_ref(),
-        lifecycle_agents: repos.lifecycle_agent_repo.as_ref(),
-        agent_frames: repos.agent_frame_repo.as_ref(),
-        execution_anchors: repos.execution_anchor_repo.as_ref(),
-        delivery_bindings: repos.agent_run_delivery_binding_repo.as_ref(),
-    })
-    .select_current_delivery(input.run_id, input.agent_id)
-    .await
-    .map_err(|error| crate::ApplicationError::Conflict(error.to_string()))?;
-    if delivery.runtime_session_id != input.runtime_session_id {
-        return Err(crate::ApplicationError::Conflict(format!(
-            "companion mailbox delivery runtime mismatch: run_id={}, agent_id={}, expected_runtime_session_id={}, current_runtime_session_id={}",
-            input.run_id, input.agent_id, input.runtime_session_id, delivery.runtime_session_id
-        )));
-    }
-    if let Some(skipped) =
-        guard_companion_mailbox_target_runtime_state(&session_core, &delivery).await?
-    {
-        return Ok(skipped);
-    }
     let channel_intent = companion_channel_delivery_intent(
         input.channel_id,
         input.run_id,
@@ -1052,140 +938,67 @@ async fn deliver_companion_mailbox_message(
         input.payload_kind,
         &input.input_text,
     );
-    let materialized =
+    let _materialized =
         companion_channel_service(repos).materialize_delivery_to_mailbox(&channel_intent)?;
-    let source_dedup_key = mailbox_source_identity_dedup_key(&materialized.message.source)
-        .unwrap_or_else(|| format!("channel_delivery:{}", materialized.delivery_id));
-    let mailbox_result = companion_mailbox_service_from_runtime(
-        repos,
-        session_core,
-        session_control,
-        session_eventing,
-        session_launch,
-    )
-    .accept_intake_message(AgentRunMailboxIntakeCommand {
-        run_id: input.run_id,
-        agent_id: input.agent_id,
-        frame_id: delivery.current_frame_id,
-        origin: materialized.message.origin,
-        source: materialized.message.source,
-        retain_payload: true,
-        schedule_on_submit: true,
-        input: companion_delivery_projection_input_blocks(input.input_text),
-        client_command_id: input.client_command_id,
-        source_dedup_key: Some(source_dedup_key),
-        executor_config: None,
-        backend_selection: None,
-        identity: None,
-        delivery_intent: Some(format!("channel_delivery:{}", channel_intent.id)),
-    })
-    .await
-    .map_err(map_companion_mailbox_error)?;
-    if matches!(
-        mailbox_result.outcome,
-        AgentRunMailboxCommandOutcome::Failed | AgentRunMailboxCommandOutcome::Blocked
-    ) {
-        let mailbox_message_id = mailbox_result
-            .mailbox_message
-            .as_ref()
-            .map(|message| message.id.to_string())
-            .unwrap_or_else(|| "(none)".to_string());
-        return Err(crate::ApplicationError::Conflict(format!(
-            "companion mailbox delivery 未接受消息: outcome={}, mailbox_message_id={mailbox_message_id}",
-            mailbox_result.outcome.as_str()
-        )));
-    }
-    let mailbox_message_id = mailbox_result
-        .mailbox_message
-        .as_ref()
-        .map(|message| message.id);
-    let command_receipt_id = mailbox_result
-        .mailbox_message
-        .as_ref()
-        .and_then(|message| message.command_receipt_id);
-    let accepted_agent_run_turn_id = mailbox_result
-        .accepted_refs
-        .as_ref()
-        .and_then(|refs| refs.agent_run_turn_id.clone());
-    let accepted_protocol_turn_id = mailbox_result
-        .accepted_refs
-        .as_ref()
-        .and_then(|refs| refs.protocol_turn_id.clone());
-    if let Some(mailbox_message_id) = mailbox_message_id {
-        companion_channel_service(repos)
-            .record_delivery_state(
-                &ChannelOwner::LifecycleRun {
-                    run_id: input.run_id,
-                },
-                input.channel_id,
-                ChannelDeliveryState {
-                    delivery_id: channel_intent.id,
-                    message_id: channel_intent.message.id,
-                    target: channel_intent.target.clone(),
-                    status: ChannelDeliveryStatus::Materialized,
-                    materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
-                        message_id: mailbox_message_id,
-                    }),
-                    updated_at: Utc::now(),
-                },
-            )
-            .await?;
-    }
+    let client_command_id = input.client_command_id.clone();
+    let delivery = product_delivery
+        .deliver(DeliverAgentRunProductInput {
+            run_id: input.run_id,
+            agent_id: input.agent_id,
+            input: vec![RuntimeInput::Text {
+                text: input.input_text,
+            }],
+            actor: RuntimeActor::System {
+                component: format!("companion:{}", input.payload_kind),
+            },
+            client_command_id: input.client_command_id,
+        })
+        .await
+        .map_err(|error| crate::ApplicationError::Internal(error.to_string()))?;
+    let mailbox_message_id = Some(delivery.mailbox_message_id);
+    companion_channel_service(repos)
+        .record_delivery_state(
+            &ChannelOwner::LifecycleRun {
+                run_id: input.run_id,
+            },
+            input.channel_id,
+            ChannelDeliveryState {
+                delivery_id: channel_intent.id,
+                message_id: channel_intent.message.id,
+                target: channel_intent.target.clone(),
+                status: ChannelDeliveryStatus::Materialized,
+                materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
+                    message_id: delivery.mailbox_message_id,
+                }),
+                updated_at: Utc::now(),
+            },
+        )
+        .await?;
 
     Ok(CompanionParentMailboxDeliveryResult {
         mailbox_message_id,
-        command_receipt_id,
-        command_receipt_client_command_id: mailbox_result.command_receipt.client_command_id,
-        command_receipt_status: mailbox_result.command_receipt.status,
-        command_receipt_duplicate: mailbox_result.command_receipt.duplicate,
-        outcome: mailbox_result.outcome.as_str().to_string(),
-        accepted_agent_run_turn_id,
-        accepted_protocol_turn_id,
-    })
-}
-
-async fn guard_companion_mailbox_target_runtime_state(
-    session_core: &SessionCoreService,
-    delivery: &crate::agent_run::DeliveryRuntimeSelection,
-) -> Result<Option<CompanionParentMailboxDeliveryResult>, crate::ApplicationError> {
-    let execution_state = session_core
-        .inspect_session_execution_state(&delivery.runtime_session_id)
-        .await
-        .map_err(|error| crate::ApplicationError::Internal(error.to_string()))?;
-
-    match (delivery.status, execution_state) {
-        (DeliveryBindingStatus::Running, SessionExecutionState::Running { .. })
-        | (DeliveryBindingStatus::Running, SessionExecutionState::Cancelling { .. }) => Ok(None),
-        (DeliveryBindingStatus::Running, state) => Err(crate::ApplicationError::Conflict(format!(
-            "companion mailbox delivery target binding is running but RuntimeSession is not active: run_id={}, agent_id={}, runtime_session_id={}, runtime_state={state:?}",
-            delivery.run_id, delivery.agent_id, delivery.runtime_session_id
-        ))),
-        (DeliveryBindingStatus::Terminal, state) if state.is_terminal() => Ok(Some(
-            skipped_companion_mailbox_delivery_result("skipped_terminal_target"),
-        )),
-        (DeliveryBindingStatus::Terminal, state) => {
-            Err(crate::ApplicationError::Conflict(format!(
-                "companion mailbox delivery target binding is terminal but RuntimeSession is not terminal: run_id={}, agent_id={}, runtime_session_id={}, runtime_state={state:?}",
-                delivery.run_id, delivery.agent_id, delivery.runtime_session_id
-            )))
+        accepted_runtime_operation_id: None,
+        command_receipt_client_command_id: client_command_id,
+        command_receipt_status: if delivery.queued {
+            "queued"
+        } else {
+            "accepted"
         }
-        (_, _) => Ok(None),
-    }
-}
-
-fn skipped_companion_mailbox_delivery_result(
-    outcome: &'static str,
-) -> CompanionParentMailboxDeliveryResult {
-    CompanionParentMailboxDeliveryResult {
-        mailbox_message_id: None,
-        command_receipt_id: None,
-        command_receipt_client_command_id: outcome.to_string(),
-        command_receipt_status: "skipped".to_string(),
-        command_receipt_duplicate: false,
-        outcome: outcome.to_string(),
-        accepted_agent_run_turn_id: None,
-        accepted_protocol_turn_id: None,
-    }
+        .to_string(),
+        command_receipt_duplicate: delivery
+            .operation_receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.duplicate),
+        outcome: if delivery.queued {
+            "queued"
+        } else {
+            "dispatched"
+        }
+        .to_string(),
+        runtime_operation_id: delivery
+            .operation_receipt
+            .map(|receipt| receipt.operation_id.to_string()),
+    })
 }
 
 fn marker_delivery_replay_result(
@@ -1195,36 +1008,12 @@ fn marker_delivery_replay_result(
 ) -> CompanionParentMailboxDeliveryResult {
     CompanionParentMailboxDeliveryResult {
         mailbox_message_id: marker.mailbox_message_id,
-        command_receipt_id: marker.command_receipt_id,
+        accepted_runtime_operation_id: marker.accepted_runtime_operation_id.clone(),
         command_receipt_client_command_id: client_command_id,
         command_receipt_status: marker.status.as_str().to_string(),
         command_receipt_duplicate: duplicate,
         outcome: marker.status.as_str().to_string(),
-        accepted_agent_run_turn_id: None,
-        accepted_protocol_turn_id: None,
-    }
-}
-
-fn map_companion_mailbox_error(
-    error: agentdash_application_agentrun::WorkflowApplicationError,
-) -> crate::ApplicationError {
-    match error {
-        agentdash_application_agentrun::WorkflowApplicationError::BadRequest(message)
-        | agentdash_application_agentrun::WorkflowApplicationError::ModelRequired(message) => {
-            crate::ApplicationError::BadRequest(message)
-        }
-        agentdash_application_agentrun::WorkflowApplicationError::NotFound(message) => {
-            crate::ApplicationError::NotFound(message)
-        }
-        agentdash_application_agentrun::WorkflowApplicationError::Conflict(message) => {
-            crate::ApplicationError::Conflict(message)
-        }
-        agentdash_application_agentrun::WorkflowApplicationError::Unavailable(message) => {
-            crate::ApplicationError::Unavailable(message)
-        }
-        agentdash_application_agentrun::WorkflowApplicationError::Internal(message) => {
-            crate::ApplicationError::Internal(message)
-        }
+        runtime_operation_id: None,
     }
 }
 
@@ -1338,26 +1127,28 @@ pub struct CompanionRequestTool {
     workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
 }
 
+pub(crate) struct CompanionRequestToolDeps {
+    pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
+    pub repos: crate::repository_set::RepositorySet,
+    pub session_services_handle: SharedSessionToolServicesHandle,
+    pub tool_context: CompanionToolContext,
+    pub companion_agents: Vec<CompanionAgentEntry>,
+    pub wait_service: WaitActivityService,
+    pub model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
+    pub workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
+}
+
 impl CompanionRequestTool {
-    pub(crate) fn new(
-        project_agent_repo: Arc<dyn ProjectAgentRepository>,
-        repos: crate::repository_set::RepositorySet,
-        session_services_handle: SharedSessionToolServicesHandle,
-        tool_context: CompanionToolContext,
-        companion_agents: Vec<CompanionAgentEntry>,
-        wait_service: WaitActivityService,
-        model_preflight: Option<Arc<dyn CompanionModelPreflightPort>>,
-        workflow_script_preflight: Option<Arc<dyn CompanionWorkflowScriptPreflightPort>>,
-    ) -> Self {
+    pub(crate) fn new(deps: CompanionRequestToolDeps) -> Self {
         Self {
-            project_agent_repo,
-            repos,
-            session_services_handle,
-            tool_context,
-            companion_agents,
-            wait_service,
-            model_preflight,
-            workflow_script_preflight,
+            project_agent_repo: deps.project_agent_repo,
+            repos: deps.repos,
+            session_services_handle: deps.session_services_handle,
+            tool_context: deps.tool_context,
+            companion_agents: deps.companion_agents,
+            wait_service: deps.wait_service,
+            model_preflight: deps.model_preflight,
+            workflow_script_preflight: deps.workflow_script_preflight,
         }
     }
 }
@@ -1492,7 +1283,7 @@ impl CompanionRequestTool {
 
         let current_session_id = self
             .tool_context
-            .require_delivery_runtime_session_id("派发 companion agent")?
+            .require_runtime_thread_id("派发 companion agent")?
             .to_string();
         let anchor = self
             .tool_context
@@ -1674,39 +1465,28 @@ impl CompanionRequestTool {
             "companion_dispatch",
             &dispatch_result.launch_source.dispatch_prompt,
         );
-        let materialized = companion_channel_service(&self.repos)
+        let _materialized = companion_channel_service(&self.repos)
             .materialize_delivery_to_mailbox(&channel_intent)
             .map_err(|error| {
                 AgentToolError::ExecutionFailed(format!(
                     "companion channel materialization 失败: {error}"
                 ))
             })?;
-        let source_dedup_key = mailbox_source_identity_dedup_key(&materialized.message.source)
-            .unwrap_or_else(|| format!("channel_delivery:{}", materialized.delivery_id));
-        let mailbox_result = companion_mailbox_service(&self.repos, &session_services)
-            .accept_intake_message(AgentRunMailboxIntakeCommand {
+        let mailbox_result = session_services
+            .product_delivery
+            .deliver(DeliverAgentRunProductInput {
                 run_id: dispatch_result.run_ref,
                 agent_id: dispatch_result.agent_ref,
-                frame_id: dispatch_result.frame_ref,
-                origin: materialized.message.origin,
-                source: materialized.message.source,
-                retain_payload: true,
-                schedule_on_submit: true,
-                input: text_user_input_blocks(&dispatch_result.launch_source.dispatch_prompt),
+                input: vec![RuntimeInput::Text {
+                    text: dispatch_result.launch_source.dispatch_prompt.clone(),
+                }],
+                actor: RuntimeActor::Agent {
+                    name: parent_agent_id.to_string(),
+                },
                 client_command_id: format!(
                     "companion-dispatch:{}:{}",
                     dispatch_plan.dispatch_id, dispatch_result.agent_ref
                 ),
-                source_dedup_key: Some(source_dedup_key),
-                executor_config: Some(
-                    dispatch_result
-                        .launch_source
-                        .companion_executor_config
-                        .clone(),
-                ),
-                backend_selection: None,
-                identity: self.tool_context.identity().cloned(),
-                delivery_intent: Some(format!("channel_delivery:{}", channel_intent.id)),
             })
             .await
             .map_err(|error| {
@@ -1714,49 +1494,39 @@ impl CompanionRequestTool {
                     "child companion mailbox dispatch 失败: {error}"
                 ))
             })?;
-        let child_turn_id = mailbox_result
-            .accepted_refs
+        let runtime_operation_id = mailbox_result
+            .operation_receipt
             .as_ref()
-            .and_then(|refs| refs.agent_run_turn_id.clone());
-        let mailbox_message_id = mailbox_result
-            .mailbox_message
-            .as_ref()
-            .map(|message| message.id.to_string());
-        let mailbox_outcome = mailbox_result.outcome.as_str();
-        if matches!(
-            mailbox_result.outcome,
-            AgentRunMailboxCommandOutcome::Failed | AgentRunMailboxCommandOutcome::Blocked
-        ) {
-            return Err(AgentToolError::ExecutionFailed(format!(
-                "child companion mailbox dispatch 未接受首条任务: outcome={mailbox_outcome}, mailbox_message_id={}",
-                mailbox_message_id.as_deref().unwrap_or("(none)")
-            )));
-        }
-        if let Some(mailbox_message) = mailbox_result.mailbox_message.as_ref() {
-            companion_channel_service(&self.repos)
-                .record_delivery_state(
-                    &ChannelOwner::LifecycleRun {
-                        run_id: parent_run_id,
-                    },
-                    channel_id,
-                    ChannelDeliveryState {
-                        delivery_id: channel_intent.id,
-                        message_id: channel_intent.message.id,
-                        target: channel_intent.target.clone(),
-                        status: ChannelDeliveryStatus::Materialized,
-                        materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
-                            message_id: mailbox_message.id,
-                        }),
-                        updated_at: Utc::now(),
-                    },
-                )
-                .await
-                .map_err(|error| {
-                    AgentToolError::ExecutionFailed(format!(
-                        "companion channel delivery state 写入失败: {error}"
-                    ))
-                })?;
-        }
+            .map(|receipt| receipt.operation_id.to_string());
+        let mailbox_message_id = Some(mailbox_result.mailbox_message_id.to_string());
+        let mailbox_outcome = if mailbox_result.queued {
+            "queued"
+        } else {
+            "dispatched"
+        };
+        companion_channel_service(&self.repos)
+            .record_delivery_state(
+                &ChannelOwner::LifecycleRun {
+                    run_id: parent_run_id,
+                },
+                channel_id,
+                ChannelDeliveryState {
+                    delivery_id: channel_intent.id,
+                    message_id: channel_intent.message.id,
+                    target: channel_intent.target.clone(),
+                    status: ChannelDeliveryStatus::Materialized,
+                    materialized_ref: Some(MaterializedDeliveryRef::MailboxMessage {
+                        message_id: mailbox_result.mailbox_message_id,
+                    }),
+                    updated_at: Utc::now(),
+                },
+            )
+            .await
+            .map_err(|error| {
+                AgentToolError::ExecutionFailed(format!(
+                    "companion channel delivery state 写入失败: {error}"
+                ))
+            })?;
 
         // ─── Hook: after_subagent_dispatch ──────────────────────────────
         let after_resolution = evaluate_subagent_hook(
@@ -1769,8 +1539,8 @@ impl CompanionRequestTool {
                 "agent_ref": dispatch_result.agent_ref.to_string(),
                 "frame_ref": dispatch_result.frame_ref.to_string(),
                 "gate_ref": dispatch_result.gate_ref.map(|id| id.to_string()),
-                "delivery_runtime_session_id": dispatch_result.delivery_runtime_session_id.clone(),
-                "turn_id": child_turn_id.clone(),
+                "runtime_thread_id": dispatch_result.runtime_thread_id.clone(),
+                "runtime_operation_id": runtime_operation_id,
                 "mailbox_message_id": mailbox_message_id.clone(),
                 "mailbox_outcome": mailbox_outcome,
                 "slice_mode": slice_mode,
@@ -1909,10 +1679,9 @@ impl CompanionRequestTool {
             .wait_service
             .wait_for_lifecycle_gate_payload(
                 WaitToolContext {
-                    delivery_runtime_session_id: self
-                        .tool_context
-                        .delivery_runtime_session_id()
-                        .map(str::to_string),
+                    runtime_thread_id: self.tool_context.runtime_thread_id().and_then(|value| {
+                        agentdash_agent_runtime_contract::RuntimeThreadId::new(value).ok()
+                    }),
                     turn_id: self.tool_context.turn_id().to_string(),
                 },
                 gate_id,
@@ -1946,7 +1715,7 @@ impl CompanionRequestTool {
 
         let current_session_id = self
             .tool_context
-            .require_delivery_runtime_session_id("向上提审")?
+            .require_runtime_thread_id("向上提审")?
             .to_string();
         let session_services =
             require_session_services(&self.session_services_handle, "向上提审").await?;
@@ -1961,46 +1730,6 @@ impl CompanionRequestTool {
             })
             .await
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-
-        if let Some(parent_hook_runtime) = session_services
-            .hooks
-            .ensure_hook_runtime_for_target(
-                &AgentFrameRuntimeTarget {
-                    frame_id: opened.parent_frame_id,
-                    delivery_runtime_session_id: opened.parent_delivery_runtime_session_id.clone(),
-                },
-                None,
-            )
-            .await
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-        {
-            let resolution = evaluate_subagent_hook(
-                parent_hook_runtime.as_ref(),
-                HookTrigger::CompanionResult,
-                None,
-                &opened.companion_label,
-                Some(opened.payload.clone()),
-            )
-            .await?;
-            if let Some(action) = build_subagent_pending_action(
-                &opened.request_id,
-                &opened.companion_label,
-                &opened.payload,
-                &resolution,
-            ) {
-                parent_hook_runtime.enqueue_pending_action(action);
-            }
-            record_subagent_trace(
-                parent_hook_runtime.as_ref(),
-                Some(&session_services),
-                None,
-                HookTrigger::CompanionResult,
-                "review_request",
-                &opened.companion_label,
-                &resolution,
-            )
-            .await;
-        }
 
         Ok(companion_parent_request_agent_tool_result(&opened, wait))
     }
@@ -2027,7 +1756,7 @@ impl CompanionRequestTool {
 
         let current_session_id = self
             .tool_context
-            .require_delivery_runtime_session_id("向用户发起请求")?
+            .require_runtime_thread_id("向用户发起请求")?
             .to_string();
         let anchor = self
             .tool_context
@@ -2218,7 +1947,7 @@ impl CompanionRequestTool {
             .map(ToString::to_string)
             .or_else(|| {
                 self.tool_context
-                    .delivery_runtime_session_id()
+                    .runtime_thread_id()
                     .map(ToString::to_string)
             });
         let user_id = self
@@ -2238,7 +1967,7 @@ impl CompanionRequestTool {
             .await
             .map_err(AgentToolError::ExecutionFailed)?;
 
-        Ok(workflow_script_preflight_agent_tool_result(output)?)
+        workflow_script_preflight_agent_tool_result(output)
     }
 
     async fn preflight_selected_companion_model(
@@ -2397,7 +2126,7 @@ impl AgentTool for CompanionRespondTool {
 
         let current_session_id = self
             .tool_context
-            .require_delivery_runtime_session_id("回应 companion 请求")?
+            .require_runtime_thread_id("回应 companion 请求")?
             .to_string();
         let session_services =
             require_session_services(&self.session_services_handle, "回应 companion 请求").await?;
@@ -2511,7 +2240,7 @@ impl CompanionRespondTool {
 
         if let Some((_anchor, _agent, frame)) = resolve_current_frame_from_delivery_trace_ref(
             current_session_id,
-            self.repos.execution_anchor_repo.as_ref(),
+            self.repos.agent_run_runtime_binding_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_frame_repo.as_ref(),
         )
@@ -2671,13 +2400,12 @@ impl CompanionRespondTool {
                 },
                 "mailbox": {
                     "mailbox_message_id": result.child_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
-                    "command_receipt_id": result.child_mailbox_delivery.command_receipt_id.map(|id| id.to_string()),
+                    "runtime_operation_id": result.child_mailbox_delivery.accepted_runtime_operation_id,
                     "command_receipt_client_command_id": result.child_mailbox_delivery.command_receipt_client_command_id,
                     "command_receipt_status": result.child_mailbox_delivery.command_receipt_status,
                     "command_receipt_duplicate": result.child_mailbox_delivery.command_receipt_duplicate,
                     "outcome": result.child_mailbox_delivery.outcome,
-                    "accepted_agent_run_turn_id": result.child_mailbox_delivery.accepted_agent_run_turn_id,
-                    "accepted_protocol_turn_id": result.child_mailbox_delivery.accepted_protocol_turn_id,
+                    "runtime_operation_id": result.child_mailbox_delivery.runtime_operation_id,
                 },
                 "payload": result.payload,
             })),
@@ -2690,7 +2418,7 @@ impl CompanionRespondTool {
         request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
-        session_services: &SessionToolServices,
+        _session_services: &SessionToolServices,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
         let hook_runtime = match self.tool_context.hook_runtime() {
             Some(session) => session,
@@ -2735,21 +2463,6 @@ impl CompanionRespondTool {
             .ok_or_else(|| {
                 AgentToolError::ExecutionFailed(format!(
                     "当前 session 中不存在 request_id=`{request_id}` 的 pending action"
-                ))
-            })?;
-
-        let notification = build_hook_action_resolved_notification(
-            current_session_id,
-            self.tool_context.turn_id(),
-            &action,
-        );
-        session_services
-            .eventing
-            .inject_notification(current_session_id, notification)
-            .await
-            .map_err(|error| {
-                AgentToolError::ExecutionFailed(format!(
-                    "发送 companion pending action 解析通知失败: {error}"
                 ))
             })?;
 
@@ -2821,13 +2534,12 @@ impl CompanionRespondTool {
                 },
                 "mailbox": {
                     "mailbox_message_id": result.parent_mailbox_delivery.mailbox_message_id.map(|id| id.to_string()),
-                    "command_receipt_id": result.parent_mailbox_delivery.command_receipt_id.map(|id| id.to_string()),
+                    "runtime_operation_id": result.parent_mailbox_delivery.accepted_runtime_operation_id,
                     "command_receipt_client_command_id": result.parent_mailbox_delivery.command_receipt_client_command_id,
                     "command_receipt_status": result.parent_mailbox_delivery.command_receipt_status,
                     "command_receipt_duplicate": result.parent_mailbox_delivery.command_receipt_duplicate,
                     "outcome": result.parent_mailbox_delivery.outcome,
-                    "accepted_agent_run_turn_id": result.parent_mailbox_delivery.accepted_agent_run_turn_id,
-                    "accepted_protocol_turn_id": result.parent_mailbox_delivery.accepted_protocol_turn_id,
+                    "runtime_operation_id": result.parent_mailbox_delivery.runtime_operation_id,
                 },
                 "payload": result.payload,
             })),
@@ -3172,27 +2884,10 @@ async fn record_subagent_trace(
     };
     hook_runtime.append_trace(trace.clone());
 
-    // Only inject notification when the session has NO active connector.
-    // Active connectors already receive traces via trace_broadcast → hook_trace_rx,
-    // so inject_notification would cause duplicate event cards.
-    if let (Some(session_services), Some(turn_id)) = (session_services, turn_id) {
-        let session_id = hook_runtime.session_id();
-        let has_live = session_services
-            .core
-            .has_live_executor_session(session_id)
-            .await;
-        if !has_live
-            && let Some(notification) =
-                build_hook_trace_envelope(session_id, Some(turn_id), hook_trace_source(), &trace)
-        {
-            let _ = session_services
-                .eventing
-                .inject_notification(session_id, notification)
-                .await;
-        }
-    }
+    let _ = (session_services, turn_id);
 }
 
+#[cfg(test)]
 fn build_subagent_pending_action(
     fallback_request_id: &str,
     companion_label: &str,
@@ -3263,14 +2958,6 @@ fn build_subagent_pending_action(
         resolution_turn_id: None,
         injections: resolution.injections.clone(),
     })
-}
-
-fn hook_trace_source() -> SourceInfo {
-    SourceInfo {
-        connector_id: "pi-agent".to_string(),
-        connector_type: "runtime_tool".to_string(),
-        executor_id: Some("PI_AGENT".to_string()),
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3654,29 +3341,18 @@ mod companion_tests {
         companion_subagent_agent_tool_result, companion_wake_source, merge_gate_result_refs,
         platform_capability_grant_missing_broker_error, wait_for_lifecycle_gate_resolution,
     };
-    use agentdash_application_agentrun::WorkflowApplicationError;
-    use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
-    use agentdash_application_ports::lifecycle_surface_projection::{
-        MessageStreamProjectionRef, MessageStreamTraceKind,
-    };
     use agentdash_domain::workflow::{
-        DeliveryBindingStatus, GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository,
-        RuntimeSessionExecutionAnchor, WaitProducerRef,
+        GateWaitPolicyEnvelope, LifecycleGate, LifecycleGateRepository, WaitProducerRef,
     };
     use agentdash_spi::CapabilityScope;
     use agentdash_spi::action_type as at;
     use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-    use agentdash_spi::session_persistence::SessionMeta;
     use agentdash_spi::{McpTransportConfig, MountCapability, RuntimeMcpServer, Vfs};
-    use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Mutex;
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::agent_run::{
-        DeliveryRuntimeSelection, RuntimeSessionCorePort, SessionCoreService, SessionExecutionState,
-    };
     use crate::runtime_tools::SharedSessionToolServicesHandle;
     #[derive(Default)]
     struct FixtureGateRepo {
@@ -3774,93 +3450,6 @@ mod companion_tests {
         }
     }
 
-    struct FixedSessionCorePort {
-        state: SessionExecutionState,
-    }
-
-    #[async_trait::async_trait]
-    impl RuntimeSessionCorePort for FixedSessionCorePort {
-        async fn inspect_session_execution_state(
-            &self,
-            _session_id: &str,
-        ) -> Result<SessionExecutionState, WorkflowApplicationError> {
-            Ok(self.state.clone())
-        }
-
-        async fn get_session_meta(
-            &self,
-            _session_id: &str,
-        ) -> Result<Option<SessionMeta>, WorkflowApplicationError> {
-            Ok(None)
-        }
-
-        async fn delete_session(&self, _session_id: &str) -> Result<(), WorkflowApplicationError> {
-            Ok(())
-        }
-    }
-
-    fn delivery_selection(status: DeliveryBindingStatus) -> DeliveryRuntimeSelection {
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let current_frame_id = Uuid::new_v4();
-        let launch_frame_id = Uuid::new_v4();
-        let runtime_session_id = "runtime-terminal-target".to_string();
-        let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
-            runtime_session_id.clone(),
-            run_id,
-            launch_frame_id,
-            agent_id,
-        );
-        DeliveryRuntimeSelection {
-            run_id,
-            agent_id,
-            current_frame_id,
-            launch_frame_id,
-            runtime_session_id: runtime_session_id.clone(),
-            orchestration_id: None,
-            node_path: None,
-            node_attempt: None,
-            status,
-            active_turn_id: None,
-            last_turn_id: Some("turn-terminal".to_string()),
-            terminal_state: Some("interrupted".to_string()),
-            terminal_message: Some("startup recovery".to_string()),
-            observed_at: Utc::now(),
-            address: AgentRunRuntimeAddress {
-                run_id,
-                agent_id,
-                frame_id: current_frame_id,
-            },
-            message_stream: MessageStreamProjectionRef {
-                runtime_session_id,
-                trace_kind: MessageStreamTraceKind::ConnectorRuntimeSession,
-            },
-            anchor,
-        }
-    }
-
-    #[tokio::test]
-    async fn companion_mailbox_guard_skips_terminal_target() {
-        let session_core = SessionCoreService::new(std::sync::Arc::new(FixedSessionCorePort {
-            state: SessionExecutionState::Interrupted {
-                turn_id: Some("turn-terminal".to_string()),
-                message: Some("startup recovery".to_string()),
-            },
-        }));
-        let result = super::guard_companion_mailbox_target_runtime_state(
-            &session_core,
-            &delivery_selection(DeliveryBindingStatus::Terminal),
-        )
-        .await
-        .expect("terminal target should be a no-op, not an error")
-        .expect("terminal target should return a skipped result");
-
-        assert_eq!(result.outcome, "skipped_terminal_target");
-        assert_eq!(result.command_receipt_status, "skipped");
-        assert!(result.mailbox_message_id.is_none());
-        assert!(result.accepted_agent_run_turn_id.is_none());
-    }
-
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {
         let story_id = Uuid::new_v4();
@@ -3934,7 +3523,7 @@ mod companion_tests {
         let base_refs = serde_json::json!({
             "gate_ref": "gate-1",
             "run_ref": "run-parent",
-            "delivery_runtime_session_id": "child-session",
+            "runtime_thread_id": "child-session",
         });
         let gate_payload = serde_json::json!({
             "result_refs": {
@@ -3943,7 +3532,7 @@ mod companion_tests {
                     "run_id": "run-child",
                     "agent_id": "agent-child",
                     "frame_id": "frame-child",
-                    "delivery_runtime_session_id": "child-session"
+                    "runtime_thread_id": "child-session"
                 },
                 "evidence": [
                     {
@@ -3952,7 +3541,7 @@ mod companion_tests {
                         "child_run_id": "run-child",
                         "child_agent_id": "agent-child",
                         "child_frame_id": "frame-child",
-                        "delivery_runtime_session_id": "child-session",
+                        "runtime_thread_id": "child-session",
                         "mount_id": "lifecycle",
                         "uri": "lifecycle://agent-runs/agent-child/sessions/messages"
                     }
@@ -3964,7 +3553,7 @@ mod companion_tests {
 
         assert_eq!(refs["gate_ref"], serde_json::json!("gate-1"));
         assert_eq!(
-            refs["child"]["delivery_runtime_session_id"],
+            refs["child"]["runtime_thread_id"],
             serde_json::json!("child-session")
         );
         assert_eq!(
@@ -4006,9 +3595,9 @@ mod companion_tests {
         let visible = format!("{text}\n{details}");
 
         for forbidden in [
-            "delivery_runtime_session_id",
-            "parent_delivery_runtime_session_id",
-            "child_delivery_runtime_session_id",
+            "runtime_thread_id",
+            "parent_runtime_thread_id",
+            "child_runtime_thread_id",
             "child_session_id",
             "parent_session_id",
             "runtime-child-session",
@@ -4072,15 +3661,12 @@ mod companion_tests {
             mailbox_message_id: Some(
                 Uuid::parse_str("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee").expect("mailbox uuid"),
             ),
-            command_receipt_id: Some(
-                Uuid::parse_str("ffffffff-ffff-ffff-ffff-ffffffffffff").expect("receipt uuid"),
-            ),
+            accepted_runtime_operation_id: Some("operation-test".to_string()),
             command_receipt_client_command_id: "client-command-1".to_string(),
             command_receipt_status: "accepted".to_string(),
             command_receipt_duplicate: false,
             outcome: "launched".to_string(),
-            accepted_agent_run_turn_id: Some("turn-parent-1".to_string()),
-            accepted_protocol_turn_id: Some("protocol-turn-parent-1".to_string()),
+            runtime_operation_id: Some("operation-parent-1".to_string()),
         }
     }
 
@@ -4100,10 +3686,10 @@ mod companion_tests {
             run_id: Uuid::parse_str("66666666-6666-6666-6666-666666666666").expect("run uuid"),
             parent_agent_id,
             parent_frame_id,
-            parent_delivery_runtime_session_id: "parent-session".to_string(),
+            parent_runtime_thread_id: "parent-session".to_string(),
             child_agent_id,
             child_frame_id,
-            child_delivery_runtime_session_id: "child-session".to_string(),
+            child_runtime_thread_id: "child-session".to_string(),
             companion_label: "parent".to_string(),
             parent_mailbox_delivery: mailbox_delivery_fixture(),
             payload: serde_json::json!({ "status": "pending" }),
@@ -4126,8 +3712,8 @@ mod companion_tests {
             serde_json::json!(child_messages_uri(child_agent_id))
         );
         assert_eq!(
-            details["mailbox"]["accepted_agent_run_turn_id"],
-            serde_json::json!("turn-parent-1")
+            details["mailbox"]["runtime_operation_id"],
+            serde_json::json!("operation-parent-1")
         );
     }
 
@@ -4138,11 +3724,11 @@ mod companion_tests {
         let result_refs = serde_json::json!({
             "child": {
                 "agent_id": child_agent_id,
-                "delivery_runtime_session_id": "runtime-child-session"
+                "runtime_thread_id": "runtime-child-session"
             },
             "evidence": [{
                 "kind": "lifecycle_file",
-                "child_delivery_runtime_session_id": "runtime-child-session"
+                "child_runtime_thread_id": "runtime-child-session"
             }]
         });
         let raw_preview = serde_json::json!({
@@ -4229,10 +3815,10 @@ mod companion_tests {
         let raw_response = serde_json::json!({
             "status": "completed",
             "summary": "approved",
-            "delivery_runtime_session_id": "runtime-child-session",
+            "runtime_thread_id": "runtime-child-session",
             "parent_session_id": "parent-session",
             "result_refs": {
-                "parent_delivery_runtime_session_id": "runtime-parent-session",
+                "parent_runtime_thread_id": "runtime-parent-session",
                 "child_session_id": "child-session"
             }
         });

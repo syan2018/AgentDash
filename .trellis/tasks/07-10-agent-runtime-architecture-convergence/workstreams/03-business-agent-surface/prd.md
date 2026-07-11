@@ -30,11 +30,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 外部 driver 不接收 `DynAgentTool` trait object、application delegate 或本地 VFS runtime object。
-- [ ] Tool schema/call/result保留 Thread/Turn/Item/Tool/Binding generation 坐标。
-- [ ] Brokered tool 在执行点重做 policy/VFS检查，duplicate call不重复副作用。
-- [ ] MCP secret只在local materialization boundary解引用。
-- [ ] PromptOnly/Observed/HostAdaptedBoundary 不会被UI误报为exact/native。
-- [ ] Capability Pack required contribution缺失不会静默部分启用。
-- [ ] 需要block/rewrite/same-loop decision的Hook不会被Observed/SteerApproximation误判为兼容。
-- [ ] 同一HookDefinition在Host/Broker/Driver之间解析为唯一route，不会重复执行。
+- [x] 外部 driver 不接收 `DynAgentTool` trait object、application delegate 或本地 VFS runtime object。
+- [x] Tool schema/call/result保留 Thread/Turn/Item/Tool/Binding generation 坐标。
+- [x] Brokered tool 在执行点重做 policy/VFS检查，duplicate call不重复副作用。
+- [x] MCP secret只在local materialization boundary解引用。
+- [x] PromptOnly/Observed/HostAdaptedBoundary 不会被UI误报为exact/native。
+- [x] Capability Pack required contribution缺失不会静默部分启用。
+- [x] 需要block/rewrite/same-loop decision的Hook不会被Observed/SteerApproximation误判为兼容。
+- [x] 同一HookDefinition在Host/Broker/Driver之间解析为唯一route，不会重复执行。

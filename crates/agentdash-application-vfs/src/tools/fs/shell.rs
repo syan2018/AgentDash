@@ -45,17 +45,6 @@ pub struct ShellTerminalRegistration {
 pub trait ShellTerminalRegistry: Send + Sync {
     fn register_shell_terminal(&self, registration: ShellTerminalRegistration);
     fn resolve_shell_terminal(&self, terminal_id: &str) -> Option<ShellTerminalRegistration>;
-    fn record_shell_terminal_output_snapshot(
-        &self,
-        _terminal_id: &str,
-        _stdout: &str,
-        _stderr: &str,
-        _pty: &str,
-        _next_seq: Option<u64>,
-        _truncated: bool,
-        _omitted_bytes: usize,
-    ) {
-    }
     fn remove_shell_terminal(&self, terminal_id: &str);
 }
 
@@ -591,17 +580,6 @@ impl AgentTool for ShellExecTool {
         let result_omitted_bytes = result
             .omitted_bytes
             .saturating_add(extra_truncation.omitted_bytes);
-        if let Some(registry) = &self.terminal_registry {
-            registry.record_shell_terminal_output_snapshot(
-                &terminal_id,
-                &result.stdout,
-                &result.stderr,
-                &result.pty,
-                result.next_seq,
-                result_truncated,
-                result_omitted_bytes,
-            );
-        }
         Ok(AgentToolResult {
             content: vec![ContentPart::text(shell_exec_result_text(
                 &command,

@@ -6,7 +6,7 @@ import type {
   AggregatedThinkingGroup,
   SessionEventEnvelope,
 } from "./types";
-import type { BackboneEnvelope, BackboneEvent, ThreadItem, Turn } from "../../../generated/backbone-protocol";
+import type { BackboneEnvelope, BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
 
 let nextSeq = 1;
 function seq(): number {
@@ -226,49 +226,6 @@ function rawEvent(eventSeq: number, event: BackboneEvent, turnId = "u1"): Sessio
   };
 }
 
-function turnPayload(
-  id: string,
-  status: Turn["status"],
-  durationMs: number | null,
-  opts?: { startedAt?: number | null },
-): Turn {
-  return {
-    id,
-    items: [],
-    itemsView: "full",
-    status,
-    error: null,
-    startedAt: opts?.startedAt ?? null,
-    completedAt: null,
-    durationMs,
-  };
-}
-
-function rawTurnStarted(eventSeq: number, turnId = "u1", startedAt?: number): SessionEventEnvelope {
-  return rawEvent(eventSeq, {
-    type: "turn_started",
-    payload: {
-      threadId: "t1",
-      turn: turnPayload(turnId, "inProgress", null, { startedAt }),
-    },
-  }, turnId);
-}
-
-function rawTurnCompleted(
-  eventSeq: number,
-  status: Turn["status"],
-  durationMs: number,
-  turnId = "u1",
-): SessionEventEnvelope {
-  return rawEvent(eventSeq, {
-    type: "turn_completed",
-    payload: {
-      threadId: "t1",
-      turn: turnPayload(turnId, status, durationMs),
-    },
-  }, turnId);
-}
-
 function rawTurnTerminal(
   eventSeq: number,
   terminalType: "turn_completed" | "turn_failed" | "turn_interrupted",
@@ -292,58 +249,10 @@ function rawTurnTerminal(
   }, turnId);
 }
 
-function rawProviderAttemptStatus(
-  eventSeq: number,
-  value: Record<string, unknown>,
-  turnId = "u1",
-): SessionEventEnvelope {
-  return rawEvent(eventSeq, {
-    type: "platform",
-    payload: {
-      kind: "session_meta_update",
-      data: {
-        key: "provider_attempt_status",
-        value: {
-          turn_id: turnId,
-          ...value,
-        },
-      },
-    },
-  }, turnId);
-}
-
-function mkProviderStatusEntry(id: string): SessionDisplayEntry {
+function mkNeutralMarker(id = "marker"): SessionDisplayEntry {
   const event: BackboneEvent = {
     type: "platform",
-    payload: {
-      kind: "session_meta_update",
-      data: {
-        key: "provider_attempt_status",
-        value: {
-          turn_id: "u1",
-          phase: "retrying",
-          attempt: 2,
-          max_attempts: 3,
-          will_retry: true,
-        },
-      },
-    },
-  };
-  return asEntry(id, event, { turnId: "u1" });
-}
-
-function mkTurnStarted(id = "ts"): SessionDisplayEntry {
-  const event: BackboneEvent = {
-    type: "turn_started",
-    payload: { threadId: "t1", turn: { id: "u1" } as unknown as never },
-  };
-  return asEntry(id, event);
-}
-
-function mkTurnCompleted(id = "tc"): SessionDisplayEntry {
-  const event: BackboneEvent = {
-    type: "turn_completed",
-    payload: { threadId: "t1", turn: { id: "u1" } as unknown as never },
+    payload: { kind: "session_meta_update", data: { key: "session_meta_updated", value: null } },
   };
   return asEntry(id, event);
 }
@@ -538,8 +447,8 @@ describe("aggregateEntries — tool burst", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkCmdEntry("c2", "pwd"),
-      mkTurnCompleted("tc1"),
-      mkTurnStarted("ts2"),
+      mkNeutralMarker("tc1"),
+      mkNeutralMarker("ts2"),
       mkCmdEntry("c3", "uname"),
       mkCmdEntry("c4", "date"),
     ];
@@ -611,7 +520,7 @@ describe("aggregateEntries — tool burst", () => {
   it("T10: turn boundary inside a flowing tool sequence does not flush the unit", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
-      mkTurnCompleted("tc"),
+      mkNeutralMarker("tc"),
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
@@ -853,37 +762,9 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[2] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c2", "c3"]);
   });
 
-  it("T23: provider retry status is only visible in verbose mode and does not create turn activity", () => {
-    const statusEntry = mkProviderStatusEntry("provider-status");
-    const aggregated = aggregateEntries([statusEntry]);
-    expect(aggregated).toHaveLength(0);
-
-    const verboseAggregated = aggregateEntries([statusEntry], { includeVerboseEvents: true });
-    expect(verboseAggregated).toHaveLength(1);
-    expect((verboseAggregated[0] as SessionDisplayEntry).id).toBe("provider-status");
-
-    const segments = segmentByTurn([], [
-      rawTurnStarted(1),
-      rawProviderAttemptStatus(2, {
-        phase: "retrying",
-        attempt: 2,
-        max_attempts: 3,
-        will_retry: true,
-      }),
-    ]);
-
-    expect(segments).toHaveLength(0);
-  });
-
-  it("T24: active turn without provider waiting does not create turn-level thinking", () => {
-    const segments = segmentByTurn([], [rawTurnStarted(1)]);
-
-    expect(segments).toHaveLength(0);
-  });
-
   it("T25: durationMs is read from completed, failed and interrupted terminal facts", () => {
     const completed = segmentByTurn([mkMessageEntry("completed-message", "done")], [
-      rawTurnCompleted(1, "completed", 12_000),
+      rawTurnTerminal(1, "turn_completed", 12_000),
     ]);
     const failed = segmentByTurn([mkMessageEntry("failed-message", "partial")], [
       rawTurnTerminal(1, "turn_failed", 34_000),
@@ -898,15 +779,6 @@ describe("aggregateEntries — tool burst", () => {
     expect(failed[0]?.durationMs).toBe(34_000);
     expect(interrupted[0]?.status).toBe("interrupted");
     expect(interrupted[0]?.durationMs).toBe(56_000);
-  });
-
-  it("T25b: active turn exposes startedAtMs for live turn elapsed UI", () => {
-    const segments = segmentByTurn([mkMessageEntry("active-message", "working")], [
-      rawTurnStarted(1, "u1", 1_700_000_000),
-    ]);
-
-    expect(segments[0]?.status).toBe("active");
-    expect(segments[0]?.startedAtMs).toBe(1_700_000_000_000);
   });
 
   it("T25c: projected AgentRun feed messages are stable completed turn segments", () => {
@@ -931,20 +803,6 @@ describe("aggregateEntries — tool burst", () => {
 
     expect(segments).toHaveLength(1);
     expect(segments[0]?.status).toBe("completed");
-  });
-
-  it("T26: retry exhausted does not create a status-only turn segment", () => {
-    const segments = segmentByTurn([], [
-      rawTurnStarted(1),
-      rawProviderAttemptStatus(2, {
-        phase: "failed",
-        attempt: 3,
-        max_attempts: 3,
-        will_retry: false,
-      }),
-    ]);
-
-    expect(segments).toHaveLength(0);
   });
 
   it("T27: provider waiting creates a streaming thinking card without reasoning text", () => {
@@ -1038,8 +896,7 @@ describe("aggregateEntries — tool burst", () => {
   it("T31: user message remains outside completed assistant turn segment", () => {
     const user = mkUserInputEntry("u-input", "hello", 1);
     const segments = segmentByTurn([user], [
-      rawTurnStarted(1),
-      rawTurnCompleted(2, "completed", 1_000),
+      rawTurnTerminal(2, "turn_completed", 1_000),
     ]);
 
     expect(segments[0]?.turnId).toBeNull();

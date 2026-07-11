@@ -17,6 +17,8 @@ export type SessionEventsPageResponse = { snapshot_seq: number, events: Array<Se
 
 export type SessionMessageContextBreakdownResponse = { user_message_tokens: number, assistant_message_tokens: number, tool_call_tokens: number, tool_result_tokens: number, attachment_tokens: number, };
 
+export type SessionMessageRefDto = { turn_id: string, entry_index: number, };
+
 export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number,
 /**
  * 进程级 ephemeral epoch：后端进程启动时确定一次。前端据此判定后端是否重启——

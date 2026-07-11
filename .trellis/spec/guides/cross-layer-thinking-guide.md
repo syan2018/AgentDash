@@ -23,7 +23,7 @@
 2. **前端自行推断状态**：根据 artifacts 数量等间接信号推断 Task 状态，而非以后端 `status` 字段为准
 3. **策略泄漏到接口**：接口暴露了实现细节（如 `createWorktree`），而非表达意图（如 `createWorkspace`）
 4. **视图操作影响执行**：删除视图分组时意外修改了 Story 状态——视图关系是展示层概念
-5. **session 存在 ≠ 执行器可续跑**：SessionHub 有 session 条目不代表 connector 仍持有 live runtime，必须区分热续跑和冷启动恢复
+5. **产品binding存在 ≠ Driver可用**：必须同时验证Host binding generation/lease与canonical Runtime状态；断连收敛Lost后不能由旧generation复活
 
 ---
 

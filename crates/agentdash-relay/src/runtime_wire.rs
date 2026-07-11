@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 
 use agentdash_agent_runtime_contract::{
-    ProfileDigest, RuntimeBindingId, RuntimeDriverGeneration, RuntimeProfile,
-    RuntimeServiceInstanceId,
+    ProfileDigest, RuntimeDriverGeneration, RuntimeProfile, RuntimeServiceInstanceId,
 };
 use agentdash_agent_runtime_wire::{RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireEnvelope};
+use agentdash_integration_api::{AgentRuntimePlacementId, AgentServiceDefinitionId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -17,12 +17,35 @@ pub struct RuntimeRelayStreamId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeRelayProvenance {
-    pub service_definition_id: String,
+    pub service_definition_id: AgentServiceDefinitionId,
     pub service_instance_id: RuntimeServiceInstanceId,
-    pub binding_id: RuntimeBindingId,
-    pub binding_generation: RuntimeDriverGeneration,
+    pub driver_generation: RuntimeDriverGeneration,
+    pub host_id: String,
+    pub transport_id: AgentRuntimePlacementId,
+}
+
+/// Verified Agent service offer advertised by a Local Integration Host.
+///
+/// This inventory deliberately excludes service config, credential references and secrets. Cloud
+/// may create a remote proxy offer only for this exact instance/generation/profile evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeOfferAdvertisement {
+    pub definition_id: AgentServiceDefinitionId,
+    pub publisher_integration: String,
+    pub service_version: String,
+    pub build_digest: String,
+    pub service_instance_id: RuntimeServiceInstanceId,
+    pub instance_revision: u64,
+    pub driver_generation: RuntimeDriverGeneration,
+    pub protocol_revision: u32,
+    pub effective_profile: agentdash_agent_runtime_contract::EffectiveRuntimeProfile,
     pub profile_digest: ProfileDigest,
-    pub transport_id: String,
+    pub conformance_suite_revision: String,
+    pub conformance_driver_build_digest: String,
+    pub conformance_verified_profile_digest: ProfileDigest,
+    pub conformance_verified_at: chrono::DateTime<chrono::Utc>,
+    pub transport_id: AgentRuntimePlacementId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,7 +78,7 @@ pub struct RuntimeRelayOpenAck {
     pub max_in_flight_frames: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeRelayFrame {
     pub stream_id: RuntimeRelayStreamId,
@@ -79,7 +102,7 @@ pub struct RuntimeRelayDisconnect {
     pub provenance: RuntimeRelayProvenance,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeRelayReceive {
     Accepted(Box<RuntimeWireEnvelope>),
     Duplicate { sequence: u64 },
@@ -115,6 +138,38 @@ pub struct RuntimeRelayStream {
 }
 
 impl RuntimeRelayStream {
+    pub fn connect(
+        open: RuntimeRelayOpen,
+        ack: &RuntimeRelayOpenAck,
+    ) -> Result<Self, RuntimeRelayTransportError> {
+        if ack.stream_id != open.stream_id {
+            return Err(RuntimeRelayTransportError::ProvenanceMismatch);
+        }
+        if !open
+            .supported_protocol_revisions
+            .contains(&ack.selected_protocol_revision)
+            || ack.selected_protocol_revision != RUNTIME_WIRE_PROTOCOL_REVISION
+        {
+            return Err(RuntimeRelayTransportError::UnsupportedProtocolRevision);
+        }
+        if ack.max_in_flight_frames == 0 || ack.max_in_flight_frames > open.max_in_flight_frames {
+            return Err(RuntimeRelayTransportError::Backpressure {
+                limit: ack.max_in_flight_frames,
+            });
+        }
+        Ok(Self {
+            stream_id: open.stream_id,
+            provenance: open.provenance,
+            protocol_revision: ack.selected_protocol_revision,
+            max_in_flight: ack.max_in_flight_frames,
+            next_outbound_sequence: open.resume_after_sequence.saturating_add(1),
+            next_inbound_sequence: ack.accepted_after_sequence.saturating_add(1),
+            acknowledged_outbound_sequence: ack.accepted_after_sequence,
+            outbound: BTreeMap::new(),
+            connected: true,
+        })
+    }
+
     pub fn negotiate(
         open: RuntimeRelayOpen,
         descriptor: &RuntimeRelayTransportDescriptor,
@@ -280,6 +335,11 @@ impl RuntimeRelayStream {
         self.outbound.values().cloned().collect()
     }
 
+    pub fn abandon_unacknowledged(&mut self) {
+        self.outbound.clear();
+        self.acknowledged_outbound_sequence = self.next_outbound_sequence.saturating_sub(1);
+    }
+
     pub fn disconnect(&mut self) -> Option<RuntimeRelayDisconnect> {
         if !self.connected {
             return None;
@@ -307,6 +367,10 @@ impl RuntimeRelayStream {
             stream_id: self.stream_id.clone(),
             through_sequence: self.next_inbound_sequence.saturating_sub(1),
         }
+    }
+
+    pub fn provenance(&self) -> &RuntimeRelayProvenance {
+        &self.provenance
     }
 }
 
@@ -372,12 +436,12 @@ mod tests {
 
     fn provenance() -> RuntimeRelayProvenance {
         RuntimeRelayProvenance {
-            service_definition_id: "service-definition-remote".to_string(),
+            service_definition_id: AgentServiceDefinitionId::new("service-definition-remote")
+                .expect("definition id"),
             service_instance_id: id("service-remote"),
-            binding_id: id("binding-remote"),
-            binding_generation: RuntimeDriverGeneration(4),
-            profile_digest: id("profile-remote"),
-            transport_id: "backend-local-a".to_string(),
+            driver_generation: RuntimeDriverGeneration(4),
+            host_id: "backend-local-a".to_string(),
+            transport_id: AgentRuntimePlacementId::new("runtime-wire").expect("transport id"),
         }
     }
 

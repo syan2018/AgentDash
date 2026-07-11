@@ -8,7 +8,7 @@ import {
   agentRunJournalSessionId,
   type AgentRunJournalIdentityTarget,
 } from "../model/agentRunJournalIdentity";
-import { extractPlatformEventType, isRecord } from "../model/platformEvent";
+import { extractPlatformEventType } from "../model/platformEvent";
 import { shouldNotifyRenderableSystemEvent } from "../model/systemEventPolicy";
 
 export type SessionTurnLifecycleEventType =
@@ -75,9 +75,6 @@ function isTurnTerminalType(value: unknown): value is Exclude<SessionTurnLifecyc
 }
 
 export function extractTurnLifecycleEventType(event: BackboneEvent): SessionTurnLifecycleEventType | null {
-  if (event.type === "turn_started" || event.type === "turn_completed") {
-    return event.type;
-  }
   if (
     event.type !== "platform" ||
     event.payload.kind !== "session_meta_update" ||
@@ -207,19 +204,9 @@ function isCompactionSummaryFrame(event: BackboneEvent): boolean {
     value.kind === "compaction_summary";
 }
 
-function isSessionRewindRefreshEvent(event: BackboneEvent): boolean {
-  if (event.type !== "platform") {
-    return false;
-  }
-  if (isRecord(event.payload)) {
-    const kind = typeof event.payload.kind === "string" ? event.payload.kind : null;
-    if (kind === "session_rewound") {
-      return true;
-    }
-  }
+function isProjectionInvalidationEvent(event: BackboneEvent): boolean {
   const eventType = extractPlatformEventType(event);
-  return eventType === "session_rewound" ||
-    eventType === "session_rebuilt" ||
+  return eventType === "session_rebuilt" ||
     eventType === "turn_discarded" ||
     eventType === "projection_invalidated";
 }
@@ -233,7 +220,7 @@ function isProjectionRefreshEvent(event: BackboneEvent): boolean {
     return false;
   }
   return extractPlatformEventType(event) === "context_compacted" ||
-    isSessionRewindRefreshEvent(event) ||
+    isProjectionInvalidationEvent(event) ||
     isCompactionSummaryFrame(event);
 }
 

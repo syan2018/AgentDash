@@ -56,6 +56,14 @@ pub trait AgentDashIntegration: Send + Sync {
         vec![]
     }
 
+    /// 声明与 `agent_runtime_drivers` 一一对应的编译期信任清单。
+    ///
+    /// 宿主只会激活同时拥有 driver contribution 与清单的 definition；清单中的 profile
+    /// 是集成完成 conformance 验证后的能力上界，而不是运行时自报能力。
+    fn agent_runtime_trust_manifests(&self) -> Vec<crate::AgentRuntimeTrustManifest> {
+        vec![]
+    }
+
     /// 注册额外的寻址空间能力提供者。
     ///
     /// 注意：`VfsDiscoveryProvider` 仅负责 descriptor / discovery 层抽象，

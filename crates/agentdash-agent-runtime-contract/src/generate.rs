@@ -32,14 +32,29 @@ fn main() {
 }
 
 fn ensure_no_implicit_bindings() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("bindings");
-    if path.exists() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    if let Some(path) = find_implicit_bindings(&crates) {
         eprintln!(
-            "{} must not exist; Runtime contracts are generated only through the explicit generator",
+            "{} must not exist; TypeScript contracts are generated only through explicit workspace generators",
             path.display()
         );
         std::process::exit(1);
     }
+}
+
+fn find_implicit_bindings(directory: &Path) -> Option<std::path::PathBuf> {
+    for entry in fs::read_dir(directory).ok()? {
+        let path = entry.ok()?.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == "bindings") {
+                return Some(path);
+            }
+            if let Some(found) = find_implicit_bindings(&path) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn collect_typescript(directory: &Path, declarations: &mut Vec<String>) {

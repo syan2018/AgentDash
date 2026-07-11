@@ -6,13 +6,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_application_runtime_session::session::{
-    SessionExecutionState, SessionRuntimeServices, SessionStoreSet,
-};
-use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_infrastructure::PostgresSessionRepository;
 use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
-use agentdash_spi::AgentConnector;
 use anyhow::Context;
 use serde::Serialize;
 use tokio::sync::{Mutex, watch};
@@ -27,7 +21,18 @@ use crate::tool_executor::ToolExecutor;
 use crate::ws_client;
 
 /// 本机 runtime 启动配置。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+pub struct LocalAgentRuntimeInstanceConfig {
+    pub instance_id: agentdash_agent_runtime_contract::RuntimeServiceInstanceId,
+    pub definition_id: agentdash_integration_api::AgentServiceDefinitionId,
+    pub config: serde_json::Value,
+    pub credential_refs: std::collections::BTreeMap<
+        agentdash_integration_api::AgentRuntimeCredentialSlot,
+        agentdash_integration_api::AgentRuntimeCredentialRef,
+    >,
+}
+
+#[derive(Clone)]
 pub struct LocalRuntimeConfig {
     pub cloud_url: String,
     pub token: String,
@@ -35,6 +40,12 @@ pub struct LocalRuntimeConfig {
     pub name: String,
     pub workspace_roots: Vec<PathBuf>,
     pub executor_enabled: bool,
+    pub runtime_driver_contributions:
+        Vec<agentdash_integration_api::AgentRuntimeDriverContribution>,
+    pub runtime_trust_manifests: Vec<agentdash_integration_api::AgentRuntimeTrustManifest>,
+    pub runtime_service_instances: Vec<LocalAgentRuntimeInstanceConfig>,
+    pub runtime_credential_broker: Arc<dyn agentdash_integration_api::AgentRuntimeCredentialBroker>,
+    runtime_data_root: Option<PathBuf>,
 }
 
 impl LocalRuntimeConfig {
@@ -53,7 +64,32 @@ impl LocalRuntimeConfig {
             name,
             workspace_roots: canonicalize_workspace_roots(workspace_roots),
             executor_enabled,
+            runtime_driver_contributions: Vec::new(),
+            runtime_trust_manifests: Vec::new(),
+            runtime_service_instances: Vec::new(),
+            runtime_credential_broker: Arc::new(crate::agent_runtime_host::LocalCredentialBroker),
+            runtime_data_root: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_runtime_data_root(mut self, root: PathBuf) -> Self {
+        self.runtime_data_root = Some(root);
+        self
+    }
+
+    pub fn with_runtime_driver_contributions(
+        mut self,
+        contributions: Vec<agentdash_integration_api::AgentRuntimeDriverContribution>,
+        manifests: Vec<agentdash_integration_api::AgentRuntimeTrustManifest>,
+        instances: Vec<LocalAgentRuntimeInstanceConfig>,
+        credential_broker: Arc<dyn agentdash_integration_api::AgentRuntimeCredentialBroker>,
+    ) -> Self {
+        self.runtime_driver_contributions = contributions;
+        self.runtime_trust_manifests = manifests;
+        self.runtime_service_instances = instances;
+        self.runtime_credential_broker = credential_broker;
+        self
     }
 }
 
@@ -156,7 +192,6 @@ pub struct LocalRuntimeManager {
 
 struct RunningRuntime {
     config: LocalRuntimeConfig,
-    session_runtime: Option<SessionRuntimeServices>,
     mcp_manager: Option<Arc<McpClientManager>>,
     shutdown_tx: watch::Sender<bool>,
     status_tx: watch::Sender<LocalRuntimeStatus>,
@@ -213,7 +248,6 @@ impl LocalRuntimeManager {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let backend_id = config.backend_id.clone();
         let logs = Arc::clone(&self.logs);
-        let session_runtime = ws_config.session_runtime.clone();
         let mcp_manager = ws_config.mcp_manager.clone();
 
         tokio::spawn({
@@ -282,7 +316,6 @@ impl LocalRuntimeManager {
 
         *guard = Some(RunningRuntime {
             config,
-            session_runtime,
             mcp_manager,
             shutdown_tx,
             status_tx,
@@ -330,17 +363,6 @@ impl LocalRuntimeManager {
             let Some(running) = guard.as_ref() else {
                 anyhow::bail!("本机 runtime 未运行");
             };
-
-            let active_sessions = count_active_sessions(running.session_runtime.as_ref()).await?;
-            if active_sessions > 0 {
-                self.record_log(
-                    "warn",
-                    "runtime",
-                    format!("存在 {active_sessions} 个运行中的 session，已阻止 runtime 重启"),
-                )
-                .await;
-                anyhow::bail!("存在 {active_sessions} 个运行中的 session，暂不重启 runtime");
-            }
 
             running.config.clone()
         };
@@ -410,35 +432,6 @@ async fn push_log(
     while guard.events.len() > LOCAL_LOG_CAPACITY {
         guard.events.pop_front();
     }
-}
-
-async fn count_active_sessions(
-    session_runtime: Option<&SessionRuntimeServices>,
-) -> anyhow::Result<usize> {
-    let Some(session_runtime) = session_runtime else {
-        return Ok(0);
-    };
-    let session_core = &session_runtime.core;
-
-    let sessions = session_core.list_sessions().await?;
-    if sessions.is_empty() {
-        return Ok(0);
-    }
-
-    let ids = sessions
-        .into_iter()
-        .map(|session| session.id)
-        .collect::<Vec<_>>();
-    let states = session_core.inspect_execution_states_bulk(&ids).await?;
-    Ok(states
-        .values()
-        .filter(|state| {
-            matches!(
-                state,
-                SessionExecutionState::Running { .. } | SessionExecutionState::Cancelling { .. }
-            )
-        })
-        .count())
 }
 
 /// standalone CLI 入口：保持原有无限重连行为。
@@ -562,58 +555,43 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         local_backend_config.mcp_protect_mode,
     )));
 
-    let (session_runtime, connector, session_db_runtime) = if config.executor_enabled {
-        let sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
-        let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
-        let db_runtime = Arc::new(
-            PostgresRuntime::resolve_embedded_at_data_root(
-                &format!(
-                    "agentdash-local-{}",
-                    local_runtime_backend_key(&config.backend_id)
-                ),
-                10,
-                local_runtime_data_dir()?,
-            )
-            .await?,
-        );
-        agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool).await?;
-        let session_repo = Arc::new(PostgresSessionRepository::new(db_runtime.pool.clone()));
-        session_repo.initialize().await?;
-        let session_stores = SessionStoreSet::new(
-            session_repo.clone(),
-            session_repo.clone(),
-            session_repo.clone(),
-            session_repo.clone(),
-            session_repo.clone(),
-            session_repo.clone(),
-            session_repo,
-        );
-        let session_runtime = SessionRuntimeServices::new_with_hooks_and_stores(
-            connector.clone(),
-            None,
-            session_stores,
-        );
-
-        if let Err(error) = session_runtime.runtime.recover_interrupted_sessions().await {
-            let context =
-                DiagnosticErrorContext::new("local_runtime.session_runtime", "recover_interrupted");
-            diag_error!(
-                Warn,
-                Subsystem::Relay,
-                context = &context,
-                error = &error,
-                backend_id = %config.backend_id,
-                executor_enabled = config.executor_enabled,
-                "启动恢复 session 状态失败（非致命）"
-            );
-        }
-
-        diag!(Info, Subsystem::Relay, "Session runtime 已初始化");
-        (Some(session_runtime), Some(connector), Some(db_runtime))
-    } else {
-        diag!(Info, Subsystem::Relay, "Session runtime 已禁用");
-        (None, None, None)
+    let runtime_data_root = match &config.runtime_data_root {
+        Some(root) => root.clone(),
+        None => local_runtime_data_dir()?,
     };
+    let session_db_runtime = Arc::new(
+        PostgresRuntime::resolve_embedded_at_data_root(
+            &format!(
+                "agentdash-local-{}",
+                local_runtime_backend_key(&config.backend_id)
+            ),
+            10,
+            runtime_data_root.clone(),
+        )
+        .await?,
+    );
+    agentdash_infrastructure::migration::run_postgres_migrations(&session_db_runtime.pool).await?;
+    let runtime_artifact_root = runtime_data_root
+        .join("agent-runtime-artifacts")
+        .join(local_runtime_backend_key(&config.backend_id));
+    tokio::fs::create_dir_all(&runtime_artifact_root).await?;
+    let local_agent_runtime = crate::agent_runtime_host::bootstrap_local_agent_runtime_host(
+        session_db_runtime.pool.clone(),
+        &config.backend_id,
+        &config.workspace_roots,
+        &runtime_artifact_root,
+        &config.runtime_driver_contributions,
+        &config.runtime_trust_manifests,
+        &config.runtime_service_instances,
+        config.runtime_credential_broker.clone(),
+        config.executor_enabled,
+    )
+    .await?;
+    diag!(
+        Info,
+        Subsystem::Relay,
+        "Agent Runtime Integration Host 已初始化"
+    );
 
     Ok(ws_client::Config {
         cloud_url: config.cloud_url.clone(),
@@ -622,18 +600,17 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         backend_id: config.backend_id.clone(),
         name: config.name.clone(),
         workspace_roots: config.workspace_roots.clone(),
+        executor_enabled: config.executor_enabled,
         tool_executor,
-        session_runtime,
-        connector,
-        _session_db_runtime: session_db_runtime,
+        _session_db_runtime: Some(session_db_runtime),
         mcp_manager,
-        workspace_contract_config: local_backend_config.workspace_contract,
         extension_host: LocalExtensionHostManager::with_default_config(),
         extension_artifact_cache_root: local_runtime_data_dir()?
             .join("extension-artifact-cache")
             .join(local_runtime_backend_key(&config.backend_id)),
         runner_status: None,
         relay_status_tx: None,
+        runtime_wire: local_agent_runtime.handler,
     })
 }
 
@@ -767,6 +744,29 @@ mod tests {
 
         assert_eq!(running.relay_connection, Some(relay));
     }
+
+    #[tokio::test]
+    async fn websocket_bootstrap_constructs_host_backed_runtime_wire_without_external_injection() {
+        let data_root = tempfile::tempdir().expect("temporary Local Runtime data root");
+        let config = LocalRuntimeConfig::new(
+            "ws://127.0.0.1:17301/ws/backend".to_string(),
+            "secret".to_string(),
+            "backend-local".to_string(),
+            "Desktop Runtime".to_string(),
+            Vec::new(),
+            true,
+        )
+        .with_runtime_data_root(data_root.path().to_path_buf());
+        let ws_config = build_ws_config(&config)
+            .await
+            .expect("Local bootstrap owns its Host-backed Runtime Wire");
+        let offers = ws_config
+            .runtime_wire
+            .advertised_offers()
+            .await
+            .expect("installed Local offers are readable");
+        assert!(!offers.is_empty());
+    }
 }
 
 fn status_from_ws_config(
@@ -786,7 +786,7 @@ fn status_from_ws_config(
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect(),
-        executor_enabled: config.session_runtime.is_some(),
+        executor_enabled: config.executor_enabled,
         mcp_server_count: config
             .mcp_manager
             .as_ref()

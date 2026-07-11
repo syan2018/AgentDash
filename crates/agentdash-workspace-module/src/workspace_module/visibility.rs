@@ -354,7 +354,10 @@ mod tests {
         AgentRunEffectiveCapabilityView {
             target: AgentFrameRuntimeTarget {
                 frame_id: Uuid::new_v4(),
-                delivery_runtime_session_id: "session-a".to_string(),
+                runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new(
+                    "session-a",
+                )
+                .unwrap(),
             },
             visible_capabilities: state.tool.capabilities.clone(),
             vfs_surface: state.vfs.active.clone().unwrap_or_default(),

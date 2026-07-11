@@ -56,7 +56,7 @@ packages/app-web/src/
 │   └── routine/                    # Routine 自动触发
 ├── pages/                          # 页面组件
 │   ├── DashboardPage.tsx           # Project 看板页
-│   ├── AgentRunWorkspacePage.tsx   # AgentRun 工作台页（RuntimeSession 事件流）
+│   ├── AgentRunWorkspacePage.tsx   # AgentRun工作台（canonical Runtime snapshot/events）
 │   ├── StoryPage.tsx               # Story 详情页
 │   ├── ProjectSettingsPage.tsx     # 项目设置页
 │   ├── SettingsPage.tsx            # 全局设置页

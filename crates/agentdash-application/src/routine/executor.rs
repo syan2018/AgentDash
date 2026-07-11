@@ -2,18 +2,13 @@ use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error}
 use std::fmt::{Debug, Display};
 use std::sync::Arc;
 
-use agentdash_agent_protocol::text_user_input_blocks;
-use agentdash_application_agentrun::WorkflowApplicationError as AgentRunWorkflowApplicationError;
+use agentdash_agent_runtime_contract::{RuntimeActor, RuntimeInput};
 use agentdash_application_agentrun::agent_run::{
-    AgentRunMailboxCommandOutcome, AgentRunMailboxCommandTarget,
-    AgentRunMailboxIntakeTargetCommand, AgentRunMailboxService, SessionControlService,
-    SessionCoreService, SessionEventingService, SessionLaunchService,
+    AgentRunProductDeliveryPort, DeliverAgentRunProductInput,
 };
-use agentdash_application_ports::agent_run_surface::AgentRunRuntimeAddress;
 use chrono::Utc;
 use uuid::Uuid;
 
-use agentdash_domain::agent_run_mailbox::{MailboxMessageOrigin, MailboxSourceIdentity};
 use agentdash_domain::project::Project;
 use agentdash_domain::routine::{
     Routine, RoutineDispatchRefs, RoutineExecution, RoutineMailboxDispatchRefs,
@@ -22,7 +17,6 @@ use agentdash_domain::workflow::{
     AgentRuntimeRefs, OrchestrationBindingRefs, SubjectExecutionDispatchResult,
 };
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::platform::auth::AuthIdentity;
 
 use crate::ApplicationError;
 use crate::lifecycle::{
@@ -64,15 +58,7 @@ impl RoutineAdmissionError {
 pub struct RoutineExecutor {
     repos: RepositorySet,
     availability: Arc<dyn BackendAvailability>,
-    mailbox_runtime: RoutineMailboxRuntime,
-}
-
-#[derive(Clone)]
-pub struct RoutineMailboxRuntime {
-    pub session_core: SessionCoreService,
-    pub session_control: SessionControlService,
-    pub session_eventing: SessionEventingService,
-    pub session_launch: SessionLaunchService,
+    product_delivery: Arc<dyn AgentRunProductDeliveryPort>,
 }
 
 struct RoutineAgentContext {
@@ -83,12 +69,12 @@ impl RoutineExecutor {
     pub fn new(
         repos: RepositorySet,
         availability: Arc<dyn BackendAvailability>,
-        mailbox_runtime: RoutineMailboxRuntime,
+        product_delivery: Arc<dyn AgentRunProductDeliveryPort>,
     ) -> Self {
         Self {
             repos,
             availability,
-            mailbox_runtime,
+            product_delivery,
         }
     }
 
@@ -311,9 +297,6 @@ impl RoutineExecutor {
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),
         )
-        .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
-        .with_delivery_binding_repo(self.repos.agent_run_delivery_binding_repo.as_ref())
-        .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref())
         .with_frame_construction_port(self.repos.agent_frame_construction.as_ref());
 
         let result: SubjectExecutionDispatchResult = dispatch_service
@@ -344,90 +327,50 @@ impl RoutineExecutor {
         target: &super::reuse_resolver::RoutineDispatchReuseTarget,
     ) -> Result<(), ApplicationError> {
         let client_command_id = format!("routine_execution:{}", execution.id);
-        let source = MailboxSourceIdentity::routine_trigger()
-            .with_source_ref(execution.id.to_string())
-            .with_correlation_ref(routine.id.to_string())
-            .with_metadata(serde_json::json!({
-                "routine_id": routine.id,
-                "trigger_source": execution.trigger_source.clone(),
-                "entity_key": execution.entity_key.clone(),
-            }));
-
         let result = self
-            .mailbox_service()
-            .accept_intake_message_for_target(AgentRunMailboxIntakeTargetCommand {
-                target: AgentRunMailboxCommandTarget::new(AgentRunRuntimeAddress {
-                    run_id: target.run_id,
-                    agent_id: target.agent_id,
-                    frame_id: target.frame_id,
-                }),
-                origin: MailboxMessageOrigin::System,
-                source,
-                retain_payload: true,
-                schedule_on_submit: true,
-                input: text_user_input_blocks(prompt),
+            .product_delivery
+            .deliver(DeliverAgentRunProductInput {
+                run_id: target.run_id,
+                agent_id: target.agent_id,
+                input: vec![RuntimeInput::Text {
+                    text: prompt.to_string(),
+                }],
+                actor: RuntimeActor::System {
+                    component: format!("routine:{}", routine.id),
+                },
                 client_command_id: client_command_id.clone(),
-                source_dedup_key: Some(client_command_id.clone()),
-                executor_config: None,
-                backend_selection: None,
-                identity: Some(AuthIdentity::system_routine(routine.id)),
-                delivery_intent: None,
             })
             .await
-            .map_err(map_routine_mailbox_error)?;
-
-        let message = result.mailbox_message.as_ref().ok_or_else(|| {
-            ApplicationError::Internal("Routine mailbox intake 未返回 mailbox message".to_string())
-        })?;
-        let accepted_refs = result.accepted_refs.as_ref();
+            .map_err(|error| ApplicationError::Internal(error.to_string()))?;
         let mailbox_refs = RoutineMailboxDispatchRefs {
-            mailbox_message_id: message.id,
-            command_receipt_id: message.command_receipt_id,
+            mailbox_message_id: result.mailbox_message_id,
             client_command_id,
-            outcome: result.outcome.as_str().to_string(),
-            runtime_session_id: accepted_refs
-                .and_then(|refs| refs.runtime_session_id.clone())
-                .or_else(|| message.delivery_runtime_session_id.clone()),
-            agent_run_turn_id: accepted_refs.and_then(|refs| refs.agent_run_turn_id.clone()),
-            protocol_turn_id: accepted_refs.and_then(|refs| refs.protocol_turn_id.clone()),
+            outcome: if result.queued {
+                "queued"
+            } else {
+                "dispatched"
+            }
+            .to_string(),
+            runtime_operation_id: result
+                .operation_receipt
+                .as_ref()
+                .map(|receipt| receipt.operation_id.to_string()),
         };
         let refs = RoutineDispatchRefs::new(runtime_refs_from_reuse_target(target))
             .with_mailbox_refs(mailbox_refs);
         execution.mark_dispatched(refs, prompt.to_string());
-
-        if result.outcome == AgentRunMailboxCommandOutcome::Failed {
-            execution.mark_failed("Routine mailbox delivery failed");
-        }
 
         diag!(Info, Subsystem::Cron,
             execution_id = %execution.id,
             run_id = %target.run_id,
             agent_id = %target.agent_id,
             frame_id = %target.frame_id,
-            mailbox_message_id = %message.id,
-            outcome = result.outcome.as_str(),
+            mailbox_message_id = %result.mailbox_message_id,
+            outcome = if result.queued { "queued" } else { "dispatched" },
             "Routine reuse trigger accepted by AgentRun mailbox"
         );
 
         Ok(())
-    }
-
-    fn mailbox_service(&self) -> AgentRunMailboxService<'_> {
-        AgentRunMailboxService::new(
-            self.repos.lifecycle_run_repo.as_ref(),
-            self.repos.lifecycle_agent_repo.as_ref(),
-            self.repos.project_agent_repo.as_ref(),
-            self.repos.agent_frame_repo.as_ref(),
-            self.repos.execution_anchor_repo.as_ref(),
-            self.repos.agent_run_delivery_binding_repo.as_ref(),
-            self.repos.project_backend_access_repo.as_ref(),
-            self.repos.agent_run_command_receipt_repo.as_ref(),
-            self.repos.agent_run_mailbox_repo.as_ref(),
-            self.mailbox_runtime.session_core.clone(),
-            self.mailbox_runtime.session_control.clone(),
-            self.mailbox_runtime.session_eventing.clone(),
-            self.mailbox_runtime.session_launch.clone(),
-        )
     }
 
     async fn load_agent_context(
@@ -588,27 +531,6 @@ fn map_routine_dispatch_error(error: LifecycleWorkflowApplicationError) -> Appli
         }
         LifecycleWorkflowApplicationError::Internal(message) => {
             ApplicationError::Internal(format!("Routine dispatch 失败: {message}"))
-        }
-    }
-}
-
-fn map_routine_mailbox_error(error: AgentRunWorkflowApplicationError) -> ApplicationError {
-    match error {
-        AgentRunWorkflowApplicationError::BadRequest(message)
-        | AgentRunWorkflowApplicationError::ModelRequired(message) => {
-            ApplicationError::BadRequest(format!("Routine mailbox dispatch 失败: {message}"))
-        }
-        AgentRunWorkflowApplicationError::NotFound(message) => {
-            ApplicationError::NotFound(format!("Routine mailbox dispatch 失败: {message}"))
-        }
-        AgentRunWorkflowApplicationError::Conflict(message) => {
-            ApplicationError::Conflict(format!("Routine mailbox dispatch 失败: {message}"))
-        }
-        AgentRunWorkflowApplicationError::Unavailable(message) => {
-            ApplicationError::Unavailable(format!("Routine mailbox dispatch 失败: {message}"))
-        }
-        AgentRunWorkflowApplicationError::Internal(message) => {
-            ApplicationError::Internal(format!("Routine mailbox dispatch 失败: {message}"))
         }
     }
 }

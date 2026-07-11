@@ -27,10 +27,10 @@
 
 ## Acceptance Criteria
 
-- [ ] 新企业 Agent service只新增Integration contribution/config，不修改application或router分支。
-- [ ] 同一Integration可贡献多个definition，同一definition可创建多个instance。
-- [ ] Thread binding sticky且durable，旧generation event无法推进新状态。
-- [ ] credential/health/config failure在side effect前typed reject。
-- [ ] Relay只作为placement descriptor/transport，不成为service identity。
-- [ ] HookProfile由behavior tests支撑，不能由配置文件存在、hooks/list或driver自报直接提升。
-- [ ] 生产composition中不再硬编码Pi/Codex/Relay connector构建。
+- [x] 新企业 Agent service只新增Integration contribution/config，不修改application或router分支。
+- [x] 同一Integration可贡献多个definition，同一definition可创建多个instance。
+- [x] Thread binding sticky且durable，旧generation event无法推进新状态。
+- [x] credential/health/config failure在side effect前typed reject。
+- [x] Relay只作为placement descriptor/transport，不成为service identity。
+- [x] HookProfile由behavior tests支撑，不能由配置文件存在、hooks/list或driver自报直接提升。
+- [x] 生产composition中不再硬编码Pi/Codex/Relay connector构建。

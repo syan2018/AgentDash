@@ -25,7 +25,7 @@ use super::policy::PermissionPolicyService;
 pub struct GrantRequest {
     pub run_id: Uuid,
     pub effect_frame_id: Option<Uuid>,
-    pub source_runtime_session_id: String,
+    pub source_runtime_operation_id: Option<String>,
     pub source_turn_id: Option<String>,
     pub source_tool_call_id: Option<String>,
     pub requested_paths: Vec<ToolCapabilityPath>,
@@ -89,7 +89,7 @@ impl PermissionGrantService {
     ) -> Result<GrantRequestResult, ApplicationError> {
         let mut grant = PermissionGrant::new(
             req.run_id,
-            req.source_runtime_session_id,
+            req.source_runtime_operation_id,
             req.requested_paths.clone(),
             req.reason,
             req.grant_scope,
@@ -706,7 +706,7 @@ mod tests {
 
     /// Grants from different runtime sessions targeting the same `effect_frame_id`
     /// are all returned by `list_active_by_frame` — proving `effect_frame_id` is the
-    /// primary query anchor, while `source_runtime_session_id` is audit-only provenance.
+    /// primary query anchor; canonical Runtime Operation is optional audit provenance.
     #[tokio::test]
     async fn list_active_by_frame_groups_by_effect_frame_not_session() {
         let grant_repo = Arc::new(FixtureGrantRepo::default());
@@ -760,7 +760,7 @@ mod tests {
 
         let sessions: Vec<&str> = by_frame
             .iter()
-            .map(|g| g.source_runtime_session_id.as_str())
+            .filter_map(|g| g.source_runtime_operation_id.as_deref())
             .collect();
         assert!(sessions.contains(&"session-a"));
         assert!(sessions.contains(&"session-b"));

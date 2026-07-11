@@ -118,7 +118,7 @@ projection 输出。
 工具 schema 构建使用 AgentRun 输出的 final visible capability view；单个工具执行使用 AgentRun
 admission decision。
 
-RuntimeSession 的 schema-visible capability projection 只服务工具 schema assembly，不是 Grant
+Bound Agent Surface的schema-visible capability projection只服务工具catalog/materialization，不是Grant
 authorization。工具执行准入必须在 `tool.execute` 前通过 AgentRun admission bridge 执行，原因是
 tool-level PermissionGrant 需要同时依赖 runtime session anchor、anchored AgentFrame surface 与
 frame-scoped grant projection，provider-local `CapabilityState` guard 不具备这些业务坐标。
@@ -267,7 +267,7 @@ companion_request(target="sub", payload.agent_key="<CompanionAgentEntry.name>", 
 - `CompanionRequestTool` 解析 `agent_key` 时必须先在当前 frame roster 中匹配，再按 `project_id + name` 读取 selected ProjectAgent identity。
 - companion child launch source 必须携带 selected ProjectAgent id 和 canonical agent_key；child `LifecycleAgent.project_agent_id` 绑定 selected ProjectAgent。这样 frame construction、AgentRun 展示与实际 child executor/capability/VFS/skill facts 使用同一个身份来源。
 - companion child frame construction 在 parent slice 上叠加 selected ProjectAgent preset facts：executor config、capability directives、MCP presets、Project VFS mount exposure、skill assets 与 companion return-channel baseline。
-- `project_id` 来自当前 delivery runtime session 的 `RuntimeSessionExecutionAnchor`，原因是 hook snapshot 的 `run_context` 只表达 active workflow 投影，不是通用 owner 事实源。
+- `project_id` 来自 `AgentRunRuntimeTarget -> LifecycleRun` 产品授权坐标；Runtime binding只提供thread/binding identity，不替代Project ownership。
 - `AuthorityState.companion.dispatch` 是 roster 投影与 `companion_request(target="sub")` 执行 guard 的上游事实；`AuthorityState.companion.respond` 由 child lineage / gate runtime channel 提供，不依赖 parent dispatch authority。这样禁止发起新 sub companion 不会切断已启动 child 的 `companion_respond` 回流通道。
 - `AuthorityState.workspace_module.present`、`AuthorityState.dynamic_workflow.author` 是当前已接入 capability projection 的静态边界：workspace module 展示和 dynamic workflow authoring 默认只面向 main/root ProjectAgent。
 - background companion child 默认隐藏 human route；该 guard 当前由 companion tool 根据 child source fail-closed 执行，后续需要在 execution context 携带用户主动进入 companion run 的 provenance 后再统一纳入 Authority projection。

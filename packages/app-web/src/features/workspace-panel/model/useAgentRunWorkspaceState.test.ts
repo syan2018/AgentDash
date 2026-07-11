@@ -82,6 +82,11 @@ function loadedState(): AgentRunWorkspaceState {
     source_key: "agentrun:run-1:agent-1",
     status: "ready",
     workspace,
+    runtime_inspect: {
+      target: { run_id: "run-1", agent_id: "agent-1" },
+      binding: null,
+      snapshot: null,
+    },
     runtime_surface: runtimeSurface,
     frame: frameRuntime,
   };
@@ -149,6 +154,7 @@ describe("AgentRun workspace refresh state", () => {
 
     expect(refreshing.status).toBe("refreshing");
     expect(refreshing.workspace).toBe(workspace);
+    expect(refreshing.runtime_inspect?.target.run_id).toBe("run-1");
     expect(refreshing.runtime_surface).toBe(runtimeSurface);
     expect(refreshing.frame).toBe(frameRuntime);
     expect(refreshing.error).toBeNull();
@@ -174,6 +180,7 @@ describe("AgentRun workspace refresh state", () => {
     expect(failed.status).toBe("error");
     expect(failed.error).toBe("refresh failed");
     expect(failed.workspace).toBe(workspace);
+    expect(failed.runtime_inspect?.target.agent_id).toBe("agent-1");
     expect(failed.runtime_surface).toBe(runtimeSurface);
     expect(failed.frame).toBe(frameRuntime);
   });

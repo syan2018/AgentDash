@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
 use agentdash_application_workflow::orchestration::{
     OrchestrationRuntimeError, OrchestrationRuntimeEvent, apply_orchestration_event_to_run,
 };
@@ -22,8 +23,7 @@ use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::workflow::{
     AgentFrameRepository, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
-    NodePortValue, RuntimeNodeError, RuntimeNodeStatus, RuntimeSessionExecutionAnchorRepository,
-    WorkflowSessionTerminalState,
+    NodePortValue, RuntimeNodeError, RuntimeNodeStatus, WorkflowSessionTerminalState,
 };
 use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
@@ -101,7 +101,7 @@ pub struct LifecycleOrchestratorDeps {
     pub run_repo: Arc<dyn LifecycleRunRepository>,
     pub agent_repo: Arc<dyn LifecycleAgentRepository>,
     pub frame_repo: Arc<dyn AgentFrameRepository>,
-    pub anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
     pub orchestration_launcher: OrchestrationExecutorLauncher,
 }
@@ -150,7 +150,7 @@ impl LifecycleOrchestrator {
             self.deps.frame_repo.as_ref(),
             self.deps.agent_repo.as_ref(),
             self.deps.run_repo.as_ref(),
-            Some(self.deps.anchor_repo.as_ref()),
+            Some(self.deps.binding_repo.as_ref()),
         )
         .await
         .map_err(|error| error.to_string())?
@@ -230,7 +230,7 @@ impl LifecycleOrchestrator {
             self.deps.frame_repo.as_ref(),
             self.deps.agent_repo.as_ref(),
             self.deps.run_repo.as_ref(),
-            Some(self.deps.anchor_repo.as_ref()),
+            Some(self.deps.binding_repo.as_ref()),
         )
         .await
         .map_err(|error| error.to_string())?

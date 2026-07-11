@@ -2,26 +2,6 @@
  * 执行器发现与选择相关的类型定义
  */
 
-/** 连接器类型 */
-export type ConnectorType = "local_executor" | "remote_acp_backend";
-
-/** 连接器能力声明 */
-export interface ConnectorCapabilities {
-  supports_cancel: boolean;
-  supports_discovery: boolean;
-  supports_variants: boolean;
-  supports_model_override: boolean;
-  supports_permission_policy: boolean;
-  supports_source_session_title: boolean;
-}
-
-/** 连接器信息 */
-export interface ConnectorInfo {
-  id: string;
-  connector_type: ConnectorType;
-  capabilities: ConnectorCapabilities;
-}
-
 /** 后端返回的执行器信息 */
 export interface ExecutorInfo {
   id: string;
@@ -34,13 +14,11 @@ export interface ExecutorInfo {
 
 /** 后端 /api/agents/discovery 响应 */
 export interface DiscoveryResponse {
-  connector: ConnectorInfo;
   executors: ExecutorInfo[];
 }
 
 /** 执行器发现 Hook 状态 */
 export interface UseExecutorDiscoveryResult {
-  connector: ConnectorInfo | null;
   executors: ExecutorInfo[];
   isLoading: boolean;
   error: Error | null;

@@ -1,4 +1,5 @@
 use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
 use agentdash_application_runtime_gateway::{RuntimeActor, RuntimeContext};
 use agentdash_application_vfs::tools::SharedRuntimeVfs;
@@ -15,7 +16,7 @@ use super::runtime_bridge::{
 #[derive(Clone)]
 pub(crate) struct WorkspaceModuleRuntimeContext {
     project_id: Uuid,
-    delivery_runtime_session_id: String,
+    runtime_thread_id: RuntimeThreadId,
     agent_id: Option<String>,
     vfs: Option<SharedRuntimeVfs>,
     current_user: Option<ProjectAuthorizationContext>,
@@ -24,10 +25,11 @@ pub(crate) struct WorkspaceModuleRuntimeContext {
 }
 
 impl WorkspaceModuleRuntimeContext {
-    pub(crate) fn new(project_id: Uuid, delivery_runtime_session_id: impl Into<String>) -> Self {
+    pub(crate) fn new(project_id: Uuid, runtime_thread_id: impl Into<String>) -> Self {
         Self {
             project_id,
-            delivery_runtime_session_id: delivery_runtime_session_id.into(),
+            runtime_thread_id: RuntimeThreadId::new(runtime_thread_id)
+                .expect("workspace module runtime thread id must not be empty"),
             agent_id: None,
             vfs: None,
             current_user: None,
@@ -67,8 +69,8 @@ impl WorkspaceModuleRuntimeContext {
         self
     }
 
-    pub(crate) fn delivery_runtime_session_id(&self) -> &str {
-        &self.delivery_runtime_session_id
+    pub(crate) fn runtime_thread_id(&self) -> &str {
+        self.runtime_thread_id.as_str()
     }
 
     pub(crate) fn current_user(&self) -> Option<&ProjectAuthorizationContext> {
@@ -81,14 +83,14 @@ impl WorkspaceModuleRuntimeContext {
 
     pub(crate) fn runtime_actor(&self) -> RuntimeActor {
         RuntimeActor::AgentSession {
-            session_id: self.delivery_runtime_session_id.clone(),
+            session_id: self.runtime_thread_id.to_string(),
             agent_id: self.agent_id.clone(),
         }
     }
 
     pub(crate) fn runtime_context(&self) -> RuntimeContext {
         RuntimeContext::Session {
-            session_id: self.delivery_runtime_session_id.clone(),
+            session_id: self.runtime_thread_id.to_string(),
             project_id: Some(self.project_id),
             workspace_id: None,
         }
@@ -107,7 +109,7 @@ impl WorkspaceModuleRuntimeContext {
         submit_canvas_runtime_surface_update(
             self.vfs.as_ref(),
             handle,
-            Some(self.delivery_runtime_session_id()),
+            Some(self.runtime_thread_id()),
             self.current_user(),
             canvas,
             request,
@@ -142,7 +144,7 @@ impl WorkspaceModuleRuntimeContext {
             canvas_mount_id,
             self.vfs.as_ref(),
             handle,
-            Some(self.delivery_runtime_session_id()),
+            Some(self.runtime_thread_id()),
             self.current_user(),
         )
         .await
@@ -163,7 +165,7 @@ impl WorkspaceModuleRuntimeContext {
             )
         })?;
         bridge
-            .inject_agent_run_notification(self.delivery_runtime_session_id(), notification)
+            .inject_agent_run_notification(self.runtime_thread_id(), notification)
             .await
             .map_err(WorkspaceModuleRuntimeBridgeError::ExecutionFailed)
     }

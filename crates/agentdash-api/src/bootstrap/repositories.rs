@@ -11,40 +11,34 @@ use agentdash_application::repository_set::{
 use agentdash_application_agentrun::agent_run::frame::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
-use agentdash_application_lifecycle::{
-    AgentRunLifecycleSurfaceProjector, SessionMetaStoreRuntimeSessionCreator,
-};
+use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
-use agentdash_application_runtime_session::session::SessionStoreSet;
 use agentdash_application_shared_library::{
     BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
     SeedBuiltinLibraryAssetsInput, SharedLibraryService,
 };
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
-    PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
-    PostgresAgentRunDeliveryBindingRepository, PostgresAgentRunForkMaterialization,
-    PostgresAgentRunLineageRepository, PostgresAgentRunMailboxRepository,
+    PostgresAgentLineageRepository, PostgresAgentRunLineageRepository,
+    PostgresAgentRunMailboxRepository, PostgresAgentRuntimeCompositionRepository,
     PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
     PostgresBackendRepository, PostgresCanvasRepository, PostgresCanvasRuntimeStateRepository,
     PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
     PostgresLifecycleAgentRepository, PostgresLifecycleGateRepository,
     PostgresLifecycleSubjectAssociationRepository, PostgresLlmProviderCredentialRepository,
-    PostgresLlmProviderRepository, PostgresManualContextCompactionRequestRepository,
-    PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository,
     PostgresRunnerRegistrationTokenRepository, PostgresRuntimeHealthRepository,
-    PostgresSessionRepository, PostgresSettingsRepository, PostgresSharedLibraryRepository,
-    PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
-    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresSettingsRepository, PostgresSharedLibraryRepository, PostgresSkillAssetRepository,
+    PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
+    PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 pub(crate) struct RepositoryBootstrapOutput {
     pub repos: RepositorySet,
-    pub session_stores: SessionStoreSet,
     pub auth_session_service: Arc<AuthSessionService>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
 }
@@ -53,6 +47,7 @@ pub(crate) async fn build_repositories(
     pool: PgPool,
     integration_library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
     project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
+    runtime_provisioner_handle: agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle,
 ) -> Result<RepositoryBootstrapOutput> {
     agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
         .await
@@ -68,20 +63,6 @@ pub(crate) async fn build_repositories(
 
     let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
-
-    let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
-    let session_stores = SessionStoreSet::new(
-        session_repo.clone(),
-        session_repo.clone(),
-        session_repo.clone(),
-        session_repo.clone(),
-        session_repo.clone(),
-        session_repo.clone(),
-        session_repo.clone(),
-    );
-    let runtime_session_creator = Arc::new(SessionMetaStoreRuntimeSessionCreator::new(
-        session_stores.meta.clone(),
-    ));
 
     let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
     let runtime_health_repo = Arc::new(PostgresRuntimeHealthRepository::new(pool.clone()));
@@ -151,24 +132,12 @@ pub(crate) async fn build_repositories(
     let lifecycle_gate_repo = Arc::new(PostgresLifecycleGateRepository::new(pool.clone()));
     let agent_lineage_repo = Arc::new(PostgresAgentLineageRepository::new(pool.clone()));
     let agent_run_lineage_repo = Arc::new(PostgresAgentRunLineageRepository::new(pool.clone()));
-    let execution_anchor_repo = Arc::new(
-        agentdash_infrastructure::PostgresRuntimeSessionExecutionAnchorRepository::new(
-            pool.clone(),
-        ),
-    );
-    let agent_run_delivery_binding_repo =
-        Arc::new(PostgresAgentRunDeliveryBindingRepository::new(pool.clone()));
-    let agent_run_command_receipt_repo =
-        Arc::new(PostgresAgentRunCommandReceiptRepository::new(pool.clone()));
-    let manual_context_compaction_request_repo = Arc::new(
-        PostgresManualContextCompactionRequestRepository::new(pool.clone()),
-    );
+    let agent_run_runtime_binding_repo =
+        Arc::new(PostgresAgentRuntimeCompositionRepository::new(pool.clone()));
     let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
     let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
         agent_frame_repo.clone(),
     ));
-    let agent_run_fork_materialization =
-        Arc::new(PostgresAgentRunForkMaterialization::new(pool.clone()));
     let lifecycle_surface_projection = Arc::new(
         AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(skill_asset_repo.clone()),
     );
@@ -186,9 +155,6 @@ pub(crate) async fn build_repositories(
             association_repo: lifecycle_subject_association_repo.clone(),
             gate_repo: lifecycle_gate_repo.clone(),
             lineage_repo: agent_lineage_repo.clone(),
-            anchor_repo: execution_anchor_repo.clone(),
-            delivery_binding_repo: agent_run_delivery_binding_repo.clone(),
-            runtime_session_creator: runtime_session_creator.clone(),
             frame_construction: agent_frame_construction.clone(),
         },
     ));
@@ -232,14 +198,10 @@ pub(crate) async fn build_repositories(
         gate_result_delivery_marker_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),
         agent_run_lineage_repo: agent_run_lineage_repo.clone(),
-        execution_anchor_repo: execution_anchor_repo.clone(),
-        agent_run_delivery_binding_repo: agent_run_delivery_binding_repo.clone(),
-        agent_run_command_receipt_repo: agent_run_command_receipt_repo.clone(),
-        manual_context_compaction_request_repo: manual_context_compaction_request_repo.clone(),
+        agent_run_runtime_binding_repo: agent_run_runtime_binding_repo.clone(),
+        agent_run_runtime_provisioner: Arc::new(runtime_provisioner_handle),
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
-        runtime_session_creator: runtime_session_creator.clone(),
         agent_frame_construction,
-        agent_run_fork_materialization,
         workflow_agent_frame_materialization,
         project_agent_lifecycle_launch,
         routine_repo: routine_repo.clone(),
@@ -267,7 +229,6 @@ pub(crate) async fn build_repositories(
 
     Ok(RepositoryBootstrapOutput {
         repos,
-        session_stores,
         auth_session_service,
         extension_package_artifact_storage: Arc::new(
             FilesystemExtensionPackageArtifactStorage::default(),

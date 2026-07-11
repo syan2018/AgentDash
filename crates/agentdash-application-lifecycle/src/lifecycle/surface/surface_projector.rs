@@ -643,12 +643,16 @@ fn project_surface_with_effective_skill_keys(
                     .as_ref()
                     .map(|node| node.evidence_ref())
             });
-            let anchor = agent_run_session_anchor_from_projector_input(
-                &input.address,
-                message_stream,
-                node_evidence.as_ref(),
+            install_agent_run_lifecycle_mount(
+                &mut vfs,
+                input.address.run_id,
+                input.address.agent_id,
+                &message_stream.runtime_session_id,
+                input.address.frame_id,
+                node_evidence
+                    .as_ref()
+                    .map(|node| (node.orchestration_id, node.node_path.as_str(), node.attempt)),
             );
-            install_agent_run_lifecycle_mount(&mut vfs, &anchor);
         }
     }
 
@@ -734,32 +738,6 @@ fn normalized_skill_asset_keys(keys: impl IntoIterator<Item = String>) -> Vec<St
         .filter(|key| !key.is_empty())
         .filter(|key| seen.insert(key.clone()))
         .collect()
-}
-
-fn agent_run_session_anchor_from_projector_input(
-    address: &AgentRunRuntimeAddress,
-    message_stream: &MessageStreamProjectionRef,
-    node_evidence: Option<&OrchestrationNodeEvidenceRef>,
-) -> agentdash_domain::workflow::RuntimeSessionExecutionAnchor {
-    match node_evidence {
-        Some(node) => {
-            agentdash_domain::workflow::RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-                message_stream.runtime_session_id.clone(),
-                address.run_id,
-                address.frame_id,
-                address.agent_id,
-                node.orchestration_id,
-                node.node_path.clone(),
-                node.attempt,
-            )
-        }
-        None => agentdash_domain::workflow::RuntimeSessionExecutionAnchor::new_dispatch(
-            message_stream.runtime_session_id.clone(),
-            address.run_id,
-            address.frame_id,
-            address.agent_id,
-        ),
-    }
 }
 
 fn refresh_lifecycle_projection_metadata(

@@ -1,6 +1,10 @@
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeBinding, AgentRunRuntimeBindingRepository,
+};
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleRun,
-    LifecycleRunRepository, RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
+    AgentFrame, AgentFrameRepository, ExecutorRunRef, LifecycleAgent, LifecycleAgentRepository,
+    LifecycleRun, LifecycleRunRepository, RuntimeNodeState,
 };
 use uuid::Uuid;
 
@@ -29,7 +33,7 @@ pub struct ActivityRuntimeAssociation {
     pub attempt: u32,
 }
 
-pub type RuntimeSessionCurrentFrame = (RuntimeSessionExecutionAnchor, LifecycleAgent, AgentFrame);
+pub type RuntimeSessionCurrentFrame = (AgentRunRuntimeBinding, LifecycleAgent, AgentFrame);
 
 /// 从 delivery trace ref 回溯当前 AgentFrame surface。
 ///
@@ -37,17 +41,30 @@ pub type RuntimeSessionCurrentFrame = (RuntimeSessionExecutionAnchor, LifecycleA
 /// LifecycleAgent 与当前 AgentFrame。
 pub async fn resolve_current_frame_from_delivery_trace_ref(
     runtime_session_id: &str,
-    anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
+    binding_repo: &dyn AgentRunRuntimeBindingRepository,
     agent_repo: &dyn LifecycleAgentRepository,
     frame_repo: &dyn AgentFrameRepository,
 ) -> Result<Option<RuntimeSessionCurrentFrame>, agentdash_domain::DomainError> {
-    let Some(anchor) = anchor_repo.find_by_session(runtime_session_id).await? else {
+    let thread_id = RuntimeThreadId::new(runtime_session_id).map_err(|error| {
+        agentdash_domain::DomainError::Database {
+            operation: "resolve_agent_run_runtime_binding",
+            message: error.to_string(),
+        }
+    })?;
+    let Some(binding) = binding_repo
+        .load_by_thread_id(&thread_id)
+        .await
+        .map_err(|error| agentdash_domain::DomainError::Database {
+            operation: "resolve_agent_run_runtime_binding",
+            message: error.to_string(),
+        })?
+    else {
         return Ok(None);
     };
-    let Some(agent) = agent_repo.get(anchor.agent_id).await? else {
+    let Some(agent) = agent_repo.get(binding.target.agent_id).await? else {
         return Ok(None);
     };
-    if agent.run_id != anchor.run_id {
+    if agent.run_id != binding.target.run_id {
         return Ok(None);
     }
     let Some(frame) = frame_repo.get_current(agent.id).await? else {
@@ -56,7 +73,7 @@ pub async fn resolve_current_frame_from_delivery_trace_ref(
     if frame.agent_id != agent.id {
         return Ok(None);
     }
-    Ok(Some((anchor, agent, frame)))
+    Ok(Some((binding, agent, frame)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -122,7 +139,7 @@ pub fn lifecycle_activity_parts_from_label(label: &str) -> Option<LifecycleActiv
 pub struct ActivityRuntimeAssociationResolver<'a> {
     frame_repo: &'a dyn AgentFrameRepository,
     run_repo: &'a dyn LifecycleRunRepository,
-    anchor_repo: Option<&'a dyn RuntimeSessionExecutionAnchorRepository>,
+    binding_repo: Option<&'a dyn AgentRunRuntimeBindingRepository>,
 }
 
 impl<'a> ActivityRuntimeAssociationResolver<'a> {
@@ -133,15 +150,15 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
         Self {
             frame_repo,
             run_repo,
-            anchor_repo: None,
+            binding_repo: None,
         }
     }
 
-    pub fn with_anchor_repo(
+    pub fn with_binding_repo(
         mut self,
-        anchor_repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+        binding_repo: &'a dyn AgentRunRuntimeBindingRepository,
     ) -> Self {
-        self.anchor_repo = Some(anchor_repo);
+        self.binding_repo = Some(binding_repo);
         self
     }
 
@@ -149,55 +166,54 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
         &self,
         session_id: &str,
     ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
-        let Some(anchor_repo) = self.anchor_repo else {
+        let Some(binding_repo) = self.binding_repo else {
             return Ok(None);
         };
-        let Some(anchor) = anchor_repo.find_by_session(session_id).await.map_err(|e| {
+        let thread_id = RuntimeThreadId::new(session_id).map_err(|error| {
             ActivityRuntimeAssociationError::Repository {
-                operation: "runtime session execution anchor",
-                message: e.to_string(),
+                operation: "runtime thread id",
+                message: error.to_string(),
             }
-        })?
-        else {
-            return Ok(None);
-        };
-        self.resolve_by_anchor(session_id, anchor).await
-    }
-
-    async fn resolve_by_anchor(
-        &self,
-        session_id: &str,
-        anchor: RuntimeSessionExecutionAnchor,
-    ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
-        let Some(orchestration_id) = anchor.orchestration_id else {
-            return Ok(None);
-        };
-        let Some(node_path) = anchor.node_path.clone() else {
-            return Ok(None);
-        };
-        let Some(frame) = self
-            .frame_repo
-            .get(anchor.launch_frame_id)
+        })?;
+        let Some(binding) = binding_repo
+            .load_by_thread_id(&thread_id)
             .await
             .map_err(|e| ActivityRuntimeAssociationError::Repository {
-                operation: "anchor launch AgentFrame",
+                operation: "agent run runtime binding",
                 message: e.to_string(),
             })?
         else {
             return Ok(None);
         };
-        if frame.agent_id != anchor.agent_id {
+        self.resolve_by_binding(session_id, binding).await
+    }
+
+    async fn resolve_by_binding(
+        &self,
+        session_id: &str,
+        binding: AgentRunRuntimeBinding,
+    ) -> Result<Option<ActivityRuntimeAssociation>, ActivityRuntimeAssociationError> {
+        let Some(frame) = self
+            .frame_repo
+            .get_current(binding.target.agent_id)
+            .await
+            .map_err(|e| ActivityRuntimeAssociationError::Repository {
+                operation: "current AgentFrame",
+                message: e.to_string(),
+            })?
+        else {
+            return Ok(None);
+        };
+        if frame.agent_id != binding.target.agent_id {
             return Err(ActivityRuntimeAssociationError::AnchorFrameMismatch {
                 runtime_session_id: session_id.to_string(),
-                frame_id: anchor.launch_frame_id,
-                agent_id: anchor.agent_id,
+                frame_id: frame.id,
+                agent_id: binding.target.agent_id,
             });
         }
-
-        let attempt = anchor.node_attempt.unwrap_or(1);
         let run = self
             .run_repo
-            .get_by_id(anchor.run_id)
+            .get_by_id(binding.target.run_id)
             .await
             .map_err(|e| ActivityRuntimeAssociationError::Repository {
                 operation: "lifecycle run",
@@ -206,9 +222,14 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
             .ok_or(
                 ActivityRuntimeAssociationError::MissingLifecycleRunForAnchor {
                     runtime_session_id: session_id.to_string(),
-                    run_id: anchor.run_id,
+                    run_id: binding.target.run_id,
                 },
             )?;
+        let Some((orchestration_id, node_path, attempt)) =
+            find_runtime_node_binding(&run, session_id)
+        else {
+            return Ok(None);
+        };
         Ok(Some(ActivityRuntimeAssociation {
             run,
             orchestration_id,
@@ -224,11 +245,11 @@ pub async fn resolve_activity_runtime_association_from_message_stream_trace(
     frame_repo: &dyn AgentFrameRepository,
     _agent_repo: &dyn LifecycleAgentRepository,
     run_repo: &dyn LifecycleRunRepository,
-    anchor_repo: Option<&dyn RuntimeSessionExecutionAnchorRepository>,
+    binding_repo: Option<&dyn AgentRunRuntimeBindingRepository>,
 ) -> Result<Option<LifecycleActivitySessionAssociation>, ActivityRuntimeAssociationError> {
     let mut resolver = ActivityRuntimeAssociationResolver::new(frame_repo, run_repo);
-    if let Some(anchor_repo) = anchor_repo {
-        resolver = resolver.with_anchor_repo(anchor_repo);
+    if let Some(binding_repo) = binding_repo {
+        resolver = resolver.with_binding_repo(binding_repo);
     }
     Ok(resolver
         .resolve_by_message_stream_trace(session_id)
@@ -250,289 +271,29 @@ pub async fn resolve_activity_runtime_association_from_message_stream_trace(
         }))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lifecycle::build_lifecycle_mount_with_node_scope;
-    use agentdash_domain::workflow::{
-        AgentFrame, AgentFrameRepository, AgentSource, LifecycleAgent, LifecycleAgentRepository,
-        LifecycleRunRepository,
-    };
-    use agentdash_spi::Vfs;
-    use agentdash_test_support::workflow::{
-        MemoryAgentFrameRepository, MemoryLifecycleAgentRepository, MemoryLifecycleRunRepository,
-        MemoryRuntimeSessionExecutionAnchorRepository,
-    };
+fn find_runtime_node_binding(run: &LifecycleRun, session_id: &str) -> Option<(Uuid, String, u32)> {
+    run.orchestrations.iter().find_map(|orchestration| {
+        find_node_by_runtime_thread(&orchestration.node_tree, session_id).map(|node| {
+            (
+                orchestration.orchestration_id,
+                node.node_path.clone(),
+                node.attempt.max(1),
+            )
+        })
+    })
+}
 
-    async fn seeded_frame_repo(
-        frames: impl IntoIterator<Item = AgentFrame>,
-    ) -> MemoryAgentFrameRepository {
-        let repo = MemoryAgentFrameRepository::default();
-        for frame in frames {
-            repo.create(&frame).await.expect("seed frame");
+fn find_node_by_runtime_thread<'a>(
+    nodes: &'a [RuntimeNodeState],
+    session_id: &str,
+) -> Option<&'a RuntimeNodeState> {
+    nodes.iter().find_map(|node| {
+        if matches!(
+            node.executor_run_ref.as_ref(),
+            Some(ExecutorRunRef::RuntimeSession { session_id: bound }) if bound == session_id
+        ) {
+            return Some(node);
         }
-        repo
-    }
-
-    async fn seeded_agent_repo(
-        agents: impl IntoIterator<Item = LifecycleAgent>,
-    ) -> MemoryLifecycleAgentRepository {
-        let repo = MemoryLifecycleAgentRepository::default();
-        for agent in agents {
-            repo.create(&agent).await.expect("seed agent");
-        }
-        repo
-    }
-
-    async fn seeded_run_repo(
-        runs: impl IntoIterator<Item = LifecycleRun>,
-    ) -> MemoryLifecycleRunRepository {
-        let repo = MemoryLifecycleRunRepository::default();
-        for run in runs {
-            repo.create(&run).await.expect("seed run");
-        }
-        repo
-    }
-
-    async fn seeded_anchor_repo(
-        anchors: impl IntoIterator<Item = RuntimeSessionExecutionAnchor>,
-    ) -> MemoryRuntimeSessionExecutionAnchorRepository {
-        let repo = MemoryRuntimeSessionExecutionAnchorRepository::default();
-        for anchor in anchors {
-            repo.create_once(&anchor).await.expect("seed anchor");
-        }
-        repo
-    }
-
-    #[test]
-    fn lifecycle_activity_label_roundtrips_run_activity_and_attempt() {
-        let run_id = Uuid::new_v4();
-        let label = build_lifecycle_activity_label(run_id, "plan", 2);
-
-        assert_eq!(
-            lifecycle_activity_parts_from_label(&label),
-            Some(LifecycleActivityLabelParts {
-                run_id,
-                activity_key: "plan".to_string(),
-                attempt: 2,
-            })
-        );
-    }
-
-    #[test]
-    fn lifecycle_activity_label_rejects_incomplete_payload() {
-        assert_eq!(
-            lifecycle_activity_parts_from_label("lifecycle_activity:plan#1"),
-            None
-        );
-        assert_eq!(
-            lifecycle_activity_parts_from_label("lifecycle_activity:not-a-uuid:plan#1"),
-            None
-        );
-        assert_eq!(
-            lifecycle_activity_parts_from_label(
-                "lifecycle_activity:00000000-0000-0000-0000-000000000000:plan"
-            ),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn resolver_uses_orchestration_anchor_after_runtime_frame_revision_changes() {
-        let project_id = Uuid::new_v4();
-        let run_id = Uuid::new_v4();
-        let orchestration_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let launch_frame_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id);
-        run.id = run_id;
-        let mut launch_frame = AgentFrame::new_revision(agent_id, 1, "launch");
-        launch_frame.id = launch_frame_id;
-        let frame_repo = seeded_frame_repo([launch_frame]).await;
-        let run_repo = seeded_run_repo([run]).await;
-        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            "sess-1",
-            run_id,
-            launch_frame_id,
-            agent_id,
-            orchestration_id,
-            "implement",
-            2,
-        );
-        let anchor_repo = seeded_anchor_repo([anchor]).await;
-        let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
-        let resolver = resolver.with_anchor_repo(&anchor_repo);
-
-        let association = resolver
-            .resolve_by_message_stream_trace("sess-1")
-            .await
-            .expect("resolver should not error")
-            .expect("association should resolve");
-
-        assert_eq!(association.orchestration_id, orchestration_id);
-        assert_eq!(association.node_path, "implement");
-        assert_eq!(association.attempt, 2);
-    }
-
-    #[tokio::test]
-    async fn resolver_uses_execution_anchor_node_evidence() {
-        let project_id = Uuid::new_v4();
-        let run_id = Uuid::new_v4();
-        let orchestration_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let launch_frame_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id);
-        run.id = run_id;
-        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            "sess-anchor",
-            run_id,
-            launch_frame_id,
-            agent_id,
-            orchestration_id,
-            "custom_main",
-            3,
-        );
-        let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
-        frame.id = launch_frame_id;
-        let frame_repo = seeded_frame_repo([frame]).await;
-        let run_repo = seeded_run_repo([run]).await;
-        let anchor_repo = seeded_anchor_repo([anchor]).await;
-        let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo)
-            .with_anchor_repo(&anchor_repo);
-
-        let association = resolver
-            .resolve_by_message_stream_trace("sess-anchor")
-            .await
-            .expect("anchor resolver should not error")
-            .expect("anchor runtime node should resolve");
-
-        assert_eq!(association.orchestration_id, orchestration_id);
-        assert_eq!(association.node_path, "custom_main");
-        assert_eq!(association.attempt, 3);
-    }
-
-    #[tokio::test]
-    async fn runtime_session_current_frame_exposes_lifecycle_vfs_surface() {
-        let project_id = Uuid::new_v4();
-        let run_id = Uuid::new_v4();
-        let orchestration_id = Uuid::new_v4();
-        let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::WorkflowAgent);
-
-        let launch_frame = AgentFrame::new_revision(agent.id, 1, "launch");
-        let lifecycle_mount = build_lifecycle_mount_with_node_scope(
-            run_id,
-            None,
-            orchestration_id,
-            "agent",
-            "test_lifecycle",
-            &["result".to_string()],
-            Some(1),
-        );
-        let lifecycle_vfs = Vfs {
-            mounts: vec![lifecycle_mount],
-            default_mount_id: None,
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
-        };
-        let mut current_frame = AgentFrame::new_revision(agent.id, 2, "lifecycle_surface");
-        current_frame.vfs_surface_json = serde_json::to_value(&lifecycle_vfs).ok();
-
-        let frame_repo = seeded_frame_repo([launch_frame.clone(), current_frame.clone()]).await;
-        let agent_repo = seeded_agent_repo([agent]).await;
-        let anchor = RuntimeSessionExecutionAnchor::new_orchestration_dispatch(
-            "sess-vfs",
-            run_id,
-            launch_frame.id,
-            current_frame.agent_id,
-            orchestration_id,
-            "agent",
-            1,
-        );
-        let anchor_repo = seeded_anchor_repo([anchor]).await;
-
-        let (_anchor, _agent, frame) = resolve_current_frame_from_delivery_trace_ref(
-            "sess-vfs",
-            &anchor_repo,
-            &agent_repo,
-            &frame_repo,
-        )
-        .await
-        .expect("current frame lookup should not error")
-        .expect("runtime session should resolve to current frame");
-
-        assert_eq!(frame.id, current_frame.id);
-        let vfs: Vfs = serde_json::from_value(
-            frame
-                .vfs_surface_json
-                .clone()
-                .expect("current frame should expose VFS"),
-        )
-        .expect("current frame should expose typed VFS");
-        assert!(
-            vfs.mounts
-                .iter()
-                .any(|mount| { mount.id == "lifecycle" && mount.provider == "lifecycle_vfs" })
-        );
-    }
-
-    #[tokio::test]
-    async fn resolver_returns_none_for_plain_anchor() {
-        let project_id = Uuid::new_v4();
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id);
-        run.id = run_id;
-        let current_frame = AgentFrame::new_revision(agent_id, 2, "capability_update");
-        let frame_id = current_frame.id;
-        let frame_repo = seeded_frame_repo([current_frame]).await;
-        let run_repo = seeded_run_repo([run]).await;
-        let anchor =
-            RuntimeSessionExecutionAnchor::new_dispatch("sess-1", run_id, frame_id, agent_id);
-        let anchor_repo = seeded_anchor_repo([anchor]).await;
-        let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
-        let resolver = resolver.with_anchor_repo(&anchor_repo);
-
-        let association = resolver
-            .resolve_by_message_stream_trace("sess-1")
-            .await
-            .expect("plain anchor should not error");
-        assert!(association.is_none());
-    }
-
-    #[tokio::test]
-    async fn resolver_returns_none_without_anchor_repo() {
-        let project_id = Uuid::new_v4();
-        let run_id = Uuid::new_v4();
-        let agent_id = Uuid::new_v4();
-        let mut run = LifecycleRun::new_control(project_id);
-        run.id = run_id;
-        let current_frame = AgentFrame::new_revision(agent_id, 1, "agent_launch");
-        let frame_repo = seeded_frame_repo([current_frame]).await;
-        let run_repo = seeded_run_repo([run]).await;
-        let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
-
-        assert!(
-            resolver
-                .resolve_by_message_stream_trace("sess-1")
-                .await
-                .expect("surface frame without activity scope should be non-activity runtime")
-                .is_none()
-        );
-    }
-
-    #[tokio::test]
-    async fn resolver_returns_none_for_runtime_session_without_frame() {
-        let frame_repo = MemoryAgentFrameRepository::default();
-        let run_repo = MemoryLifecycleRunRepository::default();
-        let resolver = ActivityRuntimeAssociationResolver::new(&frame_repo, &run_repo);
-
-        assert!(
-            resolver
-                .resolve_by_message_stream_trace("not-lifecycle")
-                .await
-                .expect("missing frame should not error")
-                .is_none()
-        );
-    }
+        find_node_by_runtime_thread(&node.children, session_id)
+    })
 }

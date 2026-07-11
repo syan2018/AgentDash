@@ -6,7 +6,7 @@
 //! hook query/resolution 以 `run_id + agent_id + frame_id` 为主语：
 //!
 //! - 读取 context/capability/VFS/MCP surface：从 `AgentFrame` 读取
-//! - advance/resolution：使用 RuntimeSessionExecutionAnchor / orchestration node refs 推进 runtime node
+//! - advance/resolution：使用 canonical Runtime thread 与 orchestration node refs 推进 runtime node
 //! - `runtime_session_id` 仅保留 trace adapter / provider query 语义
 
 use std::collections::BTreeSet;
@@ -91,7 +91,7 @@ impl RuntimeSessionHookTargetPort for AgentRunHookTargetRuntimeAdapter {
             request.control_target.agent_id,
             request.control_target.frame_id,
             request.frame_revision,
-            request.delivery_runtime_session_id,
+            request.runtime_thread_id.to_string(),
             request.provider,
             request.snapshot,
         ))))

@@ -146,19 +146,18 @@ pub enum AgentRunSurfaceProjectionContextSource {
     /// Resolve the AgentRun that owns an existing effect frame.
     EffectFrame {
         effect_frame_id: Uuid,
-        delivery_runtime_session_id: String,
+        runtime_thread_id: String,
     },
 }
 
 impl AgentRunSurfaceProjectionContextSource {
-    pub fn delivery_runtime_session_id(&self) -> &str {
+    pub fn runtime_thread_id(&self) -> &str {
         match self {
             Self::DeliveryRuntimeSession { runtime_session_id } => runtime_session_id,
-            Self::RuntimeTarget { target } => &target.delivery_runtime_session_id,
+            Self::RuntimeTarget { target } => target.runtime_thread_id.as_str(),
             Self::EffectFrame {
-                delivery_runtime_session_id,
-                ..
-            } => delivery_runtime_session_id,
+                runtime_thread_id, ..
+            } => runtime_thread_id,
         }
     }
 }
@@ -171,7 +170,7 @@ impl AgentRunSurfaceProjectionContextSource {
 #[derive(Debug, Clone)]
 pub struct AgentRunSurfaceProjectionContext {
     pub target: AgentFrameRuntimeTarget,
-    pub delivery_runtime_session_id: String,
+    pub runtime_thread_id: String,
     pub active_turn_id: Option<String>,
     pub current_frame: AgentFrame,
     pub identity: Option<AuthIdentity>,
@@ -192,7 +191,7 @@ impl AgentRunSurfaceProjectionContext {
         self.identity.as_ref().ok_or_else(|| {
             AgentRunFrameSurfaceError::ProjectionContextUnavailable(format!(
                 "delivery RuntimeSession `{}` 缺少 active turn identity",
-                self.delivery_runtime_session_id
+                self.runtime_thread_id
             ))
         })
     }
@@ -579,13 +578,14 @@ mod tests {
         let frame = AgentFrame::new_revision(agent_id, 7, "test");
         let target = AgentFrameRuntimeTarget {
             frame_id: frame.id,
-            delivery_runtime_session_id: "runtime-a".to_string(),
+            runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new("runtime-a")
+                .expect("runtime thread id"),
         };
         let identity = AuthIdentity::system_routine("surface-context-test");
 
         let context = AgentRunSurfaceProjectionContext {
             target: target.clone(),
-            delivery_runtime_session_id: "runtime-a".to_string(),
+            runtime_thread_id: "runtime-a".to_string(),
             active_turn_id: Some("turn-a".to_string()),
             current_frame: frame,
             identity: Some(identity.clone()),

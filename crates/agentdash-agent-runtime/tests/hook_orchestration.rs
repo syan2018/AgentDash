@@ -48,24 +48,15 @@ fn profile() -> RuntimeProfile {
 }
 
 fn fixture() -> (
-    Arc<InMemoryRuntimeStore>,
-    ManagedAgentRuntime<InMemoryRuntimeStore>,
+    Arc<RuntimeStoreFixture>,
+    ManagedAgentRuntime<RuntimeStoreFixture>,
 ) {
-    let store = Arc::new(InMemoryRuntimeStore::default());
-    let runtime = ManagedAgentRuntime::new(
-        store.clone(),
-        RuntimeKernelDefaults {
-            binding_id: id("binding-hook"),
-            driver_generation: RuntimeDriverGeneration(1),
-            source_thread_id: id("source-hook"),
-            profile_digest: id("profile-hook"),
-            bound_profile: profile(),
-        },
-    );
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let runtime = ManagedAgentRuntime::new(store.clone());
     (store, runtime)
 }
 
-async fn start(runtime: &ManagedAgentRuntime<InMemoryRuntimeStore>) -> RuntimeThreadId {
+async fn start(runtime: &ManagedAgentRuntime<RuntimeStoreFixture>) -> RuntimeThreadId {
     runtime
         .execute(RuntimeCommandEnvelope {
             meta: OperationMeta {
@@ -77,8 +68,21 @@ async fn start(runtime: &ManagedAgentRuntime<InMemoryRuntimeStore>) -> RuntimeTh
                 },
             },
             command: RuntimeCommand::ThreadStart {
+                thread_id: id("thread-source-hook"),
+                binding_id: id("binding-hook"),
+                driver_generation: RuntimeDriverGeneration(1),
+                source_thread_id: id("source-hook"),
+                profile_digest: id("profile-hook"),
+                bound_profile: Box::new(profile()),
                 input: Vec::new(),
                 surface_digest: id("surface-hook"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: id("hook-plan-empty-1"),
+                    entries: Vec::new(),
+                },
             },
         })
         .await
@@ -91,8 +95,8 @@ fn plan(thread_id: RuntimeThreadId, actions: BTreeSet<HookAction>) -> RuntimeHoo
     RuntimeHookPlanBinding {
         thread_id,
         plan: BoundRuntimeHookPlan {
-            revision: HookPlanRevision(1),
-            digest: id("hook-plan-1"),
+            revision: HookPlanRevision(2),
+            digest: id("hook-plan-2"),
             entries: vec![BoundRuntimeHookEntry {
                 definition_id: id("definition-1"),
                 point: HookPoint::BeforeTurn,

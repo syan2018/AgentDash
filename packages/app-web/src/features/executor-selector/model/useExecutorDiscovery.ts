@@ -2,21 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { buildApiPath } from "../../../api/origin";
 import { authenticatedFetch } from "../../../api/client";
 import type {
-  ConnectorInfo,
   DiscoveryResponse,
   ExecutorInfo,
   UseExecutorDiscoveryResult,
 } from "./types";
 
 /**
- * 获取后端可用的执行器列表和连接器信息
+ * 获取后端可用的执行器列表。
  *
- * 调用 GET /api/agents/discovery 获取当前连接器能力、
- * 所有已注册的执行器及其变体、可用性信息。
+ * 调用 GET /api/agents/discovery 获取所有已注册的执行器及其可用性信息。
  * 支持手动 refetch。
  */
 export function useExecutorDiscovery(): UseExecutorDiscoveryResult {
-  const [connector, setConnector] = useState<ConnectorInfo | null>(null);
   const [executors, setExecutors] = useState<ExecutorInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -40,7 +37,6 @@ export function useExecutorDiscovery(): UseExecutorDiscoveryResult {
       }
 
       const data: DiscoveryResponse = await res.json();
-      setConnector(data.connector);
       setExecutors(data.executors);
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
@@ -51,9 +47,12 @@ export function useExecutorDiscovery(): UseExecutorDiscoveryResult {
   }, []);
 
   useEffect(() => {
-    void fetchDiscovery();
-    return () => abortRef.current?.abort();
+    const timeoutId = window.setTimeout(() => { void fetchDiscovery(); }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+      abortRef.current?.abort();
+    };
   }, [fetchDiscovery]);
 
-  return { connector, executors, isLoading, error, refetch: fetchDiscovery };
+  return { executors, isLoading, error, refetch: fetchDiscovery };
 }

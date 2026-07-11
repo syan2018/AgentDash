@@ -11,20 +11,23 @@ use agentdash_agent_types::DynAgentTool;
 use agentdash_integration_api::*;
 use async_trait::async_trait;
 use futures::StreamExt;
+use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
+    context::{NativeBindingContext, NativeToolCallContext},
     hook::{NativeHookDelegate, supported_hook},
     mapping::{context_blocks_to_messages, inputs_to_message, message_text},
-    tool::NativeRuntimeTool,
+    tool::{NativeRuntimeTool, NativeToolEventContext},
 };
 
 const PROTOCOL_REVISION: u32 = 1;
 const FACTORY_KEY: &str = "agentdash.native_agent";
 const DEFINITION_ID: &str = "agentdash.native_agent";
+const CONFORMANCE_SUITE: &str = "agentdash-native-runtime-conformance-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum NativeBridgeResolveError {
@@ -32,6 +35,54 @@ pub enum NativeBridgeResolveError {
     InvalidConfiguration { reason: String },
     #[error("native provider is unavailable: {reason}")]
     Unavailable { reason: String, retryable: bool },
+}
+
+/// Native service instance 选择 Provider credential 的持久、非密钥坐标。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NativeCredentialScope {
+    Platform,
+    User { user_id: String },
+}
+
+/// Native service instance 的 schema-validated 配置。API key/OAuth token 永远不进入该对象。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAgentServiceConfig {
+    pub provider: String,
+    pub model: String,
+    pub credential_scope: NativeCredentialScope,
+}
+
+impl NativeAgentServiceConfig {
+    pub fn from_instance(
+        instance: &ActivatedAgentServiceInstance,
+    ) -> Result<Self, NativeBridgeResolveError> {
+        let mut config: Self =
+            serde_json::from_value(instance.config.clone()).map_err(|error| {
+                NativeBridgeResolveError::InvalidConfiguration {
+                    reason: format!(
+                        "service instance config does not match Native schema: {error}"
+                    ),
+                }
+            })?;
+        config.provider = config.provider.trim().to_string();
+        config.model = config.model.trim().to_string();
+        if config.provider.is_empty() || config.model.is_empty() {
+            return Err(NativeBridgeResolveError::InvalidConfiguration {
+                reason: "provider and model must be non-empty".to_string(),
+            });
+        }
+        if let NativeCredentialScope::User { user_id } = &mut config.credential_scope {
+            *user_id = user_id.trim().to_string();
+            if user_id.is_empty() {
+                return Err(NativeBridgeResolveError::InvalidConfiguration {
+                    reason: "user credential scope requires a non-empty user_id".to_string(),
+                });
+            }
+        }
+        Ok(config)
+    }
 }
 
 #[async_trait]
@@ -69,6 +120,10 @@ impl AgentDashIntegration for NativeAgentRuntimeIntegration {
 
     fn agent_runtime_drivers(&self) -> Vec<AgentRuntimeDriverContribution> {
         vec![native_agent_contribution(self.resolver.clone())]
+    }
+
+    fn agent_runtime_trust_manifests(&self) -> Vec<AgentRuntimeTrustManifest> {
+        vec![native_runtime_trust_manifest()]
     }
 }
 
@@ -117,10 +172,28 @@ pub fn native_agent_contribution(
         "properties": {
             "provider": { "type": "string", "minLength": 1 },
             "model": { "type": "string", "minLength": 1 },
-            "system_prompt": { "type": "string" }
+            "credential_scope": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": { "kind": { "const": "platform" } },
+                        "required": ["kind"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "const": "user" },
+                            "user_id": { "type": "string", "minLength": 1 }
+                        },
+                        "required": ["kind", "user_id"],
+                        "additionalProperties": false
+                    }
+                ]
+            }
         },
-        "required": ["provider", "model"],
-        "additionalProperties": true
+        "required": ["provider", "model", "credential_scope"],
+        "additionalProperties": false
     });
     let schema_digest = digest_json(&config_schema);
     AgentRuntimeDriverContribution {
@@ -146,6 +219,29 @@ pub fn native_agent_contribution(
             service_profile_upper_bound: profile,
         },
         factory: Arc::new(NativeAgentDriverFactory::new(resolver)),
+    }
+}
+
+pub fn native_runtime_trust_manifest() -> AgentRuntimeTrustManifest {
+    // The manifest intentionally derives only from immutable first-party build metadata and the
+    // conformance-tested profile, never from a live driver or service instance advertisement.
+    let provenance = AgentServiceProvenance {
+        definition_id: AgentServiceDefinitionId::new(DEFINITION_ID)
+            .expect("static native definition id"),
+        publisher_integration: "agentdash.first_party".to_string(),
+        service_version: env!("CARGO_PKG_VERSION").to_string(),
+        build_digest: AgentServiceBuildDigest::new(format!(
+            "sha256:{}",
+            digest_bytes(env!("CARGO_PKG_VERSION").as_bytes())
+        ))
+        .expect("native build digest"),
+    };
+    AgentRuntimeTrustManifest {
+        driver_build_digest: provenance.build_digest.to_string(),
+        provenance,
+        suite_revision: CONFORMANCE_SUITE.to_string(),
+        protocol_revision: PROTOCOL_REVISION,
+        verified_profile: native_runtime_profile(),
     }
 }
 
@@ -194,6 +290,7 @@ pub fn native_runtime_profile() -> RuntimeProfile {
             capabilities: BTreeSet::from([
                 ContextCapability::Read,
                 ContextCapability::Import,
+                ContextCapability::PrepareCompaction,
                 ContextCapability::ActivateCheckpoint,
             ]),
             fidelity: ContextFidelity::PlatformExact,
@@ -235,6 +332,7 @@ struct NativeThread {
     agent: Mutex<Agent>,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     context_revision: RwLock<ContextRevision>,
+    tool_events: Arc<RwLock<Option<NativeToolEventContext>>>,
 }
 
 impl NativeAgentDriver {
@@ -279,6 +377,7 @@ impl NativeAgentDriver {
         }
         let surface = binding.surface.read().await.clone();
         let active_turn = Arc::new(RwLock::new(None));
+        let tool_events = Arc::new(RwLock::new(None));
         let mut agent = Agent::new(
             self.bridge.clone(),
             AgentConfig {
@@ -286,21 +385,27 @@ impl NativeAgentDriver {
                 ..Default::default()
             },
         );
+        let binding_context = NativeBindingContext {
+            binding_id: binding_id.clone(),
+            generation: self.generation,
+            source_thread_id: binding.source_thread_id.clone(),
+            runtime_thread_id: surface.runtime_thread_id.clone(),
+            authorization_identity: surface.authorization_identity.clone(),
+        };
         agent.set_runtime_delegates(NativeHookDelegate::delegates(
-            binding_id.clone(),
-            self.generation,
-            binding.source_thread_id.clone(),
+            binding_context,
             active_turn.clone(),
             surface.hooks.clone(),
             self.host.hooks.clone(),
         ));
         agent.set_tools(native_tools(
-            &surface.tools,
+            &surface,
             binding_id,
             self.generation,
             &binding.source_thread_id,
             active_turn.clone(),
             self.host.tools.clone(),
+            tool_events.clone(),
         ));
         agent
             .replace_messages(context_blocks_to_messages(&surface.context.blocks))
@@ -309,6 +414,7 @@ impl NativeAgentDriver {
             agent: Mutex::new(agent),
             active_turn,
             context_revision: RwLock::new(ContextRevision(0)),
+            tool_events,
         });
         let mut slot = binding.thread.write().await;
         Ok(slot.get_or_insert_with(|| thread.clone()).clone())
@@ -326,6 +432,12 @@ impl NativeAgentDriver {
             parsed_id(format!("native-turn-{}", envelope.request_id))?;
         let runtime_turn_id: RuntimeTurnId = parsed_id(source_turn_id.to_string())?;
         *thread.active_turn.write().await = Some(source_turn_id.clone());
+        *thread.tool_events.write().await = Some(NativeToolEventContext {
+            sink: sink.clone(),
+            binding_id: envelope.binding_id.clone(),
+            generation: envelope.generation,
+            source_thread_id: binding.source_thread_id.clone(),
+        });
         let result = async {
             let (mut events, handle) = {
                 let mut agent = thread.agent.lock().await;
@@ -379,6 +491,7 @@ impl NativeAgentDriver {
         }
         .await;
         *thread.active_turn.write().await = None;
+        *thread.tool_events.write().await = None;
         result
     }
 }
@@ -531,6 +644,7 @@ impl AgentRuntimeDriver for NativeAgentDriver {
             RuntimeCommand::ThreadStart {
                 input,
                 surface_digest,
+                ..
             } => {
                 if binding.surface.read().await.digest != surface_digest {
                     return Err(DriverError::Rejected {
@@ -669,15 +783,20 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                     });
                 }
                 let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
+                let updated_surface = {
+                    let mut surface = binding.surface.write().await;
+                    surface.tools = tools;
+                    surface.clone()
+                };
                 thread.agent.lock().await.set_tools(native_tools(
-                    &tools,
+                    &updated_surface,
                     &envelope.binding_id,
                     envelope.generation,
                     &binding.source_thread_id,
                     thread.active_turn.clone(),
                     self.host.tools.clone(),
+                    thread.tool_events.clone(),
                 ));
-                binding.surface.write().await.tools = tools;
                 applied_tool_set = Some(DriverToolSetApplyReceipt {
                     revision: expected_tool_set_revision,
                     digest: tool_set_digest,
@@ -811,18 +930,20 @@ impl AgentRuntimeDriver for NativeAgentDriver {
             }),
             DriverInspectionQuery::CompactionActivation { candidate_id } => {
                 for binding in self.bindings.read().await.values() {
-                    if let Some((digest, _)) =
+                    if let Some((digest, revision)) =
                         binding.applied_candidates.read().await.get(&candidate_id)
                     {
                         return Ok(DriverInspection::CompactionActivation {
                             applied: true,
                             digest: Some(digest.to_string()),
+                            driver_context_revision: Some(revision.clone()),
                         });
                     }
                 }
                 Ok(DriverInspection::CompactionActivation {
                     applied: false,
                     digest: None,
+                    driver_context_revision: None,
                 })
             }
             DriverInspectionQuery::Checkpoint { checkpoint_id } => {
@@ -944,7 +1065,11 @@ fn native_hook_capabilities() -> Vec<HookPointCapability> {
         ),
         exact(
             HookPoint::AfterTool,
-            BTreeSet::from([HookAction::Observe, HookAction::RewriteResult]),
+            BTreeSet::from([
+                HookAction::Observe,
+                HookAction::RewriteResult,
+                HookAction::EmitEffect,
+            ]),
         ),
         exact(
             HookPoint::AfterTurn,
@@ -958,26 +1083,37 @@ fn native_hook_capabilities() -> Vec<HookPointCapability> {
 }
 
 fn native_tools(
-    surface: &DriverToolSurface,
+    surface: &MaterializedDriverSurface,
     binding_id: &RuntimeBindingId,
     generation: RuntimeDriverGeneration,
     source_thread_id: &DriverThreadId,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     callback: Arc<dyn AgentRuntimeToolCallback>,
+    events: Arc<RwLock<Option<NativeToolEventContext>>>,
 ) -> Vec<DynAgentTool> {
     surface
+        .tools
         .tools
         .iter()
         .filter(|tool| tool.channels.contains(&ToolChannel::DirectCallback))
         .cloned()
         .map(|tool| {
+            let binding = NativeBindingContext {
+                binding_id: binding_id.clone(),
+                generation,
+                source_thread_id: source_thread_id.clone(),
+                runtime_thread_id: surface.runtime_thread_id.clone(),
+                authorization_identity: surface.authorization_identity.clone(),
+            };
+            let call = NativeToolCallContext {
+                active_turn: active_turn.clone(),
+                tool_set_revision: surface.tools.revision,
+                events: events.clone(),
+            };
             Arc::new(NativeRuntimeTool::new(
                 tool,
-                binding_id.clone(),
-                generation,
-                source_thread_id.clone(),
-                active_turn.clone(),
-                surface.revision,
+                binding,
+                call,
                 callback.clone(),
             )) as DynAgentTool
         })
@@ -1027,6 +1163,8 @@ struct NativeEventMapper {
     source_turn_id: DriverTurnId,
     next_item: u64,
     current_item: Option<(RuntimeItemId, DriverItemId)>,
+    turn_started: bool,
+    turn_terminal: bool,
 }
 
 impl NativeEventMapper {
@@ -1036,15 +1174,21 @@ impl NativeEventMapper {
             source_turn_id,
             next_item: 0,
             current_item: None,
+            turn_started: false,
+            turn_terminal: false,
         }
     }
 
     fn map(&mut self, event: AgentEvent) -> Result<Vec<MappedEvent>, DriverError> {
         let mut mapped = Vec::new();
         match event {
-            AgentEvent::TurnStart => mapped.push(self.event(RuntimeEvent::TurnStarted {
-                turn_id: self.runtime_turn_id.clone(),
-            })),
+            AgentEvent::AgentStart | AgentEvent::TurnStart if !self.turn_started => {
+                self.turn_started = true;
+                mapped.push(self.event(RuntimeEvent::TurnStarted {
+                    turn_id: self.runtime_turn_id.clone(),
+                }));
+            }
+            AgentEvent::AgentStart | AgentEvent::TurnStart => {}
             AgentEvent::MessageStart { .. } => {
                 let item = self.next_item()?;
                 self.current_item = Some(item.clone());
@@ -1053,6 +1197,9 @@ impl NativeEventMapper {
                     RuntimeEvent::ItemStarted {
                         turn_id: self.runtime_turn_id.clone(),
                         item_id: item.0.clone(),
+                        initial_content: RuntimeItemContent::AgentMessage {
+                            text: String::new(),
+                        },
                     },
                 ));
             }
@@ -1086,58 +1233,26 @@ impl NativeEventMapper {
                     ));
                 }
             }
-            AgentEvent::ToolExecutionStart {
-                tool_call_id,
-                tool_name: _,
-                args: _,
-            } => {
-                let item = (parsed_id(tool_call_id.clone())?, parsed_id(tool_call_id)?);
-                mapped.push(self.item_event(
-                    &item,
-                    RuntimeEvent::ItemStarted {
-                        turn_id: self.runtime_turn_id.clone(),
-                        item_id: item.0.clone(),
-                    },
-                ));
+            AgentEvent::ToolExecutionStart { .. } => {}
+            AgentEvent::ToolExecutionEnd { .. } => {}
+            AgentEvent::TurnEnd { .. } => {}
+            AgentEvent::AgentEnd { .. } if !self.turn_terminal => {
+                self.turn_terminal = true;
+                mapped.push(self.event(RuntimeEvent::TurnTerminal {
+                    turn_id: self.runtime_turn_id.clone(),
+                    terminal: RuntimeTurnTerminal::Completed,
+                    message: None,
+                }));
             }
-            AgentEvent::ToolExecutionEnd {
-                tool_call_id,
-                tool_name,
-                result,
-                is_error,
-            } => {
-                let item = (parsed_id(tool_call_id.clone())?, parsed_id(tool_call_id)?);
-                let terminal = if is_error {
-                    RuntimeItemTerminal::Failed {
-                        message: Some(result.to_string()),
-                    }
-                } else {
-                    RuntimeItemTerminal::Completed {
-                        final_content: RuntimeItemContent::ToolResult {
-                            name: tool_name,
-                            output: result,
-                        },
-                    }
-                };
-                mapped.push(self.item_event(
-                    &item,
-                    RuntimeEvent::ItemTerminal {
-                        turn_id: self.runtime_turn_id.clone(),
-                        item_id: item.0.clone(),
-                        terminal,
-                    },
-                ));
+            AgentEvent::RunError { error } if !self.turn_terminal => {
+                self.turn_terminal = true;
+                mapped.push(self.event(RuntimeEvent::TurnTerminal {
+                    turn_id: self.runtime_turn_id.clone(),
+                    terminal: RuntimeTurnTerminal::Failed,
+                    message: Some(error.to_string()),
+                }));
             }
-            AgentEvent::TurnEnd { .. } => mapped.push(self.event(RuntimeEvent::TurnTerminal {
-                turn_id: self.runtime_turn_id.clone(),
-                terminal: RuntimeTurnTerminal::Completed,
-                message: None,
-            })),
-            AgentEvent::RunError { error } => mapped.push(self.event(RuntimeEvent::TurnTerminal {
-                turn_id: self.runtime_turn_id.clone(),
-                terminal: RuntimeTurnTerminal::Failed,
-                message: Some(error.to_string()),
-            })),
+            AgentEvent::RunError { .. } | AgentEvent::AgentEnd { .. } => {}
             AgentEvent::ContextCompactionStarted { .. }
             | AgentEvent::ContextCompactionNoop { .. }
             | AgentEvent::ContextCompacted { .. }
@@ -1192,10 +1307,7 @@ impl NativeEventMapper {
                     ));
                 }
             }
-            AgentEvent::AgentStart
-            | AgentEvent::AgentEnd { .. }
-            | AgentEvent::ProviderAttemptStatus { .. }
-            | AgentEvent::ToolExecutionUpdate { .. } => {}
+            AgentEvent::ProviderAttemptStatus { .. } | AgentEvent::ToolExecutionUpdate { .. } => {}
         }
         Ok(mapped)
     }
@@ -1266,24 +1378,41 @@ fn stream_delta(event: AssistantStreamEvent) -> Option<String> {
 }
 
 fn profile_digest(profile: &RuntimeProfile) -> Result<ProfileDigest, DriverError> {
-    let bytes = serde_json::to_vec(profile).map_err(|error| DriverError::ProtocolViolation {
+    let value = serde_json::to_value(profile).map_err(|error| DriverError::ProtocolViolation {
         reason: format!("native profile serialization failed: {error}"),
         critical: true,
     })?;
-    ProfileDigest::new(format!("sha256:{}", digest_bytes(&bytes))).map_err(|error| {
-        DriverError::ProtocolViolation {
+    ProfileDigest::new(format!("sha256:{}", digest_bytes(&canonical_json(&value)))).map_err(
+        |error| DriverError::ProtocolViolation {
             reason: error.to_string(),
             critical: true,
-        }
-    })
+        },
+    )
 }
 
 fn digest_json(value: &serde_json::Value) -> String {
-    digest_bytes(
-        serde_json::to_string(value)
-            .expect("JSON value serializes")
-            .as_bytes(),
-    )
+    digest_bytes(&canonical_json(value))
+}
+
+fn canonical_json(value: &serde_json::Value) -> Vec<u8> {
+    fn canonicalize(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(object) => {
+                let mut entries = object.iter().collect::<Vec<_>>();
+                entries.sort_by(|left, right| left.0.cmp(right.0));
+                let mut canonical = serde_json::Map::new();
+                for (key, value) in entries {
+                    canonical.insert(key.clone(), canonicalize(value));
+                }
+                serde_json::Value::Object(canonical)
+            }
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.iter().map(canonicalize).collect())
+            }
+            other => other.clone(),
+        }
+    }
+    serde_json::to_vec(&canonicalize(value)).expect("JSON value serializes")
 }
 
 fn digest_bytes(bytes: &[u8]) -> String {
@@ -1334,5 +1463,70 @@ fn context_error(error: DriverContextError) -> DriverError {
             reason,
             critical: true,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_provider_iterations_map_to_one_canonical_turn_lifecycle() {
+        let mut mapper = NativeEventMapper::new(
+            parsed_id("runtime-turn").expect("runtime turn"),
+            parsed_id("source-turn").expect("source turn"),
+        );
+        let started = mapper.map(AgentEvent::AgentStart).expect("agent start");
+        assert!(matches!(
+            started.as_slice(),
+            [MappedEvent {
+                event: RuntimeEvent::TurnStarted { .. },
+                ..
+            }]
+        ));
+        assert!(
+            mapper
+                .map(AgentEvent::TurnStart)
+                .expect("first provider iteration")
+                .is_empty()
+        );
+        assert!(
+            mapper
+                .map(AgentEvent::TurnEnd {
+                    message: agentdash_agent::AgentMessage::assistant("tool call iteration"),
+                    tool_results: Vec::new(),
+                })
+                .expect("intermediate provider iteration")
+                .is_empty()
+        );
+        assert!(
+            mapper
+                .map(AgentEvent::TurnStart)
+                .expect("second provider iteration")
+                .is_empty()
+        );
+        let terminal = mapper
+            .map(AgentEvent::AgentEnd {
+                messages: Vec::new(),
+            })
+            .expect("agent terminal");
+        assert!(matches!(
+            terminal.as_slice(),
+            [MappedEvent {
+                event: RuntimeEvent::TurnTerminal {
+                    terminal: RuntimeTurnTerminal::Completed,
+                    ..
+                },
+                ..
+            }]
+        ));
+        assert!(
+            mapper
+                .map(AgentEvent::AgentEnd {
+                    messages: Vec::new(),
+                })
+                .expect("duplicate agent terminal")
+                .is_empty()
+        );
     }
 }

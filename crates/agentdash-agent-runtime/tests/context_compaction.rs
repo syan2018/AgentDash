@@ -2,8 +2,8 @@ use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
 use agentdash_agent_runtime::{
     ActivationObservation, CommitFailurePoint, CompactionPreparation, ContextActivationStatus,
-    ContextRuntimeError, InMemoryRuntimeStore, ManagedAgentRuntime, RuntimeCommit,
-    RuntimeKernelDefaults, RuntimeRepository, RuntimeUnitOfWork,
+    ContextRuntimeError, ManagedAgentRuntime, RuntimeCommit, RuntimeRepository,
+    RuntimeStoreFixture, RuntimeUnitOfWork,
 };
 use agentdash_agent_runtime_contract::*;
 
@@ -62,21 +62,20 @@ fn profile() -> RuntimeProfile {
     }
 }
 
+fn initial_hook_plan() -> BoundRuntimeHookPlan {
+    BoundRuntimeHookPlan {
+        revision: HookPlanRevision(1),
+        digest: id("hook-plan-empty-1"),
+        entries: Vec::new(),
+    }
+}
+
 fn fixture() -> (
-    Arc<InMemoryRuntimeStore>,
-    ManagedAgentRuntime<InMemoryRuntimeStore>,
+    Arc<RuntimeStoreFixture>,
+    ManagedAgentRuntime<RuntimeStoreFixture>,
 ) {
-    let store = Arc::new(InMemoryRuntimeStore::default());
-    let runtime = ManagedAgentRuntime::new(
-        store.clone(),
-        RuntimeKernelDefaults {
-            binding_id: id("binding-1"),
-            driver_generation: RuntimeDriverGeneration(4),
-            source_thread_id: id("source-1"),
-            profile_digest: id("profile-1"),
-            bound_profile: profile(),
-        },
-    );
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let runtime = ManagedAgentRuntime::new(store.clone());
     (store, runtime)
 }
 
@@ -95,7 +94,7 @@ fn envelope(operation: &str, key: &str, command: RuntimeCommand) -> RuntimeComma
 }
 
 async fn start_and_accept_compaction(
-    runtime: &ManagedAgentRuntime<InMemoryRuntimeStore>,
+    runtime: &ManagedAgentRuntime<RuntimeStoreFixture>,
     operation: &str,
     trigger: ContextCompactionTrigger,
 ) -> RuntimeThreadId {
@@ -104,8 +103,17 @@ async fn start_and_accept_compaction(
             "thread-start",
             "thread-key",
             RuntimeCommand::ThreadStart {
+                thread_id: id("thread-source-1"),
+                binding_id: id("binding-1"),
+                driver_generation: RuntimeDriverGeneration(4),
+                source_thread_id: id("source-1"),
+                profile_digest: id("profile-1"),
+                bound_profile: Box::new(profile()),
                 input: Vec::new(),
                 surface_digest: id("surface-1"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                hook_plan: initial_hook_plan(),
             },
         ))
         .await
@@ -254,8 +262,17 @@ async fn compaction_acceptance_and_recovery_work_are_atomic() {
             "thread-start",
             "thread-key",
             RuntimeCommand::ThreadStart {
+                thread_id: id("thread-source-1"),
+                binding_id: id("binding-1"),
+                driver_generation: RuntimeDriverGeneration(4),
+                source_thread_id: id("source-1"),
+                profile_digest: id("profile-1"),
+                bound_profile: Box::new(profile()),
                 input: Vec::new(),
                 surface_digest: id("surface-1"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                hook_plan: initial_hook_plan(),
             },
         ))
         .await
@@ -784,8 +801,17 @@ async fn opaque_driver_compaction_never_advances_platform_context_head() {
             "thread-start",
             "thread-key",
             RuntimeCommand::ThreadStart {
+                thread_id: id("thread-source-1"),
+                binding_id: id("binding-1"),
+                driver_generation: RuntimeDriverGeneration(4),
+                source_thread_id: id("source-1"),
+                profile_digest: id("profile-1"),
+                bound_profile: Box::new(profile()),
                 input: Vec::new(),
                 surface_digest: id("surface-1"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                hook_plan: initial_hook_plan(),
             },
         ))
         .await

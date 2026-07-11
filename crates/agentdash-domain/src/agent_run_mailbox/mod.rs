@@ -137,10 +137,6 @@ impl MailboxSourceIdentity {
         Self::new("routine", "trigger", "routine")
     }
 
-    pub fn local_relay_prompt() -> Self {
-        Self::new("core", "local_relay_prompt", "user")
-    }
-
     pub fn canvas_action() -> Self {
         Self::new("core", "canvas_action", "user")
     }
@@ -354,7 +350,6 @@ pub struct AgentRunMailboxMessage {
     pub id: Uuid,
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub delivery_runtime_session_id: Option<String>,
     pub origin: MailboxMessageOrigin,
     pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
@@ -364,15 +359,10 @@ pub struct AgentRunMailboxMessage {
     pub priority: i32,
     pub order_key: i64,
     pub source_dedup_key: Option<String>,
-    pub queued_agent_run_turn_id: Option<String>,
-    pub consuming_agent_run_turn_id: Option<String>,
-    pub expected_active_agent_run_turn_id: Option<String>,
-    pub accepted_agent_run_turn_id: Option<String>,
-    pub accepted_protocol_turn_id: Option<String>,
+    pub accepted_runtime_operation_id: Option<String>,
     pub claim_token: Option<Uuid>,
     pub claimed_at: Option<DateTime<Utc>>,
     pub claim_expires_at: Option<DateTime<Utc>>,
-    pub command_receipt_id: Option<Uuid>,
     pub payload_json: Option<Value>,
     pub executor_config_json: Option<Value>,
     pub launch_planning_input: Option<Value>,
@@ -391,7 +381,6 @@ pub struct AgentRunMailboxMessage {
 pub struct NewAgentRunMailboxMessage {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub delivery_runtime_session_id: Option<String>,
     pub origin: MailboxMessageOrigin,
     pub source: MailboxSourceIdentity,
     pub delivery: MailboxDelivery,
@@ -399,9 +388,6 @@ pub struct NewAgentRunMailboxMessage {
     pub drain_mode: MailboxDrainMode,
     pub priority: i32,
     pub source_dedup_key: Option<String>,
-    pub queued_agent_run_turn_id: Option<String>,
-    pub expected_active_agent_run_turn_id: Option<String>,
-    pub command_receipt_id: Option<Uuid>,
     pub payload_json: Option<Value>,
     pub executor_config_json: Option<Value>,
     pub launch_planning_input: Option<Value>,
@@ -414,7 +400,6 @@ pub struct NewAgentRunMailboxMessage {
 pub struct AgentRunMailboxState {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub delivery_runtime_session_id: Option<String>,
     pub paused: bool,
     pub pause_reason: Option<String>,
     pub pause_message: Option<String>,
@@ -426,7 +411,6 @@ pub struct AgentRunMailboxState {
 pub struct AgentRunMailboxClaimRequest {
     pub run_id: Uuid,
     pub agent_id: Uuid,
-    pub delivery_runtime_session_id: Option<String>,
     pub barriers: Vec<ConsumptionBarrier>,
     pub drain_mode: Option<MailboxDrainMode>,
     pub limit: i64,
@@ -436,6 +420,10 @@ pub struct AgentRunMailboxClaimRequest {
 
 #[async_trait::async_trait]
 pub trait AgentRunMailboxRepository: Send + Sync {
+    async fn list_pending_targets(&self) -> Result<Vec<(Uuid, Uuid)>, DomainError> {
+        Ok(Vec::new())
+    }
+
     async fn create_message(
         &self,
         message: NewAgentRunMailboxMessage,
@@ -466,10 +454,21 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         id: Uuid,
         claim_token: Option<Uuid>,
         status: MailboxMessageStatus,
-        accepted_agent_run_turn_id: Option<String>,
-        accepted_protocol_turn_id: Option<String>,
         last_error: Option<String>,
     ) -> Result<AgentRunMailboxMessage, DomainError>;
+
+    async fn mark_runtime_operation_accepted(
+        &self,
+        id: Uuid,
+        claim_token: Uuid,
+        operation_id: String,
+    ) -> Result<AgentRunMailboxMessage, DomainError> {
+        let _ = (id, claim_token, operation_id);
+        Err(DomainError::InvalidConfig(
+            "mailbox repository does not implement canonical runtime operation receipts"
+                .to_string(),
+        ))
+    }
 
     async fn update_message_policy(
         &self,
@@ -489,7 +488,6 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        delivery_runtime_session_id: Option<String>,
         reason: String,
         message: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError>;
@@ -498,7 +496,6 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        delivery_runtime_session_id: Option<String>,
     ) -> Result<AgentRunMailboxState, DomainError>;
 
     async fn get_state(
@@ -511,7 +508,6 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         &self,
         run_id: Uuid,
         agent_id: Uuid,
-        delivery_runtime_session_id: Option<String>,
         preference: Value,
     ) -> Result<AgentRunMailboxState, DomainError>;
 

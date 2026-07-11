@@ -6,9 +6,11 @@ use ts_rs::TS;
 
 use crate::{
     ActiveContextHeadView, CommandAvailability, ContextBlock, ContextCheckpointId,
-    ContextCheckpointView, ContextFidelity, ContextRevision, ProfileDigest, RuntimeBindingId,
-    RuntimeCommandKind, RuntimeInteractionId, RuntimeProfile, RuntimeRevision, RuntimeThreadId,
-    RuntimeThreadStatus, RuntimeTurnId, ThreadSettingsRevision, ToolSetRevision,
+    ContextCheckpointView, ContextFidelity, ContextRevision, IdempotencyKey, OperationReceipt,
+    ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand, RuntimeCommandKind,
+    RuntimeInteractionId, RuntimeOperationId, RuntimeOperationTerminal, RuntimeProfile,
+    RuntimeRevision, RuntimeThreadId, RuntimeThreadStatus, RuntimeTurnId, ThreadSettingsRevision,
+    ToolSetRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -50,8 +52,26 @@ pub struct RuntimeContextView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeOperationView {
+    pub operation_id: RuntimeOperationId,
+    pub idempotency_key: IdempotencyKey,
+    pub actor: RuntimeActor,
+    pub command: RuntimeCommand,
+    pub receipt: OperationReceipt,
+    pub terminal: Option<RuntimeOperationTerminal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeSnapshotResult {
-    Thread { snapshot: Box<RuntimeSnapshot> },
-    Context { context: Box<RuntimeContextView> },
+    Operation {
+        operation: Box<RuntimeOperationView>,
+    },
+    Thread {
+        snapshot: Box<RuntimeSnapshot>,
+    },
+    Context {
+        context: Box<RuntimeContextView>,
+    },
 }

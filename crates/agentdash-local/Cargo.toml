@@ -18,14 +18,14 @@ standalone = []
 agentdash-relay.workspace = true
 agentdash-contracts.workspace = true
 agentdash-spi.workspace = true
-agentdash-agent-protocol = { workspace = true }
 agentdash-agent-runtime-contract = { workspace = true }
 agentdash-agent-runtime-wire = { workspace = true }
+agentdash-agent-runtime-host = { workspace = true }
+agentdash-integration-api = { workspace = true }
 agentdash-integration-remote-runtime = { workspace = true }
-agentdash-executor = { workspace = true }
+agentdash-first-party-integrations = { workspace = true }
 agentdash-application.workspace = true
 agentdash-application-ports = { workspace = true }
-agentdash-application-runtime-session = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-domain.workspace = true
 agentdash-infrastructure.workspace = true

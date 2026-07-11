@@ -1,7 +1,7 @@
 import type {
   AgentRunCommandPreconditionView,
-  AgentRunContextCompactionCommandResponse,
 } from "../../../generated/agent-run-mailbox-contracts";
+import type { OperationReceipt } from "../../../generated/agent-runtime-contracts";
 import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 
 export function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {
@@ -17,20 +17,9 @@ export function newClientCommandId(): string {
 }
 
 export function contextCompactionOutcomeMessage(
-  response: AgentRunContextCompactionCommandResponse,
+  response: OperationReceipt,
 ): string {
-  switch (response.outcome) {
-    case "scheduled_next_turn":
-      return "已排队";
-    case "launched_compaction_turn":
-      return "已启动";
-    case "completed":
-      return response.message ?? "压缩完成";
-    case "no_eligible_messages":
-      return response.message ?? "暂无可压缩内容";
-    case "blocked":
-      return response.message ?? "当前无法压缩";
-    case "failed":
-      return response.message ?? "压缩失败";
-  }
+  return response.duplicate
+    ? `压缩操作已存在 · ${response.operation_id}`
+    : `压缩操作已接受 · ${response.operation_id}`;
 }

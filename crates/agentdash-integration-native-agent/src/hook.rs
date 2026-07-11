@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use agentdash_agent_runtime_contract::{
     DriverItemId, DriverThreadId, DriverTurnId, HookAction, HookPoint, RuntimeBindingId,
-    RuntimeDriverGeneration,
+    RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
 };
 use agentdash_agent_types::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage,
@@ -11,18 +11,22 @@ use agentdash_agent_types::{
     RuntimeTurnBoundaryDelegate, StopDecision, ToolCallDecision, TurnControlDecision,
 };
 use agentdash_integration_api::{
-    AgentRuntimeHookCallback, DriverHookBinding, DriverHookDecision, DriverHookInvocation,
-    DriverHookSurface,
+    AgentRuntimeHookCallback, AuthIdentity, DriverHookBinding, DriverHookDecision,
+    DriverHookInvocation, DriverHookSurface,
 };
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use crate::context::NativeBindingContext;
+
 pub(crate) struct NativeHookDelegate {
     binding_id: RuntimeBindingId,
     generation: RuntimeDriverGeneration,
     source_thread_id: DriverThreadId,
+    runtime_thread_id: RuntimeThreadId,
+    authorization_identity: Option<AuthIdentity>,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     surface: DriverHookSurface,
     callback: Arc<dyn AgentRuntimeHookCallback>,
@@ -30,17 +34,17 @@ pub(crate) struct NativeHookDelegate {
 
 impl NativeHookDelegate {
     pub(crate) fn delegates(
-        binding_id: RuntimeBindingId,
-        generation: RuntimeDriverGeneration,
-        source_thread_id: DriverThreadId,
+        binding: NativeBindingContext,
         active_turn: Arc<RwLock<Option<DriverTurnId>>>,
         surface: DriverHookSurface,
         callback: Arc<dyn AgentRuntimeHookCallback>,
     ) -> AgentRuntimeDelegateSet {
         let delegate = Arc::new(Self {
-            binding_id,
-            generation,
-            source_thread_id,
+            binding_id: binding.binding_id,
+            generation: binding.generation,
+            source_thread_id: binding.source_thread_id,
+            runtime_thread_id: binding.runtime_thread_id,
+            authorization_identity: binding.authorization_identity,
             active_turn,
             surface,
             callback,
@@ -63,17 +67,28 @@ impl NativeHookDelegate {
             .iter()
             .filter(|binding| binding.point == point && supported_hook(binding))
         {
+            let source_turn_id = self.active_turn.read().await.clone();
+            let turn_id = source_turn_id
+                .as_ref()
+                .and_then(|value| RuntimeTurnId::new(value.to_string()).ok());
+            let item_id = source_item_id
+                .as_ref()
+                .and_then(|value| RuntimeItemId::new(value.to_string()).ok());
             let decision = self
                 .callback
                 .execute(DriverHookInvocation {
+                    thread_id: self.runtime_thread_id.clone(),
+                    turn_id,
+                    item_id,
                     binding_id: self.binding_id.clone(),
                     generation: self.generation,
                     source_thread_id: self.source_thread_id.clone(),
-                    source_turn_id: self.active_turn.read().await.clone(),
+                    source_turn_id,
                     source_item_id: source_item_id.clone(),
                     definition_id: binding.definition_id.clone(),
                     point,
                     payload,
+                    authorization_identity: self.authorization_identity.clone(),
                 })
                 .await
                 .map_err(|error| AgentRuntimeError::Runtime(error.to_string()))?;
@@ -278,7 +293,11 @@ pub(crate) fn supported_hook(binding: &DriverHookBinding) -> bool {
             HookAction::RewriteInput,
             HookAction::RequestApproval,
         ]),
-        HookPoint::AfterTool => BTreeSet::from([HookAction::Observe, HookAction::RewriteResult]),
+        HookPoint::AfterTool => BTreeSet::from([
+            HookAction::Observe,
+            HookAction::RewriteResult,
+            HookAction::EmitEffect,
+        ]),
         HookPoint::AfterTurn | HookPoint::BeforeStop => {
             BTreeSet::from([HookAction::Observe, HookAction::ContinueTurn])
         }

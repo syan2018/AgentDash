@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use agentdash_agent_runtime::{ManagedAgentRuntime, RuntimeRepository, RuntimeStoreFixture};
 use agentdash_agent_runtime_contract::*;
 use agentdash_agent_runtime_host::*;
 use agentdash_integration_api::*;
@@ -19,6 +20,185 @@ where
     T::Err: std::fmt::Debug,
 {
     value.parse().expect("valid test id")
+}
+
+#[tokio::test]
+async fn coordinate_index_failure_degrades_host_without_replaying_committed_runtime_event() {
+    let fixture = fixture().await;
+    let offer = activate(&fixture).await;
+    let binding = fixture
+        .host
+        .bind(BindRuntimeRequest {
+            binding_id: id("binding-coordinate-health"),
+            thread_id: id("thread-coordinate-health"),
+            offer_id: offer.id,
+            bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Start,
+        })
+        .await
+        .expect("bind");
+    let source_thread_id = binding.source_thread_id.clone().expect("source thread");
+    let runtime_store = Arc::new(RuntimeStoreFixture::default());
+    let runtime = Arc::new(ManagedAgentRuntime::new(runtime_store.clone()));
+    runtime
+        .execute(RuntimeCommandEnvelope {
+            meta: OperationMeta {
+                operation_id: id("runtime-coordinate-thread-start"),
+                idempotency_key: id("runtime-coordinate-thread-start-key"),
+                expected_thread_revision: None,
+                actor: RuntimeActor::System {
+                    component: "host-coordinate-test".to_string(),
+                },
+            },
+            command: RuntimeCommand::ThreadStart {
+                thread_id: binding.thread_id.clone(),
+                binding_id: binding.id.clone(),
+                driver_generation: binding.driver_generation,
+                source_thread_id: source_thread_id.clone(),
+                profile_digest: binding.profile_digest.clone(),
+                bound_profile: Box::new(fixture.full_profile.clone()),
+                input: Vec::new(),
+                surface_digest: binding.bound_surface.digest.clone(),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: binding.bound_surface.tool_set_revision,
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: id("runtime-coordinate-hook-plan"),
+                    entries: Vec::new(),
+                },
+            },
+        })
+        .await
+        .expect("runtime thread start");
+    runtime
+        .execute(RuntimeCommandEnvelope {
+            meta: OperationMeta {
+                operation_id: id("runtime-coordinate"),
+                idempotency_key: id("runtime-coordinate-key"),
+                expected_thread_revision: Some(RuntimeRevision(3)),
+                actor: RuntimeActor::System {
+                    component: "host-coordinate-test".to_string(),
+                },
+            },
+            command: RuntimeCommand::TurnStart {
+                thread_id: binding.thread_id.clone(),
+                input: Vec::new(),
+            },
+        })
+        .await
+        .expect("runtime turn start");
+    *fixture.factory.driver.extra_events.lock().await = vec![
+        DriverEventEnvelope {
+            binding_id: binding.id.clone(),
+            generation: binding.driver_generation,
+            source_thread_id: source_thread_id.clone(),
+            source_turn_id: Some(id("source-turn-coordinate")),
+            source_item_id: Some(id("source-item-collision")),
+            event: RuntimeEvent::ItemStarted {
+                turn_id: id("turn-runtime-coordinate"),
+                item_id: id("runtime-item-coordinate-a"),
+                initial_content: RuntimeItemContent::ToolCall {
+                    name: "first".to_string(),
+                    arguments: json!({}),
+                },
+            },
+        },
+        DriverEventEnvelope {
+            binding_id: binding.id.clone(),
+            generation: binding.driver_generation,
+            source_thread_id: source_thread_id.clone(),
+            source_turn_id: Some(id("source-turn-coordinate")),
+            source_item_id: Some(id("source-item-collision")),
+            event: RuntimeEvent::ItemStarted {
+                turn_id: id("turn-runtime-coordinate"),
+                item_id: id("runtime-item-coordinate-b"),
+                initial_content: RuntimeItemContent::ToolCall {
+                    name: "second".to_string(),
+                    arguments: json!({}),
+                },
+            },
+        },
+    ];
+    let lease = fixture
+        .host
+        .acquire_driver_lease(&binding.id)
+        .await
+        .expect("lease");
+    let sink = Arc::new(ManagedRuntimeSink {
+        runtime: runtime.clone(),
+        accepted: AtomicUsize::new(0),
+    });
+    let command = RouteDriverCommand {
+        envelope: DriverCommandEnvelope {
+            request_id: id("request-coordinate-health"),
+            binding_id: binding.id.clone(),
+            generation: binding.driver_generation,
+            source_thread_id,
+            command: RuntimeCommand::TurnStart {
+                thread_id: binding.thread_id.clone(),
+                input: Vec::new(),
+            },
+        },
+        lease_owner: lease.owner.clone(),
+        lease_token: lease.token.clone(),
+    };
+    fixture
+        .host
+        .dispatch(command.clone(), sink.clone())
+        .await
+        .expect("authoritative events remain accepted");
+    assert_eq!(sink.accepted.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        fixture
+            .repository
+            .load_binding(&binding.id)
+            .await
+            .expect("binding")
+            .expect("binding row")
+            .state,
+        RuntimeBindingState::Failed
+    );
+    assert!(matches!(
+        fixture.host.dispatch(command, sink.clone()).await,
+        Err(AgentRuntimeHostError::DispatchRejected { .. })
+    ));
+    assert_eq!(sink.accepted.load(Ordering::SeqCst), 4);
+    let projection = runtime_store
+        .load_thread(&binding.thread_id)
+        .await
+        .expect("runtime thread")
+        .expect("runtime thread row");
+    assert_eq!(projection.status, RuntimeThreadStatus::Lost);
+    assert!(projection.active_turn_id.is_none());
+    assert!(projection.items.values().all(|item| matches!(
+        item.phase,
+        agentdash_agent_runtime::EntityPhase::Terminal(RuntimeItemTerminal::Lost { .. })
+    )));
+    let operation = runtime_store
+        .find_operation(&id("runtime-coordinate"))
+        .await
+        .expect("operation")
+        .expect("operation row");
+    assert!(matches!(
+        operation.terminal,
+        Some(RuntimeOperationTerminal::Lost { .. })
+    ));
+    let events = runtime_store
+        .events_after(&binding.thread_id, None)
+        .await
+        .expect("runtime events")
+        .events;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                &event.event,
+                RuntimeEvent::OperationTerminal { operation_id, .. }
+                    if operation_id == &id("runtime-coordinate")
+            ))
+            .count(),
+        1
+    );
 }
 
 fn profile(hooks: Vec<HookPointCapability>) -> RuntimeProfile {
@@ -238,25 +418,12 @@ fn test_host_ports(credentials: Arc<dyn AgentRuntimeCredentialBroker>) -> Runtim
     }
 }
 
-struct AcceptingConformanceVerifier;
-
-#[async_trait]
-impl DriverConformanceVerifier for AcceptingConformanceVerifier {
-    async fn verify(
-        &self,
-        _driver: &dyn AgentRuntimeDriver,
-        _descriptor: &RuntimeDescriptor,
-        _evidence: &ConformanceEvidence,
-    ) -> Result<(), ConformanceVerificationError> {
-        Ok(())
-    }
-}
-
 struct TestDriver {
     descriptor: RuntimeDescriptor,
     bind_count: AtomicUsize,
     dispatch_count: AtomicUsize,
     emit_barrier: Mutex<Option<(Arc<Notify>, Arc<Notify>)>>,
+    extra_events: Mutex<Vec<DriverEventEnvelope>>,
 }
 
 #[async_trait]
@@ -296,7 +463,7 @@ impl AgentRuntimeDriver for TestDriver {
         sink.emit(DriverEventEnvelope {
             binding_id: command.binding_id.clone(),
             generation: command.generation,
-            source_thread_id: command.source_thread_id,
+            source_thread_id: command.source_thread_id.clone(),
             source_turn_id: None,
             source_item_id: None,
             event: RuntimeEvent::BindingEstablished {
@@ -304,6 +471,12 @@ impl AgentRuntimeDriver for TestDriver {
             },
         })
         .await?;
+        for mut event in self.extra_events.lock().await.clone() {
+            event.binding_id = command.binding_id.clone();
+            event.generation = command.generation;
+            event.source_thread_id = command.source_thread_id.clone();
+            sink.emit(event).await?;
+        }
         Ok(DriverDispatchReceipt {
             request_id: command.request_id,
             duplicate: false,
@@ -365,11 +538,32 @@ impl DriverEventSink for RecordingSink {
     }
 }
 
+struct ManagedRuntimeSink {
+    runtime: Arc<ManagedAgentRuntime<RuntimeStoreFixture>>,
+    accepted: AtomicUsize,
+}
+
+#[async_trait]
+impl DriverEventSink for ManagedRuntimeSink {
+    async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+        self.runtime
+            .ingest_driver_event(event)
+            .await
+            .map_err(|error| DriverError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })?;
+        self.accepted.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 struct Fixture {
     host: Arc<IntegrationDriverHost>,
     registry: AgentServiceDefinitionRegistry,
-    repository: Arc<MemoryAgentRuntimeHostRepository>,
+    repository: Arc<AgentRuntimeHostRepositoryFixture>,
     factory: Arc<TestFactory>,
+    conformance: Arc<dyn DriverConformanceVerifier>,
     full_profile: RuntimeProfile,
 }
 
@@ -397,11 +591,12 @@ async fn fixture_with_broker_and_probe(
             protocol_revision: 1,
             service_instance_id,
             profile: full_profile.clone(),
-            profile_digest: descriptor_profile_digest,
+            profile_digest: descriptor_profile_digest.clone(),
         },
         bind_count: AtomicUsize::new(0),
         dispatch_count: AtomicUsize::new(0),
         emit_barrier: Mutex::new(None),
+        extra_events: Mutex::new(Vec::new()),
     });
     let factory = Arc::new(TestFactory {
         key: AgentRuntimeFactoryKey::new("corp.factory").expect("factory key"),
@@ -409,17 +604,29 @@ async fn fixture_with_broker_and_probe(
         creates: AtomicUsize::new(0),
         credential_probe,
     });
+    let service_definition = definition("corp.factory", full_profile.clone());
+    let conformance: Arc<dyn DriverConformanceVerifier> =
+        Arc::new(TrustedDriverConformanceVerifier::new(
+            TrustedDriverManifestRegistry::collect([TrustedDriverManifest {
+                provenance: service_definition.provenance.clone(),
+                suite_revision: "runtime-driver-v1".to_string(),
+                driver_build_digest: "sha256:driver".to_string(),
+                protocol_revision: 1,
+                verified_profile_digest: descriptor_profile_digest,
+            }])
+            .expect("trusted driver manifests"),
+        ));
     let registry = AgentServiceDefinitionRegistry::collect([AgentRuntimeDriverContribution {
-        definition: definition("corp.factory", full_profile.clone()),
+        definition: service_definition,
         factory: factory.clone(),
     }])
     .expect("registry");
-    let repository = Arc::new(MemoryAgentRuntimeHostRepository::new());
+    let repository = Arc::new(AgentRuntimeHostRepositoryFixture::new());
     let host = Arc::new(IntegrationDriverHost::new(
         registry.clone(),
         repository.clone(),
         test_host_ports(credential_broker),
-        Arc::new(AcceptingConformanceVerifier),
+        conformance.clone(),
         "host-a",
     ));
     Fixture {
@@ -427,6 +634,7 @@ async fn fixture_with_broker_and_probe(
         registry,
         repository,
         factory,
+        conformance,
         full_profile,
     }
 }
@@ -847,6 +1055,57 @@ async fn event_sink_revalidates_lease_after_takeover() {
 }
 
 #[tokio::test]
+async fn driver_lease_can_be_renewed_and_explicitly_released() {
+    let fixture = fixture().await;
+    let offer = activate(&fixture).await;
+    let binding = fixture
+        .host
+        .bind(BindRuntimeRequest {
+            binding_id: id("binding-lease-lifecycle"),
+            thread_id: id("thread-lease-lifecycle"),
+            offer_id: offer.id,
+            bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Start,
+        })
+        .await
+        .expect("bind");
+    let lease = fixture
+        .host
+        .acquire_driver_lease(&binding.id)
+        .await
+        .expect("lease");
+    let renewed = fixture
+        .host
+        .renew_driver_lease(&lease)
+        .await
+        .expect("renew lease");
+    assert_eq!(renewed.binding_id, lease.binding_id);
+    assert_eq!(renewed.generation, lease.generation);
+    assert_eq!(renewed.owner, lease.owner);
+    assert_eq!(renewed.token, lease.token);
+    assert_eq!(renewed.epoch, lease.epoch);
+    assert!(renewed.expires_at >= lease.expires_at);
+
+    fixture
+        .host
+        .release_driver_lease(&renewed)
+        .await
+        .expect("release lease");
+    let error = fixture
+        .repository
+        .validate_lease(
+            &renewed.binding_id,
+            renewed.generation,
+            &renewed.owner,
+            &renewed.token,
+            Utc::now(),
+        )
+        .await
+        .expect_err("released lease must be fenced");
+    assert!(matches!(error, HostStoreError::NotFound { .. }));
+}
+
+#[tokio::test]
 async fn thread_binding_is_sticky_and_source_generation_is_fenced() {
     let fixture = fixture().await;
     let offer = activate(&fixture).await;
@@ -971,7 +1230,7 @@ async fn durable_offer_recovers_the_same_driver_generation_after_host_restart() 
         fixture.registry.clone(),
         fixture.repository.clone(),
         test_host_ports(Arc::new(TestCredentialBroker)),
-        Arc::new(AcceptingConformanceVerifier),
+        fixture.conformance.clone(),
         "host-b",
     );
     assert_eq!(
@@ -1027,7 +1286,7 @@ async fn host_restart_recovers_orphaned_pending_binding_from_durable_intent() {
         fixture.registry.clone(),
         fixture.repository.clone(),
         test_host_ports(Arc::new(TestCredentialBroker)),
-        Arc::new(AcceptingConformanceVerifier),
+        fixture.conformance.clone(),
         "host-b",
     );
     assert_eq!(
@@ -1090,9 +1349,13 @@ async fn old_binding_recovers_from_activation_snapshot_after_instance_config_upd
         fixture.registry.clone(),
         fixture.repository.clone(),
         test_host_ports(Arc::new(TestCredentialBroker)),
-        Arc::new(AcceptingConformanceVerifier),
+        fixture.conformance.clone(),
         "host-b",
     );
+    restarted
+        .driver_endpoint(&binding.service_instance_id, binding.driver_generation)
+        .await
+        .expect("old generation endpoint remains resolvable for its sticky binding");
     let lease = restarted
         .acquire_driver_lease(&binding.id)
         .await

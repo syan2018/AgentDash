@@ -104,12 +104,11 @@ describe("SessionProjectionViewPanel", () => {
   it("点击手动压缩只提交 command-only request", async () => {
     vi.stubGlobal("crypto", { randomUUID: () => "command-compact-1" });
     mocks.compactAgentRunContext.mockResolvedValue({
-      command_receipt: {
-        client_command_id: "command-compact-1",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "launched_compaction_turn",
+      operation_id: "operation-compact-1",
+      operation_sequence: 1n,
+      thread_id: "thread-1",
+      accepted_revision: 4n,
+      duplicate: false,
     });
     const { SessionProjectionViewPanel: Panel } = await importProjectionViewWithImmediateEffects();
     const element = Panel({
@@ -142,40 +141,21 @@ describe("SessionProjectionViewPanel", () => {
 });
 
 describe("context compaction helpers", () => {
-  it("maps compact command outcomes to short UI status text", () => {
+  it("renders canonical Runtime operation acceptance and duplicate replay", () => {
     expect(contextCompactionOutcomeMessage({
-      command_receipt: {
-        client_command_id: "cmd-1",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "scheduled_next_turn",
-    })).toBe("已排队");
+      operation_id: "operation-1",
+      operation_sequence: 1n,
+      thread_id: "thread-1",
+      accepted_revision: 4n,
+      duplicate: false,
+    })).toBe("压缩操作已接受 · operation-1");
     expect(contextCompactionOutcomeMessage({
-      command_receipt: {
-        client_command_id: "cmd-2",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "launched_compaction_turn",
-    })).toBe("已启动");
-    expect(contextCompactionOutcomeMessage({
-      command_receipt: {
-        client_command_id: "cmd-3",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "no_eligible_messages",
-    })).toBe("暂无可压缩内容");
-    expect(contextCompactionOutcomeMessage({
-      command_receipt: {
-        client_command_id: "cmd-4",
-        status: "accepted",
-        duplicate: false,
-      },
-      outcome: "failed",
-      message: "summary provider failed",
-    })).toBe("summary provider failed");
+      operation_id: "operation-1",
+      operation_sequence: 1n,
+      thread_id: "thread-1",
+      accepted_revision: 4n,
+      duplicate: true,
+    })).toBe("压缩操作已存在 · operation-1");
   });
 });
 

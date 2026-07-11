@@ -46,7 +46,7 @@ struct MemoryState {
 
 /// Transactional fixture used by interface tests and future infrastructure adapters.
 #[derive(Default)]
-pub struct InMemoryRuntimeStore {
+pub struct RuntimeStoreFixture {
     state: Mutex<MemoryState>,
     fail_next_commit_at: AtomicU8,
 }
@@ -62,7 +62,7 @@ pub enum CommitFailurePoint {
     AfterContext = 6,
 }
 
-impl InMemoryRuntimeStore {
+impl RuntimeStoreFixture {
     pub fn fail_next_commit(&self) {
         self.fail_next_commit_at(CommitFailurePoint::BeforeWrite);
     }
@@ -116,7 +116,7 @@ impl InMemoryRuntimeStore {
 }
 
 #[async_trait]
-impl RuntimeRepository for InMemoryRuntimeStore {
+impl RuntimeRepository for RuntimeStoreFixture {
     async fn load_thread(
         &self,
         thread_id: &RuntimeThreadId,
@@ -357,7 +357,7 @@ impl RuntimeRepository for InMemoryRuntimeStore {
 }
 
 #[async_trait]
-impl RuntimeUnitOfWork for InMemoryRuntimeStore {
+impl RuntimeUnitOfWork for RuntimeStoreFixture {
     async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError> {
         self.inject_failure(CommitFailurePoint::BeforeWrite)?;
         let mut state = self.state.lock().await;
@@ -807,7 +807,7 @@ impl RuntimeUnitOfWork for InMemoryRuntimeStore {
 }
 
 #[async_trait]
-impl RuntimeTransientEvents for InMemoryRuntimeStore {
+impl RuntimeTransientEvents for RuntimeStoreFixture {
     async fn publish(&self, event: RuntimeEventEnvelope) {
         self.state
             .lock()

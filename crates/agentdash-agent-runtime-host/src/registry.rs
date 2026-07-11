@@ -5,7 +5,6 @@ use agentdash_integration_api::{
     AgentServiceDefinitionId,
 };
 use jsonschema::validator_for;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -163,7 +162,7 @@ impl AgentServiceDefinitionRegistry {
 }
 
 pub fn schema_digest(value: &serde_json::Value) -> String {
-    format!("sha256:{:x}", Sha256::digest(canonical_json(value)))
+    agentdash_integration_api::agent_service_schema_digest(value)
 }
 
 pub fn canonical_json(value: &serde_json::Value) -> Vec<u8> {

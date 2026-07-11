@@ -89,10 +89,8 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   workspace_module_present_failed: "Workspace Module 展示失败",
   context_frame:          "Agent 上下文",
   session_branch_forked:           "会话已分叉",
-  provider_attempt_status:         "模型状态",
   provider_retry:                  "模型重试",
   provider_status:                 "模型状态",
-  session_rewound:                 "SESSION_REWOUND",
   hook_event:                      "流程事件",
 };
 
@@ -111,15 +109,12 @@ const EVENT_TYPE_DEFAULT_MESSAGES: Record<string, string> = {
   workspace_module_present_failed: "后端未找到可展示的 Workspace Module 视图",
   context_frame:          "Agent 上下文已更新",
   session_branch_forked:           "已从父会话分叉出当前会话",
-  provider_attempt_status:         "模型服务状态更新",
   provider_retry:                  "模型服务正在重试",
   provider_status:                 "模型服务状态更新",
-  session_rewound:                 "已丢弃失败轮次，恢复到上一稳定状态",
   hook_event:                      "流程产生新事件",
 };
 
 const VERBOSE_ONLY_EVENT_TYPES = new Set([
-  "provider_attempt_status",
   "provider_retry",
   "provider_status",
 ]);
@@ -562,20 +557,6 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
   if (eventType === "executor_session_bound") {
     const esId = typeof data.executor_session_id === "string" ? data.executor_session_id : null;
     if (esId) lines.push(`执行器会话：${esId.slice(0, 12)}...`);
-    return lines;
-  }
-
-  if (eventType === "session_rewound") {
-    const discardedTurnId = typeof data.discarded_turn_id === "string" ? data.discarded_turn_id : null;
-    const stableTurnId = typeof data.stable_turn_id === "string" ? data.stable_turn_id : null;
-    const replacementTurnId = typeof data.replacement_turn_id === "string" ? data.replacement_turn_id : null;
-    const reason = typeof data.reason === "string" ? data.reason : null;
-    const stableEventSeq = readOptionalNumber(data.stable_event_seq);
-    if (discardedTurnId) lines.push(`丢弃轮次：${discardedTurnId}`);
-    if (stableTurnId) lines.push(`稳定轮次：${stableTurnId}`);
-    if (stableEventSeq != null) lines.push(`稳定事件序号：${stableEventSeq}`);
-    if (replacementTurnId) lines.push(`替换轮次：${replacementTurnId}`);
-    if (reason) lines.push(`原因：${reason}`);
     return lines;
   }
 

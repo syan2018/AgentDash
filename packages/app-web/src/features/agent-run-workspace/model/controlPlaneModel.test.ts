@@ -1,9 +1,9 @@
 ﻿import { describe, expect, it } from "vitest";
 
 import type {
-  BackboneEvent,
   ControlPlaneProjection,
   ControlPlaneProjectionChangeReason,
+  ControlPlaneProjectionChanged,
 } from "../../../generated/backbone-protocol";
 import type {
   AgentRunOwnershipView,
@@ -23,7 +23,7 @@ import {
 } from "./conversationCommandState";
 import {
   planAgentRunMessageSent,
-  planAgentRunSystemEvent,
+  planAgentRunControlPlaneProjectionChanged,
   planAgentRunTurnEnded,
   planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
@@ -87,22 +87,15 @@ function controlPlaneProjectionEvent(data: {
     payload: null;
     diagnostics: null;
   } | null;
-}): BackboneEvent {
+}): ControlPlaneProjectionChanged {
   return {
-    type: "platform",
-    payload: {
-      kind: "control_plane_projection_changed",
-      data: {
-        run_id: "run-1",
-        agent_id: "agent-1",
-        frame_id: null,
-        gate_id: null,
-        mailbox_message_id: null,
-        delivery_runtime_session_id: null,
-        workspace_module_presentation: null,
-        ...data,
-      },
-    },
+    run_id: "run-1",
+    agent_id: "agent-1",
+    frame_id: null,
+    gate_id: null,
+    mailbox_message_id: null,
+    workspace_module_presentation: null,
+    ...data,
   };
 }
 
@@ -135,7 +128,8 @@ describe("AgentRun control-plane model", () => {
     const result = resolveAgentRunSubmitCommand(commandState, submitIntent("cmd-submit"));
 
     if (!result.ok) throw new Error(result.message);
-    expect(result.command).toBe(submit);
+    expect(result.command).toBe(commandState.commands.commands[0]);
+    expect(result.command.enabled).toBe(false);
   });
 
   it("resolves submit intent against local draft command", () => {
@@ -210,8 +204,7 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("plans workspace and list refresh from typed control-plane projection changes", () => {
-    const plan = planAgentRunSystemEvent(
-      "control_plane_projection_changed",
+    const plan = planAgentRunControlPlaneProjectionChanged(
       controlPlaneProjectionEvent({
         projection: "mailbox",
         reason: "mailbox_state_changed",
@@ -225,8 +218,7 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("plans resource surface and hook refresh from typed capability projection changes", () => {
-    const plan = planAgentRunSystemEvent(
-      "control_plane_projection_changed",
+    const plan = planAgentRunControlPlaneProjectionChanged(
       controlPlaneProjectionEvent({
         projection: "resource_surface",
         reason: "capability_state_changed",
@@ -243,8 +235,7 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("opens Canvas presentation from typed projection payload after refreshing runtime surface", () => {
-    const plan = planAgentRunSystemEvent(
-      "control_plane_projection_changed",
+    const plan = planAgentRunControlPlaneProjectionChanged(
       controlPlaneProjectionEvent({
         projection: "resource_surface",
         reason: "capability_state_changed",
@@ -278,8 +269,7 @@ describe("AgentRun control-plane model", () => {
   });
 
   it("does not synthesize Canvas presentation URI from view_key", () => {
-    const plan = planAgentRunSystemEvent(
-      "control_plane_projection_changed",
+    const plan = planAgentRunControlPlaneProjectionChanged(
       controlPlaneProjectionEvent({
         projection: "resource_surface",
         reason: "capability_state_changed",

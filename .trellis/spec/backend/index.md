@@ -27,13 +27,14 @@
 | [Integration Agent Runtime Driver Host](./agent-runtime-driver-host.md) | service contribution、offer、sticky binding、lease与source fencing合同 |
 | [Native Agent Runtime Adapter and Clean Agent Core](./agent-runtime-native-adapter.md) | Native driver、exact context、truthful profile与Clean Core合同 |
 | [Codex App Server Runtime Adapter](./agent-runtime-codex-adapter.md) | App Server lifecycle、typed input/interaction、opaque context与native Hook合同 |
+| [AgentRun Runtime Facade and Product Cutover](./agent-runtime-agentrun-facade.md) | 产品命令映射、canonical Runtime读写边界、生产装配与旧schema切换合同 |
 | [Embedded Skill Bundles](./embedded-skill-bundles.md) | 源码内嵌 skill bundle 契约 |
 
 ## 模块 Architecture
 
 | 模块 | 主文档 | Appendices |
 | --- | --- | --- |
-| session | [Session Architecture](./session/architecture.md) | [startup](./session/session-startup-pipeline.md), [runtime state](./session/runtime-execution-state.md), [agentrun mailbox](./session/agentrun-mailbox.md), [execution frames](./session/execution-context-frames.md), [bundle](./session/bundle-main-datasource.md), [streaming](./session/streaming-protocol.md), [pi-agent streaming](./session/pi-agent-streaming.md), [context compaction projection](./session/context-compaction-projection.md) |
+| agent runtime conversation | [Agent Runtime Conversation Architecture](./session/architecture.md) | [runtime kernel](./agent-runtime-kernel.md), [persistence](./agent-runtime-persistence.md), [context](./agent-runtime-context.md), [facade](./agent-runtime-agentrun-facade.md) |
 | workflow | [Workflow Architecture](./workflow/architecture.md) | [activity lifecycle](./workflow/activity-lifecycle.md), [lifecycle edge](./workflow/lifecycle-edge.md), [lifecycle run link](./workflow/lifecycle-run-link.md), [story task runtime](./story-task-runtime.md) |
 | vfs | [VFS Architecture](./vfs/architecture.md) | [vfs access](./vfs/vfs-access.md), [materialization](./vfs/vfs-materialization.md) |
 | hooks | [Hooks Architecture](./hooks/architecture.md) | [execution hook runtime](./hooks/execution-hook-runtime.md), [hook script engine](./hooks/hook-script-engine.md) |

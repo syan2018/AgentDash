@@ -6,8 +6,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
-use agentdash_application_agentrun::agent_run::AgentRunTerminalLaunchTarget;
 use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
+use agentdash_application_ports::agent_run_surface::AgentRunTerminalLaunchTarget;
 use agentdash_relay::*;
 
 use crate::auth::{CurrentUser, ProjectPermission};

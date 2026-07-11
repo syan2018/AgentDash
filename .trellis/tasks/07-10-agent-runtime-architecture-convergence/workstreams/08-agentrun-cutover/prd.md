@@ -32,10 +32,10 @@
 
 ## Acceptance Criteria
 
-- [ ] Application只依赖AgentRun facade/owned Runtime contract。
-- [ ] 生产composition不存在Pi/Codex/Relay connector硬编码。
-- [ ] UI命令只由bound profile + session state推导。
-- [ ] 搜索不到旧runtime-session、connector capability OR、false success与vendor DTO泄漏。
-- [ ] 新数据库schema是唯一读写路径，无dual write、fallback或兼容层。
-- [ ] Native、Codex、Enterprise remote代表性E2E通过；首期不存在ACP driver/endpoint生产路径。
-- [ ] 最终spec只记录目标职责、语义不变量与选择依据。
+- [x] Application只依赖AgentRun facade/owned Runtime contract。
+- [x] 生产composition不存在Pi/Codex/Relay connector硬编码。
+- [x] UI命令只由bound profile + session state推导。
+- [x] 搜索不到旧runtime-session、connector capability OR、false success与vendor DTO泄漏。
+- [x] 新数据库schema是唯一读写路径，无dual write、fallback或兼容层。
+- [x] Native、Codex、Enterprise remote代表性E2E通过；首期不存在ACP driver/endpoint生产路径。
+- [x] 最终spec只记录目标职责、语义不变量与选择依据。

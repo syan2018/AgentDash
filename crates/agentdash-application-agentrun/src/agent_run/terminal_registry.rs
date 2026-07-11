@@ -29,6 +29,16 @@ pub struct AgentRunKey {
     pub agent_id: String,
 }
 
+pub struct TerminalOutputSnapshot<'a> {
+    pub terminal_id: &'a str,
+    pub stdout: &'a str,
+    pub stderr: &'a str,
+    pub pty: &'a str,
+    pub next_seq: Option<u64>,
+    pub truncated: bool,
+    pub omitted_bytes: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalState {
@@ -192,16 +202,16 @@ impl AgentRunTerminalRegistry {
         }
     }
 
-    pub fn record_output_snapshot(
-        &self,
-        terminal_id: &str,
-        stdout: &str,
-        stderr: &str,
-        pty: &str,
-        next_seq: Option<u64>,
-        truncated: bool,
-        omitted_bytes: usize,
-    ) {
+    pub fn record_output_snapshot(&self, snapshot: TerminalOutputSnapshot<'_>) {
+        let TerminalOutputSnapshot {
+            terminal_id,
+            stdout,
+            stderr,
+            pty,
+            next_seq,
+            truncated,
+            omitted_bytes,
+        } = snapshot;
         let mut cache = self.inner.write().unwrap();
         for terminals in cache.values_mut() {
             if let Some(entry) = terminals.get_mut(terminal_id) {

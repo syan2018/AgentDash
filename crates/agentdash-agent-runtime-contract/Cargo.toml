@@ -19,3 +19,4 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 ts-rs = { workspace = true }
 tempfile = { workspace = true }
+sha2 = { workspace = true }

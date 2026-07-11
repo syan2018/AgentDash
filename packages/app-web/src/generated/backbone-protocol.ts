@@ -58,7 +58,7 @@ export type BackboneEnvelope = { event: BackboneEvent, sessionId: string, source
  * 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
  * `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
  */
-export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_updated", "payload": ItemUpdatedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "turn_started", "payload": TurnStartedNotification } | { "type": "turn_completed", "payload": TurnCompletedNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "user_input_submitted", "payload": UserInputSubmittedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "thread_status_changed", "payload": ThreadStatusChangedNotification } | { "type": "executor_context_compacted", "payload": ContextCompactedNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
+export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_updated", "payload": ItemUpdatedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "user_input_submitted", "payload": UserInputSubmittedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
 
 export type ByteRange = { start: number, end: number, };
 
@@ -140,18 +140,13 @@ export type CommandExecutionSource = "agent" | "userShell" | "unifiedExecStartup
 
 export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
 
-/**
- * Deprecated: Use `ContextCompaction` item type instead.
- */
-export type ContextCompactedNotification = { threadId: string, turnId: string, };
-
 export type ContextUsageSource = "provider" | "providerPlusEstimate" | "localEstimate";
 
 export type ControlPlaneProjection = "workspace" | "agent_run_list" | "mailbox" | "waiting" | "delivery" | "hook_runtime" | "resource_surface" | "title";
 
 export type ControlPlaneProjectionChangeReason = "agent_run_lineage_changed" | "agent_run_shell_changed" | "agent_run_activity_changed" | "mailbox_state_changed" | "wait_resolved" | "delivery_terminal" | "companion_result" | "hook_effect_applied" | "hook_auto_resume_queued" | "workspace_module_presented" | "capability_state_changed" | "context_frame_changed" | "title_changed";
 
-export type ControlPlaneProjectionChanged = { projection: ControlPlaneProjection, reason: ControlPlaneProjectionChangeReason, run_id: string, agent_id: string, frame_id: string | null, gate_id: string | null, mailbox_message_id: string | null, delivery_runtime_session_id: string | null, workspace_module_presentation: ControlPlaneWorkspaceModulePresentation | null, };
+export type ControlPlaneProjectionChanged = { projection: ControlPlaneProjection, reason: ControlPlaneProjectionChangeReason, run_id: string, agent_id: string, frame_id: string | null, gate_id: string | null, mailbox_message_id: string | null, workspace_module_presentation: ControlPlaneWorkspaceModulePresentation | null, };
 
 export type ControlPlaneWorkspaceModulePresentation = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload: JsonValue | null, diagnostics: JsonValue | null, };
 
@@ -276,11 +271,7 @@ export type PlanDeltaNotification = { threadId: string, turnId: string, itemId: 
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
-
-export type ProviderAttemptPhase = "connecting" | "connected_waiting_first_delta" | "streaming" | "retry_scheduled" | "retrying" | "failed" | "succeeded";
-
-export type ProviderAttemptStatus = { turn_id: string, phase: ProviderAttemptPhase, attempt: number, max_attempts: number, will_retry: boolean, delay_ms: bigint | null, reason_code: string | null, message: string | null, provider: string | null, model: string | null, };
+export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
 
 /**
  * See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning
@@ -294,12 +285,6 @@ export type ReasoningTextDeltaNotification = { threadId: string, turnId: string,
 export type RequestId = string | number;
 
 export type RequestPermissionProfile = { network: AdditionalNetworkPermissions | null, fileSystem: AdditionalFileSystemPermissions | null, };
-
-export type RuntimeTerminalDiagnostic = { kind: string, code: string | null, http_status: number | null, provider: string | null, model: string | null, message: string, retryable: boolean, };
-
-export type SessionRewindReason = "provider_retry" | "provider_failure" | "runtime_failure";
-
-export type SessionRewound = { discarded_turn_id: string, discarded_entry_index: number | null, stable_event_seq: bigint, stable_turn_id: string | null, reason: SessionRewindReason, replacement_turn_id: string | null, message: string | null, };
 
 export type ShellExecExecutionMode = "platform" | "mountExec";
 
@@ -319,8 +304,6 @@ byteRange: ByteRange,
  * Optional human-readable placeholder for the element, displayed in the UI.
  */
 placeholder: string | null, };
-
-export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
 
 export type ThreadItem = { "type": "userMessage", id: string, clientId: string | null, content: Array<UserInput>, } | { "type": "hookPrompt", id: string, fragments: Array<HookPromptFragment>, } | { "type": "agentMessage", id: string, text: string, phase: MessagePhase | null, memoryCitation: MemoryCitation | null, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", id: string, summary: Array<string>, content: Array<string>, } | { "type": "commandExecution", id: string,
 /**
@@ -399,10 +382,6 @@ reasoningEffort: ReasoningEffort | null,
  */
 agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "subAgentActivity", id: string, kind: SubAgentActivityKind, agentThreadId: string, agentPath: string, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null, result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
 
-export type ThreadStatus = { "type": "notLoaded" } | { "type": "idle" } | { "type": "systemError" } | { "type": "active", activeFlags: Array<ThreadActiveFlag>, };
-
-export type ThreadStatusChangedNotification = { threadId: string, status: ThreadStatus, };
-
 export type ThreadTokenUsage = { total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number | null, context: NormalizedContextUsage, };
 
 export type ThreadTokenUsageUpdatedNotification = { threadId: string, turnId: string, tokenUsage: ThreadTokenUsage, };
@@ -455,8 +434,6 @@ completedAt: number | null,
  */
 durationMs: number | null, };
 
-export type TurnCompletedNotification = { threadId: string, turn: Turn, };
-
 /**
  * Notification that the turn-level unified diff has changed.
  * Contains the latest aggregated diff across all file changes in the turn.
@@ -472,8 +449,6 @@ export type TurnPlanStep = { step: string, status: TurnPlanStepStatus, };
 export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
 
 export type TurnPlanUpdatedNotification = { threadId: string, turnId: string, explanation: string | null, plan: Array<TurnPlanStep>, };
-
-export type TurnStartedNotification = { threadId: string, turn: Turn, };
 
 export type TurnStatus = "completed" | "interrupted" | "failed" | "inProgress";
 

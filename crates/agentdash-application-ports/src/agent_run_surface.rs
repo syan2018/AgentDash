@@ -53,6 +53,7 @@ pub struct AgentRunRuntimeSurface {
     pub surface_revision: i32,
     pub capability_state: CapabilityState,
     pub vfs: Vfs,
+    pub vfs_access_policy: agentdash_spi::RuntimeVfsAccessPolicy,
     pub mcp_servers: Vec<RuntimeMcpServer>,
     pub runtime_backend_anchor: Option<RuntimeBackendAnchor>,
     pub active_turn_id: Option<String>,

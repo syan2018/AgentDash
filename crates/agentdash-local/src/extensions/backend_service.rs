@@ -948,7 +948,7 @@ fn status_from_instance(instance: &BackendServiceInstance) -> ExtensionBackendSe
         endpoint: Some(instance.endpoint.clone()),
         pid: instance.child.id(),
         materialization: Some(instance.materialization.clone()),
-        updated_at: instance.updated_at.clone(),
+        updated_at: instance.updated_at,
     }
 }
 

@@ -4,10 +4,11 @@ use agentdash_agent_runtime_contract::{
     HookPointCapability, HookProfile, HookRequirement, InputModality, InputProfile,
     InstructionProfile, InteractionProfile, LifecycleCapability, ProfileProvenance,
     ReferenceRuntimeClass, RuntimeCommand, RuntimeCommandKind, RuntimeDescriptor,
-    RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope, RuntimeInput, RuntimeOperationId,
-    RuntimeOperationTerminal, RuntimeProfile, RuntimeRevision, RuntimeThreadStatus, RuntimeTurnId,
-    SemanticStrength, TelemetryCapability, ToolChannel, ToolProfile, WorkspaceCapability,
-    WorkspaceProfile, command_availability, intersect_profile_layers,
+    RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope, RuntimeInput, RuntimeItemContent,
+    RuntimeOperationId, RuntimeOperationTerminal, RuntimeProfile, RuntimeRevision,
+    RuntimeThreadStatus, RuntimeTurnId, SemanticStrength, TelemetryCapability, ToolChannel,
+    ToolProfile, WorkspaceCapability, WorkspaceProfile, command_availability,
+    intersect_profile_layers,
 };
 
 use super::*;
@@ -201,6 +202,9 @@ fn final_item_is_authoritative_and_delta_after_terminal_is_invalid() {
         .observe(&envelope(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
+            initial_content: RuntimeItemContent::AgentMessage {
+                text: String::new(),
+            },
         }))
         .expect("start item");
     validator
@@ -232,6 +236,9 @@ fn item_terminal_cannot_change_thread_or_turn_parent() {
         .observe(&envelope(RuntimeEvent::ItemStarted {
             turn_id: id("turn-1"),
             item_id: item_id.clone(),
+            initial_content: RuntimeItemContent::AgentMessage {
+                text: String::new(),
+            },
         }))
         .expect("start item");
 

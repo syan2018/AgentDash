@@ -5,7 +5,6 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_application_ports::agent_run_surface as ports_agent_run_surface;
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::canvas::CanvasRepository;
@@ -357,27 +356,14 @@ impl<'a> OwnerBootstrapComposer<'a> {
         }
 
         let mut vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
-            let anchor = match spec.audit_session_key.as_deref() {
-                Some(session_id) => self
-                    .repos
-                    .execution_anchor_repo
-                    .find_by_session(session_id)
-                    .await
-                    .map_err(|error| error.to_string())?,
+            let runtime_refs = match spec.audit_session_key.as_deref() {
+                Some(session_id) => {
+                    super::resolve_runtime_surface_refs(self.repos, session_id).await?
+                }
                 None => None,
             };
-            match anchor {
-                Some(anchor) => {
-                    let address = ports_agent_run_surface::AgentRunRuntimeAddress {
-                        run_id: anchor.run_id,
-                        agent_id: anchor.agent_id,
-                        frame_id: anchor.launch_frame_id,
-                    };
-                    let message_stream = ports_lifecycle_surface::MessageStreamProjectionRef {
-                        runtime_session_id: anchor.runtime_session_id,
-                        trace_kind:
-                            ports_lifecycle_surface::MessageStreamTraceKind::ConnectorRuntimeSession,
-                    };
+            match runtime_refs {
+                Some((address, message_stream)) => {
                     let builtin_skills =
                         ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(
                             vec![

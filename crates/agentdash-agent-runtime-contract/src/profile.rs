@@ -4,6 +4,35 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+pub fn runtime_profile_digest(profile: &RuntimeProfile) -> crate::ProfileDigest {
+    use sha2::{Digest, Sha256};
+
+    fn canonicalize(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(object) => {
+                let mut entries = object.iter().collect::<Vec<_>>();
+                entries.sort_by(|left, right| left.0.cmp(right.0));
+                serde_json::Value::Object(
+                    entries
+                        .into_iter()
+                        .map(|(key, value)| (key.clone(), canonicalize(value)))
+                        .collect(),
+                )
+            }
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.iter().map(canonicalize).collect())
+            }
+            other => other.clone(),
+        }
+    }
+
+    let value = serde_json::to_value(profile).expect("RuntimeProfile serialization cannot fail");
+    let bytes = serde_json::to_vec(&canonicalize(&value))
+        .expect("RuntimeProfile canonical serialization cannot fail");
+    crate::ProfileDigest::new(format!("sha256:{:x}", Sha256::digest(bytes)))
+        .expect("RuntimeProfile digest is non-empty")
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, TS,
 )]

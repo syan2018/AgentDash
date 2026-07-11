@@ -83,7 +83,7 @@ Agent 运转只需要三个业务参数：
 | `global_or_user` | 当前用户有 BYOK 时优先使用用户 Key，否则使用全局 Key |
 | `user_required` | 只使用当前用户 BYOK；没有用户身份或用户 Key 时不可执行 |
 
-PiAgent prompt 和 discovered-options discovery 需要按当前 `AuthIdentity` 解析 effective Provider。HTTP prompt 已通过 `ExecutionSessionFrame.identity` 携带身份；discovered-options 通过 `DiscoveryContext.identity` 传入 connector。无身份的系统级执行只解析全局凭据。OpenAI-compatible 的本地无 Key 端点可以以 `credential_source = none` 进入运行态，原因是该协议承载 Ollama 等无鉴权端点；`user_required` 不适用无 Key 端点。
+Native Runtime provisioning按`AuthIdentity`构造明确credential scope；factory通过`RepositoryNativeBridgeResolver`解析effective Provider。无身份只允许显式platform scope，user_required不回退。OpenAI-compatible本地无Key端点可声明`credential_source=none`。
 
 DB-backed Key 的加解密通过 `LlmSecretCodec` 端口完成，当前基础设施实现使用 AES-GCM 主密钥：部署可以通过 `AGENTDASH_SECRET_KEY` 显式指定；未指定时服务端会在 AgentDash 数据根下创建并复用本地 master key 文件。这样本地开发和 embedded Postgres 数据生命周期保持一致，同时 API 响应只暴露配置状态、来源和脱敏 preview，运行态 secret 只在 resolver 到 bridge 构建链路内短暂存在。
 
@@ -123,11 +123,12 @@ agent.pi.system_prompt       # PiAgent 系统提示词
 ## 数据流
 
 ```
-AgentRunWorkspacePage / Agent 入口 → LifecycleAgent message command { prompt_blocks, executor_config }
-  → AgentFrame / LifecycleAgent 解析 delivery RuntimeSession
-  → Runtime delivery pipeline 按 model_id 选择 provider bridge
-  → agent.set_thinking_level(thinking_level)
-  → AgentLoop → LLM API
+AgentRun product command + AuthIdentity
+  → Business Surface编译provider/model期望
+  → Native service instance(config + credential scope)
+  → trusted factory解析LlmBridge
+  → Host offer/binding + Managed Runtime operation
+  → Native Driver → AgentLoop → LLM API
 ```
 
 ## Scenario: Companion SubAgent Model Preflight
@@ -228,24 +229,17 @@ companion_request(target=sub)
   -> open wait gate / launch child only when executable
 ```
 
-## PiAgent Live Runtime 模型切换
+## Native Agent Runtime 模型绑定
 
-PiAgent 的 `LlmBridge` 在 `Agent::new(bridge, config)` 时绑定具体 provider/model。
-同一个 `session_id` 的 live runtime 会跨 turn 复用 Agent 以保留会话历史、工具状态和
-identity prompt，因此后续 prompt 的 `executor_config.provider_id/model_id` 变化必须在
-connector 边界显式投影到 Agent bridge。
+Native Integration service instance保存明确provider/model与credential scope；factory激活时通过repository+secret codec解析`LlmBridge`。配置与surface revision绑定到durable Runtime binding，不能在turn中静默切换provider。
 
 ### 契约
 
-- 每次 `PiAgentConnector::prompt` 从 `ExecutionContext.session.executor_config` 读取当前
-  `provider_id` 与 `model_id`，空白值按 `None` 处理。
-- live runtime 记录上一次已绑定 bridge 的模型选择。
-- 如果当前模型选择与 live runtime 记录不同，connector 必须用新 bridge 重建 Agent，并把
-  existing Agent 的消息历史、当前工具列表和已应用的 identity prompt 带入新 Agent。
-- `thinking_level` 不要求重建 Agent；每轮 prompt 前调用 `agent.set_thinking_level(...)`
-  即可生效。
-- `AgentFrame.execution_profile` 记录当前生效配置；真正发往 LLM 的模型由 connector
-  runtime bridge 决定，测试需要覆盖 connector bridge 选择而不只检查 runtime trace。
+- user credential scope必须带authenticated user coordinate，不回退platform credential。
+- provider/model不存在、blocked或credential缺失在Driver factory side effect前返回typed unavailable/invalid configuration。
+- model/surface变化创建新的service instance revision/offer generation；已有binding保持sticky，显式rebind才采用新revision。
+- secret不进入instance JSON、RuntimeOffer、RuntimeWire或日志。
+- 测试覆盖provider extraction、scope、error mapping与无fallback。
 
 ---
 

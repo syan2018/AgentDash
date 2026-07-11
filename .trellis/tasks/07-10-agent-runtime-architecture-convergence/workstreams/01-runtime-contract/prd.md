@@ -22,13 +22,13 @@
 
 ## Acceptance Criteria
 
-- [ ] Canonical/source IDs 在类型系统中不可混用。
-- [ ] accepted、running、terminal、Lost 与 retryable error 语义有 executable tests。
-- [ ] final Item authoritative、terminal 后 delta 非法有 executable tests。
-- [ ] unsupported command 在 side effect 前返回 typed error，不存在 default no-op。
-- [ ] service/transport/host policy profile intersection 与 CommandAvailability tests 通过。
-- [ ] Rust/TypeScript/JSON Schema 由同一 owned contract 生成且不包含 vendor DTO。
-- [ ] 新 contract crate 的依赖图满足 parent design。
+- [x] Canonical/source IDs 在类型系统中不可混用。
+- [x] accepted、running、terminal、Lost 与 retryable error 语义有 executable tests。
+- [x] final Item authoritative、terminal 后 delta 非法有 executable tests。
+- [x] unsupported command 在 side effect 前返回 typed error，不存在 default no-op。
+- [x] service/transport/host policy profile intersection 与 CommandAvailability tests 通过。
+- [x] Rust/TypeScript/JSON Schema 由同一 owned contract 生成且不包含 vendor DTO。
+- [x] 新 contract crate 的依赖图满足 parent design。
 
 ## Out of Scope
 

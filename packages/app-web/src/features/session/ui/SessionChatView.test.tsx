@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../../../generated/common-contracts";
-import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
 import {
   computeProjectionRefreshKey,
@@ -17,17 +17,6 @@ import {
   isSessionComposerSubmitDisabled,
   isSessionModelRequirementSatisfied,
 } from "./SessionChatComposerState";
-
-const completedTurn: Turn = {
-  id: "turn-1",
-  items: [],
-  itemsView: "full",
-  status: "completed",
-  error: null,
-  startedAt: null,
-  completedAt: null,
-  durationMs: null,
-};
 
 function eventEnvelope(eventSeq: number, event: BackboneEvent, sessionId = "session-1"): SessionEventEnvelope {
   return {
@@ -85,28 +74,12 @@ function turnTerminalMetaEvent(terminalType: "turn_completed" | "turn_failed" | 
 describe("computeProjectionRefreshKey", () => {
   it("普通 delta event 不推进 projection refresh key", () => {
     const events = [
-      eventEnvelope(1, {
-        type: "turn_completed",
-        payload: { threadId: "thread-1", turn: completedTurn },
-      }),
+      eventEnvelope(1, turnTerminalMetaEvent("turn_completed")),
       eventEnvelope(2, agentDeltaEvent("assistant-1")),
       eventEnvelope(3, agentDeltaEvent("assistant-1")),
     ];
 
     expect(computeProjectionRefreshKey(events)).toBe(1);
-  });
-
-  it("外部 executor_context_compacted 不推进 projection refresh key", () => {
-    const events = [
-      eventEnvelope(1, agentDeltaEvent("assistant-1")),
-      eventEnvelope(2, {
-        type: "executor_context_compacted",
-        payload: { threadId: "thread-1", turnId: "turn-1" },
-      }),
-      eventEnvelope(3, agentDeltaEvent("assistant-2")),
-    ];
-
-    expect(computeProjectionRefreshKey(events)).toBe(0);
   });
 
   it("compaction_summary context_frame 会推进 projection refresh key", () => {
@@ -143,18 +116,6 @@ describe("computeProjectionRefreshKey", () => {
     expect(computeProjectionRefreshKey(events)).toBe(7);
   });
 
-  it("session_rewound meta event 会推进 projection refresh key", () => {
-    const events = [
-      eventEnvelope(1, agentDeltaEvent("assistant-1")),
-      eventEnvelope(8, platformMetaEvent("session_rewound", {
-        discarded_turn_id: "turn-1",
-        stable_event_seq: 0,
-        reason: "provider_retry",
-      })),
-    ];
-
-    expect(computeProjectionRefreshKey(events)).toBe(8);
-  });
 });
 
 describe("rawEventsBelongToRuntimeStreamTarget", () => {
@@ -288,29 +249,16 @@ describe("collectRenderableSystemEvents", () => {
 describe("collectTurnLifecycleEvents", () => {
   it("按边界只收集 live turn lifecycle 并推进 lastSeenSeq", () => {
     const events = [
-      eventEnvelope(8, {
-        type: "turn_completed",
-        payload: { threadId: "thread-1", turn: completedTurn },
-      }),
+      eventEnvelope(8, turnTerminalMetaEvent("turn_completed")),
       eventEnvelope(10, turnTerminalMetaEvent("turn_completed")),
-      eventEnvelope(11, {
-        type: "turn_started",
-        payload: {
-          threadId: "thread-1",
-          turn: { ...completedTurn, id: "turn-2", status: "inProgress" },
-        },
-      }),
       eventEnvelope(12, turnTerminalMetaEvent("turn_failed")),
     ];
 
     const result = collectTurnLifecycleEvents(events, 10);
 
     expect(result.lastSeenSeq).toBe(12);
-    expect(result.items.map((item) => item.eventSeq)).toEqual([11, 12]);
-    expect(result.items.map((item) => item.eventType)).toEqual([
-      "turn_started",
-      "turn_failed",
-    ]);
+    expect(result.items.map((item) => item.eventSeq)).toEqual([12]);
+    expect(result.items.map((item) => item.eventType)).toEqual(["turn_failed"]);
   });
 });
 

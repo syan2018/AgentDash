@@ -6,8 +6,6 @@ use axum::{
 };
 use uuid::Uuid;
 
-use agentdash_application::permission::PermissionGrantService;
-use agentdash_application_agentrun::agent_run::AgentRunPermissionRuntimeSurfaceUpdateService;
 use agentdash_contracts::permission::{
     ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
     PermissionGrantStatusDto, PermissionGrantStatusGroupDto, PermissionGrantVfsAccessRuleDto,
@@ -181,18 +179,6 @@ pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/permission-grants", axum::routing::get(list_grants))
         .route("/permission-grants/{id}", axum::routing::get(get_grant))
-        .route(
-            "/permission-grants/{id}/approve",
-            axum::routing::post(approve_grant),
-        )
-        .route(
-            "/permission-grants/{id}/reject",
-            axum::routing::post(reject_grant),
-        )
-        .route(
-            "/permission-grants/{id}/revoke",
-            axum::routing::post(revoke_grant),
-        )
 }
 
 // ── Query params ──
@@ -252,74 +238,4 @@ pub async fn get_grant(
         .ok_or_else(|| ApiError::NotFound(format!("grant not found: {grant_id}")))?;
 
     Ok(Json(grant_to_dto(&grant)))
-}
-
-/// POST /permission-grants/:id/approve
-pub async fn approve_grant(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(grant_id): Path<String>,
-) -> Result<Json<PermissionGrantResponse>, ApiError> {
-    let id: Uuid = grant_id
-        .parse()
-        .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
-
-    let runtime_surface_updates =
-        AgentRunPermissionRuntimeSurfaceUpdateService::with_active_adopter(
-            state.repos.agent_frame_repo.clone(),
-            Arc::new(state.services.runtime_surface_update.clone()),
-        );
-    let result = PermissionGrantService::new_with_runtime_surface_updates(
-        state.repos.permission_grant_repo.clone(),
-        runtime_surface_updates,
-    )
-    .approve(id, &current_user.user_id)
-    .await?;
-
-    Ok(Json(grant_to_dto(&result.grant)))
-}
-
-/// POST /permission-grants/:id/reject
-pub async fn reject_grant(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
-    Path(grant_id): Path<String>,
-) -> Result<Json<PermissionGrantResponse>, ApiError> {
-    let id: Uuid = grant_id
-        .parse()
-        .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
-
-    let grant = PermissionGrantService::new(
-        state.repos.permission_grant_repo.clone(),
-        state.repos.agent_frame_repo.clone(),
-    )
-    .reject(id)
-    .await?;
-
-    Ok(Json(grant_to_dto(&grant)))
-}
-
-/// POST /permission-grants/:id/revoke
-pub async fn revoke_grant(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
-    Path(grant_id): Path<String>,
-) -> Result<Json<PermissionGrantResponse>, ApiError> {
-    let id: Uuid = grant_id
-        .parse()
-        .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
-
-    let runtime_surface_updates =
-        AgentRunPermissionRuntimeSurfaceUpdateService::with_active_adopter(
-            state.repos.agent_frame_repo.clone(),
-            Arc::new(state.services.runtime_surface_update.clone()),
-        );
-    let result = PermissionGrantService::new_with_runtime_surface_updates(
-        state.repos.permission_grant_repo.clone(),
-        runtime_surface_updates,
-    )
-    .revoke(id)
-    .await?;
-
-    Ok(Json(grant_to_dto(&result.grant)))
 }

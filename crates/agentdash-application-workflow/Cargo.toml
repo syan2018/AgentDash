@@ -20,5 +20,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+agentdash-agent-runtime-contract = { workspace = true }
 agentdash-test-support = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

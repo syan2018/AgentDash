@@ -147,16 +147,10 @@ impl RoutineDispatchRefs {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoutineMailboxDispatchRefs {
     pub mailbox_message_id: Uuid,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command_receipt_id: Option<Uuid>,
     pub client_command_id: String,
     pub outcome: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_run_turn_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub protocol_turn_id: Option<String>,
+    pub runtime_operation_id: Option<String>,
 }
 
 /// 每次触发产生的执行记录

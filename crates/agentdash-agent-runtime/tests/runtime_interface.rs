@@ -1,8 +1,8 @@
 use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
 use agentdash_agent_runtime::{
-    CommitFailurePoint, DriverEventAdmission, InMemoryRuntimeStore, ManagedAgentRuntime,
-    RuntimeKernelDefaults, RuntimeRepository,
+    CommitFailurePoint, DriverEventAdmission, ManagedAgentRuntime, RuntimeRepository,
+    RuntimeStoreFixture,
 };
 use agentdash_agent_runtime_contract::*;
 
@@ -60,20 +60,11 @@ fn profile() -> RuntimeProfile {
 }
 
 fn fixture() -> (
-    Arc<InMemoryRuntimeStore>,
-    ManagedAgentRuntime<InMemoryRuntimeStore>,
+    Arc<RuntimeStoreFixture>,
+    ManagedAgentRuntime<RuntimeStoreFixture>,
 ) {
-    let store = Arc::new(InMemoryRuntimeStore::default());
-    let runtime = ManagedAgentRuntime::new(
-        store.clone(),
-        RuntimeKernelDefaults {
-            binding_id: id("binding-1"),
-            driver_generation: RuntimeDriverGeneration(7),
-            source_thread_id: id("source-1"),
-            profile_digest: id("profile-1"),
-            bound_profile: profile(),
-        },
-    );
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let runtime = ManagedAgentRuntime::new(store.clone());
     (store, runtime)
 }
 
@@ -102,10 +93,23 @@ fn start() -> RuntimeCommandEnvelope {
         "key-1",
         None,
         RuntimeCommand::ThreadStart {
+            thread_id: id("thread-source-1"),
+            binding_id: id("binding-1"),
+            driver_generation: RuntimeDriverGeneration(7),
+            source_thread_id: id("source-1"),
+            profile_digest: id("profile-1"),
+            bound_profile: Box::new(profile()),
             input: vec![RuntimeInput::Text {
                 text: "hello".to_string(),
             }],
             surface_digest: id("surface-1"),
+            settings_revision: ThreadSettingsRevision(0),
+            tool_set_revision: ToolSetRevision(0),
+            hook_plan: BoundRuntimeHookPlan {
+                revision: HookPlanRevision(1),
+                digest: id("hook-plan-empty-1"),
+                entries: Vec::new(),
+            },
         },
     )
 }
@@ -122,7 +126,7 @@ fn driver(event: RuntimeEvent) -> DriverEventEnvelope {
 }
 
 async fn thread_snapshot(
-    runtime: &ManagedAgentRuntime<InMemoryRuntimeStore>,
+    runtime: &ManagedAgentRuntime<RuntimeStoreFixture>,
     thread_id: RuntimeThreadId,
 ) -> RuntimeSnapshot {
     match runtime
@@ -134,7 +138,9 @@ async fn thread_snapshot(
         .expect("snapshot")
     {
         RuntimeSnapshotResult::Thread { snapshot } => *snapshot,
-        RuntimeSnapshotResult::Context { .. } => panic!("expected thread snapshot"),
+        RuntimeSnapshotResult::Operation { .. } | RuntimeSnapshotResult::Context { .. } => {
+            panic!("expected thread snapshot")
+        }
     }
 }
 
@@ -154,6 +160,13 @@ async fn acceptance_projection_journal_and_outbox_commit_atomically() {
             .expect("read")
             .is_none()
     );
+    assert!(
+        store
+            .load_hook_plan(&id("thread-source-1"))
+            .await
+            .expect("read hook plan")
+            .is_none()
+    );
 
     let receipt = runtime.execute(start()).await.expect("accepted");
     assert_eq!(receipt.operation_sequence.0, 1);
@@ -163,11 +176,39 @@ async fn acceptance_projection_journal_and_outbox_commit_atomically() {
         .await
         .expect("events")
         .events;
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), 3);
     assert!(matches!(
         events[0].event,
         RuntimeEvent::OperationAccepted { .. }
     ));
+    let hook_plan = store
+        .load_hook_plan(&id("thread-source-1"))
+        .await
+        .expect("read hook plan")
+        .expect("hook plan committed with ThreadStart");
+    assert_eq!(hook_plan.plan.revision, HookPlanRevision(1));
+}
+
+#[tokio::test]
+async fn accepted_operation_is_readable_by_canonical_operation_identity() {
+    let (_store, runtime) = fixture();
+    let receipt = runtime.execute(start()).await.expect("start accepted");
+    let result = runtime
+        .snapshot(RuntimeSnapshotQuery::Operation {
+            operation_id: receipt.operation_id.clone(),
+        })
+        .await
+        .expect("operation snapshot");
+    let RuntimeSnapshotResult::Operation { operation } = result else {
+        panic!("expected operation snapshot");
+    };
+    assert_eq!(operation.operation_id, receipt.operation_id);
+    assert_eq!(operation.receipt, receipt);
+    assert!(matches!(
+        operation.command,
+        RuntimeCommand::ThreadStart { .. }
+    ));
+    assert!(operation.terminal.is_none());
 }
 
 #[tokio::test]
@@ -178,6 +219,7 @@ async fn every_injected_write_stage_rolls_back_the_complete_acceptance_write_set
         CommitFailurePoint::AfterOperation,
         CommitFailurePoint::AfterEvents,
         CommitFailurePoint::AfterOutbox,
+        CommitFailurePoint::AfterContext,
     ] {
         let (store, runtime) = fixture();
         store.fail_next_commit_at(point);
@@ -214,6 +256,14 @@ async fn every_injected_write_stage_rolls_back_the_complete_acceptance_write_set
                 .is_empty(),
             "journal leaked at {point:?}"
         );
+        assert!(
+            store
+                .load_hook_plan(&id("thread-source-1"))
+                .await
+                .expect("read hook plan")
+                .is_none(),
+            "hook plan leaked at {point:?}"
+        );
     }
 }
 
@@ -242,7 +292,7 @@ async fn idempotency_expected_revision_and_operation_sequence_are_enforced() {
     ));
     assert_eq!(
         runtime
-            .execute(turn(2))
+            .execute(turn(3))
             .await
             .expect("turn accepted")
             .operation_sequence
@@ -273,7 +323,7 @@ async fn operation_identity_binds_actor_and_thread_scoped_key_to_the_typed_comma
         .execute(command(
             "op-2",
             "shared-key",
-            Some(2),
+            Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
                 input: Vec::new(),
@@ -284,7 +334,7 @@ async fn operation_identity_binds_actor_and_thread_scoped_key_to_the_typed_comma
     let mut changed_actor_and_payload = command(
         "op-3",
         "shared-key",
-        Some(4),
+        Some(5),
         RuntimeCommand::TurnInterrupt {
             thread_id,
             expected_turn_id: id("turn-op-2"),
@@ -314,7 +364,7 @@ async fn concurrent_mutations_allocate_sequences_only_for_the_cas_winner() {
     let turn = command(
         "op-2",
         "key-2",
-        Some(2),
+        Some(3),
         RuntimeCommand::TurnStart {
             thread_id: thread_id.clone(),
             input: Vec::new(),
@@ -323,7 +373,7 @@ async fn concurrent_mutations_allocate_sequences_only_for_the_cas_winner() {
     let settings = command(
         "op-3",
         "key-3",
-        Some(2),
+        Some(3),
         RuntimeCommand::ThreadSettingsUpdate {
             thread_id: thread_id.clone(),
             instructions: vec!["be precise".to_string()],
@@ -372,7 +422,7 @@ async fn event_cursor_distinguishes_future_cursor_from_retention_gap() {
         .execute(command(
             "op-2",
             "key-2",
-            Some(2),
+            Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
                 input: Vec::new(),
@@ -395,14 +445,14 @@ async fn event_cursor_distinguishes_future_cursor_from_retention_gap() {
         Err(RuntimeSubscribeError::CursorGap {
             requested: EventSequence(1),
             earliest_available: EventSequence(3),
-            latest_available: EventSequence(4),
+            latest_available: EventSequence(5),
         })
     ));
     assert!(matches!(
         runtime
             .events(RuntimeEventSubscription {
                 thread_id,
-                after: Some(EventSequence(5)),
+                after: Some(EventSequence(6)),
                 include_transient: false,
             })
             .await,
@@ -423,7 +473,7 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
         .execute(command(
             "op-2",
             "key-2",
-            Some(2),
+            Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
                 input: Vec::new(),
@@ -573,7 +623,7 @@ async fn driver_cannot_forge_runtime_owned_hook_transitions() {
         .expect("thread")
         .expect("state");
     assert_eq!(projection.status, RuntimeThreadStatus::Lost);
-    assert!(projection.hook_plan_revision.is_none());
+    assert_eq!(projection.hook_plan_revision, Some(HookPlanRevision(1)));
     assert!(matches!(
         store.quarantined().await.as_slice(),
         [agentdash_agent_runtime::QuarantinedDriverEvent {
@@ -597,7 +647,7 @@ async fn transient_delta_has_no_durable_cursor() {
         .execute(command(
             "op-2",
             "key-2",
-            Some(2),
+            Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
                 input: Vec::new(),
@@ -611,6 +661,9 @@ async fn transient_delta_has_no_durable_cursor() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
+            initial_content: RuntimeItemContent::AgentMessage {
+                text: String::new(),
+            },
         }))
         .await
         .expect("item");
@@ -626,7 +679,7 @@ async fn transient_delta_has_no_durable_cursor() {
         DriverEventAdmission::Transient
     );
     let durable = store
-        .events_after(&thread_id, Some(EventSequence(4)))
+        .events_after(&thread_id, Some(EventSequence(5)))
         .await
         .expect("tail")
         .events;
@@ -634,7 +687,7 @@ async fn transient_delta_has_no_durable_cursor() {
     let mut stream = runtime
         .events(RuntimeEventSubscription {
             thread_id,
-            after: Some(EventSequence(4)),
+            after: Some(EventSequence(5)),
             include_transient: true,
         })
         .await
@@ -672,7 +725,7 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
         .execute(command(
             "op-2",
             "key-2",
-            Some(2),
+            Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
                 input: Vec::new(),
@@ -687,6 +740,10 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
+            initial_content: RuntimeItemContent::ToolCall {
+                name: "fixture".to_string(),
+                arguments: serde_json::json!({}),
+            },
         }))
         .await
         .expect("item");
@@ -704,7 +761,7 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
         .execute(command(
             "op-3",
             "key-3",
-            Some(6),
+            Some(7),
             RuntimeCommand::InteractionRespond {
                 thread_id: thread_id.clone(),
                 interaction_id,
@@ -780,7 +837,7 @@ async fn binding_loss_atomically_converges_every_active_entity_to_lost() {
         .execute(command(
             "op-2",
             "key-2",
-            Some(2),
+            Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
                 input: Vec::new(),
@@ -795,6 +852,10 @@ async fn binding_loss_atomically_converges_every_active_entity_to_lost() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
+            initial_content: RuntimeItemContent::ToolCall {
+                name: "fixture".to_string(),
+                arguments: serde_json::json!({}),
+            },
         }))
         .await
         .expect("item");
@@ -859,7 +920,7 @@ async fn malformed_lifecycle_is_typed_quarantined_and_persists_critical_loss() {
         .execute(command(
             "op-2",
             "key-2",
-            Some(2),
+            Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
                 input: Vec::new(),
@@ -872,6 +933,9 @@ async fn malformed_lifecycle_is_typed_quarantined_and_persists_critical_loss() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: id("item-1"),
+            initial_content: RuntimeItemContent::AgentMessage {
+                text: String::new(),
+            },
         }))
         .await
         .expect("item");

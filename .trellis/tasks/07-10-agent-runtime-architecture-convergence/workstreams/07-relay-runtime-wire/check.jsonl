@@ -1,4 +1,4 @@
 {"file":".trellis/spec/cross-layer/deployment-runtime.md","reason":"复核Relay仅为placement transport"}
 {"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"复核typed frames、cursor与replay"}
-{"file":".trellis/spec/backend/session/streaming-protocol.md","reason":"复核lag/disconnect/duplicate terminal"}
+{"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"复核lag/disconnect/duplicate terminal"}
 {"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"复核持久stream、provenance、sequence、replay与异步event delivery"}

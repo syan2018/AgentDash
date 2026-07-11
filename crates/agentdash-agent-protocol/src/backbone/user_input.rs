@@ -68,10 +68,6 @@ impl UserInputSource {
         Self::new("core", "composer", "user")
     }
 
-    pub fn local_relay_prompt() -> Self {
-        Self::new("core", "local_relay_prompt", "user")
-    }
-
     pub fn companion_parent_resume() -> Self {
         Self::new("companion", "parent_resume", "agent").with_route("parent")
     }

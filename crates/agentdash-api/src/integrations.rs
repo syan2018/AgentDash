@@ -5,11 +5,10 @@ use std::sync::Arc;
 
 use agentdash_application_shared_library::IntegrationEmbeddedLibraryAssetSeed;
 use agentdash_integration_api::{
-    AgentDashIntegration, AgentRuntimeDriverContribution, AuthProvider, IdentityDirectoryProvider,
-    LibraryAssetType, MarketplaceSourceDescriptor, MarketplaceSourceProvider,
-    MemoryDiscoveryProvider, SkillDiscoveryProvider,
+    AgentDashIntegration, AgentRuntimeDriverContribution, AgentRuntimeTrustManifest, AuthProvider,
+    IdentityDirectoryProvider, LibraryAssetType, MarketplaceSourceDescriptor,
+    MarketplaceSourceProvider, MemoryDiscoveryProvider, SkillDiscoveryProvider,
 };
-use agentdash_spi::AgentConnector;
 use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
 use thiserror::Error;
@@ -25,6 +24,7 @@ pub fn builtin_integrations() -> Vec<Box<dyn AgentDashIntegration>> {
 pub(crate) struct HostIntegrationRegistration {
     pub vfs_providers: Vec<Box<dyn VfsDiscoveryProvider>>,
     pub runtime_driver_contributions: Vec<AgentRuntimeDriverContribution>,
+    pub runtime_trust_manifests: Vec<AgentRuntimeTrustManifest>,
     pub auth_provider: Option<Arc<dyn AuthProvider>>,
     pub identity_directory_provider: Option<Arc<dyn IdentityDirectoryProvider>>,
     pub mount_providers: Vec<Arc<dyn MountProvider>>,
@@ -57,20 +57,17 @@ pub(crate) enum IntegrationRegistrationError {
         second_integration: String,
     },
     #[error(
-        "执行器 ID `{executor_id}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一执行器"
-    )]
-    DuplicateExecutorId {
-        executor_id: String,
-        first_owner: String,
-        second_owner: String,
-    },
-    #[error(
         "Agent service definition `{definition_id}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一 definition"
     )]
     DuplicateAgentServiceDefinition {
         definition_id: String,
         first_owner: String,
         second_owner: String,
+    },
+    #[error("Host Integration `{integration_name}` 的 Agent Runtime 信任清单非法: {message}")]
+    InvalidAgentRuntimeTrustManifest {
+        integration_name: String,
+        message: String,
     },
     #[error(
         "Marketplace Source `{source_key}` 重复注册：`{first_owner}` 与 `{second_owner}` 不能同时声明同一来源"
@@ -114,6 +111,7 @@ pub(crate) fn collect_integration_registration(
 ) -> Result<HostIntegrationRegistration, IntegrationRegistrationError> {
     let mut vfs_providers = Vec::new();
     let mut runtime_driver_contributions = Vec::new();
+    let mut runtime_trust_manifests = Vec::new();
     let mut runtime_definition_owners: HashMap<String, String> = HashMap::new();
     let mut auth_provider: Option<Arc<dyn AuthProvider>> = None;
     let mut auth_provider_integration: Option<String> = None;
@@ -147,7 +145,14 @@ pub(crate) fn collect_integration_registration(
 
         vfs_providers.extend(integration.vfs_providers());
 
-        for contribution in integration.agent_runtime_drivers() {
+        let integration_runtime_contributions = integration.agent_runtime_drivers();
+        let integration_runtime_manifests = integration.agent_runtime_trust_manifests();
+        validate_runtime_trust_manifests(
+            &integration_name,
+            &integration_runtime_contributions,
+            &integration_runtime_manifests,
+        )?;
+        for contribution in integration_runtime_contributions {
             let definition_id = contribution.definition.provenance.definition_id.to_string();
             if let Some(first_owner) =
                 runtime_definition_owners.insert(definition_id.clone(), integration_name.clone())
@@ -162,6 +167,7 @@ pub(crate) fn collect_integration_registration(
             }
             runtime_driver_contributions.push(contribution);
         }
+        runtime_trust_manifests.extend(integration_runtime_manifests);
 
         let mp = integration.mount_providers();
         if !mp.is_empty() {
@@ -326,6 +332,7 @@ pub(crate) fn collect_integration_registration(
     Ok(HostIntegrationRegistration {
         vfs_providers,
         runtime_driver_contributions,
+        runtime_trust_manifests,
         auth_provider,
         identity_directory_provider,
         mount_providers,
@@ -335,6 +342,81 @@ pub(crate) fn collect_integration_registration(
         extra_skill_dirs,
         library_asset_seeds,
     })
+}
+
+fn validate_runtime_trust_manifests(
+    integration_name: &str,
+    contributions: &[AgentRuntimeDriverContribution],
+    manifests: &[AgentRuntimeTrustManifest],
+) -> Result<(), IntegrationRegistrationError> {
+    let definitions = contributions
+        .iter()
+        .map(|contribution| {
+            (
+                contribution.definition.provenance.definition_id.as_str(),
+                &contribution.definition,
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    if definitions.len() != contributions.len() {
+        return Err(
+            IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
+                integration_name: integration_name.to_string(),
+                message: "同一 Integration 内重复声明了 service definition".to_string(),
+            },
+        );
+    }
+    let mut seen = HashMap::new();
+    for manifest in manifests {
+        let definition_id = manifest.provenance.definition_id.as_str();
+        if seen.insert(definition_id, ()).is_some() {
+            return Err(
+                IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
+                    integration_name: integration_name.to_string(),
+                    message: format!("definition `{definition_id}` 存在重复信任清单"),
+                },
+            );
+        }
+        let Some(definition) = definitions.get(definition_id) else {
+            return Err(
+                IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
+                    integration_name: integration_name.to_string(),
+                    message: format!("信任清单引用了未贡献的 definition `{definition_id}`"),
+                },
+            );
+        };
+        if manifest.provenance != definition.provenance
+            || manifest.driver_build_digest != definition.provenance.build_digest.as_str()
+            || !definition
+                .supported_protocol_revisions
+                .contains(&manifest.protocol_revision)
+            || manifest.verified_profile != definition.service_profile_upper_bound
+            || manifest.suite_revision.trim().is_empty()
+        {
+            return Err(
+                IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
+                    integration_name: integration_name.to_string(),
+                    message: format!(
+                        "definition `{definition_id}` 的 provenance、build、protocol、profile 或 suite 与 driver contribution 不一致"
+                    ),
+                },
+            );
+        }
+    }
+    if seen.len() != definitions.len() {
+        let missing = definitions
+            .keys()
+            .find(|definition_id| !seen.contains_key(**definition_id))
+            .copied()
+            .unwrap_or("unknown");
+        return Err(
+            IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest {
+                integration_name: integration_name.to_string(),
+                message: format!("definition `{missing}` 缺少编译期信任清单"),
+            },
+        );
+    }
+    Ok(())
 }
 
 fn validate_marketplace_source_descriptor(
@@ -387,30 +469,9 @@ fn is_supported_marketplace_source_asset_type(asset_type: LibraryAssetType) -> b
     )
 }
 
-pub(crate) fn validate_connector_executor_ids(
-    connectors: &[Arc<dyn AgentConnector>],
-) -> Result<(), IntegrationRegistrationError> {
-    let mut executor_owners: HashMap<String, String> = HashMap::new();
-
-    for connector in connectors {
-        let owner = connector.connector_id().to_string();
-        for executor in connector.list_executors() {
-            if let Some(first_owner) = executor_owners.insert(executor.id.clone(), owner.clone()) {
-                return Err(IntegrationRegistrationError::DuplicateExecutorId {
-                    executor_id: executor.id,
-                    first_owner,
-                    second_owner: owner.clone(),
-                });
-            }
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+
     use std::sync::Arc;
 
     use agentdash_integration_api::{
@@ -422,12 +483,7 @@ mod tests {
         MemoryDiscoveryOutput, MemoryDiscoveryProvider, SkillDiscoveryContext,
         SkillDiscoveryOutput, SkillDiscoveryProvider,
     };
-    use agentdash_spi::{
-        AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-        ExecutionContext, ExecutionStream, PromptPayload,
-    };
     use async_trait::async_trait;
-    use futures::stream::{self, BoxStream};
     use serde_json::json;
 
     use super::*;
@@ -453,6 +509,18 @@ mod tests {
     struct MemoryProviderIntegration {
         name: &'static str,
         provider_key: &'static str,
+    }
+
+    struct RuntimeIntegrationWithoutManifest(Vec<AgentRuntimeDriverContribution>);
+
+    impl AgentDashIntegration for RuntimeIntegrationWithoutManifest {
+        fn name(&self) -> &str {
+            "runtime-without-manifest"
+        }
+
+        fn agent_runtime_drivers(&self) -> Vec<AgentRuntimeDriverContribution> {
+            self.0.clone()
+        }
     }
 
     impl AgentDashIntegration for SeedIntegration {
@@ -643,78 +711,6 @@ mod tests {
             _action: &str,
         ) -> Result<bool, AuthError> {
             Ok(true)
-        }
-    }
-
-    struct TestConnector {
-        id: &'static str,
-        executors: Vec<String>,
-    }
-
-    #[async_trait]
-    impl AgentConnector for TestConnector {
-        fn connector_id(&self) -> &'static str {
-            self.id
-        }
-
-        fn connector_type(&self) -> ConnectorType {
-            ConnectorType::LocalExecutor
-        }
-
-        fn capabilities(&self) -> ConnectorCapabilities {
-            ConnectorCapabilities::default()
-        }
-
-        fn list_executors(&self) -> Vec<AgentInfo> {
-            self.executors
-                .iter()
-                .map(|id| AgentInfo {
-                    id: id.clone(),
-                    name: id.clone(),
-                    variants: vec![],
-                    available: true,
-                })
-                .collect()
-        }
-
-        async fn discover_options_stream(
-            &self,
-            _executor: &str,
-            _working_dir: Option<PathBuf>,
-        ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
-            Ok(Box::pin(stream::empty()))
-        }
-
-        async fn prompt(
-            &self,
-            _session_id: &str,
-            _follow_up_session_id: Option<&str>,
-            _prompt: &PromptPayload,
-            _context: ExecutionContext,
-        ) -> Result<ExecutionStream, ConnectorError> {
-            let stream: ExecutionStream = Box::pin(stream::empty());
-            Ok(stream)
-        }
-
-        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-
-        async fn approve_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
-        }
-
-        async fn reject_tool_call(
-            &self,
-            _session_id: &str,
-            _tool_call_id: &str,
-            _reason: Option<String>,
-        ) -> Result<(), ConnectorError> {
-            Ok(())
         }
     }
 
@@ -999,24 +995,38 @@ mod tests {
     }
 
     #[test]
-    fn validates_duplicate_executor_ids_across_combined_connectors() {
-        let connectors: Vec<Arc<dyn AgentConnector>> = vec![
-            Arc::new(TestConnector {
-                id: "builtin-pi",
-                executors: vec!["PI_AGENT".to_string()],
-            }),
-            Arc::new(TestConnector {
-                id: "integration-codex",
-                executors: vec!["PI_AGENT".to_string()],
-            }),
-        ];
+    fn collects_first_party_runtime_trust_manifest() {
+        let registration = collect_integration_registration(
+            agentdash_first_party_integrations::builtin_integrations(),
+        )
+        .expect("first-party integrations collect");
 
-        let err = validate_connector_executor_ids(&connectors)
-            .expect_err("内置与 Host Integration 执行器重复时应失败");
+        assert_eq!(
+            registration.runtime_trust_manifests.len(),
+            registration.runtime_driver_contributions.len()
+        );
+        assert!(registration.runtime_trust_manifests.iter().any(|manifest| {
+            manifest.provenance.definition_id.as_str() == "builtin.codex-app-server"
+        }));
+    }
+
+    #[test]
+    fn rejects_runtime_driver_without_compile_time_trust_manifest() {
+        let contributions = agentdash_first_party_integrations::builtin_integrations()
+            .into_iter()
+            .flat_map(|integration| integration.agent_runtime_drivers())
+            .collect::<Vec<_>>();
+        assert!(!contributions.is_empty());
+
+        let error = collect_integration_registration(vec![Box::new(
+            RuntimeIntegrationWithoutManifest(contributions),
+        )])
+        .err()
+        .expect("Runtime driver without manifest must fail");
 
         assert!(matches!(
-            err,
-            IntegrationRegistrationError::DuplicateExecutorId { .. }
+            error,
+            IntegrationRegistrationError::InvalidAgentRuntimeTrustManifest { .. }
         ));
     }
 }

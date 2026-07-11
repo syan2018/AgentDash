@@ -34,7 +34,7 @@ pub struct AgentConversationIdentityModel {
 #[derive(Debug, Clone)]
 pub struct AgentConversationLifecycleContextModel {
     pub frame_ref: Option<AgentConversationFrameRefModel>,
-    pub delivery_runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub subject_associations: Vec<LifecycleSubjectAssociationView>,
 }
 
@@ -476,7 +476,7 @@ pub struct ConversationCommandAvailabilityInput {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub frame_ref: Option<(Uuid, i32)>,
-    pub delivery_runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub execution_state: AgentRunExecutionState,
     pub terminal_agent: bool,
     pub supports_steering: bool,
@@ -492,7 +492,7 @@ impl ConversationCommandAvailabilityInput {
             run_id: input.run_id,
             agent_id: input.agent_id,
             frame_ref: input.frame_ref,
-            delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
+            runtime_thread_id: input.runtime_thread_id.clone(),
             execution_state: input.execution_state.clone(),
             terminal_agent: input.terminal_agent,
             supports_steering: input.supports_steering,
@@ -539,7 +539,7 @@ impl ConversationCommandAvailabilityResolver {
             snapshot_id,
             execution_status,
             frame_id: input.frame_ref.map(|(frame_id, _)| frame_id.to_string()),
-            runtime_session_id: input.delivery_runtime_session_id,
+            runtime_session_id: input.runtime_thread_id,
             active_turn_id,
             terminal_agent: input.terminal_agent,
             commands,
@@ -552,7 +552,7 @@ pub struct AgentConversationSnapshotInput {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub frame_ref: Option<(Uuid, i32)>,
-    pub delivery_runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub subject_associations: Vec<LifecycleSubjectAssociationView>,
     pub execution_state: AgentRunExecutionState,
     pub terminal_agent: bool,
@@ -603,7 +603,7 @@ impl AgentConversationSnapshotResolver {
                         revision: Some(revision),
                     }
                 }),
-                delivery_runtime_session_id: input.delivery_runtime_session_id.clone(),
+                runtime_thread_id: input.runtime_thread_id.clone(),
                 subject_associations: input.subject_associations,
             },
             execution,
@@ -647,7 +647,7 @@ fn conversation_execution_view(
     };
     ConversationExecutionModel {
         status,
-        runtime_session_id: input.delivery_runtime_session_id.clone(),
+        runtime_session_id: input.runtime_thread_id.clone(),
         active_turn_id,
         reason,
     }
@@ -696,7 +696,7 @@ fn conversation_commands(
         status == ConversationExecutionStatusModel::RunningActive && active_turn_id.is_some();
     let compact_context = model_ready
         && input.frame_ref.is_some()
-        && input.delivery_runtime_session_id.is_some()
+        && input.runtime_thread_id.is_some()
         && (status == ConversationExecutionStatusModel::Ready || running_active);
     let cancel = matches!(
         status,
@@ -799,13 +799,13 @@ fn conversation_commands(
                 status,
                 model_ready,
                 input.frame_ref.is_some(),
-                input.delivery_runtime_session_id.is_some(),
+                input.runtime_thread_id.is_some(),
             ),
             Some(disabled_code_for_compact_context(
                 status,
                 model_ready,
                 input.frame_ref.is_some(),
-                input.delivery_runtime_session_id.is_some(),
+                input.runtime_thread_id.is_some(),
             )),
             None,
             false,
@@ -1078,7 +1078,7 @@ mod tests {
             run_id: Uuid::new_v4(),
             agent_id: Uuid::new_v4(),
             frame_ref: Some((Uuid::new_v4(), 1)),
-            delivery_runtime_session_id: Some("runtime-1".to_string()),
+            runtime_thread_id: Some("runtime-1".to_string()),
             subject_associations: Vec::new(),
             execution_state,
             terminal_agent: false,
@@ -1357,7 +1357,7 @@ mod tests {
         );
 
         let mut runtime_missing = snapshot_input(AgentRunExecutionState::Idle);
-        runtime_missing.delivery_runtime_session_id = None;
+        runtime_missing.runtime_thread_id = None;
         let runtime_missing = AgentConversationSnapshotResolver::resolve(runtime_missing);
         assert_eq!(
             command(
@@ -1457,7 +1457,7 @@ mod tests {
             },
         ));
         let mut rotated_runtime = input.clone();
-        rotated_runtime.delivery_runtime_session_id = Some("runtime-2".to_string());
+        rotated_runtime.runtime_thread_id = Some("runtime-2".to_string());
 
         let first = ConversationCommandAvailabilityResolver::resolve(input);
         let second = ConversationCommandAvailabilityResolver::resolve(rotated_runtime);

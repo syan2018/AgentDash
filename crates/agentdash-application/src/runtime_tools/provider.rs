@@ -6,23 +6,13 @@ use agentdash_spi::{ConnectorError, DynAgentTool, ExecutionContext};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use crate::agent_run::AgentRunRuntimeSurfaceUpdateService;
-use crate::session::{
-    SessionControlService, SessionCoreService, SessionEventingService, SessionHookService,
-    SessionLaunchService, SessionRuntimeTransitionService,
-};
 use crate::vfs::compile_whole_mount_runtime_vfs_access_policy;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
+use agentdash_application_agentrun::agent_run::AgentRunProductDeliveryPort;
 
 #[derive(Clone)]
 pub struct SessionToolServices {
-    pub core: SessionCoreService,
-    pub eventing: SessionEventingService,
-    pub control: SessionControlService,
-    pub launch: SessionLaunchService,
-    pub hooks: SessionHookService,
-    pub runtime_transition: SessionRuntimeTransitionService,
-    pub runtime_surface_update: AgentRunRuntimeSurfaceUpdateService,
+    pub product_delivery: Arc<dyn AgentRunProductDeliveryPort>,
 }
 
 #[derive(Clone, Default)]

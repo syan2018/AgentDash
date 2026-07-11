@@ -113,11 +113,7 @@ pub(super) async fn compose(
                     .project_vfs_mount_exposure_grants
                     .clone()
                     .unwrap_or_default(),
-                request_mcp_servers: input
-                    .command
-                    .local_relay_modifier()
-                    .map(|payload| payload.mcp_servers.clone())
-                    .unwrap_or_default(),
+                request_mcp_servers: Vec::new(),
                 existing_vfs: frame.typed_vfs(),
                 visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
                 // 三态直达：None/空集 → base mode=All；非空 → Allowlist（不再 unwrap_or_default 抹平）。

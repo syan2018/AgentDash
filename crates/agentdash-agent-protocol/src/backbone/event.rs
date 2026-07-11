@@ -37,9 +37,7 @@ pub enum BackboneEvent {
     FileChangeDelta(codex::FileChangeOutputDeltaNotification),
     McpToolCallProgress(codex::McpToolCallProgressNotification),
 
-    // ── Turn 生命周期 ──
-    TurnStarted(codex::TurnStartedNotification),
-    TurnCompleted(codex::TurnCompletedNotification),
+    // ── Turn 内容 ──
     TurnDiffUpdated(codex::TurnDiffUpdatedNotification),
 
     // ── 用户输入（Codex UserInput + AgentDash submission 标注）──
@@ -51,10 +49,6 @@ pub enum BackboneEvent {
 
     // ── 资源 / 状态 ──
     TokenUsageUpdated(ThreadTokenUsageUpdatedNotification),
-    ThreadStatusChanged(codex::ThreadStatusChangedNotification),
-    /// 外部 executor 自行完成的 compact 标记。该事件没有 AgentDash-owned
-    /// summary/boundary/replacement provenance，只能作为遥测与审计事实。
-    ExecutorContextCompacted(codex::ContextCompactedNotification),
 
     // ── 审批请求（server → client，需要平台决策后回传）──
     ApprovalRequest(ApprovalRequest),

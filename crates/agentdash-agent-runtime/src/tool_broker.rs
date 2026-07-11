@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use agentdash_agent_runtime_contract::{
-    RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId, RuntimeItemId,
+    RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeInteractionId,
+    RuntimeInteractionKind, RuntimeItemContent, RuntimeItemId, RuntimeItemTerminal,
     RuntimeThreadId, RuntimeTurnId, ToolChannel, ToolSetRevision,
 };
 use async_trait::async_trait;
@@ -10,6 +11,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+use crate::{EntityPhase, RuntimeCommit, RuntimeRepository, RuntimeStoreError, RuntimeUnitOfWork};
 use crate::{ToolCatalogRevision, ToolContribution};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,6 +234,185 @@ pub trait ToolBrokerRuntimeJournal: Send + Sync {
     ) -> Result<(), ToolBrokerError>;
 }
 
+/// Canonical Runtime journal used by production ToolBroker callbacks.
+///
+/// The Driver must already have committed `ItemStarted(ToolCall)` before entering the broker.
+/// This adapter validates that authoritative fact, then owns terminal and approval interaction
+/// convergence through the same Runtime projection/event UoW.
+pub struct ManagedRuntimeToolJournal<S> {
+    store: Arc<S>,
+}
+
+impl<S> ManagedRuntimeToolJournal<S> {
+    pub fn new(store: Arc<S>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl<S> ToolBrokerRuntimeJournal for ManagedRuntimeToolJournal<S>
+where
+    S: RuntimeRepository + RuntimeUnitOfWork + 'static,
+{
+    async fn accept_tool_call(
+        &self,
+        invocation: &ToolBrokerInvocation,
+        _tool: &ToolContribution,
+    ) -> Result<(), ToolBrokerError> {
+        let thread = self.load_matching_thread(invocation).await?;
+        let item = thread
+            .items
+            .get(&invocation.coordinates.item_id)
+            .ok_or(ToolBrokerError::StaleCoordinates)?;
+        if item.turn_id != invocation.coordinates.turn_id
+            || item.initial_content
+                != (RuntimeItemContent::ToolCall {
+                    name: invocation.tool_name.clone(),
+                    arguments: invocation.arguments.clone(),
+                })
+        {
+            return Err(ToolBrokerError::IdempotencyConflict);
+        }
+        Ok(())
+    }
+
+    async fn record_tool_terminal(&self, call: &ToolBrokerCall) -> Result<(), ToolBrokerError> {
+        let mut thread = self.load_matching_thread(&call.invocation).await?;
+        let terminal = broker_terminal(call)?;
+        let item = thread
+            .items
+            .get(&call.invocation.coordinates.item_id)
+            .ok_or(ToolBrokerError::StaleCoordinates)?;
+        if item.turn_id != call.invocation.coordinates.turn_id {
+            return Err(ToolBrokerError::StaleCoordinates);
+        }
+        match &item.phase {
+            EntityPhase::Terminal(existing) if existing == &terminal => return Ok(()),
+            EntityPhase::Terminal(_) => return Err(ToolBrokerError::IdempotencyConflict),
+            EntityPhase::Active => {}
+        }
+        let expected = thread.revision;
+        let events = thread
+            .append_events([RuntimeEvent::ItemTerminal {
+                turn_id: call.invocation.coordinates.turn_id.clone(),
+                item_id: call.invocation.coordinates.item_id.clone(),
+                terminal,
+            }])
+            .map_err(transition_tool_error)?;
+        self.commit_projection(thread, expected, events).await
+    }
+
+    async fn request_tool_approval(
+        &self,
+        invocation: &ToolBrokerInvocation,
+        interaction_id: &RuntimeInteractionId,
+        reason: &str,
+    ) -> Result<(), ToolBrokerError> {
+        let mut thread = self.load_matching_thread(invocation).await?;
+        if thread.interactions.contains_key(interaction_id) {
+            return Ok(());
+        }
+        let expected = thread.revision;
+        let events = thread
+            .append_events([RuntimeEvent::InteractionRequested {
+                turn_id: invocation.coordinates.turn_id.clone(),
+                item_id: Some(invocation.coordinates.item_id.clone()),
+                interaction_id: interaction_id.clone(),
+                interaction_kind: RuntimeInteractionKind::PermissionApproval,
+                prompt: reason.to_string(),
+            }])
+            .map_err(transition_tool_error)?;
+        self.commit_projection(thread, expected, events).await
+    }
+}
+
+impl<S> ManagedRuntimeToolJournal<S>
+where
+    S: RuntimeRepository + RuntimeUnitOfWork,
+{
+    async fn load_matching_thread(
+        &self,
+        invocation: &ToolBrokerInvocation,
+    ) -> Result<crate::RuntimeThreadState, ToolBrokerError> {
+        let thread = self
+            .store
+            .load_thread(&invocation.coordinates.thread_id)
+            .await
+            .map_err(store_tool_error)?
+            .ok_or(ToolBrokerError::StaleCoordinates)?;
+        if thread.binding_id != invocation.coordinates.binding_id
+            || thread.driver_generation != invocation.coordinates.binding_generation
+            || thread.tool_set_revision != invocation.coordinates.tool_set_revision
+        {
+            return Err(ToolBrokerError::StaleCoordinates);
+        }
+        Ok(thread)
+    }
+
+    async fn commit_projection(
+        &self,
+        projection: crate::RuntimeThreadState,
+        expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
+        events: Vec<agentdash_agent_runtime_contract::RuntimeEventEnvelope>,
+    ) -> Result<(), ToolBrokerError> {
+        self.store
+            .commit(RuntimeCommit {
+                expected_projection_revision: Some(expected_projection_revision),
+                projection,
+                operation: None,
+                operation_terminals: Vec::new(),
+                events,
+                outbox: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await
+            .map_err(store_tool_error)
+    }
+}
+
+fn broker_terminal(call: &ToolBrokerCall) -> Result<RuntimeItemTerminal, ToolBrokerError> {
+    let result = call.result.as_ref().ok_or(ToolBrokerStoreError::Conflict)?;
+    Ok(match call.status {
+        ToolBrokerCallStatus::Completed => RuntimeItemTerminal::Completed {
+            final_content: RuntimeItemContent::ToolResult {
+                name: call.invocation.tool_name.clone(),
+                output: result.output.clone(),
+            },
+        },
+        ToolBrokerCallStatus::Cancelled => RuntimeItemTerminal::Cancelled {
+            message: call.terminal_message.clone(),
+        },
+        ToolBrokerCallStatus::Failed | ToolBrokerCallStatus::TimedOut => {
+            RuntimeItemTerminal::Failed {
+                message: call
+                    .terminal_message
+                    .clone()
+                    .or_else(|| Some(result.output.to_string())),
+            }
+        }
+        ToolBrokerCallStatus::Accepted
+        | ToolBrokerCallStatus::AwaitingApproval
+        | ToolBrokerCallStatus::Running => return Err(ToolBrokerStoreError::Conflict.into()),
+    })
+}
+
+fn transition_tool_error(error: crate::TransitionError) -> ToolBrokerError {
+    ToolBrokerError::Execution(error.to_string())
+}
+
+fn store_tool_error(error: RuntimeStoreError) -> ToolBrokerError {
+    ToolBrokerStoreError::Unavailable(error.to_string()).into()
+}
+
 #[async_trait]
 pub trait ToolBrokerPolicyPort: Send + Sync {
     async fn validate_binding(
@@ -305,12 +486,12 @@ pub trait ToolBrokerHookPort: Send + Sync {
 }
 
 #[derive(Debug, Default)]
-pub struct InMemoryToolBrokerRepository {
+pub struct ToolBrokerRepositoryFixture {
     calls: Mutex<BTreeMap<RuntimeItemId, ToolBrokerCall>>,
 }
 
 #[async_trait]
-impl ToolBrokerRepository for InMemoryToolBrokerRepository {
+impl ToolBrokerRepository for ToolBrokerRepositoryFixture {
     async fn load(
         &self,
         item_id: &RuntimeItemId,

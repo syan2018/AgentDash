@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::session::SessionMessageRefDto;
 use crate::workflow::{
     AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, LifecycleRunRefDto,
 };
@@ -95,28 +94,10 @@ pub struct AgentRunMessageAcceptedRefs {
     pub frame_ref: Option<AgentFrameRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub agent_run_turn_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub protocol_turn_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunToolCallApprovalResponse {
-    pub approved: bool,
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    pub tool_call_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunToolCallRejectionResponse {
-    pub rejected: bool,
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    pub tool_call_id: String,
+    pub runtime_operation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -148,24 +129,6 @@ pub struct MailboxMessageView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunMailboxMoveRequest {
-    pub client_command_id: String,
-    pub command: AgentRunCommandPreconditionView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub after_message_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunMailboxMessageContentView {
-    pub id: String,
-    #[ts(type = "JsonValue")]
-    pub input: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct MailboxStateView {
     pub paused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,34 +150,7 @@ pub struct AgentRunCommandReceipt {
     pub duplicate: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRunContextCompactionCommandOutcome {
-    ScheduledNextTurn,
-    LaunchedCompactionTurn,
-    Completed,
-    NoEligibleMessages,
-    Blocked,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunContextCompactionCommandResponse {
-    pub command_receipt: AgentRunCommandReceipt,
-    pub outcome: AgentRunContextCompactionCommandOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub runtime_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub request_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub turn_id: Option<String>,
+    pub accepted_runtime_operation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub message: Option<String>,
@@ -247,7 +183,10 @@ pub struct AgentRunAcceptedRefs {
     pub frame_ref: Option<AgentFrameRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub turn_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_operation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -272,14 +211,9 @@ pub struct AgentRunComposerSubmitRequest {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRunMessageCommandOutcome {
-    Launched,
+    Dispatched,
     Queued,
     Steered,
-    Deleted,
-    Moved,
-    Resumed,
-    Blocked,
-    Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -293,92 +227,6 @@ pub struct AgentRunMessageCommandResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub accepted_refs: Option<AgentRunMessageAcceptedRefs>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub fork: Option<AgentRunForkOutcomeView>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunForkRequest {
-    pub client_command_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub fork_point_ref: Option<SessionMessageRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub metadata_json: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunForkSubmitRequest {
-    pub input: Vec<codex::UserInput>,
-    pub client_command_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub title: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub fork_point_ref: Option<SessionMessageRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub metadata_json: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "JsonValue")]
-    pub executor_config: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub backend_selection: Option<BackendSelectionRequestDto>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunForkLineageView {
-    pub id: String,
-    pub parent: AgentRunMessageAcceptedRefs,
-    pub child: AgentRunMessageAcceptedRefs,
-    pub relation_kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub fork_point_event_seq: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub fork_point_ref: Option<SessionMessageRefDto>,
-    pub forked_by_user_id: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunForkOutcomeView {
-    pub outcome: String,
-    pub parent_refs: AgentRunMessageAcceptedRefs,
-    pub child_refs: AgentRunMessageAcceptedRefs,
-    pub lineage: AgentRunForkLineageView,
-    pub redirect: AgentRunRefDto,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunForkResponse {
-    pub command_receipt: AgentRunCommandReceipt,
-    pub outcome: String,
-    pub parent_refs: AgentRunMessageAcceptedRefs,
-    pub child_refs: AgentRunMessageAcceptedRefs,
-    pub lineage: AgentRunForkLineageView,
-    pub redirect: AgentRunRefDto,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunMailboxView {
-    pub state: MailboxStateView,
-    #[serde(default)]
-    pub messages: Vec<MailboxMessageView>,
 }
 
 #[cfg(test)]

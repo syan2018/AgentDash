@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SessionDisplayEntry } from "./types";
 import type { TurnSegment } from "./useSessionFeed";
-import {
-  buildRoundActionModel,
-  lastAgentReplyText,
-} from "./roundActions";
+import { lastAgentReplyText } from "./roundActions";
 
 function agentEntry(params: {
   id: string;
@@ -59,33 +56,4 @@ describe("round action model", () => {
     expect(lastAgentReplyText(segment([first, last]))).toBe("final answer\nwith detail");
   });
 
-  it("builds a stable fork point from a completed round final MessageRef", () => {
-    const model = buildRoundActionModel(segment([
-      agentEntry({
-        id: "assistant-final",
-        text: "done",
-        turnId: "turn-42",
-        entryIndex: 7,
-      }),
-    ]));
-
-    expect(model.forkFromHere).toMatchObject({
-      enabled: true,
-      forkPointRef: { turn_id: "turn-42", entry_index: 7 },
-    });
-  });
-
-  it("disables fork for active or incomplete boundaries with a reason", () => {
-    const model = buildRoundActionModel(segment([
-      agentEntry({
-        id: "assistant-streaming",
-        text: "still running",
-        turnId: "turn-1",
-        entryIndex: 2,
-      }),
-    ], "active"));
-
-    expect(model.forkFromHere.enabled).toBe(false);
-    expect(model.forkFromHere.disabledReason).toContain("仍在运行");
-  });
 });

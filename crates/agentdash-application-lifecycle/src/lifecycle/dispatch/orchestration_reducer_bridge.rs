@@ -28,12 +28,6 @@ impl<'a> OrchestrationReducerBridge<'a> {
                 binding, materialized.runtime_refs.orchestration_binding
             )));
         }
-        let _session_id = materialized.runtime_session_ref.ok_or_else(|| {
-            WorkflowApplicationError::Internal(
-                "Graph-backed dispatch 缺少 RuntimeSession，无法 materialize entry NodeClaimed"
-                    .to_string(),
-            )
-        })?;
         let (updated_run, _) = apply_orchestration_event_to_run(
             run,
             binding.orchestration_ref,

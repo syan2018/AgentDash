@@ -1,7 +1,7 @@
 {"file":".trellis/spec/backend/architecture.md","reason":"复核最终module ownership与依赖方向"}
 {"file":".trellis/spec/backend/capability/integration-api.md","reason":"复核Integration taxonomy与Agent service扩展点"}
 {"file":".trellis/spec/backend/session/architecture.md","reason":"复核Application/AgentRun与Managed Runtime边界"}
-{"file":".trellis/spec/backend/session/context-compaction-projection.md","reason":"复核context/compaction事实源、CAS与恢复"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"复核统一AgentRun facade、context/compaction事实源、CAS与恢复"}
 {"file":".trellis/spec/backend/hooks/execution-hook-runtime.md","reason":"复核Hook因果点、failure policy、trace/effect与mailbox边界"}
 {"file":".trellis/spec/backend/database-guidelines.md","reason":"复核migration、事务、索引与一致性"}
 {"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"复核Runtime Wire与product event事实源分离"}

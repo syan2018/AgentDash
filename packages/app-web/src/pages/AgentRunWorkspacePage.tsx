@@ -17,6 +17,7 @@ import { InlineBackendSelector, type InlineBackendOption } from "../features/ses
 import { selectVfsBackendTarget } from "../features/vfs/vfs-browser-panel-policy";
 import { agentSourceLabel } from "../lib/agent-source";
 import { useAgentRunWorkspaceControlPlane } from "../features/agent-run-workspace/model/useAgentRunWorkspaceControlPlane";
+import { AgentRuntimeCapabilitySummary } from "../features/agent-run-workspace/ui/AgentRuntimeCapabilitySummary";
 import {
   refreshAgentRunListState,
   useAgentRunListState,
@@ -221,7 +222,13 @@ export function AgentRunWorkspacePage({
   const subagentChildCount = workspaceControl?.children?.length ?? 0;
   const hasIdentityBar =
     !isProjectAgentDraft
-    && (identityAgentSource !== null || identitySubject !== null || lineageParent !== null || subagentChildCount > 0);
+    && (
+      identityAgentSource !== null
+      || identitySubject !== null
+      || lineageParent !== null
+      || subagentChildCount > 0
+      || agentRunWorkspaceState.runtime_inspect?.binding != null
+    );
   const activeHookRuntime = agentRunWorkspaceState.hook_runtime;
   const deliveryRuntimeSurface = agentRunWorkspaceState.runtime_surface;
   const sessionContextSnapshot = null;
@@ -445,32 +452,12 @@ export function AgentRunWorkspacePage({
     });
   }, [draftProjectIdValue, navigate]);
 
-  const handleAgentRunRedirect = useCallback((target: { runId: string; agentId: string }) => {
-    refreshAgentRunListState(ownerProjectId ?? draftProjectIdValue, "agent_run_redirect");
-    navigate(`/agent-runs/${encodeURIComponent(target.runId)}/${encodeURIComponent(target.agentId)}`, {
-      state: {
-        trace_agent: {
-          display_name: workspaceTitle || "AgentRun",
-          executor_hint: draftProjectAgent?.executor.executor ?? traceAgentContext?.executor_hint,
-        },
-      },
-    });
-  }, [
-    draftProjectIdValue,
-    draftProjectAgent?.executor.executor,
-    navigate,
-    ownerProjectId,
-    traceAgentContext?.executor_hint,
-    workspaceTitle,
-  ]);
-
   const {
     chatModel: controlPlaneChatModel,
     chatIntents: controlPlaneChatIntents,
     handleMessageSent,
     handleTurnEnd,
     handleTaskPlanChanged,
-    handleSystemEvent,
     handleWorkspaceModuleOpened,
   } = useAgentRunWorkspaceControlPlane({
     currentRunId,
@@ -486,7 +473,6 @@ export function AgentRunWorkspacePage({
     taskExecutorSummary,
     createProjectAgentRun,
     onDraftStarted: handleDraftAgentRunStarted,
-    onAgentRunRedirect: handleAgentRunRedirect,
     refreshAgentRunList,
     refreshWorkspaceModuleCatalog,
     openWorkspacePanel: ({ typeId, uri, options }) => {
@@ -723,6 +709,7 @@ export function AgentRunWorkspacePage({
               <span>个 subagent</span>
             </button>
           )}
+          <AgentRuntimeCapabilitySummary inspect={agentRunWorkspaceState.runtime_inspect} />
         </div>
       )}
 
@@ -735,7 +722,6 @@ export function AgentRunWorkspacePage({
                 intents={chatIntents}
                 onMessageSent={handleMessageSent}
                 onTurnEnd={handleTurnEnd}
-                onSystemEvent={handleSystemEvent}
                 onTaskPlanChanged={handleTaskPlanChanged}
                 inputPrefix={chatInputPrefix}
                 inputToolbarSlot={backendSelectionBar}

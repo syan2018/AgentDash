@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agentdash_domain::workflow::{
-    LifecycleAgentRepository, RuntimeSessionExecutionAnchorRepository,
-};
+use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository;
+use agentdash_domain::workflow::LifecycleAgentRepository;
 use agentdash_spi::ExecutionContext;
 use uuid::Uuid;
 
@@ -34,24 +34,24 @@ impl AgentRunTaskScopeInput {
 
 #[derive(Clone)]
 pub struct AgentRunTaskScopeResolver {
-    execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
 }
 
 impl AgentRunTaskScopeResolver {
     pub fn new(
-        execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+        runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     ) -> Self {
         Self {
-            execution_anchor_repo,
+            runtime_binding_repo,
             lifecycle_agent_repo,
         }
     }
 
     pub fn from_repos(repos: &RepositorySet) -> Self {
         Self::new(
-            repos.execution_anchor_repo.clone(),
+            repos.agent_run_runtime_binding_repo.clone(),
             repos.lifecycle_agent_repo.clone(),
         )
     }
@@ -64,31 +64,37 @@ impl AgentRunTaskScopeResolver {
             .runtime_session_id
             .clone()
             .ok_or(AgentRunTaskScopeResolutionError::MissingRuntimeSession)?;
-        let anchor = self
-            .execution_anchor_repo
-            .find_by_session(&session_id)
+        let thread_id = RuntimeThreadId::new(session_id.clone()).map_err(|error| {
+            AgentRunTaskScopeResolutionError::BindingLookup {
+                session_id: session_id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+        let binding = self
+            .runtime_binding_repo
+            .load_by_thread_id(&thread_id)
             .await
-            .map_err(|error| AgentRunTaskScopeResolutionError::AnchorLookup {
+            .map_err(|error| AgentRunTaskScopeResolutionError::BindingLookup {
                 session_id: session_id.clone(),
                 message: error.to_string(),
             })?
-            .ok_or_else(|| AgentRunTaskScopeResolutionError::AnchorMissing {
+            .ok_or_else(|| AgentRunTaskScopeResolutionError::BindingMissing {
                 session_id: session_id.clone(),
             })?;
         let agent = self
             .lifecycle_agent_repo
-            .get(anchor.agent_id)
+            .get(binding.target.agent_id)
             .await
             .map_err(|error| AgentRunTaskScopeResolutionError::AgentLookup {
-                agent_id: anchor.agent_id,
+                agent_id: binding.target.agent_id,
                 message: error.to_string(),
             })?
             .ok_or(AgentRunTaskScopeResolutionError::AgentMissing {
-                agent_id: anchor.agent_id,
+                agent_id: binding.target.agent_id,
             })?;
-        if agent.run_id != anchor.run_id {
+        if agent.run_id != binding.target.run_id {
             return Err(AgentRunTaskScopeResolutionError::RunMismatch {
-                anchor_run_id: anchor.run_id,
+                binding_run_id: binding.target.run_id,
                 agent_run_id: agent.run_id,
             });
         }
@@ -104,85 +110,81 @@ impl AgentRunTaskScopeResolver {
 pub enum AgentRunTaskScopeResolutionError {
     #[error("当前 session 缺少 hook runtime，无法定位 Task scope")]
     MissingRuntimeSession,
-    #[error("查询 runtime session `{session_id}` 的执行锚点失败: {message}")]
-    AnchorLookup { session_id: String, message: String },
-    #[error("runtime session `{session_id}` 缺少执行锚点，无法定位 Task scope")]
-    AnchorMissing { session_id: String },
+    #[error("查询 runtime thread `{session_id}` 的 AgentRun binding 失败: {message}")]
+    BindingLookup { session_id: String, message: String },
+    #[error("runtime thread `{session_id}` 缺少 AgentRun binding，无法定位 Task scope")]
+    BindingMissing { session_id: String },
     #[error("查询 LifecycleAgent `{agent_id}` 失败: {message}")]
     AgentLookup { agent_id: Uuid, message: String },
     #[error("LifecycleAgent `{agent_id}` 不存在，无法定位 Task scope")]
     AgentMissing { agent_id: Uuid },
-    #[error("执行锚点 run_id `{anchor_run_id}` 与 LifecycleAgent run_id `{agent_run_id}` 不一致")]
+    #[error(
+        "Runtime binding run_id `{binding_run_id}` 与 LifecycleAgent run_id `{agent_run_id}` 不一致"
+    )]
     RunMismatch {
-        anchor_run_id: Uuid,
+        binding_run_id: Uuid,
         agent_run_id: Uuid,
     },
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+    use std::str::FromStr;
+
     use super::*;
+    use agentdash_agent_runtime_contract::*;
+    use agentdash_application_ports::agent_run_runtime::{
+        AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeTarget,
+    };
     use agentdash_domain::DomainError;
-    use agentdash_domain::workflow::{AgentSource, LifecycleAgent, RuntimeSessionExecutionAnchor};
+    use agentdash_domain::workflow::{AgentSource, LifecycleAgent};
     use async_trait::async_trait;
     use tokio::sync::Mutex;
 
     #[derive(Default)]
-    struct FixtureAnchorRepo {
-        anchors: Mutex<Vec<RuntimeSessionExecutionAnchor>>,
+    struct FixtureBindingRepo {
+        bindings: Mutex<Vec<AgentRunRuntimeBinding>>,
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for FixtureAnchorRepo {
-        async fn create_once(
+    impl AgentRunRuntimeBindingRepository for FixtureBindingRepo {
+        async fn load(
             &self,
-            anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
-            let mut anchors = self.anchors.lock().await;
-            if let Some(existing) = anchors
-                .iter()
-                .find(|item| item.runtime_session_id == anchor.runtime_session_id)
-            {
-                if existing.has_same_launch_coordinates_as(anchor) {
-                    return Ok(());
-                }
-                return Err(existing.immutable_conflict(anchor));
-            }
-            anchors.push(anchor.clone());
-            Ok(())
-        }
-
-        async fn delete_by_session(&self, runtime_session_id: &str) -> Result<(), DomainError> {
-            self.anchors
-                .lock()
-                .await
-                .retain(|anchor| anchor.runtime_session_id != runtime_session_id);
-            Ok(())
-        }
-
-        async fn find_by_session(
-            &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
+            target: &AgentRunRuntimeTarget,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
             Ok(self
-                .anchors
+                .bindings
                 .lock()
                 .await
                 .iter()
-                .find(|anchor| anchor.runtime_session_id == runtime_session_id)
+                .find(|binding| &binding.target == target)
+                .cloned())
+        }
+
+        async fn load_by_thread_id(
+            &self,
+            thread_id: &RuntimeThreadId,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok(self
+                .bindings
+                .lock()
+                .await
+                .iter()
+                .find(|binding| &binding.thread_id == thread_id)
                 .cloned())
         }
 
         async fn list_by_run(
             &self,
             run_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
             Ok(self
-                .anchors
+                .bindings
                 .lock()
                 .await
                 .iter()
-                .filter(|anchor| anchor.run_id == run_id)
+                .filter(|binding| binding.target.run_id == run_id)
                 .cloned()
                 .collect())
         }
@@ -190,29 +192,88 @@ mod tests {
         async fn list_by_agent(
             &self,
             agent_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
             Ok(self
-                .anchors
+                .bindings
                 .lock()
                 .await
                 .iter()
-                .filter(|anchor| anchor.agent_id == agent_id)
+                .filter(|binding| binding.target.agent_id == agent_id)
                 .cloned()
                 .collect())
         }
 
-        async fn list_by_project_session_ids(
+        async fn insert(
             &self,
-            runtime_session_ids: &[String],
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(self
-                .anchors
-                .lock()
-                .await
-                .iter()
-                .filter(|anchor| runtime_session_ids.contains(&anchor.runtime_session_id))
-                .cloned()
-                .collect())
+            binding: AgentRunRuntimeBinding,
+        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+            self.bindings.lock().await.push(binding.clone());
+            Ok(binding)
+        }
+    }
+
+    fn runtime_id<T: FromStr>(value: &str) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        value.parse().expect("valid runtime id")
+    }
+
+    fn binding(run_id: Uuid, agent_id: Uuid) -> AgentRunRuntimeBinding {
+        AgentRunRuntimeBinding {
+            target: AgentRunRuntimeTarget { run_id, agent_id },
+            thread_id: runtime_id("session-1"),
+            binding_id: runtime_id("binding-task-scope"),
+            driver_generation: RuntimeDriverGeneration(1),
+            source_thread_id: runtime_id("source-task-scope"),
+            profile_digest: runtime_id("profile-task-scope"),
+            profile_provenance: ProfileProvenance {
+                service_digest: runtime_id("service-task-scope"),
+                transport_digest: runtime_id("transport-task-scope"),
+                host_policy_digest: runtime_id("policy-task-scope"),
+            },
+            bound_profile: RuntimeProfile {
+                reference_class: ReferenceRuntimeClass::ManagedThread,
+                input: InputProfile {
+                    modalities: BTreeSet::new(),
+                },
+                instruction: InstructionProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                tools: ToolProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                    cancellation: true,
+                },
+                workspace: WorkspaceProfile {
+                    capabilities: BTreeSet::new(),
+                    mechanism: DeliveryMechanism::Native,
+                },
+                interactions: InteractionProfile {
+                    kinds: BTreeSet::new(),
+                    durable_correlation: true,
+                },
+                lifecycle: BTreeSet::new(),
+                hooks: HookProfile {
+                    points: Vec::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                context: ContextProfile {
+                    capabilities: BTreeSet::new(),
+                    fidelity: ContextFidelity::Opaque,
+                    activation_idempotent: false,
+                },
+                telemetry_config: BTreeSet::new(),
+            },
+            surface_digest: runtime_id("surface-task-scope"),
+            settings_revision: ThreadSettingsRevision(0),
+            tool_set_revision: ToolSetRevision(0),
+            hook_plan: BoundRuntimeHookPlan {
+                revision: HookPlanRevision(1),
+                digest: runtime_id("hook-task-scope"),
+                entries: Vec::new(),
+            },
         }
     }
 
@@ -265,24 +326,18 @@ mod tests {
 
     #[tokio::test]
     async fn resolver_maps_runtime_session_anchor_to_task_plan_scope() {
-        let anchor_repo = Arc::new(FixtureAnchorRepo::default());
+        let binding_repo = Arc::new(FixtureBindingRepo::default());
         let agent_repo = Arc::new(FixtureAgentRepo::default());
-        let resolver = AgentRunTaskScopeResolver::new(anchor_repo.clone(), agent_repo.clone());
+        let resolver = AgentRunTaskScopeResolver::new(binding_repo.clone(), agent_repo.clone());
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
-        let frame_id = Uuid::new_v4();
         let agent = LifecycleAgent::new_root(run_id, project_id, AgentSource::ProjectAgent);
         let agent_id = agent.id;
         agent_repo.create(&agent).await.expect("seed agent");
-        anchor_repo
-            .create_once(&RuntimeSessionExecutionAnchor::new_dispatch(
-                "session-1",
-                run_id,
-                frame_id,
-                agent_id,
-            ))
+        binding_repo
+            .insert(binding(run_id, agent_id))
             .await
-            .expect("seed anchor");
+            .expect("seed binding");
 
         let scope = resolver
             .resolve(&AgentRunTaskScopeInput {

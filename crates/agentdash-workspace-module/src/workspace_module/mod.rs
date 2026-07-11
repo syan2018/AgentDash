@@ -37,9 +37,9 @@ use crate::extension_runtime::{
 pub use runtime_bridge::{
     ResolvedInvocationBackend, SharedWorkspaceModuleAgentRunBridgeHandle,
     SharedWorkspaceModuleRuntimeGatewayHandle, WorkspaceModuleAgentRunBridge,
-    delivery_runtime_session_id_from_context, project_authorization_context_from_identity,
-    project_id_from_context, request_existing_canvas_visibility_for_runtime,
-    resolve_invocation_backend, shared_runtime_vfs_from_context,
+    project_authorization_context_from_identity, project_id_from_context,
+    request_existing_canvas_visibility_for_runtime, resolve_invocation_backend,
+    runtime_thread_id_from_context, shared_runtime_vfs_from_context,
     submit_canvas_runtime_surface_update,
 };
 pub(crate) use runtime_context::WorkspaceModuleRuntimeContext;

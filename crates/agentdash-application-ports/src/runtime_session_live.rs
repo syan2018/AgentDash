@@ -1,3 +1,4 @@
+use agentdash_agent_runtime_contract::{RuntimeThreadId, RuntimeTurnId};
 use std::sync::Arc;
 
 use agentdash_agent_protocol::UserInputBlock;
@@ -10,9 +11,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 pub struct RuntimeSessionMailboxAutoResumeRequest {
-    pub session_id: String,
+    pub runtime_thread_id: RuntimeThreadId,
     pub effect_id: Uuid,
-    pub source_turn_id: String,
+    pub source_turn_id: RuntimeTurnId,
     pub terminal_event_seq: u64,
     pub input: Vec<UserInputBlock>,
 }
@@ -35,7 +36,7 @@ impl RuntimeSessionLivePortError {
 pub trait RuntimeSessionMailboxRuntimePort: Send + Sync {
     fn turn_boundary_delegate(
         &self,
-        runtime_session_id: String,
+        runtime_thread_id: RuntimeThreadId,
         inner: Option<DynRuntimeTurnBoundaryDelegate>,
     ) -> DynRuntimeTurnBoundaryDelegate;
 
@@ -51,15 +52,15 @@ pub trait RuntimeSessionEffectiveCapabilityPort: Send + Sync {
     ///
     /// This is not a Grant admission boundary. Tool-level PermissionGrant facts are
     /// evaluated by AgentRun admission at tool execution time.
-    async fn schema_visible_capability_state_for_runtime_session(
+    async fn schema_visible_capability_state_for_runtime_thread(
         &self,
-        runtime_session_id: &str,
+        runtime_thread_id: &RuntimeThreadId,
         base_state: CapabilityState,
     ) -> Result<CapabilityState, RuntimeSessionLivePortError>;
 }
 
 pub struct RuntimeSessionHookTargetRuntimeRequest {
-    pub delivery_runtime_session_id: String,
+    pub runtime_thread_id: RuntimeThreadId,
     pub control_target: HookControlTarget,
     pub frame_revision: i32,
     pub provider: Arc<dyn ExecutionHookProvider>,

@@ -6,8 +6,12 @@ use agentdash_agent_protocol::{
     ControlPlaneProjectionChanged, ControlPlaneWorkspaceModulePresentation, PlatformEvent,
     SourceInfo, TraceInfo,
 };
+use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_ports::agent_frame_materialization::{
     CanvasVisibilityReason, RuntimeSurfaceUpdateRequest,
+};
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeBinding, AgentRunRuntimeBindingRepository,
 };
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_application_runtime_gateway::{
@@ -34,9 +38,6 @@ use agentdash_domain::project::{
     ProjectAuthorization, ProjectAuthorizationContext, ProjectRepository,
 };
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
-use agentdash_domain::workflow::{
-    RuntimeSessionExecutionAnchor, RuntimeSessionExecutionAnchorRepository,
-};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -62,7 +63,7 @@ use crate::workspace_module::{
 #[derive(Clone, Default)]
 pub(crate) struct WorkspaceModuleVisibilitySource {
     agent_run_bridge_handle: Option<SharedWorkspaceModuleAgentRunBridgeHandle>,
-    delivery_runtime_session_id: Option<String>,
+    runtime_thread_id: Option<String>,
     current_user: Option<ProjectAuthorizationContext>,
     #[cfg(test)]
     effective_view: Option<AgentRunEffectiveCapabilityView>,
@@ -72,10 +73,10 @@ impl WorkspaceModuleVisibilitySource {
     pub(crate) fn with_agent_run_delivery(
         mut self,
         agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
-        delivery_runtime_session_id: impl Into<String>,
+        runtime_thread_id: impl Into<String>,
     ) -> Self {
         self.agent_run_bridge_handle = Some(agent_run_bridge_handle);
-        self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
+        self.runtime_thread_id = Some(runtime_thread_id.into());
         self
     }
 
@@ -105,9 +106,9 @@ impl WorkspaceModuleVisibilitySource {
             return Ok(view);
         }
 
-        let (Some(handle), Some(delivery_runtime_session_id)) = (
+        let (Some(handle), Some(runtime_thread_id)) = (
             self.agent_run_bridge_handle.as_ref(),
-            self.delivery_runtime_session_id.as_deref(),
+            self.runtime_thread_id.as_deref(),
         ) else {
             return Err(WorkspaceModuleSurfaceError::ExecutionFailed(
                 "AgentRun effective capability view unavailable for workspace module visibility"
@@ -120,7 +121,7 @@ impl WorkspaceModuleVisibilitySource {
             ));
         };
         agent_run_bridge
-            .effective_capability_view_for_agent_run_delivery(delivery_runtime_session_id)
+            .effective_capability_view_for_agent_run_delivery(runtime_thread_id)
             .await
             .map_err(WorkspaceModuleSurfaceError::ExecutionFailed)
     }
@@ -130,7 +131,7 @@ impl WorkspaceModuleVisibilitySource {
 pub(crate) struct WorkspaceModuleOperationRuntimeSource {
     runtime_gateway: Option<Arc<RuntimeGateway>>,
     runtime_gateway_handle: Option<SharedWorkspaceModuleRuntimeGatewayHandle>,
-    delivery_runtime_session_id: Option<String>,
+    runtime_thread_id: Option<String>,
     agent_id: Option<String>,
     channel_transport_available: bool,
     backend_readiness: WorkspaceModuleOperationReadiness,
@@ -142,7 +143,7 @@ impl Default for WorkspaceModuleOperationRuntimeSource {
         Self {
             runtime_gateway: None,
             runtime_gateway_handle: None,
-            delivery_runtime_session_id: None,
+            runtime_thread_id: None,
             agent_id: None,
             channel_transport_available: false,
             backend_readiness: WorkspaceModuleOperationReadiness::unavailable(
@@ -161,14 +162,14 @@ impl WorkspaceModuleOperationRuntimeSource {
     pub(crate) fn with_gateway_handle(
         mut self,
         runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
-        delivery_runtime_session_id: impl Into<String>,
+        runtime_thread_id: impl Into<String>,
         agent_id: Option<String>,
         channel_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
         backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.runtime_gateway_handle = Some(runtime_gateway_handle);
-        self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
+        self.runtime_thread_id = Some(runtime_thread_id.into());
         self.agent_id = agent_id;
         self.channel_transport_available = channel_transport_available;
         self.backend_readiness = backend_readiness;
@@ -179,14 +180,14 @@ impl WorkspaceModuleOperationRuntimeSource {
     pub(crate) fn with_gateway(
         mut self,
         runtime_gateway: Arc<RuntimeGateway>,
-        delivery_runtime_session_id: impl Into<String>,
+        runtime_thread_id: impl Into<String>,
         agent_id: Option<String>,
         channel_transport_available: bool,
         backend_readiness: WorkspaceModuleOperationReadiness,
         backend_service_readiness: WorkspaceModuleOperationReadiness,
     ) -> Self {
         self.runtime_gateway = Some(runtime_gateway);
-        self.delivery_runtime_session_id = Some(delivery_runtime_session_id.into());
+        self.runtime_thread_id = Some(runtime_thread_id.into());
         self.agent_id = agent_id;
         self.channel_transport_available = channel_transport_available;
         self.backend_readiness = backend_readiness;
@@ -208,7 +209,7 @@ impl WorkspaceModuleOperationRuntimeSource {
         &self,
         project_id: Uuid,
     ) -> WorkspaceModuleRuntimeActionCatalog {
-        let Some(delivery_runtime_session_id) = self.delivery_runtime_session_id.as_ref() else {
+        let Some(runtime_thread_id) = self.runtime_thread_id.as_ref() else {
             return WorkspaceModuleRuntimeActionCatalog::unavailable(
                 "delivery runtime session id is unavailable for RuntimeGateway catalog discovery",
             );
@@ -228,11 +229,11 @@ impl WorkspaceModuleOperationRuntimeSource {
         match runtime_gateway
             .surface_for_actor(
                 RuntimeActor::AgentSession {
-                    session_id: delivery_runtime_session_id.clone(),
+                    session_id: runtime_thread_id.clone(),
                     agent_id: self.agent_id.clone(),
                 },
                 RuntimeContext::Session {
-                    session_id: delivery_runtime_session_id.clone(),
+                    session_id: runtime_thread_id.clone(),
                     project_id: Some(project_id),
                     workspace_id: None,
                 },
@@ -297,7 +298,7 @@ pub(crate) struct WorkspaceModuleInvokeCommand<'a> {
     pub installation_repo: &'a Arc<dyn ProjectExtensionInstallationRepository>,
     pub canvas_repo: &'a Arc<dyn CanvasRepository>,
     pub canvas_runtime_state_repo: &'a Arc<dyn CanvasRuntimeStateRepository>,
-    pub execution_anchor_repo: &'a Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub runtime_binding_repo: &'a Arc<dyn AgentRunRuntimeBindingRepository>,
     pub project_id: Uuid,
     pub gateway: &'a Arc<RuntimeGateway>,
     pub channel_invoker: &'a Arc<ExtensionRuntimeChannelInvoker>,
@@ -313,7 +314,7 @@ pub(crate) struct WorkspaceModuleInvokeCommand<'a> {
 pub(crate) struct WorkspaceModulePresentCommand<'a> {
     pub installation_repo: &'a Arc<dyn ProjectExtensionInstallationRepository>,
     pub canvas_repo: &'a Arc<dyn CanvasRepository>,
-    pub execution_anchor_repo: &'a Arc<dyn RuntimeSessionExecutionAnchorRepository>,
+    pub runtime_binding_repo: &'a Arc<dyn AgentRunRuntimeBindingRepository>,
     pub project_id: Uuid,
     pub turn_id: &'a str,
     pub visibility_source: &'a WorkspaceModuleVisibilitySource,
@@ -719,10 +720,7 @@ async fn invoke(
                 .channel_invoker
                 .invoke(ExtensionRuntimeChannelInvokeRequest {
                     project_id: command.project_id,
-                    session_id: command
-                        .runtime_context
-                        .delivery_runtime_session_id()
-                        .to_string(),
+                    session_id: command.runtime_context.runtime_thread_id().to_string(),
                     backend_id: backend.backend_id.clone(),
                     workspace: backend.workspace.clone(),
                     consumer: ExtensionRuntimeChannelConsumer::SessionUser,
@@ -782,10 +780,7 @@ async fn invoke(
             let result = invoker
                 .invoke(ExtensionRuntimeBackendServiceInvokeRequest {
                     project_id: command.project_id,
-                    session_id: command
-                        .runtime_context
-                        .delivery_runtime_session_id()
-                        .to_string(),
+                    session_id: command.runtime_context.runtime_thread_id().to_string(),
                     backend_id: backend.backend_id.clone(),
                     workspace: backend.workspace.clone(),
                     extension_key: module.summary.source.clone(),
@@ -875,8 +870,8 @@ async fn invoke(
             WorkspaceModuleCanvasHostAction::Inspect => {
                 inspect_canvas(
                     command.canvas_runtime_state_repo.as_ref(),
-                    command.execution_anchor_repo.as_ref(),
-                    command.runtime_context.delivery_runtime_session_id(),
+                    command.runtime_binding_repo.as_ref(),
+                    command.runtime_context.runtime_thread_id(),
                     &module.summary.source,
                 )
                 .await
@@ -884,8 +879,8 @@ async fn invoke(
             WorkspaceModuleCanvasHostAction::GetInteractionState => {
                 get_canvas_interaction_state(
                     command.canvas_runtime_state_repo.as_ref(),
-                    command.execution_anchor_repo.as_ref(),
-                    command.runtime_context.delivery_runtime_session_id(),
+                    command.runtime_binding_repo.as_ref(),
+                    command.runtime_context.runtime_thread_id(),
                     &module.summary.source,
                 )
                 .await
@@ -968,8 +963,8 @@ async fn present(
     })?;
 
     let notification = match build_present_projection_notification(
-        command.execution_anchor_repo.as_ref(),
-        command.runtime_context.delivery_runtime_session_id(),
+        command.runtime_binding_repo.as_ref(),
+        command.runtime_context.runtime_thread_id(),
         command.turn_id,
         &presentation,
         value.clone(),
@@ -1462,29 +1457,32 @@ fn bind_canvas_data_for_loaded_canvas(
     Ok((canvas, binding, result))
 }
 
-async fn current_anchor(
-    execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
-    delivery_runtime_session_id: &str,
-) -> Result<RuntimeSessionExecutionAnchor, WorkspaceModuleCommandDiagnostic> {
-    match execution_anchor_repo
-        .find_by_session(delivery_runtime_session_id)
-        .await
-    {
-        Ok(Some(anchor)) => Ok(anchor),
+async fn current_binding(
+    runtime_binding_repo: &dyn AgentRunRuntimeBindingRepository,
+    runtime_thread_id: &str,
+) -> Result<AgentRunRuntimeBinding, WorkspaceModuleCommandDiagnostic> {
+    let thread_id = RuntimeThreadId::new(runtime_thread_id.to_string()).map_err(|error| {
+        WorkspaceModuleCommandDiagnostic {
+            code: "runtime_thread_id_invalid",
+            message: format!("无效的 Runtime Thread ID: {error}"),
+            details: serde_json::json!({ "runtime_thread_id": runtime_thread_id }),
+        }
+    })?;
+    match runtime_binding_repo.load_by_thread_id(&thread_id).await {
+        Ok(Some(binding)) => Ok(binding),
         Ok(None) => Err(WorkspaceModuleCommandDiagnostic {
-            code: "runtime_anchor_not_found",
-            message:
-                "当前 AgentRun delivery runtime 无 execution anchor，无法解析 Canvas 诊断状态归属"
-                    .to_string(),
+            code: "runtime_binding_not_found",
+            message: "当前 Runtime Thread 无 AgentRun binding，无法解析 Canvas 诊断状态归属"
+                .to_string(),
             details: serde_json::json!({
-                "delivery_runtime_session_id": delivery_runtime_session_id,
+                "runtime_thread_id": runtime_thread_id,
             }),
         }),
         Err(error) => Err(WorkspaceModuleCommandDiagnostic {
-            code: "runtime_anchor_query_failed",
-            message: format!("查询 runtime execution anchor 失败: {error}"),
+            code: "runtime_binding_query_failed",
+            message: format!("查询 AgentRun Runtime binding 失败: {error}"),
             details: serde_json::json!({
-                "delivery_runtime_session_id": delivery_runtime_session_id,
+                "runtime_thread_id": runtime_thread_id,
             }),
         }),
     }
@@ -1492,23 +1490,27 @@ async fn current_anchor(
 
 async fn inspect_canvas(
     canvas_runtime_state_repo: &dyn CanvasRuntimeStateRepository,
-    execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
-    delivery_runtime_session_id: &str,
+    runtime_binding_repo: &dyn AgentRunRuntimeBindingRepository,
+    runtime_thread_id: &str,
     canvas_mount_id: &str,
 ) -> Result<WorkspaceModuleOperationOutcome, WorkspaceModuleSurfaceError> {
-    let anchor = match current_anchor(execution_anchor_repo, delivery_runtime_session_id).await {
-        Ok(anchor) => anchor,
+    let binding = match current_binding(runtime_binding_repo, runtime_thread_id).await {
+        Ok(binding) => binding,
         Err(diagnostic) => return Ok(WorkspaceModuleOperationOutcome::Diagnostic(diagnostic)),
     };
     let observation = canvas_runtime_state_repo
-        .latest_runtime_observation(anchor.run_id, anchor.agent_id, canvas_mount_id)
+        .latest_runtime_observation(
+            binding.target.run_id,
+            binding.target.agent_id,
+            canvas_mount_id,
+        )
         .await
         .map_err(|error| WorkspaceModuleSurfaceError::ExecutionFailed(error.to_string()))?;
     Ok(
         WorkspaceModuleOperationOutcome::CanvasRuntimeObservationRead {
             canvas_mount_id: canvas_mount_id.to_string(),
-            run_id: anchor.run_id,
-            agent_id: anchor.agent_id,
+            run_id: binding.target.run_id,
+            agent_id: binding.target.agent_id,
             observation,
         },
     )
@@ -1516,23 +1518,27 @@ async fn inspect_canvas(
 
 async fn get_canvas_interaction_state(
     canvas_runtime_state_repo: &dyn CanvasRuntimeStateRepository,
-    execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
-    delivery_runtime_session_id: &str,
+    runtime_binding_repo: &dyn AgentRunRuntimeBindingRepository,
+    runtime_thread_id: &str,
     canvas_mount_id: &str,
 ) -> Result<WorkspaceModuleOperationOutcome, WorkspaceModuleSurfaceError> {
-    let anchor = match current_anchor(execution_anchor_repo, delivery_runtime_session_id).await {
-        Ok(anchor) => anchor,
+    let binding = match current_binding(runtime_binding_repo, runtime_thread_id).await {
+        Ok(binding) => binding,
         Err(diagnostic) => return Ok(WorkspaceModuleOperationOutcome::Diagnostic(diagnostic)),
     };
     let snapshot = canvas_runtime_state_repo
-        .latest_interaction_snapshot(anchor.run_id, anchor.agent_id, canvas_mount_id)
+        .latest_interaction_snapshot(
+            binding.target.run_id,
+            binding.target.agent_id,
+            canvas_mount_id,
+        )
         .await
         .map_err(|error| WorkspaceModuleSurfaceError::ExecutionFailed(error.to_string()))?;
     Ok(
         WorkspaceModuleOperationOutcome::CanvasInteractionSnapshotRead {
             canvas_mount_id: canvas_mount_id.to_string(),
-            run_id: anchor.run_id,
-            agent_id: anchor.agent_id,
+            run_id: binding.target.run_id,
+            agent_id: binding.target.agent_id,
             snapshot,
         },
     )
@@ -1544,7 +1550,7 @@ async fn inject_present_diagnostic(
     value: &serde_json::Value,
 ) {
     let notification = build_present_notification(
-        runtime_context.delivery_runtime_session_id(),
+        runtime_context.runtime_thread_id(),
         turn_id,
         "workspace_module_present_failed",
         value.clone(),
@@ -1558,7 +1564,7 @@ async fn inject_present_diagnostic(
         diag_error!(Warn, Subsystem::AgentRun,
             context = &diagnostic_context,
             error = &error,
-            session_id = %runtime_context.delivery_runtime_session_id(),
+            session_id = %runtime_context.runtime_thread_id(),
             turn_id = %turn_id,
             event_kind = "workspace_module_present_failed",
             "workspace_module_present diagnostic notification injection failed"
@@ -1592,29 +1598,28 @@ fn build_present_notification(
 }
 
 async fn build_present_projection_notification(
-    execution_anchor_repo: &dyn RuntimeSessionExecutionAnchorRepository,
-    delivery_runtime_session_id: &str,
+    runtime_binding_repo: &dyn AgentRunRuntimeBindingRepository,
+    runtime_thread_id: &str,
     turn_id: &str,
     presentation: &WorkspaceModulePresentation,
     payload: serde_json::Value,
 ) -> Result<BackboneEnvelope, WorkspaceModuleCommandDiagnostic> {
-    let anchor = current_anchor(execution_anchor_repo, delivery_runtime_session_id).await?;
+    let binding = current_binding(runtime_binding_repo, runtime_thread_id).await?;
     let source = SourceInfo {
         connector_id: "agentdash-workspace-module".to_string(),
         connector_type: "runtime_tool".to_string(),
         executor_id: None,
     };
     Ok(BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(
+        BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(Box::new(
             ControlPlaneProjectionChanged {
                 projection: ControlPlaneProjection::ResourceSurface,
                 reason: ControlPlaneProjectionChangeReason::WorkspaceModulePresented,
-                run_id: anchor.run_id.to_string(),
-                agent_id: anchor.agent_id.to_string(),
-                frame_id: Some(anchor.launch_frame_id.to_string()),
+                run_id: binding.target.run_id.to_string(),
+                agent_id: binding.target.agent_id.to_string(),
+                frame_id: None,
                 gate_id: None,
                 mailbox_message_id: None,
-                delivery_runtime_session_id: Some(delivery_runtime_session_id.to_string()),
                 workspace_module_presentation: Some(ControlPlaneWorkspaceModulePresentation {
                     module_id: presentation.module_id.clone(),
                     view_key: presentation.view_key.clone(),
@@ -1625,8 +1630,8 @@ async fn build_present_projection_notification(
                     diagnostics: None,
                 }),
             },
-        )),
-        delivery_runtime_session_id,
+        ))),
+        runtime_thread_id,
         source,
     )
     .with_trace(TraceInfo {
@@ -1637,9 +1642,14 @@ async fn build_present_projection_notification(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
+    use std::str::FromStr;
     use std::sync::{Arc, Mutex};
 
+    use agentdash_agent_runtime_contract::*;
+    use agentdash_application_ports::agent_run_runtime::{
+        AgentRunRuntimeBindingError, AgentRunRuntimeTarget,
+    };
     use agentdash_application_ports::agent_run_surface::AgentRunGrantProjection;
     use agentdash_application_ports::extension_runtime::{
         ExtensionChannelInvokeRequest, ExtensionChannelInvokeResponse,
@@ -1786,7 +1796,10 @@ mod tests {
         AgentRunEffectiveCapabilityView {
             target: AgentFrameRuntimeTarget {
                 frame_id: Uuid::new_v4(),
-                delivery_runtime_session_id: "session-a".to_string(),
+                runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new(
+                    "session-a",
+                )
+                .unwrap(),
             },
             visible_capabilities: state.tool.capabilities.clone(),
             vfs_surface: state.vfs.active.clone().unwrap_or_default(),
@@ -1806,14 +1819,14 @@ mod tests {
     impl WorkspaceModuleAgentRunBridge for CapturingAgentRunBridge {
         async fn effective_capability_view_for_agent_run_delivery(
             &self,
-            _delivery_runtime_session_id: &str,
+            _runtime_thread_id: &str,
         ) -> Result<AgentRunEffectiveCapabilityView, String> {
             Ok(effective_view())
         }
 
         async fn apply_canvas_runtime_surface_update_to_agent_run(
             &self,
-            _delivery_runtime_session_id: &str,
+            _runtime_thread_id: &str,
             _canvas: &Canvas,
             _current_user: Option<&ProjectAuthorizationContext>,
             _request: RuntimeSurfaceUpdateRequest,
@@ -1827,7 +1840,7 @@ mod tests {
 
         async fn inject_agent_run_notification(
             &self,
-            _delivery_runtime_session_id: &str,
+            _runtime_thread_id: &str,
             notification: BackboneEnvelope,
         ) -> Result<(), String> {
             self.notifications
@@ -1876,36 +1889,32 @@ mod tests {
         }
     }
 
-    struct StaticRuntimeSessionExecutionAnchorRepo {
-        anchor: RuntimeSessionExecutionAnchor,
+    struct StaticAgentRunRuntimeBindingRepo {
+        binding: AgentRunRuntimeBinding,
     }
 
     #[async_trait]
-    impl RuntimeSessionExecutionAnchorRepository for StaticRuntimeSessionExecutionAnchorRepo {
-        async fn create_once(
+    impl AgentRunRuntimeBindingRepository for StaticAgentRunRuntimeBindingRepo {
+        async fn load(
             &self,
-            _anchor: &RuntimeSessionExecutionAnchor,
-        ) -> Result<(), DomainError> {
-            Ok(())
+            target: &AgentRunRuntimeTarget,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((&self.binding.target == target).then(|| self.binding.clone()))
         }
 
-        async fn delete_by_session(&self, _runtime_session_id: &str) -> Result<(), DomainError> {
-            Ok(())
-        }
-
-        async fn find_by_session(
+        async fn load_by_thread_id(
             &self,
-            runtime_session_id: &str,
-        ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok((self.anchor.runtime_session_id == runtime_session_id).then(|| self.anchor.clone()))
+            thread_id: &RuntimeThreadId,
+        ) -> Result<Option<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((&self.binding.thread_id == thread_id).then(|| self.binding.clone()))
         }
 
         async fn list_by_run(
             &self,
             run_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok((self.anchor.run_id == run_id)
-                .then(|| self.anchor.clone())
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target.run_id == run_id)
+                .then(|| self.binding.clone())
                 .into_iter()
                 .collect())
         }
@@ -1913,23 +1922,83 @@ mod tests {
         async fn list_by_agent(
             &self,
             agent_id: Uuid,
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok((self.anchor.agent_id == agent_id)
-                .then(|| self.anchor.clone())
+        ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+            Ok((self.binding.target.agent_id == agent_id)
+                .then(|| self.binding.clone())
                 .into_iter()
                 .collect())
         }
 
-        async fn list_by_project_session_ids(
+        async fn insert(
             &self,
-            runtime_session_ids: &[String],
-        ) -> Result<Vec<RuntimeSessionExecutionAnchor>, DomainError> {
-            Ok(runtime_session_ids
-                .iter()
-                .any(|runtime_session_id| runtime_session_id == &self.anchor.runtime_session_id)
-                .then(|| self.anchor.clone())
-                .into_iter()
-                .collect())
+            binding: AgentRunRuntimeBinding,
+        ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+            Ok(binding)
+        }
+    }
+
+    fn runtime_id<T: FromStr>(value: &str) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        value.parse().expect("valid runtime id")
+    }
+
+    fn runtime_binding(thread_id: &str, run_id: Uuid, agent_id: Uuid) -> AgentRunRuntimeBinding {
+        AgentRunRuntimeBinding {
+            target: AgentRunRuntimeTarget { run_id, agent_id },
+            thread_id: runtime_id(thread_id),
+            binding_id: runtime_id("binding-workspace-module"),
+            driver_generation: RuntimeDriverGeneration(1),
+            source_thread_id: runtime_id("source-workspace-module"),
+            profile_digest: runtime_id("profile-workspace-module"),
+            profile_provenance: ProfileProvenance {
+                service_digest: runtime_id("service-workspace-module"),
+                transport_digest: runtime_id("transport-workspace-module"),
+                host_policy_digest: runtime_id("policy-workspace-module"),
+            },
+            bound_profile: RuntimeProfile {
+                reference_class: ReferenceRuntimeClass::ManagedThread,
+                input: InputProfile {
+                    modalities: BTreeSet::new(),
+                },
+                instruction: InstructionProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                tools: ToolProfile {
+                    channels: BTreeSet::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                    cancellation: true,
+                },
+                workspace: WorkspaceProfile {
+                    capabilities: BTreeSet::new(),
+                    mechanism: DeliveryMechanism::Native,
+                },
+                interactions: InteractionProfile {
+                    kinds: BTreeSet::new(),
+                    durable_correlation: true,
+                },
+                lifecycle: BTreeSet::new(),
+                hooks: HookProfile {
+                    points: Vec::new(),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                },
+                context: ContextProfile {
+                    capabilities: BTreeSet::new(),
+                    fidelity: ContextFidelity::Opaque,
+                    activation_idempotent: false,
+                },
+                telemetry_config: BTreeSet::new(),
+            },
+            surface_digest: runtime_id("surface-workspace-module"),
+            settings_revision: ThreadSettingsRevision(0),
+            tool_set_revision: ToolSetRevision(0),
+            hook_plan: BoundRuntimeHookPlan {
+                revision: HookPlanRevision(1),
+                digest: runtime_id("hook-workspace-module"),
+                entries: Vec::new(),
+            },
         }
     }
 
@@ -2079,15 +2148,9 @@ mod tests {
             Arc::new(EmptyCanvasRuntimeStateRepo);
         let run_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let frame_id = Uuid::new_v4();
-        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
-            Arc::new(StaticRuntimeSessionExecutionAnchorRepo {
-                anchor: RuntimeSessionExecutionAnchor::new_dispatch(
-                    "session-a",
-                    run_id,
-                    frame_id,
-                    agent_id,
-                ),
+        let runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository> =
+            Arc::new(StaticAgentRunRuntimeBindingRepo {
+                binding: runtime_binding("session-a", run_id, agent_id),
             });
         let current_user =
             ProjectAuthorizationContext::new("user-1".to_string(), Vec::new(), false);
@@ -2112,7 +2175,7 @@ mod tests {
                 installation_repo: &installation_repo,
                 canvas_repo: &canvas_repo,
                 canvas_runtime_state_repo: &canvas_runtime_state_repo,
-                execution_anchor_repo: &execution_anchor_repo,
+                runtime_binding_repo: &runtime_binding_repo,
                 project_id,
                 gateway: &gateway,
                 channel_invoker: &channel_invoker,
@@ -2163,14 +2226,9 @@ mod tests {
         .expect("canvas");
         canvas_repo.create(&canvas).await.expect("create canvas");
         let canvas_repo: Arc<dyn CanvasRepository> = canvas_repo;
-        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
-            Arc::new(StaticRuntimeSessionExecutionAnchorRepo {
-                anchor: RuntimeSessionExecutionAnchor::new_dispatch(
-                    "session-a",
-                    Uuid::new_v4(),
-                    Uuid::new_v4(),
-                    Uuid::new_v4(),
-                ),
+        let runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository> =
+            Arc::new(StaticAgentRunRuntimeBindingRepo {
+                binding: runtime_binding("session-a", Uuid::new_v4(), Uuid::new_v4()),
             });
         let current_user =
             ProjectAuthorizationContext::new("user-1".to_string(), Vec::new(), false);
@@ -2195,7 +2253,7 @@ mod tests {
             WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
                 installation_repo: &installation_repo,
                 canvas_repo: &canvas_repo,
-                execution_anchor_repo: &execution_anchor_repo,
+                runtime_binding_repo: &runtime_binding_repo,
                 project_id,
                 turn_id: "turn-a",
                 visibility_source: &visibility_source,
@@ -2242,14 +2300,9 @@ mod tests {
         .expect("canvas");
         canvas_repo.create(&canvas).await.expect("create canvas");
         let canvas_repo: Arc<dyn CanvasRepository> = canvas_repo;
-        let execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository> =
-            Arc::new(StaticRuntimeSessionExecutionAnchorRepo {
-                anchor: RuntimeSessionExecutionAnchor::new_dispatch(
-                    "session-a",
-                    Uuid::new_v4(),
-                    Uuid::new_v4(),
-                    Uuid::new_v4(),
-                ),
+        let runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository> =
+            Arc::new(StaticAgentRunRuntimeBindingRepo {
+                binding: runtime_binding("session-a", Uuid::new_v4(), Uuid::new_v4()),
             });
         let current_user =
             ProjectAuthorizationContext::new("user-1".to_string(), Vec::new(), false);
@@ -2274,7 +2327,7 @@ mod tests {
             WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
                 installation_repo: &installation_repo,
                 canvas_repo: &canvas_repo,
-                execution_anchor_repo: &execution_anchor_repo,
+                runtime_binding_repo: &runtime_binding_repo,
                 project_id,
                 turn_id: "turn-a",
                 visibility_source: &visibility_source,

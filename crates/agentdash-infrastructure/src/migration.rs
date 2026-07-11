@@ -6,7 +6,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_frames",
     "agent_lineages",
     "agent_procedures",
-    "agent_run_command_receipts",
     "agent_run_mailbox_messages",
     "agent_run_mailbox_states",
     "auth_sessions",
@@ -59,22 +58,15 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_runtime_host_binding",
     "agent_runtime_driver_lease",
     "agent_runtime_driver_coordinate",
+    "agent_runtime_surface_snapshot",
+    "agent_run_runtime_binding",
     "agent_context_checkpoint",
     "agent_context_preparation",
     "agent_context_candidate",
     "agent_context_head",
     "agent_context_activation",
     "agent_context_activation_dispatch",
-    "runtime_session_compaction_requests",
-    "runtime_session_execution_anchors",
-    "runtime_session_compactions",
-    "runtime_session_events",
-    "runtime_session_lineage",
-    "runtime_session_projection_heads",
-    "runtime_session_projection_segments",
-    "runtime_session_delivery_commands",
     "agent_run_control_effects",
-    "runtime_sessions",
     "settings",
     "skill_assets",
     "state_changes",
@@ -84,6 +76,20 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "workflow_graphs",
     "workspace_bindings",
     "workspaces",
+];
+
+const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "agent_run_command_receipts",
+    "agent_run_delivery_bindings",
+    "runtime_session_compaction_requests",
+    "runtime_session_execution_anchors",
+    "runtime_session_delivery_commands",
+    "runtime_session_projection_segments",
+    "runtime_session_projection_heads",
+    "runtime_session_lineage",
+    "runtime_session_compactions",
+    "runtime_session_events",
+    "runtime_sessions",
 ];
 
 pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
@@ -96,7 +102,8 @@ pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
 }
 
 pub async fn assert_postgres_schema_ready(pool: &PgPool) -> Result<(), DomainError> {
-    assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await
+    assert_postgres_tables_ready(pool, REQUIRED_POSTGRES_TABLES).await?;
+    assert_postgres_tables_absent(pool, RETIRED_POSTGRES_TABLES).await
 }
 
 pub async fn assert_postgres_tables_ready(
@@ -124,5 +131,33 @@ pub async fn assert_postgres_tables_ready(
     Err(DomainError::InvalidConfig(format!(
         "PostgreSQL schema 未完成 migration，缺少表: {}",
         missing.join(", ")
+    )))
+}
+
+pub async fn assert_postgres_tables_absent(
+    pool: &PgPool,
+    tables: &[&str],
+) -> Result<(), DomainError> {
+    let mut present = Vec::new();
+    for table in tables {
+        let regclass: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::TEXT")
+            .bind(format!("public.{table}"))
+            .fetch_one(pool)
+            .await
+            .map_err(|err| {
+                DomainError::InvalidConfig(format!("schema retirement 检查失败: {err}"))
+            })?;
+        if regclass.is_some() {
+            present.push(*table);
+        }
+    }
+
+    if present.is_empty() {
+        return Ok(());
+    }
+
+    Err(DomainError::InvalidConfig(format!(
+        "PostgreSQL schema 仍包含已退役表: {}",
+        present.join(", ")
     )))
 }

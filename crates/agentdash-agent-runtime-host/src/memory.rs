@@ -33,18 +33,18 @@ struct MemoryHostState {
 }
 
 #[derive(Default)]
-pub struct MemoryAgentRuntimeHostRepository {
+pub struct AgentRuntimeHostRepositoryFixture {
     state: RwLock<MemoryHostState>,
 }
 
-impl MemoryAgentRuntimeHostRepository {
+impl AgentRuntimeHostRepositoryFixture {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 #[async_trait]
-impl AgentRuntimeHostRepository for MemoryAgentRuntimeHostRepository {
+impl AgentRuntimeHostRepository for AgentRuntimeHostRepositoryFixture {
     async fn load_instance(
         &self,
         id: &RuntimeServiceInstanceId,
@@ -489,6 +489,66 @@ impl AgentRuntimeHostRepository for MemoryAgentRuntimeHostRepository {
             binding.lease_epoch = epoch;
         }
         Ok(lease)
+    }
+
+    async fn renew_lease(
+        &self,
+        binding_id: &RuntimeBindingId,
+        generation: RuntimeDriverGeneration,
+        owner: &str,
+        token: &str,
+        now: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<DriverLease, HostStoreError> {
+        let mut state = self.state.write().await;
+        let lease = state
+            .leases
+            .get_mut(binding_id)
+            .ok_or_else(|| HostStoreError::NotFound {
+                entity: "agent_runtime_driver_lease",
+                id: binding_id.to_string(),
+            })?;
+        if lease.generation != generation
+            || lease.owner != owner
+            || lease.token != token
+            || lease.expires_at <= now
+        {
+            return Err(HostStoreError::Conflict {
+                entity: "agent_runtime_driver_lease",
+                id: binding_id.to_string(),
+                expected: Some(lease.epoch),
+                actual: Some(lease.epoch),
+            });
+        }
+        lease.expires_at = expires_at;
+        Ok(lease.clone())
+    }
+
+    async fn release_lease(
+        &self,
+        binding_id: &RuntimeBindingId,
+        generation: RuntimeDriverGeneration,
+        owner: &str,
+        token: &str,
+    ) -> Result<(), HostStoreError> {
+        let mut state = self.state.write().await;
+        let lease = state
+            .leases
+            .get(binding_id)
+            .ok_or_else(|| HostStoreError::NotFound {
+                entity: "agent_runtime_driver_lease",
+                id: binding_id.to_string(),
+            })?;
+        if lease.generation != generation || lease.owner != owner || lease.token != token {
+            return Err(HostStoreError::Conflict {
+                entity: "agent_runtime_driver_lease",
+                id: binding_id.to_string(),
+                expected: Some(lease.epoch),
+                actual: Some(lease.epoch),
+            });
+        }
+        state.leases.remove(binding_id);
+        Ok(())
     }
 
     async fn record_driver_coordinate(

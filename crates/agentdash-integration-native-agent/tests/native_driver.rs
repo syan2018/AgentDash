@@ -6,7 +6,8 @@ use agentdash_agent_runtime_test_support::RuntimeTraceValidator;
 use agentdash_agent_types::{AgentMessage, ContentPart};
 use agentdash_integration_api::*;
 use agentdash_integration_native_agent::{
-    NativeBridgeResolveError, NativeBridgeResolver, native_agent_contribution,
+    NativeAgentServiceConfig, NativeBridgeResolveError, NativeBridgeResolver,
+    NativeCredentialScope, native_agent_contribution,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -18,6 +19,65 @@ where
     T::Err: std::fmt::Debug,
 {
     value.parse().expect("valid test id")
+}
+
+fn config_instance(config: serde_json::Value) -> ActivatedAgentServiceInstance {
+    let contribution = native_agent_contribution(Arc::new(Resolver));
+    ActivatedAgentServiceInstance {
+        instance_id: id("native-config-instance"),
+        instance_revision: 1,
+        generation: RuntimeDriverGeneration(1),
+        definition: contribution.definition,
+        config,
+        credentials: BTreeMap::new(),
+        placement: AgentRuntimePlacement::InProcess,
+    }
+}
+
+#[test]
+fn native_service_config_requires_explicit_user_credential_scope() {
+    let config = NativeAgentServiceConfig::from_instance(&config_instance(json!({
+        "provider": "openai",
+        "model": "gpt-5",
+        "credential_scope": { "kind": "user", "user_id": "user-1" }
+    })))
+    .expect("explicit user scope");
+
+    assert_eq!(
+        config.credential_scope,
+        NativeCredentialScope::User {
+            user_id: "user-1".to_string()
+        }
+    );
+}
+
+#[test]
+fn native_service_config_rejects_missing_credential_scope() {
+    let error = NativeAgentServiceConfig::from_instance(&config_instance(json!({
+        "provider": "openai",
+        "model": "gpt-5"
+    })))
+    .expect_err("missing scope must not imply platform fallback");
+
+    assert!(matches!(
+        error,
+        NativeBridgeResolveError::InvalidConfiguration { .. }
+    ));
+}
+
+#[test]
+fn native_service_config_rejects_blank_user_coordinate() {
+    let error = NativeAgentServiceConfig::from_instance(&config_instance(json!({
+        "provider": "openai",
+        "model": "gpt-5",
+        "credential_scope": { "kind": "user", "user_id": "  " }
+    })))
+    .expect_err("blank user coordinate");
+
+    assert!(matches!(
+        error,
+        NativeBridgeResolveError::InvalidConfiguration { .. }
+    ));
 }
 
 struct EchoBridge;
@@ -183,8 +243,10 @@ fn recipe(tool_set_revision: ToolSetRevision) -> ContextRecipe {
 
 fn fixture_surface() -> MaterializedDriverSurface {
     MaterializedDriverSurface {
+        runtime_thread_id: id("runtime-thread-1"),
         revision: SurfaceRevision(7),
         digest: id("sha256:native-surface"),
+        authorization_identity: None,
         context: DriverContextSurface {
             recipe: recipe(ToolSetRevision(3)),
             instructions: vec![DriverInstructionSet {
@@ -225,6 +287,29 @@ fn fixture_surface() -> MaterializedDriverSurface {
     }
 }
 
+fn thread_start(input: Vec<RuntimeInput>) -> RuntimeCommand {
+    let profile = native_agent_contribution(Arc::new(Resolver))
+        .definition
+        .service_profile_upper_bound;
+    RuntimeCommand::ThreadStart {
+        thread_id: id("runtime-thread-1"),
+        binding_id: id("binding-1"),
+        driver_generation: RuntimeDriverGeneration(4),
+        source_thread_id: id("native-thread-binding-1"),
+        profile_digest: id("native-profile"),
+        bound_profile: Box::new(profile),
+        input,
+        surface_digest: id("sha256:native-surface"),
+        settings_revision: ThreadSettingsRevision(1),
+        tool_set_revision: ToolSetRevision(3),
+        hook_plan: BoundRuntimeHookPlan {
+            revision: HookPlanRevision(1),
+            digest: id("sha256:native-hook-plan"),
+            entries: Vec::new(),
+        },
+    }
+}
+
 async fn driver_fixture() -> (Arc<dyn AgentRuntimeDriver>, DriverBinding) {
     let contribution = native_agent_contribution(Arc::new(Resolver));
     let instance_id: RuntimeServiceInstanceId = id("native-instance");
@@ -249,7 +334,11 @@ async fn driver_fixture() -> (Arc<dyn AgentRuntimeDriver>, DriverBinding) {
                 instance_revision: 1,
                 generation: RuntimeDriverGeneration(4),
                 definition: contribution.definition,
-                config: json!({"provider": "test", "model": "echo"}),
+                config: json!({
+                    "provider": "test",
+                    "model": "echo",
+                    "credential_scope": { "kind": "platform" }
+                }),
                 credentials: BTreeMap::new(),
                 placement: AgentRuntimePlacement::InProcess,
             },
@@ -301,12 +390,9 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
-                command: RuntimeCommand::ThreadStart {
-                    input: vec![RuntimeInput::Text {
-                        text: "hello".to_string(),
-                    }],
-                    surface_digest: id("sha256:native-surface"),
-                },
+                command: thread_start(vec![RuntimeInput::Text {
+                    text: "hello".to_string(),
+                }]),
             },
             sink.clone(),
         )
@@ -393,6 +479,7 @@ async fn native_compaction_activation_is_exact_and_idempotently_inspectable() {
         DriverInspection::CompactionActivation {
             applied: true,
             digest: Some("sha256:context-1".to_string()),
+            driver_context_revision: Some(id("native-context-revision-1")),
         }
     );
     assert_eq!(
@@ -551,12 +638,9 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
-                command: RuntimeCommand::ThreadStart {
-                    input: vec![RuntimeInput::Text {
-                        text: "hello".to_string(),
-                    }],
-                    surface_digest: id("sha256:native-surface"),
-                },
+                command: thread_start(vec![RuntimeInput::Text {
+                    text: "hello".to_string(),
+                }]),
             },
             Arc::new(FailingSink),
         )
@@ -604,13 +688,10 @@ async fn native_descriptor_does_not_claim_prompt_flattened_input_modalities() {
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
-                command: RuntimeCommand::ThreadStart {
-                    input: vec![RuntimeInput::Structured {
-                        schema: "example".to_string(),
-                        value: json!({"value": 1}),
-                    }],
-                    surface_digest: id("sha256:native-surface"),
-                },
+                command: thread_start(vec![RuntimeInput::Structured {
+                    schema: "example".to_string(),
+                    value: json!({"value": 1}),
+                }]),
             },
             sink.clone(),
         )

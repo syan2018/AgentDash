@@ -2,37 +2,30 @@ use std::{collections::VecDeque, sync::Arc};
 
 use agentdash_agent_runtime_contract::{
     AgentRuntimeGateway, ContextRevision, DriverEventEnvelope, EventSequence,
-    OperationConflictKind, OperationSequence, ProfileDigest, RuntimeBindingId, RuntimeCommand,
-    RuntimeCommandEnvelope, RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope,
-    RuntimeEventStream, RuntimeExecuteError, RuntimeInteractionTerminal, RuntimeProfile,
+    OperationConflictKind, OperationSequence, RuntimeCommand, RuntimeCommandEnvelope, RuntimeEvent,
+    RuntimeEventEnvelope, RuntimeEventStream, RuntimeExecuteError, RuntimeInteractionTerminal,
     RuntimeProtocolViolationCode, RuntimeRevision, RuntimeSnapshotError, RuntimeSnapshotQuery,
     RuntimeSnapshotResult, RuntimeSubscribeError, RuntimeThreadId, RuntimeThreadStatus,
 };
 use async_trait::async_trait;
 
 use crate::{
-    DriverEventQuarantineReason, QuarantinedDriverEvent, RuntimeCommit, RuntimeOperationRecord,
-    RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError, RuntimeThreadState,
-    RuntimeTransientEvents, RuntimeUnitOfWork, TransitionError,
+    DriverEventQuarantineReason, QuarantinedDriverEvent, RuntimeCommit, RuntimeHookPlanBinding,
+    RuntimeOperationRecord, RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError,
+    RuntimeThreadState, RuntimeTransientEvents, RuntimeUnitOfWork, TransitionError,
 };
-
-#[derive(Debug, Clone)]
-pub struct RuntimeKernelDefaults {
-    pub binding_id: RuntimeBindingId,
-    pub driver_generation: RuntimeDriverGeneration,
-    pub source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
-    pub profile_digest: ProfileDigest,
-    pub bound_profile: RuntimeProfile,
-}
 
 pub struct ManagedAgentRuntime<S> {
     store: Arc<S>,
-    defaults: RuntimeKernelDefaults,
+    driver_event_ingest: tokio::sync::Mutex<()>,
 }
 
 impl<S> ManagedAgentRuntime<S> {
-    pub fn new(store: Arc<S>, defaults: RuntimeKernelDefaults) -> Self {
-        Self { store, defaults }
+    pub fn new(store: Arc<S>) -> Self {
+        Self {
+            store,
+            driver_event_ingest: tokio::sync::Mutex::new(()),
+        }
     }
 
     pub(crate) fn store(&self) -> &S {
@@ -55,6 +48,10 @@ where
         &self,
         source: DriverEventEnvelope,
     ) -> Result<DriverEventAdmission, RuntimeExecuteError> {
+        // Driver pumps and command callbacks may deliver events concurrently for one binding.
+        // Serialize the read-transition-CAS boundary so a valid event never fails merely because
+        // another valid event advanced the projection between load and commit.
+        let _ingest = self.driver_event_ingest.lock().await;
         let Some(mut state) = self
             .store
             .find_thread_by_source(&source.binding_id, &source.source_thread_id)
@@ -284,6 +281,20 @@ where
 
         let target = command_thread_id(&envelope.command);
         let (mut state, expected_projection_revision) = match target {
+            Some(thread_id) if matches!(envelope.command, RuntimeCommand::ThreadStart { .. }) => {
+                if self
+                    .store
+                    .load_thread(&thread_id)
+                    .await
+                    .map_err(store_execute_error)?
+                    .is_some()
+                {
+                    return Err(RuntimeExecuteError::InvalidCommand {
+                        reason: format!("thread {thread_id} already exists"),
+                    });
+                }
+                (new_thread(&envelope.command)?, None)
+            }
             Some(thread_id) => {
                 let state = self
                     .store
@@ -294,9 +305,6 @@ where
                         reason: format!("thread {thread_id} was not found"),
                     })?;
                 (state.clone(), Some(state.revision))
-            }
-            None if matches!(envelope.command, RuntimeCommand::ThreadStart { .. }) => {
-                (self.new_thread(), None)
             }
             None => {
                 return Err(RuntimeExecuteError::InvalidCommand {
@@ -347,6 +355,27 @@ where
             });
         }
         validate_command(&state, &envelope.command)?;
+        let hook_plan_binding = match &envelope.command {
+            RuntimeCommand::ThreadStart {
+                thread_id,
+                hook_plan,
+                ..
+            } => {
+                crate::hook::validate_bound_hook_plan(hook_plan).map_err(|error| {
+                    RuntimeExecuteError::InvalidCommand {
+                        reason: error.to_string(),
+                    }
+                })?;
+                if hook_plan.revision.0 != 1 {
+                    return invalid("initial hook plan revision must be one");
+                }
+                Some(RuntimeHookPlanBinding {
+                    thread_id: thread_id.clone(),
+                    plan: hook_plan.clone(),
+                })
+            }
+            _ => None,
+        };
         if let RuntimeCommand::ContextCompact {
             base_checkpoint_id,
             expected_context_revision,
@@ -430,7 +459,7 @@ where
                 context_candidates: Vec::new(),
                 context_activations: Vec::new(),
                 context_head: None,
-                hook_plan_binding: None,
+                hook_plan_binding,
                 hook_runs: Vec::new(),
                 hook_effects: Vec::new(),
                 quarantine: Vec::new(),
@@ -444,7 +473,31 @@ where
         &self,
         query: RuntimeSnapshotQuery,
     ) -> Result<RuntimeSnapshotResult, RuntimeSnapshotError> {
+        let query = match query {
+            RuntimeSnapshotQuery::Operation { operation_id } => {
+                let operation = self
+                    .store
+                    .find_operation(&operation_id)
+                    .await
+                    .map_err(|error| RuntimeSnapshotError::Unavailable {
+                        reason: error.to_string(),
+                    })?
+                    .ok_or(RuntimeSnapshotError::NotFound)?;
+                return Ok(RuntimeSnapshotResult::Operation {
+                    operation: Box::new(agentdash_agent_runtime_contract::RuntimeOperationView {
+                        operation_id: operation.operation_id.clone(),
+                        idempotency_key: operation.idempotency_key.clone(),
+                        actor: operation.actor.clone(),
+                        command: operation.command.clone(),
+                        receipt: operation.receipt(false),
+                        terminal: operation.terminal,
+                    }),
+                });
+            }
+            other => other,
+        };
         let (thread_id, at_revision, at_context_revision, context_query) = match query {
+            RuntimeSnapshotQuery::Operation { .. } => unreachable!("handled above"),
             RuntimeSnapshotQuery::Thread {
                 thread_id,
                 at_revision,
@@ -557,41 +610,53 @@ where
     }
 }
 
-impl<S> ManagedAgentRuntime<S> {
-    fn new_thread(&self) -> RuntimeThreadState {
-        let thread_id = RuntimeThreadId::new(format!("thread-{}", self.defaults.source_thread_id))
-            .expect("configured source thread id is valid");
-        RuntimeThreadState {
-            thread_id,
-            revision: RuntimeRevision(0),
-            next_event_sequence: EventSequence(0),
-            next_operation_sequence: OperationSequence(0),
-            status: RuntimeThreadStatus::Active,
-            active_turn_id: None,
-            binding_id: self.defaults.binding_id.clone(),
-            driver_generation: self.defaults.driver_generation,
-            source_thread_id: self.defaults.source_thread_id.clone(),
-            profile_digest: self.defaults.profile_digest.clone(),
-            bound_profile: self.defaults.bound_profile.clone(),
-            active_checkpoint_id: None,
-            context_revision: agentdash_agent_runtime_contract::ContextRevision(0),
-            settings_revision: agentdash_agent_runtime_contract::ThreadSettingsRevision(0),
-            tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision(0),
-            hook_plan_revision: None,
-            hook_plan_digest: None,
-            operations: Default::default(),
-            turns: Default::default(),
-            items: Default::default(),
-            item_order: Vec::new(),
-            interactions: Default::default(),
-        }
-    }
+impl<S> ManagedAgentRuntime<S> {}
+
+fn new_thread(command: &RuntimeCommand) -> Result<RuntimeThreadState, RuntimeExecuteError> {
+    let RuntimeCommand::ThreadStart {
+        thread_id,
+        binding_id,
+        driver_generation,
+        source_thread_id,
+        profile_digest,
+        bound_profile,
+        settings_revision,
+        tool_set_revision,
+        ..
+    } = command
+    else {
+        return invalid("new runtime thread requires ThreadStart coordinates");
+    };
+    Ok(RuntimeThreadState {
+        thread_id: thread_id.clone(),
+        revision: RuntimeRevision(0),
+        next_event_sequence: EventSequence(0),
+        next_operation_sequence: OperationSequence(0),
+        status: RuntimeThreadStatus::Active,
+        active_turn_id: None,
+        binding_id: binding_id.clone(),
+        driver_generation: *driver_generation,
+        source_thread_id: source_thread_id.clone(),
+        profile_digest: profile_digest.clone(),
+        bound_profile: (**bound_profile).clone(),
+        active_checkpoint_id: None,
+        context_revision: agentdash_agent_runtime_contract::ContextRevision(0),
+        settings_revision: *settings_revision,
+        tool_set_revision: *tool_set_revision,
+        hook_plan_revision: None,
+        hook_plan_digest: None,
+        operations: Default::default(),
+        turns: Default::default(),
+        items: Default::default(),
+        item_order: Vec::new(),
+        interactions: Default::default(),
+    })
 }
 
 fn command_thread_id(command: &RuntimeCommand) -> Option<RuntimeThreadId> {
     match command {
-        RuntimeCommand::ThreadStart { .. } => None,
-        RuntimeCommand::ThreadResume { thread_id }
+        RuntimeCommand::ThreadStart { thread_id, .. }
+        | RuntimeCommand::ThreadResume { thread_id }
         | RuntimeCommand::ThreadFork { thread_id, .. }
         | RuntimeCommand::ThreadSettingsUpdate { thread_id, .. }
         | RuntimeCommand::TurnStart { thread_id, .. }
@@ -648,9 +713,15 @@ fn apply_command_projection(
     events: &mut Vec<RuntimeEvent>,
 ) -> Result<(), RuntimeExecuteError> {
     match command {
-        RuntimeCommand::ThreadStart { .. } => events.push(RuntimeEvent::ThreadStatusChanged {
-            status: RuntimeThreadStatus::Active,
-        }),
+        RuntimeCommand::ThreadStart { hook_plan, .. } => {
+            events.push(RuntimeEvent::ThreadStatusChanged {
+                status: RuntimeThreadStatus::Active,
+            });
+            events.push(RuntimeEvent::HookPlanBound {
+                plan_revision: hook_plan.revision,
+                plan_digest: hook_plan.digest.clone(),
+            });
+        }
         RuntimeCommand::ThreadResume { .. } => events.push(RuntimeEvent::ThreadStatusChanged {
             status: RuntimeThreadStatus::Active,
         }),

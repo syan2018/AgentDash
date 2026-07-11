@@ -22,7 +22,7 @@ pub enum FrameConstructionCommand {
     DispatchLaunchAnchor {
         run_id: Uuid,
         agent_id: Uuid,
-        runtime_session_id: String,
+        runtime_session_id: Option<String>,
         created_by_id: Option<String>,
     },
     CommitAcceptedLaunch {

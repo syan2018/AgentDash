@@ -25,9 +25,9 @@
 
 ## Acceptance Criteria
 
-- [ ] Relay不拥有Agent service identity、tool/context业务语义或connector capability。
-- [ ] authoritative event在lag/reconnect下可重放且duplicate幂等。
-- [ ] active turn断连exactly-one Lost，不产生Completed。
-- [ ] service provenance跨placement保持不变。
-- [ ] local/remote路径共享同一Managed Runtime state machine。
-- [ ] untyped Backbone value转发与薄prompt协议删除。
+- [x] Relay不拥有Agent service identity、tool/context业务语义或connector capability。
+- [x] authoritative event在lag/reconnect下可重放且duplicate幂等。
+- [x] active turn断连exactly-one Lost，不产生Completed。
+- [x] service provenance跨placement保持不变。
+- [x] local/remote路径共享同一Managed Runtime state machine。
+- [x] untyped Backbone value转发与薄prompt协议删除。

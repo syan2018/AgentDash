@@ -1,0 +1,2472 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
+
+use crate::{
+    PostgresAgentRuntimeCompositionRepository, PostgresAgentRuntimeContextBroker,
+    PostgresAgentRuntimeHostRepository, PostgresRuntimeRepository,
+};
+use agentdash_agent::LlmBridge;
+use agentdash_agent_runtime::{
+    ManagedAgentRuntime, PlatformToolBroker, RuntimeRepository, RuntimeWorkClaim,
+    RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkPayload, RuntimeWorkQueue,
+    RuntimeWorkerId, ToolBrokerCallStatus, ToolBrokerInvocation, ToolBrokerOutcome,
+    ToolCallCoordinates,
+};
+use agentdash_agent_runtime_contract::{
+    AgentRuntimeGateway, BoundRuntimeHookEntry, BoundRuntimeHookPlan, DriverBindIntent,
+    DriverCommandEnvelope, DriverError, DriverEventEnvelope, DriverEventSink, DriverRequestId,
+    HookExecutionSite, ProfileDigest, RuntimeBindingId, RuntimeHookPlanBinding,
+    RuntimeServiceInstanceId, RuntimeThreadId,
+};
+use agentdash_agent_runtime_host::{
+    ActivateAgentServiceInstance, AgentRuntimeHostRepository, AgentServiceDefinitionId,
+    AgentServiceDefinitionRegistry, BindRuntimeRequest, BoundAgentSurfaceReference,
+    ConformanceEvidence, IntegrationDriverHost, PutAgentServiceInstance, RouteDriverCommand,
+    ServiceInstanceDesiredState, TrustedDriverConformanceVerifier, TrustedDriverManifest,
+    TrustedDriverManifestRegistry, canonical_json, profile_digest,
+};
+use agentdash_application_ports::agent_run_runtime::{
+    AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
+    AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeTarget,
+};
+use agentdash_diagnostics::{Subsystem, diag};
+use agentdash_domain::llm_provider::{
+    LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
+};
+use agentdash_integration_api::{
+    ActivatedAgentServiceInstance, AgentDashIntegration, AgentRuntimeCredentialBroker,
+    AgentRuntimeHookCallback, AgentRuntimePlacement, AgentRuntimeToolCallback, DriverHookBinding,
+    MaterializedDriverSurface, RuntimeDriverHostPorts,
+};
+use agentdash_integration_native_agent::{
+    NativeAgentRuntimeIntegration, NativeAgentServiceConfig, NativeBridgeResolveError,
+    NativeBridgeResolver, NativeCredentialScope, native_runtime_profile,
+    native_runtime_trust_manifest,
+};
+use agentdash_llm_provider::{
+    ProviderBridgeResolveError, ProviderCredentialScope, resolve_effective_bridge_for_scope,
+};
+use async_trait::async_trait;
+use chrono::Utc;
+use serde_json::json;
+use sha2::{Digest, Sha256};
+use sqlx::PgPool;
+use thiserror::Error;
+use tokio_util::sync::CancellationToken;
+
+const NATIVE_DEFINITION_ID: &str = "agentdash.native_agent";
+const NATIVE_CONFORMANCE_SUITE: &str = "agentdash-native-runtime-conformance-v1";
+
+#[async_trait]
+pub trait AgentRunPlatformToolBrokerResolver: Send + Sync {
+    async fn resolve(
+        &self,
+        request: &agentdash_integration_api::DriverToolInvocation,
+    ) -> Result<PlatformToolBroker, agentdash_integration_api::DriverToolCallbackError>;
+}
+
+pub struct PlatformAgentRuntimeToolCallback {
+    resolver: Arc<dyn AgentRunPlatformToolBrokerResolver>,
+}
+
+impl PlatformAgentRuntimeToolCallback {
+    pub fn new(resolver: Arc<dyn AgentRunPlatformToolBrokerResolver>) -> Self {
+        Self { resolver }
+    }
+}
+
+#[async_trait]
+impl AgentRuntimeToolCallback for PlatformAgentRuntimeToolCallback {
+    async fn invoke(
+        &self,
+        request: agentdash_integration_api::DriverToolInvocation,
+    ) -> Result<
+        agentdash_integration_api::DriverToolOutcome,
+        agentdash_integration_api::DriverToolCallbackError,
+    > {
+        let broker = self.resolver.resolve(&request).await?;
+        let outcome = broker
+            .invoke(
+                agentdash_agent_runtime_contract::ToolChannel::DirectCallback,
+                ToolBrokerInvocation {
+                    coordinates: ToolCallCoordinates {
+                        thread_id: request.thread_id,
+                        turn_id: request.turn_id,
+                        item_id: request.item_id,
+                        binding_id: request.binding_id,
+                        binding_generation: request.generation,
+                        tool_set_revision: request.tool_set_revision,
+                    },
+                    tool_name: request.tool_name,
+                    arguments: request.arguments,
+                    timeout_ms: request.timeout_ms,
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| {
+                agentdash_integration_api::DriverToolCallbackError::ProtocolViolation {
+                    reason: error.to_string(),
+                }
+            })?;
+        Ok(match outcome {
+            ToolBrokerOutcome::Terminal { status, result, .. } => {
+                agentdash_integration_api::DriverToolOutcome::Completed {
+                    output: result.output,
+                    is_error: result.is_error || status != ToolBrokerCallStatus::Completed,
+                }
+            }
+            ToolBrokerOutcome::ApprovalRequired {
+                interaction_id,
+                reason,
+            } => agentdash_integration_api::DriverToolOutcome::InteractionRequired {
+                interaction_id,
+                reason,
+            },
+            ToolBrokerOutcome::Denied { reason, .. } => {
+                agentdash_integration_api::DriverToolOutcome::Denied { reason }
+            }
+        })
+    }
+}
+
+/// 生产 Native Agent bridge resolver。
+///
+/// Service instance 只保存 provider/model 与明确的 platform/user 凭据作用域；真实 secret
+/// 由 Provider repository + codec 在激活 driver 时短暂解析，不进入 instance config、Host
+/// descriptor 或日志。User scope 必须带 user_id，因此不会以 `None` 静默回退到全局凭据。
+pub struct RepositoryNativeBridgeResolver {
+    provider_repository: Arc<dyn LlmProviderRepository>,
+    credential_repository: Arc<dyn LlmProviderCredentialRepository>,
+    secret_codec: Arc<dyn LlmSecretCodec>,
+}
+
+impl RepositoryNativeBridgeResolver {
+    pub fn new(
+        provider_repository: Arc<dyn LlmProviderRepository>,
+        credential_repository: Arc<dyn LlmProviderCredentialRepository>,
+        secret_codec: Arc<dyn LlmSecretCodec>,
+    ) -> Self {
+        Self {
+            provider_repository,
+            credential_repository,
+            secret_codec,
+        }
+    }
+}
+
+#[async_trait]
+impl NativeBridgeResolver for RepositoryNativeBridgeResolver {
+    async fn resolve(
+        &self,
+        instance: &ActivatedAgentServiceInstance,
+        _host: &RuntimeDriverHostPorts,
+    ) -> Result<Arc<dyn LlmBridge>, NativeBridgeResolveError> {
+        let config = NativeAgentServiceConfig::from_instance(instance)?;
+        let scope = match config.credential_scope {
+            NativeCredentialScope::Platform => ProviderCredentialScope::Platform,
+            NativeCredentialScope::User { user_id } => ProviderCredentialScope::User { user_id },
+        };
+
+        resolve_effective_bridge_for_scope(
+            self.provider_repository.as_ref(),
+            Some(self.credential_repository.as_ref()),
+            self.secret_codec.as_ref(),
+            &scope,
+            &config.provider,
+            Some(&config.model),
+        )
+        .await
+        .map_err(map_provider_bridge_error)
+    }
+}
+
+fn map_provider_bridge_error(error: ProviderBridgeResolveError) -> NativeBridgeResolveError {
+    match error {
+        ProviderBridgeResolveError::CatalogUnavailable { reason } => {
+            NativeBridgeResolveError::Unavailable {
+                reason,
+                retryable: true,
+            }
+        }
+        ProviderBridgeResolveError::ProviderUnavailable { reason, .. } => {
+            NativeBridgeResolveError::Unavailable {
+                reason,
+                retryable: false,
+            }
+        }
+        ProviderBridgeResolveError::ProviderNotFound { .. }
+        | ProviderBridgeResolveError::InvalidModel { .. } => {
+            NativeBridgeResolveError::InvalidConfiguration {
+                reason: error.to_string(),
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeAgentRunSurfacePlan {
+    pub provider: String,
+    pub model: String,
+    pub surface: MaterializedDriverSurface,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AgentRunRuntimeSurfaceSourceError {
+    #[error("AgentRun runtime surface is unavailable: {reason}")]
+    Unavailable { reason: String, retryable: bool },
+    #[error("AgentRun runtime surface is invalid: {reason}")]
+    Invalid { reason: String },
+}
+
+/// Product/business Surface 的生产入口。
+///
+/// 实现负责从 AgentRun、AgentFrame、workspace、tool catalog 与 HookPlan 等真实业务事实
+/// 编译 immutable surface；provisioner 不构造默认或空 surface。
+#[async_trait]
+pub trait NativeAgentRunSurfaceCompiler: Send + Sync {
+    async fn compile(
+        &self,
+        request: &AgentRunRuntimeProvisionRequest,
+        thread_id: &RuntimeThreadId,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedAgentRunRuntime {
+    pub service_instance_id: RuntimeServiceInstanceId,
+    pub definition_id: AgentServiceDefinitionId,
+    pub service_config: serde_json::Value,
+    pub placement: AgentRuntimePlacement,
+    pub surface: MaterializedDriverSurface,
+    pub hook_plan: RuntimeHookPlanBinding,
+    pub bound_surface: BoundAgentSurfaceReference,
+    pub transport_profile: agentdash_agent_runtime_contract::RuntimeProfile,
+    pub host_policy_profile: agentdash_agent_runtime_contract::RuntimeProfile,
+    pub conformance: ConformanceEvidence,
+}
+
+#[async_trait]
+pub trait AgentRunRuntimeSurfaceSource: Send + Sync {
+    async fn prepare(
+        &self,
+        request: &AgentRunRuntimeProvisionRequest,
+        thread_id: &RuntimeThreadId,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<PreparedAgentRunRuntime, AgentRunRuntimeSurfaceSourceError>;
+}
+
+pub struct NativeAgentRunRuntimeSurfaceSource {
+    compiler: Arc<dyn NativeAgentRunSurfaceCompiler>,
+    definition: agentdash_integration_api::AgentServiceDefinition,
+    profile_digest: ProfileDigest,
+}
+
+impl NativeAgentRunRuntimeSurfaceSource {
+    pub fn new(
+        compiler: Arc<dyn NativeAgentRunSurfaceCompiler>,
+        definition: agentdash_integration_api::AgentServiceDefinition,
+    ) -> Result<Self, AgentRuntimeCompositionError> {
+        let profile_digest = profile_digest(&native_runtime_profile())
+            .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?;
+        Ok(Self {
+            compiler,
+            definition,
+            profile_digest,
+        })
+    }
+}
+
+#[async_trait]
+impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
+    async fn prepare(
+        &self,
+        request: &AgentRunRuntimeProvisionRequest,
+        thread_id: &RuntimeThreadId,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<PreparedAgentRunRuntime, AgentRunRuntimeSurfaceSourceError> {
+        let plan = self
+            .compiler
+            .compile(request, thread_id, binding_id)
+            .await?;
+        let mut surface = plan.surface;
+        surface.runtime_thread_id = thread_id.clone();
+        surface.authorization_identity = request.identity.clone();
+        let provider = plan.provider.trim();
+        let model = plan.model.trim();
+        if provider.is_empty() || model.is_empty() {
+            return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: "Native provider and model must be non-empty".to_string(),
+            });
+        }
+        let credential_scope = match &request.identity {
+            Some(identity) if !identity.user_id.trim().is_empty() => {
+                json!({ "kind": "user", "user_id": identity.user_id.trim() })
+            }
+            Some(_) => {
+                return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+                    reason: "authenticated Native provisioning requires a non-empty user_id"
+                        .to_string(),
+                });
+            }
+            None => json!({ "kind": "platform" }),
+        };
+        let service_config = json!({
+            "provider": provider,
+            "model": model,
+            "credential_scope": credential_scope,
+        });
+        let service_instance_id = deterministic_service_instance_id(
+            &self.definition.provenance.definition_id,
+            &service_config,
+        )?;
+        let bound_surface = bound_surface_reference(&surface);
+        let hook_plan = runtime_hook_plan(thread_id, &surface);
+        let profile = native_runtime_profile();
+        Ok(PreparedAgentRunRuntime {
+            service_instance_id,
+            definition_id: self.definition.provenance.definition_id.clone(),
+            service_config,
+            placement: AgentRuntimePlacement::InProcess,
+            surface,
+            hook_plan,
+            bound_surface,
+            transport_profile: profile.clone(),
+            host_policy_profile: profile,
+            conformance: ConformanceEvidence {
+                suite_revision: NATIVE_CONFORMANCE_SUITE.to_string(),
+                driver_build_digest: self.definition.provenance.build_digest.to_string(),
+                verified_profile_digest: self.profile_digest.clone(),
+                verified_at: Utc::now(),
+            },
+        })
+    }
+}
+
+fn runtime_hook_plan(
+    thread_id: &RuntimeThreadId,
+    surface: &MaterializedDriverSurface,
+) -> RuntimeHookPlanBinding {
+    RuntimeHookPlanBinding {
+        thread_id: thread_id.clone(),
+        plan: BoundRuntimeHookPlan {
+            revision: surface.hooks.revision,
+            digest: surface.hooks.digest.clone(),
+            entries: surface
+                .hooks
+                .bindings
+                .iter()
+                .map(|binding| BoundRuntimeHookEntry {
+                    definition_id: binding.definition_id.clone(),
+                    point: binding.point,
+                    actions: binding.actions.iter().copied().collect::<BTreeSet<_>>(),
+                    delivered_strength: binding.strength,
+                    failure_policy: binding.failure_policy,
+                    required: binding.required,
+                    site: HookExecutionSite::AgentCoreCallback,
+                })
+                .collect(),
+        },
+    }
+}
+
+fn deterministic_service_instance_id(
+    definition_id: &AgentServiceDefinitionId,
+    config: &serde_json::Value,
+) -> Result<RuntimeServiceInstanceId, AgentRunRuntimeSurfaceSourceError> {
+    let digest = Sha256::digest(canonical_json(&json!({
+        "definition_id": definition_id,
+        "config": config,
+    })));
+    RuntimeServiceInstanceId::new(format!("service-{:x}", digest)).map_err(|error| {
+        AgentRunRuntimeSurfaceSourceError::Invalid {
+            reason: error.to_string(),
+        }
+    })
+}
+
+fn bound_surface_reference(surface: &MaterializedDriverSurface) -> BoundAgentSurfaceReference {
+    BoundAgentSurfaceReference {
+        revision: surface.revision,
+        digest: surface.digest.clone(),
+        tool_set_revision: surface.tools.revision,
+        tool_set_digest: surface.tools.digest.clone(),
+        hook_plan_revision: Some(surface.hooks.revision),
+        hook_plan_digest: Some(surface.hooks.digest.clone()),
+        hook_artifact_digest: surface.hooks.artifact_digest.clone(),
+        hook_configuration_boundary: surface.hooks.configuration_boundary,
+        required_hooks: surface
+            .hooks
+            .bindings
+            .iter()
+            .map(hook_requirement)
+            .collect(),
+    }
+}
+
+fn hook_requirement(
+    binding: &DriverHookBinding,
+) -> agentdash_agent_runtime_contract::HookRequirement {
+    agentdash_agent_runtime_contract::HookRequirement {
+        point: binding.point,
+        actions: binding.actions.iter().copied().collect(),
+        minimum_strength: binding.strength,
+        failure_policy: binding.failure_policy,
+        required: binding.required,
+    }
+}
+
+#[async_trait]
+pub trait AgentRunRuntimeSurfaceStore: Send + Sync {
+    async fn put_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+        surface: &MaterializedDriverSurface,
+    ) -> Result<(), AgentRunRuntimeBindingError>;
+}
+
+#[async_trait]
+impl AgentRunRuntimeSurfaceStore for PostgresAgentRuntimeCompositionRepository {
+    async fn put_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+        surface: &MaterializedDriverSurface,
+    ) -> Result<(), AgentRunRuntimeBindingError> {
+        PostgresAgentRuntimeCompositionRepository::put_surface(self, binding_id, surface)
+            .await
+            .map_err(|error| AgentRunRuntimeBindingError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })
+    }
+}
+
+pub struct HostAgentRunRuntimeProvisioner {
+    host: Arc<IntegrationDriverHost>,
+    host_repository: Arc<dyn AgentRuntimeHostRepository>,
+    bindings: Arc<dyn AgentRunRuntimeBindingRepository>,
+    surfaces: Arc<dyn AgentRunRuntimeSurfaceStore>,
+    source: Arc<dyn AgentRunRuntimeSurfaceSource>,
+}
+
+impl HostAgentRunRuntimeProvisioner {
+    pub fn new(
+        host: Arc<IntegrationDriverHost>,
+        host_repository: Arc<dyn AgentRuntimeHostRepository>,
+        bindings: Arc<dyn AgentRunRuntimeBindingRepository>,
+        surfaces: Arc<dyn AgentRunRuntimeSurfaceStore>,
+        source: Arc<dyn AgentRunRuntimeSurfaceSource>,
+    ) -> Self {
+        Self {
+            host,
+            host_repository,
+            bindings,
+            surfaces,
+            source,
+        }
+    }
+
+    async fn ensure_offer(
+        &self,
+        prepared: &PreparedAgentRunRuntime,
+    ) -> Result<agentdash_agent_runtime_host::RuntimeOffer, AgentRunRuntimeBindingError> {
+        let instance = match self
+            .host_repository
+            .load_instance(&prepared.service_instance_id)
+            .await
+            .map_err(host_store_error)?
+        {
+            Some(existing) => {
+                if existing.definition_id != prepared.definition_id
+                    || existing.config != prepared.service_config
+                    || existing.placement != prepared.placement
+                    || !existing.credentials.is_empty()
+                {
+                    return Err(binding_unavailable(
+                        format!(
+                            "service instance {} was reused with different immutable coordinates",
+                            prepared.service_instance_id
+                        ),
+                        false,
+                    ));
+                }
+                if existing.desired_state == ServiceInstanceDesiredState::Active {
+                    existing
+                } else {
+                    self.host
+                        .put_instance(PutAgentServiceInstance {
+                            id: existing.id,
+                            definition_id: existing.definition_id,
+                            config: existing.config,
+                            credentials: existing.credentials,
+                            placement: existing.placement,
+                            desired_state: ServiceInstanceDesiredState::Active,
+                            expected_revision: Some(existing.revision),
+                        })
+                        .await
+                        .map_err(host_error)?
+                }
+            }
+            None => self
+                .host
+                .put_instance(PutAgentServiceInstance {
+                    id: prepared.service_instance_id.clone(),
+                    definition_id: prepared.definition_id.clone(),
+                    config: prepared.service_config.clone(),
+                    credentials: BTreeMap::new(),
+                    placement: prepared.placement.clone(),
+                    desired_state: ServiceInstanceDesiredState::Active,
+                    expected_revision: None,
+                })
+                .await
+                .map_err(host_error)?,
+        };
+
+        if let Some(offer) = self
+            .host_repository
+            .list_offers()
+            .await
+            .map_err(host_store_error)?
+            .into_iter()
+            .find(|offer| {
+                offer.available
+                    && offer.service_instance_id == instance.id
+                    && offer.instance_revision == instance.revision
+                    && offer.conformance.suite_revision == prepared.conformance.suite_revision
+                    && offer.conformance.driver_build_digest
+                        == prepared.conformance.driver_build_digest
+            })
+        {
+            return Ok(offer);
+        }
+
+        let transport_profile_digest = profile_digest(&prepared.transport_profile)
+            .map_err(|error| binding_unavailable(error.to_string(), false))?;
+        let host_policy_digest = profile_digest(&prepared.host_policy_profile)
+            .map_err(|error| binding_unavailable(error.to_string(), false))?;
+        self.host
+            .activate(ActivateAgentServiceInstance {
+                instance_id: instance.id,
+                expected_revision: instance.revision,
+                transport_profile: prepared.transport_profile.clone(),
+                transport_profile_digest,
+                host_policy_profile: prepared.host_policy_profile.clone(),
+                host_policy_digest,
+                conformance: prepared.conformance.clone(),
+            })
+            .await
+            .map_err(host_error)
+    }
+
+    async fn select_activated_offer(
+        &self,
+        prepared: &PreparedAgentRunRuntime,
+    ) -> Result<Option<agentdash_agent_runtime_host::RuntimeOffer>, AgentRunRuntimeBindingError>
+    {
+        let mut offers = self
+            .host
+            .offers()
+            .await
+            .map_err(host_error)?
+            .into_iter()
+            .filter(|offer| offer.available && offer_supports_surface(offer, &prepared.surface))
+            .collect::<Vec<_>>();
+        offers.sort_by(|left, right| {
+            placement_priority(&left.placement)
+                .cmp(&placement_priority(&right.placement))
+                .then_with(|| {
+                    left.provenance
+                        .definition_id
+                        .cmp(&right.provenance.definition_id)
+                })
+                .then_with(|| left.service_instance_id.cmp(&right.service_instance_id))
+        });
+        Ok(offers.into_iter().next())
+    }
+}
+
+fn placement_priority(placement: &AgentRuntimePlacement) -> u8 {
+    match placement {
+        AgentRuntimePlacement::Remote { .. } => 0,
+        AgentRuntimePlacement::LocalProcess { .. } => 1,
+        AgentRuntimePlacement::InProcess => 2,
+    }
+}
+
+fn offer_supports_surface(
+    offer: &agentdash_agent_runtime_host::RuntimeOffer,
+    surface: &MaterializedDriverSurface,
+) -> bool {
+    let profile = &offer.effective_profile.profile;
+    if !profile
+        .lifecycle
+        .contains(&agentdash_agent_runtime_contract::LifecycleCapability::ThreadStart)
+        || !profile
+            .lifecycle
+            .contains(&agentdash_agent_runtime_contract::LifecycleCapability::TurnStart)
+    {
+        return false;
+    }
+    if surface
+        .context
+        .instructions
+        .iter()
+        .any(|instruction| !profile.instruction.channels.contains(&instruction.channel))
+        || surface.tools.tools.iter().any(|tool| {
+            tool.channels
+                .iter()
+                .any(|channel| !profile.tools.channels.contains(channel))
+        })
+        || surface
+            .workspace
+            .capabilities
+            .iter()
+            .any(|capability| !profile.workspace.capabilities.contains(capability))
+    {
+        return false;
+    }
+    surface.hooks.bindings.iter().all(|binding| {
+        !binding.required
+            || profile
+                .hooks
+                .satisfies(&agentdash_agent_runtime_contract::HookRequirement {
+                    point: binding.point,
+                    actions: binding.actions.iter().copied().collect(),
+                    minimum_strength: binding.strength,
+                    failure_policy: binding.failure_policy,
+                    required: true,
+                })
+    })
+}
+
+#[async_trait]
+impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
+    async fn provision(
+        &self,
+        request: &AgentRunRuntimeProvisionRequest,
+    ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+        if let Some(existing) = self.bindings.load(&request.target).await? {
+            return Ok(existing);
+        }
+        let thread_id = runtime_thread_id(&request.target)?;
+        let binding_id = runtime_binding_id(&request.target)?;
+        let prepared = self
+            .source
+            .prepare(request, &thread_id, &binding_id)
+            .await
+            .map_err(surface_source_error)?;
+        self.surfaces
+            .put_surface(&binding_id, &prepared.surface)
+            .await?;
+        let offer = match self.select_activated_offer(&prepared).await? {
+            Some(offer) => offer,
+            None => self.ensure_offer(&prepared).await?,
+        };
+        let hook_plan = prepared.hook_plan.plan.clone();
+        let host_binding = self
+            .host
+            .bind(BindRuntimeRequest {
+                binding_id: binding_id.clone(),
+                thread_id: thread_id.clone(),
+                offer_id: offer.id,
+                bound_surface: prepared.bound_surface,
+                intent: DriverBindIntent::Start,
+            })
+            .await
+            .map_err(host_error)?;
+        let source_thread_id = host_binding.source_thread_id.ok_or_else(|| {
+            binding_unavailable(
+                "Host binding became active without a source thread coordinate".to_string(),
+                false,
+            )
+        })?;
+        let settings_revision = prepared.surface.context.recipe.provenance.settings_revision;
+        let tool_set_revision = prepared.surface.tools.revision;
+        let binding = AgentRunRuntimeBinding {
+            target: request.target.clone(),
+            thread_id,
+            binding_id,
+            driver_generation: host_binding.driver_generation,
+            source_thread_id,
+            profile_digest: offer.profile_digest,
+            profile_provenance: offer.effective_profile.provenance,
+            bound_profile: offer.effective_profile.profile,
+            surface_digest: prepared.surface.digest,
+            settings_revision,
+            tool_set_revision,
+            hook_plan,
+        };
+        self.bindings.insert(binding).await
+    }
+}
+
+fn runtime_thread_id(
+    target: &AgentRunRuntimeTarget,
+) -> Result<RuntimeThreadId, AgentRunRuntimeBindingError> {
+    RuntimeThreadId::new(format!("thread-{}-{}", target.run_id, target.agent_id))
+        .map_err(|error| binding_unavailable(error.to_string(), false))
+}
+
+fn runtime_binding_id(
+    target: &AgentRunRuntimeTarget,
+) -> Result<RuntimeBindingId, AgentRunRuntimeBindingError> {
+    RuntimeBindingId::new(format!("binding-{}-{}", target.run_id, target.agent_id))
+        .map_err(|error| binding_unavailable(error.to_string(), false))
+}
+
+fn surface_source_error(error: AgentRunRuntimeSurfaceSourceError) -> AgentRunRuntimeBindingError {
+    match error {
+        AgentRunRuntimeSurfaceSourceError::Unavailable { reason, retryable } => {
+            binding_unavailable(reason, retryable)
+        }
+        AgentRunRuntimeSurfaceSourceError::Invalid { reason } => binding_unavailable(reason, false),
+    }
+}
+
+fn host_store_error(
+    error: agentdash_agent_runtime_host::HostStoreError,
+) -> AgentRunRuntimeBindingError {
+    binding_unavailable(error.to_string(), true)
+}
+
+fn host_error(
+    error: agentdash_agent_runtime_host::AgentRuntimeHostError,
+) -> AgentRunRuntimeBindingError {
+    let retryable = matches!(
+        error,
+        agentdash_agent_runtime_host::AgentRuntimeHostError::Store(_)
+            | agentdash_agent_runtime_host::AgentRuntimeHostError::OfferUnavailable { .. }
+            | agentdash_agent_runtime_host::AgentRuntimeHostError::Factory { .. }
+    );
+    binding_unavailable(error.to_string(), retryable)
+}
+
+fn binding_unavailable(reason: String, retryable: bool) -> AgentRunRuntimeBindingError {
+    AgentRunRuntimeBindingError::Unavailable { reason, retryable }
+}
+
+struct ManagedRuntimeDriverEventSink {
+    runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
+}
+
+#[async_trait]
+impl DriverEventSink for ManagedRuntimeDriverEventSink {
+    async fn emit(&self, event: DriverEventEnvelope) -> Result<(), DriverError> {
+        self.runtime
+            .ingest_driver_event(event)
+            .await
+            .map(|_| ())
+            .map_err(|error| DriverError::Lost {
+                reason: format!("Managed Runtime rejected driver event: {error}"),
+                retryable: true,
+            })
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum RuntimeOutboxWorkerError {
+    #[error("Runtime outbox store failed: {0}")]
+    Store(String),
+    #[error("Runtime outbox claim is invalid: {0}")]
+    InvalidClaim(String),
+    #[error("Runtime outbox Host dispatch failed: {0}")]
+    Host(String),
+}
+
+pub struct RuntimeOutboxWorker {
+    store: Arc<PostgresRuntimeRepository>,
+    runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
+    host: Arc<IntegrationDriverHost>,
+    worker_id: RuntimeWorkerId,
+}
+
+impl RuntimeOutboxWorker {
+    pub fn new(
+        store: Arc<PostgresRuntimeRepository>,
+        runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
+        host: Arc<IntegrationDriverHost>,
+        worker_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            store,
+            runtime,
+            host,
+            worker_id: RuntimeWorkerId(worker_id.into()),
+        }
+    }
+
+    pub async fn run_once(&self, limit: u32) -> Result<usize, RuntimeOutboxWorkerError> {
+        let claims = self
+            .store
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::RuntimeOutbox,
+                owner: self.worker_id.clone(),
+                lease_duration_ms: 5 * 60 * 1_000,
+                limit,
+            })
+            .await
+            .map_err(|error| RuntimeOutboxWorkerError::Store(error.to_string()))?;
+        let count = claims.len();
+        let mut first_error = None;
+        for claim in claims {
+            if let Err(error) = self.dispatch_claim(&claim).await {
+                if self.terminalized_after_dispatch_failure(&claim).await? {
+                    self.store
+                        .ack(&claim)
+                        .await
+                        .map_err(|store| RuntimeOutboxWorkerError::Store(store.to_string()))?;
+                    continue;
+                }
+                if let Err(store) = self.store.release(&claim, error.to_string()).await {
+                    first_error
+                        .get_or_insert_with(|| RuntimeOutboxWorkerError::Store(store.to_string()));
+                } else {
+                    first_error.get_or_insert(error);
+                }
+                continue;
+            }
+            if let Err(error) = self.store.ack(&claim).await {
+                let error = RuntimeOutboxWorkerError::Store(error.to_string());
+                let _ = self.store.release(&claim, error.to_string()).await;
+                first_error.get_or_insert(error);
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        Ok(count)
+    }
+
+    async fn terminalized_after_dispatch_failure(
+        &self,
+        claim: &RuntimeWorkClaim,
+    ) -> Result<bool, RuntimeOutboxWorkerError> {
+        let RuntimeWorkPayload::RuntimeOutbox(entry) = &claim.payload else {
+            return Ok(false);
+        };
+        let thread = self
+            .store
+            .load_thread(&entry.thread_id)
+            .await
+            .map_err(|error| RuntimeOutboxWorkerError::Store(error.to_string()))?;
+        Ok(thread.is_some_and(|thread| {
+            matches!(
+                thread.status,
+                agentdash_agent_runtime_contract::RuntimeThreadStatus::Lost
+                    | agentdash_agent_runtime_contract::RuntimeThreadStatus::Closed
+            )
+        }))
+    }
+
+    async fn dispatch_claim(
+        &self,
+        claim: &RuntimeWorkClaim,
+    ) -> Result<(), RuntimeOutboxWorkerError> {
+        let RuntimeWorkPayload::RuntimeOutbox(entry) = &claim.payload else {
+            return Err(RuntimeOutboxWorkerError::InvalidClaim(
+                "claim payload is not RuntimeOutbox".to_string(),
+            ));
+        };
+        let thread = self
+            .store
+            .load_thread(&entry.thread_id)
+            .await
+            .map_err(|error| RuntimeOutboxWorkerError::Store(error.to_string()))?
+            .ok_or_else(|| {
+                RuntimeOutboxWorkerError::InvalidClaim(format!(
+                    "Runtime thread {} does not exist",
+                    entry.thread_id
+                ))
+            })?;
+        if thread.driver_generation != entry.generation {
+            return Err(RuntimeOutboxWorkerError::InvalidClaim(
+                "outbox generation no longer matches the Runtime thread".to_string(),
+            ));
+        }
+        let request_id = DriverRequestId::new(format!("request-{}", entry.operation_id))
+            .map_err(|error| RuntimeOutboxWorkerError::InvalidClaim(error.to_string()))?;
+        let mut lease = self
+            .host
+            .acquire_driver_lease(&thread.binding_id)
+            .await
+            .map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string()))?;
+        let sink: Arc<dyn DriverEventSink> = Arc::new(ManagedRuntimeDriverEventSink {
+            runtime: self.runtime.clone(),
+        });
+        let dispatch = self.host.dispatch(
+            RouteDriverCommand {
+                envelope: DriverCommandEnvelope {
+                    request_id,
+                    binding_id: thread.binding_id.clone(),
+                    generation: entry.generation,
+                    source_thread_id: thread.source_thread_id.clone(),
+                    command: entry.command.clone(),
+                },
+                lease_owner: lease.owner.clone(),
+                lease_token: lease.token.clone(),
+            },
+            sink,
+        );
+        tokio::pin!(dispatch);
+        let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(10));
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        heartbeat.tick().await;
+        let result: Result<_, RuntimeOutboxWorkerError> = loop {
+            tokio::select! {
+                result = &mut dispatch => break result.map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string())),
+                _ = heartbeat.tick() => {
+                    match self.host.renew_driver_lease(&lease).await {
+                        Ok(renewed) => lease = renewed,
+                        Err(error) => break Err(RuntimeOutboxWorkerError::Host(error.to_string())),
+                    }
+                }
+            }
+        };
+        let release_result = self.host.release_driver_lease(&lease).await;
+        result?;
+        release_result.map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string()))?;
+        Ok(())
+    }
+
+    pub fn spawn(self: Arc<Self>, cancellation: CancellationToken) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut poll = tokio::time::interval(std::time::Duration::from_millis(250));
+            poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    _ = cancellation.cancelled() => break,
+                    _ = poll.tick() => {
+                        match self.run_once(16).await {
+                            Ok(0) => {},
+                            Ok(_) => {},
+                            Err(error) => diag!(
+                                Error,
+                                Subsystem::AgentRun,
+                                error = error.to_string(),
+                                "Runtime outbox worker dispatch failed"
+                            ),
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum AgentRuntimeCompositionError {
+    #[error("Agent Runtime composition is invalid: {0}")]
+    Invalid(String),
+}
+
+pub struct NativeAgentRuntimeCompositionInput {
+    pub pool: PgPool,
+    pub provider_repository: Arc<dyn LlmProviderRepository>,
+    pub provider_credential_repository: Arc<dyn LlmProviderCredentialRepository>,
+    pub secret_codec: Arc<dyn LlmSecretCodec>,
+    pub surface_compiler: Arc<dyn NativeAgentRunSurfaceCompiler>,
+    pub credential_broker: Arc<dyn AgentRuntimeCredentialBroker>,
+    pub tool_callback: Arc<dyn AgentRuntimeToolCallback>,
+    pub hook_callback: Arc<dyn AgentRuntimeHookCallback>,
+    pub remote_definitions: Vec<agentdash_integration_api::AgentServiceDefinition>,
+    pub remote_trust_manifests: Vec<agentdash_integration_api::AgentRuntimeTrustManifest>,
+    pub remote_placements:
+        Arc<dyn agentdash_integration_remote_runtime::RuntimeWirePlacementResolver>,
+    pub node_id: String,
+}
+
+pub struct AgentRuntimeCompositionInput {
+    pub pool: PgPool,
+    pub contributions: Vec<agentdash_integration_api::AgentRuntimeDriverContribution>,
+    pub trusted_manifests: Vec<TrustedDriverManifest>,
+    pub surface_source: Arc<dyn AgentRunRuntimeSurfaceSource>,
+    pub credential_broker: Arc<dyn AgentRuntimeCredentialBroker>,
+    pub tool_callback: Arc<dyn AgentRuntimeToolCallback>,
+    pub hook_callback: Arc<dyn AgentRuntimeHookCallback>,
+    pub node_id: String,
+}
+
+pub struct AgentRuntimeComposition {
+    pub gateway: Arc<dyn AgentRuntimeGateway>,
+    pub host: Arc<IntegrationDriverHost>,
+    pub provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
+    pub bindings: Arc<dyn AgentRunRuntimeBindingRepository>,
+    pub outbox_worker: Arc<RuntimeOutboxWorker>,
+    pub durable_workers: Arc<crate::agent_runtime_workers::RuntimeDurableWorkers>,
+    pub work_queue: Arc<dyn RuntimeWorkQueue>,
+    pub managed_runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
+}
+
+pub type NativeAgentRuntimeComposition = AgentRuntimeComposition;
+
+pub fn build_agent_runtime_composition(
+    input: AgentRuntimeCompositionInput,
+) -> Result<AgentRuntimeComposition, AgentRuntimeCompositionError> {
+    let runtime_repository = Arc::new(PostgresRuntimeRepository::new(input.pool.clone()));
+    let host_repository = Arc::new(PostgresAgentRuntimeHostRepository::new(input.pool.clone()));
+    let composition_repository = Arc::new(PostgresAgentRuntimeCompositionRepository::new(
+        input.pool.clone(),
+    ));
+    let context_broker = Arc::new(PostgresAgentRuntimeContextBroker::new(
+        runtime_repository.clone(),
+        composition_repository.clone(),
+    ));
+    let verifier = Arc::new(TrustedDriverConformanceVerifier::new(
+        TrustedDriverManifestRegistry::collect(input.trusted_manifests)
+            .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?,
+    ));
+    let registry = AgentServiceDefinitionRegistry::collect(input.contributions)
+        .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?;
+    let host_repository_port: Arc<dyn AgentRuntimeHostRepository> = host_repository.clone();
+    let host = Arc::new(IntegrationDriverHost::new(
+        registry,
+        host_repository_port.clone(),
+        RuntimeDriverHostPorts {
+            credentials: input.credential_broker,
+            surfaces: composition_repository.clone(),
+            context: context_broker,
+            tools: input.tool_callback,
+            hooks: input.hook_callback,
+        },
+        verifier,
+        input.node_id,
+    ));
+    let bindings: Arc<dyn AgentRunRuntimeBindingRepository> = composition_repository.clone();
+    let surface_store: Arc<dyn AgentRunRuntimeSurfaceStore> = composition_repository.clone();
+    let provisioner: Arc<dyn AgentRunRuntimeProvisioner> =
+        Arc::new(HostAgentRunRuntimeProvisioner::new(
+            host.clone(),
+            host_repository_port,
+            bindings.clone(),
+            surface_store,
+            input.surface_source,
+        ));
+    let runtime = Arc::new(ManagedAgentRuntime::new(runtime_repository.clone()));
+    let work_queue: Arc<dyn RuntimeWorkQueue> = runtime_repository.clone();
+    let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
+    let outbox_worker = Arc::new(RuntimeOutboxWorker::new(
+        runtime_repository.clone(),
+        runtime.clone(),
+        host.clone(),
+        "agentdash-api-runtime-outbox",
+    ));
+    let durable_workers = Arc::new(crate::agent_runtime_workers::RuntimeDurableWorkers::new(
+        runtime_repository,
+        runtime.clone(),
+        composition_repository,
+        host.clone(),
+        Arc::new(crate::agent_runtime_workers::DiagnosticRuntimeHookEffectDispatcher),
+        "agentdash-api-runtime-durable",
+    ));
+    Ok(AgentRuntimeComposition {
+        gateway,
+        host,
+        provisioner,
+        bindings,
+        outbox_worker,
+        durable_workers,
+        work_queue,
+        managed_runtime: runtime,
+    })
+}
+
+/// 在 PostgreSQL repositories 与 secret codec 已建立后装配 Native Runtime。
+///
+/// 该顺序确保 Runtime Integration registry 收集到的 factory 已持有真实 resolver；宿主不再
+/// 在 repository bootstrap 之前收集一个无法激活的占位 contribution。
+pub fn build_native_agent_runtime_composition(
+    input: NativeAgentRuntimeCompositionInput,
+) -> Result<NativeAgentRuntimeComposition, AgentRuntimeCompositionError> {
+    let resolver: Arc<dyn NativeBridgeResolver> = Arc::new(RepositoryNativeBridgeResolver::new(
+        input.provider_repository,
+        input.provider_credential_repository,
+        input.secret_codec,
+    ));
+    let integration = NativeAgentRuntimeIntegration::new(resolver);
+    let mut contributions = integration.agent_runtime_drivers();
+    let contribution = contributions.pop().ok_or_else(|| {
+        AgentRuntimeCompositionError::Invalid(
+            "Native Integration did not contribute a Runtime driver".to_string(),
+        )
+    })?;
+    if !contributions.is_empty() {
+        return Err(AgentRuntimeCompositionError::Invalid(
+            "Native Integration contributed more than one Runtime driver".to_string(),
+        ));
+    }
+    let definition = contribution.definition.clone();
+    if definition.provenance.definition_id.as_str() != NATIVE_DEFINITION_ID {
+        return Err(AgentRuntimeCompositionError::Invalid(format!(
+            "unexpected Native definition id {}",
+            definition.provenance.definition_id
+        )));
+    }
+    let trust_manifest = native_runtime_trust_manifest();
+    if trust_manifest.provenance != definition.provenance
+        || trust_manifest.verified_profile != definition.service_profile_upper_bound
+    {
+        return Err(AgentRuntimeCompositionError::Invalid(
+            "Native driver contribution does not match its trusted Integration manifest"
+                .to_string(),
+        ));
+    }
+    let verified_profile_digest = profile_digest(&trust_manifest.verified_profile)
+        .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?;
+    let manifest = TrustedDriverManifest {
+        provenance: trust_manifest.provenance,
+        suite_revision: trust_manifest.suite_revision,
+        driver_build_digest: trust_manifest.driver_build_digest,
+        protocol_revision: trust_manifest.protocol_revision,
+        verified_profile_digest,
+    };
+    let surface_source: Arc<dyn AgentRunRuntimeSurfaceSource> = Arc::new(
+        NativeAgentRunRuntimeSurfaceSource::new(input.surface_compiler, definition)?,
+    );
+    let mut runtime_contributions = vec![contribution];
+    let mut trusted_manifests = vec![manifest];
+    let mut remote_manifests = input
+        .remote_trust_manifests
+        .into_iter()
+        .map(|manifest| (manifest.provenance.definition_id.clone(), manifest))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for definition in input.remote_definitions {
+        let manifest = remote_manifests
+            .remove(&definition.provenance.definition_id)
+            .ok_or_else(|| {
+                AgentRuntimeCompositionError::Invalid(format!(
+                    "remote definition {} has no trusted Integration manifest",
+                    definition.provenance.definition_id
+                ))
+            })?;
+        if manifest.provenance != definition.provenance
+            || manifest.driver_build_digest != definition.provenance.build_digest.as_str()
+            || !definition
+                .supported_protocol_revisions
+                .contains(&manifest.protocol_revision)
+            || manifest.verified_profile != definition.service_profile_upper_bound
+        {
+            return Err(AgentRuntimeCompositionError::Invalid(format!(
+                "remote definition {} does not match its trusted Integration manifest",
+                definition.provenance.definition_id
+            )));
+        }
+        let verified_profile_digest = profile_digest(&manifest.verified_profile)
+            .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?;
+        trusted_manifests.push(TrustedDriverManifest {
+            provenance: manifest.provenance,
+            suite_revision: manifest.suite_revision,
+            driver_build_digest: manifest.driver_build_digest,
+            protocol_revision: manifest.protocol_revision,
+            verified_profile_digest,
+        });
+        let mut proxy_definition = definition;
+        proxy_definition.factory_key = agentdash_integration_api::AgentRuntimeFactoryKey::new(
+            format!("remote-proxy.{}", proxy_definition.provenance.definition_id),
+        )
+        .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?;
+        proxy_definition.config_schema = serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sourceServiceInstanceId", "sourceDriverGeneration"],
+            "properties": {
+                "sourceServiceInstanceId": { "type": "string", "minLength": 1 },
+                "sourceDriverGeneration": { "type": "integer", "minimum": 1 }
+            }
+        });
+        proxy_definition.config_schema_digest =
+            agentdash_integration_api::AgentServiceSchemaDigest::new(
+                agentdash_agent_runtime_host::schema_digest(&proxy_definition.config_schema),
+            )
+            .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?;
+        proxy_definition.credential_slots.clear();
+        runtime_contributions.push(
+            agentdash_integration_remote_runtime::remote_runtime_contribution(
+                proxy_definition,
+                input.remote_placements.clone(),
+            ),
+        );
+    }
+    if !remote_manifests.is_empty() {
+        return Err(AgentRuntimeCompositionError::Invalid(format!(
+            "trusted Integration manifests reference {} unavailable remote definitions",
+            remote_manifests.len()
+        )));
+    }
+    build_agent_runtime_composition(AgentRuntimeCompositionInput {
+        pool: input.pool,
+        contributions: runtime_contributions,
+        trusted_manifests,
+        surface_source,
+        credential_broker: input.credential_broker,
+        tool_callback: input.tool_callback,
+        hook_callback: input.hook_callback,
+        node_id: input.node_id,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::pin::Pin;
+
+    use super::*;
+    use agentdash_agent::{
+        AgentMessage, BridgeRequest, BridgeResponse, ContentPart, LlmBridge, StreamChunk,
+        TokenUsage,
+    };
+    use agentdash_agent_runtime_contract::*;
+    use agentdash_domain::{
+        common::error::DomainError,
+        llm_provider::{LlmCredentialMode, LlmProvider, LlmProviderUserCredential, WireProtocol},
+    };
+    use agentdash_integration_api::*;
+    use agentdash_integration_codex::{
+        CodexAppServerLauncher, codex_runtime_contribution_with_launcher,
+        codex_runtime_trust_manifest,
+    };
+    use agentdash_spi::{AuthIdentity, AuthMode};
+    use futures::stream;
+    use sqlx::postgres::PgConnectOptions;
+    use uuid::Uuid;
+
+    struct ProviderRepository(LlmProvider);
+
+    #[async_trait]
+    impl LlmProviderRepository for ProviderRepository {
+        async fn create(&self, _provider: &LlmProvider) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        async fn get_by_id(&self, _id: Uuid) -> Result<Option<LlmProvider>, DomainError> {
+            unimplemented!()
+        }
+        async fn list_all(&self) -> Result<Vec<LlmProvider>, DomainError> {
+            Ok(vec![self.0.clone()])
+        }
+        async fn list_enabled(&self) -> Result<Vec<LlmProvider>, DomainError> {
+            unimplemented!()
+        }
+        async fn update(&self, _provider: &LlmProvider) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        async fn delete(&self, _id: Uuid) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        async fn reorder(&self, _ids: &[Uuid]) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+    }
+
+    struct NoUserCredentials;
+
+    #[async_trait]
+    impl LlmProviderCredentialRepository for NoUserCredentials {
+        async fn get_for_user_provider(
+            &self,
+            _user_id: &str,
+            _provider_id: Uuid,
+        ) -> Result<Option<LlmProviderUserCredential>, DomainError> {
+            Ok(None)
+        }
+        async fn list_for_user(
+            &self,
+            _user_id: &str,
+        ) -> Result<Vec<LlmProviderUserCredential>, DomainError> {
+            Ok(Vec::new())
+        }
+        async fn upsert_for_user_provider(
+            &self,
+            _credential: &LlmProviderUserCredential,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        async fn delete_for_user_provider(
+            &self,
+            _user_id: &str,
+            _provider_id: Uuid,
+        ) -> Result<bool, DomainError> {
+            unimplemented!()
+        }
+    }
+
+    struct UserCredentials(LlmProviderUserCredential);
+
+    #[async_trait]
+    impl LlmProviderCredentialRepository for UserCredentials {
+        async fn get_for_user_provider(
+            &self,
+            user_id: &str,
+            provider_id: Uuid,
+        ) -> Result<Option<LlmProviderUserCredential>, DomainError> {
+            Ok(
+                (self.0.user_id == user_id && self.0.provider_id == provider_id)
+                    .then(|| self.0.clone()),
+            )
+        }
+        async fn list_for_user(
+            &self,
+            user_id: &str,
+        ) -> Result<Vec<LlmProviderUserCredential>, DomainError> {
+            Ok((self.0.user_id == user_id)
+                .then(|| self.0.clone())
+                .into_iter()
+                .collect())
+        }
+        async fn upsert_for_user_provider(
+            &self,
+            _credential: &LlmProviderUserCredential,
+        ) -> Result<(), DomainError> {
+            unimplemented!()
+        }
+        async fn delete_for_user_provider(
+            &self,
+            _user_id: &str,
+            _provider_id: Uuid,
+        ) -> Result<bool, DomainError> {
+            unimplemented!()
+        }
+    }
+
+    struct PlaintextCodec;
+
+    impl LlmSecretCodec for PlaintextCodec {
+        fn encrypt(&self, plaintext: &str) -> Result<String, DomainError> {
+            Ok(plaintext.to_string())
+        }
+        fn decrypt(&self, ciphertext: &str) -> Result<String, DomainError> {
+            Ok(ciphertext.to_string())
+        }
+    }
+
+    struct NoCredentials;
+
+    struct NoRemotePlacements;
+
+    #[async_trait]
+    impl agentdash_integration_remote_runtime::RuntimeWirePlacementResolver for NoRemotePlacements {
+        async fn resolve(
+            &self,
+            _request: agentdash_integration_remote_runtime::RuntimeWirePlacementRequest,
+        ) -> Result<
+            Arc<dyn agentdash_integration_remote_runtime::RuntimeWirePlacement>,
+            agentdash_integration_remote_runtime::RemoteRuntimeTransportError,
+        > {
+            Err(
+                agentdash_integration_remote_runtime::RemoteRuntimeTransportError::Unavailable {
+                    reason: "fixture has no remote placements".to_string(),
+                    retryable: false,
+                },
+            )
+        }
+    }
+
+    #[async_trait]
+    impl AgentRuntimeCredentialBroker for NoCredentials {
+        async fn resolve(
+            &self,
+            slot: &AgentRuntimeCredentialSlot,
+            _reference: &AgentRuntimeCredentialRef,
+            _purpose: &str,
+        ) -> Result<CredentialLease, CredentialResolveError> {
+            Err(CredentialResolveError::Unavailable {
+                slot: slot.clone(),
+                reason: "fixture has no credential slots".to_string(),
+            })
+        }
+    }
+
+    struct NoTools;
+
+    #[async_trait]
+    impl AgentRuntimeToolCallback for NoTools {
+        async fn invoke(
+            &self,
+            _request: DriverToolInvocation,
+        ) -> Result<DriverToolOutcome, DriverToolCallbackError> {
+            Err(DriverToolCallbackError::ProtocolViolation {
+                reason: "fixture has no tools".to_string(),
+            })
+        }
+    }
+
+    struct ContinueHooks;
+
+    #[async_trait]
+    impl AgentRuntimeHookCallback for ContinueHooks {
+        async fn execute(
+            &self,
+            request: DriverHookInvocation,
+        ) -> Result<DriverHookDecision, DriverHookCallbackError> {
+            Ok(DriverHookDecision::Continue {
+                payload: request.payload,
+            })
+        }
+    }
+
+    struct EchoBridge;
+
+    #[async_trait]
+    impl LlmBridge for EchoBridge {
+        async fn stream_complete(
+            &self,
+            _request: BridgeRequest,
+        ) -> Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
+            Box::pin(stream::iter(vec![
+                StreamChunk::TextDelta("native ".to_string()),
+                StreamChunk::TextDelta("response".to_string()),
+                StreamChunk::Done(BridgeResponse {
+                    message: AgentMessage::assistant("native response"),
+                    raw_content: vec![ContentPart::text("native response")],
+                    usage: TokenUsage::default(),
+                }),
+            ]))
+        }
+    }
+
+    struct EchoResolver;
+
+    #[async_trait]
+    impl NativeBridgeResolver for EchoResolver {
+        async fn resolve(
+            &self,
+            _instance: &ActivatedAgentServiceInstance,
+            _host: &RuntimeDriverHostPorts,
+        ) -> Result<Arc<dyn LlmBridge>, NativeBridgeResolveError> {
+            Ok(Arc::new(EchoBridge))
+        }
+    }
+
+    struct CodexTracerLauncher(std::path::PathBuf);
+
+    impl CodexAppServerLauncher for CodexTracerLauncher {
+        fn spawn(
+            &self,
+            cwd: &std::path::Path,
+            _hook_endpoint: Option<&str>,
+        ) -> Result<tokio::process::Child, String> {
+            let mut command = tokio::process::Command::new("node");
+            command
+                .arg(&self.0)
+                .current_dir(cwd)
+                .kill_on_drop(true)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null());
+            command.spawn().map_err(|error| error.to_string())
+        }
+    }
+
+    struct CodexTracerSurfaceSource {
+        definition: AgentServiceDefinition,
+        root: std::path::PathBuf,
+    }
+
+    #[async_trait]
+    impl AgentRunRuntimeSurfaceSource for CodexTracerSurfaceSource {
+        async fn prepare(
+            &self,
+            _request: &AgentRunRuntimeProvisionRequest,
+            thread_id: &RuntimeThreadId,
+            _binding_id: &RuntimeBindingId,
+        ) -> Result<PreparedAgentRunRuntime, AgentRunRuntimeSurfaceSourceError> {
+            let mut surface = fixture_surface();
+            surface.runtime_thread_id = thread_id.clone();
+            surface.hooks.bindings.clear();
+            surface.hooks.digest = parsed("sha256:codex-tracer-hooks");
+            surface.digest = parsed("sha256:codex-tracer-surface");
+            surface.workspace.roots = vec![self.root.display().to_string()];
+            let profile = self.definition.service_profile_upper_bound.clone();
+            let digest = profile_digest(&profile).map_err(|error| {
+                AgentRunRuntimeSurfaceSourceError::Invalid {
+                    reason: error.to_string(),
+                }
+            })?;
+            Ok(PreparedAgentRunRuntime {
+                service_instance_id: parsed("codex-tracer-service"),
+                definition_id: self.definition.provenance.definition_id.clone(),
+                service_config: json!({
+                    "cwd": self.root,
+                    "artifactRoot": self.root.join("artifacts"),
+                    "runtimeWorkspaceRoots": [self.root]
+                }),
+                placement: AgentRuntimePlacement::InProcess,
+                bound_surface: bound_surface_reference(&surface),
+                hook_plan: RuntimeHookPlanBinding {
+                    thread_id: thread_id.clone(),
+                    plan: BoundRuntimeHookPlan {
+                        revision: HookPlanRevision(1),
+                        digest: surface.hooks.digest.clone(),
+                        entries: Vec::new(),
+                    },
+                },
+                surface,
+                transport_profile: profile.clone(),
+                host_policy_profile: profile,
+                conformance: ConformanceEvidence {
+                    suite_revision: "codex-app-server-runtime-v1".to_string(),
+                    driver_build_digest: self.definition.provenance.build_digest.to_string(),
+                    verified_profile_digest: digest,
+                    verified_at: Utc::now(),
+                },
+            })
+        }
+    }
+
+    struct FixtureSurfaceCompiler;
+
+    #[async_trait]
+    impl NativeAgentRunSurfaceCompiler for FixtureSurfaceCompiler {
+        async fn compile(
+            &self,
+            _request: &AgentRunRuntimeProvisionRequest,
+            _thread_id: &RuntimeThreadId,
+            _binding_id: &RuntimeBindingId,
+        ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
+            Ok(NativeAgentRunSurfacePlan {
+                provider: "openai".to_string(),
+                model: "gpt-test".to_string(),
+                surface: fixture_surface(),
+            })
+        }
+    }
+
+    fn parsed<T: std::str::FromStr>(value: &str) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        value.parse().expect("valid fixture id")
+    }
+
+    fn fixture_surface() -> MaterializedDriverSurface {
+        MaterializedDriverSurface {
+            runtime_thread_id: parsed("fixture-thread"),
+            revision: SurfaceRevision(1),
+            digest: parsed("sha256:production-native-surface"),
+            authorization_identity: None,
+            context: DriverContextSurface {
+                recipe: ContextRecipe {
+                    revision: ContextRecipeRevision(1),
+                    provenance: ContextProvenance {
+                        settings_revision: ThreadSettingsRevision(1),
+                        tool_set_revision: ToolSetRevision(1),
+                    },
+                    source_item_ids: Vec::new(),
+                },
+                instructions: vec![DriverInstructionSet {
+                    channel: InstructionChannel::System,
+                    entries: vec!["You are the production Native Agent.".to_string()],
+                }],
+                blocks: vec![ContextBlock::Input {
+                    input: vec![RuntimeInput::Text {
+                        text: "durable initial context".to_string(),
+                    }],
+                }],
+                digest: parsed("sha256:production-native-context"),
+                fidelity: ContextFidelity::PlatformExact,
+            },
+            tools: DriverToolSurface {
+                revision: ToolSetRevision(1),
+                digest: "sha256:production-native-tools".to_string(),
+                tools: Vec::new(),
+            },
+            hooks: DriverHookSurface {
+                revision: HookPlanRevision(1),
+                digest: parsed("sha256:production-native-hooks"),
+                artifact_digest: None,
+                configuration_boundary: ConfigurationBoundary::Binding,
+                bindings: vec![
+                    DriverHookBinding {
+                        definition_id: parsed("native-tracer-hook"),
+                        point: HookPoint::BeforeTool,
+                        actions: vec![HookAction::Observe, HookAction::Block],
+                        strength: SemanticStrength::ExactSynchronous,
+                        failure_policy: HookFailurePolicy::FailClosed,
+                        required: true,
+                    },
+                    DriverHookBinding {
+                        definition_id: parsed("native-tracer-effect-hook"),
+                        point: HookPoint::AfterTool,
+                        actions: vec![HookAction::Observe, HookAction::EmitEffect],
+                        strength: SemanticStrength::ExactSynchronous,
+                        failure_policy: HookFailurePolicy::FailClosed,
+                        required: true,
+                    },
+                ],
+            },
+            workspace: DriverWorkspaceSurface {
+                capabilities: Vec::new(),
+                roots: vec!["workspace://project".to_string()],
+            },
+        }
+    }
+
+    async fn test_database() -> (
+        PgPool,
+        crate::postgres_runtime::PostgresRuntime,
+        tokio::sync::OwnedSemaphorePermit,
+    ) {
+        static SERIAL: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
+            std::sync::OnceLock::new();
+        let permit = SERIAL
+            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("native runtime composition test semaphore");
+        let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/native-runtime-production-tracer");
+        let runtime = crate::postgres_runtime::PostgresRuntime::resolve_embedded_at_data_root(
+            "native-runtime-production-tracer",
+            8,
+            data_root,
+        )
+        .await
+        .expect("start embedded PostgreSQL");
+        let database = format!("native_runtime_{}", Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE DATABASE {database}"))
+            .execute(&runtime.pool)
+            .await
+            .expect("create tracer database");
+        let options: PgConnectOptions = runtime
+            .pool
+            .connect_options()
+            .as_ref()
+            .clone()
+            .database(&database);
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(6)
+            .connect_with(options)
+            .await
+            .expect("connect tracer database");
+        crate::migration::run_postgres_migrations(&pool)
+            .await
+            .expect("migrate tracer database");
+        (pool, runtime, permit)
+    }
+
+    #[tokio::test]
+    async fn production_native_composition_provisions_account_scoped_binding_idempotently() {
+        let (pool, _runtime, _serial) = test_database().await;
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
+        let now = Utc::now();
+        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,topology,status,created_at,updated_at,last_activity_at) VALUES ($1,$2,'plain','ready',$3,$3,$3)")
+            .bind(run_id.to_string())
+            .bind(project_id.to_string())
+            .bind(now)
+            .execute(&pool)
+            .await
+            .expect("seed lifecycle run");
+        sqlx::query("INSERT INTO lifecycle_agents (id,run_id,project_id,source,status) VALUES ($1,$2,$3,'primary','active')")
+            .bind(agent_id.to_string())
+            .bind(run_id.to_string())
+            .bind(project_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("seed lifecycle agent");
+
+        let mut provider = LlmProvider::new("OpenAI", "openai", WireProtocol::OpenaiCompatible);
+        provider.credential_mode = LlmCredentialMode::UserRequired;
+        provider.default_model = "gpt-test".to_string();
+        provider.models = json!(["gpt-test"]);
+        let credential = LlmProviderUserCredential {
+            id: Uuid::new_v4(),
+            provider_id: provider.id,
+            user_id: "account-user-1".to_string(),
+            api_key_ciphertext: "user-secret".to_string(),
+            verification_status: Default::default(),
+            verification_message: String::new(),
+            verified_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let composition =
+            build_native_agent_runtime_composition(NativeAgentRuntimeCompositionInput {
+                pool: pool.clone(),
+                provider_repository: Arc::new(ProviderRepository(provider)),
+                provider_credential_repository: Arc::new(UserCredentials(credential)),
+                secret_codec: Arc::new(PlaintextCodec),
+                surface_compiler: Arc::new(FixtureSurfaceCompiler),
+                credential_broker: Arc::new(NoCredentials),
+                tool_callback: Arc::new(NoTools),
+                hook_callback: Arc::new(ContinueHooks),
+                remote_definitions: Vec::new(),
+                remote_trust_manifests: Vec::new(),
+                remote_placements: Arc::new(NoRemotePlacements),
+                node_id: "production-tracer-node".to_string(),
+            })
+            .expect("build production composition");
+        let request = AgentRunRuntimeProvisionRequest {
+            target: AgentRunRuntimeTarget { run_id, agent_id },
+            identity: Some(AuthIdentity {
+                auth_mode: AuthMode::Enterprise,
+                user_id: "account-user-1".to_string(),
+                subject: "directory-subject-1".to_string(),
+                display_name: None,
+                email: None,
+                avatar_url: None,
+                groups: Vec::new(),
+                is_admin: false,
+                provider: Some("enterprise".to_string()),
+                extra: serde_json::Value::Null,
+            }),
+        };
+        let first = composition
+            .provisioner
+            .provision(&request)
+            .await
+            .expect("provision Native binding");
+        let replay = composition
+            .provisioner
+            .provision(&request)
+            .await
+            .expect("replay Native provisioning");
+
+        assert_eq!(first, replay);
+        assert_eq!(first.bound_profile, native_runtime_profile());
+        assert_eq!(
+            composition
+                .bindings
+                .load(&request.target)
+                .await
+                .expect("load product binding"),
+            Some(first.clone())
+        );
+        let stored_surface: serde_json::Value = sqlx::query_scalar(
+            "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1",
+        )
+        .bind(first.binding_id.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("load immutable surface");
+        assert_eq!(
+            stored_surface["context"]["instructions"][0]["entries"][0],
+            "You are the production Native Agent."
+        );
+        let config: serde_json::Value =
+            sqlx::query_scalar("SELECT config FROM agent_runtime_service_instance LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .expect("load service config");
+        assert_eq!(config["credential_scope"]["kind"], "user");
+        assert_eq!(config["credential_scope"]["user_id"], "account-user-1");
+    }
+
+    #[tokio::test]
+    async fn production_native_tracer_dispatches_durable_thread_start_and_replays_client_command() {
+        let (pool, _postgres, _serial) = test_database().await;
+        let integration = NativeAgentRuntimeIntegration::new(Arc::new(EchoResolver));
+        let contribution = integration
+            .agent_runtime_drivers()
+            .pop()
+            .expect("Native contribution");
+        let definition = contribution.definition.clone();
+        let manifest = native_runtime_trust_manifest();
+        let composition = build_agent_runtime_composition(AgentRuntimeCompositionInput {
+            pool: pool.clone(),
+            contributions: vec![contribution],
+            trusted_manifests: vec![TrustedDriverManifest {
+                provenance: manifest.provenance,
+                suite_revision: manifest.suite_revision,
+                driver_build_digest: manifest.driver_build_digest,
+                protocol_revision: manifest.protocol_revision,
+                verified_profile_digest: profile_digest(&manifest.verified_profile)
+                    .expect("profile digest"),
+            }],
+            surface_source: Arc::new(
+                NativeAgentRunRuntimeSurfaceSource::new(
+                    Arc::new(FixtureSurfaceCompiler),
+                    definition,
+                )
+                .expect("Native surface source"),
+            ),
+            credential_broker: Arc::new(NoCredentials),
+            tool_callback: Arc::new(NoTools),
+            hook_callback: Arc::new(ContinueHooks),
+            node_id: "native-production-tracer".to_string(),
+        })
+        .expect("production composition");
+        let target = AgentRunRuntimeTarget {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        };
+        let project_id = Uuid::new_v4();
+        let now = Utc::now();
+        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,topology,status,created_at,updated_at,last_activity_at) VALUES ($1,$2,'plain','ready',$3,$3,$3)")
+            .bind(target.run_id.to_string())
+            .bind(project_id.to_string())
+            .bind(now)
+            .execute(&pool)
+            .await
+            .expect("seed lifecycle run");
+        sqlx::query("INSERT INTO lifecycle_agents (id,run_id,project_id,source,status) VALUES ($1,$2,$3,'primary','active')")
+            .bind(target.agent_id.to_string())
+            .bind(target.run_id.to_string())
+            .bind(project_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("seed lifecycle agent");
+        let binding = composition
+            .provisioner
+            .provision(&AgentRunRuntimeProvisionRequest {
+                target,
+                identity: None,
+            })
+            .await
+            .expect("provision Native tracer");
+        let command = RuntimeCommandEnvelope {
+            meta: OperationMeta {
+                operation_id: parsed("native-tracer-start-operation"),
+                idempotency_key: parsed("native-tracer-start-key"),
+                expected_thread_revision: None,
+                actor: RuntimeActor::System {
+                    component: "native-production-tracer".to_string(),
+                },
+            },
+            command: RuntimeCommand::ThreadStart {
+                thread_id: binding.thread_id.clone(),
+                binding_id: binding.binding_id.clone(),
+                driver_generation: binding.driver_generation,
+                source_thread_id: binding.source_thread_id.clone(),
+                profile_digest: binding.profile_digest.clone(),
+                bound_profile: Box::new(binding.bound_profile.clone()),
+                input: vec![RuntimeInput::Text {
+                    text: "hello native tracer".to_string(),
+                }],
+                surface_digest: binding.surface_digest.clone(),
+                settings_revision: binding.settings_revision,
+                tool_set_revision: binding.tool_set_revision,
+                hook_plan: binding.hook_plan.clone(),
+            },
+        };
+        let first = composition
+            .gateway
+            .execute(command.clone())
+            .await
+            .expect("accept ThreadStart");
+        let replay = composition
+            .gateway
+            .execute(command)
+            .await
+            .expect("replay ThreadStart");
+        assert!(!first.duplicate);
+        assert!(replay.duplicate);
+        assert_eq!(first.operation_id, replay.operation_id);
+        assert_eq!(
+            composition
+                .outbox_worker
+                .run_once(8)
+                .await
+                .expect("dispatch durable outbox"),
+            1
+        );
+        let RuntimeSnapshotResult::Thread { snapshot } = composition
+            .gateway
+            .snapshot(RuntimeSnapshotQuery::Thread {
+                thread_id: binding.thread_id,
+                at_revision: None,
+            })
+            .await
+            .expect("canonical Native snapshot")
+        else {
+            panic!("expected thread snapshot")
+        };
+        assert_eq!(snapshot.status, RuntimeThreadStatus::Active);
+        assert!(snapshot.transcript.iter().any(|item| {
+            matches!(
+                &item.final_content,
+                RuntimeItemContent::AgentMessage { text } if text == "native response"
+            )
+        }));
+        let mut events = composition
+            .gateway
+            .events(RuntimeEventSubscription {
+                thread_id: snapshot.thread_id.clone(),
+                after: None,
+                include_transient: true,
+            })
+            .await
+            .expect("canonical event stream");
+        let mut saw_delta = false;
+        for _ in 0..32 {
+            let Some(event) =
+                tokio::time::timeout(std::time::Duration::from_secs(1), events.next())
+                    .await
+                    .expect("event stream timeout")
+            else {
+                break;
+            };
+            if matches!(
+                event.expect("canonical event").event,
+                RuntimeEvent::ItemDelta { .. }
+            ) {
+                saw_delta = true;
+                break;
+            }
+        }
+        assert!(saw_delta);
+
+        composition
+            .gateway
+            .execute(RuntimeCommandEnvelope {
+                meta: OperationMeta {
+                    operation_id: parsed("native-tracer-compaction-operation"),
+                    idempotency_key: parsed("native-tracer-compaction-key"),
+                    expected_thread_revision: Some(snapshot.revision),
+                    actor: RuntimeActor::System {
+                        component: "native-production-tracer".to_string(),
+                    },
+                },
+                command: RuntimeCommand::ContextCompact {
+                    thread_id: snapshot.thread_id.clone(),
+                    compaction_id: parsed("native-tracer-compaction"),
+                    trigger: ContextCompactionTrigger::Automatic,
+                    base_checkpoint_id: None,
+                    expected_context_revision: ContextRevision(0),
+                },
+            })
+            .await
+            .expect("accept managed compaction");
+        let abandoned = composition
+            .work_queue
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::ContextPreparation,
+                owner: RuntimeWorkerId("crashed-context-worker".to_string()),
+                lease_duration_ms: 1,
+                limit: 1,
+            })
+            .await
+            .expect("crashed worker claim");
+        assert_eq!(abandoned.len(), 1);
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        assert_eq!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::ContextPreparation, 8)
+                .await
+                .expect("take over expired preparation claim"),
+            1
+        );
+        assert_eq!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::ContextActivationDispatch, 8)
+                .await
+                .expect("dispatch context activation"),
+            1
+        );
+        assert_eq!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::ContextActivationRecovery, 8)
+                .await
+                .expect("recover context activation"),
+            1
+        );
+        assert_eq!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::ContextActivationRecovery, 8)
+                .await
+                .expect("terminal activation is not reclaimed"),
+            0
+        );
+
+        let effect_run_id: HookRunId = parsed("native-tracer-effect-run");
+        composition
+            .managed_runtime
+            .accept_hook(agentdash_agent_runtime::RuntimeHookInvocation {
+                hook_run_id: effect_run_id.clone(),
+                thread_id: snapshot.thread_id.clone(),
+                definition_id: parsed("native-tracer-effect-hook"),
+                point: HookPoint::AfterTool,
+                correlation: agentdash_agent_runtime::HookCorrelation {
+                    operation_id: None,
+                    turn_id: None,
+                    item_id: None,
+                    interaction_id: None,
+                },
+                input: json!({"tool_name":"read"}),
+            })
+            .await
+            .expect("accept known effect hook");
+        composition
+            .managed_runtime
+            .start_hook(&effect_run_id)
+            .await
+            .expect("start known effect hook");
+        let known_payload = json!({"code":"native_tracer","message":"recorded"});
+        composition
+            .managed_runtime
+            .complete_hook(
+                &effect_run_id,
+                agentdash_agent_runtime::HookCompletion {
+                    status: agentdash_agent_runtime::HookRunStatus::Completed,
+                    decision: HookRunDecision::Continue,
+                    message: None,
+                },
+                vec![agentdash_agent_runtime::HookEffect {
+                    effect_id: parsed("native-tracer-known-effect"),
+                    hook_run_id: effect_run_id.clone(),
+                    thread_id: snapshot.thread_id.clone(),
+                    idempotency_key: "native-tracer-known-effect".to_string(),
+                    descriptor: agentdash_agent_runtime::HookEffectDescriptor {
+                        effect_type: "diagnostic:record".to_string(),
+                        schema_version: 1,
+                        target_authority: "agentdash_hook_effect_dispatcher".to_string(),
+                        retry_limit: 3,
+                        payload_digest: agentdash_agent_runtime::hook_effect_payload_digest(
+                            &known_payload,
+                        ),
+                    },
+                    payload: known_payload,
+                }],
+            )
+            .await
+            .expect("complete known effect hook");
+        assert_eq!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::HookEffect, 8)
+                .await
+                .expect("dispatch known hook effect"),
+            1
+        );
+        assert_eq!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::HookEffect, 8)
+                .await
+                .expect("known effect is exactly-once acknowledged"),
+            0
+        );
+
+        let unknown_run_id: HookRunId = parsed("native-tracer-unknown-effect-run");
+        composition
+            .managed_runtime
+            .accept_hook(agentdash_agent_runtime::RuntimeHookInvocation {
+                hook_run_id: unknown_run_id.clone(),
+                thread_id: snapshot.thread_id.clone(),
+                definition_id: parsed("native-tracer-effect-hook"),
+                point: HookPoint::AfterTool,
+                correlation: agentdash_agent_runtime::HookCorrelation {
+                    operation_id: None,
+                    turn_id: None,
+                    item_id: None,
+                    interaction_id: None,
+                },
+                input: json!({"tool_name":"read"}),
+            })
+            .await
+            .expect("accept unknown effect hook");
+        composition
+            .managed_runtime
+            .start_hook(&unknown_run_id)
+            .await
+            .expect("start unknown effect hook");
+        let unknown_payload = json!({"note":"must remain pending"});
+        composition
+            .managed_runtime
+            .complete_hook(
+                &unknown_run_id,
+                agentdash_agent_runtime::HookCompletion {
+                    status: agentdash_agent_runtime::HookRunStatus::Completed,
+                    decision: HookRunDecision::Continue,
+                    message: None,
+                },
+                vec![agentdash_agent_runtime::HookEffect {
+                    effect_id: parsed("native-tracer-unknown-effect"),
+                    hook_run_id: unknown_run_id.clone(),
+                    thread_id: snapshot.thread_id.clone(),
+                    idempotency_key: "native-tracer-unknown-effect".to_string(),
+                    descriptor: agentdash_agent_runtime::HookEffectDescriptor {
+                        effect_type: "record:note".to_string(),
+                        schema_version: 1,
+                        target_authority: "unknown_enterprise_authority".to_string(),
+                        retry_limit: 3,
+                        payload_digest: agentdash_agent_runtime::hook_effect_payload_digest(
+                            &unknown_payload,
+                        ),
+                    },
+                    payload: unknown_payload,
+                }],
+            )
+            .await
+            .expect("complete unknown effect hook");
+        assert!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::HookEffect, 8)
+                .await
+                .is_err(),
+            "unknown authority must release instead of acknowledging"
+        );
+        assert_eq!(
+            composition
+                .work_queue
+                .claim(RuntimeWorkClaimRequest {
+                    kind: RuntimeWorkKind::HookEffect,
+                    owner: RuntimeWorkerId("unknown-effect-observer".to_string()),
+                    lease_duration_ms: 1_000,
+                    limit: 8,
+                })
+                .await
+                .expect("unknown effect remains claimable")
+                .len(),
+            1
+        );
+        let RuntimeSnapshotResult::Context { context } = composition
+            .gateway
+            .snapshot(RuntimeSnapshotQuery::Context {
+                thread_id: snapshot.thread_id,
+                at_context_revision: None,
+            })
+            .await
+            .expect("compacted context snapshot")
+        else {
+            panic!("expected context snapshot")
+        };
+        assert!(context.head.is_some());
+        assert_eq!(context.fidelity, ContextFidelity::PlatformExact);
+
+        let hook_run_id: HookRunId = parsed("native-tracer-crashed-hook");
+        assert!(matches!(
+            composition
+                .managed_runtime
+                .accept_hook(agentdash_agent_runtime::RuntimeHookInvocation {
+                    hook_run_id: hook_run_id.clone(),
+                    thread_id: context.thread_id,
+                    definition_id: parsed("native-tracer-hook"),
+                    point: HookPoint::BeforeTool,
+                    correlation: agentdash_agent_runtime::HookCorrelation {
+                        operation_id: None,
+                        turn_id: None,
+                        item_id: None,
+                        interaction_id: None,
+                    },
+                    input: json!({"tool_name":"read"}),
+                })
+                .await
+                .expect("accept durable hook"),
+            agentdash_agent_runtime::HookAdmission::Durable(_)
+        ));
+        let abandoned_hook = composition
+            .work_queue
+            .claim(RuntimeWorkClaimRequest {
+                kind: RuntimeWorkKind::HookRunRecovery,
+                owner: RuntimeWorkerId("crashed-hook-worker".to_string()),
+                lease_duration_ms: 1,
+                limit: 1,
+            })
+            .await
+            .expect("crashed hook worker claim");
+        assert_eq!(abandoned_hook.len(), 1);
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        assert_eq!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::HookRunRecovery, 8)
+                .await
+                .expect("recover expired hook claim"),
+            1
+        );
+        assert_eq!(
+            composition
+                .durable_workers
+                .run_once(RuntimeWorkKind::HookRunRecovery, 8)
+                .await
+                .expect("terminal hook is not reclaimed"),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn production_codex_tracer_maps_app_server_stream_and_resolves_interaction() {
+        let (pool, _postgres, _serial) = test_database().await;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/codex-runtime-production-tracer")
+            .join(Uuid::new_v4().simple().to_string());
+        std::fs::create_dir_all(root.join("artifacts")).expect("create Codex tracer root");
+        let script = root.join("app-server.cjs");
+        std::fs::write(
+            &script,
+            r#"const readline = require('readline');
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+const send = value => { console.error('codex-tracer-send', value.method || 'response', value.id || 'notification'); process.stdout.write(JSON.stringify(value) + '\n'); };
+const turnId = 'codex-source-turn-1';
+rl.on('line', line => {
+  const message = JSON.parse(line);
+  console.error('codex-tracer-recv', message.method || 'response', message.id || 'notification');
+  if (message.method === 'initialize') send({ id: message.id, result: { capabilities: {} } });
+  else if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'codex-source-thread-1' } } });
+  else if (message.method === 'turn/start') {
+    send({ id: message.id, result: { turn: { id: turnId } } });
+    setTimeout(() => {
+      send({ method: 'turn/started', params: { turn: { id: turnId } } });
+      send({ method: 'item/started', params: { turnId, item: { id: 'codex-item-1', type: 'agentMessage', text: '' } } });
+      send({ method: 'item/agentMessage/delta', params: { turnId, itemId: 'codex-item-1', delta: 'codex ' } });
+      send({ id: 700, method: 'item/commandExecution/requestApproval', params: { turnId, itemId: 'codex-item-1', reason: 'approve tracer command' } });
+    }, 10);
+  } else if (message.id === 700 && !message.method) {
+    send({ method: 'item/agentMessage/delta', params: { turnId, itemId: 'codex-item-1', delta: 'response' } });
+    send({ method: 'item/completed', params: { turnId, item: { id: 'codex-item-1', type: 'agentMessage', status: 'completed', text: 'codex response' } } });
+    send({ method: 'turn/completed', params: { turn: { id: turnId, status: 'completed' } } });
+  }
+});
+"#,
+        )
+        .expect("write controllable app-server");
+        let contribution =
+            codex_runtime_contribution_with_launcher(Arc::new(CodexTracerLauncher(script)));
+        let definition = contribution.definition.clone();
+        let manifest = codex_runtime_trust_manifest();
+        let composition = build_agent_runtime_composition(AgentRuntimeCompositionInput {
+            pool: pool.clone(),
+            contributions: vec![contribution],
+            trusted_manifests: vec![TrustedDriverManifest {
+                provenance: manifest.provenance,
+                suite_revision: manifest.suite_revision,
+                driver_build_digest: manifest.driver_build_digest,
+                protocol_revision: manifest.protocol_revision,
+                verified_profile_digest: profile_digest(&manifest.verified_profile)
+                    .expect("Codex profile digest"),
+            }],
+            surface_source: Arc::new(CodexTracerSurfaceSource {
+                definition,
+                root: root.clone(),
+            }),
+            credential_broker: Arc::new(NoCredentials),
+            tool_callback: Arc::new(NoTools),
+            hook_callback: Arc::new(ContinueHooks),
+            node_id: "codex-production-tracer".to_string(),
+        })
+        .expect("Codex production composition");
+        let target = AgentRunRuntimeTarget {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        };
+        let project_id = Uuid::new_v4();
+        let now = Utc::now();
+        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,topology,status,created_at,updated_at,last_activity_at) VALUES ($1,$2,'plain','ready',$3,$3,$3)")
+            .bind(target.run_id.to_string()).bind(project_id.to_string()).bind(now)
+            .execute(&pool).await.expect("seed Codex lifecycle run");
+        sqlx::query("INSERT INTO lifecycle_agents (id,run_id,project_id,source,status) VALUES ($1,$2,$3,'primary','active')")
+            .bind(target.agent_id.to_string()).bind(target.run_id.to_string()).bind(project_id.to_string())
+            .execute(&pool).await.expect("seed Codex lifecycle agent");
+        let binding = composition
+            .provisioner
+            .provision(&AgentRunRuntimeProvisionRequest {
+                target,
+                identity: None,
+            })
+            .await
+            .expect("provision Codex binding");
+        let start = RuntimeCommandEnvelope {
+            meta: OperationMeta {
+                operation_id: parsed("codex-tracer-start-operation"),
+                idempotency_key: parsed("codex-tracer-start-key"),
+                expected_thread_revision: None,
+                actor: RuntimeActor::System {
+                    component: "codex-production-tracer".to_string(),
+                },
+            },
+            command: RuntimeCommand::ThreadStart {
+                thread_id: binding.thread_id.clone(),
+                binding_id: binding.binding_id.clone(),
+                driver_generation: binding.driver_generation,
+                source_thread_id: binding.source_thread_id.clone(),
+                profile_digest: binding.profile_digest.clone(),
+                bound_profile: Box::new(binding.bound_profile.clone()),
+                input: vec![RuntimeInput::Text {
+                    text: "hello codex tracer".to_string(),
+                }],
+                surface_digest: binding.surface_digest.clone(),
+                settings_revision: binding.settings_revision,
+                tool_set_revision: binding.tool_set_revision,
+                hook_plan: binding.hook_plan.clone(),
+            },
+        };
+        assert!(
+            !composition
+                .gateway
+                .execute(start.clone())
+                .await
+                .expect("accept Codex ThreadStart")
+                .duplicate
+        );
+        assert!(
+            composition
+                .gateway
+                .execute(start)
+                .await
+                .expect("replay Codex ThreadStart")
+                .duplicate
+        );
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                composition.outbox_worker.run_once(8),
+            )
+            .await
+            .expect("Codex ThreadStart dispatch timeout")
+            .expect("dispatch Codex ThreadStart"),
+            1
+        );
+        let pending = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let RuntimeSnapshotResult::Thread { snapshot } = composition
+                    .gateway
+                    .snapshot(RuntimeSnapshotQuery::Thread {
+                        thread_id: binding.thread_id.clone(),
+                        at_revision: None,
+                    })
+                    .await
+                    .expect("Codex pending snapshot")
+                else {
+                    panic!("expected Codex thread snapshot")
+                };
+                if let Some(interaction_id) = snapshot.pending_interactions.first() {
+                    break (snapshot.revision, interaction_id.clone());
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let (revision, interaction_id) = match pending {
+            Ok(pending) => pending,
+            Err(_) => {
+                let snapshot = composition
+                    .gateway
+                    .snapshot(RuntimeSnapshotQuery::Thread {
+                        thread_id: binding.thread_id.clone(),
+                        at_revision: None,
+                    })
+                    .await
+                    .expect("Codex diagnostic snapshot");
+                panic!("Codex interaction timeout; snapshot={snapshot:?}")
+            }
+        };
+        composition
+            .gateway
+            .execute(RuntimeCommandEnvelope {
+                meta: OperationMeta {
+                    operation_id: parsed("codex-tracer-interaction-operation"),
+                    idempotency_key: parsed("codex-tracer-interaction-key"),
+                    expected_thread_revision: Some(revision),
+                    actor: RuntimeActor::User {
+                        subject: "codex-tracer-user".to_string(),
+                    },
+                },
+                command: RuntimeCommand::InteractionRespond {
+                    thread_id: binding.thread_id.clone(),
+                    interaction_id,
+                    response: InteractionResponse::Approved,
+                },
+            })
+            .await
+            .expect("accept Codex interaction response");
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                composition.outbox_worker.run_once(8),
+            )
+            .await
+            .expect("Codex interaction dispatch timeout")
+            .expect("dispatch Codex interaction response"),
+            1
+        );
+        let final_result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let RuntimeSnapshotResult::Thread { snapshot } = composition.gateway.snapshot(RuntimeSnapshotQuery::Thread {
+                    thread_id: binding.thread_id.clone(), at_revision: None,
+                }).await.expect("Codex final snapshot") else { panic!("expected Codex thread snapshot") };
+                if snapshot.pending_interactions.is_empty() && snapshot.transcript.iter().any(|item| matches!(
+                    &item.final_content, RuntimeItemContent::AgentMessage { text } if text == "codex response"
+                )) { break snapshot; }
+                tokio::task::yield_now().await;
+            }
+        }).await;
+        let final_snapshot = match final_result {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                let snapshot = composition
+                    .gateway
+                    .snapshot(RuntimeSnapshotQuery::Thread {
+                        thread_id: binding.thread_id.clone(),
+                        at_revision: None,
+                    })
+                    .await
+                    .expect("Codex terminal diagnostic snapshot");
+                let events: Vec<serde_json::Value> = sqlx::query_scalar(
+                    "SELECT envelope FROM agent_runtime_event WHERE thread_id=$1 ORDER BY event_sequence",
+                )
+                .bind(binding.thread_id.as_str())
+                .fetch_all(&pool)
+                .await
+                .expect("Codex diagnostic events");
+                panic!("Codex terminal snapshot timeout; snapshot={snapshot:?}; events={events:?}")
+            }
+        };
+        let serialized = serde_json::to_string(&final_snapshot).expect("snapshot serializes");
+        assert!(!serialized.contains("item/agentMessage/delta"));
+        assert!(!serialized.contains("turn/completed"));
+    }
+
+    #[tokio::test]
+    async fn native_surface_source_uses_authenticated_user_coordinate() {
+        let resolver: Arc<dyn NativeBridgeResolver> =
+            Arc::new(RepositoryNativeBridgeResolver::new(
+                Arc::new(ProviderRepository(LlmProvider::new(
+                    "OpenAI",
+                    "openai",
+                    WireProtocol::OpenaiCompatible,
+                ))),
+                Arc::new(NoUserCredentials),
+                Arc::new(PlaintextCodec),
+            ));
+        let definition = NativeAgentRuntimeIntegration::new(resolver)
+            .agent_runtime_drivers()
+            .remove(0)
+            .definition;
+        let source =
+            NativeAgentRunRuntimeSurfaceSource::new(Arc::new(FixtureSurfaceCompiler), definition)
+                .expect("Native surface source");
+        let request = AgentRunRuntimeProvisionRequest {
+            target: AgentRunRuntimeTarget {
+                run_id: Uuid::new_v4(),
+                agent_id: Uuid::new_v4(),
+            },
+            identity: Some(AuthIdentity {
+                auth_mode: AuthMode::Enterprise,
+                user_id: "account-user-1".to_string(),
+                subject: "directory-subject-1".to_string(),
+                display_name: None,
+                email: None,
+                avatar_url: None,
+                groups: Vec::new(),
+                is_admin: false,
+                provider: Some("enterprise".to_string()),
+                extra: serde_json::Value::Null,
+            }),
+        };
+        let prepared = source
+            .prepare(
+                &request,
+                &parsed("thread-account"),
+                &parsed("binding-account"),
+            )
+            .await
+            .expect("prepare user-scoped service");
+
+        assert_eq!(
+            prepared.service_config["credential_scope"],
+            json!({"kind":"user","user_id":"account-user-1"})
+        );
+        assert_ne!(
+            prepared.service_config["credential_scope"]["user_id"],
+            request.identity.as_ref().unwrap().subject
+        );
+    }
+}

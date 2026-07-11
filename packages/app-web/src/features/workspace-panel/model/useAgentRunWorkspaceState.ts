@@ -5,6 +5,10 @@ import type { AgentFrameHookRuntimeInfo } from "../../../types";
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchAgentRunWorkspace } from "../../../services/lifecycle";
+import {
+  fetchAgentRunRuntimeInspect,
+  type AgentRunRuntimeInspectResponse,
+} from "../../../services/agentRunRuntime";
 import type { WorkspaceRuntimeStateStatus } from "../../workspace-runtime";
 
 export interface AgentRunWorkspaceState {
@@ -13,6 +17,7 @@ export interface AgentRunWorkspaceState {
   source_key: string | null;
   status: WorkspaceRuntimeStateStatus;
   workspace: AgentRunWorkspaceView | null;
+  runtime_inspect: AgentRunRuntimeInspectResponse | null;
   runtime_surface: ResolvedVfsSurface | null;
   hook_runtime: AgentFrameHookRuntimeInfo | null;
   frame: AgentFrameRuntimeView | null;
@@ -35,6 +40,7 @@ export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceState {
     source_key: null,
     status: "idle",
     workspace: null,
+    runtime_inspect: null,
     runtime_surface: null,
     hook_runtime: null,
     frame: null,
@@ -134,7 +140,10 @@ export function useAgentRunWorkspaceState({
     setState((current) => beginAgentRunWorkspaceStateLoad(current, rid, aid, skey, mode));
 
     try {
-      const workspace = await fetchAgentRunWorkspace(rid, aid);
+      const [workspace, runtimeInspect] = await Promise.all([
+        fetchAgentRunWorkspace(rid, aid),
+        fetchAgentRunRuntimeInspect({ runId: rid, agentId: aid }),
+      ]);
       const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
 
       if (!canCommit()) return workspace;
@@ -150,6 +159,7 @@ export function useAgentRunWorkspaceState({
         source_key: skey,
         status: "ready",
         workspace,
+        runtime_inspect: runtimeInspect,
         runtime_surface: runtimeSurface,
         hook_runtime: null,
         frame: workspace.frame_runtime ?? null,

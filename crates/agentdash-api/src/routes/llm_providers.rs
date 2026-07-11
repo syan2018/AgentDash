@@ -30,7 +30,7 @@ use chrono::{DateTime, Utc};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::{
+use agentdash_llm_provider::{
     EffectiveLlmProviderProfile, ProviderUnavailableReason,
     build_effective_profile_catalog_from_db, build_effective_provider_profile,
 };
@@ -774,7 +774,7 @@ pub async fn probe_models(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
-    let models = agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::probe_models_for_protocol(
+    let models = agentdash_llm_provider::probe_models_for_protocol(
         protocol,
         &api_key,
         base_url,
@@ -813,7 +813,7 @@ pub async fn probe_user_provider_models(
             (!provider.discovery_url.trim().is_empty()).then_some(provider.discovery_url.as_str())
         });
 
-    let models = agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::probe_models_for_protocol(
+    let models = agentdash_llm_provider::probe_models_for_protocol(
         protocol,
         &api_key,
         base_url,
@@ -892,7 +892,7 @@ async fn verify_user_api_key(
     let discovery_url =
         (!provider.discovery_url.trim().is_empty()).then_some(provider.discovery_url.as_str());
 
-    match agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::probe_models_for_protocol(
+    match agentdash_llm_provider::probe_models_for_protocol(
         provider.protocol,
         api_key,
         base_url,
@@ -1291,9 +1291,7 @@ fn ensure_provider_allows_user_credential(provider: &LlmProvider) -> Result<(), 
     ))
 }
 
-fn probe_model_dto(
-    model: agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::ProbeModelResult,
-) -> ProbeLlmProviderModelDto {
+fn probe_model_dto(model: agentdash_llm_provider::ProbeModelResult) -> ProbeLlmProviderModelDto {
     ProbeLlmProviderModelDto {
         id: model.id,
         name: model.name,

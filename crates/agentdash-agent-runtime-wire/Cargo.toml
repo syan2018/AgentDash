@@ -13,6 +13,7 @@ path = "src/generate.rs"
 
 [dependencies]
 agentdash-agent-runtime-contract = { workspace = true }
+agentdash-integration-api = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

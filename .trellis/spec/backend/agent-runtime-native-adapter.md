@@ -32,6 +32,7 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 ## 3. Contracts
 
 - Native service通过与Codex/企业service相同的Integration contribution/factory进入Host。Application/router不按Pi或Native类型分支，service descriptor与conformance是能力事实源。
+- Native service instance使用schema-validated `provider`、`model`与显式`credential_scope`。`credential_scope`只能是平台凭据或带非空`user_id`的账户凭据；缺失scope不得解释为平台回退。instance只保存凭据查找坐标，API key/OAuth token仍由repository/secret codec在driver激活时短暂解析。
 - Bind intent显式区分Start、Resume与Fork。Resume必须保留source thread；Fork必须导入请求指定的checkpoint并验证checkpoint ID/context digest，不能选择任意最新context。
 - Native descriptor只声明实际原生支持的输入与能力。当前Text/Image可进入本地Core；FileReference/Structured不得文本拍平冒充支持，必须在request lock、status event、prompt或任何side effect前typed Unsupported。
 - Surface materialization返回真实surface/tool-set/hook plan revision与digest。ToolSetReplace receipt必须携带`DriverToolSetApplyReceipt`；其他命令为None。Host只依据ack开放required dispatch gate。
@@ -49,6 +50,7 @@ Factory从WP04 Host获得`ActivatedInstance + RuntimeDriverHostPorts`，resolver
 | 场景 | 必须得到的结果 |
 | --- | --- |
 | Start/Resume/Fork缺少或错用source coordinate | typed bind error，无session side effect |
+| user credential scope缺失或user_id为空 | typed configuration error，不尝试平台全局凭据 |
 | Fork broker返回非请求checkpoint/digest | reject，不激活context |
 | FileReference/Structured输入 | side effect前Unsupported |
 | surface/tool/hook applied digest不匹配 | Host gate保持未应用/失败 |

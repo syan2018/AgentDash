@@ -873,7 +873,7 @@ async fn claim_activation_recovery(
 ) -> Result<Vec<RuntimeWorkClaim>, RuntimeStoreError> {
     let rows = sqlx::query(
         "WITH candidates AS (SELECT id FROM agent_context_activation \
-         WHERE status='applied' AND (recovery_claim_token IS NULL OR recovery_claim_expires_at_ms <= $1) \
+         WHERE status IN ('prepared','applied') AND (recovery_claim_token IS NULL OR recovery_claim_expires_at_ms <= $1) \
          ORDER BY updated_at LIMIT $5 FOR UPDATE SKIP LOCKED) \
          UPDATE agent_context_activation q SET recovery_claim_token=$2,recovery_claim_owner=$3,\
          recovery_claim_expires_at_ms=$4,recovery_attempt_count=q.recovery_attempt_count+1,\
@@ -2044,9 +2044,9 @@ mod tests {
         BoundRuntimeHookEntry, BoundRuntimeHookPlan, CompactionPreparation, HookAdmission,
         HookCompletion, HookCorrelation, HookEffect, HookEffectDescriptor, HookExecutionSite,
         HookGateDecision, HookRunStatus, ManagedAgentRuntime, RuntimeHookInvocation,
-        RuntimeHookPlanBinding, RuntimeKernelDefaults, RuntimeRepository, RuntimeStoreError,
-        RuntimeUnitOfWork, RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkPayload,
-        RuntimeWorkQueue, RuntimeWorkerId,
+        RuntimeHookPlanBinding, RuntimeRepository, RuntimeStoreError, RuntimeUnitOfWork,
+        RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkPayload, RuntimeWorkQueue,
+        RuntimeWorkerId,
     };
     use agentdash_agent_runtime_contract::*;
 
@@ -2183,16 +2183,7 @@ mod tests {
             .bind(&binding_id).bind(&source_id).bind(&thread_id)
             .execute(&pool).await.expect("seed host-owned source coordinate");
         let store = Arc::new(PostgresRuntimeRepository::new(pool));
-        let runtime = ManagedAgentRuntime::new(
-            store.clone(),
-            RuntimeKernelDefaults {
-                binding_id: id(&binding_id),
-                driver_generation: RuntimeDriverGeneration(7),
-                source_thread_id: id(&source_id),
-                profile_digest: id(&format!("profile-{suffix}")),
-                bound_profile: profile(),
-            },
-        );
+        let runtime = ManagedAgentRuntime::new(store.clone());
         Fixture {
             store,
             runtime,
@@ -2213,36 +2204,46 @@ mod tests {
                 },
             },
             command: RuntimeCommand::ThreadStart {
+                thread_id: fixture.thread_id.clone(),
+                binding_id: id(&format!("binding-{}", fixture.suffix)),
+                driver_generation: RuntimeDriverGeneration(7),
+                source_thread_id: id(&format!("source-{}", fixture.suffix)),
+                profile_digest: id(&format!("profile-{}", fixture.suffix)),
+                bound_profile: Box::new(profile()),
                 input: Vec::new(),
                 surface_digest: id(&format!("surface-{}", fixture.suffix)),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: id(&format!("hook-plan-{}", fixture.suffix)),
+                    entries: Vec::new(),
+                },
             },
         }
     }
 
     #[tokio::test]
-    async fn migration_keeps_legacy_trace_data_outside_managed_runtime() {
+    async fn migration_physically_removes_legacy_runtime_session_schema() {
         let _serial = serial_test_guard().await;
         let database = runtime_test_database().await;
         let pool = &database.pool;
-        let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let legacy_id = format!("legacy-{suffix}");
-        sqlx::query("INSERT INTO runtime_sessions (id,created_at,updated_at,last_delivery_status) VALUES ($1,0,0,'running')")
-            .bind(&legacy_id).execute(pool).await.expect("seed representative legacy trace");
-        let managed: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM agent_runtime_thread WHERE id=$1")
-                .bind(&legacy_id)
-                .fetch_one(pool)
-                .await
-                .expect("query managed runtime");
-        assert_eq!(
-            managed, 0,
-            "legacy live trace must not masquerade as a recoverable RuntimeThread"
-        );
-        sqlx::query("DELETE FROM runtime_sessions WHERE id=$1")
-            .bind(&legacy_id)
-            .execute(pool)
-            .await
-            .expect("cleanup legacy fixture");
+        crate::migration::assert_postgres_tables_absent(
+            pool,
+            &[
+                "runtime_session_compaction_requests",
+                "runtime_session_execution_anchors",
+                "runtime_session_delivery_commands",
+                "runtime_session_projection_segments",
+                "runtime_session_projection_heads",
+                "runtime_session_lineage",
+                "runtime_session_compactions",
+                "runtime_session_events",
+                "runtime_sessions",
+            ],
+        )
+        .await
+        .expect("legacy RuntimeSession schema is physically absent");
     }
 
     #[tokio::test]
@@ -2712,11 +2713,6 @@ mod tests {
     async fn hook_plan_run_terminal_and_effect_lease_are_durable_in_postgres() {
         let _guard = serial_test_guard().await;
         let fixture = fixture("hook orchestration").await;
-        fixture
-            .runtime
-            .execute(start(&fixture))
-            .await
-            .expect("start runtime thread");
         let plan = RuntimeHookPlanBinding {
             thread_id: fixture.thread_id.clone(),
             plan: BoundRuntimeHookPlan {
@@ -2735,6 +2731,16 @@ mod tests {
                 }],
             },
         };
+        let mut start_command = start(&fixture);
+        let RuntimeCommand::ThreadStart { hook_plan, .. } = &mut start_command.command else {
+            unreachable!("start fixture always emits ThreadStart")
+        };
+        *hook_plan = plan.plan.clone();
+        fixture
+            .runtime
+            .execute(start_command)
+            .await
+            .expect("start runtime thread with durable hook plan");
         fixture
             .runtime
             .bind_hook_plan(plan.clone())

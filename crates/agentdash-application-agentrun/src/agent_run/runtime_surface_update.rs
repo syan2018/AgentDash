@@ -29,8 +29,8 @@ use crate::agent_run::runtime_capability_projection::{
     RuntimeCapabilityProjectionInput, derive_runtime_skill_baseline, merge_live_vfs_skill_entries,
 };
 use crate::agent_run::{
-    AgentFrameBuilder, AgentRunEffectiveCapabilityService, AgentRunEffectiveCapabilityView,
-    AgentRunRuntimeSurfaceQueryPort, RuntimeSurfaceQueryPurpose,
+    AgentFrameBuilder, AgentRunEffectiveCapabilityView, AgentRunRuntimeSurfaceQueryPort,
+    RuntimeSurfaceQueryPurpose,
 };
 use agentdash_application_vfs::VfsService;
 
@@ -182,7 +182,10 @@ impl AgentRunRuntimeSurfaceUpdateService {
         self.active_adopter
             .adopt_runtime_surface(AgentFrameRuntimeTarget {
                 frame_id: next_frame.id,
-                delivery_runtime_session_id: session_id.to_string(),
+                runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new(
+                    session_id,
+                )
+                .expect("runtime thread id"),
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -207,7 +210,8 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .map_err(|error| error.to_string())?;
         let target = AgentFrameRuntimeTarget {
             frame_id: surface.current_surface_frame_id,
-            delivery_runtime_session_id: session_id.to_string(),
+            runtime_thread_id: agentdash_agent_runtime_contract::RuntimeThreadId::new(session_id)
+                .expect("runtime thread id"),
         };
         let frame = self
             .frame_repo
@@ -215,7 +219,16 @@ impl AgentRunRuntimeSurfaceUpdateService {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("AgentFrame `{}` 不存在", surface.current_surface_frame_id))?;
-        Ok(AgentRunEffectiveCapabilityService::effective_view_from_frame(target, &frame))
+        let capability_state = project_capability_state_from_frame(&frame);
+        Ok(AgentRunEffectiveCapabilityView {
+            target,
+            visible_capabilities: capability_state.tool.capabilities.clone(),
+            vfs_surface: capability_state.vfs.active.clone().unwrap_or_default(),
+            mcp_surface: capability_state.tool.mcp_servers.clone(),
+            capability_state,
+            visible_workspace_module_refs: frame.visible_workspace_module_refs(),
+            grant_projection: Default::default(),
+        })
     }
 
     async fn derive_skill_baseline_for_transition_state(

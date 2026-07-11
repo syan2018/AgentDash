@@ -2154,7 +2154,7 @@ mod tests {
             last_payload: StdMutex::new(None),
         });
         let invoker = ExtensionRuntimeBackendServiceInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![installation(project_id, true, true)],
             }),
             transport.clone(),
@@ -2222,7 +2222,7 @@ mod tests {
             last_payload: StdMutex::new(None),
         });
         let invoker = ExtensionRuntimeBackendServiceInvoker::new(
-            Arc::new(FakeInstallationRepo {
+            Arc::new(FixtureInstallationRepo {
                 installations: vec![installation(project_id, true, true)],
             }),
             transport.clone(),

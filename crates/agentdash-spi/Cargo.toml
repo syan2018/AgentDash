@@ -25,6 +25,7 @@ tokio = { workspace = true, features = ["sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 agentdash-agent-protocol = { workspace = true }
 schemars = { workspace = true }
+ts-rs = { workspace = true }
 json-patch = "2.0"
 
 [dev-dependencies]

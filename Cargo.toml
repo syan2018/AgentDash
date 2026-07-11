@@ -10,7 +10,6 @@ members = [
     "crates/agentdash-domain",
     "crates/agentdash-application-ports",
     "crates/agentdash-application-runtime-gateway",
-    "crates/agentdash-application-runtime-session",
     "crates/agentdash-application-vfs",
     "crates/agentdash-application-skill",
     "crates/agentdash-application-agentrun",
@@ -36,6 +35,7 @@ members = [
     "crates/agentdash-mcp",
     "crates/agentdash-agent-types",
     "crates/agentdash-agent",
+    "crates/agentdash-llm-provider",
     "crates/agentdash-relay",
     "crates/agentdash-local",
     "crates/agentdash-local-tauri",
@@ -107,7 +107,6 @@ agentdash-integration-remote-runtime = { path = "crates/agentdash-integration-re
 agentdash-agent-runtime-test-support = { path = "crates/agentdash-agent-runtime-test-support" }
 agentdash-application-ports = { path = "crates/agentdash-application-ports" }
 agentdash-application-runtime-gateway = { path = "crates/agentdash-application-runtime-gateway" }
-agentdash-application-runtime-session = { path = "crates/agentdash-application-runtime-session" }
 agentdash-application-vfs = { path = "crates/agentdash-application-vfs" }
 agentdash-application-skill = { path = "crates/agentdash-application-skill" }
 agentdash-application-agentrun = { path = "crates/agentdash-application-agentrun" }
@@ -128,6 +127,7 @@ agentdash-first-party-integrations = { path = "crates/agentdash-first-party-inte
 agentdash-mcp = { path = "crates/agentdash-mcp" }
 agentdash-agent-types = { path = "crates/agentdash-agent-types" }
 agentdash-agent = { path = "crates/agentdash-agent" }
+agentdash-llm-provider = { path = "crates/agentdash-llm-provider" }
 agentdash-relay = { path = "crates/agentdash-relay" }
 agentdash-local = { path = "crates/agentdash-local", default-features = false }
 agentdash-integration-api = { path = "crates/agentdash-integration-api" }

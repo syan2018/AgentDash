@@ -1,6 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ExecutorConfig } from "../../../services/executor";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
@@ -16,7 +15,6 @@ import type {
 } from "../../workspace-panel/model/useAgentRunWorkspaceState";
 import {
   planAgentRunMessageSent,
-  planAgentRunSystemEvent,
   planAgentRunTurnEnded,
   planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
@@ -55,7 +53,6 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
     payload: CreateProjectAgentRunRequest,
   ) => Promise<ProjectAgentRunStartResult>;
   onDraftStarted: (response: ProjectAgentRunStartResult) => void;
-  onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   refreshAgentRunList: (reason: string) => void;
   refreshWorkspaceModuleCatalog: () => void;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
@@ -70,7 +67,6 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   handleMessageSent: () => void;
   handleTurnEnd: () => void;
   handleTaskPlanChanged: () => void;
-  handleSystemEvent: (eventType: string, event: BackboneEvent) => void;
   handleWorkspaceModuleOpened: () => void;
 }
 
@@ -88,7 +84,6 @@ export function useAgentRunWorkspaceControlPlane({
   taskExecutorSummary = null,
   createProjectAgentRun,
   onDraftStarted,
-  onAgentRunRedirect,
   refreshAgentRunList,
   refreshWorkspaceModuleCatalog,
   openWorkspacePanel,
@@ -179,6 +174,7 @@ export function useAgentRunWorkspaceControlPlane({
           conversation: workspaceControl?.conversation,
           workspaceStateStatus: agentRunWorkspaceState.status,
           workspaceStateError: agentRunWorkspaceState.error,
+          runtimeSnapshot: agentRunWorkspaceState.runtime_inspect?.snapshot,
         }),
     [
       agentRunWorkspaceState.error,
@@ -189,6 +185,7 @@ export function useAgentRunWorkspaceControlPlane({
       explicitExecutorConfigOverride,
       isProjectAgentDraft,
       workspaceControl?.conversation,
+      agentRunWorkspaceState.runtime_inspect?.snapshot,
     ],
   );
 
@@ -197,19 +194,10 @@ export function useAgentRunWorkspaceControlPlane({
   const {
     handleAgentRunCommand,
     handleCancelAgentRun,
-    handlePromoteMailboxMessage,
-    handleDeleteMailboxMessage,
-    handleResumeMailbox,
-    handleRecallMailboxMessage,
-    handleMoveMailboxMessage,
-    handleForkFromMessageRef,
-    recalledInput,
-    clearRecalledInput,
   } = useAgentRunWorkspaceCommands({
     currentRunId,
     currentAgentId,
     chatCommandState: commandState,
-    conversationMailbox,
     draftProjectId,
     draftProjectAgentKey,
     draftReady: Boolean(draftProjectId && draftProjectAgentKey && draftProjectAgent),
@@ -217,7 +205,6 @@ export function useAgentRunWorkspaceControlPlane({
     fetchAndIngestLifecycleRun,
     refreshWorkspaceState: refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
-    onAgentRunRedirect,
     resolveExecutorConfig: resolveExecutorConfigForConversationCommand,
     isCompleteExecutorConfig,
     onDraftStarted,
@@ -244,42 +231,8 @@ export function useAgentRunWorkspaceControlPlane({
     refreshAgentRunList("agent_run_cancelled");
   }, [handleCancelAgentRun, refreshAgentRunList]);
 
-  const promoteMailboxMessage = useCallback((messageId: string) => {
-    void (async () => {
-      await handlePromoteMailboxMessage(messageId);
-      refreshAgentRunList("mailbox_message_promoted");
-    })();
-  }, [handlePromoteMailboxMessage, refreshAgentRunList]);
-
-  const deleteMailboxMessage = useCallback((messageId: string) => {
-    void (async () => {
-      await handleDeleteMailboxMessage(messageId);
-      refreshAgentRunList("mailbox_message_deleted");
-    })();
-  }, [handleDeleteMailboxMessage, refreshAgentRunList]);
-
-  const resumeMailbox = useCallback(() => {
-    void (async () => {
-      await handleResumeMailbox();
-      refreshAgentRunList("mailbox_resumed");
-    })();
-  }, [handleResumeMailbox, refreshAgentRunList]);
-
-  const recallMailboxMessage = useCallback((messageId: string) => {
-    void (async () => {
-      await handleRecallMailboxMessage(messageId);
-      refreshAgentRunList("mailbox_message_recalled");
-    })();
-  }, [handleRecallMailboxMessage, refreshAgentRunList]);
-
-  const moveMailboxMessage = useCallback((messageId: string, afterMessageId: string | null) => {
-    void (async () => {
-      await handleMoveMailboxMessage(messageId, afterMessageId);
-      refreshAgentRunList("mailbox_message_moved");
-    })();
-  }, [handleMoveMailboxMessage, refreshAgentRunList]);
-
   const chatModel = useMemo<AgentRunChatModel>(() => ({
+    runtimeInspect: agentRunWorkspaceState.runtime_inspect,
     executorHint,
     agentDefaults: draftProjectAgent?.effective_executor_config
       ?? workspaceControl?.conversation?.model_config.effective_executor_config
@@ -290,8 +243,8 @@ export function useAgentRunWorkspaceControlPlane({
     mailbox: projectAgentRunChatMailboxModel(commandState, conversationMailbox),
     statusBarRunId: currentRunId,
     statusBarAgentId: currentAgentId,
-    injectedInputValue: recalledInput,
   }), [
+    agentRunWorkspaceState.runtime_inspect,
     commandState,
     conversationMailbox,
     currentAgentId,
@@ -299,7 +252,6 @@ export function useAgentRunWorkspaceControlPlane({
     draftProjectAgent?.effective_executor_config,
     executorHint,
     executorStateKey,
-    recalledInput,
     workspaceControl?.conversation?.model_config.effective_executor_config,
     taskExecutorSummary,
   ]);
@@ -308,22 +260,8 @@ export function useAgentRunWorkspaceControlPlane({
     submitComposer,
     cancelAction,
     setExecutorConfigOverride: setExplicitExecutorConfigOverride,
-    promoteMailboxMessage,
-    deleteMailboxMessage,
-    resumeMailbox,
-    recallMailboxMessage,
-    moveMailboxMessage,
-    forkFromMessageRef: handleForkFromMessageRef,
-    injectedInputConsumed: clearRecalledInput,
   }), [
     cancelAction,
-    clearRecalledInput,
-    deleteMailboxMessage,
-    handleForkFromMessageRef,
-    moveMailboxMessage,
-    promoteMailboxMessage,
-    recallMailboxMessage,
-    resumeMailbox,
     setExplicitExecutorConfigOverride,
     submitComposer,
   ]);
@@ -391,10 +329,6 @@ export function useAgentRunWorkspaceControlPlane({
     refreshStatusBarTasks();
   }, [refreshStatusBarTasks]);
 
-  const handleSystemEvent = useCallback((eventType: string, event: BackboneEvent) => {
-    applyControlPlaneEffectPlan(planAgentRunSystemEvent(eventType, event));
-  }, [applyControlPlaneEffectPlan]);
-
   const handleWorkspaceModuleOpened = useCallback(() => {
     applyControlPlaneEffectPlan(planAgentRunWorkspaceModuleOpened());
   }, [applyControlPlaneEffectPlan]);
@@ -408,7 +342,6 @@ export function useAgentRunWorkspaceControlPlane({
     handleMessageSent,
     handleTurnEnd,
     handleTaskPlanChanged,
-    handleSystemEvent,
     handleWorkspaceModuleOpened,
   };
 }

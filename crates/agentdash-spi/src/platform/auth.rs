@@ -8,10 +8,12 @@
 
 use std::str::FromStr;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// 当前认证模式
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
     /// 个人使用模式，通常对应单个固定用户
@@ -50,7 +52,7 @@ impl FromStr for AuthMode {
 }
 
 /// 用户组声明
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AuthGroup {
     /// 用户组唯一标识
@@ -60,7 +62,7 @@ pub struct AuthGroup {
 }
 
 /// 认证后的用户身份
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct AuthIdentity {
     /// 当前认证模式

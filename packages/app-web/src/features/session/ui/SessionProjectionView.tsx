@@ -285,9 +285,8 @@ export function SessionProjectionViewPanel({
         client_command_id: newClientCommandId(),
         command: commandPrecondition(compactContextCommand),
       });
-      const failedOutcome = response.outcome === "blocked" || response.outcome === "failed";
       setCompactAction({
-        kind: failedOutcome ? "error" : "success",
+        kind: "success",
         message: contextCompactionOutcomeMessage(response),
       });
       onRefresh?.();

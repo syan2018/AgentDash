@@ -21,7 +21,7 @@ pub struct AgentRunWorkspaceSnapshot {
     pub agent: LifecycleAgent,
     pub ownership: AgentRunOwnershipModel,
     pub shell: AgentRunWorkspaceShellModel,
-    pub delivery_runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub state: AgentRunWorkspaceStateModel,
     pub agent_view: Option<AgentRunView>,
     pub frame_runtime: Option<AgentRunWorkspaceFrameRuntimeModel>,
@@ -46,7 +46,7 @@ pub struct AgentRunListItem {
     /// 面向用户的身份标识：绑定 Project Agent 的显示名（preset.display_name || name）；
     /// 无绑定（ad-hoc / 已删除）时为 None。
     pub project_agent_label: Option<String>,
-    pub delivery_runtime_session_id: Option<String>,
+    pub runtime_thread_id: Option<String>,
     pub subject_ref: Option<SubjectRefModel>,
     pub subject_label: Option<String>,
 }

@@ -36,13 +36,13 @@
 
 ## Acceptance Criteria
 
-- [ ] Codex protocol DTO不出adapter crate。
-- [ ] 图片/structured input、instruction channel与workspace roots端到端无损。
-- [ ] Dynamic tool call有identity/policy/result/terminal闭环。
-- [ ] Approval/UserInput不会自动决定，pending interaction可恢复。
-- [ ] Interrupt accepted与turn terminal分离，EOF不Completed。
-- [ ] `thread/read`不冒充exact context，opaque compact不推进platform head。
-- [ ] 未实现hot update时typed说明boundary/rebind，不假成功。
-- [ ] PreToolUse block/rewrite、Permission allow/deny与Stop continuation在side effect/terminal candidate前真实生效，并关联canonical HookRun。
-- [ ] Bridge timeout按required rule failure policy收敛，duplicate callback与late notification不重复effect。
-- [ ] linked worktree与脚本内容替换场景通过artifact digest/path/trust tests。
+- [x] Codex protocol DTO不出adapter crate。
+- [x] 图片/structured input、instruction channel与workspace roots端到端无损。
+- [x] Dynamic tool call有identity/policy/result/terminal闭环。
+- [x] Approval/UserInput不会自动决定，pending interaction可恢复。
+- [x] Interrupt accepted与turn terminal分离，EOF不Completed。
+- [x] `thread/read`不冒充exact context，opaque compact不推进platform head。
+- [x] 未实现hot update时typed说明boundary/rebind，不假成功。
+- [x] PreToolUse block/rewrite、Permission allow/deny与Stop continuation在side effect/terminal candidate前真实生效，并关联canonical HookRun。
+- [x] Bridge timeout按required rule failure policy收敛，duplicate callback与late notification不重复effect。
+- [x] linked worktree与脚本内容替换场景通过artifact digest/path/trust tests。

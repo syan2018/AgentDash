@@ -33,13 +33,11 @@ const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "workspace_module_present_failed",
   "context_frame",
   "session_branch_forked",
-  "session_rewound",
   "session_rebuilt",
   "turn_discarded",
 ]);
 
 const VERBOSE_SYSTEM_EVENT_TYPES = new Set<string>([
-  "provider_attempt_status",
   "provider_retry",
   "provider_status",
 ]);

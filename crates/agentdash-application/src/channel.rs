@@ -190,7 +190,7 @@ impl ChannelBindingResolver for UnsupportedChannelBindingResolver {
 pub enum ChannelIngressOutcome {
     Resolved {
         owner: ChannelOwner,
-        message: ChannelMessage,
+        message: Box<ChannelMessage>,
     },
     Unresolved,
     Unsupported {
@@ -408,7 +408,10 @@ impl ChannelService {
                 );
                 message.provider_event_ref = envelope.key.provider_event_ref;
                 message.correlation_ref = envelope.correlation_ref;
-                Ok(ChannelIngressOutcome::Resolved { owner, message })
+                Ok(ChannelIngressOutcome::Resolved {
+                    owner,
+                    message: Box::new(message),
+                })
             }
             ChannelBindingResolution::Unresolved => Ok(ChannelIngressOutcome::Unresolved),
             ChannelBindingResolution::Unsupported { provider } => {
@@ -544,7 +547,6 @@ impl ChannelService {
             message: NewAgentRunMailboxMessage {
                 run_id,
                 agent_id,
-                delivery_runtime_session_id: None,
                 origin: mailbox_origin_from_channel_address(&intent.message.address),
                 source,
                 delivery: MailboxDelivery::LaunchOrContinueTurn,
@@ -552,9 +554,6 @@ impl ChannelService {
                 drain_mode: MailboxDrainMode::One,
                 priority: 0,
                 source_dedup_key: Some(format!("channel_delivery:{}", intent.id)),
-                queued_agent_run_turn_id: None,
-                expected_active_agent_run_turn_id: None,
-                command_receipt_id: None,
                 payload_json: Some(payload_json),
                 executor_config_json: None,
                 launch_planning_input: None,

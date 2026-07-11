@@ -100,20 +100,20 @@
 
 ## Acceptance Criteria
 
-- [ ] 现状报告覆盖 Agent Core 到 application、executor、内部/外部 Agent 与协议层的实际依赖图和关键运行时序列，并包含可核验的文件与符号证据。
-- [ ] compaction、上下文构造、会话状态及协议处理的当前所有权和重复/泄漏点均被识别，结论区分事实、推断与待决策项。
-- [ ] 目标设计定义各层职责、允许的依赖方向、公开契约、状态事实源、事务与失败边界以及跨层数据转换位置。
-- [ ] 内部业务 Agent 与外部 Agent 的统一能力模型能够表达扩展 Codex App Server Protocol 的完整会话与压缩语义，并说明能力发现及不支持能力的处理方式。
-- [ ] 目标设计把 Agent 服务定义为可插拔 Integration contribution，覆盖企业自研 Agent 的注册、service instance 配置、凭据、driver activation、能力协商、运行时路由、thread binding 与隔离语义，不依赖硬编码 connector 分支。
-- [ ] 目标设计明确区分平台期望的`AgentSurfaceSnapshot`、service实际能力`RuntimeOffer`、admission结果`BoundAgentSurface`与adapter应用回执`AppliedAgentSurface`，required contribution不能静默降级。
-- [ ] Runtime reference class与capability profile有明确guarantee、availability映射和conformance方式；Native、Codex、企业Agent service以及Relay transport分别套入正确模型。
-- [ ] 目标设计从第一原则论证模块存在的必要性；不能由明确职责或技术不变量支持的既有抽象被删除或合并。
-- [ ] 重构范围形成父任务内有序工作包，每个工作包都有显式依赖、迁移目标、验证方式、风险点和完成条件。
-- [ ] Hook设计明确Business Agent Surface、Managed Runtime、Tool Broker、Driver Host、Agent Core/Adapter与Infrastructure各自ownership，并能阻止weak callback/steer被误报为exact hook。
-- [ ] Codex native hook bridge覆盖可映射触发点、trust/materialization、configuration boundary、decision translation与HookRun correlation；unsupported actions按typed profile关闭。
-- [ ] ACP不进入首期Runtime Driver/Relay/Binding实现；可选projection明确为授权脱敏后的BestEffort read model，并说明首期跳过原因。
-- [ ] 涉及持久化模型变化时，设计包含数据库 migration、数据一致性和验证方案，但不保留旧字段兼容路径。
-- [ ] `prd.md`、`design.md`、`implement.md` 通过用户评审后才进入实现阶段。
+- [x] 现状报告覆盖 Agent Core 到 application、executor、内部/外部 Agent 与协议层的实际依赖图和关键运行时序列，并包含可核验的文件与符号证据。
+- [x] compaction、上下文构造、会话状态及协议处理的当前所有权和重复/泄漏点均被识别，结论区分事实、推断与待决策项。
+- [x] 目标设计定义各层职责、允许的依赖方向、公开契约、状态事实源、事务与失败边界以及跨层数据转换位置。
+- [x] 内部业务 Agent 与外部 Agent 的统一能力模型能够表达扩展 Codex App Server Protocol 的完整会话与压缩语义，并说明能力发现及不支持能力的处理方式。
+- [x] 目标设计把 Agent 服务定义为可插拔 Integration contribution，覆盖企业自研 Agent 的注册、service instance 配置、凭据、driver activation、能力协商、运行时路由、thread binding 与隔离语义，不依赖硬编码 connector 分支。
+- [x] 目标设计明确区分平台期望的`AgentSurfaceSnapshot`、service实际能力`RuntimeOffer`、admission结果`BoundAgentSurface`与adapter应用回执`AppliedAgentSurface`，required contribution不能静默降级。
+- [x] Runtime reference class与capability profile有明确guarantee、availability映射和conformance方式；Native、Codex、企业Agent service以及Relay transport分别套入正确模型。
+- [x] 目标设计从第一原则论证模块存在的必要性；不能由明确职责或技术不变量支持的既有抽象被删除或合并。
+- [x] 重构范围形成父任务内有序工作包，每个工作包都有显式依赖、迁移目标、验证方式、风险点和完成条件。
+- [x] Hook设计明确Business Agent Surface、Managed Runtime、Tool Broker、Driver Host、Agent Core/Adapter与Infrastructure各自ownership，并能阻止weak callback/steer被误报为exact hook。
+- [x] Codex native hook bridge覆盖可映射触发点、trust/materialization、configuration boundary、decision translation与HookRun correlation；unsupported actions按typed profile关闭。
+- [x] ACP不进入首期Runtime Driver/Relay/Binding实现；可选projection明确为授权脱敏后的BestEffort read model，并说明首期跳过原因。
+- [x] 涉及持久化模型变化时，设计包含数据库 migration、数据一致性和验证方案，但不保留旧字段兼容路径。
+- [x] `prd.md`、`design.md`、`implement.md` 通过用户评审后才进入实现阶段。
 
 ## Out of Scope
 

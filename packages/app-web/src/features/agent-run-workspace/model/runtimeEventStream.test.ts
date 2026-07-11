@@ -5,11 +5,11 @@ import { createRuntimeEventStream, parseRuntimeEventStreamItem } from "./runtime
 const mocks = vi.hoisted(() => ({
   authenticatedFetch: vi.fn(),
   registerStreamConnection: vi.fn(() => vi.fn()),
-  resolveApiUrl: vi.fn((path: string) => `http://api.test${path}`),
+  buildApiPath: vi.fn((path: string) => `http://api.test/api${path}`),
 }));
 
 vi.mock("../../../api/client", () => ({ authenticatedFetch: mocks.authenticatedFetch }));
-vi.mock("../../../api/origin", () => ({ resolveApiUrl: mocks.resolveApiUrl }));
+vi.mock("../../../api/origin", () => ({ buildApiPath: mocks.buildApiPath }));
 vi.mock("../../../api/streamRegistry", () => ({
   registerStreamConnection: mocks.registerStreamConnection,
 }));
@@ -18,7 +18,7 @@ beforeEach(() => {
   mocks.authenticatedFetch.mockReset();
   mocks.registerStreamConnection.mockReset();
   mocks.registerStreamConnection.mockReturnValue(vi.fn());
-  mocks.resolveApiUrl.mockClear();
+  mocks.buildApiPath.mockClear();
 });
 
 describe("Agent Runtime event stream", () => {
@@ -53,7 +53,7 @@ describe("Agent Runtime event stream", () => {
 
     await vi.waitFor(() => expect(mocks.authenticatedFetch).toHaveBeenCalledOnce());
     expect(mocks.authenticatedFetch.mock.calls[0]?.[0]).toBe(
-      "http://api.test/agent-runs/run%201/agents/agent%2F1/runtime/events/stream/ndjson?after=41&include_transient=true",
+      "http://api.test/api/agent-runs/run%201/agents/agent%2F1/runtime/events/stream/ndjson?after=41&include_transient=false",
     );
     stream.close();
   });

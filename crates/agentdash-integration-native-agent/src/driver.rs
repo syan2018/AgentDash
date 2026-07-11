@@ -265,7 +265,13 @@ pub fn native_runtime_profile() -> RuntimeProfile {
             cancellation: true,
         },
         workspace: WorkspaceProfile {
-            capabilities: BTreeSet::new(),
+            capabilities: BTreeSet::from([
+                WorkspaceCapability::Read,
+                WorkspaceCapability::Write,
+                WorkspaceCapability::Search,
+                WorkspaceCapability::MultipleRoots,
+                WorkspaceCapability::VirtualFileSystem,
+            ]),
             mechanism: DeliveryMechanism::HostAdaptedExact,
         },
         interactions: InteractionProfile {
@@ -1040,19 +1046,21 @@ fn command_inputs(command: &RuntimeCommand) -> Option<&[RuntimeInput]> {
     }
 }
 
-fn native_hook_capabilities() -> Vec<HookPointCapability> {
-    let exact = |point, actions| HookPointCapability {
+pub(crate) fn native_hook_capabilities() -> Vec<HookPointCapability> {
+    let exact = |point, actions, failure_policies| HookPointCapability {
         point,
         actions,
         strength: SemanticStrength::ExactSynchronous,
         mechanism: DeliveryMechanism::HostAdaptedExact,
-        failure_policies: BTreeSet::from([HookFailurePolicy::FailClosed]),
+        failure_policies,
         acknowledged: true,
     };
+    let fail_closed = || BTreeSet::from([HookFailurePolicy::FailClosed]);
     vec![
         exact(
             HookPoint::BeforeProviderRequest,
             BTreeSet::from([HookAction::Observe]),
+            fail_closed(),
         ),
         exact(
             HookPoint::BeforeTool,
@@ -1062,6 +1070,7 @@ fn native_hook_capabilities() -> Vec<HookPointCapability> {
                 HookAction::RewriteInput,
                 HookAction::RequestApproval,
             ]),
+            fail_closed(),
         ),
         exact(
             HookPoint::AfterTool,
@@ -1070,14 +1079,20 @@ fn native_hook_capabilities() -> Vec<HookPointCapability> {
                 HookAction::RewriteResult,
                 HookAction::EmitEffect,
             ]),
+            BTreeSet::from([
+                HookFailurePolicy::FailClosed,
+                HookFailurePolicy::FailOpenWithDiagnostic,
+            ]),
         ),
         exact(
             HookPoint::AfterTurn,
             BTreeSet::from([HookAction::Observe, HookAction::ContinueTurn]),
+            fail_closed(),
         ),
         exact(
             HookPoint::BeforeStop,
             BTreeSet::from([HookAction::Observe, HookAction::ContinueTurn]),
+            fail_closed(),
         ),
     ]
 }

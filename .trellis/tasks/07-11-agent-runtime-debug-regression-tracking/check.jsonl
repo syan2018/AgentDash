@@ -7,3 +7,4 @@
 {"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"检查 VFS access、backend placement与本机路径边界。"}
 {"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 Lifecycle dispatch 与 immutable AgentFrame Business Surface 的顺序。"}
 {"file":".trellis/spec/backend/session/architecture.md","reason":"检查 launch-anchor/current AgentFrame 在 provision 前已闭包完整 surface。"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"检查 tool capability provenance 与稀疏 policy 未被混用。"}

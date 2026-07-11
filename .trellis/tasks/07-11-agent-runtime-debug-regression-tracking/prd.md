@@ -63,6 +63,46 @@
 - VFS default mount 必须来自 canonical Project/workspace mount resolution，并保留 backend/root/provider/capability 坐标；不得使用进程 cwd、空目录、任意在线 backend 或静默 fallback。
 - 缺少真实 workspace/mount 时应在 frame materialization/admission 边界返回归属明确的 typed error，不进入 Driver Host binding。
 
+### R7. Runtime tool 的 capability ownership
+
+**问题 ARD-005：完整 VFS surface 进入 Runtime compiler 后无法解析 `mounts_list` capability**
+
+- 现象：ARD-004 修复后真实 Draft 已越过 default mount 校验，但 Runtime binding 返回 `assembled tool mounts_list has no unambiguous AgentFrame capability identity`。
+- 已确认根因：`CapabilityState.tool_policy` 按契约是只保存 whitelist/exclude 的稀疏运行策略；Runtime surface compiler 却把它误当作完整 tool-to-capability registry。平台工具的 canonical ownership 已由 `platform_tool_descriptors()` 定义，`mounts_list` 属于 `file_read`。
+- Runtime surface compiler 必须从 canonical tool descriptor 读取 capability key，并通过当前 `CapabilityState::is_capability_tool_enabled` 校验 capability/cluster/policy；未知、未授权或真正歧义的工具继续在 Host side effect 前严格拒绝。
+- 不得通过“当前只有一个 capability”、任意首项或给所有工具补空 policy 的方式猜测 ownership。
+
+### R8. Business Surface 与 Runtime offer 的单一求交边界
+
+**问题 ARD-006：Runtime compiler 硬编码的 Hook 要求与 offer 能力证明矛盾**
+
+- 现象：ARD-005 修复后真实 Draft 继续进入 Host binding，但返回 `required hook BeforeTool is not guaranteed by the selected offer`。
+- 已确认根因：Runtime surface compiler 无条件构造 `BeforeTool/AfterTool` binding，其中 `BeforeTool.EmitEffect` 不属于 Native/Codex driver callback 的必要动作，`AfterTool` 的 fail-open 要求又与 Native 仅声明 fail-closed 的实现不一致；首次动态创建 offer 后还绕过了复用路径已有的 `offer_supports_surface` 求交。
+- Hook action 必须按唯一 execution site 表达：Driver profile 只证明 driver/native callback 真正需要承担的同步语义，Managed Runtime 持久化 effect 不得伪装成 driver action requirement。
+- Runtime offer 无论来自既有 inventory 还是本次动态 activation，都必须经过同一个完整 Surface admission；Host bind 只接受已经求交成功的 immutable offer/surface。
+- Native 的 `HostAdaptedExact` workspace 与 Hook failure policy 必须由实现和 conformance profile 同源声明，不得用空 profile 或 Host 侧宽松判断掩盖。
+- 结构性收口以 AgentFrame revision 持有 immutable HookPlan ref/digest/requirements 为终态；Runtime compiler 消费该事实，不继续维护无来源的固定 Hook 列表。
+
+### R9. Draft 页面瞬时 React Context 异常
+
+**问题 ARD-007：开发服务器重启期间偶发 `useContext` null**
+
+- 现象：保持 Draft 页面打开并重启 `pnpm dev` 后，页面曾瞬时显示 `Cannot read properties of null (reading 'useContext')`，手动刷新后消失。
+- 当前证据：workspace 的 React/ReactDOM 均解析为 19.2.4，尚无稳定的多 React 实例或产品构建复现证据；该问题先保留为 `reported`，与稳定的 Runtime binding blocker 分开跟踪。
+- 后续只有在可重复出现并取得浏览器 stack/module URL 后才修改前端依赖或 Vite 配置，避免把开发期 HMR 断连现象误判为产品代码根因。
+
+### R10. AgentRun API cutover 与事件消费语义
+
+**问题 ARD-008：Runtime 成功运行后 Workspace projection 404，transient event 被重复回放**
+
+- 现象：真实 AgentRun 已 active 并完成 `runtime-ok`，运行页却显示 event stream HTTP 404、Not Found与模型缺失；修正路径后，同一 transient delta 在有限批次结束后的自动重连中反复追加。
+- 已确认根因一：NDJSON 客户端直接使用 origin resolver，漏掉统一 API builder注入的 `/api` 前缀。
+- 已确认根因二：重构分支把 `lifecycle_agents` 收缩为 Runtime command routes时，删除了前端仍消费的 Project AgentRun list与`AgentRunWorkspaceView` projection；`useAgentRunWorkspaceState` 又用一个 `Promise.all` 同时加载 workspace与runtime inspect，workspace 404使已成功的 Runtime snapshot也被丢弃。
+- 已确认根因三：Runtime `events()` 当前是有限 replay batch，transient event没有 durable cursor且repository永久保留；客户端把批次结束当断线重连会再次读取同一 transient history。
+- cutover必须建立“前端调用 → route → application owner → contract test”的完整 inventory。每个旧入口只能被明确迁移到新 owner、替换消费者或连同契约一起删除，禁止用文件级替换让 route静默消失。
+- `AgentRunWorkspaceView` 应由当前 Lifecycle/AgentFrame/Managed Runtime事实重建为产品 projection，不恢复已退役 RuntimeSession作为执行事实源；Runtime inspect与workspace projection的加载失败必须各自归属，不互相抹掉已成功事实。
+- 在 Runtime 提供真正 live subscription或稳定 transient identity/cursor前，有限轮询只消费 durable events；不能以易误删合法重复 chunk的文本指纹去重伪造 exactly-once。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -78,6 +118,12 @@
 - [x] ARD-003 通过真实 Draft create-run 验证 override 已穿过 API、Lifecycle 与 Runtime surface compiler；空测试项目随后因缺少 VFS mount 被独立拒绝。
 - [x] ARD-004 真实 ProjectAgent Draft 在 Runtime provision 前持久化包含 canonical default mount 的完整 AgentFrame Business Surface。
 - [x] ARD-004 通过定向回归测试与真实 `pnpm dev` create-run验证越过 VFS default mount 断点并进入后续 tool surface compilation。
+- [x] ARD-005 canonical platform tool descriptor 能为 `mounts_list` 等 assembled tools 提供唯一 capability ownership，并保持 capability policy admission。
+- [x] ARD-005 通过真实 `pnpm dev` Draft create-run 验证 Runtime binding继续越过 tool surface compilation。
+- [ ] ARD-006 Native/Codex Hook requirements、failure policy、workspace profile 与实际 execution site 一致，新建和复用 offer 共用同一 Surface admission。
+- [x] ARD-006 通过真实 `pnpm dev` Draft create-run 验证 Runtime binding越过 Hook/offer 求交。
+- [x] ARD-008 event stream使用统一 `/api` builder，durable replay不重复追加。
+- [ ] ARD-008 恢复基于当前架构事实的 AgentRun list/workspace product projection，并完成 route-consumer inventory。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -93,6 +139,10 @@
 | ARD-002 | verified | blocker | 桌面 OAuth token 已改为可选；Personal 无 token 真实 prepare 成功，Enterprise 权限保留 |
 | ARD-003 | verified | blocker | RunLaunchProfile 已进入 AgentFrame、Integration definition 与 backend offer selection |
 | ARD-004 | verified | blocker | ProjectAgent launch 在 product delivery 前物化完整 owner surface；真实 Draft 已越过 VFS default mount 断点 |
+| ARD-005 | verified | blocker | canonical descriptor 已解析 `mounts_list`；真实 Draft越过 tool surface并完成回复 |
+| ARD-006 | fixed | blocker | Native action/failure/workspace与新建offer admission已验证；Codex需由真实HookPlan route消除固定`RequestApproval`要求 |
+| ARD-007 | reported | minor | dev server重启期间瞬时 `useContext` null；刷新消失，暂无稳定复现与 stack |
+| ARD-008 | diagnosed | blocker | Runtime成功但 API cutover删除 workspace/list projection；event path与transient replay语义另有断链 |
 
 ## Verification Record
 
@@ -105,3 +155,6 @@
 - ARD-003 真实 create-run 不再返回 override 拒绝；请求中的 `CODEX + explicit local backend` 已进入 Runtime surface compiler。临时空 Project 因没有默认 VFS mount在后续 surface 编译阶段失败，测试 Project 已删除。
 - ARD-004 embedded PostgreSQL Lifecycle launch正例证明 current AgentFrame 在 product delivery 前已包含 canonical workspace mount、backend/root/workspace binding、capability/context 与逐 Run execution profile；无 workspace负例在 frame construction 精确失败。
 - ARD-004 真实 `pnpm dev` Draft 已不再返回 `AgentRun VFS has no usable default mount`，随后在独立的 tool capability ownership 断点停止。
+- ARD-005/006 真实 Draft `2a977413-7aa3-48d2-b4f6-141eb6046ca9` 建立 active Native binding，HookPlan applied，模型回复 `runtime-ok`，Runtime snapshot revision 10且10条 durable event可读取。
+- 修正 event URL与durable-only replay后，重新打开同一 AgentRun只显示一份`runtime-ok`；workspace/list projection仍因cutover route缺失保持ARD-008 open。
+- `cargo test -p agentdash-api agent_runtime_surface::tests` 4项、`cargo test -p agentdash-integration-native-agent` 11项、runtimeEventStream 2项与app-web typecheck通过；目标三crate `--lib` clippy通过。`--all-targets`另暴露`agentdash-agent-runtime-test-support`既有`collapsible_match`，未修改该无关文件。

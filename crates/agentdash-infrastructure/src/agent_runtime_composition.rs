@@ -594,6 +594,7 @@ impl HostAgentRunRuntimeProvisioner {
                     && offer.conformance.suite_revision == prepared.conformance.suite_revision
                     && offer.conformance.driver_build_digest
                         == prepared.conformance.driver_build_digest
+                    && offer_supports_surface(offer, &prepared.surface)
             })
         {
             return Ok(offer);
@@ -603,7 +604,8 @@ impl HostAgentRunRuntimeProvisioner {
             .map_err(|error| binding_unavailable(error.to_string(), false))?;
         let host_policy_digest = profile_digest(&prepared.host_policy_profile)
             .map_err(|error| binding_unavailable(error.to_string(), false))?;
-        self.host
+        let offer = self
+            .host
             .activate(ActivateAgentServiceInstance {
                 instance_id: instance.id,
                 expected_revision: instance.revision,
@@ -614,7 +616,15 @@ impl HostAgentRunRuntimeProvisioner {
                 conformance: prepared.conformance.clone(),
             })
             .await
-            .map_err(host_error)
+            .map_err(host_error)?;
+        if !offer_supports_surface(&offer, &prepared.surface) {
+            return Err(binding_unavailable(
+                "activated Runtime offer does not satisfy the prepared AgentFrame surface"
+                    .to_string(),
+                false,
+            ));
+        }
+        Ok(offer)
     }
 
     async fn select_activated_offer(

@@ -701,6 +701,7 @@ dependencies = [
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
  "agentdash-agent-types",
+ "agentdash-diagnostics",
  "agentdash-integration-api",
  "async-trait",
  "futures",

@@ -753,7 +753,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             .map_err(|error| AgentRunRuntimeSurfaceSourceError::Invalid {
             reason: error.to_string(),
         })?;
-        let hook_bindings = canonical_hook_bindings();
+        let hook_bindings = platform_driver_hook_bindings();
         let hook_digest =
             HookPlanDigest::new(digest_json(&(revision, &hook_bindings))?).map_err(|error| {
                 AgentRunRuntimeSurfaceSourceError::Invalid {
@@ -823,23 +823,51 @@ fn capability_for_tool(
     state: &agentdash_spi::CapabilityState,
     tool_name: &str,
 ) -> Result<String, AgentRunRuntimeSurfaceSourceError> {
-    if let Some((key, _)) = state
-        .tool
-        .tool_policy
+    use agentdash_spi::platform::tool_capability::{ToolSource, platform_tool_descriptors};
+
+    let descriptors = platform_tool_descriptors()
+        .into_iter()
+        .filter(|descriptor| descriptor.name == tool_name)
+        .collect::<Vec<_>>();
+    let mut candidates = descriptors
         .iter()
-        .find(|(_, filter)| filter.allows(tool_name))
-    {
-        return Ok(key.clone());
-    }
-    if state.tool.capabilities.len() == 1 {
-        return Ok(state
+        .filter(|descriptor| {
+            let cluster = match &descriptor.source {
+                ToolSource::Platform { cluster } => Some(*cluster),
+                ToolSource::PlatformMcp { .. } | ToolSource::Mcp { .. } => None,
+            };
+            state.is_capability_tool_enabled(&descriptor.capability_key, tool_name, cluster)
+        })
+        .map(|descriptor| descriptor.capability_key.clone())
+        .collect::<BTreeSet<_>>();
+
+    candidates.extend(
+        state
             .tool
-            .capabilities
+            .tool_policy
             .iter()
+            .filter(|(key, filter)| {
+                filter.allows(tool_name)
+                    && state
+                        .tool
+                        .capabilities
+                        .contains(&agentdash_spi::ToolCapability::new((*key).clone()))
+            })
+            .map(|(key, _)| key.clone()),
+    );
+
+    if candidates.len() == 1 {
+        return Ok(candidates
+            .into_iter()
             .next()
-            .expect("one capability")
-            .key()
-            .to_string());
+            .expect("one capability candidate"));
+    }
+    if !descriptors.is_empty() && candidates.is_empty() {
+        return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+            reason: format!(
+                "assembled tool `{tool_name}` is not enabled by current AgentFrame capability"
+            ),
+        });
     }
     Err(AgentRunRuntimeSurfaceSourceError::Invalid {
         reason: format!(
@@ -848,7 +876,7 @@ fn capability_for_tool(
     })
 }
 
-fn canonical_hook_bindings() -> Vec<DriverHookBinding> {
+fn platform_driver_hook_bindings() -> Vec<DriverHookBinding> {
     vec![
         DriverHookBinding {
             definition_id: HookDefinitionId::new("agentdash.platform.before_tool")
@@ -858,7 +886,6 @@ fn canonical_hook_bindings() -> Vec<DriverHookBinding> {
                 HookAction::RewriteInput,
                 HookAction::Block,
                 HookAction::RequestApproval,
-                HookAction::EmitEffect,
             ],
             strength: SemanticStrength::ExactSynchronous,
             failure_policy: HookFailurePolicy::FailClosed,
@@ -911,4 +938,83 @@ fn digest_json(value: &impl serde::Serialize) -> Result<String, AgentRunRuntimeS
     })?;
     let bytes = agentdash_agent_runtime_host::canonical_json(&value);
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_spi::{
+        CapabilityState, ToolCapability, ToolCapabilityFilter, ToolCluster,
+        platform::tool_capability::{CAP_FILE_READ, CAP_WORKSPACE_MODULE},
+    };
+
+    fn capability_state_with_platform_tools() -> CapabilityState {
+        let mut state =
+            CapabilityState::from_clusters([ToolCluster::Read, ToolCluster::WorkspaceModule]);
+        state
+            .tool
+            .capabilities
+            .insert(ToolCapability::new(CAP_FILE_READ));
+        state
+            .tool
+            .capabilities
+            .insert(ToolCapability::new(CAP_WORKSPACE_MODULE));
+        state
+    }
+
+    #[test]
+    fn canonical_descriptor_resolves_mounts_list_without_sparse_policy_entry() {
+        let state = capability_state_with_platform_tools();
+
+        assert_eq!(
+            capability_for_tool(&state, "mounts_list").expect("canonical capability"),
+            CAP_FILE_READ
+        );
+    }
+
+    #[test]
+    fn canonical_descriptor_respects_sparse_tool_policy_exclusion() {
+        let mut state = capability_state_with_platform_tools();
+        let mut filter = ToolCapabilityFilter::default();
+        filter.exclude.insert("mounts_list".to_string());
+        state
+            .tool
+            .tool_policy
+            .insert(CAP_FILE_READ.to_string(), filter);
+
+        let error = capability_for_tool(&state, "mounts_list").expect_err("excluded tool");
+        assert!(error.to_string().contains("is not enabled"));
+    }
+
+    #[test]
+    fn unknown_tool_does_not_inherit_the_only_enabled_capability() {
+        let mut state = CapabilityState::from_clusters([ToolCluster::Read]);
+        state
+            .tool
+            .capabilities
+            .insert(ToolCapability::new(CAP_FILE_READ));
+
+        let error = capability_for_tool(&state, "unknown_runtime_tool")
+            .expect_err("unknown tool must remain unowned");
+        assert!(error.to_string().contains("no unambiguous"));
+    }
+
+    #[test]
+    fn native_offer_profile_satisfies_platform_driver_hook_bindings() {
+        let profile = agentdash_integration_native_agent::native_runtime_profile();
+
+        for binding in platform_driver_hook_bindings() {
+            let requirement = HookRequirement {
+                point: binding.point,
+                actions: binding.actions.into_iter().collect(),
+                minimum_strength: binding.strength,
+                failure_policy: binding.failure_policy,
+                required: binding.required,
+            };
+            assert!(
+                profile.hooks.satisfies(&requirement),
+                "native profile must satisfy {requirement:?}"
+            );
+        }
+    }
 }

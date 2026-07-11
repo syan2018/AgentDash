@@ -42,6 +42,8 @@ impl AgentRuntimeHost {
 - DriverLease使用数据库时钟、owner/token/epoch/generation。相同owner+generation在未过期时幂等返回原lease；不同owner冲突；到期takeover产生新token/epoch并fence旧owner。
 - Source coordinates按binding/generation维护canonical与driver ID双向唯一。Dispatch前校验lease，event sink对每个event再次校验binding、generation、source coordinate、owner/token和DB lease，防止dispatch期间takeover后的late event推进Runtime。
 - Required surface/hook contribution只有在revision/digest/artifact与per-point applied ack匹配，且effective HookProfile满足actions/strength/failure policy/configuration boundary后才允许Turn dispatch。
+- inventory中复用的offer与本次`activate()`新产生的offer必须经过同一个完整Surface admission函数；activation成功只证明service可用，不证明它满足当前AgentFrame。任何路径都不得把未求交offer延迟到Host `bind()`才发现workspace/hook不兼容。
+- Integration profile与adapter apply acknowledgment必须由同一capability事实生成。`HostAdaptedExact` workspace要声明Host能够精确交付的最大capability；Hook failure policy必须与callback错误分支一致。Managed Runtime持久化effect不进入Driver action requirement。
 - 0061的`agent_runtime_binding`/`agent_runtime_source_coordinate`是Managed Runtime引用的最小Host-owned anchor；0064保存instance history、activation/offer、binding detail、lease和完整coordinates。Runtime repository不写Host authority，Host不写Runtime journal/projection。
 - Relay是placement transport而非service identity。Native/Codex/remote service通过相同contribution/Host seam接入，不在Application/router增加service类型分支。
 
@@ -60,6 +62,8 @@ impl AgentRuntimeHost {
 | lease未过期时不同owner claim | conflict |
 | lease过期takeover后旧token dispatch/event | stale generation/lease reject |
 | required Hook未ack或artifact digest不符 | Turn dispatch gate拒绝 |
+| 新activation offer不满足当前workspace/hook surface | `ensure_offer`返回typed unavailable，不进入Host bind |
+| Driver profile声明fail-open但callback错误仍向上失败 | conformance失败，不得发布该failure policy |
 | source ID跨binding/generation复用 | composite unique/FK或typed conflict |
 
 ## 5. Good / Base / Bad Cases
@@ -75,6 +79,7 @@ impl AgentRuntimeHost {
 - Registry/Integration测试覆盖多definition、多instance、duplicate/factory/schema/protocol/credential定义与immutable collect。
 - Instance/activation测试覆盖config/credential preflight、secret隐藏、revision CAS/history、deactivate/reactivate/unhealthy、evidence-backed profile intersection。
 - Binding测试覆盖sticky/idempotent bind、stale offer、Pending recovery、orphan failure、surface/hook apply gate和configuration boundary。
+- Provision测试分别覆盖既有offer与新activation offer，断言二者调用同一Surface admission；Native profile测试逐项满足实际platform Driver hook binding与VFS workspace requirements。
 - Lease/source/router行为覆盖same-owner replay、DB-clock takeover、stale token、dispatch期间takeover、source双向唯一与old-generation event fencing。
 - 真实embedded PostgreSQL覆盖0061/0064 ownership、instance并发CAS、history FK、binding完整复合FK、anchor rollback、offer锁与lease过期。
 - API/Executor测试证明Integration不再贡献旧connector，Composite不再OR/broadcast/first-success；彻底删除legacy probe随WP08 cutover验证。
@@ -98,4 +103,15 @@ factory.create(activation, global_credentials).await?;
 
 // Correct: Host按definition+instance声明构造purpose-scoped broker。
 factory.create(activation, scoped_credentials).await?;
+```
+
+```rust
+// Wrong：动态activation后直接bind，绕过既有offer路径的surface求交
+let offer = host.activate(request).await?;
+host.bind(offer.id, surface).await?;
+
+// Correct：activation与inventory offer共用同一admission
+let offer = host.activate(request).await?;
+ensure_offer_supports_surface(&offer, &surface)?;
+host.bind(offer.id, surface).await?;
 ```

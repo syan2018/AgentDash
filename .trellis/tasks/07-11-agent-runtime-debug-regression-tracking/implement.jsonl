@@ -8,3 +8,4 @@
 {"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"约束 Project/workspace mount resolution 与 runtime placement 的访问边界。"}
 {"file":".trellis/spec/backend/workflow/architecture.md","reason":"约束 Lifecycle dispatch 先建立 immutable AgentFrame Business Surface，再进入 AgentRun product delivery。"}
 {"file":".trellis/spec/backend/session/architecture.md","reason":"约束 AgentFrame/Business Surface 与 Managed Runtime conversation 的映射。"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"约束 canonical tool descriptor、稀疏 tool_policy 与 runtime admission 的职责。"}

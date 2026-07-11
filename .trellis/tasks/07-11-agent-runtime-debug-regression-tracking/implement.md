@@ -39,3 +39,26 @@
 - [x] 补充真实 Project/workspace mount fixture，证明 current AgentFrame 具有可用 default mount且 Runtime surface compiler可以继续绑定。
 - [x] 覆盖无可用 Project workspace/mount 的精确失败语义，确认不回退进程 cwd、任意 backend或空 mount。
 - [x] 运行相关 Rust 定向测试、fmt/check/clippy，并使用 `pnpm dev` 验证真实 Draft越过 VFS default mount 断点。
+
+## ARD-005
+
+- [x] Runtime surface compiler从 canonical platform tool descriptor解析 assembled tool 的 capability key/cluster。
+- [x] 使用 current AgentFrame `CapabilityState` 校验 capability与稀疏 tool policy，不从 policy 表缺失推断 ownership。
+- [x] 补充 `mounts_list -> file_read`、policy exclude与未知 tool strict rejection 定向测试。
+- [x] 优先使用真实 `pnpm dev` Draft create-run验证下一个产品断点；通过后再运行完整质量检查。
+
+## ARD-006
+
+- [x] 删除 Driver `BeforeTool` requirement 中属于 Managed Runtime 的 effect action，保留真实同步 callback语义。
+- [x] 让 Native Hook capability、apply acknowledgment与 bound failure policy由同一 profile事实驱动，并支持 `AfterTool` fail-open。
+- [x] 如实声明 Native `HostAdaptedExact` workspace能力，避免完整 VFS surface与空 profile矛盾。
+- [x] 新 activation offer与既有 offer复用同一个 Surface admission，拒绝未经求交的 Host bind。
+- [x] 使用真实 `pnpm dev` Draft create-run优先验证产品链路；成功后再补定向回归与完整质量检查。
+
+## ARD-008
+
+- [x] Runtime NDJSON客户端改用统一 API path builder，修复遗漏`/api`导致的永久404。
+- [x] 有限event replay只请求durable events，停止无cursor transient history在轮询重连中重复追加。
+- [ ] 建立AgentRun前端service/route/application owner/generated contract inventory，分类迁移、替换与删除项。
+- [ ] 基于Lifecycle、AgentFrame与Managed Runtime当前事实重建AgentRun list/workspace product projection，不恢复旧RuntimeSession执行链。
+- [ ] 拆分workspace与runtime inspect加载错误归属，验证Runtime成功事实不会被另一projection失败清空。

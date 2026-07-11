@@ -1,5 +1,5 @@
 import { authenticatedFetch } from "../../../api/client";
-import { resolveApiUrl } from "../../../api/origin";
+import { buildApiPath } from "../../../api/origin";
 import { registerStreamConnection } from "../../../api/streamRegistry";
 import type { RuntimeEventEnvelope } from "../../../generated/agent-runtime-contracts";
 import type { RuntimeSubscribeError } from "../../../generated/agent-runtime-contracts";
@@ -85,10 +85,10 @@ class FetchRuntimeEventStream implements RuntimeEventStream {
     this.options.onLifecycleChange(this.connectedOnce ? "reconnecting" : "connecting");
     const params = new URLSearchParams({
       after: String(this.cursor),
-      include_transient: "true",
+      include_transient: "false",
     });
     try {
-      const response = await authenticatedFetch(resolveApiUrl(
+      const response = await authenticatedFetch(buildApiPath(
         agentRunScopedPath(this.options.target, `/runtime/events/stream/ndjson?${params.toString()}`),
       ), {
         method: "GET",

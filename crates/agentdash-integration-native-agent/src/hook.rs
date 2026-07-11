@@ -1,7 +1,7 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    DriverItemId, DriverThreadId, DriverTurnId, HookAction, HookPoint, RuntimeBindingId,
+    DriverItemId, DriverThreadId, DriverTurnId, HookPoint, RuntimeBindingId,
     RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
 };
 use agentdash_agent_types::{
@@ -10,6 +10,7 @@ use agentdash_agent_types::{
     BeforeToolCallInput, ContentPart, RuntimeProviderObserverDelegate, RuntimeToolPolicyDelegate,
     RuntimeTurnBoundaryDelegate, StopDecision, ToolCallDecision, TurnControlDecision,
 };
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_integration_api::{
     AgentRuntimeHookCallback, AuthIdentity, DriverHookBinding, DriverHookDecision,
     DriverHookInvocation, DriverHookSurface,
@@ -74,7 +75,7 @@ impl NativeHookDelegate {
             let item_id = source_item_id
                 .as_ref()
                 .and_then(|value| RuntimeItemId::new(value.to_string()).ok());
-            let decision = self
+            let decision = match self
                 .callback
                 .execute(DriverHookInvocation {
                     thread_id: self.runtime_thread_id.clone(),
@@ -87,11 +88,31 @@ impl NativeHookDelegate {
                     source_item_id: source_item_id.clone(),
                     definition_id: binding.definition_id.clone(),
                     point,
-                    payload,
+                    payload: payload.clone(),
                     authorization_identity: self.authorization_identity.clone(),
                 })
                 .await
-                .map_err(|error| AgentRuntimeError::Runtime(error.to_string()))?;
+            {
+                Ok(decision) => decision,
+                Err(error)
+                    if matches!(
+                        binding.failure_policy,
+                        agentdash_agent_runtime_contract::HookFailurePolicy::FailOpenWithDiagnostic
+                            | agentdash_agent_runtime_contract::HookFailurePolicy::ObserveOnly
+                    ) =>
+                {
+                    diag!(
+                        Warn,
+                        Subsystem::Hooks,
+                        hook_definition_id = %binding.definition_id,
+                        hook_point = ?binding.point,
+                        error = %error,
+                        "native hook callback failed open according to the bound HookPlan"
+                    );
+                    continue;
+                }
+                Err(error) => return Err(AgentRuntimeError::Runtime(error.to_string())),
+            };
             match decision {
                 DriverHookDecision::Continue { payload: next } => payload = next,
                 terminal => return Ok(terminal),
@@ -282,31 +303,20 @@ impl RuntimeTurnBoundaryDelegate for NativeHookDelegate {
 }
 
 pub(crate) fn supported_hook(binding: &DriverHookBinding) -> bool {
-    if binding.failure_policy != agentdash_agent_runtime_contract::HookFailurePolicy::FailClosed {
-        return false;
-    }
-    let supported = match binding.point {
-        HookPoint::BeforeProviderRequest => BTreeSet::from([HookAction::Observe]),
-        HookPoint::BeforeTool => BTreeSet::from([
-            HookAction::Observe,
-            HookAction::Block,
-            HookAction::RewriteInput,
-            HookAction::RequestApproval,
-        ]),
-        HookPoint::AfterTool => BTreeSet::from([
-            HookAction::Observe,
-            HookAction::RewriteResult,
-            HookAction::EmitEffect,
-        ]),
-        HookPoint::AfterTurn | HookPoint::BeforeStop => {
-            BTreeSet::from([HookAction::Observe, HookAction::ContinueTurn])
-        }
-        _ => return false,
-    };
-    binding
-        .actions
-        .iter()
-        .all(|action| supported.contains(action))
+    crate::driver::native_hook_capabilities()
+        .into_iter()
+        .any(|capability| {
+            capability.point == binding.point
+                && capability.strength.satisfies(binding.strength)
+                && binding
+                    .actions
+                    .iter()
+                    .all(|action| capability.actions.contains(action))
+                && capability
+                    .failure_policies
+                    .contains(&binding.failure_policy)
+                && capability.acknowledged
+        })
 }
 
 fn messages_from_payload(payload: &serde_json::Value, key: &str) -> Vec<AgentMessage> {

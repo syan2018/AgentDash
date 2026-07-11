@@ -867,8 +867,7 @@ mod workflow_claim_tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::channel::{
-        Channel, ChannelMedium, ChannelOwner, ChannelRecord, ChannelRegistryMutation,
-        ChannelTopology,
+        Channel, ChannelKey, ChannelOwner, ChannelRecord, ChannelRegistryMutation,
     };
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
@@ -1234,8 +1233,7 @@ mod workflow_claim_tests {
 
         let channel = Channel::new(
             ChannelOwner::LifecycleRun { run_id: run.id },
-            ChannelMedium::Runtime,
-            ChannelTopology::Direct,
+            ChannelKey::parse("runtime:first").unwrap(),
         );
         let channel_id = channel.id;
         LifecycleRunRepository::mutate_channel_registry(
@@ -1279,13 +1277,11 @@ mod workflow_claim_tests {
 
         let first = Channel::new(
             ChannelOwner::LifecycleRun { run_id: run.id },
-            ChannelMedium::Runtime,
-            ChannelTopology::Direct,
+            ChannelKey::parse("runtime:first").unwrap(),
         );
         let second = Channel::new(
             ChannelOwner::LifecycleRun { run_id: run.id },
-            ChannelMedium::Runtime,
-            ChannelTopology::Group,
+            ChannelKey::parse("runtime:second").unwrap(),
         );
 
         LifecycleRunRepository::mutate_channel_registry(

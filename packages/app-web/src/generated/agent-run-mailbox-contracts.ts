@@ -8,15 +8,13 @@ export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: 
 
 export type AgentRunAcceptedRefs = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, frame_ref?: AgentFrameRefDto, runtime_thread_id?: string, runtime_operation_id?: string, };
 
-export type AgentRunCommandPreconditionView = { command_id: string, command_kind: ConversationCommandKind, stale_guard: ConversationCommandStaleGuardView, };
-
 export type AgentRunCommandReceipt = { client_command_id: string, status: string, duplicate: boolean, accepted_runtime_operation_id?: string, message?: string, };
 
 export type AgentRunComposerSubmitRequest = {
 /**
  * canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
  */
-input: Array<UserInput>, client_command_id: string, command: AgentRunCommandPreconditionView, executor_config?: JsonValue, backend_selection?: BackendSelectionRequestDto,
+input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, backend_selection?: BackendSelectionRequestDto,
 /**
  * 投递意图：`"steer"` 表示用户明确要求注入 active turn，其余情况排队等待。
  */

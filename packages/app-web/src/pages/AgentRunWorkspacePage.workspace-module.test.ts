@@ -1,6 +1,5 @@
 ﻿import { describe, expect, it, vi } from "vitest";
 
-import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
 import {
   buildAgentRunConversationCommandState,
@@ -12,10 +11,9 @@ import type {
   WorkspaceModulePresentation,
 } from "../generated/workspace-module-contracts";
 import type {
-  AgentRunOwnershipView,
-  ConversationCommandView,
-  ConversationKeyboardMapView,
+  ConversationModelConfigView,
 } from "../generated/workflow-contracts";
+import type { RuntimeSnapshot } from "../generated/agent-runtime-contracts";
 import type { ProjectAgentSummary } from "../types";
 import {
   activeCanvasMountIdsFromRuntimeSurface,
@@ -28,90 +26,58 @@ import {
   workspaceModulePresentedTabTarget,
 } from "./AgentRunWorkspacePage.workspaceModulePresentation";
 
-const ownership: AgentRunOwnershipView = {
-  run_created_by_user_id: "owner-user",
-  agent_created_by_user_id: "owner-user",
-  current_user_controls_run: true,
+const resolvedModelConfig: ConversationModelConfigView = {
+  status: "resolved",
+  missing_fields: [],
+  effective_executor_config: {
+    executor: "CODEX",
+    source: "frame_execution_profile",
+  },
 };
 
-function workspaceView(
-  controlStatus: AgentRunWorkspaceView["control_plane"]["status"],
-  commands: ConversationCommandView[] = [],
-  keyboard: ConversationKeyboardMapView = {},
-): AgentRunWorkspaceView {
+function runtimeSnapshot(activeTurnId: string | null): RuntimeSnapshot {
   return {
-    run_ref: { run_id: "run-1" },
-    agent_ref: { run_id: "run-1", agent_id: "agent-1" },
-    project_id: "project-1",
-    shell: {
-      display_title: "Workspace",
-      title_source: "session_meta",
-      delivery_status: controlStatus,
-      last_activity_at: "2026-06-12T00:00:00.000Z",
+    thread_id: "thread-1",
+    revision: 1n,
+    status: "active",
+    active_turn_id: activeTurnId,
+    binding_id: "binding-1",
+    profile_digest: "sha256:profile",
+    bound_profile: {
+      reference_class: "managed_thread",
+      input: { modalities: ["text"] },
+      instruction: { channels: ["system"], configuration_boundary: "thread_start" },
+      tools: { channels: [], configuration_boundary: "turn_start", cancellation: true },
+      workspace: { capabilities: [], mechanism: "host_adapted_exact" },
+      interactions: { kinds: [], durable_correlation: true },
+      lifecycle: ["turn_start", "turn_steer"],
+      hooks: { points: [], configuration_boundary: "thread_start" },
+      context: { capabilities: ["read"], fidelity: "platform_exact", activation_idempotent: true },
+      telemetry_config: [],
     },
-    control_plane: { status: controlStatus, ownership },
-    subject_associations: [],
-    children: [],
-    conversation: {
-      snapshot_id: "snapshot-1",
-      identity: {
-        run_ref: { run_id: "run-1" },
-        agent_ref: { run_id: "run-1", agent_id: "agent-1" },
-        project_id: "project-1",
-      },
-      lifecycle_context: {
-        subject_associations: [],
-      },
-      execution: {
-        status: controlStatus === "running" ? "running_active" : controlStatus === "ready" ? "ready" : "terminal",
-      },
-      model_config: {
-        status: "resolved",
-        missing_fields: [],
-      },
-      commands: {
-        ownership,
-        commands,
-        keyboard,
-      },
-      mailbox: {
-        visible_message_count: 0,
-        paused: false,
-        user_attention: false,
-        messages: [],
-        waiting_items: [],
-      },
-      diagnostics: [],
+    active_checkpoint_id: null,
+    context_revision: 1n,
+    settings_revision: 1n,
+    tool_set_revision: 1n,
+    pending_interactions: [],
+    command_availability: {
+      [activeTurnId ? "turn_steer" : "turn_start"]: { status: "available" },
     },
+    transcript: [],
+    transcript_fidelity: "platform_exact",
   };
 }
 
 function commandState(
   workspaceStateStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
-  workspace: AgentRunWorkspaceView | null,
+  snapshot: RuntimeSnapshot | null,
 ) {
   return buildAgentRunConversationCommandState({
     workspaceStateStatus,
     workspaceStateError: workspaceStateStatus === "error" ? "refresh failed" : null,
-    conversation: workspace?.conversation,
+    modelConfig: resolvedModelConfig,
+    runtimeSnapshot: snapshot,
   });
-}
-
-function command(kind: ConversationCommandView["kind"], commandId: string): ConversationCommandView {
-  return {
-    kind,
-    command_id: commandId,
-    enabled: true,
-    requires_input: true,
-    executor_config_policy: "required",
-    placement: ["composer_primary"],
-    stale_guard: {
-      snapshot_id: `snapshot-${commandId}`,
-      run_id: "run-1",
-      agent_id: "agent-1",
-      active_turn_id: undefined,
-    },
-  };
 }
 
 function presentation(params: {
@@ -346,39 +312,23 @@ describe("AgentRun workspace conversation command authority", () => {
     });
   });
 
-  it("uses snapshot keyboard mapping for ready Ctrl/Cmd+Enter submit_message", () => {
-    const submit = command("submit_message", "cmd-submit");
-    const state = commandState("ready", workspaceView("ready", [submit], {
-      enter: "cmd-submit",
-      ctrl_enter: "cmd-submit",
-    }));
+  it("uses Runtime snapshot availability for ready submit", () => {
+    const state = commandState("ready", runtimeSnapshot(null));
 
-    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-submit");
-    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.kind).toBe("submit_message");
+    expect(state.commands.keyboard.enter).toBe("runtime:turn_start");
+    expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
+    expect(state.commands.commands.find((item) => item.command_id === "runtime:turn_start")?.kind).toBe("submit_message");
   });
 
-  it("exposes running submit only when snapshot maps it", () => {
-    const submit = {
-      ...command("submit_message", "cmd-submit"),
-      stale_guard: {
-        snapshot_id: "snapshot-cmd-submit",
-        run_id: "run-1",
-        agent_id: "agent-1",
-        active_turn_id: "turn-1",
-      },
-    };
-    const state = commandState("ready", workspaceView("running", [submit], {
-      enter: "cmd-submit",
-      ctrl_enter: "cmd-submit",
-    }));
+  it("switches running submit to Runtime steer", () => {
+    const state = commandState("ready", runtimeSnapshot("turn-1"));
 
-    expect(state.commands.keyboard.enter).toBe("cmd-submit");
-    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-submit");
-    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.stale_guard.active_turn_id).toBe("turn-1");
+    expect(state.commands.keyboard.enter).toBe("runtime:turn_steer");
+    expect(state.activeTurnId).toBe("turn-1");
   });
 
-  it("does not infer command enablement from top-level control_plane status", () => {
-    const state = commandState("ready", workspaceView("running"));
+  it("does not infer command enablement without a Runtime snapshot", () => {
+    const state = commandState("ready", null);
 
     expect(state.executionStatus).toBe("ready");
     expect(state.commands.commands).toHaveLength(0);
@@ -387,19 +337,15 @@ describe("AgentRun workspace conversation command authority", () => {
   });
 
   it("freezes stale backend commands while projection is refreshing", () => {
-    const state = commandState("refreshing", workspaceView("running", [
-      command("submit_message", "cmd-submit"),
-    ], { enter: "cmd-submit" }));
+    const state = commandState("refreshing", runtimeSnapshot("turn-1"));
 
     expect(state.executionStatus).toBe("refreshing");
     expect(state.commands.keyboard.enter).toBeUndefined();
     expect(state.commands.commands).toHaveLength(0);
   });
 
-  it("requires conversation snapshot before exposing commands", () => {
-    const workspace = workspaceView("terminal");
-    workspace.conversation = undefined;
-    const state = commandState("ready", workspace);
+  it("requires Runtime snapshot before exposing commands", () => {
+    const state = commandState("ready", null);
 
     expect(state.executionStatus).toBe("ready");
     expect(state.commands.commands).toHaveLength(0);

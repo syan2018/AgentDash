@@ -43,7 +43,6 @@ import type {
   BackendConfig,
   RuntimeTraceAgentContext,
   SessionNavigationState,
-  AgentRunWorkspaceView,
   AgentRunListChild,
   AgentRunWorkspaceListEntry,
   SubjectRunContext,
@@ -191,7 +190,7 @@ export function AgentRunWorkspacePage({
     sourceKey: agentRunSourceKey,
   });
 
-  const workspaceControl: AgentRunWorkspaceView | null = agentRunWorkspaceState.workspace;
+  const workspaceControl = agentRunWorkspaceState.workspace;
   const draftWorkspaceTitle =
     draftProjectAgent?.display_name
     ?? traceAgentContext?.display_name
@@ -201,7 +200,7 @@ export function AgentRunWorkspacePage({
     : workspaceControl?.shell.display_title ?? "";
 
   // ─── 身份 / 从属信息（identity bar）─────────────────────
-  const identityAgentSource = agentSourceLabel(workspaceControl?.agent?.source);
+  const identityAgentSource = agentSourceLabel(workspaceControl?.agent.source);
   const identitySubject = useMemo(() => {
     const assoc = workspaceControl?.subject_associations?.[0];
     if (!assoc) return null;
@@ -218,15 +217,11 @@ export function AgentRunWorkspacePage({
     }
     return { kind: assoc.subject_ref.kind, id: assoc.subject_ref.id, label };
   }, [workspaceControl?.subject_associations]);
-  const lineageParent = workspaceControl?.parent ?? null;
-  const subagentChildCount = workspaceControl?.children?.length ?? 0;
   const hasIdentityBar =
     !isProjectAgentDraft
     && (
       identityAgentSource !== null
       || identitySubject !== null
-      || lineageParent !== null
-      || subagentChildCount > 0
       || agentRunWorkspaceState.runtime_inspect?.binding != null
     );
   const activeHookRuntime = agentRunWorkspaceState.hook_runtime;
@@ -238,7 +233,7 @@ export function AgentRunWorkspacePage({
   const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
   const agentRunDetailRunId = workspaceControl?.run_ref.run_id ?? currentRunId;
   const agentRunDetailAgentId = workspaceControl?.agent_ref.agent_id ?? currentAgentId;
-  const agentRunDetailFrameId = workspaceControl?.frame_runtime?.frame_ref.frame_id ?? null;
+  const agentRunDetailFrameId = workspaceControl?.current_frame?.frame_ref.frame_id ?? null;
   const agentRunDetailTarget = useMemo(() => {
     if (!agentRunDetailRunId || !agentRunDetailAgentId) return null;
     return {
@@ -531,7 +526,7 @@ export function AgentRunWorkspacePage({
     agentRunRuntimeTarget,
     lifecycleRun: null,
     lifecycleAgent: workspaceControl?.agent ?? null,
-    frameRuntime: workspaceControl?.frame_runtime ?? null,
+    frameRuntime: workspaceControl?.current_frame ?? null,
     subjectAssociations: workspaceControl?.subject_associations ?? [],
     runtimeStatus: agentRunWorkspaceState.status,
     runtimeError: agentRunWorkspaceState.error ?? agentRunWorkspaceState.runtime_surface_error,
@@ -682,31 +677,6 @@ export function AgentRunWorkspacePage({
             >
               <span className="text-muted-foreground/60">{identitySubject.kind}</span>
               <span className="font-medium text-foreground">{identitySubject.label}</span>
-            </button>
-          )}
-          {lineageParent && (
-            <button
-              type="button"
-              onClick={() => navigate(`/agent-runs/${encodeURIComponent(lineageParent.run_id)}/${encodeURIComponent(lineageParent.agent_id)}`)}
-              className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground"
-              title="跳转到父 Run"
-            >
-              <span aria-hidden>←</span>
-              <span className="text-muted-foreground/60">隶属于</span>
-              <span className="max-w-[200px] truncate font-medium text-foreground">
-                {lineageParent.display_title.trim() || agentSourceLabel(lineageParent.source) || "父 Run"}
-              </span>
-            </button>
-          )}
-          {subagentChildCount > 0 && agentRunDetailTarget && (
-            <button
-              type="button"
-              onClick={handleOpenRunDetail}
-              className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 transition-colors hover:bg-secondary hover:text-foreground"
-              title="查看派发的 subagent"
-            >
-              <span className="font-medium text-foreground">{subagentChildCount}</span>
-              <span>个 subagent</span>
             </button>
           )}
           <AgentRuntimeCapabilitySummary inspect={agentRunWorkspaceState.runtime_inspect} />

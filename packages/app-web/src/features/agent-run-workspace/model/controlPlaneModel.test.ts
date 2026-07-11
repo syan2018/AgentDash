@@ -6,15 +6,9 @@ import type {
   ControlPlaneProjectionChanged,
 } from "../../../generated/backbone-protocol";
 import type {
-  AgentRunOwnershipView,
-  ConversationCommandPlacement,
-  ConversationCommandView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
-import type {
-  ConversationCommandKind,
-  ConversationCommandStaleGuardView,
-} from "../../../generated/agent-run-mailbox-contracts";
+import type { RuntimeSnapshot } from "../../../generated/agent-runtime-contracts";
 import type { ProjectAgentSummary } from "../../../types";
 import {
   type AgentRunChatSubmitIntent,
@@ -29,29 +23,36 @@ import {
   resolveAgentRunSubmitCommand,
 } from "./controlPlaneModel";
 
-function staleGuard(commandId: string): ConversationCommandStaleGuardView {
+function runtimeSnapshot(): RuntimeSnapshot {
   return {
-    snapshot_id: "snapshot-1",
-    run_id: "run-1",
-    agent_id: "agent-1",
-    active_turn_id: commandId === "cancel" ? "turn-1" : undefined,
-  };
-}
-
-function command(input: {
-  kind: ConversationCommandKind;
-  command_id: string;
-  enabled?: boolean;
-  placement?: ConversationCommandPlacement[];
-}): ConversationCommandView {
-  return {
-    kind: input.kind,
-    command_id: input.command_id,
-    enabled: input.enabled ?? true,
-    requires_input: input.kind === "submit_message",
-    executor_config_policy: "optional",
-    placement: input.placement ?? ["composer_primary"],
-    stale_guard: staleGuard(input.kind),
+    thread_id: "thread-1",
+    revision: 1n,
+    status: "active",
+    active_turn_id: null,
+    binding_id: "binding-1",
+    profile_digest: "sha256:profile",
+    bound_profile: {
+      reference_class: "managed_thread",
+      input: { modalities: ["text"] },
+      instruction: { channels: ["system"], configuration_boundary: "thread_start" },
+      tools: { channels: [], configuration_boundary: "turn_start", cancellation: true },
+      workspace: { capabilities: [], mechanism: "host_adapted_exact" },
+      interactions: { kinds: [], durable_correlation: true },
+      lifecycle: ["turn_start"],
+      hooks: { points: [], configuration_boundary: "thread_start" },
+      context: { capabilities: ["read"], fidelity: "platform_exact", activation_idempotent: true },
+      telemetry_config: [],
+    },
+    active_checkpoint_id: null,
+    context_revision: 1n,
+    settings_revision: 1n,
+    tool_set_revision: 1n,
+    pending_interactions: [],
+    command_availability: {
+      turn_start: { status: "unavailable", unmet: [], reason: "runtime unavailable" },
+    },
+    transcript: [],
+    transcript_fidelity: "platform_exact",
   };
 }
 
@@ -99,33 +100,16 @@ function controlPlaneProjectionEvent(data: {
   };
 }
 
-const ownership: AgentRunOwnershipView = {
-  run_created_by_user_id: "owner-user",
-  agent_created_by_user_id: "owner-user",
-  current_user_controls_run: true,
-};
-
 describe("AgentRun control-plane model", () => {
-  it("resolves submit intent against runtime conversation commands", () => {
-    const submit = command({
-      kind: "submit_message",
-      command_id: "cmd-submit",
-    });
+  it("resolves submit intent against Runtime snapshot commands", () => {
     const commandState = buildAgentRunConversationCommandState({
-      conversation: {
-        execution: { status: "ready" },
-        commands: {
-          ownership,
-          keyboard: { enter: "cmd-submit" },
-          commands: [submit],
-        },
-        model_config: resolvedModelConfig(),
-      },
+      modelConfig: resolvedModelConfig(),
       workspaceStateStatus: "ready",
       workspaceStateError: null,
+      runtimeSnapshot: runtimeSnapshot(),
     });
 
-    const result = resolveAgentRunSubmitCommand(commandState, submitIntent("cmd-submit"));
+    const result = resolveAgentRunSubmitCommand(commandState, submitIntent("runtime:turn_start"));
 
     if (!result.ok) throw new Error(result.message);
     expect(result.command).toBe(commandState.commands.commands[0]);
@@ -164,15 +148,7 @@ describe("AgentRun control-plane model", () => {
 
   it("rejects submit intent when command id came from a stale snapshot", () => {
     const commandState = buildAgentRunConversationCommandState({
-      conversation: {
-        execution: { status: "ready" },
-        commands: {
-          ownership,
-          keyboard: {},
-          commands: [],
-        },
-        model_config: resolvedModelConfig(),
-      },
+      modelConfig: resolvedModelConfig(),
       workspaceStateStatus: "ready",
       workspaceStateError: null,
     });

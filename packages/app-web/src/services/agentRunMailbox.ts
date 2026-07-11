@@ -3,7 +3,7 @@ import type {
   AgentRunComposerSubmitRequest,
   AgentRunMessageCommandResponse,
 } from "../generated/agent-run-mailbox-contracts";
-import type { AgentRunCommandOnlyRequest } from "../generated/workflow-contracts";
+import type { AgentRunRuntimeCommandRequest } from "../generated/workflow-contracts";
 import type { OperationReceipt } from "../generated/agent-runtime-contracts";
 import { agentRunScopedPath } from "./agentRunRuntime";
 
@@ -21,7 +21,7 @@ export async function submitAgentRunComposerInput(
 export async function cancelAgentRun(
   runId: string,
   agentId: string,
-  request: AgentRunCommandOnlyRequest,
+  request: AgentRunRuntimeCommandRequest,
 ): Promise<OperationReceipt> {
   return api.post<OperationReceipt>(
     agentRunScopedPath({ runId, agentId }, "/cancel"),

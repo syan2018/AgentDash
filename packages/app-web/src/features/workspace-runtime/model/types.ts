@@ -1,7 +1,6 @@
 import type {
   ExtensionRuntimeProjectionResponse,
   AgentFrameHookRuntimeInfo,
-  AgentFrameRuntimeView,
   LifecycleRunView,
   AgentRunView,
   LifecycleSubjectAssociationDto,
@@ -11,6 +10,7 @@ import type {
   Story,
   TaskSessionExecutorSummary,
 } from "../../../types";
+import type { AgentRunCurrentFrameView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 
 export type WorkspaceRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
@@ -47,7 +47,7 @@ export interface WorkspaceRuntimeData {
   refreshAgentRunWorkspace?: (() => Promise<unknown>) | null;
   lifecycleRun: LifecycleRunView | null;
   lifecycleAgent: AgentRunView | null;
-  frameRuntime: AgentFrameRuntimeView | null;
+  frameRuntime: AgentRunCurrentFrameView | null;
   subjectAssociations: LifecycleSubjectAssociationDto[];
   runtimeStatus: WorkspaceRuntimeStateStatus;
   runtimeError: string | null;

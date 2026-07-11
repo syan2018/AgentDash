@@ -1,16 +1,4 @@
-import type {
-  AgentRunCommandPreconditionView,
-} from "../../../generated/agent-run-mailbox-contracts";
 import type { OperationReceipt } from "../../../generated/agent-runtime-contracts";
-import type { ConversationCommandView } from "../../../generated/workflow-contracts";
-
-export function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {
-  return {
-    command_id: command.command_id,
-    command_kind: command.kind,
-    stale_guard: command.stale_guard,
-  };
-}
 
 export function newClientCommandId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`;

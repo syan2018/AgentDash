@@ -148,13 +148,6 @@ pub struct ConversationCommandStaleGuardModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentRunCommandPreconditionModel {
-    pub command_id: String,
-    pub command_kind: ConversationCommandKindModel,
-    pub stale_guard: ConversationCommandStaleGuardModel,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationCommandModel {
     pub kind: ConversationCommandKindModel,
     pub command_id: String,

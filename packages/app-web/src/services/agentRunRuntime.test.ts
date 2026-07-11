@@ -13,20 +13,6 @@ vi.mock("../api/client", () => ({
 }));
 
 import { compactAgentRunContext, fetchAgentRunRuntimeInspect } from "./agentRunRuntime";
-import type { AgentRunCommandPreconditionView } from "../generated/agent-run-mailbox-contracts";
-
-function command(kind: AgentRunCommandPreconditionView["command_kind"]): AgentRunCommandPreconditionView {
-  return {
-    command_id: kind,
-    command_kind: kind,
-    stale_guard: {
-      snapshot_id: `snapshot-${kind}`,
-      run_id: "run/1",
-      agent_id: "agent/1",
-      active_turn_id: "turn-1",
-    },
-  };
-}
 
 describe("AgentRun runtime service", () => {
   beforeEach(() => {
@@ -45,14 +31,12 @@ describe("AgentRun runtime service", () => {
   it("submits context compaction as command-only intent", async () => {
     await compactAgentRunContext("run/1", "agent/1", {
       client_command_id: "command-compact",
-      command: command("compact_context"),
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/context/compact",
       {
         client_command_id: "command-compact",
-        command: command("compact_context"),
       },
     );
   });

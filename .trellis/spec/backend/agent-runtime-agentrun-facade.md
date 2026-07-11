@@ -20,6 +20,20 @@ pub trait AgentRunRuntime: Send + Sync {
 }
 ```
 
+```rust
+pub struct AgentRunProductQueryInput<'a> {
+    pub run: &'a LifecycleRun,
+    pub agent: &'a LifecycleAgent,
+    pub has_runtime_binding: bool,
+    pub runtime_projection: &'a dyn VfsSurfaceRuntimeProjection,
+}
+
+pub async fn AgentRunProductQuery::get(
+    &self,
+    input: AgentRunProductQueryInput<'_>,
+) -> Result<AgentRunProductModel, ApplicationError>;
+```
+
 ```text
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime
 GET  /agent-runs/{run_id}/agents/{agent_id}/runtime/context
@@ -33,6 +47,7 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 ## 3. Contracts
 
 - Application depends on the named `AgentRunRuntime` facade and owned Runtime contract. The facade maps product coordinates and commands; it does not own Thread/Turn/Item/Interaction state.
+- AgentRun详情产品投影由具名`AgentRunProductQuery`组合Lifecycle read model、current AgentFrame/model config与VFS surface；API route只负责鉴权、runtime projection adapter和generated DTO映射，不直接编排repository。
 - `ManagedAgentRuntime` is the only writer of canonical operation, lifecycle event, snapshot, context head and compaction state. Product receipts store the accepted Runtime operation ID without encoding it as a protocol Turn ID.
 - Production composition is built below the API boundary: Business Surface compiles product facts, Driver Host resolves an Integration `RuntimeOffer`, admission persists the bound surface and Host binding, and the facade persists the AgentRun-to-Runtime binding.
 - Agent services enter through trusted Integration contributions. Native, Codex and enterprise remote services have the same definition/instance/offer/factory/binding lifecycle; Relay contributes placement transport only.
@@ -74,6 +89,7 @@ Migration `0065_agent_runtime_cutover.sql` removes the superseded runtime-sessio
 - Enterprise remote E2E asserts compaction preparation/activation/recovery, disconnect, exactly-once `BindingLost`, reopen, late-event fencing and no duplicate outbox replay.
 - Migration tests run `0065` against a fresh PostgreSQL root and assert removed tables/columns are absent; bootstrap tests must use isolated data roots.
 - Contract generation, frontend typecheck/tests, workspace checks, Runtime crate tests and migration guard are required before completion.
+- Product query tests覆盖current Frame execution profile到`model_config`的resolved/model-required投影；前端state测试覆盖workspace/runtime两路独立失败与refresh保留。
 
 ## 7. Wrong vs Correct
 
@@ -83,6 +99,14 @@ let can_cancel = agent_run.status == AgentRunStatus::Running;
 
 // Correct: the canonical Runtime snapshot owns command admission.
 let can_cancel = runtime_view.command_availability.supports(RuntimeCommandKind::Interrupt);
+```
+
+```rust
+// Wrong: API handler直接读取Lifecycle/Frame repository并拼装产品投影。
+let frame = state.repos.agent_frame_repo.get_current(agent_id).await?;
+
+// Correct: API鉴权后调用具名application query，再映射generated contract。
+let product = state.services.agent_run_product_query.get(input).await?;
 ```
 
 ```rust

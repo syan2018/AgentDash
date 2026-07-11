@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::workflow::{
-    AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, LifecycleRunRefDto,
-};
+use crate::workflow::{AgentFrameRefDto, AgentRunRefDto, LifecycleRunRefDto};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -195,7 +193,6 @@ pub struct AgentRunComposerSubmitRequest {
     /// canonical 用户输入，由后端写入 mailbox 并按 scheduler outcome 消费或排队。
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
-    pub command: AgentRunCommandPreconditionView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "JsonValue")]
     pub executor_config: Option<Value>,

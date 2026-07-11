@@ -6,10 +6,7 @@ import type {
   MailboxMessageView,
   MailboxStateView,
 } from "../../../generated/agent-run-mailbox-contracts";
-import type {
-  ConversationCommandView,
-  ConversationWaitingItemView,
-} from "../../../generated/workflow-contracts";
+import type { ConversationWaitingItemView } from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { AgentRunRuntimeInspectResponse } from "../../../services/agentRunRuntime";
@@ -81,8 +78,8 @@ export interface SessionChatModel {
   executorStateKey?: string | null;
   showExecutorSelector?: boolean;
   commandState: SessionChatCommandState;
-  compactContextCommand?: ConversationCommandView;
-  mailbox: SessionChatMailboxModel;
+  compactContextCommand?: SessionChatCommandModel;
+  mailbox?: SessionChatMailboxModel;
   statusBarRunId?: string | null;
   statusBarAgentId?: string | null;
   injectedInputValue?: string | null;

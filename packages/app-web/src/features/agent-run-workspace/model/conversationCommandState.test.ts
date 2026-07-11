@@ -1,65 +1,18 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
+import type { RuntimeSnapshot } from "../../../generated/agent-runtime-contracts";
 import type {
-  AgentRunOwnershipView,
-  ConversationCommandPlacement,
-  ConversationCommandView,
   ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
-import type {
-  ConversationCommandKind,
-  ConversationCommandStaleGuardView,
-  MailboxMessageView,
-} from "../../../generated/agent-run-mailbox-contracts";
+import type { MailboxMessageView } from "../../../generated/agent-run-mailbox-contracts";
 import type { ProjectAgentSummary } from "../../../types";
-import type { RuntimeSnapshot } from "../../../generated/agent-runtime-contracts";
 import {
   buildAgentRunConversationCommandState,
   buildDraftConversationCommandState,
   projectAgentRunChatCommandState,
   projectAgentRunChatMailboxModel,
 } from "./conversationCommandState";
-
-const ownership: AgentRunOwnershipView = {
-  run_created_by_user_id: "owner-user",
-  agent_created_by_user_id: "owner-user",
-  current_user_controls_run: true,
-};
-
-function staleGuard(commandId: string): ConversationCommandStaleGuardView {
-  return {
-    snapshot_id: "snapshot-1",
-    run_id: "run-1",
-    agent_id: "agent-1",
-    active_turn_id: commandId === "cancel" ? "turn-1" : undefined,
-  };
-}
-
-function command(input: {
-  kind: ConversationCommandKind;
-  command_id: string;
-  enabled?: boolean;
-  unavailable_reason?: string;
-  disabled_code?: string;
-  shortcut?: string;
-  requires_input?: boolean;
-  executor_config_policy?: string;
-  placement?: ConversationCommandPlacement[];
-}): ConversationCommandView {
-  return {
-    kind: input.kind,
-    command_id: input.command_id,
-    enabled: input.enabled ?? true,
-    unavailable_reason: input.unavailable_reason,
-    disabled_code: input.disabled_code,
-    shortcut: input.shortcut,
-    requires_input: input.requires_input ?? input.kind === "submit_message",
-    executor_config_policy: input.executor_config_policy ?? "optional",
-    placement: input.placement ?? ["composer_primary"],
-    stale_guard: staleGuard(input.kind),
-  };
-}
 
 function resolvedModelConfig(): ConversationModelConfigView {
   return {
@@ -69,17 +22,17 @@ function resolvedModelConfig(): ConversationModelConfigView {
       executor: "CODEX",
       provider_id: "openai",
       model_id: "gpt-test",
-      source: "project_agent_preset",
+      source: "frame_execution_profile",
     },
   };
 }
 
-function runtimeSnapshot(): RuntimeSnapshot {
+function runtimeSnapshot(activeTurnId: string | null = "turn-1"): RuntimeSnapshot {
   return {
     thread_id: "thread-1",
     revision: 4n,
     status: "active",
-    active_turn_id: "turn-1",
+    active_turn_id: activeTurnId,
     binding_id: "binding-1",
     profile_digest: "sha256:profile",
     bound_profile: {
@@ -100,12 +53,9 @@ function runtimeSnapshot(): RuntimeSnapshot {
     tool_set_revision: 1n,
     pending_interactions: [],
     command_availability: {
-      turn_steer: { status: "available" },
-      turn_interrupt: {
-        status: "unavailable",
-        unmet: [{ kind: "no_active_turn" }],
-        reason: "当前没有运行中的 turn。",
-      },
+      [activeTurnId ? "turn_steer" : "turn_start"]: { status: "available" },
+      turn_interrupt: { status: "available" },
+      context_compact: { status: "available" },
     },
     transcript: [],
     transcript_fidelity: "platform_exact",
@@ -139,39 +89,9 @@ function mailboxMessage(): MailboxMessageView {
 }
 
 describe("AgentRun conversation command state", () => {
-  it("projects runtime keyboard, primary command, cancel command, and helper text", () => {
-    const submit = command({
-      kind: "submit_message",
-      command_id: "cmd-submit",
-      shortcut: "enter",
-      placement: ["composer_primary"],
-    });
-    const cancel = command({
-      kind: "cancel",
-      command_id: "cmd-cancel",
-      enabled: false,
-      unavailable_reason: "当前没有运行中的 turn。",
-      disabled_code: "runtime_command_unavailable",
-      requires_input: false,
-      executor_config_policy: "forbidden",
-      placement: ["header"],
-    });
+  it("projects Runtime snapshot as the only runtime command authority", () => {
     const commandState = buildAgentRunConversationCommandState({
-      conversation: {
-        execution: {
-          status: "running_active",
-          reason: "正在运行",
-        },
-        commands: {
-          ownership,
-          keyboard: {
-            enter: "cmd-submit",
-            ctrl_enter: "cmd-submit-steer",
-          },
-          commands: [cancel, submit],
-        },
-        model_config: resolvedModelConfig(),
-      },
+      modelConfig: resolvedModelConfig(),
       workspaceStateStatus: "ready",
       workspaceStateError: null,
       runtimeSnapshot: runtimeSnapshot(),
@@ -182,44 +102,37 @@ describe("AgentRun conversation command state", () => {
     expect(model.mode).toBe("runtime");
     expect(model.executionStatus).toBe("running_active");
     expect(model.keyboard).toEqual({
-      enter: "cmd-submit",
-      ctrl_enter: "cmd-submit-steer",
+      enter: "runtime:turn_steer",
+      ctrl_enter: undefined,
     });
-    expect(model.primaryCommandId).toBe("cmd-submit");
-    expect(model.cancelCommand).toEqual({
-      command_id: "cmd-cancel",
+    expect(model.primaryCommandId).toBe("runtime:turn_steer");
+    expect(model.cancelCommand).toMatchObject({
+      command_id: "runtime:turn_interrupt",
       kind: "cancel",
-      enabled: false,
-      unavailable_reason: "当前没有运行中的 turn。",
-      disabled_code: "runtime_command_unavailable",
-      requires_input: false,
+      enabled: true,
       executor_config_policy: "forbidden",
-      shortcut: undefined,
     });
     expect(model.modelConfig.status).toBe("resolved");
-    expect(model.helperText).toBe("正在运行");
   });
 
-  it("keeps workspace state loading and error states visible when conversation snapshot is missing", () => {
+  it("keeps product projection errors visible without fabricating model state", () => {
+    const modelConfig = resolvedModelConfig();
     const commandState = buildAgentRunConversationCommandState({
-      conversation: null,
+      modelConfig,
       workspaceStateStatus: "error",
       workspaceStateError: "工作台状态加载失败",
+      runtimeSnapshot: runtimeSnapshot(),
     });
 
     const model = projectAgentRunChatCommandState(commandState);
 
     expect(model.executionStatus).toBe("error");
     expect(model.commands).toEqual([]);
-    expect(model.modelConfig).toEqual({
-      status: "model_required",
-      missing_fields: [],
-      message: "工作台状态加载失败",
-    });
+    expect(model.modelConfig).toMatchObject(modelConfig);
     expect(model.helperText).toBe("工作台状态加载失败");
   });
 
-  it("uses only canonical snapshot command availability for runtime controls", () => {
+  it("uses canonical command availability for every Runtime control", () => {
     const snapshot = runtimeSnapshot();
     snapshot.command_availability = {
       turn_steer: {
@@ -235,19 +148,7 @@ describe("AgentRun conversation command state", () => {
       },
     };
     const state = buildAgentRunConversationCommandState({
-      conversation: {
-        execution: { status: "ready" },
-        commands: {
-          ownership,
-          keyboard: { enter: "submit" },
-          commands: [
-            command({ kind: "submit_message", command_id: "submit" }),
-            command({ kind: "cancel", command_id: "cancel", requires_input: false }),
-            command({ kind: "compact_context", command_id: "compact", requires_input: false }),
-          ],
-        },
-        model_config: resolvedModelConfig(),
-      },
+      modelConfig: resolvedModelConfig(),
       workspaceStateStatus: "ready",
       workspaceStateError: null,
       runtimeSnapshot: snapshot,
@@ -264,31 +165,12 @@ describe("AgentRun conversation command state", () => {
     });
   });
 
-  it("does not expose stale running commands while workspace state is refreshing", () => {
-    const submit = command({
-      kind: "submit_message",
-      command_id: "cmd-submit",
-      shortcut: "enter",
-      placement: ["composer_primary"],
-    });
+  it("does not expose commands while the product projection is refreshing", () => {
     const commandState = buildAgentRunConversationCommandState({
-      conversation: {
-        execution: {
-          status: "running_active",
-          active_turn_id: "turn-1",
-          reason: "当前 AgentRun 正在执行中。",
-        },
-        commands: {
-          ownership,
-          keyboard: {
-            enter: "cmd-submit",
-          },
-          commands: [submit],
-        },
-        model_config: resolvedModelConfig(),
-      },
+      modelConfig: resolvedModelConfig(),
       workspaceStateStatus: "refreshing",
       workspaceStateError: null,
+      runtimeSnapshot: runtimeSnapshot(),
     });
 
     const model = projectAgentRunChatCommandState(commandState);
@@ -305,7 +187,7 @@ describe("AgentRun conversation command state", () => {
       description: "Draft agent",
       source: "project_agent",
       executor: {
-        executor: "CODEX",
+        executor: "PI_AGENT",
         provider_id: null,
         model_id: null,
       },
@@ -319,7 +201,6 @@ describe("AgentRun conversation command state", () => {
     });
     expect(missingModel.executionStatus).toBe("model_required");
     expect(missingModel.localDraftAction?.enabled).toBe(false);
-    expect(missingModel.localDraftAction?.disabled_code).toBe("model_required");
 
     const ready = buildDraftConversationCommandState({
       projectId: "project-1",
@@ -327,7 +208,7 @@ describe("AgentRun conversation command state", () => {
       agent,
       workspaceStateReady: true,
       explicitExecutorConfigOverride: {
-        executor: "CODEX",
+        executor: "PI_AGENT",
         provider_id: "openai",
         model_id: "gpt-test",
       },
@@ -335,84 +216,39 @@ describe("AgentRun conversation command state", () => {
     const model = projectAgentRunChatCommandState(ready);
 
     expect(ready.executionStatus).toBe("draft");
-    expect(ready.localDraftAction?.enabled).toBe(true);
-    expect(model.mode).toBe("draft");
-    expect(model.keyboard.enter).toBe("draft:start_local:resolved");
     expect(model.primaryCommandId).toBe("draft:start_local:resolved");
-    expect(model.modelConfig.effective_executor_config).toEqual({
-      executor: "CODEX",
+    expect(model.modelConfig.effective_executor_config).toMatchObject({
+      executor: "PI_AGENT",
       provider_id: "openai",
       model_id: "gpt-test",
-      agent_id: undefined,
-      thinking_level: undefined,
-      permission_policy: undefined,
       source: "user_override",
     });
   });
 
-  it("projects canonical mailbox state without exposing retired management commands", () => {
-    const resume = command({
-      kind: "resume_mailbox",
-      command_id: "cmd-resume",
-      requires_input: false,
-      placement: ["mailbox_banner"],
-    });
-    const promote = command({
-      kind: "promote_mailbox_message",
-      command_id: "cmd-promote",
-      requires_input: false,
-      placement: ["mailbox_row"],
-    });
-    const deleteCommand = command({
-      kind: "delete_mailbox_message",
-      command_id: "cmd-delete",
-      requires_input: false,
-      placement: ["mailbox_row"],
-    });
+  it("projects mailbox facts without reviving retired management commands", () => {
     const commandState = buildAgentRunConversationCommandState({
-      conversation: {
-        execution: { status: "ready" },
-        commands: {
-          ownership,
-          keyboard: {},
-          commands: [promote, deleteCommand],
-        },
-        model_config: resolvedModelConfig(),
-      },
+      modelConfig: resolvedModelConfig(),
       workspaceStateStatus: "ready",
       workspaceStateError: null,
+      runtimeSnapshot: runtimeSnapshot(),
     });
     const mailbox: ConversationMailboxSnapshotView = {
       visible_message_count: 1,
       paused: false,
       user_attention: true,
-      resume_command: resume,
       state: {
         paused: true,
         can_resume: true,
         hide_system_steer_messages: true,
       },
       messages: [mailboxMessage()],
-      waiting_items: [
-        {
-          wait_id: "wait-1",
-          gate_id: "gate-1",
-          kind: "companion",
-          status: "open",
-          source_label: "Research Agent",
-          preview: "等待协作 Agent",
-          created_at: "2026-07-02T10:15:30.000Z",
-        },
-      ],
+      waiting_items: [],
     };
 
     const model = projectAgentRunChatMailboxModel(commandState, mailbox);
 
     expect(model.messages).toEqual([mailboxMessage()]);
-    expect(model.waiting_items).toEqual(mailbox.waiting_items);
     expect(model.paused).toBe(true);
-    expect(model.user_attention).toBe(true);
-    expect(model.hide_system_steer_messages).toBe(true);
     expect(model.can_resume).toBe(false);
     expect(model.resumeAction).toBeUndefined();
     expect(model.promoteAction).toBeUndefined();

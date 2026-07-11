@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { SessionProjectionViewResponse } from "../../../generated/session-contracts";
-import type { ConversationCommandView } from "../../../generated/workflow-contracts";
+import type { SessionChatCommandModel } from "./SessionChatViewTypes";
 import { SessionProjectionViewPanel } from "./SessionProjectionView";
 import {
-  commandPrecondition,
   contextCompactionOutcomeMessage,
 } from "./sessionProjectionCompactionAction";
 
@@ -134,7 +133,6 @@ describe("SessionProjectionViewPanel", () => {
       "agent/1",
       {
         client_command_id: "command-compact-1",
-        command: commandPrecondition(sampleCompactCommand()),
       },
     );
   });
@@ -242,21 +240,13 @@ function findButtonByAriaLabel(
   return null;
 }
 
-function sampleCompactCommand(overrides: Partial<ConversationCommandView> = {}): ConversationCommandView {
+function sampleCompactCommand(overrides: Partial<SessionChatCommandModel> = {}): SessionChatCommandModel {
   return {
     kind: "compact_context",
     command_id: "compact_context",
     enabled: true,
     requires_input: false,
     executor_config_policy: "forbidden",
-    placement: ["header"],
-    stale_guard: {
-      snapshot_id: "snapshot-1",
-      run_id: "run/1",
-      agent_id: "agent/1",
-      frame_id: "frame-1",
-      active_turn_id: "turn-1",
-    },
     ...overrides,
   };
 }

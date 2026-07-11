@@ -1023,14 +1023,6 @@ pub struct ConversationCommandStaleGuardView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunCommandPreconditionView {
-    pub command_id: String,
-    pub command_kind: ConversationCommandKind,
-    pub stale_guard: ConversationCommandStaleGuardView,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub struct ConversationCommandView {
     pub kind: ConversationCommandKind,
     pub command_id: String,
@@ -1180,40 +1172,6 @@ pub struct AgentConversationSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunWorkspaceView {
-    pub run_ref: LifecycleRunRefDto,
-    pub agent_ref: AgentRunRefDto,
-    pub project_id: String,
-    pub shell: AgentRunWorkspaceShell,
-    pub control_plane: AgentRunWorkspaceControlPlaneView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub agent: Option<AgentRunView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub frame_runtime: Option<AgentFrameRuntimeView>,
-    #[serde(default)]
-    pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub resource_surface: Option<ResolvedVfsSurface>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub resource_surface_coordinate: Option<AgentRunResourceSurfaceCoordinateView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub conversation: Option<AgentConversationSnapshot>,
-    /// lineage 父节点：本 Run 若为 subagent 则指向其父，供"隶属于"跳转。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub parent: Option<AgentRunLineageRef>,
-    /// 本 Run 直接派发的 subagent（一跳子节点），供右侧展开/下钻。
-    #[serde(default)]
-    pub children: Vec<AgentRunLineageRef>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
 pub struct LifecycleSubjectAssociationDto {
     pub id: String,
     pub anchor_run_id: String,
@@ -1347,6 +1305,55 @@ pub struct AgentFrameRuntimeView {
     pub effective_executor_config: Option<ConversationEffectiveExecutorConfigView>,
 }
 
+/// AgentRun 详情页产品事实，由 Lifecycle 与 current AgentFrame 共同提供。
+///
+/// canonical Runtime 状态通过独立 inspect endpoint 读取，使产品投影失败不会覆盖
+/// 已成功加载的 Runtime snapshot。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunProductView {
+    pub run_ref: LifecycleRunRefDto,
+    pub agent_ref: AgentRunRefDto,
+    pub project_id: String,
+    pub shell: AgentRunProductShellView,
+    pub agent: AgentRunView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_frame: Option<AgentRunCurrentFrameView>,
+    #[serde(default)]
+    pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_surface: Option<ResolvedVfsSurface>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunProductShellView {
+    pub display_title: String,
+    pub title_source: String,
+    pub lifecycle_status: String,
+    pub last_activity_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentRunCurrentFrameView {
+    pub frame_ref: AgentFrameRefDto,
+    #[serde(default)]
+    pub capability_surface: Value,
+    #[serde(default)]
+    pub context_slice: Value,
+    #[serde(default)]
+    pub vfs_surface: Value,
+    #[serde(default)]
+    pub mcp_surface: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub execution_profile: Option<Value>,
+    pub model_config: ConversationModelConfigView,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct SubjectRuntimeAttemptView {
@@ -1402,26 +1409,8 @@ pub struct RuntimeSessionTraceView {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct AgentRunCommandOnlyRequest {
-    pub command: AgentRunCommandPreconditionView,
+pub struct AgentRunRuntimeCommandRequest {
     pub client_command_id: String,
-}
-
-/// AgentRun lineage 控制树上的一跳引用（父或子）。
-///
-/// 用于右侧会话栏展示从属关系与跳转。`relation_kind` 来自 `AgentLineage`。
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AgentRunLineageRef {
-    pub run_id: String,
-    pub agent_id: String,
-    /// Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
-    pub source: String,
-    pub relation_kind: String,
-    pub display_title: String,
-    /// 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
-    #[serde(default)]
-    pub subagent_count: u32,
 }
 
 /// AgentRun 列表内联的直接子 Agent 节点（一跳），携带真实 shell 状态，免前端懒加载。

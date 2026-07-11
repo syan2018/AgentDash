@@ -4,11 +4,14 @@ import type { ExecutorConfig } from "../../../services/executor";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import type {
-  AgentRunWorkspaceView,
   CreateProjectAgentRunRequest,
   ProjectAgentRunStartResult,
   ProjectAgentSummary,
 } from "../../../types";
+import type {
+  AgentRunProductView,
+  ConversationModelConfigView,
+} from "../../../generated/workflow-contracts";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type {
   AgentRunWorkspaceState,
@@ -30,7 +33,6 @@ import {
   conversationCommandByKind,
   isCompleteExecutorConfig,
   projectAgentRunChatCommandState,
-  projectAgentRunChatMailboxModel,
   resolveExecutorConfigForConversationCommand,
 } from "./conversationCommandState";
 import { useAgentRunWorkspaceCommands } from "./useAgentRunWorkspaceCommands";
@@ -59,7 +61,7 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
 }
 
 interface UseAgentRunWorkspaceControlPlaneResult {
-  workspaceControl: AgentRunWorkspaceView | null;
+  workspaceControl: AgentRunProductView | null;
   chatModel: AgentRunChatModel;
   chatIntents: AgentRunChatViewIntents;
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
@@ -146,7 +148,7 @@ export function useAgentRunWorkspaceControlPlane({
         : null;
     }
     if (!currentRunId || !currentAgentId) return null;
-    const frameId = workspaceControl?.frame_runtime?.frame_ref.frame_id ?? "pending";
+    const frameId = workspaceControl?.current_frame?.frame_ref.frame_id ?? "pending";
     return `agentrun:${currentRunId}:${currentAgentId}:${frameId}`;
   }, [
     currentAgentId,
@@ -154,12 +156,20 @@ export function useAgentRunWorkspaceControlPlane({
     draftProjectAgentKey,
     draftProjectId,
     isProjectAgentDraft,
-    workspaceControl?.frame_runtime?.frame_ref.frame_id,
+    workspaceControl?.current_frame?.frame_ref.frame_id,
   ]);
 
   const executorHint = draftProjectAgent?.executor.executor
     ?? traceExecutorHint
     ?? null;
+  const runtimeModelConfig = useMemo<ConversationModelConfigView>(
+    () => workspaceControl?.current_frame?.model_config ?? {
+      status: "model_required",
+      missing_fields: ["agent_frame"],
+      message: "current AgentFrame 尚未就绪。",
+    },
+    [workspaceControl?.current_frame?.model_config],
+  );
 
   const commandState = useMemo(
     () => isProjectAgentDraft
@@ -171,7 +181,7 @@ export function useAgentRunWorkspaceControlPlane({
           explicitExecutorConfigOverride,
         })
       : buildAgentRunConversationCommandState({
-          conversation: workspaceControl?.conversation,
+          modelConfig: runtimeModelConfig,
           workspaceStateStatus: agentRunWorkspaceState.status,
           workspaceStateError: agentRunWorkspaceState.error,
           runtimeSnapshot: agentRunWorkspaceState.runtime_inspect?.snapshot,
@@ -184,12 +194,10 @@ export function useAgentRunWorkspaceControlPlane({
       draftProjectId,
       explicitExecutorConfigOverride,
       isProjectAgentDraft,
-      workspaceControl?.conversation,
+      runtimeModelConfig,
       agentRunWorkspaceState.runtime_inspect?.snapshot,
     ],
   );
-
-  const conversationMailbox = workspaceControl?.conversation?.mailbox;
 
   const {
     handleAgentRunCommand,
@@ -235,24 +243,22 @@ export function useAgentRunWorkspaceControlPlane({
     runtimeInspect: agentRunWorkspaceState.runtime_inspect,
     executorHint,
     agentDefaults: draftProjectAgent?.effective_executor_config
-      ?? workspaceControl?.conversation?.model_config.effective_executor_config
+      ?? workspaceControl?.current_frame?.model_config.effective_executor_config
       ?? taskExecutorSummary,
     executorStateKey,
     commandState: projectAgentRunChatCommandState(commandState),
     compactContextCommand: conversationCommandByKind(commandState.commands.commands, "compact_context"),
-    mailbox: projectAgentRunChatMailboxModel(commandState, conversationMailbox),
     statusBarRunId: currentRunId,
     statusBarAgentId: currentAgentId,
   }), [
     agentRunWorkspaceState.runtime_inspect,
     commandState,
-    conversationMailbox,
     currentAgentId,
     currentRunId,
     draftProjectAgent?.effective_executor_config,
     executorHint,
     executorStateKey,
-    workspaceControl?.conversation?.model_config.effective_executor_config,
+    workspaceControl?.current_frame?.model_config.effective_executor_config,
     taskExecutorSummary,
   ]);
 

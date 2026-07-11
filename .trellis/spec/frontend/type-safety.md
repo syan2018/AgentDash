@@ -178,16 +178,70 @@ Project/Story/Task/Agent knowledge预览使用`ResolvedVfsSurfaceSource`；Agent
 
 AgentRun 右侧 WorkspacePanel 消费 current workspace projection state。该 state 以 `run_id + agent_id + frame/runtime projection key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`workspace_module_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。Canvas 打开动作读取 generated event payload 的 `presentation_uri`，值为 `canvas://{canvas_mount_id}`；`view_key`、`module_id` 与 `{canvas_mount_id}://...` 分别保留 UI entry selection、module ref 与 VFS authoring URI 语义。
 
-## AgentRun Conversation DTO
+## Scenario: AgentRun Product Projection 与 Runtime Command 分权
 
-AgentRun workspace 消费 `AgentConversationSnapshot` / `AgentRunWorkspaceView.conversation` 的 generated DTO。输入区、pending row、model selector 与 keyboard submit 使用 `ConversationCommandSetView.commands`、
-`ConversationKeyboardMapView`、`ConversationModelConfigView` 和 `ConversationPendingSnapshotView`，原因是这些字段携带后端同一轮 snapshot 的 command id、stale guard、模型解析和用户注意力语义。
+### 1. Scope / Trigger
 
-AgentRun command handlers 以 `ConversationCommandView.enabled`、`unavailable_reason` 和 `commandPrecondition(command)` 作为 mutating command 的语义准入来源；`delivery_status` 与 workspace projection loading state 只服务展示和刷新 UX。这样做的原因是后端 command resolver 与 command policy 共享 stale guard，前端如果再用展示状态派生 allow/deny 会绕开同源 command contract。
+- 修改 AgentRun 详情加载、模型选择、composer/cancel/compact command 或 Runtime inspect 时适用。
+- 该分权防止退役的 workspace conversation DTO 再次同时充当产品、模型和执行状态权威。
 
-ProjectAgent draft start 使用 generated `CreateProjectAgentRunRequest` / `ProjectAgentRunStartResult`。启动成功后前端用 `run_ref` / `agent_ref` 导航，并从`initial_message`与后续canonical Runtime snapshot/events观察queued/dispatched结果。`runtime_thread_id`和`runtime_operation_id`只作typed evidence；HTTP success不等于turn terminal。
+### 2. Signatures
 
-AgentRun 右侧 WorkspacePanel 使用当前 AgentFrame/Business Surface的`resource_surface: ResolvedVfsSurface`。后端从`AgentRunRuntimeBinding`解析canonical thread/binding，并把资源facts与Runtime facts分离；浏览器不从trace metadata重建surface。
+```text
+GET  /agent-runs/{run_id}/agents/{agent_id}/workspace -> AgentRunProductView
+GET  /agent-runs/{run_id}/agents/{agent_id}/runtime   -> Managed Runtime inspect
+POST /agent-runs/{run_id}/agents/{agent_id}/composer-submit
+     { input, client_command_id, executor_config?, backend_selection?, delivery_intent? }
+POST .../cancel | .../runtime/context/compact
+     { client_command_id }
+```
+
+### 3. Contracts
+
+- `AgentRunProductView` 只包含 Lifecycle identity/shell、current AgentFrame、`model_config`、subject associations 与 `resource_surface`；不嵌入 Runtime snapshot、mailbox command policy或旧 RuntimeSession source anchor。
+- Runtime command enabled 状态只读取 `RuntimeSnapshot.command_availability`。前端 action ID 可以投影 Runtime command kind，但不携带自造 stale guard。
+- 服务端在 mutating command 前 inspect 当前 Runtime snapshot并生成 `AgentRunCommandGuard`，因此请求只携带幂等 `client_command_id` 与命令 payload。
+- workspace product 与 runtime inspect 独立加载、独立记录错误；refresh 单路失败时保留该 owner 上一份成功事实。
+- ProjectAgent draft start 继续使用 generated `CreateProjectAgentRunRequest` / `ProjectAgentRunStartResult`；HTTP success不等于 turn terminal。
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| workspace失败、runtime inspect成功 | 保留Runtime snapshot并记录`workspace_error` |
+| runtime inspect失败、workspace成功 | 保留产品/Frame/model/surface并记录`runtime_inspect_error` |
+| refresh单路失败 | 保留该owner上一份成功事实，不清空另一owner的新结果 |
+| command availability缺失或unavailable | UI禁用；API在副作用前按当前snapshot拒绝 |
+| current AgentFrame缺少cloud-native provider/model | `model_config.status=model_required`并列出missing fields |
+| 请求携带旧workspace stale guard | generated request不包含该字段；TypeScript/serde拒绝契约漂移 |
+
+### 5. Good / Base / Bad Cases
+
+- Good：详情页从 product route得到current Frame/model/surface，从runtime route得到active snapshot；一侧刷新失败不会抹掉另一侧。
+- Base：Runtime尚未创建时product projection仍可展示Lifecycle/Frame，命令保持不可用。
+- Bad：使用`Promise.all`统一catch两路请求，或从Lifecycle status/conversation DTO制造Runtime command authority。
+
+### 6. Tests Required
+
+- state model测试首次单路失败与refresh单路失败保留语义。
+- command-state测试submit/steer/interrupt/compact只由`command_availability`决定。
+- service测试URL encoding与request不再发送dead command precondition。
+- generated contract check、frontend typecheck及真实Draft create-run验证model/surface/runtime三条事实一致。
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong：一个旧聚合DTO和一次统一catch覆盖两个owner。
+const [workspace, runtime] = await Promise.all([loadWorkspace(), inspectRuntime()]);
+const canCancel = workspace.control_plane.status === "running";
+
+// Correct：两路事实独立settle，命令只消费canonical Runtime availability。
+const [productResult, runtimeResult] = await Promise.allSettled([
+  loadAgentRunProduct(),
+  inspectRuntime(),
+]);
+const canCancel = runtimeSnapshot?.command_availability.turn_interrupt?.status === "available";
+```
 
 Round action只暴露已有canonical command的动作。新增fork前必须先在`AgentRunRuntime` facade实现typed ThreadFork、availability、operation receipt与产品child binding，再生成前端合同。
 

@@ -8,18 +8,28 @@ use agentdash_agent_runtime_contract::{
     EventSequence, InteractionResponse, OperationReceipt, RuntimeActor, RuntimeContextView,
     RuntimeEventEnvelope, RuntimeInput, RuntimeInteractionId, RuntimeSnapshot,
 };
+use agentdash_application::agent_run_product::{
+    AgentRunCurrentFrameModel, AgentRunProductModel, AgentRunProductQueryInput,
+};
 use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunCommandGuard, AgentRunRuntimeError, AgentRunRuntimeView, EnqueueRuntimeMailboxMessage,
-    GuardedAgentRunCommand, ReadAgentRunEvents, ResolveAgentRunInteraction, RuntimeAgentRunMailbox,
-    RuntimeMailboxError, RuntimeMailboxSubmitOutcome, SteerAgentRunTurn,
+    AgentRunCommandGuard, AgentRunRuntimeError, AgentRunRuntimeView,
+    ConversationModelConfigSourceModel, ConversationModelConfigStatusModel,
+    EnqueueRuntimeMailboxMessage, GuardedAgentRunCommand, ReadAgentRunEvents,
+    ResolveAgentRunInteraction, RuntimeAgentRunMailbox, RuntimeMailboxError,
+    RuntimeMailboxSubmitOutcome, SteerAgentRunTurn,
 };
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeTarget,
 };
 use agentdash_application_ports::agent_run_surface::AgentRunTerminalLaunchTarget;
 use agentdash_contracts::agent_run_mailbox::AgentRunComposerSubmitRequest;
-use agentdash_contracts::workflow::AgentRunCommandOnlyRequest;
+use agentdash_contracts::workflow::{
+    AgentFrameRefDto, AgentRunCurrentFrameView, AgentRunProductShellView, AgentRunProductView,
+    AgentRunRefDto, AgentRunRuntimeCommandRequest, ConversationEffectiveExecutorConfigView,
+    ConversationModelConfigSource, ConversationModelConfigStatus, ConversationModelConfigView,
+    LifecycleRunRefDto,
+};
 use agentdash_domain::workflow::{LifecycleAgent, LifecycleRun};
 use axum::{
     Json,
@@ -38,6 +48,7 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     routes::terminals,
     rpc::ApiError,
+    vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
 
 struct AgentRunContext {
@@ -63,6 +74,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime",
             axum::routing::get(inspect_agent_run_runtime),
+        )
+        .route(
+            "/agent-runs/{run_id}/agents/{agent_id}/workspace",
+            axum::routing::get(get_agent_run_workspace),
         )
         .route(
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/context",
@@ -93,6 +108,123 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             "/agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{tool_call_id}/reject",
             axum::routing::post(reject_agent_run_tool_call),
         )
+}
+
+async fn get_agent_run_workspace(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<AgentRunProductView>, ApiError> {
+    let context = resolve_agent_run_context(
+        state.as_ref(),
+        &current_user,
+        &run_id,
+        &agent_id,
+        ProjectPermission::Use,
+    )
+    .await?;
+    let runtime_projection = ApiVfsSurfaceRuntimeProjection::new(
+        state.services.backend_registry.clone(),
+        state.services.mount_provider_registry.clone(),
+    );
+    let product = state
+        .services
+        .agent_run_product_query
+        .get(AgentRunProductQueryInput {
+            run: &context.run,
+            agent: &context.agent,
+            has_runtime_binding: context.runtime_thread_id.is_some(),
+            runtime_projection: &runtime_projection,
+        })
+        .await?;
+
+    Ok(Json(agent_run_product_to_contract(product)))
+}
+
+fn agent_run_product_to_contract(model: AgentRunProductModel) -> AgentRunProductView {
+    AgentRunProductView {
+        run_ref: LifecycleRunRefDto {
+            run_id: model.run_id.clone(),
+        },
+        agent_ref: AgentRunRefDto {
+            run_id: model.run_id,
+            agent_id: model.agent_id,
+        },
+        project_id: model.project_id,
+        shell: AgentRunProductShellView {
+            display_title: model.shell.display_title,
+            title_source: model.shell.title_source,
+            lifecycle_status: model.shell.lifecycle_status,
+            last_activity_at: model.shell.last_activity_at,
+        },
+        agent: super::lifecycle_contracts::agent_run_to_contract(model.agent),
+        current_frame: model.current_frame.map(agent_run_current_frame_to_contract),
+        subject_associations: model
+            .subject_associations
+            .into_iter()
+            .map(super::lifecycle_contracts::subject_association_to_contract)
+            .collect(),
+        resource_surface: model
+            .resource_surface
+            .map(super::vfs_surfaces::dto::surface_from_application),
+    }
+}
+
+fn agent_run_current_frame_to_contract(
+    model: AgentRunCurrentFrameModel,
+) -> AgentRunCurrentFrameView {
+    let effective_executor_config = model.model_config.effective_executor_config.map(|model| {
+        ConversationEffectiveExecutorConfigView {
+            executor: model.executor,
+            provider_id: model.provider_id,
+            model_id: model.model_id,
+            agent_id: model.agent_id,
+            thinking_level: model.thinking_level,
+            permission_policy: model.permission_policy,
+            source: match model.source {
+                ConversationModelConfigSourceModel::ProjectAgentPreset => {
+                    ConversationModelConfigSource::ProjectAgentPreset
+                }
+                ConversationModelConfigSourceModel::FrameExecutionProfile => {
+                    ConversationModelConfigSource::FrameExecutionProfile
+                }
+                ConversationModelConfigSourceModel::UserOverride => {
+                    ConversationModelConfigSource::UserOverride
+                }
+                ConversationModelConfigSourceModel::ExecutorDiscoveryDefault => {
+                    ConversationModelConfigSource::ExecutorDiscoveryDefault
+                }
+                ConversationModelConfigSourceModel::Unspecified => {
+                    ConversationModelConfigSource::Unspecified
+                }
+            },
+        }
+    });
+    AgentRunCurrentFrameView {
+        frame_ref: AgentFrameRefDto {
+            agent_id: model.agent_id,
+            frame_id: model.frame_id,
+            revision: Some(model.revision),
+        },
+        capability_surface: model.capability_surface,
+        context_slice: model.context_slice,
+        vfs_surface: model.vfs_surface,
+        mcp_surface: model.mcp_surface,
+        execution_profile: model.execution_profile,
+        model_config: ConversationModelConfigView {
+            status: match model.model_config.status {
+                ConversationModelConfigStatusModel::Resolved => {
+                    ConversationModelConfigStatus::Resolved
+                }
+                ConversationModelConfigStatusModel::ModelRequired => {
+                    ConversationModelConfigStatus::ModelRequired
+                }
+            },
+            effective_executor_config,
+            missing_fields: model.model_config.missing_fields,
+            message: model.model_config.message,
+        },
+    }
 }
 
 /// AgentRun 列表分页查询参数。
@@ -214,7 +346,7 @@ async fn cancel_agent_run(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<AgentRunCommandOnlyRequest>,
+    Json(body): Json<AgentRunRuntimeCommandRequest>,
 ) -> Result<Json<OperationReceipt>, ApiError> {
     if body.client_command_id.trim().is_empty() {
         return Err(ApiError::BadRequest(
@@ -249,7 +381,7 @@ async fn compact_agent_run_context(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((run_id, agent_id)): Path<(String, String)>,
-    Json(body): Json<AgentRunCommandOnlyRequest>,
+    Json(body): Json<AgentRunRuntimeCommandRequest>,
 ) -> Result<Json<OperationReceipt>, ApiError> {
     if body.client_command_id.trim().is_empty() {
         return Err(ApiError::BadRequest(

@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use crate::integrations::{builtin_integrations, collect_integration_registration};
 use crate::project_projection_notification::ProjectProjectionNotificationPublisher;
 use crate::relay::registry::BackendRegistry;
+use agentdash_application::agent_run_product::{AgentRunProductQuery, AgentRunProductQueryDeps};
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
     InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
@@ -88,6 +89,7 @@ impl agentdash_integration_api::AgentRuntimeCredentialBroker
 pub struct ServiceSet {
     pub agent_run_runtime: Arc<dyn AgentRunRuntime>,
     pub agent_run_product_delivery: Arc<dyn AgentRunProductDeliveryPort>,
+    pub agent_run_product_query: AgentRunProductQuery,
     pub agent_runtime_host: Arc<agentdash_agent_runtime_host::IntegrationDriverHost>,
     pub agent_runtime_inventory: Arc<crate::relay::CloudRemoteRuntimeInventory>,
     pub runtime_surface_query: Arc<dyn AgentRunRuntimeSurfaceQueryPort>,
@@ -434,6 +436,11 @@ impl AppState {
             vfs_service: vfs_service.clone(),
             resource_surface_query: resource_surface_query_port,
         });
+        let agent_run_product_query = AgentRunProductQuery::new(AgentRunProductQueryDeps {
+            lifecycle_read_model_query: lifecycle_read_model_query.clone(),
+            frame_repo: repos.agent_frame_repo.clone(),
+            vfs_surface_resolver: vfs_surface_resolver.clone(),
+        });
         let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
             runtime_surface_query.clone(),
             mcp_tool_discovery,
@@ -472,6 +479,7 @@ impl AppState {
             services: ServiceSet {
                 agent_run_runtime,
                 agent_run_product_delivery,
+                agent_run_product_query,
                 agent_runtime_host,
                 agent_runtime_inventory,
                 runtime_surface_query: runtime_surface_query_port,

@@ -3,15 +3,14 @@ import type {
   SessionProjectionSegmentViewResponse,
   SessionProjectionViewResponse,
 } from "../../../generated/session-contracts";
-import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import {
   compactAgentRunContext,
   fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
 import type { TokenUsageInfo } from "../model/types";
+import type { SessionChatCommandModel } from "./SessionChatViewTypes";
 import {
-  commandPrecondition,
   contextCompactionOutcomeMessage,
   newClientCommandId,
 } from "./sessionProjectionCompactionAction";
@@ -20,7 +19,7 @@ export interface SessionProjectionViewProps {
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey?: number;
   tokenUsage?: TokenUsageInfo | null;
-  compactContextCommand?: ConversationCommandView;
+  compactContextCommand?: SessionChatCommandModel;
   /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
   embedded?: boolean;
 }
@@ -29,7 +28,7 @@ export interface SessionProjectionViewPanelProps {
   projection: SessionProjectionViewResponse | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   tokenUsage?: TokenUsageInfo | null;
-  compactContextCommand?: ConversationCommandView;
+  compactContextCommand?: SessionChatCommandModel;
   isLoading?: boolean;
   error?: string | null;
   onRefresh?: () => void;
@@ -283,7 +282,6 @@ export function SessionProjectionViewPanel({
     try {
       const response = await compactAgentRunContext(agentRunTarget.runId, agentRunTarget.agentId, {
         client_command_id: newClientCommandId(),
-        command: commandPrecondition(compactContextCommand),
       });
       setCompactAction({
         kind: "success",

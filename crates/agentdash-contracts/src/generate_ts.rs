@@ -206,11 +206,11 @@ use agentdash_contracts::workflow::{
     ActiveRuntimeNodeRefDto, ActivityDefinition, ActivityTransition, AgentConversationIdentity,
     AgentConversationLifecycleContext, AgentConversationSnapshot, AgentFrameRefDto,
     AgentFrameRuntimeView, AgentProcedureContract, AgentProcedureResponse,
-    AgentRunCommandOnlyRequest, AgentRunCommandPreconditionView, AgentRunRefDto,
-    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView, AgentRunView,
-    AgentRunWorkspaceControlPlaneStatus, AgentRunWorkspaceControlPlaneView,
-    AgentRunWorkspaceListEntry, AgentRunWorkspaceListView, AgentRunWorkspaceShell,
-    AgentRunWorkspaceView, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
+    AgentRunCurrentFrameView, AgentRunProductShellView, AgentRunProductView, AgentRunRefDto,
+    AgentRunResourceSurfaceCoordinateView, AgentRunResourceSurfaceSourceAnchorView,
+    AgentRunRuntimeCommandRequest, AgentRunView, AgentRunWorkspaceControlPlaneStatus,
+    AgentRunWorkspaceControlPlaneView, AgentRunWorkspaceListEntry, AgentRunWorkspaceListView,
+    AgentRunWorkspaceShell, CapabilityCatalogEntryDto, CapabilityCatalogResponse,
     CapabilityScopeDto, ContinueLifecycleRunResponse, ConversationCommandKind,
     ConversationCommandPlacement, ConversationCommandSetView, ConversationCommandStaleGuardView,
     ConversationCommandView, ConversationDiagnosticView, ConversationEffectiveExecutorConfigView,
@@ -319,6 +319,8 @@ fn main() {
         check,
         |dir| {
             export_all::<AgentRunComposerSubmitRequest>(dir);
+            export_all::<ConversationCommandKind>(dir);
+            export_all::<ConversationCommandStaleGuardView>(dir);
             export_all::<BackendSelectionModeDto>(dir);
             export_all::<BackendSelectionRequestDto>(dir);
             export_all::<AgentRunCommandReceipt>(dir);
@@ -786,8 +788,7 @@ fn main() {
             export_all::<AgentRunRefDto>(dir);
             export_all::<AgentFrameRefDto>(dir);
             export_all::<RuntimeSessionRefDto>(dir);
-            export_all::<AgentRunCommandPreconditionView>(dir);
-            export_all::<AgentRunCommandOnlyRequest>(dir);
+            export_all::<AgentRunRuntimeCommandRequest>(dir);
             export_all::<LifecycleSubjectAssociationDto>(dir);
             export_all::<RuntimeNodeView>(dir);
             export_all::<ActiveRuntimeNodeRefDto>(dir);
@@ -824,7 +825,9 @@ fn main() {
             export_all::<AgentConversationIdentity>(dir);
             export_all::<AgentConversationLifecycleContext>(dir);
             export_all::<AgentConversationSnapshot>(dir);
-            export_all::<AgentRunWorkspaceView>(dir);
+            export_all::<AgentRunProductView>(dir);
+            export_all::<AgentRunProductShellView>(dir);
+            export_all::<AgentRunCurrentFrameView>(dir);
             export_all::<SubjectRuntimeAttemptView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<ProjectActiveAgentsView>(dir);

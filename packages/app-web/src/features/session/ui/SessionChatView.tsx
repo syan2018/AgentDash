@@ -495,7 +495,7 @@ export function SessionChatView({
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasRuntimeStreamTarget ? runtimeStreamError?.message : null) ?? null;
-  const mailboxMessages = mailbox.messages;
+  const mailboxMessages = mailbox?.messages ?? [];
 
   // ─── 渲染 ────────────────────────────────────────────
 
@@ -542,17 +542,19 @@ export function SessionChatView({
 
       {/* Mailbox 消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
-        <SessionStatusBar
-          runId={statusBarRunId}
-          agentId={statusBarAgentId}
-          messages={mailboxMessages}
-          mailbox={mailbox}
-          onPromote={promoteMailboxMessage ?? (() => {})}
-          onDelete={deleteMailboxMessage ?? (() => {})}
-          onResume={resumeMailbox}
-          onRecall={recallMailboxMessage}
-          onMove={moveMailboxMessage}
-        />
+        {mailbox && (
+          <SessionStatusBar
+            runId={statusBarRunId}
+            agentId={statusBarAgentId}
+            messages={mailboxMessages}
+            mailbox={mailbox}
+            onPromote={promoteMailboxMessage ?? (() => {})}
+            onDelete={deleteMailboxMessage ?? (() => {})}
+            onResume={resumeMailbox}
+            onRecall={recallMailboxMessage}
+            onMove={moveMailboxMessage}
+          />
+        )}
 
         <SessionChatComposer
           commandState={commandState}

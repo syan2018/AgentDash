@@ -1,149 +1,85 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
+import type { AgentRunProductView } from "../../../generated/workflow-contracts";
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
-import type { AgentRunOwnershipView } from "../../../generated/workflow-contracts";
-import type {
-  AgentFrameRuntimeView,
-  AgentRunWorkspaceView,
-} from "../../../types";
+import type { AgentRunRuntimeInspectResponse } from "../../../services/agentRunRuntime";
 import {
   agentRunWorkspaceResourceSurface,
   beginAgentRunWorkspaceStateLoad,
   emptyAgentRunWorkspaceState,
-  failAgentRunWorkspaceStateLoad,
+  settleAgentRunWorkspaceStateLoad,
   type AgentRunWorkspaceState,
 } from "./useAgentRunWorkspaceState";
 
-const frameRuntime: AgentFrameRuntimeView = {
-  frame_ref: {
-    agent_id: "agent-1",
-    frame_id: "frame-1",
-  },
-  capability_surface: {},
-  context_slice: {},
-  vfs_surface: {},
-  mcp_surface: {},
-  runtime_session_refs: [{ runtime_session_id: "session-1" }],
+const runtimeSurface: ResolvedVfsSurface = {
+  surface_ref: "agent-run:run-1:agent-1",
+  source: { source_type: "agent_run", run_id: "run-1", agent_id: "agent-1" },
+  mounts: [],
 };
 
-const ownership: AgentRunOwnershipView = {
-  run_created_by_user_id: "owner-user",
-  agent_created_by_user_id: "owner-user",
-  current_user_controls_run: true,
-};
-
-const workspace: AgentRunWorkspaceView = {
+const workspace: AgentRunProductView = {
   run_ref: { run_id: "run-1" },
   agent_ref: { run_id: "run-1", agent_id: "agent-1" },
   project_id: "project-1",
   shell: {
     display_title: "Workspace title",
-    title_source: "session_meta",
-    delivery_status: "running",
-    last_activity_at: "2026-06-12T00:00:00.000Z",
+    title_source: "user",
+    lifecycle_status: "active",
+    last_activity_at: "2026-07-11T00:00:00.000Z",
   },
-  control_plane: {
-    status: "running",
-    ownership,
+  agent: {
+    agent_ref: { run_id: "run-1", agent_id: "agent-1" },
+    project_id: "project-1",
+    source: "project_agent",
+    status: "active",
+    created_at: "2026-07-11T00:00:00.000Z",
+    updated_at: "2026-07-11T00:00:00.000Z",
   },
-  frame_runtime: frameRuntime,
+  current_frame: {
+    frame_ref: { agent_id: "agent-1", frame_id: "frame-1", revision: 1 },
+    capability_surface: {},
+    context_slice: {},
+    vfs_surface: {},
+    mcp_surface: {},
+    model_config: {
+      status: "resolved",
+      effective_executor_config: {
+        executor: "PI_AGENT",
+        provider_id: "provider-1",
+        model_id: "model-1",
+        source: "frame_execution_profile",
+      },
+      missing_fields: [],
+    },
+  },
   subject_associations: [],
-  children: [],
+  resource_surface: runtimeSurface,
 };
 
-const runtimeSurface: ResolvedVfsSurface = {
-  surface_ref: "agent-run:run-1:agent-1",
-  source: { source_type: "agent_run", run_id: "run-1", agent_id: "agent-1" },
-  mounts: [
-    {
-      id: "main",
-      display_name: "main",
-      provider: "relay_fs",
-      backend_id: "backend-1",
-      capabilities: ["read", "write", "list", "search", "exec"],
-      default_write: true,
-      purpose: "workspace",
-      backend_online: true,
-      edit_capabilities: {
-        create: true,
-        delete: true,
-        rename: true,
-      },
-    },
-  ],
-  default_mount_id: "main",
+const runtimeInspect: AgentRunRuntimeInspectResponse = {
+  target: { run_id: "run-1", agent_id: "agent-1" },
+  binding: null,
+  snapshot: null,
 };
 
 function loadedState(): AgentRunWorkspaceState {
-  return {
-    ...emptyAgentRunWorkspaceState(),
-    run_id: "run-1",
-    agent_id: "agent-1",
-    source_key: "agentrun:run-1:agent-1",
-    status: "ready",
-    workspace,
-    runtime_inspect: {
-      target: { run_id: "run-1", agent_id: "agent-1" },
-      binding: null,
-      snapshot: null,
-    },
-    runtime_surface: runtimeSurface,
-    frame: frameRuntime,
-  };
+  return settleAgentRunWorkspaceStateLoad(
+    emptyAgentRunWorkspaceState(),
+    "run-1",
+    "agent-1",
+    "agentrun:run-1:agent-1",
+    "replace",
+    { status: "fulfilled", value: workspace },
+    { status: "fulfilled", value: runtimeInspect },
+  );
 }
 
-describe("AgentRun workspace refresh state", () => {
-  it("直接使用 AgentRun workspace snapshot resource_surface", () => {
-    const snapshotWorkspace: AgentRunWorkspaceView = {
-      ...workspace,
-      resource_surface: runtimeSurface,
-      conversation: {
-        snapshot_id: "snapshot-1",
-        identity: {
-          run_ref: { run_id: "run-1" },
-          agent_ref: { run_id: "run-1", agent_id: "agent-1" },
-          project_id: "project-1",
-        },
-        lifecycle_context: {
-          frame_ref: {
-            agent_id: "agent-1",
-            frame_id: "frame-1",
-          },
-          subject_associations: [],
-        },
-        execution: {
-          status: "running_active",
-          runtime_session_ref: { runtime_session_id: "session-1" },
-          active_turn_id: "turn-1",
-        },
-        model_config: {
-          status: "resolved",
-          missing_fields: [],
-        },
-        commands: {
-          ownership,
-          keyboard: {
-            enter: "submit",
-            ctrl_enter: "submit",
-          },
-          commands: [],
-        },
-        mailbox: {
-          visible_message_count: 0,
-          paused: false,
-          user_attention: false,
-          messages: [],
-          waiting_items: [],
-        },
-        resource_surface: runtimeSurface,
-        diagnostics: [],
-      },
-    };
-
-    expect(agentRunWorkspaceResourceSurface(snapshotWorkspace)).toBe(runtimeSurface);
+describe("AgentRun product and Runtime projection state", () => {
+  it("直接使用 current product projection resource_surface", () => {
+    expect(agentRunWorkspaceResourceSurface(workspace)).toBe(runtimeSurface);
   });
 
-  it("初始加载成功后触发 refresh 时 pending 期间保留 workspace", () => {
+  it("refresh pending 期间保留已加载的两路事实", () => {
     const refreshing = beginAgentRunWorkspaceStateLoad(
       loadedState(),
       "run-1",
@@ -154,34 +90,65 @@ describe("AgentRun workspace refresh state", () => {
 
     expect(refreshing.status).toBe("refreshing");
     expect(refreshing.workspace).toBe(workspace);
-    expect(refreshing.runtime_inspect?.target.run_id).toBe("run-1");
-    expect(refreshing.runtime_surface).toBe(runtimeSurface);
-    expect(refreshing.frame).toBe(frameRuntime);
-    expect(refreshing.error).toBeNull();
+    expect(refreshing.runtime_inspect).toBe(runtimeInspect);
   });
 
-  it("refresh 失败时不清空上一帧 workspace", () => {
-    const refreshing = beginAgentRunWorkspaceStateLoad(
+  it("workspace 失败时保留成功的 Runtime inspect", () => {
+    const state = settleAgentRunWorkspaceStateLoad(
+      emptyAgentRunWorkspaceState(),
+      "run-1",
+      "agent-1",
+      "agentrun:run-1:agent-1",
+      "replace",
+      { status: "rejected", reason: new Error("workspace failed") },
+      { status: "fulfilled", value: runtimeInspect },
+    );
+
+    expect(state.status).toBe("error");
+    expect(state.workspace).toBeNull();
+    expect(state.workspace_error).toBe("workspace failed");
+    expect(state.runtime_inspect).toBe(runtimeInspect);
+    expect(state.runtime_inspect_error).toBeNull();
+  });
+
+  it("refresh Runtime inspect 失败时保留上一份 Runtime snapshot 和新 workspace", () => {
+    const state = settleAgentRunWorkspaceStateLoad(
       loadedState(),
       "run-1",
       "agent-1",
       "agentrun:run-1:agent-1",
       "refresh",
+      { status: "fulfilled", value: workspace },
+      { status: "rejected", reason: new Error("runtime failed") },
     );
-    const failed = failAgentRunWorkspaceStateLoad(
-      refreshing,
+
+    expect(state.status).toBe("ready");
+    expect(state.workspace).toBe(workspace);
+    expect(state.workspace_error).toBeNull();
+    expect(state.runtime_inspect).toBe(runtimeInspect);
+    expect(state.runtime_inspect_error).toBe("runtime failed");
+  });
+
+  it("refresh workspace 失败时保留上一份 workspace surface 和新 Runtime inspect", () => {
+    const state = settleAgentRunWorkspaceStateLoad(
+      loadedState(),
       "run-1",
       "agent-1",
       "agentrun:run-1:agent-1",
       "refresh",
-      "refresh failed",
+      { status: "rejected", reason: new Error("workspace failed") },
+      { status: "fulfilled", value: runtimeInspect },
     );
 
-    expect(failed.status).toBe("error");
-    expect(failed.error).toBe("refresh failed");
-    expect(failed.workspace).toBe(workspace);
-    expect(failed.runtime_inspect?.target.agent_id).toBe("agent-1");
-    expect(failed.runtime_surface).toBe(runtimeSurface);
-    expect(failed.frame).toBe(frameRuntime);
+    expect(state.workspace).toBe(workspace);
+    expect(state.frame).toBe(workspace.current_frame);
+    expect(state.runtime_surface).toBe(runtimeSurface);
+    expect(state.runtime_inspect).toBe(runtimeInspect);
+    expect(state.workspace_error).toBe("workspace failed");
+  });
+
+  it("empty state 不包含其他 target 的事实", () => {
+    expect(emptyAgentRunWorkspaceState().workspace).toBeNull();
+    expect(emptyAgentRunWorkspaceState().runtime_inspect).toBeNull();
   });
 });

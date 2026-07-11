@@ -2,7 +2,7 @@
 // Do not edit manually.
 
 import type { JsonValue } from "./common-contracts";
-import type { AgentFrameRefDto, AgentRunCommandPreconditionView, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView } from "./agent-run-mailbox-contracts";
+import type { AgentFrameRefDto, AgentRunRefDto, ConversationCommandKind, ConversationCommandStaleGuardView, LifecycleRunRefDto, MailboxMessageView, MailboxStateView } from "./agent-run-mailbox-contracts";
 import type { ConversationEffectiveExecutorConfigView, SubjectRefDto } from "./project-agent-contracts";
 import type { InstalledAssetSourceDto } from "./shared-library-contracts";
 import type { ResolvedVfsSurface } from "./vfs-contracts";
@@ -39,22 +39,7 @@ export type AgentProcedureResponse = { id: string, project_id: string, key: stri
 
 export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent";
 
-export type AgentRunCommandOnlyRequest = { command: AgentRunCommandPreconditionView, client_command_id: string, };
-
-/**
- * AgentRun lineage 控制树上的一跳引用（父或子）。
- *
- * 用于右侧会话栏展示从属关系与跳转。`relation_kind` 来自 `AgentLineage`。
- */
-export type AgentRunLineageRef = { run_id: string, agent_id: string,
-/**
- * Agent 创建/启动来源（标准化枚举 slug，取代原 `agent_kind`）。
- */
-source: string, relation_kind: string, display_title: string,
-/**
- * 该节点子树（传递闭包）下的 subagent 总数；前端据此决定是否显示展开箭头。
- */
-subagent_count: number, };
+export type AgentRunCurrentFrameView = { frame_ref: AgentFrameRefDto, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, execution_profile?: JsonValue, model_config: ConversationModelConfigView, };
 
 /**
  * AgentRun 列表内联的直接子 Agent 节点（一跳），携带真实 shell 状态，免前端懒加载。
@@ -87,9 +72,22 @@ children: Array<AgentRunListChild>, };
 
 export type AgentRunOwnershipView = { run_created_by_user_id: string, agent_created_by_user_id: string, current_user_controls_run: boolean, };
 
+export type AgentRunProductShellView = { display_title: string, title_source: string, lifecycle_status: string, last_activity_at: string, };
+
+/**
+ * AgentRun detail page product facts owned by Lifecycle and the current AgentFrame.
+ *
+ * Canonical Runtime state is intentionally not embedded here; callers load it from the
+ * AgentRun Runtime inspect endpoint so a product projection failure cannot erase a valid
+ * Runtime snapshot.
+ */
+export type AgentRunProductView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunProductShellView, agent: AgentRunView, current_frame?: AgentRunCurrentFrameView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, };
+
 export type AgentRunResourceSurfaceCoordinateView = { surface_frame_ref: AgentFrameRefDto, source_anchor?: AgentRunResourceSurfaceSourceAnchorView, };
 
 export type AgentRunResourceSurfaceSourceAnchorView = { runtime_session_ref: RuntimeSessionRefDto, launch_frame_id: string, orchestration_id?: string, node_path?: string, node_attempt?: number, delivery_status: string, observed_at: string, };
+
+export type AgentRunRuntimeCommandRequest = { client_command_id: string, };
 
 export type AgentRunView = { agent_ref: AgentRunRefDto, project_id: string,
 /**
@@ -131,16 +129,6 @@ export type AgentRunWorkspaceListView = { project_id: string, agent_runs: Array<
 next_cursor?: string, };
 
 export type AgentRunWorkspaceShell = { display_title: string, title_source: string, delivery_status: string, last_turn_id?: string, last_activity_at: string, };
-
-export type AgentRunWorkspaceView = { run_ref: LifecycleRunRefDto, agent_ref: AgentRunRefDto, project_id: string, shell: AgentRunWorkspaceShell, control_plane: AgentRunWorkspaceControlPlaneView, agent?: AgentRunView, frame_runtime?: AgentFrameRuntimeView, subject_associations: Array<LifecycleSubjectAssociationDto>, resource_surface?: ResolvedVfsSurface, resource_surface_coordinate?: AgentRunResourceSurfaceCoordinateView, conversation?: AgentConversationSnapshot,
-/**
- * lineage 父节点：本 Run 若为 subagent 则指向其父，供"隶属于"跳转。
- */
-parent?: AgentRunLineageRef,
-/**
- * 本 Run 直接派发的 subagent（一跳子节点），供右侧展开/下钻。
- */
-children: Array<AgentRunLineageRef>, };
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 

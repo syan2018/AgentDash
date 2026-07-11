@@ -7,14 +7,9 @@ import type {
   AgentRunRuntimeOptionsRequest,
 } from "../../../generated/project-agent-contracts";
 import type {
-  AgentRunCommandOnlyRequest,
-  ConversationCommandView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
-import type {
-  AgentRunCommandPreconditionView,
-  BackendSelectionRequestDto,
-} from "../../../generated/agent-run-mailbox-contracts";
+import type { BackendSelectionRequestDto } from "../../../generated/agent-run-mailbox-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   cancelAgentRun,
@@ -92,17 +87,8 @@ function newClientCommandId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function commandPrecondition(command: ConversationCommandView): AgentRunCommandPreconditionView {
+function commandRequest(): { client_command_id: string } {
   return {
-    command_id: command.command_id,
-    command_kind: command.kind,
-    stale_guard: command.stale_guard,
-  };
-}
-
-function commandRequest(command: ConversationCommandView): AgentRunCommandOnlyRequest {
-  return {
-    command: commandPrecondition(command),
     client_command_id: newClientCommandId(),
   };
 }
@@ -224,7 +210,6 @@ export function useAgentRunWorkspaceCommands(
     const commandKey = JSON.stringify({
       command_id: command.command_id,
       kind: command.kind,
-      stale_guard: isLocalDraftStartAction(command) ? null : command.stale_guard,
       input: inputBlocks,
       executor_config: commandExecutorConfig ?? null,
       backend_selection: backendSelection ?? null,
@@ -260,7 +245,6 @@ export function useAgentRunWorkspaceCommands(
       const response = await submitAgentRunComposerInput(currentRunId, currentAgentId, {
         input: inputBlocks,
         client_command_id: resolvedCommand.clientCommandId,
-        command: commandPrecondition(command),
         executor_config: executorConfigToJsonValue(commandExecutorConfig),
         backend_selection: backendSelection,
         delivery_intent: deliveryIntent,
@@ -304,7 +288,7 @@ export function useAgentRunWorkspaceCommands(
       throw new Error(cancelCommand?.unavailable_reason ?? "当前 AgentRun 没有可取消的运行。");
     }
     try {
-      await cancelAgentRun(currentRunId, currentAgentId, commandRequest(cancelCommand));
+      await cancelAgentRun(currentRunId, currentAgentId, commandRequest());
     } catch (error) {
       if (refreshAfterStaleAgentRunCommandError(error)) return;
       throw error;

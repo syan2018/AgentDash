@@ -3,7 +3,7 @@ import type {
   SessionEventsPageResponse,
   SessionProjectionViewResponse,
 } from "../generated/session-contracts";
-import type { AgentRunCommandOnlyRequest } from "../generated/workflow-contracts";
+import type { AgentRunRuntimeCommandRequest } from "../generated/workflow-contracts";
 import type {
   BoundRuntimeHookPlan,
   DriverThreadId,
@@ -87,7 +87,7 @@ export async function fetchAgentRunRuntimeContextProjection(
 export async function compactAgentRunContext(
   runId: string,
   agentId: string,
-  request: AgentRunCommandOnlyRequest,
+  request: AgentRunRuntimeCommandRequest,
 ): Promise<OperationReceipt> {
   return api.post<OperationReceipt>(
     agentRunScopedPath({ runId, agentId }, "/runtime/context/compact"),

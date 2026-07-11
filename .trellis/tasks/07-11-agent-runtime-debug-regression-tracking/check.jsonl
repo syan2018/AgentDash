@@ -3,3 +3,7 @@
 {"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 API、授权与真实 PostgreSQL/启动路径验证要求。"}
 {"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查前端、API 与桌面 bridge 契约一致。"}
 {"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 selector 与 OAuth action 的前端测试和错误呈现。"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"检查 default mount 来自 canonical Project/workspace surface且无临时 fallback。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"检查 VFS access、backend placement与本机路径边界。"}
+{"file":".trellis/spec/backend/workflow/architecture.md","reason":"检查 Lifecycle dispatch 与 immutable AgentFrame Business Surface 的顺序。"}
+{"file":".trellis/spec/backend/session/architecture.md","reason":"检查 launch-anchor/current AgentFrame 在 provision 前已闭包完整 surface。"}

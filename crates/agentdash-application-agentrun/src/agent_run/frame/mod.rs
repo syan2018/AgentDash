@@ -20,7 +20,7 @@ pub use lifecycle_materialization::{
 pub use runtime_launch::{
     FrameLaunchContextProjection, FrameLaunchDiagnostics, FrameLaunchEnvelope, FrameLaunchFrameRef,
     FrameLaunchIntent, FrameLaunchRuntimeSurface, FrameLaunchSurface, FrameRuntimeSurface,
-    LaunchResolutionTrace, TerminalHookEffectBinding,
+    LaunchResolutionTrace, TerminalHookEffectBinding, runtime_backend_anchor_from_vfs,
 };
 pub use surface::{AgentFrameSurfaceExt, FrameContextBundleSummary, FrameSurfaceDraft};
 pub use surface_service::{

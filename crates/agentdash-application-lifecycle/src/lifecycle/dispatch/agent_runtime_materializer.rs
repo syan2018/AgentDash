@@ -182,6 +182,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                 agent_frame_materialization_port::FrameConstructionCommand::DispatchLaunchAnchor {
                     run_id: agent.run_id,
                     agent_id: agent.id,
+                    subject_ref: plan.subject_ref.clone(),
                     runtime_session_id: None,
                     created_by_id: None,
                     execution_profile: plan.execution_profile_override.clone(),

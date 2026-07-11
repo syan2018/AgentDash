@@ -12,6 +12,10 @@ use agentdash_application_agentrun::agent_run::frame::{
     AgentRunLaunchAnchorFrameConstructionAdapter, AgentRunWorkflowNodeFrameMaterializationAdapter,
 };
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
+use agentdash_application_ports::agent_frame_materialization::{
+    AgentRunFrameConstructionPort, SharedAgentRunFrameConstructionHandle,
+};
+use agentdash_application_ports::lifecycle_surface_projection::LifecycleSurfaceProjectionPort;
 use agentdash_application_ports::project_projection_notification::ProjectProjectionNotificationPort;
 use agentdash_application_shared_library::{
     BuiltinLibrarySeedProviderInput, IntegrationEmbeddedLibraryAssetSeed,
@@ -41,6 +45,7 @@ pub(crate) struct RepositoryBootstrapOutput {
     pub repos: RepositorySet,
     pub auth_session_service: Arc<AuthSessionService>,
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
+    pub lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort>,
 }
 
 pub(crate) async fn build_repositories(
@@ -48,6 +53,7 @@ pub(crate) async fn build_repositories(
     integration_library_asset_seeds: Vec<IntegrationEmbeddedLibraryAssetSeed>,
     project_projection_notifications: Option<Arc<dyn ProjectProjectionNotificationPort>>,
     runtime_provisioner_handle: agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle,
+    frame_construction_handle: SharedAgentRunFrameConstructionHandle,
 ) -> Result<RepositoryBootstrapOutput> {
     agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
         .await
@@ -135,16 +141,18 @@ pub(crate) async fn build_repositories(
     let agent_run_runtime_binding_repo =
         Arc::new(PostgresAgentRuntimeCompositionRepository::new(pool.clone()));
     let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
-    let agent_frame_construction = Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
-        agent_frame_repo.clone(),
-    ));
-    let lifecycle_surface_projection = Arc::new(
+    let agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort> = Arc::new(
+        AgentRunLaunchAnchorFrameConstructionAdapter::new(agent_frame_repo.clone()),
+    );
+    let project_agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort> =
+        Arc::new(frame_construction_handle);
+    let lifecycle_surface_projection: Arc<dyn LifecycleSurfaceProjectionPort> = Arc::new(
         AgentRunLifecycleSurfaceProjector::from_skill_asset_repo(skill_asset_repo.clone()),
     );
     let workflow_agent_frame_materialization =
         Arc::new(AgentRunWorkflowNodeFrameMaterializationAdapter::new(
             agent_frame_repo.clone(),
-            lifecycle_surface_projection,
+            lifecycle_surface_projection.clone(),
         ));
     let project_agent_lifecycle_launch = Arc::new(LifecycleProjectAgentLaunchAdapter::new(
         LifecycleProjectAgentLaunchDeps {
@@ -155,7 +163,7 @@ pub(crate) async fn build_repositories(
             association_repo: lifecycle_subject_association_repo.clone(),
             gate_repo: lifecycle_gate_repo.clone(),
             lineage_repo: agent_lineage_repo.clone(),
-            frame_construction: agent_frame_construction.clone(),
+            frame_construction: project_agent_frame_construction,
         },
     ));
 
@@ -233,6 +241,7 @@ pub(crate) async fn build_repositories(
         extension_package_artifact_storage: Arc::new(
             FilesystemExtensionPackageArtifactStorage::default(),
         ),
+        lifecycle_surface_projection,
     })
 }
 
@@ -241,4 +250,293 @@ fn builtin_seed_provider_input() -> Result<BuiltinLibrarySeedProviderInput> {
         workflow_templates: agentdash_application_workflow::list_builtin_workflow_templates()
             .map_err(|error| anyhow::anyhow!("{error}"))?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use agentdash_application::context::{AuditFilter, ContextAuditBus, InMemoryContextAuditBus};
+    use agentdash_application::frame_construction::{
+        AgentRunProjectOwnerFrameConstructionAdapter, AgentRunProjectOwnerFrameConstructionDeps,
+    };
+    use agentdash_application::platform_config::PlatformConfig;
+    use agentdash_application::repository_set::RepositorySet;
+    use agentdash_application_agentrun::agent_run::frame::AgentFrameSurfaceExt;
+    use agentdash_application_ports::agent_frame_materialization::SharedAgentRunFrameConstructionHandle;
+    use agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle;
+    use agentdash_domain::agent::ProjectAgent;
+    use agentdash_domain::backend::ProjectBackendAccess;
+    use agentdash_domain::project::Project;
+    use agentdash_domain::story::Story;
+    use agentdash_domain::workflow::{
+        AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
+        RunPolicy, RuntimePolicy, SubjectRef,
+    };
+    use agentdash_domain::workspace::{
+        Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
+        WorkspaceResolutionPolicy, WorkspaceStatus, identity_payload_from_detected_facts,
+    };
+    use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
+    use agentdash_relay::CapabilitiesPayload;
+    use agentdash_spi::AgentConfig;
+    use chrono::Utc;
+    use tokio::sync::mpsc;
+    use uuid::Uuid;
+
+    use super::build_repositories;
+    use crate::relay::registry::{BackendRegistry, ConnectedBackend};
+
+    async fn migrated_runtime(name: &str) -> PostgresRuntime {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/agent-runtime-frame-tests")
+            .join(format!("{name}-{}", Uuid::new_v4().simple()));
+        let runtime = PostgresRuntime::resolve_embedded_at_data_root(name, 8, root)
+            .await
+            .expect("embedded PostgreSQL");
+        agentdash_infrastructure::migration::run_postgres_migrations(&runtime.pool)
+            .await
+            .expect("migrations");
+        runtime
+    }
+
+    async fn register_backend(registry: &Arc<BackendRegistry>, backend_id: &str) {
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        registry
+            .try_register(ConnectedBackend {
+                backend_id: backend_id.to_string(),
+                name: "ARD-004 local backend".to_string(),
+                version: "test".to_string(),
+                capabilities: CapabilitiesPayload::default(),
+                sender,
+                connected_at: Utc::now(),
+            })
+            .await
+            .expect("register backend");
+    }
+
+    async fn create_project_agent_fixture(
+        repos: &RepositorySet,
+        backend_id: Option<&str>,
+    ) -> (Project, ProjectAgent) {
+        let mut project = Project::new("ARD-004 project".to_string(), String::new());
+        repos
+            .project_repo
+            .create(&project)
+            .await
+            .expect("create project");
+
+        if let Some(backend_id) = backend_id {
+            let root_ref = "D:/Projects/AgentDash";
+            let mut workspace = Workspace::new(
+                project.id,
+                "ARD-004 workspace".to_string(),
+                WorkspaceIdentityKind::LocalDir,
+                identity_payload_from_detected_facts(
+                    WorkspaceIdentityKind::LocalDir,
+                    &serde_json::json!({}),
+                    root_ref,
+                )
+                .expect("local workspace identity"),
+                WorkspaceResolutionPolicy::PreferDefaultBinding,
+            );
+            let mut binding = WorkspaceBinding::new(
+                workspace.id,
+                backend_id.to_string(),
+                root_ref.to_string(),
+                serde_json::json!({ "source": "ard-004-test" }),
+            );
+            binding.status = WorkspaceBindingStatus::Ready;
+            workspace.status = WorkspaceStatus::Active;
+            workspace.set_bindings(vec![binding]);
+            repos
+                .workspace_repo
+                .create(&workspace)
+                .await
+                .expect("create workspace");
+            project.config.default_workspace_id = Some(workspace.id);
+            repos
+                .project_repo
+                .update(&project)
+                .await
+                .expect("bind default workspace");
+            repos
+                .project_backend_access_repo
+                .create(&ProjectBackendAccess::new(
+                    project.id,
+                    backend_id.to_string(),
+                    Some("ard-004-test".to_string()),
+                ))
+                .await
+                .expect("grant project backend access");
+        }
+
+        let mut project_agent = ProjectAgent::new(project.id, "codex", "CODEX");
+        project_agent.config = serde_json::json!({
+            "executor": "CODEX",
+            "provider_id": "openai_codex",
+            "model_id": "gpt-5"
+        });
+        repos
+            .project_agent_repo
+            .create(&project_agent)
+            .await
+            .expect("create ProjectAgent");
+        (project, project_agent)
+    }
+
+    fn launch_intent(
+        project: &Project,
+        project_agent: &ProjectAgent,
+        subject_ref: Option<SubjectRef>,
+    ) -> AgentLaunchIntent {
+        let mut effective_profile = AgentConfig::new("CODEX");
+        effective_profile.provider_id = Some("openai_codex".to_string());
+        effective_profile.model_id = Some("gpt-5.1-codex".to_string());
+        AgentLaunchIntent {
+            project_id: project.id,
+            project_agent_id: Some(project_agent.id),
+            execution_profile_override: Some(
+                serde_json::to_value(effective_profile).expect("execution profile"),
+            ),
+            source: ExecutionSource::ProjectAgent,
+            created_by_user_id: Some("ard-004-test".to_string()),
+            subject_ref,
+            parent_run_id: None,
+            parent_agent_id: None,
+            workflow_graph_ref: None,
+            run_policy: RunPolicy::CreateLinkedRun,
+            agent_policy: AgentPolicy::Create,
+            context_policy: ContextPolicy::Isolated,
+            capability_policy: CapabilityPolicy::Baseline,
+            runtime_policy: RuntimePolicy::ProvisionRuntimeThread,
+        }
+    }
+
+    #[tokio::test]
+    async fn lifecycle_launch_persists_canonical_workspace_surface_before_product_delivery() {
+        let runtime = migrated_runtime("ard004_launch_surface").await;
+        let frame_construction_handle = SharedAgentRunFrameConstructionHandle::default();
+        let bootstrap = build_repositories(
+            runtime.pool.clone(),
+            Vec::new(),
+            None,
+            SharedAgentRunRuntimeProvisionerHandle::default(),
+            frame_construction_handle.clone(),
+        )
+        .await
+        .expect("repository bootstrap");
+        let repos = bootstrap.repos;
+        let backend_registry = BackendRegistry::new();
+        register_backend(&backend_registry, "local-ard004").await;
+        let vfs = crate::bootstrap::vfs::build_vfs_kernel(
+            repos.clone(),
+            backend_registry.clone(),
+            Vec::new(),
+        );
+        let audit_bus = Arc::new(InMemoryContextAuditBus::new(32));
+        let frame_construction_bound = frame_construction_handle
+            .set(Arc::new(AgentRunProjectOwnerFrameConstructionAdapter::new(
+                AgentRunProjectOwnerFrameConstructionDeps {
+                    repos: repos.clone(),
+                    vfs_service: vfs.vfs_service,
+                    availability: backend_registry,
+                    platform_config: Arc::new(PlatformConfig { mcp_base_url: None }),
+                    lifecycle_surface_projection: bootstrap.lifecycle_surface_projection,
+                    audit_bus: audit_bus.clone(),
+                },
+            )))
+            .is_ok();
+        assert!(frame_construction_bound, "bind frame construction");
+
+        let (project, project_agent) =
+            create_project_agent_fixture(&repos, Some("local-ard004")).await;
+        let story = Story::new(
+            project.id,
+            "ARD-004 subject story".to_string(),
+            "subject context must be available during frame construction".to_string(),
+        );
+        repos.story_repo.create(&story).await.expect("create story");
+        let launched = repos
+            .project_agent_lifecycle_launch
+            .launch_project_agent(&launch_intent(
+                &project,
+                &project_agent,
+                Some(SubjectRef::new("story", story.id)),
+            ))
+            .await
+            .expect("Lifecycle launch");
+        let frame = repos
+            .agent_frame_repo
+            .get_current(launched.runtime_refs.agent_ref)
+            .await
+            .expect("load current frame")
+            .expect("current frame");
+        assert_eq!(frame.id, launched.runtime_refs.frame_ref);
+        let vfs = frame.typed_vfs().expect("canonical frame VFS");
+        let default_mount = vfs.default_mount().expect("workspace default mount");
+        assert_eq!(default_mount.id, "main");
+        assert_eq!(default_mount.backend_id, "local-ard004");
+        assert_eq!(default_mount.provider, "relay_fs");
+        assert_eq!(default_mount.root_ref, "D:/Projects/AgentDash");
+        assert!(
+            default_mount
+                .metadata
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some(),
+            "default mount must preserve canonical workspace coordinates"
+        );
+        assert!(
+            default_mount
+                .metadata
+                .get("workspace_binding_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some(),
+            "default mount must preserve canonical workspace binding coordinates"
+        );
+        assert!(!default_mount.capabilities.is_empty());
+        assert!(frame.typed_capability_state().is_some());
+        assert!(frame.context_bundle_summary().is_some());
+        assert_eq!(
+            frame
+                .typed_execution_profile()
+                .and_then(|profile| profile.model_id),
+            Some("gpt-5.1-codex".to_string())
+        );
+        let story_context_events = audit_bus.query(
+            &launched.runtime_refs.run_ref.to_string(),
+            &launched.runtime_refs.agent_ref.to_string(),
+            &AuditFilter {
+                slot: Some("story".to_string()),
+                ..AuditFilter::default()
+            },
+        );
+        assert!(
+            story_context_events
+                .iter()
+                .any(|event| event.fragment.content.contains("ARD-004 subject story")),
+            "subject_ref must reach owner composition before Lifecycle persists its association"
+        );
+
+        let (project_without_workspace, agent_without_workspace) =
+            create_project_agent_fixture(&repos, None).await;
+        let error = repos
+            .project_agent_lifecycle_launch
+            .launch_project_agent(&launch_intent(
+                &project_without_workspace,
+                &agent_without_workspace,
+                None,
+            ))
+            .await
+            .expect_err("missing workspace must fail during frame construction");
+        assert!(
+            error
+                .to_string()
+                .contains("缺少可用的 workspace default mount"),
+            "unexpected error: {error}"
+        );
+
+        drop(runtime);
+    }
 }

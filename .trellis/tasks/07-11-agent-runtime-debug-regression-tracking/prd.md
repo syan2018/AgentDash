@@ -53,6 +53,16 @@
 - effective model config 必须在 Runtime provision 前持久化到 AgentFrame revision；backend selection 必须进入 Host offer selection并最终由 Runtime binding记录实际 placement。
 - 启动 override 不得只在 HTTP 调用内临时生效，也不得更新 ProjectAgent 默认配置。
 
+### R6. AgentRun 启动前的 AgentFrame VFS surface
+
+**问题 ARD-004：真实 ProjectAgent 会话在 Runtime binding 阶段缺少 VFS default mount**
+
+- 现象：从真实 ProjectAgent Draft 开始会话时返回 `AgentRun runtime binding is unavailable: AgentRun VFS has no usable default mount`。
+- 已确认根因：Lifecycle launch 只通过 `AgentRunLaunchAnchorFrameConstructionAdapter` 创建带 execution profile 的 launch-anchor AgentFrame，没有在 Runtime provision 前写入 Project workspace/VFS/capability surface；`BusinessFrameSurfaceQuery` 随后把缺失 VFS 投影为空 VFS，`AgentFrameNativeSurfaceCompiler` 因不存在可用 default mount 拒绝绑定。旧 runtime-session owner bootstrap 曾在更晚的 connector launch 阶段补齐该 surface，WP08 cutover 删除旧启动链后没有把 surface materialization 前移。
+- ProjectAgent 首次启动必须在 Runtime provision 前基于 Project、ProjectAgent、workspace、Project VFS mounts 与现有 capability sources 生成完整 AgentFrame revision；Business Surface compiler 只消费该持久事实，不临时构造 workspace cwd。
+- VFS default mount 必须来自 canonical Project/workspace mount resolution，并保留 backend/root/provider/capability 坐标；不得使用进程 cwd、空目录、任意在线 backend 或静默 fallback。
+- 缺少真实 workspace/mount 时应在 frame materialization/admission 边界返回归属明确的 typed error，不进入 Driver Host binding。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -66,6 +76,8 @@
 - [x] ARD-003 启动时选择的 Provider/model 被写入 AgentFrame effective execution profile；executor 始终继承 ProjectAgent 并驱动对应 Integration definition/service instance。
 - [x] ARD-003 explicit backend 只匹配目标 backend 的 activated Runtime offer；无匹配 offer返回精确 unavailable error。
 - [x] ARD-003 通过真实 Draft create-run 验证 override 已穿过 API、Lifecycle 与 Runtime surface compiler；空测试项目随后因缺少 VFS mount 被独立拒绝。
+- [x] ARD-004 真实 ProjectAgent Draft 在 Runtime provision 前持久化包含 canonical default mount 的完整 AgentFrame Business Surface。
+- [x] ARD-004 通过定向回归测试与真实 `pnpm dev` create-run验证越过 VFS default mount 断点并进入后续 tool surface compilation。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -80,6 +92,7 @@
 | ARD-001 | verified | blocker | discovery/options 已由 canonical Host definitions 与 Provider catalog 恢复；双 registry 视角已删除 |
 | ARD-002 | verified | blocker | 桌面 OAuth token 已改为可选；Personal 无 token 真实 prepare 成功，Enterprise 权限保留 |
 | ARD-003 | verified | blocker | RunLaunchProfile 已进入 AgentFrame、Integration definition 与 backend offer selection |
+| ARD-004 | verified | blocker | ProjectAgent launch 在 product delivery 前物化完整 owner surface；真实 Draft 已越过 VFS default mount 断点 |
 
 ## Verification Record
 
@@ -90,3 +103,5 @@
 - 最终 Host inventory 的真实 PostgreSQL composition 测试覆盖动态 Native definition，防止 pre-composition registry 再次成为 API 事实源。
 - Workspace fmt、check、clippy、contracts、frontend typecheck 与 91 文件/550 项前端测试通过。
 - ARD-003 真实 create-run 不再返回 override 拒绝；请求中的 `CODEX + explicit local backend` 已进入 Runtime surface compiler。临时空 Project 因没有默认 VFS mount在后续 surface 编译阶段失败，测试 Project 已删除。
+- ARD-004 embedded PostgreSQL Lifecycle launch正例证明 current AgentFrame 在 product delivery 前已包含 canonical workspace mount、backend/root/workspace binding、capability/context 与逐 Run execution profile；无 workspace负例在 frame construction 精确失败。
+- ARD-004 真实 `pnpm dev` Draft 已不再返回 `AgentRun VFS has no usable default mount`，随后在独立的 tool capability ownership 断点停止。

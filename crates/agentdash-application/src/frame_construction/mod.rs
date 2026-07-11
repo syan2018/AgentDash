@@ -10,6 +10,7 @@ mod classify;
 mod composer_companion;
 mod composer_project_agent;
 mod composer_workflow_node;
+mod launch_anchor_materialization;
 mod owner_bootstrap;
 pub mod plan;
 mod request_assembler;
@@ -77,6 +78,9 @@ pub struct FrameConstructionDeps {
 }
 
 pub(crate) use assembly::FrameAssemblyLaunchExtras;
+pub use launch_anchor_materialization::{
+    AgentRunProjectOwnerFrameConstructionAdapter, AgentRunProjectOwnerFrameConstructionDeps,
+};
 pub(crate) use owner_bootstrap::{
     OwnerBootstrapComposer, OwnerBootstrapSpec, OwnerPromptLaunchPath, OwnerScope,
 };
@@ -159,18 +163,6 @@ impl FrameConstructionService {
         )
         .with_audit_bus(self.audit_bus.clone())
         .with_companion_parent_facts_provider(self.companion_facts.as_ref())
-    }
-
-    pub(crate) fn owner_bootstrap_composer(&self) -> OwnerBootstrapComposer<'_> {
-        OwnerBootstrapComposer::new(
-            self.vfs_service.as_ref(),
-            self.repos.canvas_repo.as_ref(),
-            self.availability.as_ref(),
-            &self.repos,
-            self.platform_config.as_ref(),
-            self.lifecycle_surface_projection.as_ref(),
-        )
-        .with_audit_bus(self.audit_bus.clone())
     }
 
     pub(crate) fn prompt_launch_path(

@@ -209,17 +209,22 @@ impl AppState {
         let runtime_pool = pool.clone();
         let runtime_provisioner_handle =
             agentdash_application_ports::agent_run_runtime::SharedAgentRunRuntimeProvisionerHandle::default();
+        let frame_construction_handle =
+            agentdash_application_ports::agent_frame_materialization::SharedAgentRunFrameConstructionHandle::default();
+        let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         let repository_bootstrap = crate::bootstrap::repositories::build_repositories(
             pool,
             integration_registration.library_asset_seeds.clone(),
             Some(project_projection_notifications.clone()),
             runtime_provisioner_handle.clone(),
+            frame_construction_handle.clone(),
         )
         .await?;
         let repos = repository_bootstrap.repos;
         let auth_session_service = repository_bootstrap.auth_session_service;
         let extension_package_artifact_storage =
             repository_bootstrap.extension_package_artifact_storage;
+        let lifecycle_surface_projection = repository_bootstrap.lifecycle_surface_projection;
         let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
             agentdash_infrastructure::LlmProviderSecretCipher::from_env_or_create_default()?,
         );
@@ -249,6 +254,20 @@ impl AppState {
         let vfs_mutation_dispatcher = vfs_bootstrap.vfs_mutation_dispatcher;
         let vfs_materialization_service = vfs_bootstrap.vfs_materialization_service;
         let mcp_relay_provider = vfs_bootstrap.mcp_relay_provider;
+        frame_construction_handle
+            .set(Arc::new(
+                agentdash_application::frame_construction::AgentRunProjectOwnerFrameConstructionAdapter::new(
+                    agentdash_application::frame_construction::AgentRunProjectOwnerFrameConstructionDeps {
+                        repos: repos.clone(),
+                        vfs_service: vfs_service.clone(),
+                        availability: backend_registry.clone(),
+                        platform_config: platform_config.clone(),
+                        lifecycle_surface_projection: lifecycle_surface_projection.clone(),
+                        audit_bus: audit_bus.clone(),
+                    },
+                ),
+            ))
+            .map_err(|_| anyhow::anyhow!("AgentRun frame-construction composition 重复绑定"))?;
         let mcp_tool_discovery: Arc<
             dyn agentdash_application_ports::mcp_discovery::McpToolDiscovery,
         > = Arc::new(agentdash_executor::mcp::ExecutorMcpToolDiscovery::new(
@@ -442,7 +461,6 @@ impl AppState {
             integration_registration.vfs_providers,
         );
 
-        let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(2000));
         let routine_executor = Arc::new(RoutineExecutor::new(
             repos.clone(),
             backend_registry.clone(),

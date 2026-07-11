@@ -42,6 +42,7 @@ impl PlatformToolBroker {
 
 - Business Surface 以 protocol-neutral contribution 为输入，稳定展开 Instruction、Context、Tool、MCP、Skill、Workflow、Permission 与 Hook；按 priority和稳定key确定性排序，同key不同定义必须typed conflict。
 - API composition通过`NativeAgentRunSurfaceCompiler`等显式production source取得AgentRun/AgentFrame/workspace/tool/Hook业务事实；provisioner只接受编译完成且带真实revision/digest的`MaterializedDriverSurface`，不构造默认或空surface。immutable surface必须先持久化，再进入Host bind，产品binding最后落库；确定性Thread/Binding ID保证中途崩溃后可重放。
+- Direct ProjectAgent launch 必须在 `AgentRunProductDelivery` 触发首次 Runtime provision 前，通过 application-owned owner composer 持久化完整 current AgentFrame revision；execution profile、capability、context、MCP 与 canonical VFS default mount 位于同一 revision。Repository bootstrap 早于 VFS bootstrap 时使用一次性 late-bound construction port，并在 AppState 对外可见前完成绑定，不把 VFS composition 下沉到 Runtime compiler。
 - `AgentSurfaceSnapshot` 是业务期望的immutable事实，`BoundAgentSurface`是与实际RuntimeProfile求交后的业务admission结果。Driver Host只能持久化revision/digest/hook refs等轻量reference，不得复制或重新编译contribution。
 - Required contribution不满足即typed incompatible；只有显式optional贡献可以省略。`PromptOnly`不满足callable Tool、exact Workspace/Skill或required Hook语义。
 - Tool需要真实callable route：Direct Callback、session-scoped MCP façade或Driver Native。runtime tool name、tool path、MCP server identity、configuration boundary和schema/provenance必须无冲突。
@@ -60,6 +61,8 @@ impl PlatformToolBroker {
 | --- | --- |
 | contribution稳定key相同但内容不同 | typed compile conflict，不覆盖 |
 | required Tool/Skill/Hook/Workspace仅有PromptOnly或弱route | `IncompatibleContribution` |
+| ProjectAgent launch 无 canonical workspace default mount | frame construction typed reject；不创建 Host binding，不使用进程 cwd 或任意 backend |
+| frame construction port 在 VFS bootstrap 后仍未绑定 | AppState composition fail-fast；请求不可进入半装配状态 |
 | 一个Hook definition分配多个route | `ConflictingHookRoute` |
 | stale binding generation/tool-set revision | side effect与broker call前typed reject |
 | 相同Item ID但arguments/channel/provenance不同 | `IdempotencyConflict` |
@@ -81,6 +84,7 @@ impl PlatformToolBroker {
 ## 6. Tests Required
 
 - Surface测试覆盖确定性编译、各contribution必填字段、所有identity冲突、required/optional/PromptOnly矩阵、Hook唯一route与profile strength。
+- embedded PostgreSQL Lifecycle launch 测试断言：product delivery 前 current AgentFrame 已包含 canonical workspace mount/backend/root/capability/context 与本次 Run execution profile；无 default workspace 的 Project 在 frame construction 边界失败。
 - Broker behavior覆盖Direct/MCP同状态机、rewrite/block/approval、permission/VFS/credential顺序、cancel/timeout/executor failure/result rewrite。
 - 覆盖duplicate identity、AwaitingApproval与Running crash recovery、effective arguments不可漂移、canonical Item terminal convergence。
 - 真实embedded PostgreSQL覆盖0063 migration、Thread/Turn/Item/Interaction/Binding generation复合FK、accept幂等、typed transition、并发terminal与FK失败全事务回滚。

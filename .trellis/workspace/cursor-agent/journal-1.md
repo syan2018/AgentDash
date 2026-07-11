@@ -1192,3 +1192,36 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Status
 
 [OK] **Implementation complete; ready to archive**
+
+
+## Session 25: AgentRun Runtime主链路统一收束
+
+**Date**: 2026-07-12
+**Task**: AgentRun Runtime主链路统一收束
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+完成immutable HookPlan、AgentRun cutover route ledger与canonical Turn lifecycle收束；真实产品验证首轮、连续轮次和工具失败后follow-up，ARD-006/008标记verified，ARD-007保持reported。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bc127a7fb` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

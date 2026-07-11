@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 63
-- **Last Active**: 2026-07-09
+- **Total Sessions**: 64
+- **Last Active**: 2026-07-11
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~333 | Active |
+| `journal-2.md` | ~373 | Active |
 | `journal-1.md` | ~1971 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 64 | 2026-07-11 | Agent Runtime 架构收敛与生产切换 | `1330a8560`, `b43d2be53`, `63dbd623b`, `0806457db`, `ef4bdec6f`, `b47164bc5`, `e934c287e`, `af21f9d7c` | `codex/agent-runtime-architecture-convergence` |
 | 63 | 2026-07-09 | 手动上下文压缩生命周期收敛 | `fafe213bf` | `main` |
 | 62 | 2026-07-08 | 存量 JSON 文本列 JSONB 收敛 | `1dd7b043` | `codex/database-jsonb-storage-cleanup` |
 | 61 | 2026-07-08 | 完成 ChannelService 通信主干 | `f3755482`, `a5ab28c8`, `1ced2cb8`, `eab97226`, `769c526d`, `be31c14a` | `codex/companion-channel-convergence` |

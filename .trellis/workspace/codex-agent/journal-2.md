@@ -331,3 +331,43 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 64: Agent Runtime 架构收敛与生产切换
+
+**Date**: 2026-07-11
+**Task**: Agent Runtime 架构收敛与生产切换
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+完成 Runtime Contract/Wire、Managed Runtime、上下文压缩、PostgreSQL 恢复、Business Agent Surface、Integration Driver Host、Native/Codex/Enterprise Remote 与 Relay RuntimeWire 的分阶段落地；将 AgentRun/API/UI/Companion/Routine 全量切换到 canonical runtime facade，删除旧 RuntimeSession/AgentConnector/RelayPrompt/Backbone 多事实源，完成 0065 数据库 cutover、bindings/specs 收敛以及 workspace 全量 Rust、contracts、migration、frontend 测试和 pnpm dev 验收。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1330a8560` | (see git log) |
+| `b43d2be53` | (see git log) |
+| `63dbd623b` | (see git log) |
+| `0806457db` | (see git log) |
+| `ef4bdec6f` | (see git log) |
+| `b47164bc5` | (see git log) |
+| `e934c287e` | (see git log) |
+| `af21f9d7c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

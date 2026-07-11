@@ -22,22 +22,64 @@ const RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT: &str = "runtime_mcp_tool_discovery";
 pub struct CurrentSurfaceRuntimeMcpAccess {
     surface_query: Arc<dyn RuntimeGatewayMcpSurfaceQueryPort>,
     mcp_tool_discovery: Arc<dyn McpToolDiscovery>,
-    binding_repo:
+    runtime_thread_resolver: Arc<dyn AgentRunRuntimeThreadResolver>,
+}
+
+#[async_trait]
+pub trait AgentRunRuntimeThreadResolver: Send + Sync {
+    async fn resolve_thread_id(
+        &self,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+    ) -> Result<String, String>;
+}
+
+pub struct RepositoryAgentRunRuntimeThreadResolver {
+    bindings:
         Arc<dyn agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository>,
+}
+
+impl RepositoryAgentRunRuntimeThreadResolver {
+    pub fn new(
+        bindings: Arc<
+            dyn agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository,
+        >,
+    ) -> Self {
+        Self { bindings }
+    }
+}
+
+#[async_trait]
+impl AgentRunRuntimeThreadResolver for RepositoryAgentRunRuntimeThreadResolver {
+    async fn resolve_thread_id(
+        &self,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+    ) -> Result<String, String> {
+        self.bindings
+            .load(
+                &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget {
+                    run_id,
+                    agent_id,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|binding| binding.thread_id.to_string())
+            .ok_or_else(|| "AgentRun runtime binding 不存在".to_string())
+    }
 }
 
 impl CurrentSurfaceRuntimeMcpAccess {
     pub fn new(
         surface_query: Arc<dyn RuntimeGatewayMcpSurfaceQueryPort>,
         mcp_tool_discovery: Arc<dyn McpToolDiscovery>,
-        binding_repo: Arc<
-            dyn agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository,
-        >,
+        runtime_thread_resolver: Arc<dyn AgentRunRuntimeThreadResolver>,
     ) -> Self {
         Self {
             surface_query,
             mcp_tool_discovery,
-            binding_repo,
+            runtime_thread_resolver,
         }
     }
 
@@ -46,23 +88,15 @@ impl CurrentSurfaceRuntimeMcpAccess {
         run_id: uuid::Uuid,
         agent_id: uuid::Uuid,
     ) -> Result<(Vec<DiscoveredMcpTool>, String), McpAccessError> {
-        let binding = self
-            .binding_repo
-            .load(
-                &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget {
-                    run_id,
-                    agent_id,
-                },
-            )
+        let thread_id = self
+            .runtime_thread_resolver
+            .resolve_thread_id(run_id, agent_id)
             .await
-            .map_err(|error| McpAccessError::SurfaceUnavailable(error.to_string()))?
-            .ok_or_else(|| {
-                McpAccessError::SurfaceUnavailable("AgentRun runtime binding 不存在".to_string())
-            })?;
+            .map_err(McpAccessError::SurfaceUnavailable)?;
         let surface = self
             .surface_query
             .current_runtime_mcp_surface_with_backend(
-                &binding.thread_id.to_string(),
+                &thread_id,
                 RuntimeGatewayMcpSurfaceQueryPurpose::new(RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT),
             )
             .await
@@ -278,21 +312,18 @@ mod tests {
                 .expect("surface")
                 .clone())
         }
+    }
 
-        async fn current_runtime_mcp_surface_for_agent_run(
+    struct FakeThreadResolver;
+
+    #[async_trait]
+    impl AgentRunRuntimeThreadResolver for FakeThreadResolver {
+        async fn resolve_thread_id(
             &self,
             _run_id: Uuid,
             _agent_id: Uuid,
-            _purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
-        ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError>
-        {
-            Ok(self
-                .surface
-                .lock()
-                .expect("surface mutex poisoned")
-                .as_ref()
-                .expect("surface")
-                .clone())
+        ) -> Result<String, String> {
+            Ok("session-1".to_string())
         }
     }
 
@@ -402,6 +433,7 @@ mod tests {
         Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
             Arc::new(FakeSurfaceQuery::new(surface_with_backend())),
             discovery,
+            Arc::new(FakeThreadResolver),
         ))
     }
 
@@ -509,7 +541,7 @@ mod tests {
 
     #[test]
     fn production_mcp_access_does_not_import_session_or_frame_boundaries() {
-        let production_code = include_str!("mcp_access.rs")
+        let production_code = include_str!("operation_mcp_access.rs")
             .split("#[cfg(test)]")
             .next()
             .expect("production segment");

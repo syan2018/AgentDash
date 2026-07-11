@@ -301,11 +301,32 @@ impl AppState {
         let tool_registry = Arc::new(
             crate::bootstrap::agent_runtime_surface::CompiledAgentRunToolRegistry::default(),
         );
+        let operation_gateway_handle =
+            crate::bootstrap::runtime_gateway::SharedOperationGatewayHandle::default();
+        let operation_script_engine_handle =
+            crate::bootstrap::operation_runtime_tools::SharedOperationScriptEngineHandle::default();
+        let platform_tool_factory: Arc<
+            dyn crate::bootstrap::operation_runtime_tools::AgentRunPlatformToolFactory,
+        > = Arc::new(
+            crate::bootstrap::operation_runtime_tools::WorkspaceModuleRuntimeToolProvider::new(
+                repos.project_extension_installation_repo.clone(),
+                repos.interaction_definition_repo.clone(),
+                operation_gateway_handle.clone(),
+                operation_script_engine_handle.clone(),
+                Arc::new(
+                    crate::bootstrap::operation_runtime_tools::ApiWorkspaceModulePresentationPort::new(
+                        repos.interaction_definition_repo.clone(),
+                        repos.interaction_instance_repo.clone(),
+                    ),
+                ),
+            ),
+        );
         let surface_compiler = Arc::new(
             crate::bootstrap::agent_runtime_surface::AgentFrameNativeSurfaceCompiler::new(
                 runtime_surface_query.clone(),
                 repos.agent_frame_repo.clone(),
                 runtime_tool_provider,
+                platform_tool_factory,
                 hook_provider.clone(),
                 tool_registry.clone(),
             ),
@@ -424,11 +445,13 @@ impl AppState {
             crate::bootstrap::operation_mcp_access::CurrentSurfaceRuntimeMcpAccess::new(
                 runtime_surface_query.clone(),
                 mcp_tool_discovery,
-                repos.agent_run_runtime_binding_repo.clone(),
+            Arc::new(
+                crate::bootstrap::operation_mcp_access::RepositoryAgentRunRuntimeThreadResolver::new(
+                    repos.agent_run_runtime_binding_repo.clone(),
+                ),
+            ),
             ),
         );
-        let operation_gateway_handle =
-            crate::bootstrap::runtime_gateway::SharedOperationGatewayHandle::default();
         let operation_gateway = crate::bootstrap::runtime_gateway::build_operation_gateway(
             mcp_probe_relay,
             operation_mcp_access,
@@ -451,6 +474,9 @@ impl AppState {
             )
             .map_err(|error| anyhow::anyhow!("OperationScript engine 初始化失败: {error}"))?,
         );
+        operation_script_engine_handle
+            .set(operation_script_engine.clone())
+            .await;
 
         let auth_mode = crate::bootstrap::auth::validate_auth_provider_registered(
             crate::bootstrap::auth::resolve_configured_auth_mode()?,

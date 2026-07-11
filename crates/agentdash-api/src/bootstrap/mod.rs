@@ -3,6 +3,7 @@ pub mod agent_runtime_surface;
 pub mod auth;
 pub mod background_workers;
 pub mod operation_mcp_access;
+pub mod operation_runtime_tools;
 pub mod relay;
 pub mod repositories;
 pub mod runtime_gateway;

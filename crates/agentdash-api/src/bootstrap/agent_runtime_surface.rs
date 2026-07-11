@@ -28,6 +28,9 @@ use super::agent_runtime::{
     AgentRunPlatformToolBrokerResolver, AgentRunRuntimeSurfaceSourceError,
     NativeAgentRunSurfaceCompiler, NativeAgentRunSurfacePlan,
 };
+use super::operation_runtime_tools::{
+    AgentRunOperationSurfaceTarget, AgentRunPlatformToolFactory, PlatformToolBinding,
+};
 
 #[derive(Clone)]
 pub struct CompiledAgentRunToolBinding {
@@ -506,6 +509,7 @@ pub struct AgentFrameNativeSurfaceCompiler {
     surface_query: Arc<BusinessFrameSurfaceQuery>,
     frame_repository: Arc<dyn AgentFrameRepository>,
     runtime_tools: Arc<dyn RuntimeToolProvider>,
+    platform_tools: Arc<dyn AgentRunPlatformToolFactory>,
     hooks: Arc<dyn ExecutionHookProvider>,
     tool_registry: Arc<CompiledAgentRunToolRegistry>,
 }
@@ -515,6 +519,7 @@ impl AgentFrameNativeSurfaceCompiler {
         surface_query: Arc<BusinessFrameSurfaceQuery>,
         frame_repository: Arc<dyn AgentFrameRepository>,
         runtime_tools: Arc<dyn RuntimeToolProvider>,
+        platform_tools: Arc<dyn AgentRunPlatformToolFactory>,
         hooks: Arc<dyn ExecutionHookProvider>,
         tool_registry: Arc<CompiledAgentRunToolRegistry>,
     ) -> Self {
@@ -522,6 +527,7 @@ impl AgentFrameNativeSurfaceCompiler {
             surface_query,
             frame_repository,
             runtime_tools,
+            platform_tools,
             hooks,
             tool_registry,
         }
@@ -628,6 +634,24 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                 reason: error.to_string(),
                 retryable: true,
             })?;
+        let platform_tools = self
+            .platform_tools
+            .build_tools(AgentRunOperationSurfaceTarget {
+                project_id: surface.project_id,
+                run_id: request.target.run_id,
+                agent_id: request.target.agent_id,
+                frame_id: frame.id,
+                workspace_module_enabled: surface
+                    .capability_state
+                    .tool
+                    .enabled_clusters
+                    .contains(&agentdash_spi::ToolCluster::WorkspaceModule),
+            })
+            .await
+            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason: error.to_string(),
+                retryable: false,
+            })?;
         let revision = u64::try_from(surface.surface_revision).map_err(|_| {
             AgentRunRuntimeSurfaceSourceError::Invalid {
                 reason: "AgentFrame surface revision must be positive".to_string(),
@@ -672,6 +696,44 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                 parameters_schema,
                 capability_key: capability_key.clone(),
                 tool_path: format!("{capability_key}::{name}"),
+                allowed_channels: [ToolChannel::DirectCallback].into(),
+                configuration_boundary: ConfigurationBoundary::Binding,
+            });
+        }
+        for PlatformToolBinding {
+            tool,
+            capability_key,
+            tool_path,
+        } in platform_tools
+        {
+            let name = tool.name().trim().to_string();
+            if name.is_empty() || direct_tools.insert(name.clone(), tool.clone()).is_some() {
+                return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
+                    reason: format!("platform runtime tool name is empty or duplicated: {name}"),
+                });
+            }
+            let parameters_schema = tool.parameters_schema();
+            driver_tools.push(DriverToolDefinition {
+                name: name.clone(),
+                description: tool.description().to_string(),
+                parameters_schema: parameters_schema.clone(),
+                channels: vec![ToolChannel::DirectCallback],
+            });
+            catalog_tools.push(agentdash_agent_runtime::ToolContribution {
+                meta: agentdash_agent_runtime::ContributionMeta {
+                    key: format!("tool:{capability_key}:{name}"),
+                    source: agentdash_agent_runtime::SurfaceSourceRef {
+                        layer: "agent_operation_surface".to_string(),
+                        key: frame.id.to_string(),
+                    },
+                    priority: 0,
+                    requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+                },
+                runtime_name: name,
+                description: tool.description().to_string(),
+                parameters_schema,
+                capability_key,
+                tool_path,
                 allowed_channels: [ToolChannel::DirectCallback].into(),
                 configuration_boundary: ConfigurationBoundary::Binding,
             });

@@ -5,11 +5,11 @@
 mod auth;
 mod backend;
 mod backend_access;
-mod interaction;
 mod extension_management;
 mod extension_runtime;
 mod file_picker;
 mod health;
+mod interaction;
 mod llm_provider;
 mod project;
 mod project_agent;
@@ -32,11 +32,11 @@ pub use agentdash_contracts::workspace::{WorkspaceBindingResponse, WorkspaceResp
 pub use auth::*;
 pub use backend::*;
 pub use backend_access::*;
-pub use interaction::*;
 pub use extension_management::*;
 pub use extension_runtime::*;
 pub use file_picker::*;
 pub use health::*;
+pub use interaction::*;
 pub use llm_provider::*;
 pub use project::*;
 pub use project_agent::*;

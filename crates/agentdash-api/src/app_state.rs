@@ -25,19 +25,19 @@ use agentdash_application_agentrun::agent_run::{
 use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
 use agentdash_application_lifecycle::run_view_builder::LifecycleReadModelQueryAdapter;
+use agentdash_application_operation_gateway::OperationGateway;
 use agentdash_application_ports::agent_run_surface::{
     AgentRunEffectiveCapabilityPort, AgentRunResourceSurfaceQueryPort,
     AgentRunRuntimeSurfaceQueryPort,
 };
 use agentdash_application_ports::lifecycle_read_model::LifecycleReadModelQueryPort;
-use agentdash_application_runtime_gateway::{
-    CurrentSurfaceRuntimeMcpAccess, ExtensionRuntimeProtocolInvoker, RuntimeGateway,
-};
+use agentdash_application_ports::operation_script::OperationScriptEngine;
 use agentdash_application_vfs::MountProviderRegistry;
 use agentdash_application_vfs::{VfsMutationDispatcher, VfsService};
 use agentdash_contracts::project::ProjectEventStreamEnvelope;
 use agentdash_diagnostics::DiagnosticBuffer;
 use agentdash_domain::llm_provider::LlmSecretCodec;
+use agentdash_infrastructure::{RhaiOperationScriptConfig, RhaiOperationScriptEngine};
 use agentdash_integration_api::AgentDashIntegration;
 use agentdash_integration_api::AuthMode;
 use agentdash_integration_api::MarketplaceSourceProvider;
@@ -130,9 +130,10 @@ pub struct ServiceSet {
     pub routine_executor: Option<Arc<RoutineExecutor>>,
     /// Session 上下文审计总线 — Bundle / Fragment 产出与消费的可观测轨迹
     pub audit_bus: SharedContextAuditBus,
-    /// 统一运行时能力网关 — Session/Setup runtime action 的共享入口
-    pub runtime_gateway: Arc<RuntimeGateway>,
-    pub extension_runtime_protocol_invoker: Arc<ExtensionRuntimeProtocolInvoker>,
+    /// actor-neutral canonical Operation gateway。
+    pub operation_gateway: Arc<OperationGateway>,
+    /// 可信宿主共享的 ephemeral async Rhai 组合执行器。
+    pub operation_script_engine: Arc<dyn OperationScriptEngine>,
     /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
     pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
     /// Workflow function/local-effect executor port — orchestration scheduler 共享。
@@ -419,23 +420,37 @@ impl AppState {
             vfs_service: vfs_service.clone(),
             resource_surface_query: resource_surface_query_port,
         });
-        let session_mcp_access = Arc::new(CurrentSurfaceRuntimeMcpAccess::new(
-            runtime_surface_query.clone(),
-            mcp_tool_discovery,
-        ));
-        let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
+        let operation_mcp_access = Arc::new(
+            crate::bootstrap::operation_mcp_access::CurrentSurfaceRuntimeMcpAccess::new(
+                runtime_surface_query.clone(),
+                mcp_tool_discovery,
+                repos.agent_run_runtime_binding_repo.clone(),
+            ),
+        );
+        let operation_gateway_handle =
+            crate::bootstrap::runtime_gateway::SharedOperationGatewayHandle::default();
+        let operation_gateway = crate::bootstrap::runtime_gateway::build_operation_gateway(
             mcp_probe_relay,
+            operation_mcp_access,
+            runtime_surface_query.clone(),
             repos.clone(),
             backend_registry.clone(),
             setup_action_transport,
-            session_mcp_access,
-            repos.project_extension_installation_repo.clone(),
-            backend_registry.clone(),
+            operation_gateway_handle.clone(),
+        )?;
+        operation_gateway_handle
+            .set(operation_gateway.clone())
+            .await;
+        let mut operation_script_signing_secret = [0_u8; 32];
+        operation_script_signing_secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        operation_script_signing_secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
+        let operation_script_engine: Arc<dyn OperationScriptEngine> = Arc::new(
+            RhaiOperationScriptEngine::new(
+                &operation_script_signing_secret,
+                RhaiOperationScriptConfig::default(),
+            )
+            .map_err(|error| anyhow::anyhow!("OperationScript engine 初始化失败: {error}"))?,
         );
-        let extension_runtime_protocol_invoker = Arc::new(ExtensionRuntimeProtocolInvoker::new(
-            repos.project_extension_installation_repo.clone(),
-            backend_registry.clone(),
-        ));
 
         let auth_mode = crate::bootstrap::auth::validate_auth_provider_registered(
             crate::bootstrap::auth::resolve_configured_auth_mode()?,
@@ -482,8 +497,8 @@ impl AppState {
                 cron_scheduler: CronSchedulerHandle::new(),
                 routine_executor: Some(routine_executor),
                 audit_bus,
-                runtime_gateway,
-                extension_runtime_protocol_invoker,
+                operation_gateway,
+                operation_script_engine,
                 extension_package_artifact_storage,
                 function_runner,
             },

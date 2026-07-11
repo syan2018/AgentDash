@@ -13,12 +13,13 @@ name = "agentdash_api"
 path = "src/lib.rs"
 
 [dependencies]
+agentdash-agent-types = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-workspace-module = { workspace = true }
 agentdash-contracts = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-application-ports = { workspace = true }
-agentdash-application-runtime-gateway = { workspace = true }
+agentdash-application-operation-gateway = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-application-agentrun = { workspace = true }
 agentdash-application-lifecycle = { workspace = true }

@@ -6,20 +6,27 @@ use agentdash_application::ApplicationError;
 use agentdash_application::workspace::{
     WorkspaceDetectionResult, WorkspacePlacementDetectInput, WorkspacePlacementRuntime,
 };
-use agentdash_application_runtime_gateway::{
-    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeGateway, RuntimeInvocationError,
-    RuntimeInvocationErrorKind, RuntimeInvocationRequest, WORKSPACE_DETECT_ACTION,
-    WorkspaceDetectInput,
+use agentdash_application_operation_gateway::{
+    OperationExecutionError, OperationExecutionErrorKind, OperationGateway,
+    OperationInvocationCommand, OperationOriginRef, OperationPrincipal, OperationScopeRef,
+    OperationTraceContext, WORKSPACE_DETECT_ACTION, WorkspaceDetectInput, setup_operation_ref,
 };
+use agentdash_spi::AuthIdentity;
+use chrono::{Duration, Utc};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct RuntimeGatewayWorkspacePlacementRuntime {
-    runtime_gateway: Arc<RuntimeGateway>,
+    operation_gateway: Arc<OperationGateway>,
+    identity: AuthIdentity,
 }
 
 impl RuntimeGatewayWorkspacePlacementRuntime {
-    pub fn new(runtime_gateway: Arc<RuntimeGateway>) -> Self {
-        Self { runtime_gateway }
+    pub fn new(operation_gateway: Arc<OperationGateway>, identity: AuthIdentity) -> Self {
+        Self {
+            operation_gateway,
+            identity,
+        }
     }
 }
 
@@ -36,46 +43,52 @@ impl WorkspacePlacementRuntime for RuntimeGatewayWorkspacePlacementRuntime {
         .map_err(|error| {
             ApplicationError::BadRequest(format!("workspace.detect 输入非法: {error}"))
         })?;
-        let request = RuntimeInvocationRequest::new(
-            RuntimeActionKey::parse(WORKSPACE_DETECT_ACTION).map_err(|error| {
-                ApplicationError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
-            })?,
-            RuntimeActor::PlatformUser {
-                user_id: input.user_id,
-            },
-            RuntimeContext::Setup {
+        let request = OperationInvocationCommand {
+            operation_ref: setup_operation_ref(WORKSPACE_DETECT_ACTION)
+                .map_err(application_error_from_operation_gateway)?,
+            input: gateway_input,
+            principal: OperationPrincipal::authenticated_user(self.identity.clone()),
+            scope_ref: OperationScopeRef::EnvironmentSetup {
                 project_id: Some(input.project_id),
                 workspace_id: input.workspace_id,
                 backend_id: Some(input.backend_id),
-                root_ref: Some(input.root_ref),
             },
-            gateway_input,
-        );
+            origin: OperationOriginRef::EnvironmentSetup,
+            trace: OperationTraceContext::root(),
+            deadline: Utc::now() + Duration::seconds(30),
+            idempotency_key: None,
+            attachment_ref: None,
+        };
         let invocation = self
-            .runtime_gateway
-            .invoke(request)
+            .operation_gateway
+            .invoke(request, CancellationToken::new())
             .await
-            .map_err(application_error_from_runtime_gateway)?;
-        serde_json::from_value::<WorkspaceDetectionResult>(invocation.output.output).map_err(
-            |error| ApplicationError::Internal(format!("workspace.detect 返回值解析失败: {error}")),
-        )
+            .map_err(application_error_from_operation_gateway)?;
+        let agentdash_application_operation_gateway::OperationResultValue::Inline { value } =
+            invocation.value
+        else {
+            return Err(ApplicationError::Internal(
+                "workspace.detect 不应返回 result ref".to_string(),
+            ));
+        };
+        serde_json::from_value::<WorkspaceDetectionResult>(value).map_err(|error| {
+            ApplicationError::Internal(format!("workspace.detect 返回值解析失败: {error}"))
+        })
     }
 }
 
-fn application_error_from_runtime_gateway(error: RuntimeInvocationError) -> ApplicationError {
+fn application_error_from_operation_gateway(error: OperationExecutionError) -> ApplicationError {
     let message = error.to_string();
     match error.kind() {
-        RuntimeInvocationErrorKind::InvalidRequest => ApplicationError::BadRequest(message),
-        RuntimeInvocationErrorKind::CapabilityDenied => ApplicationError::Forbidden(message),
-        RuntimeInvocationErrorKind::Conflict => ApplicationError::Conflict(message),
-        RuntimeInvocationErrorKind::ProviderUnavailable | RuntimeInvocationErrorKind::Timeout => {
-            ApplicationError::Unavailable(message)
+        OperationExecutionErrorKind::InvalidRequest => ApplicationError::BadRequest(message),
+        OperationExecutionErrorKind::Denied => ApplicationError::Forbidden(message),
+        OperationExecutionErrorKind::AuthorityChanged | OperationExecutionErrorKind::Cancelled => {
+            ApplicationError::Conflict(message)
         }
-        RuntimeInvocationErrorKind::ProviderFailed => match error {
-            RuntimeInvocationError::ProviderFailed { message, .. } => {
-                ApplicationError::Internal(message)
-            }
-            _ => ApplicationError::Internal(message),
-        },
+        OperationExecutionErrorKind::Unavailable
+        | OperationExecutionErrorKind::DeadlineExceeded => ApplicationError::Unavailable(message),
+        OperationExecutionErrorKind::ProviderFailed
+        | OperationExecutionErrorKind::InvalidOutput
+        | OperationExecutionErrorKind::ResultStoreFailed => ApplicationError::Internal(message),
     }
 }

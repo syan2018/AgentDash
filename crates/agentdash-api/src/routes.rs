@@ -1,7 +1,6 @@
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
-pub mod canvases;
 pub mod companion_gates;
 pub mod diagnostics;
 pub mod extension_package_artifacts;
@@ -9,6 +8,7 @@ pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
+pub mod interactions;
 pub mod lifecycle_agents;
 mod lifecycle_contracts;
 pub mod lifecycle_views;
@@ -16,6 +16,7 @@ pub mod llm_providers;
 pub mod marketplace;
 pub mod mcp_presets;
 pub mod me;
+pub mod operation_workshop;
 pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
@@ -80,7 +81,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(project_agents::router())
         .merge(routines::router())
         .merge(runner_registration_tokens::router())
-        .merge(canvases::router())
+        .merge(interactions::router())
+        .merge(operation_workshop::router())
         .merge(companion_gates::router())
         .merge(mcp_presets::router())
         .merge(skill_assets::router())

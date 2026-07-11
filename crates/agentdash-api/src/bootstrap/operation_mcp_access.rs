@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_agent_types::AgentToolResult;
+use agentdash_agent_types::{AgentToolError, AgentToolResult};
 use agentdash_application_ports::mcp_discovery::{
     DiscoveredMcpTool, McpToolDiscovery, McpToolDiscoveryRequest,
 };
@@ -12,9 +12,9 @@ use agentdash_spi::{ConnectorError, RelayMcpCallContext};
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{
-    McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
-    execute_runtime_mcp_tool,
+use agentdash_application_operation_gateway::{
+    OperationAuthorizationScope, OperationExecutionError, OperationMcpAccess, OperationMcpTool,
+    OperationPrincipal, OperationPrincipalRef,
 };
 
 const RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT: &str = "runtime_mcp_tool_discovery";
@@ -22,70 +22,128 @@ const RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT: &str = "runtime_mcp_tool_discovery";
 pub struct CurrentSurfaceRuntimeMcpAccess {
     surface_query: Arc<dyn RuntimeGatewayMcpSurfaceQueryPort>,
     mcp_tool_discovery: Arc<dyn McpToolDiscovery>,
+    binding_repo:
+        Arc<dyn agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository>,
 }
 
 impl CurrentSurfaceRuntimeMcpAccess {
     pub fn new(
         surface_query: Arc<dyn RuntimeGatewayMcpSurfaceQueryPort>,
         mcp_tool_discovery: Arc<dyn McpToolDiscovery>,
+        binding_repo: Arc<
+            dyn agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingRepository,
+        >,
     ) -> Self {
         Self {
             surface_query,
             mcp_tool_discovery,
+            binding_repo,
         }
     }
 
-    async fn discover_entries(
+    async fn discover_entries_for_agent_run(
         &self,
-        session_id: &str,
-    ) -> Result<Vec<DiscoveredMcpTool>, RuntimeSessionMcpError> {
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+    ) -> Result<(Vec<DiscoveredMcpTool>, String), McpAccessError> {
+        let binding = self
+            .binding_repo
+            .load(
+                &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget {
+                    run_id,
+                    agent_id,
+                },
+            )
+            .await
+            .map_err(|error| McpAccessError::SurfaceUnavailable(error.to_string()))?
+            .ok_or_else(|| {
+                McpAccessError::SurfaceUnavailable("AgentRun runtime binding 不存在".to_string())
+            })?;
         let surface = self
             .surface_query
             .current_runtime_mcp_surface_with_backend(
-                session_id,
+                &binding.thread_id.to_string(),
                 RuntimeGatewayMcpSurfaceQueryPurpose::new(RUNTIME_MCP_TOOL_DISCOVERY_COMPONENT),
             )
             .await
             .map_err(runtime_surface_query_error_to_mcp)?;
-
-        self.mcp_tool_discovery
+        let backend_id = surface.runtime_backend_anchor.backend_id().to_string();
+        let tools = self
+            .mcp_tool_discovery
             .discover_tool_entries(discovery_request(surface))
             .await
             .map(|outcome| outcome.tools)
-            .map_err(runtime_mcp_error_from_connector)
+            .map_err(runtime_mcp_error_from_connector)?;
+        Ok((tools, backend_id))
     }
 }
 
 #[async_trait]
-impl RuntimeSessionMcpAccess for CurrentSurfaceRuntimeMcpAccess {
-    async fn list_mcp_tools(
+impl OperationMcpAccess for CurrentSurfaceRuntimeMcpAccess {
+    async fn discover_tools(
         &self,
-        session_id: &str,
-    ) -> Result<Vec<RuntimeMcpToolDescriptor>, RuntimeSessionMcpError> {
-        let entries = self.discover_entries(session_id).await?;
+        principal: &OperationPrincipal,
+        _: &OperationAuthorizationScope,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Vec<OperationMcpTool>, OperationExecutionError> {
+        if cancel.is_cancelled() {
+            return Err(OperationExecutionError::Cancelled);
+        }
+        let OperationPrincipalRef::AgentRunAgent { run_id, agent_id } = principal.principal_ref()
+        else {
+            return Ok(Vec::new());
+        };
+        let (entries, backend_id) = self
+            .discover_entries_for_agent_run(*run_id, *agent_id)
+            .await
+            .map_err(operation_error_from_mcp)?;
         Ok(entries
             .into_iter()
-            .map(runtime_mcp_tool_descriptor_from_entry)
+            .map(|entry| OperationMcpTool {
+                server_name: entry.server_name,
+                tool_name: entry.tool_name,
+                description: entry.description,
+                input_schema: entry.parameters_schema,
+                backend_id: backend_id.clone(),
+            })
             .collect())
     }
 
-    async fn call_mcp_tool(
+    async fn invoke_tool(
         &self,
-        session_id: &str,
-        input: McpCallToolInput,
-    ) -> Result<AgentToolResult, RuntimeSessionMcpError> {
-        let entry = self
-            .discover_entries(session_id)
-            .await?
+        principal: &OperationPrincipal,
+        _: &OperationAuthorizationScope,
+        server_name: &str,
+        tool_name: &str,
+        arguments: Value,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<Value, OperationExecutionError> {
+        let OperationPrincipalRef::AgentRunAgent { run_id, agent_id } = principal.principal_ref()
+        else {
+            return Err(OperationExecutionError::CapabilitiesDenied {
+                missing: vec!["agent_run.mcp".to_string()],
+            });
+        };
+        let (entries, _) = self
+            .discover_entries_for_agent_run(*run_id, *agent_id)
+            .await
+            .map_err(operation_error_from_mcp)?;
+        let operation_ref = agentdash_domain::operation::OperationRef::new(
+            agentdash_application_operation_gateway::MCP_OPERATION_NAMESPACE,
+            server_name,
+            tool_name,
+            1,
+        )
+        .map_err(|error| OperationExecutionError::invalid_request(error.to_string()))?;
+        let entry = entries
             .into_iter()
-            .find(|entry| runtime_mcp_entry_matches(entry, &input))
-            .ok_or_else(|| {
-                RuntimeSessionMcpError::ToolUnavailable(
-                    "目标 MCP 工具不在当前 Session Runtime Surface 中".to_string(),
-                )
-            })?;
-        let arguments = input.arguments.unwrap_or(Value::Null);
-        execute_runtime_mcp_tool(entry.tool, &entry.runtime_name, arguments).await
+            .find(|entry| entry.server_name == server_name && entry.tool_name == tool_name)
+            .ok_or(OperationExecutionError::OperationUnavailable { operation_ref })?;
+        let result = execute_runtime_mcp_tool(entry.tool, &entry.runtime_name, arguments, cancel)
+            .await
+            .map_err(operation_error_from_mcp)?;
+        serde_json::to_value(result)
+            .map_err(|error| OperationExecutionError::provider_failed(error.to_string()))
     }
 }
 
@@ -109,51 +167,65 @@ fn discovery_request(surface: RuntimeGatewayMcpSurfaceWithBackend) -> McpToolDis
     }
 }
 
-fn runtime_mcp_tool_descriptor_from_entry(entry: DiscoveredMcpTool) -> RuntimeMcpToolDescriptor {
-    RuntimeMcpToolDescriptor {
-        runtime_name: entry.runtime_name,
-        server_name: entry.server_name,
-        tool_name: entry.tool_name,
-        uses_relay: entry.uses_relay,
-        description: entry.description,
-        parameters_schema: entry.parameters_schema,
-    }
-}
-
-fn runtime_mcp_entry_matches(entry: &DiscoveredMcpTool, input: &McpCallToolInput) -> bool {
-    if let Some(runtime_name) = input.runtime_name.as_deref()
-        && runtime_name == entry.runtime_name
-    {
-        return true;
-    }
-    matches!(
-        (input.server_name.as_deref(), input.tool_name.as_deref()),
-        (Some(server_name), Some(tool_name))
-            if server_name == entry.server_name && tool_name == entry.tool_name
-    )
-}
-
-fn runtime_surface_query_error_to_mcp(
-    error: RuntimeGatewayMcpSurfaceQueryError,
-) -> RuntimeSessionMcpError {
+fn runtime_surface_query_error_to_mcp(error: RuntimeGatewayMcpSurfaceQueryError) -> McpAccessError {
     if let Some(anchor_error) = error.runtime_backend_anchor_error {
-        return RuntimeSessionMcpError::SessionUnavailable(anchor_error.to_string());
+        return McpAccessError::SurfaceUnavailable(anchor_error.to_string());
     }
-    RuntimeSessionMcpError::SessionUnavailable(error.to_string())
+    McpAccessError::SurfaceUnavailable(error.to_string())
 }
 
-fn runtime_mcp_error_from_connector(error: ConnectorError) -> RuntimeSessionMcpError {
+fn runtime_mcp_error_from_connector(error: ConnectorError) -> McpAccessError {
     match error {
         ConnectorError::Runtime(message) | ConnectorError::InvalidConfig(message) => {
-            RuntimeSessionMcpError::SessionUnavailable(message)
+            McpAccessError::SurfaceUnavailable(message)
         }
-        ConnectorError::ConnectionFailed(message) => {
-            RuntimeSessionMcpError::DiscoveryFailed(message)
-        }
-        ConnectorError::SpawnFailed(message) => RuntimeSessionMcpError::DiscoveryFailed(message),
-        ConnectorError::Io(error) => RuntimeSessionMcpError::DiscoveryFailed(error.to_string()),
-        ConnectorError::Json(error) => RuntimeSessionMcpError::DiscoveryFailed(error.to_string()),
+        ConnectorError::ConnectionFailed(message) => McpAccessError::DiscoveryFailed(message),
+        ConnectorError::SpawnFailed(message) => McpAccessError::DiscoveryFailed(message),
+        ConnectorError::Io(error) => McpAccessError::DiscoveryFailed(error.to_string()),
+        ConnectorError::Json(error) => McpAccessError::DiscoveryFailed(error.to_string()),
     }
+}
+
+fn operation_error_from_mcp(error: McpAccessError) -> OperationExecutionError {
+    match error {
+        McpAccessError::InvalidArguments(message) => {
+            OperationExecutionError::invalid_request(message)
+        }
+        McpAccessError::SurfaceUnavailable(message) => OperationExecutionError::NotReady {
+            code: "mcp_unavailable".to_string(),
+            message,
+        },
+        McpAccessError::DiscoveryFailed(message) | McpAccessError::ExecutionFailed(message) => {
+            OperationExecutionError::provider_failed(message)
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum McpAccessError {
+    #[error("AgentRun MCP surface 不可用: {0}")]
+    SurfaceUnavailable(String),
+    #[error("MCP 工具参数非法: {0}")]
+    InvalidArguments(String),
+    #[error("MCP 工具发现失败: {0}")]
+    DiscoveryFailed(String),
+    #[error("MCP 工具执行失败: {0}")]
+    ExecutionFailed(String),
+}
+
+async fn execute_runtime_mcp_tool(
+    tool: agentdash_agent_types::DynAgentTool,
+    runtime_name: &str,
+    arguments: Value,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<AgentToolResult, McpAccessError> {
+    tool.execute(&format!("op-mcp-{runtime_name}"), arguments, cancel, None)
+        .await
+        .map_err(|error| match error {
+            AgentToolError::InvalidArguments(message) => McpAccessError::InvalidArguments(message),
+            AgentToolError::ExecutionFailed(message) => McpAccessError::ExecutionFailed(message),
+            AgentToolError::Other(error) => McpAccessError::ExecutionFailed(error.to_string()),
+        })
 }
 
 #[cfg(test)]
@@ -175,11 +247,6 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
-    use crate::runtime_gateway::{
-        MCP_CALL_TOOL_ACTION, MCP_LIST_TOOLS_ACTION, RuntimeActionKey, RuntimeActor,
-        RuntimeContext, RuntimeGateway, RuntimeInvocationRequest,
-    };
-
     use super::*;
 
     #[derive(Default)]
@@ -200,6 +267,22 @@ mod tests {
         async fn current_runtime_mcp_surface_with_backend(
             &self,
             _runtime_session_id: &str,
+            _purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
+        ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError>
+        {
+            Ok(self
+                .surface
+                .lock()
+                .expect("surface mutex poisoned")
+                .as_ref()
+                .expect("surface")
+                .clone())
+        }
+
+        async fn current_runtime_mcp_surface_for_agent_run(
+            &self,
+            _run_id: Uuid,
+            _agent_id: Uuid,
             _purpose: RuntimeGatewayMcpSurfaceQueryPurpose,
         ) -> Result<RuntimeGatewayMcpSurfaceWithBackend, RuntimeGatewayMcpSurfaceQueryError>
         {
@@ -248,21 +331,6 @@ mod tests {
                 .and_then(|context| context.backend_anchor.clone());
             Ok(McpToolDiscoveryOutcome {
                 tools: entries_for_request(&request, false),
-                sources: Vec::new(),
-            })
-        }
-    }
-
-    struct FilteringMcpDiscovery;
-
-    #[async_trait]
-    impl McpToolDiscovery for FilteringMcpDiscovery {
-        async fn discover_tool_entries(
-            &self,
-            request: McpToolDiscoveryRequest,
-        ) -> Result<McpToolDiscoveryOutcome, ConnectorError> {
-            Ok(McpToolDiscoveryOutcome {
-                tools: entries_for_request(&request, true),
                 sources: Vec::new(),
             })
         }
@@ -328,22 +396,6 @@ mod tests {
                 }
             })
             .collect()
-    }
-
-    fn gateway_request(action_key: &str, input: Value) -> RuntimeInvocationRequest {
-        RuntimeInvocationRequest::new(
-            RuntimeActionKey::parse(action_key).expect("valid action key"),
-            RuntimeActor::UserCanvas {
-                session_id: "session-1".to_string(),
-                canvas_id: Some(Uuid::new_v4()),
-            },
-            RuntimeContext::Session {
-                session_id: "session-1".to_string(),
-                project_id: Some(Uuid::new_v4()),
-                workspace_id: None,
-            },
-            input,
-        )
     }
 
     fn access(discovery: Arc<dyn McpToolDiscovery>) -> Arc<CurrentSurfaceRuntimeMcpAccess> {
@@ -417,61 +469,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idle_mcp_list_tools_uses_runtime_surface_backend_anchor() {
+    async fn operation_mcp_access_uses_agent_run_surface_and_capability_filter() {
         let discovery = Arc::new(CapturingMcpDiscovery::new());
-        let gateway = RuntimeGateway::new().with_provider(Arc::new(
-            super::super::McpListToolsProvider::new(access(discovery.clone())),
-        ));
+        let access = access(discovery.clone());
+        let principal = OperationPrincipal::server_resolved(OperationPrincipalRef::AgentRunAgent {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        });
+        let scope = OperationAuthorizationScope {
+            scope_ref: agentdash_domain::operation::OperationScopeRef::Project {
+                project_id: Uuid::new_v4(),
+            },
+            authority_revision: "authority-1".into(),
+        };
 
-        let result = gateway
-            .invoke(gateway_request(MCP_LIST_TOOLS_ACTION, json!({})))
+        let tools = access
+            .discover_tools(&principal, &scope, CancellationToken::new())
             .await
-            .expect("list tools");
+            .expect("discover");
 
-        assert_eq!(result.output.output["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(tools.len(), 2);
         assert_eq!(
             discovery.captured_backend_id().as_deref(),
             Some("backend-1")
         );
-    }
-
-    #[tokio::test]
-    async fn mcp_call_tool_matches_by_server_and_tool_name() {
-        let gateway = RuntimeGateway::new().with_provider(Arc::new(
-            super::super::McpCallToolProvider::new(access(Arc::new(FilteringMcpDiscovery))),
-        ));
-
-        let result = gateway
-            .invoke(gateway_request(
-                MCP_CALL_TOOL_ACTION,
-                json!({
-                    "server_name": "code-analyzer",
-                    "tool_name": "allowed_tool",
-                    "arguments": {}
-                }),
-            ))
+        let result = access
+            .invoke_tool(
+                &principal,
+                &scope,
+                "code-analyzer",
+                "allowed_tool",
+                json!({}),
+                CancellationToken::new(),
+            )
             .await
-            .expect("call tool");
-
-        assert_eq!(result.output.output["is_error"], false);
-        assert_eq!(
-            result.output.output["content"][0]["text"],
-            "mcp_code_analyzer_allowed_tool"
-        );
-    }
-
-    #[tokio::test]
-    async fn capability_disabled_mcp_tool_is_not_exposed() {
-        let tools = access(Arc::new(FilteringMcpDiscovery))
-            .list_mcp_tools("session-1")
-            .await
-            .expect("tools");
-
-        let tool_names = tools
-            .iter()
-            .map(|tool| tool.tool_name.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(tool_names, vec!["allowed_tool"]);
+            .expect("invoke");
+        assert_eq!(result["is_error"], false);
     }
 
     #[test]

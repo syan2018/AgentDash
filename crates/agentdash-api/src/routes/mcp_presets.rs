@@ -9,13 +9,13 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::operation_runtime::{SetupOperationScope, invoke_setup_operation};
 use agentdash_application::mcp_preset::{
     CloneMcpPresetInput, CreateMcpPresetInput, McpPresetApplicationError, McpPresetService,
     UpdateMcpPresetInput,
 };
-use agentdash_application_runtime_gateway::{
-    MCP_PROBE_TRANSPORT_ACTION, McpProbeTarget, McpProbeTransportInput, RuntimeActionKey,
-    RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
+use agentdash_application_operation_gateway::{
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeTarget, McpProbeTransportInput,
 };
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
@@ -263,23 +263,19 @@ pub async fn probe_mcp_transport_handler(
 
     let input = serde_json::to_value(probe_mcp_transport_input(req, current_user.clone()))
         .map_err(|error| ApiError::BadRequest(format!("MCP probe 请求非法: {error}")))?;
-    let request = RuntimeInvocationRequest::new(
-        RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).map_err(|error| {
-            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
-        })?,
-        RuntimeActor::PlatformUser {
-            user_id: Some(current_user.user_id.clone()),
-        },
-        RuntimeContext::Setup {
+    let output = invoke_setup_operation(
+        state.as_ref(),
+        &current_user,
+        MCP_PROBE_TRANSPORT_ACTION,
+        input,
+        SetupOperationScope {
             project_id: Some(project_id),
             workspace_id: None,
             backend_id: None,
-            root_ref: None,
         },
-        input,
-    );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
-    let result = serde_json::from_value::<ProbeMcpPresetResponse>(invocation.output.output)
+    )
+    .await?;
+    let result = serde_json::from_value::<ProbeMcpPresetResponse>(output)
         .map_err(|error| ApiError::Internal(format!("MCP probe 返回值解析失败: {error}")))?;
     Ok(Json(result))
 }

@@ -228,8 +228,8 @@ dependencies = [
  "agentdash-application-agentrun",
  "agentdash-application-hooks",
  "agentdash-application-lifecycle",
+ "agentdash-application-operation-gateway",
  "agentdash-application-ports",
- "agentdash-application-runtime-gateway",
  "agentdash-application-shared-library",
  "agentdash-application-vfs",
  "agentdash-application-workflow",
@@ -293,7 +293,6 @@ dependencies = [
  "agentdash-application-lifecycle",
  "agentdash-application-operation-gateway",
  "agentdash-application-ports",
- "agentdash-application-runtime-gateway",
  "agentdash-application-shared-library",
  "agentdash-application-skill",
  "agentdash-application-vfs",
@@ -443,25 +442,6 @@ dependencies = [
  "agentdash-domain",
  "agentdash-relay",
  "agentdash-spi",
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
-name = "agentdash-application-runtime-gateway"
-version = "0.1.0"
-dependencies = [
- "agentdash-agent-types",
- "agentdash-application-ports",
- "agentdash-domain",
- "agentdash-spi",
- "agentdash-test-support",
  "async-trait",
  "chrono",
  "serde",
@@ -941,9 +921,8 @@ name = "agentdash-workspace-module"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
- "agentdash-agent-runtime-contract",
+ "agentdash-application-operation-gateway",
  "agentdash-application-ports",
- "agentdash-application-runtime-gateway",
  "agentdash-application-vfs",
  "agentdash-contracts",
  "agentdash-diagnostics",

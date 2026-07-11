@@ -17,8 +17,7 @@ use agentdash_application::workspace::{
 use agentdash_application::workspace::{
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
 };
-use agentdash_application_runtime_gateway::{
-    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
+use agentdash_application_operation_gateway::{
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
     WorkspaceBrowseDirectoryOutput,
 };
@@ -39,6 +38,7 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     BrowseAccessDirectoryRequest, BrowseDirectoryEntryResponse, BrowseDirectoryResponse,
 };
+use crate::operation_runtime::{SetupOperationScope, invoke_setup_operation};
 use crate::rpc::ApiError;
 use crate::workspace_placement_runtime::RuntimeGatewayWorkspacePlacementRuntime;
 
@@ -260,7 +260,8 @@ pub async fn register_project_backend_inventory(
     )
     .await?;
     let placement_runtime = Arc::new(RuntimeGatewayWorkspacePlacementRuntime::new(
-        state.services.runtime_gateway.clone(),
+        state.services.operation_gateway.clone(),
+        current_user.clone(),
     ));
     let item = WorkspacePlacementService::new(state.repos.clone(), placement_runtime)
         .register_backend_inventory(RegisterBackendInventoryInput {
@@ -338,24 +339,20 @@ pub async fn browse_project_backend_access(
     .map_err(|error| {
         ApiError::BadRequest(format!("workspace.browse_directory 输入非法: {error}"))
     })?;
-    let request = RuntimeInvocationRequest::new(
-        RuntimeActionKey::parse(WORKSPACE_BROWSE_DIRECTORY_ACTION).map_err(|error| {
-            ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
-        })?,
-        RuntimeActor::PlatformUser {
-            user_id: Some(current_user.user_id),
-        },
-        RuntimeContext::Setup {
+    let output = invoke_setup_operation(
+        state.as_ref(),
+        &current_user,
+        WORKSPACE_BROWSE_DIRECTORY_ACTION,
+        input,
+        SetupOperationScope {
             project_id: Some(project_id),
             workspace_id: None,
             backend_id: Some(access.backend_id),
-            root_ref: None,
         },
-        input,
-    );
-    let invocation = state.services.runtime_gateway.invoke(request).await?;
-    let output = serde_json::from_value::<WorkspaceBrowseDirectoryOutput>(invocation.output.output)
-        .map_err(|error| {
+    )
+    .await?;
+    let output =
+        serde_json::from_value::<WorkspaceBrowseDirectoryOutput>(output).map_err(|error| {
             ApiError::Internal(format!(
                 "workspace.browse_directory 返回值解析失败: {error}"
             ))

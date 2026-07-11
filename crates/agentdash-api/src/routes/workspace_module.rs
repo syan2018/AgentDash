@@ -16,7 +16,7 @@ use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
-use agentdash_application_runtime_gateway::{OperationDescriptor, OperationPrincipal};
+use agentdash_application_operation_gateway::{OperationDescriptor, OperationPrincipal};
 use agentdash_contracts::workspace_module::{
     WorkspaceModuleDescriptor, WorkspaceModulePresentRequest, WorkspaceModulePresentation,
 };

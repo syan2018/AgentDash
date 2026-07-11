@@ -9,11 +9,23 @@ mod operation_types;
 mod schema;
 mod setup_operations;
 
+pub use agentdash_application_ports::runtime_gateway_setup::{
+    MCP_PROBE_TRANSPORT_ACTION, McpProbeSetupPort, McpProbeTarget, McpProbeToolOutput,
+    McpProbeTransportInput, McpProbeTransportOutput, RuntimeGatewaySetupError,
+    WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WORKSPACE_DETECT_GIT_ACTION,
+    WORKSPACE_DISCOVER_BY_IDENTITY_ACTION, WorkspaceBrowseDirectoryEntry,
+    WorkspaceBrowseDirectoryInput, WorkspaceBrowseDirectoryOutput,
+    WorkspaceBrowseDirectorySetupPort, WorkspaceDetectGitInput, WorkspaceDetectGitOutput,
+    WorkspaceDetectGitSetupPort, WorkspaceDetectInput, WorkspaceDetectOutput,
+    WorkspaceDetectSetupPort, WorkspaceDiscoverByIdentityCandidateOutput,
+    WorkspaceDiscoverByIdentityInput, WorkspaceDiscoverByIdentityOutput,
+    WorkspaceDiscoverByIdentitySetupPort, WorkspaceDiscoverByIdentitySkippedOutput,
+    WorkspaceDiscoverByIdentityWorkspaceInput,
+};
 pub use agentdash_domain::operation::{
     OperationEffect, OperationOriginRef, OperationPrincipalRef, OperationProviderRef, OperationRef,
     OperationReplayPolicy, OperationScopeRef,
 };
-pub use operation_authority::CompositeOperationAuthorityResolver;
 pub use extension_operations::{
     EXTENSION_OPERATION_NAMESPACE, ExtensionOperationContextPort, ExtensionOperationProvider,
     ExtensionOperationRuntimeContext,
@@ -29,6 +41,7 @@ pub use interaction_operations::{
 pub use mcp_operations::{
     MCP_OPERATION_NAMESPACE, McpOperationProvider, OperationMcpAccess, OperationMcpTool,
 };
+pub use operation_authority::CompositeOperationAuthorityResolver;
 pub use operation_core::{
     OperationAuditSink, OperationDispatcher, OperationExecutionCore, OperationPlacementResolver,
     OperationResultStore, OperationSurfaceResolver, result_access_matches, scope_project_id,

@@ -11,7 +11,6 @@ pub mod runtime_capability_projection;
 pub mod runtime_facade;
 pub mod runtime_mailbox;
 pub mod runtime_session_boundary;
-mod runtime_surface_update;
 
 pub use runtime_facade::{
     AgentRunCommandGuard, AgentRunRuntime, AgentRunRuntimeError, AgentRunRuntimeView,
@@ -71,7 +70,7 @@ pub use frame::{
     AgentRunFrameSurfaceCommandOutcome, AgentRunFrameSurfaceError, AgentRunFrameSurfaceService,
     AgentRunHookTargetRuntimeAdapter, AgentRunRuntimeSurfaceUpdateAdapter,
     AgentRunSurfaceProjectionContext, AgentRunSurfaceProjectionContextResolver,
-    AgentRunSurfaceProjectionContextSource, CanvasVisibilityReason, FrameConstructionCommand,
+    AgentRunSurfaceProjectionContextSource, FrameConstructionCommand,
     FrameContextBundleSummary, FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface,
     FrameSurfaceDraft, RejectingFrameConstructionAdapter, RuntimeSurfaceKind,
     RuntimeSurfaceUpdateRequest, TerminalHookEffectBinding, agent_frame_write_boundaries,
@@ -129,9 +128,6 @@ pub use runtime_session_boundary::{
     RuntimeTraceLaunchState, SessionControlService, SessionCoreService, SessionEventPage,
     SessionEventingService, SessionExecutionState, SessionLaunchService, SessionMeta,
     SessionRepositoryRehydrateMode, SessionTurnSteerCommand, resolve_prompt_launch_path,
-};
-pub use runtime_surface_update::{
-    AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
 };
 pub use runtime_target::{AgentFrameHookRuntimeTarget, AgentFrameRuntimeTarget};
 pub use terminal_registry::{

@@ -109,7 +109,6 @@ pub struct FrameLaunchDiagnostics {
 
 #[derive(Debug, Clone)]
 pub struct FrameLaunchEnvelope {
-    pub agent_run_execution: Option<agentdash_spi::AgentRunExecutionRef>,
     pub frame: FrameLaunchFrameRef,
     pub command: FrameLaunchIntent,
     pub runtime: FrameLaunchRuntimeSurface,

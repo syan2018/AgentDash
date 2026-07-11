@@ -164,7 +164,6 @@ impl FrameConstructionService {
     pub(crate) fn owner_bootstrap_composer(&self) -> OwnerBootstrapComposer<'_> {
         OwnerBootstrapComposer::new(
             self.vfs_service.as_ref(),
-            self.repos.canvas_repo.as_ref(),
             self.availability.as_ref(),
             &self.repos,
             self.platform_config.as_ref(),

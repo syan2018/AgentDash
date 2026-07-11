@@ -7,18 +7,16 @@ use std::collections::BTreeSet;
 
 use agentdash_application_ports::lifecycle_surface_projection as ports_lifecycle_surface;
 use agentdash_domain::agent::ProjectAgent;
-use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::{AgentConfig, ProjectVfsMountExposureGrant};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workspace::Workspace;
-use agentdash_spi::{AuthIdentity, CapabilityScopeCtx};
+use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::{CapabilityState, SessionContextBundle, ToolCapability, Vfs};
 use uuid::Uuid;
 
 use crate::agent_run::frame::AgentFrameBuilder;
-use crate::canvas::project_visible_canvas_mounts;
 use crate::capability::{
     AuthorityState, CapabilityResolver, CapabilityResolverInput, CompanionContribution,
     ContextContributionSource, ContextContributions, McpCandidates, ToolContribution,
@@ -104,7 +102,6 @@ impl<'a> OwnerScope<'a> {
 /// Owner bootstrap compose 的完整输入。
 pub(crate) struct OwnerBootstrapSpec<'a> {
     pub owner: OwnerScope<'a>,
-    pub identity: Option<&'a AuthIdentity>,
     /// `LifecycleSubjectAssociation` 动态解析出的 subject 上下文。
     ///
     /// ProjectAgent 仍以 Project owner 启动；Story/Task 作为 subject profile 在这里叠加，
@@ -119,7 +116,6 @@ pub(crate) struct OwnerBootstrapSpec<'a> {
     pub project_vfs_mount_exposure_grants: Vec<ProjectVfsMountExposureGrant>,
     pub request_mcp_servers: Vec<agentdash_spi::RuntimeMcpServer>,
     pub existing_vfs: Option<Vfs>,
-    pub visible_canvas_mount_ids: Vec<String>,
     /// ProjectAgent preset 声明的 workspace module 可见性白名单。
     ///
     /// `None` / `Some([])` 代表全集可见，非空列表代表 allowlist。
@@ -154,7 +150,6 @@ enum OwnerAuditLaunchPath {
 
 pub(crate) struct OwnerBootstrapComposer<'a> {
     pub vfs_service: &'a VfsService,
-    pub canvas_repo: &'a dyn CanvasRepository,
     pub availability: &'a dyn BackendAvailability,
     pub repos: &'a RepositorySet,
     pub platform_config: &'a PlatformConfig,
@@ -166,7 +161,6 @@ pub(crate) struct OwnerBootstrapComposer<'a> {
 impl<'a> OwnerBootstrapComposer<'a> {
     pub(crate) fn new(
         vfs_service: &'a VfsService,
-        canvas_repo: &'a dyn CanvasRepository,
         availability: &'a dyn BackendAvailability,
         repos: &'a RepositorySet,
         platform_config: &'a PlatformConfig,
@@ -174,7 +168,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
     ) -> Self {
         Self {
             vfs_service,
-            canvas_repo,
             availability,
             repos,
             platform_config,
@@ -355,7 +348,7 @@ impl<'a> OwnerBootstrapComposer<'a> {
             );
         }
 
-        let mut vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
+        let vfs = if matches!(spec.owner, OwnerScope::Project { .. }) {
             let runtime_refs = match spec.audit_session_key.as_deref() {
                 Some(session_id) => {
                     super::resolve_runtime_surface_refs(self.repos, session_id).await?
@@ -368,7 +361,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
                         ports_lifecycle_surface::BuiltinLifecycleSkillPolicy::EnsureAndProject(
                             vec![
                                 ports_lifecycle_surface::BuiltinLifecycleSkill::CompanionSystem,
-                                ports_lifecycle_surface::BuiltinLifecycleSkill::CanvasSystem,
                                 ports_lifecycle_surface::BuiltinLifecycleSkill::WorkspaceModuleSystem,
                             ],
                         );
@@ -429,17 +421,6 @@ impl<'a> OwnerBootstrapComposer<'a> {
         } else {
             ports_lifecycle_surface::project_active_workflow_lifecycle_vfs(vfs, active_workflow)
         };
-        if let Some(space) = vfs.as_mut() {
-            project_visible_canvas_mounts(
-                self.canvas_repo,
-                project_id,
-                space,
-                &spec.visible_canvas_mount_ids,
-                spec.identity,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        }
 
         Ok(vfs)
     }

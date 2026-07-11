@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::repository_set::RepositorySet;
-use agentdash_application::vfs_owner_providers::MountProviderRegistryBuilderOwnerExt;
-use agentdash_application_runtime_session::session::{SessionStoreSet, SessionToolResultCache};
+use agentdash_application::vfs::{
+    InlineFsMountProvider, RoutineMountProvider, SkillAssetFsMountProvider,
+};
 use agentdash_application_vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application_vfs::{VfsMaterializationService, VfsMutationDispatcher, VfsService};
 use agentdash_spi::VfsDiscoveryProvider;
@@ -23,27 +24,20 @@ pub(crate) struct VfsBootstrapOutput {
 
 pub(crate) fn build_vfs_kernel(
     repos: RepositorySet,
-    session_stores: SessionStoreSet,
-    tool_result_cache: Arc<SessionToolResultCache>,
     backend_registry: Arc<BackendRegistry>,
     integration_mount_providers: Vec<Arc<dyn MountProvider>>,
 ) -> VfsBootstrapOutput {
     let mut mount_registry_builder = MountProviderRegistryBuilder::new()
-        .with_application_builtins(
-            repos.lifecycle_run_repo.clone(),
+        .register(Arc::new(InlineFsMountProvider::new(
             repos.inline_file_repo.clone(),
+        )))
+        .register(Arc::new(RoutineMountProvider::new(
             repos.routine_execution_repo.clone(),
+            repos.inline_file_repo.clone(),
+        )))
+        .register(Arc::new(SkillAssetFsMountProvider::new(
             repos.skill_asset_repo.clone(),
-            session_stores.meta.clone(),
-            session_stores.events.clone(),
-            session_stores.lineage.clone(),
-            session_stores.compactions.clone(),
-            repos.lifecycle_agent_repo.clone(),
-            repos.agent_frame_repo.clone(),
-            repos.execution_anchor_repo.clone(),
-            repos.agent_run_delivery_binding_repo.clone(),
-            tool_result_cache,
-        )
+        )))
         .register(Arc::new(RelayFsMountProvider::new(
             backend_registry.clone(),
         )));

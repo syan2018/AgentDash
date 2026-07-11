@@ -3,7 +3,6 @@ pub mod agent_run {
 }
 pub mod auth;
 pub mod backend;
-pub mod canvas;
 pub mod capability;
 pub mod channel;
 pub mod companion;

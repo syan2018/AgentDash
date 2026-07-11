@@ -1,4 +1,4 @@
-use agentdash_application_runtime_gateway::{
+use agentdash_application_operation_gateway::{
     OperationActorKind, OperationDescriptor, OperationReadiness,
 };
 use agentdash_contracts::workspace_module::{
@@ -24,15 +24,32 @@ pub fn build_workspace_modules(
     operations: &[OperationDescriptor],
 ) -> Vec<WorkspaceModuleDescriptor> {
     let mut modules = build_extension_modules(extensions, operations);
-    modules.extend(definitions.iter().map(build_canvas_definition_module));
+    modules.extend(
+        definitions
+            .iter()
+            .map(|revision| build_canvas_definition_module(revision, operations)),
+    );
     modules.sort_by(|left, right| left.summary.module_id.cmp(&right.summary.module_id));
     modules
 }
 
 fn build_canvas_definition_module(
     revision: &InteractionDefinitionRevision,
+    operation_catalog: &[OperationDescriptor],
 ) -> WorkspaceModuleDescriptor {
     let definition_id = revision.definition_id.to_string();
+    let operations = operation_catalog
+        .iter()
+        .filter(|operation| {
+            operation.operation_ref.provider.namespace == "interaction"
+                && operation
+                    .operation_ref
+                    .provider
+                    .provider_key
+                    .starts_with(&format!("{definition_id}."))
+        })
+        .map(extension_operation)
+        .collect::<Vec<_>>();
     WorkspaceModuleDescriptor {
         summary: WorkspaceModuleSummary {
             module_id: format!("{MODULE_ID_CANVAS_PREFIX}{definition_id}"),
@@ -41,7 +58,10 @@ fn build_canvas_definition_module(
             description: revision.description.clone(),
             source: definition_id.clone(),
             ui_summary: Some("1 view".to_string()),
-            operation_summary: Vec::new(),
+            operation_summary: operations
+                .iter()
+                .map(|operation| operation.operation_key.clone())
+                .collect(),
             permission_summary: Vec::new(),
             status: WorkspaceModuleStatus::ready(),
         },
@@ -52,7 +72,7 @@ fn build_canvas_definition_module(
             uri_scheme: None,
             title: revision.title.clone(),
         }],
-        operations: Vec::new(),
+        operations,
         runtime_backing: Some(format!("interaction_definition:{}", revision.revision_id)),
     }
 }
@@ -74,7 +94,6 @@ fn build_extension_modules(
                     view_key: tab.type_id.clone(),
                     renderer_kind: match tab.renderer {
                         agentdash_domain::shared_library::ExtensionWorkspaceTabRendererDeclaration::Webview { .. } => "webview",
-                        agentdash_domain::shared_library::ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { .. } => "canvas_panel",
                     }
                     .to_string(),
                     presentation_uri: Some(format!("{}://panel", tab.uri_scheme)),

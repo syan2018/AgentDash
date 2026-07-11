@@ -3,6 +3,10 @@
 import type { JsonValue } from "../../../generated/common-contracts";
 import type { UserInput } from "../../../generated/backbone-protocol";
 import type {
+  AgentRunModelSelectionRequest,
+  AgentRunRuntimeOptionsRequest,
+} from "../../../generated/project-agent-contracts";
+import type {
   AgentRunCommandOnlyRequest,
   ConversationCommandView,
   ConversationModelConfigView,
@@ -124,6 +128,27 @@ function executorConfigToJsonValue(config: ExecutorConfig | undefined): JsonValu
   };
 }
 
+function modelSelectionFromExecutorConfig(
+  config: ExecutorConfig | undefined,
+): AgentRunModelSelectionRequest | undefined {
+  if (!config) return undefined;
+  return {
+    provider_id: config.provider_id,
+    model_id: config.model_id,
+    agent_id: config.agent_id,
+    thinking_level: config.thinking_level,
+  };
+}
+
+function runtimeOptionsFromExecutorConfig(
+  config: ExecutorConfig | undefined,
+): AgentRunRuntimeOptionsRequest | undefined {
+  if (!config) return undefined;
+  return {
+    permission_policy: config.permission_policy,
+  };
+}
+
 export function useAgentRunWorkspaceCommands(
   options: UseAgentRunWorkspaceCommandsOptions,
 ): UseAgentRunWorkspaceCommandsResult {
@@ -219,7 +244,8 @@ export function useAgentRunWorkspaceCommands(
         const response = await createProjectAgentRun(draftProjectId, draftProjectAgentKey, {
           input: inputBlocks,
           client_command_id: resolvedCommand.clientCommandId,
-          executor_config: executorConfigToJsonValue(commandExecutorConfig),
+          model_selection: modelSelectionFromExecutorConfig(commandExecutorConfig),
+          runtime_options: runtimeOptionsFromExecutorConfig(commandExecutorConfig),
           backend_selection: backendSelection,
         });
         void fetchAndIngestLifecycleRun(response.run_ref.run_id);

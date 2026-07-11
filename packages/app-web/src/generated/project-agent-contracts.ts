@@ -5,6 +5,10 @@ import type { JsonValue } from "./common-contracts";
 import type { AgentFrameRefDto, AgentRunAcceptedRefs, AgentRunCommandReceipt, AgentRunMessageCommandResponse, AgentRunRefDto, BackendSelectionRequestDto, LifecycleRunRefDto } from "./agent-run-mailbox-contracts";
 import type { UserInput } from "./backbone-protocol";
 
+export type AgentRunModelSelectionRequest = { provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, };
+
+export type AgentRunRuntimeOptionsRequest = { permission_policy?: string, };
+
 export type ConversationEffectiveExecutorConfigView = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: string, permission_policy?: string, source: ConversationModelConfigSource, };
 
 export type ConversationModelConfigSource = "project_agent_preset" | "frame_execution_profile" | "user_override" | "executor_discovery_default" | "unspecified";
@@ -15,7 +19,7 @@ export type CreateProjectAgentRunRequest = {
 /**
  * canonical 用户输入，与 steer / lifecycle message 同形。
  */
-input: Array<UserInput>, client_command_id: string, executor_config?: JsonValue, subject_ref?: SubjectRefDto, backend_selection?: BackendSelectionRequestDto, };
+input: Array<UserInput>, client_command_id: string, model_selection?: AgentRunModelSelectionRequest, runtime_options?: AgentRunRuntimeOptionsRequest, subject_ref?: SubjectRefDto, backend_selection?: BackendSelectionRequestDto, };
 
 export type ExecutionProfileAgentDto = { id: string, label: string, description?: string, is_default: boolean, };
 

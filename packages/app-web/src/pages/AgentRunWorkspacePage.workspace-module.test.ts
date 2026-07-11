@@ -292,7 +292,7 @@ describe("AgentRun workspace conversation command authority", () => {
     }).modelConfig.status).toBe("resolved");
   });
 
-  it("resolves local draft start payload executor_config from the explicit override", () => {
+  it("splits local draft model selection from the ProjectAgent executor", () => {
     const agent: ProjectAgentSummary = {
       key: "agent-1",
       display_name: "Agent",
@@ -332,10 +332,14 @@ describe("AgentRun workspace conversation command authority", () => {
     expect({
       input: [],
       client_command_id: "cmd-1",
-      executor_config: executorConfig,
+      model_selection: {
+        provider_id: executorConfig?.provider_id,
+        model_id: executorConfig?.model_id,
+        agent_id: executorConfig?.agent_id,
+        thinking_level: executorConfig?.thinking_level,
+      },
     }).toMatchObject({
-      executor_config: {
-        executor: "PI_AGENT",
+      model_selection: {
         provider_id: "openai",
         model_id: "gpt-5.4-mini",
       },

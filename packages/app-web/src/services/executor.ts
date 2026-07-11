@@ -1,6 +1,6 @@
 import { api } from "../api/client";
-import type { ThinkingLevel } from "../types";
 import type { PermissionPolicy } from "../features/executor-selector/model/types";
+import type { ProjectAgentExecutor } from "../generated/project-agent-contracts";
 import type { CompanionGateRespondResponse } from "../generated/companion-contracts";
 import {
   approveAgentRunToolCall,
@@ -12,14 +12,7 @@ export type ExecutorProfile = string;
 
 export type { PermissionPolicy };
 
-export interface ExecutorConfig {
-  executor: ExecutorProfile;
-  provider_id?: string;
-  model_id?: string;
-  agent_id?: string;
-  thinking_level?: ThinkingLevel;
-  permission_policy?: PermissionPolicy;
-}
+export type ExecutorConfig = ProjectAgentExecutor;
 
 export async function approveToolCallForAgentRun(
   target: AgentRunRuntimeTarget,

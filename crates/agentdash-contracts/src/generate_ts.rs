@@ -146,11 +146,12 @@ use agentdash_contracts::project::{
     SchedulingConfig,
 };
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, CreateProjectAgentRunRequest, ExecutionProfileAgentDto,
-    ExecutionProfileDiscoveryResponse, ExecutionProfileDto, ExecutionProfileModelDto,
-    ExecutionProfileModelSelectorDto, ExecutionProfileOptionsDto, ExecutionProfileProviderDto,
-    ExecutionProfileSlashCommandDto, ProjectAgent, ProjectAgentExecutor,
-    ProjectAgentRunStartResult, ProjectAgentSummary, UpdateProjectAgentRequest,
+    AgentRunModelSelectionRequest, AgentRunRuntimeOptionsRequest, CreateProjectAgentRequest,
+    CreateProjectAgentRunRequest, ExecutionProfileAgentDto, ExecutionProfileDiscoveryResponse,
+    ExecutionProfileDto, ExecutionProfileModelDto, ExecutionProfileModelSelectorDto,
+    ExecutionProfileOptionsDto, ExecutionProfileProviderDto, ExecutionProfileSlashCommandDto,
+    ProjectAgent, ProjectAgentExecutor, ProjectAgentRunStartResult, ProjectAgentSummary,
+    UpdateProjectAgentRequest,
 };
 use agentdash_contracts::routine::{
     CreateRoutineRequest, EnableRoutineRequest, FireWebhookRequest, ListExecutionsQuery,
@@ -355,6 +356,8 @@ fn main() {
             export_all::<ExecutionProfileSlashCommandDto>(dir);
             export_all::<ExecutionProfileOptionsDto>(dir);
             export_all::<ProjectAgentSummary>(dir);
+            export_all::<AgentRunModelSelectionRequest>(dir);
+            export_all::<AgentRunRuntimeOptionsRequest>(dir);
             export_all::<CreateProjectAgentRunRequest>(dir);
             export_all::<ProjectAgentRunStartResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);

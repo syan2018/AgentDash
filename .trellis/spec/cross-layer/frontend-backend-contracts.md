@@ -50,6 +50,22 @@ POST /agent-runs/{run_id}/agents/{agent_id}/runtime/tool-approvals/{id}/{approve
 ```
 
 ```rust
+CreateProjectAgentRunRequest {
+    input,
+    client_command_id,
+    model_selection?: {
+        provider_id?,
+        model_id?,
+        agent_id?,
+        thinking_level?,
+    },
+    runtime_options?: {
+        permission_policy?,
+    },
+    backend_selection?,
+    subject_ref?,
+}
+
 AgentRunAcceptedRefs {
     run_ref,
     agent_ref,
@@ -70,7 +86,7 @@ AgentRunCommandReceipt {
 ### Contracts
 
 - Project Agent create 先建立 Lifecycle run/agent/frame 产品事实，再通过 `AgentRunProductDelivery` 提交首条 canonical Runtime mailbox command。响应返回产品 refs 与可选 Runtime thread/operation refs。
-- ProjectAgent 是启动默认模板；create-run 的 `executor_config` 与 `backend_selection` 是本次 RunLaunchProfile intent。admission 在 provision 前将 effective executor/provider/model 写入 AgentFrame execution profile，并将 backend intent传给 Host offer selection；它们不是无状态 HTTP override，也不改写 ProjectAgent defaults。
+- ProjectAgent 决定 executor/Integration identity并提供默认运行参数；create-run 使用独立的 `model_selection`、`runtime_options` 与 `backend_selection` 表达逐 Run 意图，不暴露完整 executor config。`model_selection` 聚合 Provider、model、agent variant 与 thinking level；admission 在 provision 前将这些 generated contract 分片与 ProjectAgent defaults 编译成 effective config并写入 AgentFrame execution profile。这些意图不是无状态 HTTP override，也不改写 ProjectAgent defaults。
 - Composer submit 返回 queued mailbox identity 或 canonical `OperationReceipt`；重复 `client_command_id` 返回同一 operation，不创建第二次 Driver side effect。
 - UI 命令可用性只读取 Runtime snapshot 的 `command_availability`。Lifecycle status、executor kind、Backbone、transcript 或 HTTP success 不能推导 submit/steer/interrupt/compact/resolve 权限。
 - `AgentRunRuntimeBinding` 是 `run_id + agent_id` 到 Runtime thread/Host binding 的唯一产品执行坐标。浏览器不接触 Driver source IDs、Host lease 或 placement credential。
@@ -83,7 +99,8 @@ AgentRunCommandReceipt {
 | Condition | Required behavior |
 | --- | --- |
 | execution profile definition 未进入最终 Host inventory | discovery 保留 profile 并返回 `available=false + unavailable_reason`；ProjectAgent 写入拒绝未知 profile |
-| create-run executor/provider/model override 合法 | 与 ProjectAgent defaults 合并，写入新 AgentFrame revision后再 provision |
+| create-run Provider/model override 合法 | 与 ProjectAgent defaults 合并，保留 ProjectAgent executor，写入新 AgentFrame revision后再 provision |
+| create-run 携带旧 `executor_config` 或分片包含未知字段 | `400 Bad Request`；不得静默忽略或建立兼容映射 |
 | explicit backend 有匹配 activated offer | 只绑定该 backend placement并持久化 binding coordinates |
 | explicit backend 无匹配 offer | typed unavailable；不得回退任意 backend或 InProcess instance |
 | `PI_AGENT` 没有 executable Provider | profile 可见但 disabled；options 返回 Provider 诊断，不依赖 RuntimeOffer |
@@ -107,6 +124,7 @@ AgentRunCommandReceipt {
 - Command-state tests 证明 availability 只取 Runtime snapshot。
 - Feed tests 覆盖 snapshot baseline、durable cursor、duplicate event、reconnect 与 typed stream error。
 - Project Agent create E2E 覆盖 lifecycle facts -> ProductDelivery -> binding/thread -> operation response。
+- Create-run contract generation test断言 generated TypeScript 只暴露 `model_selection`、`runtime_options` 与 `backend_selection`，不重新引入可覆盖 executor 的请求字段。
 
 ## 4. Companion and Workflow Product Facts
 
@@ -168,4 +186,16 @@ let profiles = app_state.runtime_definition_registry.definitions();
 
 // Correct: discovery、ProjectAgent validation 与 Relay trust 共用最终 Host
 let profiles = app_state.services.agent_runtime_host.definitions();
+```
+
+```ts
+// Wrong：前端复制一份请求形状，并把 executor 混入逐 Run 参数
+type StartConfig = { executor: string; provider_id?: string; model_id?: string };
+
+// Correct：直接消费 Rust 生成的分片合同
+import type {
+  AgentRunModelSelectionRequest,
+  AgentRunRuntimeOptionsRequest,
+  CreateProjectAgentRunRequest,
+} from "../generated/project-agent-contracts";
 ```

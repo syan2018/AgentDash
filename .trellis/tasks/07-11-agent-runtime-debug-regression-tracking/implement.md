@@ -25,8 +25,8 @@
 
 ## ARD-003
 
-- [x] 保留 create-run executor/provider/model/backend 启动合同并删除整体拒绝门禁。
-- [x] 合并 ProjectAgent defaults 与启动 override，写入 AgentFrame effective execution profile。
+- [x] 将 create-run 合同拆为 model selection、runtime options 与 backend selection；executor 只来自 ProjectAgent。
+- [x] 合并 ProjectAgent defaults 与 Provider/model override，保留 canonical executor 并写入 AgentFrame effective execution profile。
 - [x] 将 backend selection 与 identity随 Runtime mailbox 传到 provision request。
 - [x] Host offer selection 按 execution profile definition 和 explicit backend placement过滤。
 - [x] Native/Codex source preparation按 execution profile选择 definition，Codex要求已有 activated offer。

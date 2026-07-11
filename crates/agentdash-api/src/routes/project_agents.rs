@@ -6,7 +6,7 @@ use agentdash_agent_runtime_contract::RuntimeActor;
 use agentdash_application_agentrun::agent_run::{
     ConversationEffectiveExecutorConfigModel, ConversationModelConfigResolver,
     ConversationModelConfigSourceModel, DeliverAgentRunProductInput, ResolvedProjectAgentContext,
-    build_project_agent_context, merge_executor_config_fields,
+    build_project_agent_context,
 };
 use agentdash_application_ports::launch::{BackendSelectionInput, BackendSelectionInputMode};
 use agentdash_domain::{
@@ -48,6 +48,49 @@ use crate::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn create_run_contract_rejects_legacy_executor_config() {
+        let result = serde_json::from_value::<CreateProjectAgentRunRequest>(serde_json::json!({
+            "input": [],
+            "client_command_id": "cmd-1",
+            "executor_config": {
+                "executor": "CODEX"
+            }
+        }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_config_override_preserves_project_agent_executor() {
+        let base = agentdash_spi::AgentConfig {
+            executor: "PI_AGENT".to_string(),
+            provider_id: Some("default-provider".to_string()),
+            model_id: Some("default-model".to_string()),
+            ..agentdash_spi::AgentConfig::default()
+        };
+        let effective = apply_run_config(
+            base,
+            Some(
+                &agentdash_contracts::project_agent::AgentRunModelSelectionRequest {
+                    provider_id: Some("run-provider".to_string()),
+                    model_id: Some("run-model".to_string()),
+                    agent_id: None,
+                    thinking_level: Some(ThinkingLevel::High),
+                },
+            ),
+            None,
+        );
+
+        assert_eq!(effective.executor, "PI_AGENT");
+        assert_eq!(effective.provider_id.as_deref(), Some("run-provider"));
+        assert_eq!(effective.model_id.as_deref(), Some("run-model"));
+        assert_eq!(
+            effective.thinking_level,
+            Some(agentdash_spi::ThinkingLevel::High)
+        );
+    }
 
     #[test]
     fn project_agent_summary_response_serializes_as_snake_case() {
@@ -146,24 +189,21 @@ pub async fn create_project_agent_run(
     let project_agent_context = build_project_agent_context(&project_agent)
         .await
         .map_err(ApiError::Internal)?;
-    let executor_override = req
-        .executor_config
-        .as_ref()
-        .map(|value| serde_json::from_value::<agentdash_spi::AgentConfig>(value.clone()))
-        .transpose()
-        .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
-    let (effective_executor_config, executor_config_source) = match executor_override {
-        Some(override_config) => (
-            merge_executor_config_fields(
+    let has_run_config_override = req.model_selection.is_some() || req.runtime_options.is_some();
+    let (effective_executor_config, executor_config_source) = if has_run_config_override {
+        (
+            apply_run_config(
                 project_agent_context.executor_config.clone(),
-                &override_config,
+                req.model_selection.as_ref(),
+                req.runtime_options.as_ref(),
             ),
             ConversationModelConfigSourceModel::UserOverride,
-        ),
-        None => (
+        )
+    } else {
+        (
             project_agent_context.executor_config.clone(),
             ConversationModelConfigSourceModel::ProjectAgentPreset,
-        ),
+        )
     };
     if !crate::routes::execution_profiles::is_known_execution_profile(
         &state,
@@ -336,6 +376,41 @@ pub async fn create_project_agent_run(
             id: subject.id.to_string(),
         }),
     }))
+}
+
+fn apply_run_config(
+    mut base: agentdash_spi::AgentConfig,
+    model_selection: Option<&agentdash_contracts::project_agent::AgentRunModelSelectionRequest>,
+    runtime_options: Option<&agentdash_contracts::project_agent::AgentRunRuntimeOptionsRequest>,
+) -> agentdash_spi::AgentConfig {
+    if let Some(selection) = model_selection {
+        if selection.provider_id.is_some() {
+            base.provider_id = selection.provider_id.clone();
+        }
+        if selection.model_id.is_some() {
+            base.model_id = selection.model_id.clone();
+        }
+        if selection.agent_id.is_some() {
+            base.agent_id = selection.agent_id.clone();
+        }
+        if let Some(level) = selection.thinking_level {
+            base.thinking_level = Some(match level {
+                ThinkingLevel::Off => agentdash_spi::ThinkingLevel::Off,
+                ThinkingLevel::Minimal => agentdash_spi::ThinkingLevel::Minimal,
+                ThinkingLevel::Low => agentdash_spi::ThinkingLevel::Low,
+                ThinkingLevel::Medium => agentdash_spi::ThinkingLevel::Medium,
+                ThinkingLevel::High => agentdash_spi::ThinkingLevel::High,
+                ThinkingLevel::Xhigh => agentdash_spi::ThinkingLevel::Xhigh,
+            });
+        }
+    }
+    if let Some(permission_policy) = runtime_options
+        .and_then(|options| options.permission_policy.as_ref())
+        .cloned()
+    {
+        base.permission_policy = Some(permission_policy);
+    }
+    base
 }
 
 fn backend_selection_input(

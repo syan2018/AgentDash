@@ -138,13 +138,42 @@ pub struct ProjectAgentSummary {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRunModelSelectionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub thinking_level: Option<ThinkingLevel>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRunRuntimeOptionsRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub permission_policy: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
 pub struct CreateProjectAgentRunRequest {
     /// canonical 用户输入，与 steer / lifecycle message 同形。
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub executor_config: Option<Value>,
+    pub model_selection: Option<AgentRunModelSelectionRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_options: Option<AgentRunRuntimeOptionsRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub subject_ref: Option<SubjectRefDto>,

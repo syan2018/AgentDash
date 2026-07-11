@@ -12,6 +12,7 @@ pub mod embedded_skill;
 pub mod extension_package;
 pub mod identity;
 pub mod inline_file;
+pub mod interaction;
 pub mod llm_provider;
 pub mod mcp_preset;
 pub mod operation;

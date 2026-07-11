@@ -31,6 +31,7 @@ pub use persistence::postgres::PostgresCanvasRepository;
 pub use persistence::postgres::PostgresCanvasRuntimeStateRepository;
 pub use persistence::postgres::PostgresExtensionPackageArtifactRepository;
 pub use persistence::postgres::PostgresInlineFileRepository;
+pub use persistence::postgres::PostgresInteractionRepository;
 pub use persistence::postgres::PostgresLifecycleAgentRepository;
 pub use persistence::postgres::PostgresLifecycleGateRepository;
 pub use persistence::postgres::PostgresLifecycleSubjectAssociationRepository;

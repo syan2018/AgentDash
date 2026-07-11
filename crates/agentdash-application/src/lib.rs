@@ -13,6 +13,7 @@ pub mod extension_management;
 pub mod extension_package;
 pub mod extension_runtime;
 pub mod frame_construction;
+pub mod interaction;
 pub mod lifecycle {
     pub use agentdash_application_lifecycle::*;
 }

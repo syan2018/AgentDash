@@ -15,15 +15,16 @@ use agentdash_agent_runtime_contract::{
     AgentRuntimeGateway, BindingEpoch, BoundRuntimeHookPlan, DriverBindIntent,
     DriverCommandEnvelope, DriverError, DriverEventEnvelope, DriverEventSink, DriverRequestId,
     IdempotencyKey, OperationMeta, ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand,
-    RuntimeCommandEnvelope, RuntimeHookPlanBinding, RuntimeOperationId, RuntimeRecoveryIntentId,
-    RuntimeServiceInstanceId, RuntimeThreadId,
+    RuntimeCommandEnvelope, RuntimeEvent, RuntimeHookPlanBinding, RuntimeOperationId,
+    RuntimeRecoveryIntentId, RuntimeServiceInstanceId, RuntimeThreadId,
 };
 use agentdash_agent_runtime_host::{
-    ActivateAgentServiceInstance, AgentRuntimeHostRepository, AgentServiceDefinitionId,
-    AgentServiceDefinitionRegistry, BindRuntimeRequest, BoundAgentSurfaceReference,
-    ConformanceEvidence, IntegrationDriverHost, PutAgentServiceInstance, RouteDriverCommand,
-    ServiceInstanceDesiredState, TrustedDriverConformanceVerifier, TrustedDriverManifest,
-    TrustedDriverManifestRegistry, canonical_json, profile_digest,
+    ActivateAgentServiceInstance, AgentRuntimeHostError, AgentRuntimeHostRepository,
+    AgentServiceDefinitionId, AgentServiceDefinitionRegistry, BindRuntimeRequest,
+    BoundAgentSurfaceReference, ConformanceEvidence, IntegrationDriverHost,
+    PutAgentServiceInstance, RouteDriverCommand, ServiceInstanceDesiredState,
+    TrustedDriverConformanceVerifier, TrustedDriverManifest, TrustedDriverManifestRegistry,
+    canonical_json, profile_digest,
 };
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
@@ -1198,6 +1199,17 @@ pub enum RuntimeOutboxWorkerError {
     InvalidClaim(String),
     #[error("Runtime outbox Host dispatch failed: {0}")]
     Host(String),
+    #[error("Runtime outbox binding was lost: {0}")]
+    BindingLost(String),
+}
+
+fn classify_outbox_dispatch_error(error: AgentRuntimeHostError) -> RuntimeOutboxWorkerError {
+    match error {
+        AgentRuntimeHostError::Driver(DriverError::Lost { reason, .. }) => {
+            RuntimeOutboxWorkerError::BindingLost(reason)
+        }
+        error => RuntimeOutboxWorkerError::Host(error.to_string()),
+    }
 }
 
 pub struct RuntimeOutboxWorker {
@@ -1380,7 +1392,10 @@ impl RuntimeOutboxWorker {
         heartbeat.tick().await;
         let result: Result<_, RuntimeOutboxWorkerError> = loop {
             tokio::select! {
-                result = &mut dispatch => break result.map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string())),
+                result = &mut dispatch => break match result {
+                    Err(error) => Err(classify_outbox_dispatch_error(error)),
+                    Ok(receipt) => Ok(receipt),
+                },
                 _ = heartbeat.tick() => {
                     match self.host.renew_driver_lease(&lease).await {
                         Ok(renewed) => lease = renewed,
@@ -1390,9 +1405,30 @@ impl RuntimeOutboxWorker {
             }
         };
         let release_result = self.host.release_driver_lease(&lease).await;
-        result?;
         release_result.map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string()))?;
-        Ok(())
+        match result {
+            Err(RuntimeOutboxWorkerError::BindingLost(reason)) => {
+                self.runtime
+                    .ingest_driver_event(DriverEventEnvelope {
+                        binding_id: entry.binding_id.clone(),
+                        generation: entry.generation,
+                        source_thread_id: thread.source_thread_id,
+                        source_turn_id: None,
+                        source_item_id: None,
+                        event: RuntimeEvent::BindingLost {
+                            binding_id: entry.binding_id.clone(),
+                            reason,
+                        },
+                    })
+                    .await
+                    .map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string()))?;
+                Ok(())
+            }
+            result => {
+                result?;
+                Ok(())
+            }
+        }
     }
 
     pub fn spawn(self: Arc<Self>, cancellation: CancellationToken) -> tokio::task::JoinHandle<()> {
@@ -1699,6 +1735,21 @@ mod tests {
     use futures::stream;
     use sqlx::postgres::PgConnectOptions;
     use uuid::Uuid;
+
+    #[test]
+    fn outbox_classifies_missing_driver_binding_as_binding_lost() {
+        let error =
+            classify_outbox_dispatch_error(AgentRuntimeHostError::Driver(DriverError::Lost {
+                reason: "binding disappeared with the ephemeral host".to_string(),
+                retryable: true,
+            }));
+
+        assert!(matches!(
+            error,
+            RuntimeOutboxWorkerError::BindingLost(reason)
+                if reason == "binding disappeared with the ephemeral host"
+        ));
+    }
 
     struct ProviderRepository(LlmProvider);
 

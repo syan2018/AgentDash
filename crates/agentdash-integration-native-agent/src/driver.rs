@@ -369,8 +369,9 @@ impl NativeAgentDriver {
             .await
             .get(binding_id)
             .cloned()
-            .ok_or_else(|| DriverError::Rejected {
+            .ok_or_else(|| DriverError::Lost {
                 reason: format!("native binding {binding_id} does not exist"),
+                retryable: true,
             })
     }
 

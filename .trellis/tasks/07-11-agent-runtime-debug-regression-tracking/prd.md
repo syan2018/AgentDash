@@ -109,6 +109,12 @@
 
 - 现象：本机 Runtime 诊断长期显示“正在领取桌面本机 runtime 凭据”，Runtime action同时返回`目标 Backend 当前不在线: local_029f609c03386a19e4f28779`。
 - 已确认事实：该 backend来自当前机器的personal local runtime identity；本机profile启用`auto_start`，但不持久化credential，必须由当前Desktop Dashboard API origin的`POST /api/local-runtime/ensure`重新领取relay credentials并建立`/ws/backend`连接。
+
+**问题 ARD-010：Desktop重启后旧Native binding的outbox命令无限重试**
+
+- 现象：后台持续报告`native binding ... does not exist`，同一outbox命令被反复领取。
+- 已确认根因：Native host属于进程内ephemeral execution site，重启后旧binding不可恢复；adapter却把binding缺失报告成普通`Rejected`，outbox因此无法进入Runtime已有的binding-lost收敛路径。
+- 验收：binding缺失必须返回typed lost，由Runtime写入canonical `BindingLost`并ack当前outbox命令；线程进入lost后不得继续重派。
 - 已确认风险一：desktop ensure使用无请求期限的默认HTTP client，连接或响应读取无法完成时，native supervisor会无限停留在`claiming`。
 - 已确认风险二：Web auto-connect把除`error`外的任意`runtimeStart`结果视为成功；`claiming`、`waiting_for_api`、`retrying`尚未证明Backend在线，却会终止前端重试。
 - 已确认直接根因：schema 66曾在本机Runtime数据库应用后被原地改名，`agentdash-local`启动迁移因checksum不一致退出；server ensure虽已成功领取同一backend，relay进程从未存活，因此Backend保持offline。
@@ -141,6 +147,8 @@
 - [x] ARD-009 已应用migration保持immutable，字段改名通过后续migration完成；既有本机Runtime数据库可正常升级并启动。
 - [x] ARD-009 auto-connect只在Runtime/relay真实运行后完成，并能从`waiting_for_api`、`retrying`或失败状态继续收敛。
 - [x] ARD-009 使用真实产品链验证目标personal backend进入online，Runtime action不再受目标Backend离线admission阻断。
+- [x] ARD-009 Desktop native host不依赖Web bridge先提供token即可按profile自动启动Personal runtime。
+- [x] ARD-010 ephemeral Native binding缺失会收敛为canonical lost，历史outbox命令完成派发且不再重试。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -161,6 +169,7 @@
 | ARD-007 | reported | minor | dev server重启期间瞬时 `useContext` null；刷新消失，暂无稳定复现与 stack |
 | ARD-008 | verified | blocker | event、workspace/list/detail lineage、composer/context/interaction与退役consumer均按route ledger完成收束并真实验证 |
 | ARD-009 | verified | blocker | 恢复immutable migration历史并以0067收敛schema；ensure有界、Web等待relay registered，目标personal backend已真实online |
+| ARD-010 | verified | blocker | Native缺失binding返回typed lost；outbox写入BindingLost并ack，历史重试命令已停止 |
 
 ## Verification Record
 

@@ -85,3 +85,11 @@
 - [x] 覆盖HTTP悬挂、waiting/retrying中间态与最终running的Rust/前端定向测试。
 - [x] 用真实`pnpm dev`检查credential ensure、既有本机数据库升级、relay registration与server Backend online事实。
 - [x] 在目标Backend online后确认产品连接投影为已连接，offline Runtime action admission条件已消失。
+- [x] 修正Desktop native host的auto-start所有权：profile允许自动启动时由native直接执行ensure，Web bridge只在具备用户token时补充认证上下文。
+- [x] 真实`pnpm dev:desktop`验证无Web token的Personal profile自动建立relay，目标Backend进入online。
+
+## ARD-010
+
+- [x] Native ephemeral host找不到旧binding时返回typed `DriverError::Lost`，不再伪装为可重试的命令拒绝。
+- [x] Runtime outbox将binding lost投影为canonical `RuntimeEvent::BindingLost`并完成当前命令ack。
+- [x] 真实历史命令从8614次重复派发收敛为`dispatched_at`，线程状态进入`lost`且后台停止刷错。

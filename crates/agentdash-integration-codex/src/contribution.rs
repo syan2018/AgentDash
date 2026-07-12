@@ -10,8 +10,8 @@ use serde_json::json;
 
 use crate::driver::{CodexRuntimeDriverFactory, codex_runtime_profile};
 
-pub const CODEX_PROTOCOL_REVISION: u32 = 140;
-pub const CODEX_APP_SERVER_PACKAGE: &str = "@openai/codex@0.140.0";
+pub const CODEX_PROTOCOL_REVISION: u32 = 144;
+pub const CODEX_APP_SERVER_PACKAGE: &str = "@openai/codex@0.144.1";
 
 static FACTORY_KEY: LazyLock<AgentRuntimeFactoryKey> = LazyLock::new(|| {
     AgentRuntimeFactoryKey::new("builtin.codex-app-server")
@@ -112,9 +112,9 @@ mod tests {
         let contribution = codex_runtime_contribution();
         assert_eq!(
             contribution.definition.supported_protocol_revisions,
-            vec![140]
+            vec![144]
         );
-        assert!(CODEX_APP_SERVER_PACKAGE.ends_with("@0.140.0"));
+        assert!(CODEX_APP_SERVER_PACKAGE.ends_with("@0.144.1"));
         assert_eq!(
             contribution.definition.provenance.service_version,
             CODEX_PROTOCOL_REVISION.to_string()

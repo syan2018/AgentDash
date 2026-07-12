@@ -5,6 +5,7 @@ use agentdash_agent_runtime_contract::{
     RuntimeInteractionKind, RuntimeItemContent, RuntimeItemId, RuntimeItemTerminal, RuntimeTurnId,
     RuntimeTurnTerminal,
 };
+use codex_app_server_protocol as codex;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -43,6 +44,12 @@ pub(crate) enum MappingError {
     UnknownCoordinate { kind: &'static str, value: String },
     #[error("Codex method is outside the runtime adapter surface: {0}")]
     UnsupportedMethod(String),
+    #[error("Codex item payload is invalid: {0}")]
+    InvalidItemPayload(String),
+    #[error("Codex item failed owned protocol conformance: {0}")]
+    OwnedProtocolMismatch(String),
+    #[error("Codex item family is not admitted by the current Runtime projection: {0}")]
+    UnsupportedItemFamily(&'static str),
 }
 
 impl SourceCoordinateMap {
@@ -81,6 +88,7 @@ impl SourceCoordinateMap {
     ) -> Result<Option<MappedEvent>, MappingError> {
         let method = notification.method;
         let params = notification.params;
+        admit_notification(&method, &params)?;
         match method.as_str() {
             "turn/started" => {
                 let source = nested_string(&params, &["turn", "id"])
@@ -148,7 +156,7 @@ impl SourceCoordinateMap {
                 event: RuntimeEvent::DriverContextCompactedOpaque,
             })),
             "hook/started" | "hook/completed" => Ok(None),
-            _ => Ok(None),
+            _ => Err(MappingError::UnsupportedMethod(method)),
         }
     }
 
@@ -156,6 +164,7 @@ impl SourceCoordinateMap {
         &mut self,
         request: &RpcServerRequest,
     ) -> Result<MappedInteraction, MappingError> {
+        admit_server_request(&request.method, &request.params)?;
         let source_turn =
             string(&request.params, "turnId").ok_or_else(|| missing(&request.method, "turnId"))?;
         let source_item = string(&request.params, "itemId");
@@ -253,7 +262,7 @@ impl SourceCoordinateMap {
                     RuntimeItemTerminal::Cancelled { message: None }
                 }
                 _ => RuntimeItemTerminal::Completed {
-                    final_content: item_content(item),
+                    final_content: item_content(item)?,
                 },
             };
             RuntimeEvent::ItemTerminal {
@@ -265,7 +274,7 @@ impl SourceCoordinateMap {
             RuntimeEvent::ItemStarted {
                 turn_id,
                 item_id,
-                initial_content: item_content(item),
+                initial_content: item_content(item)?,
             }
         };
         Ok(Some(MappedEvent {
@@ -296,6 +305,96 @@ impl SourceCoordinateMap {
     }
 }
 
+fn strict_transcode<V, O>(value: &Value) -> Result<(), MappingError>
+where
+    V: serde::de::DeserializeOwned + serde::Serialize,
+    O: serde::de::DeserializeOwned,
+{
+    let vendor: V = serde_json::from_value(value.clone())
+        .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
+    let canonical = serde_json::to_value(vendor)
+        .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
+    serde_json::from_value::<O>(canonical)
+        .map_err(|error| MappingError::OwnedProtocolMismatch(error.to_string()))?;
+    Ok(())
+}
+
+fn admit_notification(method: &str, params: &Value) -> Result<(), MappingError> {
+    use agentdash_agent_protocol::generated::codex_v2::server_notification as owned;
+    match method {
+        "turn/started" => strict_transcode::<
+            codex::TurnStartedNotification,
+            owned::TurnStartedNotification,
+        >(params),
+        "turn/completed" => strict_transcode::<
+            codex::TurnCompletedNotification,
+            owned::TurnCompletedNotification,
+        >(params),
+        "item/started" => strict_transcode::<
+            codex::ItemStartedNotification,
+            owned::ItemStartedNotification,
+        >(params),
+        "item/completed" => strict_transcode::<
+            codex::ItemCompletedNotification,
+            owned::ItemCompletedNotification,
+        >(params),
+        "item/agentMessage/delta" => strict_transcode::<
+            codex::AgentMessageDeltaNotification,
+            owned::AgentMessageDeltaNotification,
+        >(params),
+        "item/reasoning/textDelta" => strict_transcode::<
+            codex::ReasoningTextDeltaNotification,
+            owned::ReasoningTextDeltaNotification,
+        >(params),
+        "item/plan/delta" => {
+            strict_transcode::<codex::PlanDeltaNotification, owned::PlanDeltaNotification>(params)
+        }
+        "thread/compacted" => strict_transcode::<
+            codex::ContextCompactedNotification,
+            owned::ContextCompactedNotification,
+        >(params),
+        "hook/started" => strict_transcode::<
+            codex::HookStartedNotification,
+            owned::HookStartedNotification,
+        >(params),
+        "hook/completed" => strict_transcode::<
+            codex::HookCompletedNotification,
+            owned::HookCompletedNotification,
+        >(params),
+        other => Err(MappingError::UnsupportedMethod(other.to_string())),
+    }
+}
+
+fn admit_server_request(method: &str, params: &Value) -> Result<(), MappingError> {
+    match method {
+        "item/commandExecution/requestApproval" => strict_transcode::<
+            codex::CommandExecutionRequestApprovalParams,
+            agentdash_agent_protocol::generated::codex_v2::command_execution_request_approval_params::CommandExecutionRequestApprovalParams,
+        >(params),
+        "item/fileChange/requestApproval" => strict_transcode::<
+            codex::FileChangeRequestApprovalParams,
+            agentdash_agent_protocol::generated::codex_v2::file_change_request_approval_params::FileChangeRequestApprovalParams,
+        >(params),
+        "item/permissions/requestApproval" => strict_transcode::<
+            codex::PermissionsRequestApprovalParams,
+            agentdash_agent_protocol::generated::codex_v2::permissions_request_approval_params::PermissionsRequestApprovalParams,
+        >(params),
+        "item/tool/requestUserInput" => strict_transcode::<
+            codex::ToolRequestUserInputParams,
+            agentdash_agent_protocol::generated::codex_v2::tool_request_user_input_params::ToolRequestUserInputParams,
+        >(params),
+        "item/tool/call" => strict_transcode::<
+            codex::DynamicToolCallParams,
+            agentdash_agent_protocol::generated::codex_v2::dynamic_tool_call_params::DynamicToolCallParams,
+        >(params),
+        "mcpServer/elicitation/request" => strict_transcode::<
+            codex::McpServerElicitationRequestParams,
+            agentdash_agent_protocol::generated::codex_v2::mcp_server_elicitation_request_params::McpServerElicitationRequestParams,
+        >(params),
+        other => Err(MappingError::UnsupportedMethod(other.to_string())),
+    }
+}
+
 pub(crate) fn map_input(
     input: &[RuntimeInput],
 ) -> (Vec<Value>, Option<serde_json::Map<String, Value>>) {
@@ -317,30 +416,74 @@ pub(crate) fn map_input(
     (native, (!additional.is_empty()).then_some(additional))
 }
 
-pub(crate) fn item_content(item: &Value) -> RuntimeItemContent {
-    match item.get("type").and_then(Value::as_str).unwrap_or_default() {
-        "userMessage" => RuntimeItemContent::UserMessage { input: Vec::new() },
-        "agentMessage" => RuntimeItemContent::AgentMessage {
-            text: string(item, "text").unwrap_or_default(),
-        },
-        "reasoning" => RuntimeItemContent::Reasoning {
-            text: item
-                .get("content")
-                .map(Value::to_string)
-                .unwrap_or_default(),
-        },
-        "plan" => RuntimeItemContent::Plan {
-            steps: string(item, "text").map(|v| vec![v]).unwrap_or_default(),
-        },
-        "dynamicToolCall" | "mcpToolCall" => RuntimeItemContent::ToolCall {
-            name: string(item, "tool")
-                .or_else(|| string(item, "name"))
-                .unwrap_or_else(|| "tool".to_string()),
-            arguments: item.get("arguments").cloned().unwrap_or(Value::Null),
-        },
-        _ => RuntimeItemContent::AgentMessage {
-            text: item.to_string(),
-        },
+pub(crate) fn item_content(item: &Value) -> Result<RuntimeItemContent, MappingError> {
+    let vendor: codex::ThreadItem = serde_json::from_value(item.clone())
+        .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
+    let canonical_json = serde_json::to_value(&vendor)
+        .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
+    serde_json::from_value::<
+        agentdash_agent_protocol::generated::codex_v2::thread_item::ThreadItem,
+    >(canonical_json)
+    .map_err(|error| MappingError::OwnedProtocolMismatch(error.to_string()))?;
+    match vendor {
+        codex::ThreadItem::UserMessage { .. } => {
+            Ok(RuntimeItemContent::UserMessage { input: Vec::new() })
+        }
+        codex::ThreadItem::AgentMessage { text, .. } => {
+            Ok(RuntimeItemContent::AgentMessage { text })
+        }
+        codex::ThreadItem::Reasoning {
+            summary, content, ..
+        } => {
+            let text = summary
+                .into_iter()
+                .chain(content)
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(RuntimeItemContent::Reasoning { text })
+        }
+        codex::ThreadItem::Plan { text, .. } => Ok(RuntimeItemContent::Plan { steps: vec![text] }),
+        codex::ThreadItem::DynamicToolCall {
+            tool, arguments, ..
+        }
+        | codex::ThreadItem::McpToolCall {
+            tool, arguments, ..
+        } => Ok(RuntimeItemContent::ToolCall {
+            name: tool,
+            arguments,
+        }),
+        codex::ThreadItem::HookPrompt { .. } => {
+            Err(MappingError::UnsupportedItemFamily("hookPrompt"))
+        }
+        codex::ThreadItem::CommandExecution { .. } => {
+            Err(MappingError::UnsupportedItemFamily("commandExecution"))
+        }
+        codex::ThreadItem::FileChange { .. } => {
+            Err(MappingError::UnsupportedItemFamily("fileChange"))
+        }
+        codex::ThreadItem::CollabAgentToolCall { .. } => {
+            Err(MappingError::UnsupportedItemFamily("collabAgentToolCall"))
+        }
+        codex::ThreadItem::SubAgentActivity { .. } => {
+            Err(MappingError::UnsupportedItemFamily("subAgentActivity"))
+        }
+        codex::ThreadItem::WebSearch(_) => Err(MappingError::UnsupportedItemFamily("webSearch")),
+        codex::ThreadItem::ImageView { .. } => {
+            Err(MappingError::UnsupportedItemFamily("imageView"))
+        }
+        codex::ThreadItem::Sleep { .. } => Err(MappingError::UnsupportedItemFamily("sleep")),
+        codex::ThreadItem::ImageGeneration(_) => {
+            Err(MappingError::UnsupportedItemFamily("imageGeneration"))
+        }
+        codex::ThreadItem::EnteredReviewMode { .. } => {
+            Err(MappingError::UnsupportedItemFamily("enteredReviewMode"))
+        }
+        codex::ThreadItem::ExitedReviewMode { .. } => {
+            Err(MappingError::UnsupportedItemFamily("exitedReviewMode"))
+        }
+        codex::ThreadItem::ContextCompaction { .. } => {
+            Err(MappingError::UnsupportedItemFamily("contextCompaction"))
+        }
     }
 }
 
@@ -423,10 +566,20 @@ mod tests {
     fn eof_is_never_synthesized_as_completed() {
         let mut map = SourceCoordinateMap::default();
         map.register_turn("source-turn", RuntimeTurnId::new("runtime-turn").unwrap());
-        let event = map.map_notification(RpcServerNotification {
-            method: "turn/completed".to_string(),
-            params: serde_json::json!({ "turn": { "id": "source-turn", "status": "interrupted" } }),
-        }).expect("map").expect("event");
+        let event = map
+            .map_notification(RpcServerNotification {
+                method: "turn/completed".to_string(),
+                params: serde_json::json!({
+                    "threadId": "source-thread",
+                    "turn": {
+                        "id": "source-turn", "status": "interrupted", "items": [],
+                        "itemsView": "full", "error": null, "startedAt": null,
+                        "completedAt": null, "durationMs": null
+                    }
+                }),
+            })
+            .expect("map")
+            .expect("event");
         assert!(matches!(
             event.event,
             RuntimeEvent::TurnTerminal {
@@ -444,7 +597,11 @@ mod tests {
         let request = crate::rpc::RpcServerRequest {
             id: serde_json::json!(1),
             method: "item/commandExecution/requestApproval".to_string(),
-            params: serde_json::json!({ "turnId": "source-turn", "itemId": "source-item", "reason": "approve" }),
+            params: serde_json::json!({
+                "threadId": "source-thread", "turnId": "source-turn",
+                "itemId": "source-item", "startedAtMs": 1,
+                "environmentId": null, "reason": "approve"
+            }),
         };
         let first = map.map_server_request(&request).expect("first");
         let replay = map.map_server_request(&request).expect("replay");
@@ -464,8 +621,15 @@ mod tests {
             .map_notification(RpcServerNotification {
                 method: "item/completed".to_string(),
                 params: serde_json::json!({
+                    "threadId": "source-thread",
                     "turnId": "source-turn",
-                    "item": { "id": "source-item", "type": "commandExecution", "status": "failed", "error": { "message": "exit 1" } }
+                    "completedAtMs": 1,
+                    "item": {
+                        "id": "source-item", "type": "commandExecution",
+                        "command": "false", "cwd": "C:/workspace", "processId": null,
+                        "source": "agent", "status": "failed", "commandActions": [],
+                        "aggregatedOutput": null, "exitCode": 1, "durationMs": null
+                    }
                 }),
             })
             .expect("map")
@@ -477,5 +641,159 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn unknown_item_is_rejected_instead_of_flattened_to_agent_text() {
+        let error = item_content(&serde_json::json!({
+            "id": "source-item",
+            "type": "futureItem",
+            "payload": { "secret": "structure" }
+        }))
+        .expect_err("unknown Codex item must fail typed admission");
+        assert!(matches!(error, MappingError::InvalidItemPayload(_)));
+    }
+
+    #[test]
+    fn unknown_notification_method_is_a_typed_protocol_mismatch() {
+        let error = SourceCoordinateMap::default()
+            .map_notification(RpcServerNotification {
+                method: "future/notification".to_string(),
+                params: serde_json::json!({}),
+            })
+            .expect_err("unknown notification must not be ignored");
+        assert!(
+            matches!(error, MappingError::UnsupportedMethod(method) if method == "future/notification")
+        );
+    }
+
+    #[test]
+    fn supported_item_passes_vendor_and_owned_deserialization_before_projection() {
+        let content = item_content(&serde_json::json!({
+            "id": "source-item",
+            "type": "agentMessage",
+            "text": "typed",
+            "phase": "commentary"
+        }))
+        .expect("typed item");
+        assert_eq!(
+            content,
+            RuntimeItemContent::AgentMessage {
+                text: "typed".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn owned_thread_item_accepts_omitted_and_null_and_emits_canonical_null() {
+        for fixture in [
+            serde_json::json!({
+                "id": "item-1", "type": "agentMessage", "text": "hello"
+            }),
+            serde_json::json!({
+                "id": "item-1", "type": "agentMessage", "text": "hello",
+                "phase": null, "memoryCitation": null
+            }),
+        ] {
+            let vendor: codex::ThreadItem = serde_json::from_value(fixture.clone()).unwrap();
+            let vendor_wire = serde_json::to_value(vendor).unwrap();
+            let owned: agentdash_agent_protocol::generated::codex_v2::thread_item::ThreadItem =
+                serde_json::from_value(vendor_wire).unwrap();
+            assert_eq!(
+                serde_json::to_value(owned).unwrap(),
+                serde_json::json!({
+                    "id": "item-1", "type": "agentMessage", "text": "hello",
+                    "phase": null, "memoryCitation": null
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn owned_mcp_elicitation_accepts_omitted_and_null_and_emits_canonical_null() {
+        for fixture in [
+            serde_json::json!({
+                "serverName": "docs", "threadId": "thread-1", "mode": "url",
+                "message": "open", "url": "https://example.com", "elicitationId": "e-1"
+            }),
+            serde_json::json!({
+                "serverName": "docs", "threadId": "thread-1", "turnId": null,
+                "mode": "url", "_meta": null, "message": "open",
+                "url": "https://example.com", "elicitationId": "e-1"
+            }),
+        ] {
+            let vendor: codex::McpServerElicitationRequestParams =
+                serde_json::from_value(fixture).unwrap();
+            let vendor_wire = serde_json::to_value(vendor).unwrap();
+            let owned = serde_json::from_value::<
+                agentdash_agent_protocol::generated::codex_v2::mcp_server_elicitation_request_params::McpServerElicitationRequestParams,
+            >(vendor_wire)
+            .unwrap();
+            assert_eq!(
+                serde_json::to_value(owned).unwrap(),
+                serde_json::json!({
+                    "serverName": "docs", "threadId": "thread-1", "turnId": null,
+                    "mode": "url", "_meta": null, "message": "open",
+                    "url": "https://example.com", "elicitationId": "e-1"
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn owned_thread_item_overlay_covers_mcp_uri_and_image_generation_paths() {
+        let mcp = serde_json::json!({
+            "type": "mcpToolCall", "id": "mcp-1", "server": "docs", "tool": "search",
+            "status": "inProgress", "arguments": {}, "appContext": null,
+            "pluginId": null, "result": null, "error": null, "durationMs": null
+        });
+        let vendor: codex::ThreadItem = serde_json::from_value(mcp).unwrap();
+        let owned: agentdash_agent_protocol::generated::codex_v2::thread_item::ThreadItem =
+            serde_json::from_value(serde_json::to_value(vendor).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(owned).unwrap()["mcpAppResourceUri"],
+            serde_json::Value::Null
+        );
+
+        for fixture in [
+            serde_json::json!({
+                "type": "imageGeneration", "id": "image-1", "status": "completed",
+                "result": "image", "revisedPrompt": null
+            }),
+            serde_json::json!({
+                "type": "imageGeneration", "id": "image-1", "status": "completed",
+                "result": "image", "revisedPrompt": null, "savedPath": null
+            }),
+        ] {
+            let vendor: codex::ThreadItem = serde_json::from_value(fixture).unwrap();
+            let owned: agentdash_agent_protocol::generated::codex_v2::thread_item::ThreadItem =
+                serde_json::from_value(serde_json::to_value(vendor).unwrap()).unwrap();
+            let canonical = serde_json::to_value(owned).unwrap();
+            assert_eq!(canonical["revisedPrompt"], serde_json::Value::Null);
+            assert_eq!(canonical["savedPath"], serde_json::Value::Null);
+        }
+    }
+
+    #[test]
+    fn sleep_duration_remains_required_non_nullable_number() {
+        type OwnedThreadItem =
+            agentdash_agent_protocol::generated::codex_v2::thread_item::ThreadItem;
+        let fixture = serde_json::json!({
+            "type": "sleep", "id": "sleep-1", "durationMs": 25
+        });
+        let owned: OwnedThreadItem = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(serde_json::to_value(owned).unwrap(), fixture);
+        assert!(
+            serde_json::from_value::<OwnedThreadItem>(
+                serde_json::json!({ "type": "sleep", "id": "sleep-1" })
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<OwnedThreadItem>(serde_json::json!({
+                "type": "sleep", "id": "sleep-1", "durationMs": null
+            }))
+            .is_err()
+        );
     }
 }

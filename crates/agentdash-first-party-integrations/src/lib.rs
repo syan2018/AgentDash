@@ -517,7 +517,7 @@ mod tests {
         );
         assert_eq!(
             contributions[0].definition.supported_protocol_revisions,
-            vec![140]
+            vec![144]
         );
     }
 

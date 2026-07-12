@@ -1,0 +1,61 @@
+{
+  "codex_crate_version": "0.144.1",
+  "codex_git_tag": "rust-v0.144.1",
+  "codex_commit": "44918ea1",
+  "experimental_api": false,
+  "upstream_v2_schema_sha256": "527314d061e392eda0000a62a688b3b148acccc8669a0a4610e4f7a366d4b163",
+  "mcp_elicitation_schema_sha256": "1bb165eee93a24842ea3ab8b6c79fba7e35d57d1b41b0e583105bb609cc605b0",
+  "root_types": [
+    "ThreadItem",
+    "ServerNotification",
+    "CommandExecutionRequestApprovalParams",
+    "FileChangeRequestApprovalParams",
+    "PermissionsRequestApprovalParams",
+    "ToolRequestUserInputParams",
+    "DynamicToolCallParams",
+    "McpServerElicitationRequestParams"
+  ],
+  "typify_version": "0.7.0",
+  "schema_overrides": [
+    {
+      "id": "mcp_elicitation_distribute_root_intersection_v1",
+      "schema": "McpServerElicitationRequestParams"
+    }
+  ],
+  "owned_nullable_overlays": [
+    {
+      "id": "owned_optional_nullable_fields_v1",
+      "codex_source": "app-server-protocol/src/protocol/v2/item.rs + mcp.rs@rust-v0.144.1",
+      "thread_item_paths": [
+        "UserMessage.clientId",
+        "AgentMessage.memoryCitation",
+        "AgentMessage.phase",
+        "CommandExecution.aggregatedOutput",
+        "CommandExecution.durationMs",
+        "CommandExecution.exitCode",
+        "CommandExecution.processId",
+        "McpToolCall.appContext",
+        "McpToolCall.durationMs",
+        "McpToolCall.error",
+        "McpToolCall.mcpAppResourceUri",
+        "McpToolCall.pluginId",
+        "McpToolCall.result",
+        "DynamicToolCall.contentItems",
+        "DynamicToolCall.durationMs",
+        "DynamicToolCall.namespace",
+        "DynamicToolCall.success",
+        "CollabAgentToolCall.model",
+        "CollabAgentToolCall.prompt",
+        "CollabAgentToolCall.reasoningEffort",
+        "WebSearch.action",
+        "ImageGeneration.revisedPrompt",
+        "ImageGeneration.savedPath"
+      ],
+      "mcp_elicitation_fields": [
+        "turnId",
+        "_meta"
+      ],
+      "wire_policy": "accept omitted or null; serialize canonical explicit null"
+    }
+  ]
+}

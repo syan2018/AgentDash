@@ -40,6 +40,7 @@ members = [
     "crates/agentdash-local",
     "crates/agentdash-local-tauri",
     "crates/agentdash-agent-protocol",
+    "crates/agentdash-agent-protocol-codegen",
 ]
 [workspace.package]
 version = "0.1.0"
@@ -91,8 +92,9 @@ sha2 = "0.10"
 json-patch = "2.0"
 globset = "0.4"
 tempfile = "3.18"
+typify = "0.7.0"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
-rmcp = "1.7"
+rmcp = "1.8.0"
 
 # 嵌入式脚本引擎
 rhai = { version = "1.24", features = ["serde", "sync"] }
@@ -136,9 +138,9 @@ agentdash-integration-codex = { path = "crates/agentdash-integration-codex" }
 agentdash-contracts = { path = "crates/agentdash-contracts" }
 
 # Codex Rust crates
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-app-server-protocol" }
-codex-utils-pty = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-utils-pty" }
-codex-utils-output-truncation = { git = "https://github.com/openai/codex.git", tag = "rust-v0.140.0", package = "codex-utils-output-truncation" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.144.1", package = "codex-app-server-protocol" }
+codex-utils-pty = { git = "https://github.com/openai/codex.git", tag = "rust-v0.144.1", package = "codex-utils-pty" }
+codex-utils-output-truncation = { git = "https://github.com/openai/codex.git", tag = "rust-v0.144.1", package = "codex-utils-output-truncation" }
 
 # Agent 事件流传输协议
 agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }

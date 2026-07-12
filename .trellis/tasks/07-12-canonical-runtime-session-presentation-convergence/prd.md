@@ -23,7 +23,7 @@
 - **R2b — Codex App Server 兼容空间**：本任务不实现对外 Codex-compatible server endpoint，但恢复后的协议必须保持标准 Codex App Server protocol 的方法/item/event语义可无损投影，并为未来 AgentDash typed extension 与 capability negotiation 留出明确边界。
 - **R2c — Envelope 与 payload 分层**：内部 durable Runtime envelope 可以增加 canonical thread identity、sequence、revision、operation、binding 与 recovery 信息，但不得替代、压扁或重新解释 Codex-shaped + AgentDash extension 的会话 payload。
 - **R2d — 原协议正确恢复**：以 `af21f9d7c^` 的生产 session presentation 行为和协议表达能力为恢复基线，将原 `codex_app_server_protocol::ThreadItem` 加 AgentDash 扩展的语义迁移到妥善的 owned/versioned contract；允许调整 backend envelope 解析，不允许借机改变老前端 presentation、交互或视觉行为。
-- **R2e — Vendor 终止与 conformance**：只有协议生成工具与 `agentdash-integration-codex` 依赖 Codex App Server vendor crate。标准 payload通过严格schema/serde transcode进入generated owned type，双向可验证且无generic fallback；method/variant admission必须穷举。固定Codex revision，升级时重新生成并以fixture/schema diff强制暴露漂移。
+- **R2e — Vendor 终止与 conformance**：只有协议生成工具与 `agentdash-integration-codex` 依赖 Codex App Server vendor crate。W1先将workspace内Codex Rust/npm/schema/fixture基线统一升级到官方`rust-v0.144.1`，标准 payload再通过严格schema/serde transcode进入generated owned type，双向可验证且无generic fallback；method/variant admission必须穷举。后续升级时重新生成并以fixture/schema diff强制暴露漂移。
 - **R3 — Presentation ownership**：`features/session` 拥有会话 presentation model 与 renderer；AgentRun workspace 负责提供目标、snapshot/events、command availability 与 product projection，不反向拥有第二套会话 UI。
 - **R4 — 单一投影链**：建立 canonical Runtime item/event 到 session presentation model 的单一 projection，覆盖 snapshot baseline、durable cursor、具有稳定identity的live transient delta、terminal、interaction 与 target isolation。有限durable replay不得冒充token live stream；重连和active turn replay不能重复追加delta。
 - **R5 — 行为完全保持**：消息、reasoning、plan、工具调用/结果、命令执行、文件变更、MCP、Companion、context change/compaction、typed error、usage、轮次状态、fork/round actions 与交互请求必须恢复 `af21f9d7c^` 的生产行为。除读取 backend envelope 等价物的 adapter 边界外，不重写组件结构、视觉语言或产品交互。
@@ -43,6 +43,7 @@
 - [ ] typed presentation 所需字段由 generated AgentDash-owned contracts 提供；UI 不从工具名、字符串或无 schema JSON 猜测 item 类型和状态。
 - [ ] `agentdash-agent-runtime-contract` 及 Managed Runtime 不依赖 `codex-app-server-protocol`；Codex vendor dependency只存在于protocol codegen工具与Codex Integration adapter。
 - [ ] 标准 Codex session/item/event 代表性 fixtures 在 vendor type 与 owned type 间保持 JSON 结构等价；所有受支持 variant 使用穷举转换，无 catch-all 文本化。
+- [ ] Workspace内Codex Rust crates、npm依赖、protocol revision检查、schema与fixture基线全部对齐`rust-v0.144.1`，不存在残留`0.140.0` pin。
 - [ ] 标准协议Rust/TypeScript产物可由单一命令从pinned Codex exporter重建，check mode能够检测手工修改、漏生成和上游schema漂移。
 - [ ] Rust contract、runtime/adapter、generated TypeScript 与 frontend projection 对同一 typed item/event 语义形成端到端测试。
 - [ ] 标准 Codex App Server protocol 的未来投影边界与 AgentDash extension seam 已明确；本任务不要求提供可连接的外部 server endpoint。

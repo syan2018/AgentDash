@@ -23,7 +23,7 @@ Pinned Codex source中的`app-server-protocol/src/export.rs`提供：
 - generated file set与内容diff
 - Windows换行与schema数组稳定化
 
-当前workspace pinned依赖为`codex-app-server-protocol 0.140.0`，git tag `rust-v0.140.0`，commit前缀`6506579`。实际升级以Cargo.lock与codegen lock manifest共同固定。
+盘点时workspace仍 pinned `codex-app-server-protocol 0.140.0`（`rust-v0.140.0`）。用户已将本任务目标基线调整为官方`rust-v0.144.1 / 0.144.1`；W1必须先统一Rust/npm/revision/schema/fixture pins，再以Cargo.lock与codegen lock manifest共同固定新基线。
 
 ## Typify
 
@@ -46,3 +46,5 @@ Generated：Codex标准session/item/event/interaction payload、transitive value
 Handwritten：AgentDash extension variants、Runtime durable envelope、root allowlist、extension composition、adapter method admission与业务语义测试。
 
 禁止：人工复制Codex字段、用`serde_json::Value`代替生成失败的结构、unknown item文本化、在production build动态拉取或生成上游协议。
+
+实际`0.144.1`生成链采用`typify 0.7.0`，并以固定schema hash约束MCP union机械override。nullable overlay使用`Variant.field`路径与schema枚举做missing/extra双向审计；owned输入允许审计字段omitted/null，输出canonical explicit null。全部generated TypeScript JSON整数必须为`number`，生成后存在`bigint`即失败。write/check共同管理Rust、TypeScript与schema roots的missing/changed/extra文件集合。

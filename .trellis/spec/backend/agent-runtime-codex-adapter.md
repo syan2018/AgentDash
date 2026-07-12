@@ -24,11 +24,13 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
 }
 ```
 
-Codex Rust protocol、npm package与Integration protocol revision必须使用同一个已审计版本；当前基线为`0.140.0 / revision 140`。Adapter所有vendor DTO、进程与artifact细节封装在`agentdash-integration-codex`。
+Codex Rust protocol、npm package与Integration protocol revision必须使用同一个已审计版本；当前基线为`0.144.1 / revision 144`。Adapter所有vendor DTO、进程与artifact细节封装在`agentdash-integration-codex`或workspace protocol codegen工具；其它production crate只消费generated AgentDash-owned类型。
 
 ## 3. Contracts
 
 - Codex通过Integration contribution/factory进入Driver Host；Application/Executor不硬编码构造Codex connector。旧`codex_bridge`不能与新adapter并存。
+- JSON-RPC frame可先保留`method + params` transport形态，但admission必须按method把params依次反序列化为vendor typed params与generated owned params。未知method返回typed `UnsupportedMethod`；刻意忽略的hook notification也必须显式admit为typed no-op。
+- `ThreadItem`先经vendor typed deserialize，再strict transcode为generated owned item。当前Runtime尚未承载的标准family返回typed `UnsupportedItemFamily`；invalid JSON返回`InvalidItemPayload`，禁止转换为AgentMessage文本。
 - 每个Runtime binding拥有独立`Arc<Mutex<CodexSession>>`与持久stdout pump；service instance可并发承载多个binding，不能用全局session锁串行化全部线程。
 - Bind intent映射为`thread/start|resume|fork`；dispatch映射turn start/steer/interrupt与Interaction response；inspect映射thread/read。Source thread/turn/item/request coordinates与generation必须完整保留。
 - RPC accepted不等于canonical terminal。`turn/interrupt`成功只表示请求被接受，最终Interrupted/Failed/Completed由notification映射。EOF使active turn与pending interactions exactly-once进入Lost。
@@ -49,6 +51,8 @@ Codex Rust protocol、npm package与Integration protocol revision必须使用同
 | 场景 | 必须得到的结果 |
 | --- | --- |
 | Rust/npm/service protocol version不一致 | build/contribution validation失败 |
+| notification/request method未知或params不满足0.144.1 typed shape | typed protocol mismatch，不静默忽略 |
+| ThreadItem有效但当前Runtime family尚未承载 | `UnsupportedItemFamily`，不文本化 |
 | binding A/B并发dispatch | 独立session锁，不互相串行或串事件 |
 | Resume/Fork surface含vendor不支持的dynamic tools | typed Unsupported，不虚报ack |
 | structured/image/file input | 保持typed vendor字段，无文本拍平 |

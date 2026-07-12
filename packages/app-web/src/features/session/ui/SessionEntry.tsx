@@ -232,7 +232,7 @@ export function SingleEntry({
 
 function SessionErrorCard({ notification }: { notification: ErrorNotification }) {
   const { error } = notification;
-  const errorInfo = formatCodexErrorInfo(error.codexErrorInfo);
+  const errorInfo = formatCodexErrorInfo(error.codexErrorInfo ?? null);
   const messageProjection = projectDiagnosticText(error.message);
   const details = error.additionalDetails?.trim() ?? "";
   const detailProjection = details.length > 0 ? projectDiagnosticDetails(details) : null;
@@ -294,24 +294,24 @@ function formatCodexErrorInfo(info: CodexErrorInfo | null): string | null {
   if (info == null) return null;
   if (typeof info === "string") return info;
   if ("httpConnectionFailed" in info) {
-    return formatHttpErrorInfo("http_connection_failed", info.httpConnectionFailed.httpStatusCode);
+    return formatHttpErrorInfo("http_connection_failed", info.httpConnectionFailed.httpStatusCode ?? null);
   }
   if ("responseStreamConnectionFailed" in info) {
     return formatHttpErrorInfo(
       "response_stream_connection_failed",
-      info.responseStreamConnectionFailed.httpStatusCode,
+      info.responseStreamConnectionFailed.httpStatusCode ?? null,
     );
   }
   if ("responseStreamDisconnected" in info) {
     return formatHttpErrorInfo(
       "response_stream_disconnected",
-      info.responseStreamDisconnected.httpStatusCode,
+      info.responseStreamDisconnected.httpStatusCode ?? null,
     );
   }
   if ("responseTooManyFailedAttempts" in info) {
     return formatHttpErrorInfo(
       "response_too_many_failed_attempts",
-      info.responseTooManyFailedAttempts.httpStatusCode,
+      info.responseTooManyFailedAttempts.httpStatusCode ?? null,
     );
   }
   if ("activeTurnNotSteerable" in info) {

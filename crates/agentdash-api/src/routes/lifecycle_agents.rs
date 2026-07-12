@@ -1036,11 +1036,11 @@ pub(crate) fn runtime_input_from_codex(
                 data_url: url,
             }),
             codex::UserInput::LocalImage { path, .. } => Some(RuntimeInput::FileReference {
-                uri: path.to_string_lossy().into_owned(),
+                uri: path,
                 media_type: Some("image".to_string()),
             }),
             codex::UserInput::Skill { name, path } => Some(RuntimeInput::FileReference {
-                uri: path.to_string_lossy().into_owned(),
+                uri: path,
                 media_type: Some(format!("application/x-agent-skill; name={name}")),
             }),
             codex::UserInput::Mention { name, path } => Some(RuntimeInput::FileReference {

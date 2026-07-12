@@ -255,3 +255,58 @@ const status = agentRunListPresentationStatus(
   entry.lifecycle_status,
 );
 ```
+
+## 9. Schema-generated Owned Conversation Protocol
+
+### 9.1 Scope / Trigger
+
+修改Codex revision、conversation item/event/interaction、Rust/TypeScript生成器或跨层nullable/number语义时适用。标准Codex payload由固定上游schema机械生成AgentDash-owned类型；vendor crate只允许出现在protocol codegen工具与Codex Integration。
+
+### 9.2 Signatures
+
+```powershell
+cargo run -p agentdash-agent-protocol-codegen -- write
+cargo run -p agentdash-agent-protocol-codegen -- check
+```
+
+生成锁记录upstream tag/commit、schema hash、root types、generator version、schema override identity与variant-qualified nullable paths，例如`CommandExecution.durationMs`。
+
+### 9.3 Contracts
+
+- 上游standard字段和variant不手抄；局部generator缺陷只能通过固定schema hash与路径约束的机械override处理。
+- nullable允许空间按`Variant.field`审计。已声明nullable的字段同时接受omitted/null并输出稳定canonical form；同名非nullable字段不能被全局替换影响。
+- JSON wire整数在TypeScript中统一为`number`，generated outputs不得出现`bigint`；`RequestId`保持`string | number`。
+- write删除所有managed root中的stale extra文件；check分别拒绝missing、changed与extra。
+- generated owned protocol不得依赖Codex vendor crate。Integration admission先vendor typed deserialize，再strict transcode为owned type。
+
+### 9.4 Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| schema hash与override baseline不一致 | codegen失败并要求审查override |
+| nullable审计出现missing/extra qualified path | codegen失败，不扩大为字段名全局规则 |
+| 同字段名在不同variant中nullable语义不同 | 分variant生成；required/nonnullable branch保持原shape |
+| generated TS出现`bigint` | generation/check失败 |
+| managed root存在stale extra | check失败；write删除后重建 |
+| vendor payload无法进入owned type | typed protocol mismatch，无JSON/text fallback |
+
+### 9.5 Good / Base / Bad Cases
+
+- Good：`CommandExecution.durationMs`接受null并canonical输出null，`Sleep.durationMs`仍为必填number。
+- Base：上游新增nullable path时allowlist双向审计失败，由协议升级显式决定是否接纳。
+- Bad：对`durationMs`做全局文本替换，导致非nullablevariant也变成optional。
+
+### 9.6 Tests Required
+
+- codegen执行write→check，并通过临时extra文件证明Rust、TypeScript与schema三个managed root的check/write行为。
+- nullable fixtures覆盖omitted、null与canonical output，同时保留同名nonnullable字段的拒绝测试。
+- generated TS执行no-`bigint`断言；前端typecheck验证consumer边界。
+- vendor→owned strict admission覆盖全部admitted item/notification/request family、unknown method/item与显式typed no-op。
+- `cargo tree -i codex-app-server-protocol --edges normal`证明直接owner只有codegen与Codex Integration。
+
+### 9.7 Wrong vs Correct
+
+```text
+Wrong: nullable_fields = { "durationMs" } -> 全局修改每个variant
+Correct: nullable_paths = { "CommandExecution.durationMs", ... } -> 只修改对应discriminator branch
+```

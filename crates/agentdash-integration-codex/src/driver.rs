@@ -644,7 +644,10 @@ fn projected_items(result: &Value) -> Result<Vec<DriverProjectedItem>, DriverErr
                         reason: error.to_string(),
                         critical: true,
                     })?,
-                content: item_content(item),
+                content: item_content(item).map_err(|error| DriverError::ProtocolViolation {
+                    reason: error.to_string(),
+                    critical: true,
+                })?,
             });
         }
     }

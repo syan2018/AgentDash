@@ -23,7 +23,7 @@
 //! - 文件变更通过 [`FileChangeSpec`] 表达不同子语义，避免调用方接触 codex 内部
 //!   `PatchChangeKind` 等类型
 
-use codex_app_server_protocol as codex;
+use crate::codex_app_server_protocol as codex;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -312,10 +312,7 @@ mod tests {
                     codex::PatchChangeKind::Update { move_path } => move_path.clone(),
                     other => panic!("expected Update kind, got {other:?}"),
                 };
-                assert_eq!(
-                    move_path.expect("Rename move_path").to_string_lossy(),
-                    "src/new.rs"
-                );
+                assert_eq!(move_path.expect("Rename move_path"), "src/new.rs");
             }
             other => panic!("expected FileChange, got {other:?}"),
         }

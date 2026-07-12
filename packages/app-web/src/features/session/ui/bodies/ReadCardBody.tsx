@@ -138,7 +138,7 @@ type ContentItems = NonNullable<
 
 function extractTextFromItem(item: AgentDashThreadItem): string | null {
   if (item.type === "fsRead" || item.type === "dynamicToolCall") {
-    return extractText(item.contentItems);
+    return extractText(item.contentItems ?? null);
   }
   return null;
 }

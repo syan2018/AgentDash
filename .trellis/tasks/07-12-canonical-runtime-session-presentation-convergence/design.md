@@ -38,7 +38,7 @@ features/session transport/envelope adapter
 生成链：
 
 ```text
-pinned codex-app-server-protocol
+pinned codex-app-server-protocol 0.144.1 (rust-v0.144.1)
   -> upstream generate_json/generate_ts
   -> pinned v2 schema bundle + fixture tree
   -> AgentDash Rust codegen
@@ -53,7 +53,7 @@ pinned codex-app-server-protocol
 
 新增workspace内专用`agentdash-agent-protocol-codegen`工具crate（最终名称可按目录规范调整）：
 
-- pinned `codex-app-server-protocol`：调用上游`generate_json_with_experimental`/`generate_ts_with_options`；
+- pinned `codex-app-server-protocol 0.144.1`（`rust-v0.144.1`）：调用上游`generate_json_with_experimental`/`generate_ts_with_options`；
 - pinned `typify = 0.7.0`：通过builder interface从JSON Schema生成可提交的Rust source；
 - `serde/serde_json`：canonical schema与strict transcode fixtures；
 - `sha2`：记录schema bundle digest；
@@ -104,7 +104,7 @@ cargo run -p agentdash-agent-protocol-codegen -- check
 
 ### 2.1.5 Codex升级流程
 
-1. 更新workspace pinned Codex tag/commit。
+1. 更新workspace全部Codex Rust/npm/protocol revision pin；本任务首个基线为`rust-v0.144.1`。
 2. 运行codegen `write`，审查schema/lock/root dependency diff。
 3. 修复method admission、extension discriminant冲突与strict transcode tests。
 4. 运行codegen `check`、protocol conformance、Runtime与frontend parity gates。

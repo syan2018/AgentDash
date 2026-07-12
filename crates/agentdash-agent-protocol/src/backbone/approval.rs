@@ -1,4 +1,4 @@
-use codex_app_server_protocol as codex;
+use crate::codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 

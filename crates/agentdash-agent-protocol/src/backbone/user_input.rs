@@ -1,6 +1,6 @@
+use crate::codex_app_server_protocol as codex;
 use agentdash_agent_types::ContentPart;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
-use codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
@@ -157,10 +157,12 @@ fn user_input_block_to_content_part(input: &UserInputBlock) -> Option<ContentPar
             }
         }
         codex::UserInput::Image { url, .. } => Some(image_url_to_content_part(url)),
-        codex::UserInput::LocalImage { path, .. } => Some(local_image_to_content_part(path)),
+        codex::UserInput::LocalImage { path, .. } => {
+            Some(local_image_to_content_part(std::path::Path::new(path)))
+        }
         codex::UserInput::Skill { name, path } => Some(ContentPart::text(format!(
             "[引用 Skill: {name} ({})]",
-            path.display()
+            path
         ))),
         codex::UserInput::Mention { name, path } => {
             Some(ContentPart::text(format!("[引用: {name} ({path})]")))
@@ -317,7 +319,7 @@ pub fn codex_user_input_to_text(
         .filter_map(|item| match item {
             codex::UserInput::Text { text, .. } => Some(text.as_str().to_string()),
             codex::UserInput::Image { url, .. } => Some(url.clone()),
-            codex::UserInput::LocalImage { path, .. } => path.to_str().map(ToString::to_string),
+            codex::UserInput::LocalImage { path, .. } => Some(path.clone()),
             codex::UserInput::Skill { name, .. } => Some(name.clone()),
             codex::UserInput::Mention { name, .. } => Some(name.clone()),
         })

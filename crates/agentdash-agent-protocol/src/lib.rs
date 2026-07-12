@@ -1,4 +1,5 @@
 pub mod backbone;
+pub mod generated;
 pub mod thread_item;
 
 // ─── 集中 re-export（保持外部 API 不变）───────────────────
@@ -26,7 +27,23 @@ pub use backbone::user_input::{
     user_input_blocks_to_content_parts, user_input_text,
 };
 
-pub use codex_app_server_protocol;
+/// AgentDash-owned Codex-shaped protocol facade.
+pub mod codex_app_server_protocol {
+    pub use crate::generated::codex_v2::command_execution_request_approval_params::CommandExecutionRequestApprovalParams;
+    pub use crate::generated::codex_v2::file_change_request_approval_params::FileChangeRequestApprovalParams;
+    pub use crate::generated::codex_v2::permissions_request_approval_params::PermissionsRequestApprovalParams;
+    pub use crate::generated::codex_v2::server_notification::{
+        AgentMessageDeltaNotification, CommandExecutionOutputDeltaNotification, ErrorNotification,
+        FileChangeOutputDeltaNotification, ItemCompletedNotification, ItemStartedNotification,
+        McpToolCallProgressNotification, PlanDeltaNotification,
+        ReasoningSummaryTextDeltaNotification, ReasoningTextDeltaNotification, RequestId,
+        ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, Turn,
+        TurnDiffUpdatedNotification, TurnError, TurnPlanStep, TurnPlanStepStatus,
+        TurnPlanUpdatedNotification, TurnStatus,
+    };
+    pub use crate::generated::codex_v2::thread_item::*;
+    pub use crate::generated::codex_v2::tool_request_user_input_params::ToolRequestUserInputParams;
+}
 
 pub use thread_item::{
     AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,

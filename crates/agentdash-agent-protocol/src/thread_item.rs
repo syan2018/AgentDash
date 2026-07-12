@@ -3,7 +3,7 @@
 //! Codex Protocol 已经覆盖的 item 与状态语义直接从 Codex 导出；AgentDash 只在
 //! Codex 没有一等 variant 的地方做加法扩展。
 
-use codex_app_server_protocol as codex;
+use crate::codex_app_server_protocol as codex;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -91,7 +91,7 @@ pub enum ShellExecExecutionMode {
 impl AgentDashThreadItem {
     pub fn id(&self) -> &str {
         match self {
-            AgentDashThreadItem::Codex(item) => item.id(),
+            AgentDashThreadItem::Codex(item) => codex_item_id(item),
             AgentDashThreadItem::AgentDash(item) => item.id(),
         }
     }
@@ -115,6 +115,29 @@ impl AgentDashThreadItem {
             },
             AgentDashThreadItem::AgentDash(item) => Some(item.id()),
         }
+    }
+}
+
+fn codex_item_id(item: &codex::ThreadItem) -> &str {
+    match item {
+        codex::ThreadItem::UserMessage { id, .. }
+        | codex::ThreadItem::HookPrompt { id, .. }
+        | codex::ThreadItem::AgentMessage { id, .. }
+        | codex::ThreadItem::Plan { id, .. }
+        | codex::ThreadItem::Reasoning { id, .. }
+        | codex::ThreadItem::CommandExecution { id, .. }
+        | codex::ThreadItem::FileChange { id, .. }
+        | codex::ThreadItem::McpToolCall { id, .. }
+        | codex::ThreadItem::DynamicToolCall { id, .. }
+        | codex::ThreadItem::CollabAgentToolCall { id, .. }
+        | codex::ThreadItem::SubAgentActivity { id, .. }
+        | codex::ThreadItem::WebSearch { id, .. }
+        | codex::ThreadItem::ImageView { id, .. }
+        | codex::ThreadItem::Sleep { id, .. }
+        | codex::ThreadItem::ImageGeneration { id, .. }
+        | codex::ThreadItem::EnteredReviewMode { id, .. }
+        | codex::ThreadItem::ExitedReviewMode { id, .. }
+        | codex::ThreadItem::ContextCompaction { id, .. } => id,
     }
 }
 
@@ -186,6 +209,15 @@ impl AgentDashNativeThreadItem {
 impl From<codex::ThreadItem> for AgentDashThreadItem {
     fn from(value: codex::ThreadItem) -> Self {
         AgentDashThreadItem::Codex(value)
+    }
+}
+
+impl From<crate::generated::codex_v2::server_notification::ThreadItem> for AgentDashThreadItem {
+    fn from(value: crate::generated::codex_v2::server_notification::ThreadItem) -> Self {
+        let value = serde_json::to_value(value).expect("generated server item serializes");
+        let item = serde_json::from_value(value)
+            .expect("generated server item conforms to owned ThreadItem schema");
+        AgentDashThreadItem::Codex(item)
     }
 }
 

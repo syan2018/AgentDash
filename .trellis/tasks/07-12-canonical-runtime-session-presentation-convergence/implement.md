@@ -15,6 +15,7 @@
 
 ## 2. W1 — Owned Conversation Protocol
 
+- 先将workspace内Codex Rust crates、npm依赖、protocol revision检查、schema与fixture统一升级到`rust-v0.144.1 / 0.144.1`，清除旧`0.140.0`基线。
 - 先做codegen feasibility gate：使用上游`generate_json/generate_ts`输出固定v2 schema，验证目标schema能稳定生成serde Rust types并通过代表性roundtrip。
 - 新增workspace内protocol-codegen工具，引入pinned`typify 0.7.0` builder、schema canonicalization、SHA-256 lock manifest、rustfmt与文件树diff。
 - 建立protocol generator的write/check模式并提交pinned schema/TS fixtures、lock manifest与generated Rust/TypeScript；标准协议不得手抄。
@@ -29,10 +30,11 @@
 
 ### W1 Exit Criteria
 
-- [ ] codegen write/check可重复且无需全局CLI。
-- [ ] 标准协议generated Rust/TS与pinned schema一致。
-- [ ] Codex standard payload strict transcode与conformance通过。
-- [ ] Runtime/Application production依赖图未引入Codex vendor crate。
+- [x] codegen write/check可重复且无需全局CLI。
+- [x] Workspace全部Codex version pins与protocol fixtures统一为`0.144.1`。
+- [x] 标准协议generated Rust/TS与pinned schema一致。
+- [x] Codex standard payload strict transcode与conformance通过。
+- [x] Runtime/Application production依赖图未引入Codex vendor crate。
 
 ## 3. W2 — Runtime Envelope Projection
 

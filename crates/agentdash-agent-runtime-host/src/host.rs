@@ -571,6 +571,10 @@ impl IntegrationDriverHost {
             self.repository.reserve_binding(pending).await?;
         }
         let driver = self.driver_for_offer(&offer).await?;
+        let resume_source_thread_id = match &request.intent {
+            DriverBindIntent::Resume { source_thread_id } => Some(source_thread_id.clone()),
+            _ => None,
+        };
         let driver_binding = match driver
             .bind(DriverBindRequest {
                 binding_id: request.binding_id.clone(),
@@ -589,6 +593,17 @@ impl IntegrationDriverHost {
                 return Err(error.into());
             }
         };
+        if resume_source_thread_id
+            .as_ref()
+            .is_some_and(|expected| expected != &driver_binding.source_thread_id)
+        {
+            self.repository
+                .fail_binding(&request.binding_id, offer.generation)
+                .await?;
+            return Err(AgentRuntimeHostError::DispatchRejected {
+                reason: "driver Resume returned a different source thread identity".to_string(),
+            });
+        }
         if driver_binding.applied_surface_revision != request.bound_surface.revision
             || driver_binding.applied_surface_digest != request.bound_surface.digest
             || driver_binding.applied_tool_set_revision != request.bound_surface.tool_set_revision
@@ -788,6 +803,8 @@ impl IntegrationDriverHost {
             generation: binding.driver_generation,
             source_thread_id: source.source_thread_id,
             lease_epoch: lease.epoch,
+            lease_owner: lease.owner,
+            lease_token: lease.token,
             repository: self.repository.clone(),
             inner: sink,
         });
@@ -1000,6 +1017,8 @@ struct GenerationFencedEventSink {
     generation: RuntimeDriverGeneration,
     source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
     lease_epoch: u64,
+    lease_owner: String,
+    lease_token: String,
     repository: Arc<dyn AgentRuntimeHostRepository>,
     inner: Arc<dyn DriverEventSink>,
 }
@@ -1012,6 +1031,19 @@ impl DriverEventSink for GenerationFencedEventSink {
             || event.source_thread_id != self.source_thread_id
         {
             return Err(DriverError::StaleGeneration);
+        }
+        let binding_lost = matches!(&event.event, RuntimeEvent::BindingLost { .. });
+        if !binding_lost {
+            self.repository
+                .validate_lease(
+                    &self.binding_id,
+                    self.generation,
+                    &self.lease_owner,
+                    &self.lease_token,
+                    Utc::now(),
+                )
+                .await
+                .map_err(|_| DriverError::StaleGeneration)?;
         }
         let binding = self
             .repository
@@ -1085,6 +1117,15 @@ impl DriverEventSink for GenerationFencedEventSink {
             _ => {}
         }
         self.inner.emit(event).await?;
+        if binding_lost {
+            self.repository
+                .mark_binding_lost(&self.binding_id, self.generation)
+                .await
+                .map_err(|error| DriverError::Unavailable {
+                    reason: error.to_string(),
+                    retryable: true,
+                })?;
+        }
         for coordinate in coordinates {
             if let Err(error) = self
                 .repository

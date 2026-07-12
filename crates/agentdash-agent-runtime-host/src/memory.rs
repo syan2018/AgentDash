@@ -33,18 +33,18 @@ struct MemoryHostState {
 }
 
 #[derive(Default)]
-pub struct AgentRuntimeHostRepositoryFixture {
+pub struct EphemeralAgentRuntimeHostRepository {
     state: RwLock<MemoryHostState>,
 }
 
-impl AgentRuntimeHostRepositoryFixture {
+impl EphemeralAgentRuntimeHostRepository {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 #[async_trait]
-impl AgentRuntimeHostRepository for AgentRuntimeHostRepositoryFixture {
+impl AgentRuntimeHostRepository for EphemeralAgentRuntimeHostRepository {
     async fn load_instance(
         &self,
         id: &RuntimeServiceInstanceId,
@@ -249,13 +249,27 @@ impl AgentRuntimeHostRepository for AgentRuntimeHostRepositoryFixture {
                 actual: Some(1),
             });
         }
-        if state.thread_bindings.contains_key(&binding.thread_id) {
-            return Err(HostStoreError::Conflict {
-                entity: "agent_runtime_binding.thread_id",
-                id: binding.thread_id.to_string(),
-                expected: None,
-                actual: Some(1),
-            });
+        if let Some(existing_id) = state.thread_bindings.get(&binding.thread_id) {
+            let existing =
+                state
+                    .bindings
+                    .get(existing_id)
+                    .ok_or_else(|| HostStoreError::Invariant {
+                        reason: "thread binding index points to a missing binding".to_string(),
+                    })?;
+            if matches!(
+                existing.state,
+                RuntimeBindingState::Pending
+                    | RuntimeBindingState::Active
+                    | RuntimeBindingState::Desynchronized
+            ) {
+                return Err(HostStoreError::Conflict {
+                    entity: "agent_runtime_binding.thread_id",
+                    id: binding.thread_id.to_string(),
+                    expected: None,
+                    actual: Some(1),
+                });
+            }
         }
         let offer =
             state
@@ -615,6 +629,18 @@ impl AgentRuntimeHostRepository for AgentRuntimeHostRepositoryFixture {
         now: DateTime<Utc>,
     ) -> Result<DriverLease, HostStoreError> {
         let state = self.state.read().await;
+        let binding = state
+            .bindings
+            .get(binding_id)
+            .ok_or_else(|| HostStoreError::NotFound {
+                entity: "agent_runtime_binding",
+                id: binding_id.to_string(),
+            })?;
+        if binding.state != RuntimeBindingState::Active || binding.driver_generation != generation {
+            return Err(HostStoreError::Invariant {
+                reason: "driver lease binding is not active for this generation".to_string(),
+            });
+        }
         let lease = state
             .leases
             .get(binding_id)
@@ -654,6 +680,7 @@ impl AgentRuntimeHostRepository for AgentRuntimeHostRepositoryFixture {
             });
         }
         binding.state = RuntimeBindingState::Lost;
+        state.leases.remove(binding_id);
         Ok(())
     }
 

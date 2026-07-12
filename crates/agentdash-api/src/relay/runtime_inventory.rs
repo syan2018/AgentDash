@@ -8,6 +8,7 @@ use agentdash_agent_runtime_host::{
     ActivateAgentServiceInstance, ConformanceEvidence, IntegrationDriverHost,
     PutAgentServiceInstance, ServiceInstanceDesiredState, profile_digest,
 };
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_integration_api::AgentRuntimePlacement;
 use agentdash_relay::RuntimeOfferAdvertisement;
 use tokio::sync::Mutex;
@@ -65,22 +66,12 @@ impl CloudRemoteRuntimeInventory {
         let mut next = BTreeMap::new();
         let mut newly_activated = Vec::new();
         for advertisement in advertisements {
-            let source_key = format!(
-                "{}:{}:{}",
-                advertisement.service_instance_id,
-                advertisement.driver_generation.0,
-                advertisement.profile_digest
-            );
+            let source_key = source_identity(advertisement);
             if let Some(active) = previous_snapshot.get(&source_key) {
                 next.insert(source_key, active.clone());
                 continue;
             }
-            let instance_id = RuntimeServiceInstanceId::new(format!(
-                "remote-{}-{}-g{}",
-                stable_coordinate(backend_id),
-                stable_coordinate(advertisement.service_instance_id.as_str()),
-                advertisement.driver_generation.0,
-            ))?;
+            let instance_id = proxy_instance_id(backend_id, advertisement)?;
             let expected_revision = self
                 .host
                 .service_instance(&instance_id)
@@ -94,6 +85,7 @@ impl CloudRemoteRuntimeInventory {
                     config: serde_json::json!({
                         "sourceServiceInstanceId": advertisement.service_instance_id,
                         "sourceDriverGeneration": advertisement.driver_generation.0,
+                        "sourceHostIncarnationId": advertisement.host_incarnation_id,
                     }),
                     credentials: BTreeMap::new(),
                     placement: AgentRuntimePlacement::Remote {
@@ -138,6 +130,17 @@ impl CloudRemoteRuntimeInventory {
                 }
             };
             newly_activated.push((instance_id.clone(), offer.instance_revision));
+            diag!(
+                Info,
+                Subsystem::Relay,
+                backend_id = %backend_id,
+                host_incarnation_id = %advertisement.host_incarnation_id,
+                service_instance_id = %advertisement.service_instance_id,
+                offer_generation = advertisement.driver_generation.0,
+                proxy_instance_id = %instance_id,
+                result = "activated",
+                "Agent Runtime remote offer inventory synced"
+            );
             next.insert(source_key, (instance_id, offer.instance_revision));
         }
         if !self.online_backends.lock().await.contains(backend_id) {
@@ -186,6 +189,30 @@ impl CloudRemoteRuntimeInventory {
             let _ = self.host.deactivate(instance_id, *revision).await;
         }
     }
+}
+
+fn source_identity(advertisement: &RuntimeOfferAdvertisement) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        advertisement.host_incarnation_id,
+        advertisement.service_instance_id,
+        advertisement.driver_generation.0,
+        advertisement.profile_digest
+    )
+}
+
+fn proxy_instance_id(
+    backend_id: &str,
+    advertisement: &RuntimeOfferAdvertisement,
+) -> anyhow::Result<RuntimeServiceInstanceId> {
+    RuntimeServiceInstanceId::new(format!(
+        "remote-{}-{}-{}-g{}",
+        stable_coordinate(backend_id),
+        stable_coordinate(advertisement.host_incarnation_id.as_str()),
+        stable_coordinate(advertisement.service_instance_id.as_str()),
+        advertisement.driver_generation.0,
+    ))
+    .map_err(Into::into)
 }
 
 fn validate_advertisement(
@@ -305,6 +332,10 @@ mod tests {
                     .expect("instance id"),
                 instance_revision: 1,
                 driver_generation: RuntimeDriverGeneration(3),
+                host_incarnation_id: agentdash_agent_runtime_contract::HostIncarnationId::new(
+                    "host-incarnation-1",
+                )
+                .expect("host incarnation id"),
                 protocol_revision: manifest.protocol_revision,
                 effective_profile,
                 profile_digest: digest.clone(),
@@ -329,5 +360,20 @@ mod tests {
         let mut forged = offer;
         forged.build_digest = "forged-build".to_string();
         assert!(validate_advertisement(&definition, &forged).is_err());
+    }
+
+    #[test]
+    fn host_incarnation_replaces_remote_offer_source_and_proxy_identity() {
+        let (_, first) = advertisement();
+        let mut restarted = first.clone();
+        restarted.host_incarnation_id =
+            agentdash_agent_runtime_contract::HostIncarnationId::new("host-incarnation-2")
+                .expect("host incarnation id");
+
+        assert_ne!(source_identity(&first), source_identity(&restarted));
+        assert_ne!(
+            proxy_instance_id("backend-local", &first).expect("first proxy id"),
+            proxy_instance_id("backend-local", &restarted).expect("restarted proxy id")
+        );
     }
 }

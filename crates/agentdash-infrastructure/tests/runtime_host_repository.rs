@@ -343,7 +343,6 @@ async fn postgres_host_repository_keeps_activation_binding_source_and_lease_atom
         )
         .await
         .expect("takeover lease is valid");
-
     let rollback_binding_id: RuntimeBindingId = id("binding-rollback-pg");
     assert!(
         repository
@@ -373,6 +372,31 @@ async fn postgres_host_repository_keeps_activation_binding_source_and_lease_atom
             .await
             .expect("rollback anchor count");
     assert_eq!(leaked_anchor, 0);
+
+    repository
+        .mark_binding_lost(&binding_id, generation)
+        .await
+        .expect("mark binding lost");
+    assert!(
+        repository
+            .validate_lease(
+                &binding_id,
+                generation,
+                "host-b",
+                &takeover.token,
+                Utc::now(),
+            )
+            .await
+            .is_err(),
+        "lost binding must fence the previously valid lease",
+    );
+    let remaining_lease: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agent_runtime_driver_lease WHERE binding_id=$1")
+            .bind(binding_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("count invalidated lease");
+    assert_eq!(remaining_lease, 0);
 
     let mut updated_instance = active_instance.clone();
     updated_instance.config = json!({"endpoint": "changed"});

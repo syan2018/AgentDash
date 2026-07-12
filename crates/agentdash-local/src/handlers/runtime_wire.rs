@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use agentdash_agent_runtime_contract::AgentRuntimeDriver;
+use agentdash_agent_runtime_contract::HostIncarnationId;
 use agentdash_agent_runtime_host::IntegrationDriverHost;
 use agentdash_agent_runtime_wire::{RuntimeWireEnvelope, RuntimeWireFrame, RuntimeWireResponse};
 use agentdash_integration_api::AgentRuntimePlacementId;
@@ -29,6 +30,7 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 pub struct HostRuntimeDriverEndpointResolver {
     host: Arc<IntegrationDriverHost>,
     host_id: String,
+    host_incarnation_id: HostIncarnationId,
     transport_id: AgentRuntimePlacementId,
 }
 
@@ -36,11 +38,13 @@ impl HostRuntimeDriverEndpointResolver {
     pub fn new(
         host: Arc<IntegrationDriverHost>,
         host_id: impl Into<String>,
+        host_incarnation_id: HostIncarnationId,
         transport_id: AgentRuntimePlacementId,
     ) -> Self {
         Self {
             host,
             host_id: host_id.into(),
+            host_incarnation_id,
             transport_id,
         }
     }
@@ -52,7 +56,10 @@ impl RuntimeDriverEndpointResolver for HostRuntimeDriverEndpointResolver {
         &self,
         provenance: &RuntimeRelayProvenance,
     ) -> Result<Arc<dyn AgentRuntimeDriver>, String> {
-        if provenance.host_id != self.host_id || provenance.transport_id != self.transport_id {
+        if provenance.host_id != self.host_id
+            || provenance.host_incarnation_id != self.host_incarnation_id
+            || provenance.transport_id != self.transport_id
+        {
             return Err("Runtime Wire placement targets another local Host transport".to_string());
         }
         self.host
@@ -82,6 +89,7 @@ impl RuntimeDriverEndpointResolver for HostRuntimeDriverEndpointResolver {
                 service_instance_id: offer.service_instance_id,
                 instance_revision: offer.instance_revision,
                 driver_generation: offer.generation,
+                host_incarnation_id: self.host_incarnation_id.clone(),
                 protocol_revision: offer.protocol_revision,
                 effective_profile: offer.effective_profile,
                 profile_digest: offer.profile_digest,
@@ -496,6 +504,8 @@ mod tests {
                 != AgentServiceDefinitionId::new("service-definition-local").expect("definition id")
                 || provenance.service_instance_id != id("service-local")
                 || provenance.driver_generation != RuntimeDriverGeneration(7)
+                || provenance.host_incarnation_id
+                    != HostIncarnationId::new("host-incarnation-1").expect("host incarnation id")
                 || provenance.host_id != "local-host"
                 || provenance.transport_id
                     != AgentRuntimePlacementId::new("desktop-local").expect("transport id")
@@ -572,6 +582,8 @@ mod tests {
                 .expect("definition id"),
             service_instance_id: id("service-local"),
             driver_generation: RuntimeDriverGeneration(7),
+            host_incarnation_id: HostIncarnationId::new("host-incarnation-1")
+                .expect("host incarnation id"),
             host_id: "local-host".to_string(),
             transport_id: AgentRuntimePlacementId::new("desktop-local").expect("transport id"),
         }
@@ -792,6 +804,27 @@ mod tests {
                 "open".into(),
                 RuntimeRelayOpen {
                     stream_id: RuntimeRelayStreamId("stream-invalid".into()),
+                    provenance: invalid,
+                    supported_protocol_revisions: vec![RUNTIME_WIRE_PROTOCOL_REVISION],
+                    resume_after_sequence: 0,
+                    max_in_flight_frames: 4,
+                },
+            )
+            .await;
+        assert!(matches!(result, RelayMessage::Error { .. }));
+    }
+
+    #[tokio::test]
+    async fn open_rejects_a_previous_host_incarnation_before_driver_dispatch() {
+        let (handler, _outbound) = handler();
+        let mut invalid = provenance();
+        invalid.host_incarnation_id =
+            HostIncarnationId::new("previous-host-incarnation").expect("host incarnation id");
+        let result = handler
+            .open(
+                "open".into(),
+                RuntimeRelayOpen {
+                    stream_id: RuntimeRelayStreamId("stream-previous-incarnation".into()),
                     provenance: invalid,
                     supported_protocol_revisions: vec![RUNTIME_WIRE_PROTOCOL_REVISION],
                     resume_after_sequence: 0,

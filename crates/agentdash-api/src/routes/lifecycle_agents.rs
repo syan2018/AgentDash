@@ -631,6 +631,8 @@ struct AgentRunRuntimeInspectResponse {
     target: AgentRunRuntimeTarget,
     binding: Option<AgentRunRuntimeBinding>,
     snapshot: Option<RuntimeSnapshot>,
+    binding_epoch: Option<agentdash_agent_runtime_contract::BindingEpoch>,
+    recovery: agentdash_application_agentrun::agent_run::AgentRunRuntimeRecoverySummary,
 }
 
 #[derive(Debug, Deserialize)]
@@ -670,6 +672,8 @@ async fn inspect_agent_run_runtime(
         target,
         binding,
         snapshot,
+        binding_epoch,
+        recovery,
     } = state
         .services
         .agent_run_runtime
@@ -680,6 +684,8 @@ async fn inspect_agent_run_runtime(
         target,
         binding,
         snapshot,
+        binding_epoch,
+        recovery,
     }))
 }
 

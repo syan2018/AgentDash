@@ -28,14 +28,12 @@ agentdash-application.workspace = true
 agentdash-application-ports = { workspace = true }
 agentdash-application-vfs = { workspace = true }
 agentdash-domain.workspace = true
-agentdash-infrastructure.workspace = true
 agentdash-mcp.workspace = true
 agentdash-process = { workspace = true }
 codex-utils-pty.workspace = true
 codex-utils-output-truncation.workspace = true
 
 tokio.workspace = true
-sqlx.workspace = true
 tokio-tungstenite = { version = "0.28" }
 futures.workspace = true
 
@@ -62,7 +60,6 @@ base64 = { workspace = true }
 flate2.workspace = true
 sha2 = { workspace = true }
 tar.workspace = true
-postgresql_embedded = { workspace = true }
 gix = { version = "0.83.0", default-features = false, features = ["revision", "sha1"] }
 
 [target.'cfg(windows)'.dependencies]

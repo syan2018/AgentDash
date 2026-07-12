@@ -499,6 +499,9 @@ async fn handle_backend_connection(
             );
         }
     }
+    // Runtime Wire routes must be disconnected while their remote drivers are still
+    // alive so each active binding can emit its terminal BindingLost event.
+    state.services.backend_registry.unregister(&bid).await;
     if let Err(error) = state.services.agent_runtime_inventory.withdraw(&bid).await {
         let context = DiagnosticErrorContext::new("relay.ws.disconnect", "runtime_offer_withdraw")
             .with_field("backend_id", &bid);
@@ -511,7 +514,6 @@ async fn handle_backend_connection(
             "Agent Runtime remote offers withdraw failed"
         );
     }
-    state.services.backend_registry.unregister(&bid).await;
     if let Err(error) = state
         .repos
         .runtime_health_repo

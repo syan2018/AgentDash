@@ -321,6 +321,11 @@ fn runtime_can_start_turn(view: &super::AgentRunRuntimeView) -> bool {
     match &view.snapshot {
         None => true,
         Some(snapshot) if snapshot.active_turn_id.is_some() => false,
+        Some(snapshot)
+            if snapshot.status == agentdash_agent_runtime_contract::RuntimeThreadStatus::Lost =>
+        {
+            true
+        }
         Some(snapshot) => matches!(
             snapshot
                 .command_availability
@@ -333,6 +338,12 @@ fn runtime_can_start_turn(view: &super::AgentRunRuntimeView) -> bool {
 fn retryable_delivery_error(error: &AgentRunRuntimeError) -> bool {
     matches!(
         error,
+        AgentRunRuntimeError::Binding(
+            agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError::Unavailable {
+                retryable: true,
+                ..
+            }
+        ) |
         AgentRunRuntimeError::Execute(
             agentdash_agent_runtime_contract::RuntimeExecuteError::RevisionConflict { .. }
                 | agentdash_agent_runtime_contract::RuntimeExecuteError::Unavailable {

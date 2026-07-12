@@ -6,7 +6,6 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
 use anyhow::Context;
 use serde::Serialize;
 use tokio::sync::{Mutex, watch};
@@ -559,24 +558,11 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         Some(root) => root.clone(),
         None => local_runtime_data_dir()?,
     };
-    let session_db_runtime = Arc::new(
-        PostgresRuntime::resolve_embedded_at_data_root(
-            &format!(
-                "agentdash-local-{}",
-                local_runtime_backend_key(&config.backend_id)
-            ),
-            10,
-            runtime_data_root.clone(),
-        )
-        .await?,
-    );
-    agentdash_infrastructure::migration::run_postgres_migrations(&session_db_runtime.pool).await?;
     let runtime_artifact_root = runtime_data_root
         .join("agent-runtime-artifacts")
         .join(local_runtime_backend_key(&config.backend_id));
     tokio::fs::create_dir_all(&runtime_artifact_root).await?;
     let local_agent_runtime = crate::agent_runtime_host::bootstrap_local_agent_runtime_host(
-        session_db_runtime.pool.clone(),
         &config.backend_id,
         &config.workspace_roots,
         &runtime_artifact_root,
@@ -602,7 +588,6 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         workspace_roots: config.workspace_roots.clone(),
         executor_enabled: config.executor_enabled,
         tool_executor,
-        _session_db_runtime: Some(session_db_runtime),
         mcp_manager,
         extension_host: LocalExtensionHostManager::with_default_config(),
         extension_artifact_cache_root: local_runtime_data_dir()?

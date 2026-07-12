@@ -1,4 +1,10 @@
 {"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"检查ephemeral repository不削弱binding、lease与generation invariants。"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"检查ThreadRebind保持journal/cursor/context连续并正确fence旧binding。"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"检查binding epoch、source coordinate、recovery intent和复合FK约束。"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"检查按需恢复、mailbox replay、guard与current binding解析。"}
 {"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"检查Host incarnation、旧命令隔离与云端重绑定闭环。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"检查inspect/event stream不发生cursor或审计漂移。"}
 {"file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"检查Tauri与Runner全部正式路径真正无数据库启动。"}
 {"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查Rust边界、真实启动路径与错误语义。"}
+{"file":"crates/agentdash-api/src/relay/ws_handler.rs","reason":"验证Backend断连先完成Runtime Wire BindingLost acknowledgment，再撤销remote offers。"}
+{"file":"crates/agentdash-agent-runtime-host/src/host.rs","reason":"验证BindingLost使用binding代际围栏而不依赖已结束命令的lease，并在Runtime提交后收敛Host binding。"}

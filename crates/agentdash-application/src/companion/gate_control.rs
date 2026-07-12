@@ -1682,6 +1682,7 @@ mod tests {
             target: AgentRunRuntimeTarget { run_id, agent_id },
             thread_id: runtime_id(thread_id),
             binding_id: runtime_id(&format!("binding-{thread_id}")),
+            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
             driver_generation: RuntimeDriverGeneration(1),
             source_thread_id: runtime_id(&format!("source-{thread_id}")),
             profile_digest: runtime_id("profile-gate-control"),

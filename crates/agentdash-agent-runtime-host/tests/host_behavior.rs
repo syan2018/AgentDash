@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -425,6 +425,7 @@ struct TestDriver {
     dispatch_count: AtomicUsize,
     emit_barrier: Mutex<Option<(Arc<Notify>, Arc<Notify>)>>,
     extra_events: Mutex<Vec<DriverEventEnvelope>>,
+    mismatch_resume_source: AtomicBool,
 }
 
 #[async_trait]
@@ -438,9 +439,18 @@ impl AgentRuntimeDriver for TestDriver {
 
     async fn bind(&self, request: DriverBindRequest) -> Result<DriverBinding, DriverError> {
         self.bind_count.fetch_add(1, Ordering::SeqCst);
+        let source_thread_id = match &request.intent {
+            DriverBindIntent::Resume { .. }
+                if self.mismatch_resume_source.load(Ordering::SeqCst) =>
+            {
+                id("mismatched-resume-source")
+            }
+            DriverBindIntent::Resume { source_thread_id } => source_thread_id.clone(),
+            _ => id(&format!("source-{}", request.binding_id)),
+        };
         Ok(DriverBinding {
             driver_binding_id: id(&format!("driver-{}", request.binding_id)),
-            source_thread_id: id(&format!("source-{}", request.binding_id)),
+            source_thread_id,
             applied_surface_revision: request.surface_revision,
             applied_surface_digest: request.surface_digest,
             applied_tool_set_revision: ToolSetRevision(1),
@@ -562,7 +572,7 @@ impl DriverEventSink for ManagedRuntimeSink {
 struct Fixture {
     host: Arc<IntegrationDriverHost>,
     registry: AgentServiceDefinitionRegistry,
-    repository: Arc<AgentRuntimeHostRepositoryFixture>,
+    repository: Arc<EphemeralAgentRuntimeHostRepository>,
     factory: Arc<TestFactory>,
     conformance: Arc<dyn DriverConformanceVerifier>,
     full_profile: RuntimeProfile,
@@ -598,6 +608,7 @@ async fn fixture_with_broker_and_probe(
         dispatch_count: AtomicUsize::new(0),
         emit_barrier: Mutex::new(None),
         extra_events: Mutex::new(Vec::new()),
+        mismatch_resume_source: AtomicBool::new(false),
     });
     let factory = Arc::new(TestFactory {
         key: AgentRuntimeFactoryKey::new("corp.factory").expect("factory key"),
@@ -622,7 +633,7 @@ async fn fixture_with_broker_and_probe(
         factory: factory.clone(),
     }])
     .expect("registry");
-    let repository = Arc::new(AgentRuntimeHostRepositoryFixture::new());
+    let repository = Arc::new(EphemeralAgentRuntimeHostRepository::new());
     let host = Arc::new(IntegrationDriverHost::new(
         registry.clone(),
         repository.clone(),
@@ -1058,6 +1069,86 @@ async fn event_sink_revalidates_lease_after_takeover() {
 }
 
 #[tokio::test]
+async fn binding_loss_atomically_invalidates_lease_and_fences_late_event() {
+    let fixture = fixture().await;
+    let offer = activate(&fixture).await;
+    let binding = fixture
+        .host
+        .bind(BindRuntimeRequest {
+            binding_id: id("binding-loss-event-fence"),
+            thread_id: id("thread-loss-event-fence"),
+            offer_id: offer.id,
+            bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Start,
+        })
+        .await
+        .expect("bind");
+    let lease = fixture
+        .host
+        .acquire_driver_lease(&binding.id)
+        .await
+        .expect("lease");
+    let started = Arc::new(Notify::new());
+    let proceed = Arc::new(Notify::new());
+    *fixture.factory.driver.emit_barrier.lock().await = Some((started.clone(), proceed.clone()));
+    let host = fixture.host.clone();
+    let sink = Arc::new(RecordingSink(AtomicUsize::new(0)));
+    let dispatch_sink = sink.clone();
+    let binding_id = binding.id.clone();
+    let generation = binding.driver_generation;
+    let lease_owner = lease.owner.clone();
+    let lease_token = lease.token.clone();
+    let dispatch = tokio::spawn(async move {
+        host.dispatch(
+            RouteDriverCommand {
+                envelope: DriverCommandEnvelope {
+                    request_id: id("request-loss-event-fence"),
+                    binding_id: binding.id,
+                    generation,
+                    source_thread_id: binding.source_thread_id.expect("source"),
+                    runtime_turn_id: Some(id("turn-loss-event-fence")),
+                    command: RuntimeCommand::TurnStart {
+                        thread_id: binding.thread_id,
+                        input: vec![],
+                    },
+                },
+                lease_owner,
+                lease_token,
+            },
+            dispatch_sink,
+        )
+        .await
+    });
+    started.notified().await;
+    fixture
+        .repository
+        .mark_binding_lost(&binding_id, generation)
+        .await
+        .expect("mark lost");
+    fixture
+        .repository
+        .validate_lease(
+            &binding_id,
+            generation,
+            &lease.owner,
+            &lease.token,
+            Utc::now(),
+        )
+        .await
+        .expect_err("lost binding lease must be invalid");
+    proceed.notify_one();
+    let error = dispatch
+        .await
+        .expect("dispatch task")
+        .expect_err("late event fenced");
+    assert!(matches!(
+        error,
+        AgentRuntimeHostError::Driver(DriverError::StaleGeneration)
+    ));
+    assert_eq!(sink.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn driver_lease_can_be_renewed_and_explicitly_released() {
     let fixture = fixture().await;
     let offer = activate(&fixture).await;
@@ -1200,6 +1291,53 @@ async fn thread_binding_is_sticky_and_source_generation_is_fenced() {
         .await
         .expect("same owner lease replay");
     assert_eq!(replayed_lease, first_lease);
+}
+
+#[tokio::test]
+async fn resume_rejects_mismatched_source_before_binding_activation() {
+    let fixture = fixture().await;
+    let offer = activate(&fixture).await;
+    fixture
+        .factory
+        .driver
+        .mismatch_resume_source
+        .store(true, Ordering::SeqCst);
+    let binding_id: RuntimeBindingId = id("binding-resume-source-mismatch");
+    let expected_source: DriverThreadId = id("canonical-old-source-thread");
+
+    let error = fixture
+        .host
+        .bind(BindRuntimeRequest {
+            binding_id: binding_id.clone(),
+            thread_id: id("thread-resume-source-mismatch"),
+            offer_id: offer.id,
+            bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Resume {
+                source_thread_id: expected_source,
+            },
+        })
+        .await
+        .expect_err("Resume source mismatch must be rejected");
+    assert!(matches!(
+        error,
+        AgentRuntimeHostError::DispatchRejected { .. }
+    ));
+    let binding = fixture
+        .repository
+        .load_binding(&binding_id)
+        .await
+        .expect("load failed binding")
+        .expect("failed binding remains auditable");
+    assert_eq!(binding.state, RuntimeBindingState::Failed);
+    assert!(binding.source_thread_id.is_none());
+    assert!(
+        fixture
+            .repository
+            .find_source(&binding_id, binding.driver_generation)
+            .await
+            .expect("source lookup")
+            .is_none()
+    );
 }
 
 #[tokio::test]

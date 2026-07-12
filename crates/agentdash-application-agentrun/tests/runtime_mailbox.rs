@@ -67,6 +67,7 @@ fn view(target: AgentRunRuntimeTarget, active_turn: Option<&str>) -> AgentRunRun
         target: target.clone(),
         thread_id: id("thread-mailbox"),
         binding_id: id("binding-mailbox"),
+        binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
         driver_generation: RuntimeDriverGeneration(1),
         source_thread_id: id("source-mailbox"),
         profile_digest: id("profile-mailbox"),
@@ -106,6 +107,7 @@ fn view(target: AgentRunRuntimeTarget, active_turn: Option<&str>) -> AgentRunRun
             status: RuntimeThreadStatus::Active,
             active_turn_id: active_turn.map(id),
             binding_id: binding.binding_id,
+            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
             profile_digest: binding.profile_digest,
             bound_profile,
             active_checkpoint_id: None,
@@ -117,6 +119,8 @@ fn view(target: AgentRunRuntimeTarget, active_turn: Option<&str>) -> AgentRunRun
             transcript: Vec::new(),
             transcript_fidelity: ContextFidelity::Opaque,
         }),
+        binding_epoch: Some(agentdash_agent_runtime_contract::BindingEpoch(1)),
+        recovery: agentdash_application_agentrun::agent_run::runtime_facade::AgentRunRuntimeRecoverySummary::Active,
     }
 }
 

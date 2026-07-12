@@ -521,6 +521,7 @@ mod tests {
             target: AgentRunRuntimeTarget { run_id, agent_id },
             thread_id: runtime_id("parent-session"),
             binding_id: runtime_id("parent-binding"),
+            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
             driver_generation: RuntimeDriverGeneration(1),
             source_thread_id: runtime_id("parent-source"),
             profile_digest: runtime_id("parent-profile"),

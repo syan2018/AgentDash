@@ -603,6 +603,126 @@ async fn stale_generation_is_quarantined_without_advancing_cursor() {
 }
 
 #[tokio::test]
+async fn lost_thread_rebinds_in_place_and_fences_old_binding_events() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    runtime
+        .ingest_driver_event(driver(RuntimeEvent::BindingLost {
+            binding_id: id("binding-1"),
+            reason: "relay disconnected".to_string(),
+        }))
+        .await
+        .expect("binding loss");
+    let lost = thread_snapshot(&runtime, thread_id.clone()).await;
+    assert_eq!(lost.status, RuntimeThreadStatus::Lost);
+    let new_profile = profile();
+    let new_digest = runtime_profile_digest(&new_profile);
+    runtime
+        .execute(command(
+            "op-rebind-1",
+            "key-rebind-1",
+            Some(lost.revision.0),
+            RuntimeCommand::ThreadRebind {
+                thread_id: thread_id.clone(),
+                recovery_intent_id: id("recovery-1"),
+                binding_epoch: BindingEpoch(2),
+                expected_binding_id: id("binding-1"),
+                expected_driver_generation: RuntimeDriverGeneration(7),
+                new_binding_id: id("binding-2"),
+                new_driver_generation: RuntimeDriverGeneration(7),
+                source_thread_id: id("source-1"),
+                profile_digest: new_digest.clone(),
+                bound_profile: Box::new(new_profile),
+            },
+        ))
+        .await
+        .expect("same-thread rebind");
+    let active = thread_snapshot(&runtime, thread_id.clone()).await;
+    assert_eq!(active.thread_id, thread_id);
+    assert_eq!(active.status, RuntimeThreadStatus::Active);
+    assert_eq!(active.binding_id, id("binding-2"));
+    assert_eq!(active.binding_epoch, BindingEpoch(2));
+    assert_eq!(active.profile_digest, new_digest);
+    let outbox = store.outbox().await;
+    assert_eq!(outbox.len(), 1, "rebind must not create driver work");
+    assert_eq!(outbox[0].generation, RuntimeDriverGeneration(7));
+    assert!(
+        !outbox[0].matches_thread_binding(
+            &store
+                .load_thread(&id("thread-source-1"))
+                .await
+                .expect("thread read")
+                .expect("thread")
+        ),
+        "same generation cannot make an old binding epoch dispatchable"
+    );
+    assert!(
+        store
+            .find_operation(&id("op-rebind-1"))
+            .await
+            .expect("operation read")
+            .expect("operation")
+            .terminal
+            .is_some(),
+        "runtime-owned rebind operation must finish atomically"
+    );
+
+    assert_eq!(
+        runtime
+            .ingest_driver_event(driver(RuntimeEvent::ThreadStatusChanged {
+                status: RuntimeThreadStatus::Lost,
+            }))
+            .await
+            .expect("old event is quarantined"),
+        DriverEventAdmission::Quarantined
+    );
+    assert_eq!(
+        thread_snapshot(&runtime, id("thread-source-1"))
+            .await
+            .status,
+        RuntimeThreadStatus::Active
+    );
+}
+
+#[tokio::test]
+async fn thread_rebind_rejects_active_or_stale_coordinates() {
+    let (_store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    let candidate = profile();
+    let error = runtime
+        .execute(command(
+            "op-rebind-invalid",
+            "key-rebind-invalid",
+            None,
+            RuntimeCommand::ThreadRebind {
+                thread_id,
+                recovery_intent_id: id("recovery-invalid"),
+                binding_epoch: BindingEpoch(2),
+                expected_binding_id: id("binding-stale"),
+                expected_driver_generation: RuntimeDriverGeneration(6),
+                new_binding_id: id("binding-2"),
+                new_driver_generation: RuntimeDriverGeneration(1),
+                source_thread_id: id("source-1"),
+                profile_digest: runtime_profile_digest(&candidate),
+                bound_profile: Box::new(candidate),
+            },
+        ))
+        .await
+        .expect_err("active thread cannot rebind");
+    assert!(matches!(error, RuntimeExecuteError::InvalidCommand { .. }));
+}
+
+#[tokio::test]
 async fn driver_cannot_emit_runtime_owned_context_transitions() {
     let (store, runtime) = fixture();
     let thread_id = runtime

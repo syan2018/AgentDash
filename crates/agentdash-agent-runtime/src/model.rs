@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use agentdash_agent_runtime_contract::{
-    ContextRevision, EventSequence, IdempotencyKey, OperationReceipt, OperationSequence,
-    ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand, RuntimeDriverGeneration,
-    RuntimeEvent, RuntimeEventEnvelope, RuntimeInteractionId, RuntimeItemId, RuntimeOperationId,
-    RuntimeOperationTerminal, RuntimeProfile, RuntimeRevision, RuntimeSnapshot, RuntimeThreadId,
-    RuntimeThreadStatus, RuntimeTurnId, ThreadSettingsRevision, ToolSetRevision,
+    BindingEpoch, ContextRevision, EventSequence, IdempotencyKey, OperationReceipt,
+    OperationSequence, ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand,
+    RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope, RuntimeInteractionId,
+    RuntimeItemId, RuntimeOperationId, RuntimeOperationTerminal, RuntimeProfile, RuntimeRevision,
+    RuntimeSnapshot, RuntimeThreadId, RuntimeThreadStatus, RuntimeTurnId, ThreadSettingsRevision,
+    ToolSetRevision,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -67,6 +68,7 @@ pub struct RuntimeThreadState {
     pub status: RuntimeThreadStatus,
     pub active_turn_id: Option<RuntimeTurnId>,
     pub binding_id: RuntimeBindingId,
+    pub binding_epoch: BindingEpoch,
     pub driver_generation: RuntimeDriverGeneration,
     pub source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
     pub profile_digest: ProfileDigest,
@@ -146,6 +148,16 @@ pub enum TransitionError {
     BindingMismatch {
         expected_binding_id: RuntimeBindingId,
         actual_binding_id: RuntimeBindingId,
+    },
+    #[error("binding generation {actual_generation:?} does not match {expected_generation:?}")]
+    BindingGenerationMismatch {
+        expected_generation: RuntimeDriverGeneration,
+        actual_generation: RuntimeDriverGeneration,
+    },
+    #[error("binding epoch must advance beyond {current:?}, got {actual:?}")]
+    BindingEpochDidNotAdvance {
+        current: BindingEpoch,
+        actual: BindingEpoch,
     },
 }
 
@@ -348,6 +360,38 @@ impl RuntimeThreadState {
                 self.require_binding(binding_id)?;
                 self.status = RuntimeThreadStatus::Lost;
             }
+            RuntimeEvent::BindingReestablished {
+                recovery_intent_id: _,
+                binding_epoch,
+                old_binding_id,
+                old_driver_generation,
+                new_binding_id,
+                new_driver_generation,
+                source_thread_id,
+                profile_digest,
+                bound_profile,
+            } => {
+                self.require_binding(old_binding_id)?;
+                if self.driver_generation != *old_driver_generation {
+                    return Err(TransitionError::BindingGenerationMismatch {
+                        expected_generation: self.driver_generation,
+                        actual_generation: *old_driver_generation,
+                    });
+                }
+                if *binding_epoch <= self.binding_epoch {
+                    return Err(TransitionError::BindingEpochDidNotAdvance {
+                        current: self.binding_epoch,
+                        actual: *binding_epoch,
+                    });
+                }
+                self.binding_epoch = *binding_epoch;
+                self.binding_id = new_binding_id.clone();
+                self.driver_generation = *new_driver_generation;
+                self.source_thread_id = source_thread_id.clone();
+                self.profile_digest = profile_digest.clone();
+                self.bound_profile = (**bound_profile).clone();
+                self.status = RuntimeThreadStatus::Active;
+            }
             RuntimeEvent::ProtocolViolation { critical: true, .. } => {
                 self.status = RuntimeThreadStatus::Lost;
             }
@@ -530,6 +574,7 @@ impl RuntimeThreadState {
             status: self.status,
             active_turn_id: self.active_turn_id.clone(),
             binding_id: self.binding_id.clone(),
+            binding_epoch: self.binding_epoch,
             profile_digest: self.profile_digest.clone(),
             bound_profile: self.bound_profile.clone(),
             active_checkpoint_id: self.active_checkpoint_id.clone(),
@@ -572,15 +617,16 @@ impl RuntimeThreadState {
 }
 
 trait RuntimeCommandKinds {
-    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 10];
+    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 11];
 }
 
 impl RuntimeCommandKinds for agentdash_agent_runtime_contract::RuntimeCommandKind {
-    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 10] {
+    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 11] {
         use agentdash_agent_runtime_contract::RuntimeCommandKind::*;
         [
             ThreadStart,
             ThreadResume,
+            ThreadRebind,
             ThreadFork,
             ThreadSettingsUpdate,
             TurnStart,

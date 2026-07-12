@@ -443,6 +443,11 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                     reason: "resume/fork are binding intents and cannot mutate an existing sticky binding".to_string(),
                 });
             }
+            RuntimeCommand::ThreadRebind { .. } => {
+                return Err(DriverError::Unsupported {
+                    reason: "ThreadRebind is a Managed Runtime transition and cannot be dispatched to a driver".to_string(),
+                });
+            }
             RuntimeCommand::ThreadSettingsUpdate { instructions, .. } => {
                 let source_thread_id = session.source_thread_id.as_str().to_string();
                 self.rpc_request(

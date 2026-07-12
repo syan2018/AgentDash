@@ -1,6 +1,6 @@
 # 数据库规范
 
-PostgreSQL + SQLx 覆盖云端业务库与本机 embedded PostgreSQL。
+PostgreSQL + SQLx承载云端业务库与Managed Runtime durable facts。Local Integration Host的执行状态按process incarnation重建，避免把Dashboard schema生命周期引入Desktop与Standalone Runner启动链。
 
 ## 基础规则
 

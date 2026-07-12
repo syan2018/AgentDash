@@ -28,7 +28,7 @@ impl AgentRuntimeHost {
 }
 ```
 
-`AgentRuntimeHostRepository` 提供instance revision CAS、generation reserve、activation/offer、binding/source/lease与apply receipt的durable ports。Router输入必须携带binding/generation/lease，不能以裸executor ID发现owner。
+`AgentRuntimeHostRepository` 提供instance revision CAS、generation reserve、activation/offer、binding/source/lease与apply receipt ports。云端Managed Host使用durable实现；Local Integration Host使用进程incarnation内的ephemeral实现。Router输入必须携带binding/generation/lease，不能以裸executor ID发现owner。
 
 ## 3. Contracts
 
@@ -41,11 +41,14 @@ impl AgentRuntimeHost {
 - Driver bind intent先durable Pending，再执行幂等driver.bind，最后原子写Active binding与source coordinates。崩溃后`recover_pending_bindings`用同一identity恢复；失败显式收敛Failed/Lost，不产生无owner native session。
 - DriverLease使用数据库时钟、owner/token/epoch/generation。相同owner+generation在未过期时幂等返回原lease；不同owner冲突；到期takeover产生新token/epoch并fence旧owner。
 - Source coordinates按binding/generation维护canonical与driver ID双向唯一。Dispatch前校验lease，event sink对每个event再次校验binding、generation、source coordinate、owner/token和DB lease，防止dispatch期间takeover后的late event推进Runtime。
+- `BindingLost`属于binding生命周期事件，不属于某个命令lease。Generation-fenced sink仍校验binding、generation、source coordinate与lease epoch，但即使命令lease已在上一轮结束后释放，也必须先把Lost提交到Managed Runtime，再调用`mark_binding_lost(binding_id, generation)`原子失效Host binding及残余lease。普通turn/item/interaction事件继续逐事件校验owner/token/有效期。
 - Required surface/hook contribution只有在revision/digest/artifact与per-point applied ack匹配，且effective HookProfile满足actions/strength/failure policy/configuration boundary后才允许Turn dispatch。
 - inventory中复用的offer与本次`activate()`新产生的offer必须经过同一个完整Surface admission函数；activation成功只证明service可用，不证明它满足当前AgentFrame。任何路径都不得把未求交offer延迟到Host `bind()`才发现workspace/hook不兼容。
 - Integration profile与adapter apply acknowledgment必须由同一capability事实生成。`HostAdaptedExact` workspace要声明Host能够精确交付的最大capability；Hook failure policy必须与callback错误分支一致。Managed Runtime持久化effect不进入Driver action requirement。
 - 0061的`agent_runtime_binding`/`agent_runtime_source_coordinate`是Managed Runtime引用的最小Host-owned anchor；0064保存instance history、activation/offer、binding detail、lease和完整coordinates。Runtime repository不写Host authority，Host不写Runtime journal/projection。
 - Relay是placement transport而非service identity。Native/Codex/remote service通过相同contribution/Host seam接入，不在Application/router增加service类型分支。
+- Local Host每次启动生成不可复用的`HostIncarnationId`。Offer advertisement、Runtime Wire placement request与relay provenance携带该identity；Local endpoint在解析Driver前同时校验host、transport、incarnation、instance与generation，使重启前的stream和command无法命中新进程中从1重新计数的generation。
+- Local Host的instance、offer、binding、lease与coordinate属于单个process incarnation，使用production ephemeral repository从Integration definitions与profile重建；Managed Runtime继续持有binding intent与断连Lost裁决。
 
 ## 4. Validation & Error Matrix
 
@@ -61,6 +64,8 @@ impl AgentRuntimeHost {
 | binding anchor写入后detail constraint失败 | 全事务回滚，不泄漏0061 anchor |
 | lease未过期时不同owner claim | conflict |
 | lease过期takeover后旧token dispatch/event | stale generation/lease reject |
+| turn结束且命令lease已释放后driver报告BindingLost | 接受Lost，Runtime与Host binding均收敛Lost |
+| Lost envelope的binding/generation/source不匹配 | stale generation reject，不改变Runtime或Host |
 | required Hook未ack或artifact digest不符 | Turn dispatch gate拒绝 |
 | 新activation offer不满足当前workspace/hook surface | `ensure_offer`返回typed unavailable，不进入Host bind |
 | Driver profile声明fail-open但callback错误仍向上失败 | conformance失败，不得发布该failure policy |
@@ -81,9 +86,11 @@ impl AgentRuntimeHost {
 - Binding测试覆盖sticky/idempotent bind、stale offer、Pending recovery、orphan failure、surface/hook apply gate和configuration boundary。
 - Provision测试分别覆盖既有offer与新activation offer，断言二者调用同一Surface admission；Native profile测试逐项满足实际platform Driver hook binding与VFS workspace requirements。
 - Lease/source/router行为覆盖same-owner replay、DB-clock takeover、stale token、dispatch期间takeover、source双向唯一与old-generation event fencing。
+- Binding生命周期测试覆盖“命令lease已释放后的BindingLost仍被接受”、Lost提交后Host binding为Lost且lease失效，以及错误binding/generation/source的Lost被fence。
 - 真实embedded PostgreSQL覆盖0061/0064 ownership、instance并发CAS、history FK、binding完整复合FK、anchor rollback、offer锁与lease过期。
 - API/Executor测试证明Integration不再贡献旧connector，Composite不再OR/broadcast/first-success；彻底删除legacy probe随WP08 cutover验证。
 - Host/Integration/API/Executor/Infrastructure tests、contracts、migration guard、fmt、clippy与diff check必须通过。
+- Local Host测试覆盖新incarnation重建、相同generation跨incarnation拒绝，以及无需数据库即可广告offer。
 
 ## 7. Wrong vs Correct
 
@@ -95,6 +102,17 @@ connector.prompt(executor_id, request).await?;
 // Correct: Integration贡献factory，Host只按durable binding与lease路由。
 let contribution = integration.agent_runtime_drivers();
 host.dispatch(binding_id, generation, lease, command).await?;
+```
+
+```rust
+// Wrong: 用已结束命令的lease决定长期binding是否允许报告断连。
+validate_lease(owner, token, now)?;
+sink.emit(binding_lost).await?;
+
+// Correct: BindingLost使用binding代际围栏，并在Runtime提交后收敛Host状态。
+validate_binding_generation_source(&binding_lost)?;
+runtime_sink.emit(binding_lost).await?;
+repository.mark_binding_lost(binding_id, generation).await?;
 ```
 
 ```rust

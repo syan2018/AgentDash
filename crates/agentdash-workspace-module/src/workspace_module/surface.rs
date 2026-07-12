@@ -1949,6 +1949,7 @@ mod tests {
             target: AgentRunRuntimeTarget { run_id, agent_id },
             thread_id: runtime_id(thread_id),
             binding_id: runtime_id("binding-workspace-module"),
+            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
             driver_generation: RuntimeDriverGeneration(1),
             source_thread_id: runtime_id("source-workspace-module"),
             profile_digest: runtime_id("profile-workspace-module"),

@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BoundRuntimeHookPlan, ContextCheckpointId, ContextCompactionId, ContextCompactionTrigger,
-    IdempotencyKey, ProfileDigest, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
-    RuntimeOperationId, RuntimeProfile, RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
-    SurfaceDigest, ToolSetRevision,
+    BindingEpoch, BoundRuntimeHookPlan, ContextCheckpointId, ContextCompactionId,
+    ContextCompactionTrigger, DriverThreadId, IdempotencyKey, ProfileDigest, RuntimeBindingId,
+    RuntimeDriverGeneration, RuntimeInteractionId, RuntimeOperationId, RuntimeProfile,
+    RuntimeRecoveryIntentId, RuntimeRevision, RuntimeThreadId, RuntimeTurnId, SurfaceDigest,
+    ToolSetRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -63,6 +64,7 @@ pub enum InteractionResponse {
 pub enum RuntimeCommandKind {
     ThreadStart,
     ThreadResume,
+    ThreadRebind,
     ThreadFork,
     ThreadSettingsUpdate,
     TurnStart,
@@ -91,6 +93,18 @@ pub enum RuntimeCommand {
     },
     ThreadResume {
         thread_id: RuntimeThreadId,
+    },
+    ThreadRebind {
+        thread_id: RuntimeThreadId,
+        recovery_intent_id: RuntimeRecoveryIntentId,
+        binding_epoch: BindingEpoch,
+        expected_binding_id: RuntimeBindingId,
+        expected_driver_generation: RuntimeDriverGeneration,
+        new_binding_id: RuntimeBindingId,
+        new_driver_generation: RuntimeDriverGeneration,
+        source_thread_id: DriverThreadId,
+        profile_digest: ProfileDigest,
+        bound_profile: Box<RuntimeProfile>,
     },
     ThreadFork {
         thread_id: RuntimeThreadId,
@@ -137,6 +151,7 @@ impl RuntimeCommand {
         match self {
             Self::ThreadStart { .. } => RuntimeCommandKind::ThreadStart,
             Self::ThreadResume { .. } => RuntimeCommandKind::ThreadResume,
+            Self::ThreadRebind { .. } => RuntimeCommandKind::ThreadRebind,
             Self::ThreadFork { .. } => RuntimeCommandKind::ThreadFork,
             Self::ThreadSettingsUpdate { .. } => RuntimeCommandKind::ThreadSettingsUpdate,
             Self::TurnStart { .. } => RuntimeCommandKind::TurnStart,

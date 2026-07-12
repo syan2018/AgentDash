@@ -1,13 +1,15 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 
-use agentdash_agent_runtime_contract::{RuntimeProfile, RuntimeServiceInstanceId};
+use agentdash_agent_runtime_contract::{
+    HostIncarnationId, RuntimeProfile, RuntimeServiceInstanceId,
+};
 use agentdash_agent_runtime_host::{
     ActivateAgentServiceInstance, AgentRuntimeHostRepository, AgentServiceDefinitionRegistry,
-    ConformanceEvidence, IntegrationDriverHost, PutAgentServiceInstance,
-    ServiceInstanceDesiredState, TrustedDriverConformanceVerifier, TrustedDriverManifest,
-    TrustedDriverManifestRegistry, profile_digest,
+    ConformanceEvidence, EphemeralAgentRuntimeHostRepository, IntegrationDriverHost,
+    PutAgentServiceInstance, ServiceInstanceDesiredState, TrustedDriverConformanceVerifier,
+    TrustedDriverManifest, TrustedDriverManifestRegistry, profile_digest,
 };
-use agentdash_infrastructure::PostgresAgentRuntimeHostRepository;
+use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_integration_api::{
     AgentRuntimeCredentialBroker, AgentRuntimeCredentialRef, AgentRuntimeCredentialSlot,
     AgentRuntimeDriverContribution, AgentRuntimePlacement, CredentialLease, CredentialResolveError,
@@ -26,7 +28,6 @@ pub(crate) struct LocalAgentRuntimeHost {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn bootstrap_local_agent_runtime_host(
-    pool: sqlx::PgPool,
     backend_id: &str,
     workspace_roots: &[std::path::PathBuf],
     artifact_root: &Path,
@@ -62,7 +63,15 @@ pub(crate) async fn bootstrap_local_agent_runtime_host(
     let transport_profile = runtime_wire_transport_profile(&contributions)?;
     let transport_profile_digest = profile_digest(&transport_profile)?;
     let registry = AgentServiceDefinitionRegistry::collect(contributions.clone())?;
-    let repository = Arc::new(PostgresAgentRuntimeHostRepository::new(pool));
+    let repository = Arc::new(EphemeralAgentRuntimeHostRepository::new());
+    let host_incarnation_id = HostIncarnationId::new(uuid::Uuid::new_v4().to_string())?;
+    diag!(
+        Info,
+        Subsystem::Relay,
+        backend_id = %backend_id,
+        host_incarnation_id = %host_incarnation_id,
+        "Local Agent Runtime Host incarnation initialized"
+    );
     let host_port_router = Arc::new(RuntimeWireHostPortRouter::default());
     let host = Arc::new(IntegrationDriverHost::new(
         registry,
@@ -122,26 +131,38 @@ pub(crate) async fn bootstrap_local_agent_runtime_host(
                 expected_revision,
             })
             .await?;
-        host.activate(ActivateAgentServiceInstance {
-            instance_id,
-            expected_revision: instance.revision,
-            transport_profile: transport_profile.clone(),
-            transport_profile_digest: transport_profile_digest.clone(),
-            host_policy_profile: definition.service_profile_upper_bound.clone(),
-            host_policy_digest: profile_digest(&definition.service_profile_upper_bound)?,
-            conformance: ConformanceEvidence {
-                suite_revision: manifest.suite_revision,
-                driver_build_digest: manifest.driver_build_digest,
-                verified_profile_digest: manifest.verified_profile_digest,
-                verified_at: Utc::now(),
-            },
-        })
-        .await?;
+        let offer = host
+            .activate(ActivateAgentServiceInstance {
+                instance_id,
+                expected_revision: instance.revision,
+                transport_profile: transport_profile.clone(),
+                transport_profile_digest: transport_profile_digest.clone(),
+                host_policy_profile: definition.service_profile_upper_bound.clone(),
+                host_policy_digest: profile_digest(&definition.service_profile_upper_bound)?,
+                conformance: ConformanceEvidence {
+                    suite_revision: manifest.suite_revision,
+                    driver_build_digest: manifest.driver_build_digest,
+                    verified_profile_digest: manifest.verified_profile_digest,
+                    verified_at: Utc::now(),
+                },
+            })
+            .await?;
+        diag!(
+            Info,
+            Subsystem::Relay,
+            backend_id = %backend_id,
+            host_incarnation_id = %host_incarnation_id,
+            service_instance_id = %offer.service_instance_id,
+            offer_generation = offer.generation.0,
+            result = "advertised",
+            "Local Agent Runtime offer activated"
+        );
     }
     let transport_id = agentdash_integration_api::AgentRuntimePlacementId::new(LOCAL_TRANSPORT_ID)?;
     let resolver = Arc::new(HostRuntimeDriverEndpointResolver::new(
         host,
         backend_id,
+        host_incarnation_id.clone(),
         transport_id,
     ));
     let handler = Arc::new(RuntimeWireCommandHandler::new_with_host_port_router(
@@ -328,22 +349,11 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn embedded_postgres_host_activates_installed_offer_without_external_injection() {
+    async fn ephemeral_host_activates_installed_offer_without_database() {
         let data_root = tempfile::tempdir().expect("temporary Local Runtime data root");
-        let runtime = agentdash_infrastructure::postgres_runtime::PostgresRuntime::resolve_embedded_at_data_root(
-            &format!("local-runtime-host-{}", uuid::Uuid::new_v4().simple()),
-            8,
-            data_root.path().to_path_buf(),
-        )
-        .await
-        .expect("embedded PostgreSQL starts");
-        agentdash_infrastructure::migration::run_postgres_migrations(&runtime.pool)
-            .await
-            .expect("Local Runtime migrations succeed");
         let artifact_root = data_root.path().join("artifacts");
         std::fs::create_dir_all(&artifact_root).expect("artifact root");
         let host = bootstrap_local_agent_runtime_host(
-            runtime.pool.clone(),
             "desktop-test",
             &[data_root.path().to_path_buf()],
             &artifact_root,

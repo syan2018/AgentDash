@@ -224,6 +224,7 @@ mod tests {
             target: AgentRunRuntimeTarget { run_id, agent_id },
             thread_id: runtime_id("session-1"),
             binding_id: runtime_id("binding-task-scope"),
+            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
             driver_generation: RuntimeDriverGeneration(1),
             source_thread_id: runtime_id("source-task-scope"),
             profile_digest: runtime_id("profile-task-scope"),

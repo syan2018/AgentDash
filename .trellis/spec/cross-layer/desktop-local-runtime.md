@@ -1058,6 +1058,7 @@ fn connection_key(entry: &ResolvedMcpServerEntry) -> Result<String, anyhow::Erro
 | runtime 有 Running session | `runtime_restart()` 拒绝 |
 | MCP probe 失败 | 返回 `{ ok: false }`，不升级成 command error |
 | Tauri CLI 缺失 | 仓库依赖 `@tauri-apps/cli`，不要求全局安装 |
+| Local Runtime Host启动 | 从Integration definitions与文本profile在内存中重建instance/offer，不启动embedded PostgreSQL或执行Dashboard migrations |
 
 ## 禁止模式
 

@@ -52,6 +52,7 @@ pub(crate) struct CloudRuntimeWirePlacement {
     open_waiter: Mutex<Option<oneshot::Sender<Result<(), RemoteRuntimeTransportError>>>>,
     open_failure: Mutex<Option<RemoteRuntimeTransportError>>,
     ready: Notify,
+    disconnect_acknowledged: Notify,
     registry: Arc<BackendRegistry>,
 }
 
@@ -62,16 +63,18 @@ impl CloudRuntimeWirePlacement {
         registry: Arc<BackendRegistry>,
     ) -> Arc<Self> {
         let stream_id = RuntimeRelayStreamId(format!(
-            "runtime-wire:{}:{}:{}:{}",
+            "runtime-wire:{}:{}:{}:{}:{}",
             request.host_id,
             request.transport_id,
             request.service_instance_id,
-            request.generation.0
+            request.generation.0,
+            request.host_incarnation_id
         ));
         let provenance = RuntimeRelayProvenance {
             service_definition_id: request.definition_id.clone(),
             service_instance_id: request.service_instance_id.clone(),
             driver_generation: request.generation,
+            host_incarnation_id: request.host_incarnation_id.clone(),
             host_id: request.host_id.clone(),
             transport_id: request.transport_id.clone(),
         };
@@ -87,6 +90,7 @@ impl CloudRuntimeWirePlacement {
             open_waiter: Mutex::new(None),
             open_failure: Mutex::new(None),
             ready: Notify::new(),
+            disconnect_acknowledged: Notify::new(),
             registry,
         })
     }
@@ -153,26 +157,6 @@ impl CloudRuntimeWirePlacement {
         .map_err(|_| unavailable("Runtime Wire concurrent open timed out", true))?
     }
 
-    pub(crate) async fn reopen(&self) -> Result<(), RemoteRuntimeTransportError> {
-        let resume_after_sequence = self
-            .state
-            .lock()
-            .await
-            .as_ref()
-            .map(|state| state.inbound_ack().through_sequence)
-            .unwrap_or(0);
-        self.registry
-            .send_runtime_wire_message(
-                &self.request.host_id,
-                RelayMessage::RuntimeWireOpen {
-                    id: format!("runtime-wire-reopen:{}", self.stream_id.0),
-                    payload: self.open_request(resume_after_sequence),
-                },
-            )
-            .await
-            .map_err(backend_error)
-    }
-
     pub(crate) async fn disconnect(&self) {
         let disconnected = if let Some(state) = self.state.lock().await.as_mut() {
             let disconnected = state.disconnect().is_some();
@@ -184,11 +168,13 @@ impl CloudRuntimeWirePlacement {
             false
         };
         if disconnected {
+            let acknowledged = self.disconnect_acknowledged.notified();
             let _ = self
                 .inbound_tx
                 .send(RuntimeWirePlacementEvent::Disconnected {
                     reason: "Runtime Wire backend connection was lost".to_string(),
                 });
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), acknowledged).await;
         }
     }
 
@@ -296,6 +282,10 @@ impl RuntimeWirePlacement for CloudRuntimeWirePlacement {
             .recv()
             .await
             .ok_or_else(|| unavailable("Runtime Wire receive channel is closed", false))
+    }
+
+    async fn acknowledge_disconnect(&self) {
+        self.disconnect_acknowledged.notify_one();
     }
 }
 

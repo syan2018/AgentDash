@@ -20,7 +20,6 @@ use crate::mcp_client_manager::McpClientManager;
 use crate::runner_redaction::redact_secret;
 use crate::runner_status::RunnerStatusReporter;
 use crate::tool_executor::ToolExecutor;
-use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
 
 #[derive(Clone)]
 pub struct Config {
@@ -32,7 +31,6 @@ pub struct Config {
     pub workspace_roots: Vec<PathBuf>,
     pub executor_enabled: bool,
     pub tool_executor: ToolExecutor,
-    pub _session_db_runtime: Option<Arc<PostgresRuntime>>,
     pub mcp_manager: Option<Arc<McpClientManager>>,
     pub extension_host: LocalExtensionHostManager,
     pub extension_artifact_cache_root: PathBuf,

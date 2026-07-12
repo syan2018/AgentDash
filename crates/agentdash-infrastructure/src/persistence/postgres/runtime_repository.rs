@@ -1963,6 +1963,7 @@ fn quarantine_reason(entry: &QuarantinedDriverEvent) -> &'static str {
         DriverOperationAcceptance => "driver_operation_acceptance",
         DriverRuntimeOwnedContextEvent => "driver_runtime_owned_context_event",
         DriverRuntimeOwnedHookEvent => "driver_runtime_owned_hook_event",
+        DriverRuntimeOwnedBindingEvent => "driver_runtime_owned_binding_event",
         InvalidTransition { .. } => "invalid_transition",
     }
 }

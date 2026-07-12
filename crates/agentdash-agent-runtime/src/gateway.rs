@@ -89,6 +89,17 @@ where
                 )
                 .await;
         }
+        if matches!(source.event, RuntimeEvent::BindingReestablished { .. }) {
+            return self
+                .persist_protocol_violation(
+                    state,
+                    source,
+                    DriverEventQuarantineReason::DriverRuntimeOwnedBindingEvent,
+                    RuntimeProtocolViolationCode::DriverRuntimeOwnedBindingEvent,
+                    "driver attempted to emit a runtime-owned binding transition".to_string(),
+                )
+                .await;
+        }
         if matches!(
             source.event,
             RuntimeEvent::ContextCheckpointPrepared { .. }
@@ -416,6 +427,13 @@ where
             .first()
             .expect("every mutation starts with operation acceptance")
             .revision;
+        let command_terminal = events.iter().find_map(|event| match &event.event {
+            RuntimeEvent::OperationTerminal {
+                operation_id,
+                terminal,
+            } if operation_id == &envelope.meta.operation_id => Some(terminal.clone()),
+            _ => None,
+        });
         let record = RuntimeOperationRecord {
             operation_id: envelope.meta.operation_id.clone(),
             idempotency_key: envelope.meta.idempotency_key.clone(),
@@ -424,7 +442,7 @@ where
             operation_sequence,
             accepted_revision,
             command: envelope.command.clone(),
-            terminal: None,
+            terminal: command_terminal,
         };
         let receipt = record.receipt(false);
         let context_preparation_work_items = match &record.command {
@@ -445,22 +463,31 @@ where
             }],
             _ => Vec::new(),
         };
-        let outbox = if matches!(envelope.command, RuntimeCommand::ContextCompact { .. }) {
+        let outbox = if matches!(
+            envelope.command,
+            RuntimeCommand::ContextCompact { .. } | RuntimeCommand::ThreadRebind { .. }
+        ) {
             Vec::new()
         } else {
             vec![RuntimeOutboxEntry {
                 operation_id: record.operation_id.clone(),
                 thread_id: state.thread_id.clone(),
+                binding_id: state.binding_id.clone(),
+                binding_epoch: state.binding_epoch,
                 generation: state.driver_generation,
                 command: envelope.command,
             }]
         };
+        let operation_terminals = operation_terminals(&events)
+            .into_iter()
+            .filter(|(operation_id, _)| operation_id != &record.operation_id)
+            .collect();
         self.store
             .commit(RuntimeCommit {
                 expected_projection_revision,
                 projection: state,
                 operation: Some(record),
-                operation_terminals: Vec::new(),
+                operation_terminals,
                 events,
                 outbox,
                 context_activation_outbox: Vec::new(),
@@ -645,6 +672,7 @@ fn new_thread(command: &RuntimeCommand) -> Result<RuntimeThreadState, RuntimeExe
         status: RuntimeThreadStatus::Active,
         active_turn_id: None,
         binding_id: binding_id.clone(),
+        binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
         driver_generation: *driver_generation,
         source_thread_id: source_thread_id.clone(),
         profile_digest: profile_digest.clone(),
@@ -667,6 +695,7 @@ fn command_thread_id(command: &RuntimeCommand) -> Option<RuntimeThreadId> {
     match command {
         RuntimeCommand::ThreadStart { thread_id, .. }
         | RuntimeCommand::ThreadResume { thread_id }
+        | RuntimeCommand::ThreadRebind { thread_id, .. }
         | RuntimeCommand::ThreadFork { thread_id, .. }
         | RuntimeCommand::ThreadSettingsUpdate { thread_id, .. }
         | RuntimeCommand::TurnStart { thread_id, .. }
@@ -684,6 +713,59 @@ fn validate_command(
 ) -> Result<(), RuntimeExecuteError> {
     match command {
         RuntimeCommand::ThreadStart { .. } => {}
+        RuntimeCommand::ThreadResume { .. } if state.status != RuntimeThreadStatus::Suspended => {
+            return invalid("ThreadResume requires a suspended thread on the same binding");
+        }
+        RuntimeCommand::ThreadRebind {
+            recovery_intent_id: _,
+            binding_epoch,
+            expected_binding_id,
+            expected_driver_generation,
+            new_binding_id,
+            new_driver_generation: _,
+            profile_digest,
+            bound_profile,
+            ..
+        } => {
+            if state.status != RuntimeThreadStatus::Lost {
+                return invalid("ThreadRebind requires a lost thread");
+            }
+            if state.active_turn_id.is_some()
+                || state
+                    .interactions
+                    .values()
+                    .any(|interaction| matches!(interaction.phase, crate::EntityPhase::Active))
+            {
+                return invalid("ThreadRebind requires no active turn or interaction");
+            }
+            if state.binding_id != *expected_binding_id
+                || state.driver_generation != *expected_driver_generation
+            {
+                return invalid("ThreadRebind expected binding coordinates are stale");
+            }
+            if *binding_epoch <= state.binding_epoch {
+                return invalid("ThreadRebind binding epoch must advance");
+            }
+            if new_binding_id == expected_binding_id {
+                return invalid("ThreadRebind requires a new binding identity");
+            }
+            if !bound_profile
+                .lifecycle
+                .contains(&agentdash_agent_runtime_contract::LifecycleCapability::ThreadResume)
+            {
+                return invalid("ThreadRebind profile must guarantee ThreadResume");
+            }
+            if state.bound_profile.intersect(bound_profile) != state.bound_profile {
+                return invalid(
+                    "ThreadRebind profile does not preserve the bound surface guarantees",
+                );
+            }
+            if agentdash_agent_runtime_contract::runtime_profile_digest(bound_profile)
+                != *profile_digest
+            {
+                return invalid("ThreadRebind profile digest does not match the bound profile");
+            }
+        }
         RuntimeCommand::TurnStart { .. } if state.active_turn_id.is_some() => {
             return invalid("a turn is already active");
         }
@@ -735,6 +817,34 @@ fn apply_command_projection(
         RuntimeCommand::ThreadResume { .. } => events.push(RuntimeEvent::ThreadStatusChanged {
             status: RuntimeThreadStatus::Active,
         }),
+        RuntimeCommand::ThreadRebind {
+            recovery_intent_id,
+            binding_epoch,
+            expected_binding_id,
+            expected_driver_generation,
+            new_binding_id,
+            new_driver_generation,
+            source_thread_id,
+            profile_digest,
+            bound_profile,
+            ..
+        } => {
+            events.push(RuntimeEvent::BindingReestablished {
+                recovery_intent_id: recovery_intent_id.clone(),
+                binding_epoch: *binding_epoch,
+                old_binding_id: expected_binding_id.clone(),
+                old_driver_generation: *expected_driver_generation,
+                new_binding_id: new_binding_id.clone(),
+                new_driver_generation: *new_driver_generation,
+                source_thread_id: source_thread_id.clone(),
+                profile_digest: profile_digest.clone(),
+                bound_profile: bound_profile.clone(),
+            });
+            events.push(RuntimeEvent::OperationTerminal {
+                operation_id: operation_id.clone(),
+                terminal: agentdash_agent_runtime_contract::RuntimeOperationTerminal::Succeeded,
+            });
+        }
         RuntimeCommand::ThreadSettingsUpdate { .. } => state.settings_revision.0 += 1,
         RuntimeCommand::TurnStart { .. } => {
             events.push(RuntimeEvent::TurnStarted {

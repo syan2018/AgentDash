@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ActiveContextHeadView, CommandAvailability, ContextBlock, ContextCheckpointId,
+    ActiveContextHeadView, BindingEpoch, CommandAvailability, ContextBlock, ContextCheckpointId,
     ContextCheckpointView, ContextFidelity, ContextRevision, IdempotencyKey, OperationReceipt,
     ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand, RuntimeCommandKind,
     RuntimeInteractionId, RuntimeOperationId, RuntimeOperationTerminal, RuntimeProfile,
@@ -21,6 +21,7 @@ pub struct RuntimeSnapshot {
     pub status: RuntimeThreadStatus,
     pub active_turn_id: Option<RuntimeTurnId>,
     pub binding_id: RuntimeBindingId,
+    pub binding_epoch: BindingEpoch,
     pub profile_digest: ProfileDigest,
     pub bound_profile: RuntimeProfile,
     pub active_checkpoint_id: Option<ContextCheckpointId>,

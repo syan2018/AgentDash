@@ -725,6 +725,11 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                 )
                 .await?;
             }
+            RuntimeCommand::ThreadRebind { .. } => {
+                return Err(DriverError::Unsupported {
+                    reason: "ThreadRebind is a Managed Runtime transition and cannot be dispatched to a driver".to_string(),
+                });
+            }
             RuntimeCommand::ThreadFork { checkpoint_id, .. } => {
                 let thread = self.ensure_thread(&envelope.binding_id, &binding).await?;
                 if let Some(checkpoint_id) = checkpoint_id {

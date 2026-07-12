@@ -652,11 +652,15 @@ impl AgentRuntimeHostRepository for PostgresAgentRuntimeHostRepository {
         &self,
         thread_id: &RuntimeThreadId,
     ) -> Result<Option<RuntimeBinding>, HostStoreError> {
-        let row = sqlx::query("SELECT binding FROM agent_runtime_host_binding WHERE thread_id=$1")
-            .bind(thread_id.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(sql_error)?;
+        let row = sqlx::query(
+            "SELECT binding FROM agent_runtime_host_binding \
+             WHERE thread_id=$1 AND state IN ('pending','active','desynchronized') \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(thread_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sql_error)?;
         row.map(|row| decode(row.get("binding"), "agent_runtime_host_binding.binding"))
             .transpose()
     }
@@ -892,8 +896,11 @@ impl AgentRuntimeHostRepository for PostgresAgentRuntimeHostRepository {
         _now: DateTime<Utc>,
     ) -> Result<DriverLease, HostStoreError> {
         let row = sqlx::query(
-            "SELECT lease FROM agent_runtime_driver_lease WHERE binding_id=$1 AND driver_generation=$2 \
-             AND owner=$3 AND token=$4 AND expires_at>clock_timestamp()",
+            "SELECT l.lease FROM agent_runtime_driver_lease l \
+             JOIN agent_runtime_host_binding b ON b.binding_id=l.binding_id \
+             WHERE l.binding_id=$1 AND l.driver_generation=$2 \
+             AND l.owner=$3 AND l.token=$4 AND l.expires_at>clock_timestamp() \
+             AND b.state='active' AND b.driver_generation=$2",
         )
         .bind(binding_id.as_str())
         .bind(u64_to_i64(generation.0, "lease generation")?)
@@ -926,6 +933,14 @@ impl AgentRuntimeHostRepository for PostgresAgentRuntimeHostRepository {
         )
         .bind(binding_id.as_str())
         .bind(encode(&binding, "agent_runtime_host_binding.binding")?)
+        .execute(&mut *transaction)
+        .await
+        .map_err(sql_error)?;
+        sqlx::query(
+            "DELETE FROM agent_runtime_driver_lease WHERE binding_id=$1 AND driver_generation=$2",
+        )
+        .bind(binding_id.as_str())
+        .bind(u64_to_i64(generation.0, "lease generation")?)
         .execute(&mut *transaction)
         .await
         .map_err(sql_error)?;

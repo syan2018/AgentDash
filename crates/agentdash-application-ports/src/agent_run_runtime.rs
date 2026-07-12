@@ -1,6 +1,7 @@
 use agentdash_agent_runtime_contract::{
-    BoundRuntimeHookPlan, DriverThreadId, ProfileDigest, ProfileProvenance, RuntimeBindingId,
-    RuntimeDriverGeneration, RuntimeProfile, RuntimeThreadId, SurfaceDigest,
+    BindingEpoch, BoundRuntimeHookPlan, DriverThreadId, ProfileDigest, ProfileProvenance,
+    RuntimeBindingId, RuntimeDriverGeneration, RuntimeProfile, RuntimeRevision, RuntimeThreadId,
+    SurfaceDigest,
 };
 use agentdash_spi::AuthIdentity;
 use async_trait::async_trait;
@@ -29,6 +30,7 @@ pub struct AgentRunRuntimeBinding {
     pub target: AgentRunRuntimeTarget,
     pub thread_id: RuntimeThreadId,
     pub binding_id: RuntimeBindingId,
+    pub binding_epoch: BindingEpoch,
     pub driver_generation: RuntimeDriverGeneration,
     pub source_thread_id: DriverThreadId,
     pub profile_digest: ProfileDigest,
@@ -38,6 +40,31 @@ pub struct AgentRunRuntimeBinding {
     pub settings_revision: agentdash_agent_runtime_contract::ThreadSettingsRevision,
     pub tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision,
     pub hook_plan: BoundRuntimeHookPlan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunRuntimeRecoveryState {
+    Prepared,
+    HostBound,
+    Committed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentRunRuntimeRecoveryIntent {
+    pub id: String,
+    pub target: AgentRunRuntimeTarget,
+    pub thread_id: RuntimeThreadId,
+    pub expected_old_binding_id: RuntimeBindingId,
+    pub expected_old_generation: RuntimeDriverGeneration,
+    pub expected_runtime_revision: RuntimeRevision,
+    pub binding_epoch: BindingEpoch,
+    pub proposed_binding_id: RuntimeBindingId,
+    pub selected_offer_id: String,
+    pub source_thread_id: DriverThreadId,
+    pub state: AgentRunRuntimeRecoveryState,
+    pub failure_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -78,6 +105,68 @@ pub trait AgentRunRuntimeBindingRepository: Send + Sync {
         &self,
         binding: AgentRunRuntimeBinding,
     ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError>;
+
+    async fn lineage(
+        &self,
+        target: &AgentRunRuntimeTarget,
+    ) -> Result<Vec<AgentRunRuntimeBinding>, AgentRunRuntimeBindingError> {
+        self.load(target)
+            .await
+            .map(|binding| binding.into_iter().collect())
+    }
+
+    async fn append_lineage(
+        &self,
+        expected: &AgentRunRuntimeBinding,
+        binding: AgentRunRuntimeBinding,
+        recovery_intent_id: &str,
+    ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+        let _ = (expected, binding, recovery_intent_id);
+        Err(AgentRunRuntimeBindingError::Unavailable {
+            reason: "binding lineage is not implemented".to_string(),
+            retryable: false,
+        })
+    }
+
+    async fn load_active_recovery(
+        &self,
+        target: &AgentRunRuntimeTarget,
+    ) -> Result<Option<AgentRunRuntimeRecoveryIntent>, AgentRunRuntimeBindingError> {
+        let _ = target;
+        Ok(None)
+    }
+
+    async fn load_latest_recovery(
+        &self,
+        target: &AgentRunRuntimeTarget,
+    ) -> Result<Option<AgentRunRuntimeRecoveryIntent>, AgentRunRuntimeBindingError> {
+        self.load_active_recovery(target).await
+    }
+
+    async fn prepare_recovery(
+        &self,
+        intent: AgentRunRuntimeRecoveryIntent,
+    ) -> Result<AgentRunRuntimeRecoveryIntent, AgentRunRuntimeBindingError> {
+        let _ = intent;
+        Err(AgentRunRuntimeBindingError::Unavailable {
+            reason: "binding recovery is not implemented".to_string(),
+            retryable: false,
+        })
+    }
+
+    async fn advance_recovery(
+        &self,
+        intent_id: &str,
+        expected: AgentRunRuntimeRecoveryState,
+        next: AgentRunRuntimeRecoveryState,
+        failure_reason: Option<String>,
+    ) -> Result<AgentRunRuntimeRecoveryIntent, AgentRunRuntimeBindingError> {
+        let _ = (intent_id, expected, next, failure_reason);
+        Err(AgentRunRuntimeBindingError::Unavailable {
+            reason: "binding recovery is not implemented".to_string(),
+            retryable: false,
+        })
+    }
 }
 
 /// Product-facing provisioning seam implemented by the production composition root.
@@ -90,6 +179,18 @@ pub trait AgentRunRuntimeProvisioner: Send + Sync {
         &self,
         request: &AgentRunRuntimeProvisionRequest,
     ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError>;
+
+    async fn recover(
+        &self,
+        binding: &AgentRunRuntimeBinding,
+        runtime_revision: RuntimeRevision,
+    ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+        let _ = (binding, runtime_revision);
+        Err(AgentRunRuntimeBindingError::Unavailable {
+            reason: "AgentRun runtime recovery is not available".to_string(),
+            retryable: true,
+        })
+    }
 }
 
 #[derive(Clone, Default)]
@@ -124,5 +225,20 @@ impl AgentRunRuntimeProvisioner for SharedAgentRunRuntimeProvisionerHandle {
                     retryable: true,
                 })?;
         provisioner.provision(request).await
+    }
+
+    async fn recover(
+        &self,
+        binding: &AgentRunRuntimeBinding,
+        runtime_revision: RuntimeRevision,
+    ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+        let provisioner =
+            self.inner
+                .get()
+                .ok_or_else(|| AgentRunRuntimeBindingError::Unavailable {
+                    reason: "AgentRun runtime composition 尚未绑定 provisioner".to_string(),
+                    retryable: true,
+                })?;
+        provisioner.recover(binding, runtime_revision).await
     }
 }

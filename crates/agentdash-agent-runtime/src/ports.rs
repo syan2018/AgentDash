@@ -15,8 +15,19 @@ use crate::{
 pub struct RuntimeOutboxEntry {
     pub operation_id: RuntimeOperationId,
     pub thread_id: RuntimeThreadId,
+    pub binding_id: RuntimeBindingId,
+    pub binding_epoch: agentdash_agent_runtime_contract::BindingEpoch,
     pub generation: RuntimeDriverGeneration,
     pub command: RuntimeCommand,
+}
+
+impl RuntimeOutboxEntry {
+    pub fn matches_thread_binding(&self, thread: &RuntimeThreadState) -> bool {
+        self.thread_id == thread.thread_id
+            && self.binding_id == thread.binding_id
+            && self.binding_epoch == thread.binding_epoch
+            && self.generation == thread.driver_generation
+    }
 }
 
 /// A durable work category. Each category retains its own business state; the queue only owns
@@ -112,6 +123,7 @@ pub enum DriverEventQuarantineReason {
     DriverOperationAcceptance,
     DriverRuntimeOwnedContextEvent,
     DriverRuntimeOwnedHookEvent,
+    DriverRuntimeOwnedBindingEvent,
     InvalidTransition {
         error: crate::TransitionError,
     },

@@ -50,6 +50,9 @@ pub fn command_availability(
     let required_lifecycle = match command {
         RuntimeCommandKind::ThreadStart => Some(LifecycleCapability::ThreadStart),
         RuntimeCommandKind::ThreadResume => Some(LifecycleCapability::ThreadResume),
+        // ThreadRebind validates ThreadResume against the proposed profile. The currently bound
+        // profile belongs to the lost binding and is not its admission authority.
+        RuntimeCommandKind::ThreadRebind => None,
         RuntimeCommandKind::ThreadFork => Some(LifecycleCapability::ThreadFork),
         RuntimeCommandKind::TurnStart => Some(LifecycleCapability::TurnStart),
         RuntimeCommandKind::TurnSteer => Some(LifecycleCapability::TurnSteer),
@@ -110,6 +113,7 @@ pub fn command_availability(
             command,
             RuntimeCommandKind::ThreadStart
                 | RuntimeCommandKind::ThreadResume
+                | RuntimeCommandKind::ThreadRebind
                 | RuntimeCommandKind::ThreadFork
         )
     {

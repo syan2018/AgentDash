@@ -72,7 +72,9 @@ runtime_id!(RuntimeItemId);
 runtime_id!(RuntimeInteractionId);
 runtime_id!(RuntimeOperationId);
 runtime_id!(RuntimeBindingId);
+runtime_id!(RuntimeRecoveryIntentId);
 runtime_id!(RuntimeServiceInstanceId);
+runtime_id!(HostIncarnationId);
 runtime_id!(ContextCheckpointId);
 runtime_id!(ContextCandidateId);
 runtime_id!(ContextCompactionId);
@@ -117,6 +119,7 @@ macro_rules! revision {
 
 revision!(RuntimeRevision);
 revision!(RuntimeDriverGeneration);
+revision!(BindingEpoch);
 revision!(ContextRevision);
 revision!(ContextRecipeRevision);
 revision!(ThreadSettingsRevision);

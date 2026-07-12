@@ -14,9 +14,9 @@ pub mod runtime_session_boundary;
 mod runtime_surface_update;
 
 pub use runtime_facade::{
-    AgentRunCommandGuard, AgentRunRuntime, AgentRunRuntimeError, AgentRunRuntimeView,
-    GuardedAgentRunCommand, ManagedAgentRunRuntime, ReadAgentRunEvents, ResolveAgentRunInteraction,
-    SendAgentRunMessage, SteerAgentRunTurn,
+    AgentRunCommandGuard, AgentRunRuntime, AgentRunRuntimeError, AgentRunRuntimeRecoverySummary,
+    AgentRunRuntimeView, GuardedAgentRunCommand, ManagedAgentRunRuntime, ReadAgentRunEvents,
+    ResolveAgentRunInteraction, SendAgentRunMessage, SteerAgentRunTurn,
 };
 pub use runtime_mailbox::{
     AgentRunProductDelivery, AgentRunProductDeliveryPort, DeliverAgentRunProductInput,

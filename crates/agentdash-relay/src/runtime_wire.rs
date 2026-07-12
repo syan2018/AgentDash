@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 
 use agentdash_agent_runtime_contract::{
-    ProfileDigest, RuntimeDriverGeneration, RuntimeProfile, RuntimeServiceInstanceId,
+    HostIncarnationId, ProfileDigest, RuntimeDriverGeneration, RuntimeProfile,
+    RuntimeServiceInstanceId,
 };
 use agentdash_agent_runtime_wire::{RUNTIME_WIRE_PROTOCOL_REVISION, RuntimeWireEnvelope};
 use agentdash_integration_api::{AgentRuntimePlacementId, AgentServiceDefinitionId};
@@ -20,6 +21,7 @@ pub struct RuntimeRelayProvenance {
     pub service_definition_id: AgentServiceDefinitionId,
     pub service_instance_id: RuntimeServiceInstanceId,
     pub driver_generation: RuntimeDriverGeneration,
+    pub host_incarnation_id: HostIncarnationId,
     pub host_id: String,
     pub transport_id: AgentRuntimePlacementId,
 }
@@ -38,6 +40,7 @@ pub struct RuntimeOfferAdvertisement {
     pub service_instance_id: RuntimeServiceInstanceId,
     pub instance_revision: u64,
     pub driver_generation: RuntimeDriverGeneration,
+    pub host_incarnation_id: HostIncarnationId,
     pub protocol_revision: u32,
     pub effective_profile: agentdash_agent_runtime_contract::EffectiveRuntimeProfile,
     pub profile_digest: ProfileDigest,
@@ -440,6 +443,8 @@ mod tests {
                 .expect("definition id"),
             service_instance_id: id("service-remote"),
             driver_generation: RuntimeDriverGeneration(4),
+            host_incarnation_id: HostIncarnationId::new("host-incarnation-1")
+                .expect("host incarnation id"),
             host_id: "backend-local-a".to_string(),
             transport_id: AgentRuntimePlacementId::new("runtime-wire").expect("transport id"),
         }

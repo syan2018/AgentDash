@@ -12,10 +12,11 @@ use agentdash_agent_runtime::{
     ToolCallCoordinates,
 };
 use agentdash_agent_runtime_contract::{
-    AgentRuntimeGateway, BoundRuntimeHookPlan, DriverBindIntent, DriverCommandEnvelope,
-    DriverError, DriverEventEnvelope, DriverEventSink, DriverRequestId, ProfileDigest,
-    RuntimeBindingId, RuntimeCommand, RuntimeHookPlanBinding, RuntimeServiceInstanceId,
-    RuntimeThreadId,
+    AgentRuntimeGateway, BindingEpoch, BoundRuntimeHookPlan, DriverBindIntent,
+    DriverCommandEnvelope, DriverError, DriverEventEnvelope, DriverEventSink, DriverRequestId,
+    IdempotencyKey, OperationMeta, ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand,
+    RuntimeCommandEnvelope, RuntimeHookPlanBinding, RuntimeOperationId, RuntimeRecoveryIntentId,
+    RuntimeServiceInstanceId, RuntimeThreadId,
 };
 use agentdash_agent_runtime_host::{
     ActivateAgentServiceInstance, AgentRuntimeHostRepository, AgentServiceDefinitionId,
@@ -26,7 +27,8 @@ use agentdash_agent_runtime_host::{
 };
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
-    AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeTarget,
+    AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeRecoveryIntent,
+    AgentRunRuntimeRecoveryState, AgentRunRuntimeTarget,
 };
 use agentdash_application_ports::launch::{BackendSelectionInput, BackendSelectionInputMode};
 use agentdash_diagnostics::{Subsystem, diag};
@@ -456,6 +458,10 @@ pub trait AgentRunRuntimeSurfaceStore: Send + Sync {
         binding_id: &RuntimeBindingId,
         surface: &MaterializedDriverSurface,
     ) -> Result<(), AgentRunRuntimeBindingError>;
+    async fn load_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<Option<MaterializedDriverSurface>, AgentRunRuntimeBindingError>;
 }
 
 #[async_trait]
@@ -472,6 +478,17 @@ impl AgentRunRuntimeSurfaceStore for PostgresAgentRuntimeCompositionRepository {
                 retryable: true,
             })
     }
+    async fn load_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<Option<MaterializedDriverSurface>, AgentRunRuntimeBindingError> {
+        self.load_bound_surface(binding_id).await.map_err(|error| {
+            AgentRunRuntimeBindingError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            }
+        })
+    }
 }
 
 pub struct HostAgentRunRuntimeProvisioner {
@@ -480,6 +497,7 @@ pub struct HostAgentRunRuntimeProvisioner {
     bindings: Arc<dyn AgentRunRuntimeBindingRepository>,
     surfaces: Arc<dyn AgentRunRuntimeSurfaceStore>,
     source: Arc<dyn AgentRunRuntimeSurfaceSource>,
+    gateway: Arc<dyn AgentRuntimeGateway>,
 }
 
 impl HostAgentRunRuntimeProvisioner {
@@ -489,6 +507,7 @@ impl HostAgentRunRuntimeProvisioner {
         bindings: Arc<dyn AgentRunRuntimeBindingRepository>,
         surfaces: Arc<dyn AgentRunRuntimeSurfaceStore>,
         source: Arc<dyn AgentRunRuntimeSurfaceSource>,
+        gateway: Arc<dyn AgentRuntimeGateway>,
     ) -> Self {
         Self {
             host,
@@ -496,6 +515,7 @@ impl HostAgentRunRuntimeProvisioner {
             bindings,
             surfaces,
             source,
+            gateway,
         }
     }
 
@@ -771,6 +791,7 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             target: request.target.clone(),
             thread_id,
             binding_id,
+            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
             driver_generation: host_binding.driver_generation,
             source_thread_id,
             profile_digest: offer.profile_digest,
@@ -783,6 +804,327 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
         };
         self.bindings.insert(binding).await
     }
+
+    async fn recover(
+        &self,
+        old: &AgentRunRuntimeBinding,
+        runtime_revision: agentdash_agent_runtime_contract::RuntimeRevision,
+    ) -> Result<AgentRunRuntimeBinding, AgentRunRuntimeBindingError> {
+        if let Some(current) = self.bindings.load(&old.target).await?
+            && current.binding_id != old.binding_id
+        {
+            return Ok(current);
+        }
+        let old_host = self
+            .host_repository
+            .load_binding(&old.binding_id)
+            .await
+            .map_err(host_store_error)?
+            .ok_or(AgentRunRuntimeBindingError::NotFound)?;
+        let old_offer = self
+            .host_repository
+            .load_offer(&old_host.offer_id)
+            .await
+            .map_err(host_store_error)?
+            .ok_or(AgentRunRuntimeBindingError::NotFound)?;
+        let surface = self
+            .surfaces
+            .load_surface(&old.binding_id)
+            .await?
+            .ok_or_else(|| {
+                binding_unavailable(
+                    "old materialized Runtime surface is missing".to_string(),
+                    false,
+                )
+            })?;
+        let mut offers = self
+            .host
+            .offers()
+            .await
+            .map_err(host_error)?
+            .into_iter()
+            .filter(|offer| {
+                offer.available
+                    && offer.id != old_offer.id
+                    && offer.provenance.definition_id == old_offer.provenance.definition_id
+                    && offer.placement == old_offer.placement
+                    && offer.effective_profile.profile.lifecycle.contains(
+                        &agentdash_agent_runtime_contract::LifecycleCapability::ThreadResume,
+                    )
+                    && offer_supports_surface(offer, &surface)
+            })
+            .collect::<Vec<_>>();
+        offers.sort_by(|a, b| b.generation.cmp(&a.generation));
+        let offer = offers.into_iter().next().ok_or_else(|| {
+            binding_unavailable(
+                "no same-owner Runtime offer can Resume the lost binding".to_string(),
+                true,
+            )
+        })?;
+        let epoch = BindingEpoch(old.binding_epoch.0 + 1);
+        let proposed =
+            RuntimeBindingId::new(format!("{}-epoch-{}", old.binding_id.as_str(), epoch.0))
+                .map_err(|e| binding_unavailable(e.to_string(), false))?;
+        let intent_id = format!(
+            "recovery-{}-{}-{}-{}-{}",
+            old.target.run_id, old.target.agent_id, epoch.0, offer.id, offer.generation.0
+        );
+        let intent = self
+            .bindings
+            .prepare_recovery(AgentRunRuntimeRecoveryIntent {
+                id: intent_id.clone(),
+                target: old.target.clone(),
+                thread_id: old.thread_id.clone(),
+                expected_old_binding_id: old.binding_id.clone(),
+                expected_old_generation: old.driver_generation,
+                expected_runtime_revision: runtime_revision,
+                binding_epoch: epoch,
+                proposed_binding_id: proposed,
+                selected_offer_id: offer.id.as_str().to_string(),
+                source_thread_id: old.source_thread_id.clone(),
+                state: AgentRunRuntimeRecoveryState::Prepared,
+                failure_reason: None,
+            })
+            .await?;
+        let epoch = intent.binding_epoch;
+        diag!(Info, Subsystem::AgentRun,
+            recovery_intent_id = %intent.id,
+            binding_epoch = intent.binding_epoch.0,
+            old_binding_id = %intent.expected_old_binding_id,
+            new_binding_id = %intent.proposed_binding_id,
+            stage = "prepared",
+            result = "ok",
+            "AgentRun Runtime recovery advanced"
+        );
+        let offer_id = agentdash_agent_runtime_host::AgentServiceOfferId::new(
+            intent.selected_offer_id.clone(),
+        )
+        .map_err(|error| binding_unavailable(error.to_string(), false))?;
+        let offer = self
+            .host_repository
+            .load_offer(&offer_id)
+            .await
+            .map_err(host_store_error)?
+            .ok_or_else(|| {
+                binding_unavailable("selected recovery offer no longer exists".to_string(), true)
+            })?;
+        let proposed = intent.proposed_binding_id.clone();
+        self.host_repository
+            .mark_binding_lost(&old.binding_id, old.driver_generation)
+            .await
+            .map_err(host_store_error)?;
+        self.surfaces.put_surface(&proposed, &surface).await?;
+        let host_binding = match self
+            .host
+            .bind(BindRuntimeRequest {
+                binding_id: proposed.clone(),
+                thread_id: old.thread_id.clone(),
+                offer_id: offer.id.clone(),
+                bound_surface: bound_surface_reference(&surface),
+                intent: DriverBindIntent::Resume {
+                    source_thread_id: old.source_thread_id.clone(),
+                },
+            })
+            .await
+        {
+            Ok(binding) => binding,
+            Err(error) => {
+                let mapped = host_error(error);
+                if matches!(
+                    &mapped,
+                    AgentRunRuntimeBindingError::Unavailable {
+                        retryable: false,
+                        ..
+                    }
+                ) {
+                    let reason = mapped.to_string();
+                    let _ = self
+                        .bindings
+                        .advance_recovery(
+                            &intent.id,
+                            intent.state,
+                            AgentRunRuntimeRecoveryState::Failed,
+                            Some(reason.clone()),
+                        )
+                        .await;
+                    diag!(Warn, Subsystem::AgentRun,
+                        recovery_intent_id = %intent.id,
+                        binding_epoch = intent.binding_epoch.0,
+                        stage = "host_bind",
+                        result = "failed",
+                        reason = %reason,
+                        "AgentRun Runtime recovery failed"
+                    );
+                }
+                return Err(mapped);
+            }
+        };
+        let source = host_binding.source_thread_id.clone().ok_or_else(|| {
+            binding_unavailable(
+                "resumed Host binding has no source coordinate".to_string(),
+                false,
+            )
+        })?;
+        let intent = self
+            .bindings
+            .advance_recovery(
+                &intent.id,
+                AgentRunRuntimeRecoveryState::Prepared,
+                AgentRunRuntimeRecoveryState::HostBound,
+                None,
+            )
+            .await?;
+        diag!(Info, Subsystem::AgentRun,
+            recovery_intent_id = %intent.id,
+            binding_epoch = intent.binding_epoch.0,
+            stage = "host_bound",
+            result = "ok",
+            "AgentRun Runtime recovery advanced"
+        );
+        let binding = AgentRunRuntimeBinding {
+            target: old.target.clone(),
+            thread_id: old.thread_id.clone(),
+            binding_id: proposed,
+            binding_epoch: epoch,
+            driver_generation: host_binding.driver_generation,
+            source_thread_id: source.clone(),
+            profile_digest: offer.profile_digest.clone(),
+            profile_provenance: offer.effective_profile.provenance.clone(),
+            bound_profile: offer.effective_profile.profile.clone(),
+            surface_digest: old.surface_digest.clone(),
+            settings_revision: old.settings_revision,
+            tool_set_revision: old.tool_set_revision,
+            hook_plan: old.hook_plan.clone(),
+        };
+        self.bindings
+            .append_lineage(old, binding.clone(), &intent.id)
+            .await?;
+        let op = format!("agentrun-runtime-rebind-{}", intent.id);
+        if let Err(error) = self
+            .gateway
+            .execute(RuntimeCommandEnvelope {
+                meta: OperationMeta {
+                    operation_id: RuntimeOperationId::new(op.clone())
+                        .expect("recovery operation id"),
+                    idempotency_key: IdempotencyKey::new(op).expect("recovery idempotency key"),
+                    expected_thread_revision: Some(intent.expected_runtime_revision),
+                    actor: RuntimeActor::System {
+                        component: "agent_run_runtime_recovery".to_string(),
+                    },
+                },
+                command: RuntimeCommand::ThreadRebind {
+                    thread_id: old.thread_id.clone(),
+                    recovery_intent_id: RuntimeRecoveryIntentId::new(intent.id.clone())
+                        .expect("recovery intent id"),
+                    binding_epoch: epoch,
+                    expected_binding_id: old.binding_id.clone(),
+                    expected_driver_generation: old.driver_generation,
+                    new_binding_id: binding.binding_id.clone(),
+                    new_driver_generation: binding.driver_generation,
+                    source_thread_id: source,
+                    profile_digest: binding.profile_digest.clone(),
+                    bound_profile: Box::new(binding.bound_profile.clone()),
+                },
+            })
+            .await
+        {
+            let mapped = runtime_rebind_error(error);
+            let reason = mapped.to_string();
+            if matches!(
+                &mapped,
+                AgentRunRuntimeBindingError::Unavailable {
+                    retryable: false,
+                    ..
+                }
+            ) {
+                finalize_nonretryable_recovery_failure(
+                    || async {
+                        self.host_repository
+                            .mark_binding_lost(&binding.binding_id, binding.driver_generation)
+                            .await
+                            .map_err(host_store_error)
+                    },
+                    || async {
+                        self.bindings
+                            .advance_recovery(
+                                &intent.id,
+                                AgentRunRuntimeRecoveryState::HostBound,
+                                AgentRunRuntimeRecoveryState::Failed,
+                                Some(reason.clone()),
+                            )
+                            .await
+                            .map(|_| ())
+                    },
+                )
+                .await?;
+                diag!(Warn, Subsystem::AgentRun,
+                    recovery_intent_id = %intent.id,
+                    binding_epoch = intent.binding_epoch.0,
+                    stage = "runtime_rebind",
+                    result = "failed",
+                    reason = %reason,
+                    "AgentRun Runtime recovery failed"
+                );
+            } else {
+                diag!(Warn, Subsystem::AgentRun,
+                    recovery_intent_id = %intent.id,
+                    binding_epoch = intent.binding_epoch.0,
+                    stage = "runtime_rebind",
+                    result = "retryable",
+                    reason = %reason,
+                    "AgentRun Runtime recovery remains pending"
+                );
+            }
+            return Err(mapped);
+        }
+        self.bindings
+            .advance_recovery(
+                &intent.id,
+                AgentRunRuntimeRecoveryState::HostBound,
+                AgentRunRuntimeRecoveryState::Committed,
+                None,
+            )
+            .await?;
+        diag!(Info, Subsystem::AgentRun,
+            recovery_intent_id = %intent.id,
+            binding_epoch = intent.binding_epoch.0,
+            stage = "committed",
+            result = "ok",
+            "AgentRun Runtime recovery advanced"
+        );
+        Ok(binding)
+    }
+}
+
+fn runtime_rebind_error(
+    error: agentdash_agent_runtime_contract::RuntimeExecuteError,
+) -> AgentRunRuntimeBindingError {
+    use agentdash_agent_runtime_contract::RuntimeExecuteError;
+    let retryable = match &error {
+        RuntimeExecuteError::RevisionConflict { .. } => true,
+        RuntimeExecuteError::Unavailable { retryable, .. }
+        | RuntimeExecuteError::Persistence { retryable, .. } => *retryable,
+        RuntimeExecuteError::Unsupported { .. }
+        | RuntimeExecuteError::OperationConflict { .. }
+        | RuntimeExecuteError::ContextCompactionInProgress { .. }
+        | RuntimeExecuteError::InvalidCommand { .. }
+        | RuntimeExecuteError::Incompatible { .. } => false,
+    };
+    binding_unavailable(error.to_string(), retryable)
+}
+
+async fn finalize_nonretryable_recovery_failure<Mark, MarkFuture, Advance, AdvanceFuture>(
+    mark_host_lost: Mark,
+    advance_intent_failed: Advance,
+) -> Result<(), AgentRunRuntimeBindingError>
+where
+    Mark: FnOnce() -> MarkFuture,
+    MarkFuture: std::future::Future<Output = Result<(), AgentRunRuntimeBindingError>>,
+    Advance: FnOnce() -> AdvanceFuture,
+    AdvanceFuture: std::future::Future<Output = Result<(), AgentRunRuntimeBindingError>>,
+{
+    mark_host_lost().await?;
+    advance_intent_failed().await
 }
 
 fn runtime_thread_id(
@@ -894,8 +1236,15 @@ impl RuntimeOutboxWorker {
         let count = claims.len();
         let mut first_error = None;
         for claim in claims {
+            if self.claim_is_obsolete(&claim).await? {
+                self.store
+                    .ack(&claim)
+                    .await
+                    .map_err(|store| RuntimeOutboxWorkerError::Store(store.to_string()))?;
+                continue;
+            }
             if let Err(error) = self.dispatch_claim(&claim).await {
-                if self.terminalized_after_dispatch_failure(&claim).await? {
+                if self.claim_is_obsolete(&claim).await? {
                     self.store
                         .ack(&claim)
                         .await
@@ -922,25 +1271,37 @@ impl RuntimeOutboxWorker {
         Ok(count)
     }
 
-    async fn terminalized_after_dispatch_failure(
+    async fn claim_is_obsolete(
         &self,
         claim: &RuntimeWorkClaim,
     ) -> Result<bool, RuntimeOutboxWorkerError> {
         let RuntimeWorkPayload::RuntimeOutbox(entry) = &claim.payload else {
             return Ok(false);
         };
+        let operation = self
+            .store
+            .find_operation(&entry.operation_id)
+            .await
+            .map_err(|error| RuntimeOutboxWorkerError::Store(error.to_string()))?;
+        if operation.is_none_or(|operation| operation.terminal.is_some()) {
+            return Ok(true);
+        }
         let thread = self
             .store
             .load_thread(&entry.thread_id)
             .await
             .map_err(|error| RuntimeOutboxWorkerError::Store(error.to_string()))?;
-        Ok(thread.is_some_and(|thread| {
-            matches!(
-                thread.status,
-                agentdash_agent_runtime_contract::RuntimeThreadStatus::Lost
-                    | agentdash_agent_runtime_contract::RuntimeThreadStatus::Closed
-            )
-        }))
+        let Some(thread) = thread else {
+            return Ok(true);
+        };
+        if matches!(
+            thread.status,
+            agentdash_agent_runtime_contract::RuntimeThreadStatus::Lost
+                | agentdash_agent_runtime_contract::RuntimeThreadStatus::Closed
+        ) {
+            return Ok(true);
+        }
+        Ok(!entry.matches_thread_binding(&thread))
     }
 
     async fn dispatch_claim(
@@ -963,9 +1324,24 @@ impl RuntimeOutboxWorker {
                     entry.thread_id
                 ))
             })?;
-        if thread.driver_generation != entry.generation {
+        let operation = self
+            .store
+            .find_operation(&entry.operation_id)
+            .await
+            .map_err(|error| RuntimeOutboxWorkerError::Store(error.to_string()))?
+            .ok_or_else(|| {
+                RuntimeOutboxWorkerError::InvalidClaim(
+                    "outbox operation does not exist".to_string(),
+                )
+            })?;
+        if operation.terminal.is_some() {
             return Err(RuntimeOutboxWorkerError::InvalidClaim(
-                "outbox generation no longer matches the Runtime thread".to_string(),
+                "outbox operation is already terminal".to_string(),
+            ));
+        }
+        if !entry.matches_thread_binding(&thread) {
+            return Err(RuntimeOutboxWorkerError::InvalidClaim(
+                "outbox binding identity no longer matches the Runtime thread".to_string(),
             ));
         }
         let request_id = DriverRequestId::new(format!("request-{}", entry.operation_id))
@@ -977,7 +1353,7 @@ impl RuntimeOutboxWorker {
         .then(|| agentdash_agent_runtime::canonical_turn_id(&entry.operation_id));
         let mut lease = self
             .host
-            .acquire_driver_lease(&thread.binding_id)
+            .acquire_driver_lease(&entry.binding_id)
             .await
             .map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string()))?;
         let sink: Arc<dyn DriverEventSink> = Arc::new(ManagedRuntimeDriverEventSink {
@@ -987,7 +1363,7 @@ impl RuntimeOutboxWorker {
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id,
-                    binding_id: thread.binding_id.clone(),
+                    binding_id: entry.binding_id.clone(),
                     generation: entry.generation,
                     source_thread_id: thread.source_thread_id.clone(),
                     runtime_turn_id,
@@ -1124,6 +1500,8 @@ pub fn build_agent_runtime_composition(
     ));
     let bindings: Arc<dyn AgentRunRuntimeBindingRepository> = composition_repository.clone();
     let surface_store: Arc<dyn AgentRunRuntimeSurfaceStore> = composition_repository.clone();
+    let runtime = Arc::new(ManagedAgentRuntime::new(runtime_repository.clone()));
+    let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let provisioner: Arc<dyn AgentRunRuntimeProvisioner> =
         Arc::new(HostAgentRunRuntimeProvisioner::new(
             host.clone(),
@@ -1131,10 +1509,9 @@ pub fn build_agent_runtime_composition(
             bindings.clone(),
             surface_store,
             input.surface_source,
+            gateway.clone(),
         ));
-    let runtime = Arc::new(ManagedAgentRuntime::new(runtime_repository.clone()));
     let work_queue: Arc<dyn RuntimeWorkQueue> = runtime_repository.clone();
-    let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let outbox_worker = Arc::new(RuntimeOutboxWorker::new(
         runtime_repository.clone(),
         runtime.clone(),
@@ -1261,10 +1638,11 @@ pub fn build_native_agent_runtime_composition(
         proxy_definition.config_schema = serde_json::json!({
             "type": "object",
             "additionalProperties": false,
-            "required": ["sourceServiceInstanceId", "sourceDriverGeneration"],
+            "required": ["sourceServiceInstanceId", "sourceDriverGeneration", "sourceHostIncarnationId"],
             "properties": {
                 "sourceServiceInstanceId": { "type": "string", "minLength": 1 },
-                "sourceDriverGeneration": { "type": "integer", "minimum": 1 }
+                "sourceDriverGeneration": { "type": "integer", "minimum": 1 },
+                "sourceHostIncarnationId": { "type": "string", "minLength": 1 }
             }
         });
         proxy_definition.config_schema_digest =
@@ -2633,5 +3011,78 @@ rl.on('line', line => {
             prepared.service_config["credential_scope"]["user_id"],
             request.identity.as_ref().unwrap().subject
         );
+    }
+
+    #[test]
+    fn runtime_rebind_error_preserves_retryable_intent() {
+        let mapped = runtime_rebind_error(
+            agentdash_agent_runtime_contract::RuntimeExecuteError::RevisionConflict {
+                expected: agentdash_agent_runtime_contract::RuntimeRevision(7),
+                actual: agentdash_agent_runtime_contract::RuntimeRevision(8),
+            },
+        );
+        assert!(matches!(
+            mapped,
+            AgentRunRuntimeBindingError::Unavailable {
+                retryable: true,
+                ..
+            }
+        ));
+
+        let mapped = runtime_rebind_error(
+            agentdash_agent_runtime_contract::RuntimeExecuteError::Incompatible {
+                reason: "resume profile changed".to_string(),
+            },
+        );
+        assert!(matches!(
+            mapped,
+            AgentRunRuntimeBindingError::Unavailable {
+                retryable: false,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn host_lost_failure_keeps_recovery_intent_host_bound() {
+        let advanced = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = advanced.clone();
+        let result = finalize_nonretryable_recovery_failure(
+            || async {
+                Err(AgentRunRuntimeBindingError::Unavailable {
+                    reason: "host store unavailable".to_string(),
+                    retryable: true,
+                })
+            },
+            || async move {
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AgentRunRuntimeBindingError::Unavailable {
+                retryable: true,
+                ..
+            })
+        ));
+        assert!(!advanced.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn host_lost_success_allows_recovery_intent_to_fail() {
+        let advanced = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = advanced.clone();
+        finalize_nonretryable_recovery_failure(
+            || async { Ok(()) },
+            || async move {
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await
+        .expect("Host Lost后可推进intent Failed");
+        assert!(advanced.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

@@ -155,6 +155,7 @@ impl AgentRunRuntimeProvisioner for CompositionFixture {
             target: request.target.clone(),
             thread_id: id("thread-facade"),
             binding_id: id("binding-facade"),
+            binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
             driver_generation: RuntimeDriverGeneration(3),
             source_thread_id: id("source-thread-facade"),
             profile_digest: id("profile-facade"),
@@ -214,6 +215,14 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
     assert_eq!(composition.provision_count().await, 1);
 
     let view = facade.inspect(target()).await.expect("inspect");
+    assert_eq!(
+        view.binding_epoch,
+        Some(agentdash_agent_runtime_contract::BindingEpoch(1))
+    );
+    assert_eq!(
+        view.recovery,
+        agentdash_application_agentrun::agent_run::AgentRunRuntimeRecoverySummary::Active
+    );
     assert_eq!(
         view.snapshot.expect("snapshot").thread_id,
         id("thread-facade")

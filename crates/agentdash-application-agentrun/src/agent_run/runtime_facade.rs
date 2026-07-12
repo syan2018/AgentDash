@@ -6,11 +6,12 @@ use agentdash_agent_runtime_contract::{
     RuntimeCommand, RuntimeCommandEnvelope, RuntimeEventStream, RuntimeExecuteError, RuntimeInput,
     RuntimeInteractionId, RuntimeOperationId, RuntimeSnapshot, RuntimeSnapshotError,
     RuntimeSnapshotQuery, RuntimeSnapshotResult, RuntimeSubscribeError, RuntimeThreadId,
-    RuntimeTurnId,
+    RuntimeThreadStatus, RuntimeTurnId,
 };
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
-    AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeTarget,
+    AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeRecoveryState,
+    AgentRunRuntimeTarget,
 };
 use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_spi::AuthIdentity;
@@ -22,6 +23,17 @@ pub struct AgentRunRuntimeView {
     pub target: AgentRunRuntimeTarget,
     pub binding: Option<AgentRunRuntimeBinding>,
     pub snapshot: Option<RuntimeSnapshot>,
+    pub binding_epoch: Option<agentdash_agent_runtime_contract::BindingEpoch>,
+    pub recovery: AgentRunRuntimeRecoverySummary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunRuntimeRecoverySummary {
+    Active,
+    Lost,
+    Recovering,
+    RecoveryFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +252,29 @@ impl ManagedAgentRunRuntime {
         }
     }
 
+    async fn reconcile_committed_recovery(
+        &self,
+        target: &AgentRunRuntimeTarget,
+        binding: &AgentRunRuntimeBinding,
+    ) -> Result<(), AgentRunRuntimeError> {
+        let Some(intent) = self.bindings.load_active_recovery(target).await? else {
+            return Ok(());
+        };
+        if intent.state == AgentRunRuntimeRecoveryState::HostBound
+            && intent.proposed_binding_id == binding.binding_id
+        {
+            self.bindings
+                .advance_recovery(
+                    &intent.id,
+                    AgentRunRuntimeRecoveryState::HostBound,
+                    AgentRunRuntimeRecoveryState::Committed,
+                    None,
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     fn envelope(
         target: &AgentRunRuntimeTarget,
         client_command_id: &str,
@@ -299,10 +334,29 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
             Some(binding) => self.snapshot_for(binding).await?,
             None => None,
         };
+        let latest_recovery = self.bindings.load_latest_recovery(&target).await?;
+        let recovery = match latest_recovery.as_ref().map(|intent| intent.state) {
+            Some(
+                AgentRunRuntimeRecoveryState::Prepared | AgentRunRuntimeRecoveryState::HostBound,
+            ) => AgentRunRuntimeRecoverySummary::Recovering,
+            Some(AgentRunRuntimeRecoveryState::Failed) => {
+                AgentRunRuntimeRecoverySummary::RecoveryFailed
+            }
+            _ if snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.status == RuntimeThreadStatus::Lost) =>
+            {
+                AgentRunRuntimeRecoverySummary::Lost
+            }
+            _ => AgentRunRuntimeRecoverySummary::Active,
+        };
+        let binding_epoch = binding.as_ref().map(|binding| binding.binding_epoch);
         Ok(AgentRunRuntimeView {
             target,
             binding,
             snapshot,
+            binding_epoch,
+            recovery,
         })
     }
 
@@ -311,7 +365,7 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
         command: SendAgentRunMessage,
     ) -> Result<OperationReceipt, AgentRunRuntimeError> {
         Self::operation_identity(&command.target, &command.client_command_id)?;
-        let binding = match self.bindings.load(&command.target).await? {
+        let mut binding = match self.bindings.load(&command.target).await? {
             Some(binding) => binding,
             None => {
                 self.provisioner
@@ -323,6 +377,8 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
                     .await?
             }
         };
+        self.reconcile_committed_recovery(&command.target, &binding)
+            .await?;
         if let Some(receipt) = self
             .replay_existing(
                 &command.target,
@@ -341,7 +397,15 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
         {
             return Ok(receipt);
         }
-        let snapshot = self.snapshot_for(&binding).await?;
+        let mut snapshot = self.snapshot_for(&binding).await?;
+        if snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.status == RuntimeThreadStatus::Lost)
+        {
+            let revision = snapshot.as_ref().expect("lost snapshot exists").revision;
+            binding = self.provisioner.recover(&binding, revision).await?;
+            snapshot = self.snapshot_for(&binding).await?;
+        }
         let expected = snapshot.as_ref().map(|snapshot| snapshot.revision);
         let runtime_command = match snapshot {
             None => RuntimeCommand::ThreadStart {

@@ -282,9 +282,10 @@ fn remote_proxy_definition(source: &AgentServiceDefinition) -> AgentServiceDefin
         "type":"object",
         "properties": {
             "sourceServiceInstanceId":{"type":"string","minLength":1},
-            "sourceDriverGeneration":{"type":"integer","minimum":1}
+            "sourceDriverGeneration":{"type":"integer","minimum":1},
+            "sourceHostIncarnationId":{"type":"string","minLength":1}
         },
-        "required":["sourceServiceInstanceId","sourceDriverGeneration"],
+        "required":["sourceServiceInstanceId","sourceDriverGeneration","sourceHostIncarnationId"],
         "additionalProperties":false
     });
     let mut definition = source.clone();
@@ -564,6 +565,8 @@ async fn local_host(
         Arc::new(HostRuntimeDriverEndpointResolver::new(
             host,
             BACKEND_ID,
+            agentdash_agent_runtime_contract::HostIncarnationId::new("enterprise-e2e-incarnation")
+                .expect("host incarnation id"),
             transport_id,
         )),
         RuntimeRelayTransportDescriptor {

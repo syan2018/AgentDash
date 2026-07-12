@@ -59,7 +59,9 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_runtime_driver_lease",
     "agent_runtime_driver_coordinate",
     "agent_runtime_surface_snapshot",
-    "agent_run_runtime_binding",
+    "agent_run_runtime_thread_anchor",
+    "agent_run_runtime_binding_lineage",
+    "agent_run_runtime_recovery_intent",
     "agent_context_checkpoint",
     "agent_context_preparation",
     "agent_context_candidate",
@@ -79,6 +81,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 const RETIRED_POSTGRES_TABLES: &[&str] = &[
+    "agent_run_runtime_binding",
     "agent_run_command_receipts",
     "agent_run_delivery_bindings",
     "runtime_session_compaction_requests",

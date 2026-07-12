@@ -3,11 +3,12 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ContextActivationId, ContextCandidateId, ContextCheckpointId, ContextCompactionId,
-    ContextDigest, ContextRevision, DriverContextRevision, EventSequence, HookDefinitionId,
-    HookEffectId, HookPlanDigest, HookPlanRevision, HookPoint, HookRunId, RuntimeBindingId,
-    RuntimeInteractionId, RuntimeItemId, RuntimeOperationId, RuntimeRevision, RuntimeThreadId,
-    RuntimeTurnId,
+    BindingEpoch, ContextActivationId, ContextCandidateId, ContextCheckpointId,
+    ContextCompactionId, ContextDigest, ContextRevision, DriverContextRevision, DriverThreadId,
+    EventSequence, HookDefinitionId, HookEffectId, HookPlanDigest, HookPlanRevision, HookPoint,
+    HookRunId, ProfileDigest, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
+    RuntimeItemId, RuntimeOperationId, RuntimeProfile, RuntimeRecoveryIntentId, RuntimeRevision,
+    RuntimeThreadId, RuntimeTurnId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -78,6 +79,7 @@ pub enum RuntimeProtocolViolationCode {
     DriverOperationAcceptance,
     DriverRuntimeOwnedContextEvent,
     DriverRuntimeOwnedHookEvent,
+    DriverRuntimeOwnedBindingEvent,
     InvalidLifecycleTransition,
     DuplicateTerminal,
 }
@@ -152,6 +154,17 @@ pub enum RuntimeEvent {
     BindingLost {
         binding_id: RuntimeBindingId,
         reason: String,
+    },
+    BindingReestablished {
+        recovery_intent_id: RuntimeRecoveryIntentId,
+        binding_epoch: BindingEpoch,
+        old_binding_id: RuntimeBindingId,
+        old_driver_generation: RuntimeDriverGeneration,
+        new_binding_id: RuntimeBindingId,
+        new_driver_generation: RuntimeDriverGeneration,
+        source_thread_id: DriverThreadId,
+        profile_digest: ProfileDigest,
+        bound_profile: Box<RuntimeProfile>,
     },
     ProtocolViolation {
         code: RuntimeProtocolViolationCode,

@@ -98,23 +98,6 @@ impl BackendRegistry {
         }
         backends.insert(id.clone(), backend);
         drop(backends);
-        let routes = self
-            .runtime_wire_routes
-            .read()
-            .await
-            .values()
-            .filter(|route| route.request().host_id == id)
-            .cloned()
-            .collect::<Vec<_>>();
-        for route in routes {
-            if let Err(error) = route.reopen().await {
-                diag!(Warn, Subsystem::Relay,
-                    backend_id = %id,
-                    error = %error,
-                    "Runtime Wire stream reopen failed after backend registration"
-                );
-            }
-        }
         diag!(Info, Subsystem::Relay,
         backend_id = %id, "本机后端已注册");
         Ok(())
@@ -751,6 +734,10 @@ mod tests {
             service_instance_id: RuntimeServiceInstanceId::new("enterprise-instance")
                 .expect("instance id"),
             generation: RuntimeDriverGeneration(3),
+            host_incarnation_id: agentdash_agent_runtime_contract::HostIncarnationId::new(
+                "host-incarnation-1",
+            )
+            .expect("host incarnation id"),
         };
         let resolver = CloudRuntimeWirePlacementResolver::new(registry.clone(), 8);
         let resolve = tokio::spawn(async move { resolver.resolve(request).await });
@@ -807,7 +794,10 @@ mod tests {
             panic!("expected Runtime Wire frame")
         };
 
-        registry.unregister("local-a").await;
+        let disconnecting_registry = registry.clone();
+        let disconnect = tokio::spawn(async move {
+            disconnecting_registry.unregister("local-a").await;
+        });
         assert!(matches!(
             tokio::time::timeout(std::time::Duration::from_secs(1), placement.receive())
                 .await
@@ -815,51 +805,18 @@ mod tests {
                 .expect("disconnect event"),
             RuntimeWirePlacementEvent::Disconnected { .. }
         ));
+        placement.acknowledge_disconnect().await;
+        disconnect.await.expect("disconnect task");
         let (second_sender, mut second_outbound) = mpsc::unbounded_channel();
         registry
             .try_register(connected_backend_with_sender("local-a", second_sender))
             .await
             .expect("register replacement backend connection");
-        let reopen = second_outbound.recv().await.expect("Runtime Wire reopen");
-        let RelayMessage::RuntimeWireOpen {
-            id: reopen_id,
-            payload: reopen,
-        } = reopen
-        else {
-            panic!("expected Runtime Wire reopen")
-        };
-        assert_eq!(reopen.stream_id, open.stream_id);
-        assert_eq!(reopen.provenance, open.provenance);
-        assert!(
-            registry
-                .handle_runtime_wire_message(
-                    "local-a",
-                    &RelayMessage::RuntimeWireOpenAck {
-                        id: reopen_id,
-                        payload: agentdash_relay::RuntimeRelayOpenAck {
-                            stream_id: reopen.stream_id,
-                            selected_protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
-                            accepted_after_sequence: 0,
-                            transport_profile: profile,
-                            transport_profile_digest: profile_digest,
-                            max_in_flight_frames: 8,
-                        },
-                    },
-                )
-                .await
-        );
-        assert!(matches!(
-            tokio::time::timeout(std::time::Duration::from_secs(1), placement.receive())
-                .await
-                .expect("reconnect receive must not hang")
-                .expect("reconnect event"),
-            RuntimeWirePlacementEvent::Reconnected
-        ));
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(20), second_outbound.recv(),)
                 .await
                 .is_err(),
-            "request abandoned as Lost must not replay after reconnect"
+            "declared-lost Runtime Wire route must not reopen after backend registration"
         );
         assert_eq!(first_frame.envelope, envelope);
     }

@@ -26,6 +26,8 @@ pub trait RuntimeWirePlacement: Send + Sync {
     async fn send(&self, frame: RuntimeWireEnvelope) -> Result<(), RemoteRuntimeTransportError>;
 
     async fn receive(&self) -> Result<RuntimeWirePlacementEvent, RemoteRuntimeTransportError>;
+
+    async fn acknowledge_disconnect(&self) {}
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +52,7 @@ pub struct RuntimeWirePlacementRequest {
     pub definition_id: AgentServiceDefinitionId,
     pub service_instance_id: RuntimeServiceInstanceId,
     pub generation: RuntimeDriverGeneration,
+    pub host_incarnation_id: agentdash_agent_runtime_contract::HostIncarnationId,
 }
 
 pub struct RemoteRuntimeDriverFactory {
@@ -62,6 +65,7 @@ pub struct RemoteRuntimeDriverFactory {
 struct RemoteRuntimeProxyConfig {
     source_service_instance_id: RuntimeServiceInstanceId,
     source_driver_generation: RuntimeDriverGeneration,
+    source_host_incarnation_id: agentdash_agent_runtime_contract::HostIncarnationId,
 }
 
 impl RemoteRuntimeDriverFactory {
@@ -107,6 +111,7 @@ impl AgentRuntimeDriverFactory for RemoteRuntimeDriverFactory {
                 definition_id: instance.definition.provenance.definition_id.clone(),
                 service_instance_id: proxy_config.source_service_instance_id.clone(),
                 generation: proxy_config.source_driver_generation,
+                host_incarnation_id: proxy_config.source_host_incarnation_id,
             })
             .await
             .map_err(factory_transport_error)?;
@@ -268,7 +273,7 @@ impl AgentRuntimeDriver for RemoteRuntimeDriver {
 
 enum RemoteInboundSerial {
     DriverEvent(RuntimeWireEnvelope),
-    Disconnected(String),
+    Disconnected(String, tokio::sync::oneshot::Sender<()>),
     Reconnected,
 }
 
@@ -282,8 +287,9 @@ impl RemoteRuntimeDriver {
                     RemoteInboundSerial::DriverEvent(envelope) => {
                         serial_driver.handle_inbound(envelope).await;
                     }
-                    RemoteInboundSerial::Disconnected(reason) => {
+                    RemoteInboundSerial::Disconnected(reason, acknowledged) => {
                         serial_driver.handle_disconnect(reason).await;
+                        let _ = acknowledged.send(());
                     }
                     RemoteInboundSerial::Reconnected => {
                         serial_driver
@@ -316,12 +322,15 @@ impl RemoteRuntimeDriver {
                         }
                     }
                     Ok(RuntimeWirePlacementEvent::Disconnected { reason }) => {
+                        let (acknowledged_tx, acknowledged_rx) = tokio::sync::oneshot::channel();
                         if serial_tx
-                            .send(RemoteInboundSerial::Disconnected(reason))
+                            .send(RemoteInboundSerial::Disconnected(reason, acknowledged_tx))
                             .is_err()
                         {
                             break;
                         }
+                        let _ = acknowledged_rx.await;
+                        self.placement.acknowledge_disconnect().await;
                     }
                     Ok(RuntimeWirePlacementEvent::Reconnected) => {
                         if serial_tx.send(RemoteInboundSerial::Reconnected).is_err() {
@@ -329,8 +338,11 @@ impl RemoteRuntimeDriver {
                         }
                     }
                     Err(error) => {
-                        let _ =
-                            serial_tx.send(RemoteInboundSerial::Disconnected(error.to_string()));
+                        let (acknowledged_tx, _acknowledged_rx) = tokio::sync::oneshot::channel();
+                        let _ = serial_tx.send(RemoteInboundSerial::Disconnected(
+                            error.to_string(),
+                            acknowledged_tx,
+                        ));
                         break;
                     }
                 }

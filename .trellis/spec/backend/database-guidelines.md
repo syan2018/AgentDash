@@ -399,6 +399,8 @@ impl AgentFrame {
 - `agent_frames.surface` 当前是既有 `TEXT` JSON schema 事实；新增 adjacent document 按 JSONB 文档列规则设计。
 - Split columns 是 repository projection columns；写入从 `surface_document()` 派生，读取时用于迁移物化和 projection 校验。
 - `agent_frames.hook_plan`是新revision的immutable HookPlan projection，使用业务语义列名与`jsonb`。它保持nullable以明确表示历史Frame尚未物化；生产writer必须写入typed plan，Runtime读取缺失值时精确失败。
+- 最终`hook_plan`列可由后续rename migration建立；已在任一Dashboard或本机Runtime数据库应用的migration内容保持immutable，使所有持久实例通过checksum后顺序收敛到同一schema。
+- rename migration只接受单一旧列或单一最终列，并验证最终类型为`jsonb`；双列并存、来源列缺失或类型错误都表示schema事实不一致，应显式失败。
 - 新 AgentFrame 写入先填 `surface`，再 `apply_surface_projection()`。
 - Backfill migration 从 split columns 物化 `surface`。
 - 无 live repository query 的索引用新 migration 删除。
@@ -427,7 +429,7 @@ impl AgentFrame {
 - Mapper: surface-overrides-split、split-to-surface materialization。
 - Migration guard for `agent_frames` schema change。
 - Repository roundtrip preserves canonical surface and projected fields。
-- `hook_plan` roundtrip覆盖空requirements与显式ToolBroker requirement；migration guard断言新增列名为`hook_plan jsonb`。
+- `hook_plan` roundtrip覆盖空requirements与显式ToolBroker requirement；migration guard断言最终列名为`hook_plan jsonb`并覆盖顺序rename migration。
 
 ### 7. Boundary / Canonical
 

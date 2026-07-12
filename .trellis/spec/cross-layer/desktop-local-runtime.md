@@ -548,6 +548,8 @@ Desktop defaults JSON:
 - `DesktopAppSettings.auto_connect_local_runtime` is the global desktop auto-connect gate. `LocalRuntimeProfile.auto_start` marks whether the saved profile should participate in native startup. Automatic native startup requires both and then waits for Web bridge to report that the Dashboard has a current user; profile persistence keeps startup configuration facts such as workspace roots and `executor_enabled`, not bearer credentials. Manual start/retry/tray commands still call the same host service.
 - `external` Desktop API mode only chooses the Dashboard API origin. It does not disable the embedded desktop runner host, because cloud API authority and local execution lifecycle are separate facts.
 - Web Dashboard auto-connect is a request bridge, not lifecycle ownership. It uses current-user availability as the authenticated intent gate, passes the current bearer token only when one exists, reuses an in-flight promise, and uses bounded retry for transient native/API readiness failures. If the Dashboard has a current user but no bearer token, the bridge still calls the same native ensure path so `/api/local-runtime/ensure` can either accept another configured auth source or return an actionable auth/API error in the native snapshot.
+- A desktop credential claim has bounded connect and whole-request deadlines. Timeout while connecting, waiting for response headers, or reading the response body is the same retryable `desktop_claim_timeout`; `claiming` only describes that single in-flight attempt.
+- Web auto-connect classifies each observation as `complete | pending | inactive`. Completion requires a non-empty runtime `backend_id` and Relay `registered_backend_id` to be equal while Relay state is `registered`; intermediate supervisor/Relay states are observed at most eight times without issuing another `runtime_start`.
 - Desktop embedded runner enrollment origin follows the current Desktop Dashboard API origin. In release external builds that origin is provided by `AGENTDASH_DEFAULT_CLOUD_ORIGIN` / `--api-origin`; in `pnpm dev:desktop` it is provided by `VITE_API_ORIGIN` and `AGENTDASH_DESKTOP_API_ORIGIN` pointing at the local dev `agentdash-server`. Frontend defaults resolve Local Runtime server URL as `API_ORIGIN -> default_cloud_origin -> 127.0.0.1:17301`, and Tauri normalizes profile/start request `server_url` to `desktop_api_config().origin`; persisted profile values never override the current Dashboard API origin.
 - Auto-connect failures are surfaced through native runtime snapshot/logs. Browser console output from the bridge should not include caught error objects because errors may contain request context or token-bearing diagnostics.
 
@@ -571,6 +573,8 @@ Desktop defaults JSON:
 | Native startup has no auto-start profile | report `state=idle` and wait for login bridge/profile save or manual start |
 | Profile contains an old remote or old development `server_url` while Dashboard API origin changed | normalize saved profile and runtime start request to the current Desktop Dashboard API origin |
 | Auto-connect transient failure | schedule bounded retry while leaving diagnostics in runtime snapshot/logs |
+| Credential ensure exceeds its request deadline | enter retryable native diagnostics with code `desktop_claim_timeout`; do not remain in `claiming` |
+| Runtime is `running` but Relay is unregistered or registered for another/empty backend identity | keep auto-connect pending; do not mark completion or issue another `runtime_start` |
 | Auto-connect disabled or bridge unavailable | return without scheduling retry |
 
 ### 5. Operational Rationale
@@ -596,6 +600,7 @@ Desktop defaults JSON:
 - Rust tests assert Windows autostart command/value formation, setup exe rejection, and unsupported status shape on non-Windows platforms.
 - TS typecheck asserts the desktop bridge contract is available to `app-tauri` without importing Tauri APIs into shared Web Dashboard components.
 - Frontend tests assert Local Runtime defaults prefer current `API_ORIGIN` over packaged `default_cloud_origin`; auto-connect skips when current user is unavailable, still reaches native ensure when current user exists without a bearer token, normalizes old profile `server_url` to current Dashboard API origin, reuses in-flight start, retries bounded transient failures, and does not log caught error objects.
+- Rust claim tests cover a server that never returns headers and a server that returns headers but stalls the body; both must produce retryable `desktop_claim_timeout`. Frontend tests cover the eight-observation bound, no repeated `runtime_start` in pending states, and exact non-empty Relay/backend identity matching.
 - Manual Windows validation asserts install, launch, close-to-tray, tray restore, runtime start/stop/status, explicit quit, and uninstall cleanup.
 - Manual Windows validation asserts repeated double-click or login autostart plus manual launch leaves one desktop process and one embedded runner owner.
 

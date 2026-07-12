@@ -10,6 +10,7 @@ import type {
   DesktopUpdatePolicySnapshot,
   LocalRuntimeClient,
   LocalRuntimeProfile,
+  LocalRuntimeStatus,
 } from '@agentdash/core/local-runtime';
 import type { BrowseDirectoryResult } from '@agentdash/views/directory-browser';
 import type {
@@ -61,6 +62,8 @@ interface DesktopRuntimeAuthState {
   currentUserAvailable: boolean;
 }
 
+type DesktopRuntimeAutoConnectOutcome = 'complete' | 'pending' | 'inactive';
+
 export function getDesktopLocalRuntimeClient(): LocalRuntimeClient | null {
   if (typeof window === 'undefined') return null;
   return window.__AGENTDASH_DESKTOP_LOCAL_RUNTIME__ ?? null;
@@ -105,9 +108,13 @@ export function ensureDesktopLocalRuntimeStarted(
   if (desktopRuntimeAutoConnectInFlight) return desktopRuntimeAutoConnectInFlight;
 
   desktopRuntimeAutoConnectInFlight = runDesktopLocalRuntimeAutoConnect(token)
-    .then((started) => {
-      if (started) {
+    .then((outcome) => {
+      if (outcome === 'complete') {
         desktopRuntimeAutoConnectCompleted = true;
+        clearDesktopRuntimeAutoConnectRetry();
+      } else if (outcome === 'pending') {
+        scheduleDesktopRuntimeAutoConnectRetry();
+      } else {
         clearDesktopRuntimeAutoConnectRetry();
       }
     })
@@ -122,35 +129,69 @@ export function ensureDesktopLocalRuntimeStarted(
   return desktopRuntimeAutoConnectInFlight;
 }
 
-async function runDesktopLocalRuntimeAutoConnect(accessToken: string): Promise<boolean> {
+async function runDesktopLocalRuntimeAutoConnect(
+  accessToken: string,
+): Promise<DesktopRuntimeAutoConnectOutcome> {
   const client = getDesktopLocalRuntimeClient();
   const desktopApp = getDesktopAppBridge();
   const token = accessToken.trim();
-  if (!client || !desktopApp) return false;
+  if (!client || !desktopApp) return 'inactive';
   desktopRuntimeAutoConnectAttempts += 1;
 
   const updatePolicy = await desktopApp.getUpdatePolicySnapshot().catch(() => null);
-  if (updatePolicy?.force_update_required) return false;
+  if (updatePolicy?.force_update_required) return 'inactive';
 
   const settings = await desktopApp.loadSettings();
-  if (!settings.auto_connect_local_runtime) return false;
+  if (!settings.auto_connect_local_runtime) return 'inactive';
 
   const snapshot = await client.runtimeSnapshot().catch(() => null);
-  if (snapshot?.state === 'starting' || snapshot?.state === 'running') return true;
+  const snapshotOutcome = classifyDesktopRuntimeSnapshot(snapshot);
+  if (snapshotOutcome !== 'startable') return snapshotOutcome;
 
   await ensureDesktopDefaultsLoaded();
   const profile = await loadOrCreateAutoConnectProfile(client);
-  if (!profile.auto_start) return false;
+  if (!profile.auto_start) return 'inactive';
 
   const started = await client.runtimeStart({
     ...profile,
     access_token: token,
     server_url: resolveDesktopServerUrl(),
   });
-  if (started.state === 'error') {
+  const startedOutcome = classifyDesktopRuntimeSnapshot(started);
+  if (startedOutcome === 'startable') {
     throw new Error(started.message ?? 'Desktop local runtime auto-connect failed');
   }
-  return true;
+  return startedOutcome;
+}
+
+function classifyDesktopRuntimeSnapshot(
+  snapshot: LocalRuntimeStatus | null,
+): DesktopRuntimeAutoConnectOutcome | 'startable' {
+  if (!snapshot) return 'startable';
+  if (
+    snapshot.state === 'running'
+    && snapshot.backend_id.length > 0
+    && snapshot.relay_connection?.state === 'registered'
+    && snapshot.relay_connection.registered_backend_id === snapshot.backend_id
+  ) {
+    return 'complete';
+  }
+  switch (snapshot.state) {
+    case 'claiming':
+    case 'waiting_for_api':
+    case 'starting':
+    case 'running':
+    case 'retrying':
+    case 'stopping':
+      return 'pending';
+    case 'disabled':
+    case 'waiting_for_auth':
+      return 'inactive';
+    case 'idle':
+    case 'stopped':
+    case 'error':
+      return 'startable';
+  }
 }
 
 function scheduleDesktopRuntimeAutoConnectRetry(): void {

@@ -76,3 +76,12 @@
 - [x] Native/Codex adapter分离canonical Runtime turn与Integration source turn，Tool/Hook/terminal均引用前者。
 - [x] matching `Driver TurnStarted`作为acknowledgement接纳，不创建第二个Turn或推进revision/cursor。
 - [x] Driver已经发出terminal后，底层任务的同一失败按成功dispatch完成outbox ack，阻止终态command重派。
+
+## ARD-009
+
+- [x] 恢复已应用0066 migration内容并新增0067 rename migration，验证既有本机Runtime数据库可顺序升级。
+- [x] 为desktop ensure HTTP client设置有界connect/request timeout，并保持timeout为可重试typed claim error。
+- [x] 修正Web auto-connect completion判定：只有`running`且relay为`registered`完成；中间态只观察snapshot、不重复start，也不吞掉后续收敛机会。
+- [x] 覆盖HTTP悬挂、waiting/retrying中间态与最终running的Rust/前端定向测试。
+- [x] 用真实`pnpm dev`检查credential ensure、既有本机数据库升级、relay registration与server Backend online事实。
+- [x] 在目标Backend online后确认产品连接投影为已连接，offline Runtime action admission条件已消失。

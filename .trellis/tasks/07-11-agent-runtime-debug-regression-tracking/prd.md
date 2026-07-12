@@ -103,6 +103,19 @@
 - `AgentRunWorkspaceView` 应由当前 Lifecycle/AgentFrame/Managed Runtime事实重建为产品 projection，不恢复已退役 RuntimeSession作为执行事实源；Runtime inspect与workspace projection的加载失败必须各自归属，不互相抹掉已成功事实。
 - 在 Runtime 提供真正 live subscription或稳定 transient identity/cursor前，有限轮询只消费 durable events；不能以易误删合法重复 chunk的文本指纹去重伪造 exactly-once。
 
+### R11. Desktop Local Runtime credential claim 与 Backend 在线收敛
+
+**问题 ARD-009：桌面本机 Runtime 长期停留在 claiming，已选择 Backend 保持离线**
+
+- 现象：本机 Runtime 诊断长期显示“正在领取桌面本机 runtime 凭据”，Runtime action同时返回`目标 Backend 当前不在线: local_029f609c03386a19e4f28779`。
+- 已确认事实：该 backend来自当前机器的personal local runtime identity；本机profile启用`auto_start`，但不持久化credential，必须由当前Desktop Dashboard API origin的`POST /api/local-runtime/ensure`重新领取relay credentials并建立`/ws/backend`连接。
+- 已确认风险一：desktop ensure使用无请求期限的默认HTTP client，连接或响应读取无法完成时，native supervisor会无限停留在`claiming`。
+- 已确认风险二：Web auto-connect把除`error`外的任意`runtimeStart`结果视为成功；`claiming`、`waiting_for_api`、`retrying`尚未证明Backend在线，却会终止前端重试。
+- 已确认直接根因：schema 66曾在本机Runtime数据库应用后被原地改名，`agentdash-local`启动迁移因checksum不一致退出；server ensure虽已成功领取同一backend，relay进程从未存活，因此Backend保持offline。
+- `claiming`只表达一次有界credential请求正在进行；请求必须在明确期限内成功、进入可诊断重试状态或失败，不能成为无限稳态。
+- auto-connect完成的唯一产品事实是native Runtime已经`running`且relay registration已建立；中间态继续由native supervisor推进，前端不得把它们提升为在线成功。
+- Backend online admission继续以server-side live registry为准，不对离线backend添加fallback；修复目标是让desktop enrollment/relay真实上线并暴露精确失败证据。
+
 ## Acceptance Criteria
 
 - [x] ARD-001 已在 `pnpm dev` 启动的真实产品路径复现并记录第一个断点位置。
@@ -124,6 +137,10 @@
 - [x] ARD-006 通过真实 `pnpm dev` Draft create-run 验证 Runtime binding越过 Hook/offer 求交。
 - [x] ARD-008 event stream使用统一 `/api` builder，durable replay不重复追加。
 - [x] ARD-008 恢复基于当前架构事实的 AgentRun list/workspace product projection，并完成 route-consumer inventory。
+- [x] ARD-009 desktop ensure在网络悬挂时有明确超时与诊断状态，不会永久停留`claiming`。
+- [x] ARD-009 已应用migration保持immutable，字段改名通过后续migration完成；既有本机Runtime数据库可正常升级并启动。
+- [x] ARD-009 auto-connect只在Runtime/relay真实运行后完成，并能从`waiting_for_api`、`retrying`或失败状态继续收敛。
+- [x] ARD-009 使用真实产品链验证目标personal backend进入online，Runtime action不再受目标Backend离线admission阻断。
 - [ ] 后续调试问题能够依照 R1 持续登记，不需要为每次反馈重新创建顶层任务。
 
 ## Out of Scope
@@ -143,6 +160,7 @@
 | ARD-006 | verified | blocker | AgentFrame持久化immutable HookPlan；Runtime按execution site投影requirements，Native/Codex与新建/复用offer共用同一admission |
 | ARD-007 | reported | minor | dev server重启期间瞬时 `useContext` null；刷新消失，暂无稳定复现与 stack |
 | ARD-008 | verified | blocker | event、workspace/list/detail lineage、composer/context/interaction与退役consumer均按route ledger完成收束并真实验证 |
+| ARD-009 | verified | blocker | 恢复immutable migration历史并以0067收敛schema；ensure有界、Web等待relay registered，目标personal backend已真实online |
 
 ## Verification Record
 
@@ -169,3 +187,6 @@
 - 工具调用产生业务失败后，Runtime保持active且0 protocol violation；后续同一Run成功返回`after-tool-ok`。最终snapshot revision 29，2个started/2个terminal，证明terminal command已完成outbox ack且未被重复派发。
 - 最终产品验证覆盖composer、Runtime context、generic interaction availability与工具后follow-up；浏览器error日志为空，未复现`useContext`异常。ARD-007仍按独立证据边界保持reported。
 - 质量门通过：migration guard、contracts generation/check、app-web typecheck、87文件/451项前端测试、changed-files ESLint、workspace `cargo check --all-targets`、相关Rust tests与目标crate strict clippy。全仓frontend lint仍命中32个本次未改文件中的既有`react-hooks/set-state-in-effect`错误，changed-files lint为0。
+- ARD-009真实复现证明server ensure已经领取`local_029f609c03386a19e4f28779`，但`agentdash-local`因已应用migration 66被原地修改而退出；Backend offline是relay进程未存活的结果，不是Backend registry admission误判。
+- 0066恢复原始checksum并新增0067顺序rename；当前Dashboard开发库完成一次migration metadata修复以保留既有业务数据，本机Runtime数据库随后从原始0066成功升级至schema 67。重新执行`pnpm dev`后同一backend完成relay registration，API返回`online=true`且产品“后端连接”显示`dev-local / 项目同步 · 已连接`。
+- Desktop credential claim增加5秒connect/15秒request deadline，timeout进入retryable `desktop_claim_timeout`；Web auto-connect使用complete/pending/inactive三态，仅`running + relay registered + backend identity一致`完成。Rust 9项与前端8项定向测试通过。

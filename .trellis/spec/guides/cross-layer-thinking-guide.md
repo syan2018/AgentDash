@@ -15,6 +15,7 @@
 | Cloud ↔ Local VFS | mount 语义不一致、绝对路径泄漏、context 与 runtime tool 分叉 |
 | Backend ↔ Frontend | 实时状态推送协议、断线重连 |
 | Managed Runtime ↔ Driver | canonical Runtime identity、source coordinate 与终态回执 |
+| Dashboard DB ↔ Local Runtime DB | migration checksum、顺序升级与最终schema一致性 |
 
 ---
 
@@ -27,6 +28,7 @@
 5. **产品binding存在 ≠ Driver可用**：必须同时验证Host binding generation/lease与canonical Runtime状态；断连收敛Lost后不能由旧generation复活
 6. **同一生命周期实体被跨层重复创建**：Managed Runtime在command admission创建canonical Turn后，Driver的`TurnStarted`只能确认该identity并附带source coordinate；否则一个用户Turn会形成两个Runtime Turn并触发非法状态迁移
 7. **业务终态与派发结果混为一谈**：Driver已经发出`TurnTerminal`后，底层任务的同一失败属于已投影的业务结果；dispatch必须完成outbox ack，避免重派一个已经终态的command
+8. **只验证主数据库的migration**：Dashboard与本机Runtime各自拥有持久数据库；migration文件一旦被任一实例应用就成为immutable历史，字段演进必须追加新migration并验证所有持久实例顺序升级
 
 ---
 
@@ -40,6 +42,7 @@
 - [ ] 若涉及云端/本机文件访问，先定义 mount/provider/capability 边界（参考 `vfs-access.md`）
 - [ ] 若涉及 runtime hook/workflow，确认"信息获取在 loop 外、控制决策在 loop 边界同步"（参考 `execution-hook-runtime.md`）
 - [ ] 若command会创建Runtime实体，明确唯一identity owner，并为下游source identity建立独立映射
+- [ ] 若schema被多个进程或数据根消费，列出每个持久实例并验证既有数据库升级，而不只验证空库或Dashboard数据库
 
 **实现后：**
 

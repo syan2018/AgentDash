@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
+- **Total Sessions**: 27
 - **Last Active**: 2026-07-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1260 | Active |
+| `journal-1.md` | ~1293 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-07-12 | Local Runtime无数据库与按需恢复收束 | `e91238c98` | `codex/agent-runtime-architecture-convergence` |
 | 26 | 2026-07-12 | ARD-009 Desktop Runtime领取与Backend在线收束 | `42c7c33b2` | `codex/agent-runtime-architecture-convergence` |
 | 25 | 2026-07-12 | AgentRun Runtime主链路统一收束 | `bc127a7fb` | `codex/agent-runtime-architecture-convergence` |
 | 24 | 2026-05-27 | Canvas Promote Extension 与 TS Extension SDK 收口 | `4171ded7`, `e53f69a5` | `codex/extension-sdk` |

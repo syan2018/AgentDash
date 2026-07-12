@@ -1258,3 +1258,36 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: Local Runtime无数据库与按需恢复收束
+
+**Date**: 2026-07-12
+**Task**: Local Runtime无数据库与按需恢复收束
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+移除Local PostgreSQL Host状态，增加Host incarnation、稳定RuntimeThread binding epochs、durable recovery intent、Runtime Wire断连屏障与BindingLost围栏；真实migration和定向质量门通过，enterprise E2E暴露的tool-continuation回归留给父任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e91238c98` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

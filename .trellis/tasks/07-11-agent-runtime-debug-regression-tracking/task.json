@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-12-local-runtime-ephemeral-host-state"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

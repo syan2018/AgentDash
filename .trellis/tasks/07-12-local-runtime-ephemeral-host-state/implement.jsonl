@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"约束Host instance、offer、binding、lease、generation与recovery职责。"}
+{"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"约束Local Host与云端Runtime Wire、relay断连和重绑定坐标。"}
+{"file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"约束Tauri embedded runner、Standalone Runner、profile与本机执行面生命周期。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"约束数据库归属、migration domain与持久化边界。"}

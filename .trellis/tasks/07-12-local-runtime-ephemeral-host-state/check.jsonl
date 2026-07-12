@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/agent-runtime-driver-host.md","reason":"检查ephemeral repository不削弱binding、lease与generation invariants。"}
+{"file":".trellis/spec/cross-layer/agent-runtime-wire-relay.md","reason":"检查Host incarnation、旧命令隔离与云端重绑定闭环。"}
+{"file":".trellis/spec/cross-layer/desktop-local-runtime.md","reason":"检查Tauri与Runner全部正式路径真正无数据库启动。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查Rust边界、真实启动路径与错误语义。"}

@@ -1225,3 +1225,36 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: ARD-009 Desktop Runtime领取与Backend在线收束
+
+**Date**: 2026-07-12
+**Task**: ARD-009 Desktop Runtime领取与Backend在线收束
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+定位已应用migration 66被改写导致agentdash-local退出；恢复immutable历史并新增0067，补credential claim超时与relay registered完成判定，真实pnpm dev验证目标Backend online。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `42c7c33b2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,0 +1,12 @@
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"复核generated contract、route与单一数据流"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"复核Codex-shaped标准子集与AgentDash扩展保真"}
+{"file":".trellis/spec/backend/agent-runtime-kernel.md","reason":"复核canonical Runtime kernel唯一事实与vendor隔离"}
+{"file":".trellis/spec/backend/agent-runtime-persistence.md","reason":"复核journal、snapshot、cursor与replay合同"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"复核原feed reducer、stream与presentation行为"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"复核原组件图接回且无第二套renderer"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"复核frontend tests、typecheck与无fallback"}
+{"file":".trellis/tasks/07-12-canonical-runtime-session-presentation-convergence/prd.md","reason":"逐项验收用户要求与行为保持"}
+{"file":".trellis/tasks/07-12-canonical-runtime-session-presentation-convergence/design.md","reason":"复核跨层依赖、conformance与迁移方案"}
+{"file":".trellis/tasks/07-12-canonical-runtime-session-presentation-convergence/research/protocol-codegen-toolchain.md","reason":"复核codegen可重建、无手抄与升级drift gate"}
+{"file":".trellis/tasks/07-12-canonical-runtime-session-presentation-convergence/research/connector-tool-projection-inventory.md","reason":"逐driver与逐Tool Catalog contribution复核projection完整性"}
+{"file":".trellis/spec/backend/capability/tool-capability-pipeline.md","reason":"复核tool owner projector与surface admission"}

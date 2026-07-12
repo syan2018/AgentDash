@@ -13,7 +13,7 @@ use crate::{
     ToolSetRevision,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeSnapshot {
     pub thread_id: RuntimeThreadId,
@@ -34,7 +34,7 @@ pub struct RuntimeSnapshot {
     pub transcript_fidelity: ContextFidelity,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeTranscriptItem {
     pub turn_id: RuntimeTurnId,
@@ -42,7 +42,7 @@ pub struct RuntimeTranscriptItem {
     pub final_content: crate::RuntimeItemContent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeContextView {
     pub thread_id: RuntimeThreadId,
@@ -63,7 +63,7 @@ pub struct RuntimeOperationView {
     pub terminal: Option<RuntimeOperationTerminal>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeSnapshotResult {
     Operation {

@@ -260,6 +260,7 @@ fn generate_rust(mut value: serde_json::Value, source: &str) -> Result<String> {
         .with_context(|| format!("parse normalized {source} schema"))?;
     let mut settings = TypeSpaceSettings::default();
     settings.with_derive("::ts_rs::TS".to_string());
+    settings.with_derive("::schemars::JsonSchema".to_string());
     settings.with_derive("PartialEq".to_string());
     let mut space = TypeSpace::new(&settings);
     space.add_root_schema(schema)?;

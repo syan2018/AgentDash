@@ -4,6 +4,7 @@
 //! Codex 没有一等 variant 的地方做加法扩展。
 
 use crate::codex_app_server_protocol as codex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -12,7 +13,7 @@ pub use codex::{
     McpToolCallStatus, PatchApplyStatus, ThreadItem as CodexThreadItem,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(untagged)]
 #[ts(export_to = "agentdash/")]
 pub enum AgentDashThreadItem {
@@ -21,7 +22,7 @@ pub enum AgentDashThreadItem {
     AgentDash(AgentDashNativeThreadItem),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[ts(tag = "type", export_to = "agentdash/")]
 pub enum AgentDashNativeThreadItem {
@@ -80,7 +81,7 @@ pub enum AgentDashNativeThreadItem {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "agentdash/")]
 pub enum ShellExecExecutionMode {

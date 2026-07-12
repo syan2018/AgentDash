@@ -8,6 +8,7 @@ import type {
   RuntimeBindingId,
   RuntimeDriverGeneration,
   RuntimeEventEnvelope,
+  RuntimeTransientCoordinate,
   InteractionResponse,
   OperationReceipt,
   RuntimeContextView,
@@ -43,7 +44,7 @@ export interface AgentRunRuntimeInspectResponse {
 }
 
 export type AgentRunRuntimeEventStreamItem =
-  | { kind: "event"; durable_cursor: number | null; envelope: RuntimeEventEnvelope }
+  | { kind: "event"; durable_cursor: number | null; transient_cursor: RuntimeTransientCoordinate | null; envelope: RuntimeEventEnvelope }
   | { kind: "error"; error: RuntimeSubscribeError };
 
 export function agentRunScopedPath(target: AgentRunRuntimeTarget, route: string): string {

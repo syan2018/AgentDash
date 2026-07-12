@@ -134,7 +134,7 @@ impl RuntimeTraceValidator {
                     ConformanceViolation::InvalidItemTransition(item_id.clone()),
                 )?;
             }
-            RuntimeEvent::ItemDelta {
+            RuntimeEvent::ConversationDelta {
                 turn_id, item_id, ..
             } => {
                 let Some(state) = self.items.get(item_id) else {

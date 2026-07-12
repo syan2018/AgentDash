@@ -1242,7 +1242,7 @@ async fn handle_pump_dynamic_tool(
         }
         Ok(DriverToolOutcome::InteractionRequired {
             interaction_id,
-            reason,
+            reason: _,
         }) => {
             let sink = {
                 let mut state = context.state.lock().await;
@@ -1276,11 +1276,12 @@ async fn handle_pump_dynamic_tool(
                         )
                         .ok(),
                         event: RuntimeEvent::InteractionRequested {
-                            turn_id: coordinates.0,
+                            turn_id: coordinates.0.clone(),
                             item_id: Some(coordinates.1),
-                            interaction_id,
-                            interaction_kind: RuntimeInteractionKind::DynamicToolExecution,
-                            prompt: reason,
+                            interaction_id: interaction_id.clone(),
+                            request: agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_dynamic_interaction(
+                                context.runtime_thread_id.as_str(), coordinates.0.as_str(), interaction_id.as_str(),
+                            ),
                         },
                     })
                     .await;
@@ -1739,9 +1740,7 @@ mod tests {
         }] } })).expect("projection");
         assert_eq!(items[0].source_turn_id.as_str(), "source-turn");
         assert_eq!(items[0].source_item_id.as_str(), "source-item");
-        assert!(
-            matches!(&items[0].content, agentdash_agent_runtime_contract::RuntimeItemContent::AgentMessage { text } if text == "final")
-        );
+        assert_eq!(items[0].content.agent_message_text(), Some("final"));
     }
 
     #[test]

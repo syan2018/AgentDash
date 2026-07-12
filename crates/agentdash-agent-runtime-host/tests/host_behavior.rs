@@ -97,10 +97,11 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             event: RuntimeEvent::ItemStarted {
                 turn_id: id("turn-runtime-coordinate"),
                 item_id: id("runtime-item-coordinate-a"),
-                initial_content: RuntimeItemContent::ToolCall {
-                    name: "first".to_string(),
-                    arguments: json!({}),
-                },
+                initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
+                    "runtime-item-coordinate-a",
+                    "first",
+                    json!({}),
+                ),
             },
         },
         DriverEventEnvelope {
@@ -112,10 +113,11 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             event: RuntimeEvent::ItemStarted {
                 turn_id: id("turn-runtime-coordinate"),
                 item_id: id("runtime-item-coordinate-b"),
-                initial_content: RuntimeItemContent::ToolCall {
-                    name: "second".to_string(),
-                    arguments: json!({}),
-                },
+                initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
+                    "runtime-item-coordinate-b",
+                    "second",
+                    json!({}),
+                ),
             },
         },
     ];

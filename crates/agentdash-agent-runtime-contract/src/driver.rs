@@ -101,7 +101,7 @@ pub struct DriverToolSetApplyReceipt {
     pub digest: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverEventEnvelope {
     pub binding_id: RuntimeBindingId,
@@ -122,7 +122,7 @@ pub enum DriverInspectionQuery {
     ContextRead { source_thread_id: DriverThreadId },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverProjectedItem {
     pub source_turn_id: DriverTurnId,
@@ -130,7 +130,7 @@ pub struct DriverProjectedItem {
     pub content: crate::RuntimeItemContent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DriverInspection {
     Binding {

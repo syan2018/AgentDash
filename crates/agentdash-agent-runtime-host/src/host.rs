@@ -1081,7 +1081,7 @@ impl DriverEventSink for GenerationFencedEventSink {
             RuntimeEvent::ItemStarted {
                 turn_id, item_id, ..
             }
-            | RuntimeEvent::ItemDelta {
+            | RuntimeEvent::ConversationDelta {
                 turn_id, item_id, ..
             }
             | RuntimeEvent::ItemTerminal {

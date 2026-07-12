@@ -22,7 +22,7 @@ pub struct RuntimeTurnState {
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeTurnTerminal>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeItemState {
     pub turn_id: RuntimeTurnId,
     pub initial_content: agentdash_agent_runtime_contract::RuntimeItemContent,
@@ -270,7 +270,7 @@ impl RuntimeThreadState {
                 );
                 self.item_order.push(item_id.clone());
             }
-            RuntimeEvent::ItemDelta {
+            RuntimeEvent::ConversationDelta {
                 turn_id, item_id, ..
             } => {
                 let state = self.require_item(turn_id, item_id)?;
@@ -403,6 +403,8 @@ impl RuntimeThreadState {
             | RuntimeEvent::ContextActivationApplied { .. }
             | RuntimeEvent::ContextCompactionTerminal { .. }
             | RuntimeEvent::DriverContextCompactedOpaque
+            | RuntimeEvent::TokenUsageUpdated { .. }
+            | RuntimeEvent::ConversationError { .. }
             | RuntimeEvent::HookRunAccepted { .. }
             | RuntimeEvent::HookRunStarted { .. }
             | RuntimeEvent::HookRunTerminal { .. } => {}
@@ -535,6 +537,7 @@ impl RuntimeThreadState {
             envelopes.push(RuntimeEventEnvelope {
                 thread_id: self.thread_id.clone(),
                 sequence: Some(self.next_event_sequence),
+                transient: None,
                 revision: self.revision,
                 event,
             });

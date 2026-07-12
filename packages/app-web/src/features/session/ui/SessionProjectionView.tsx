@@ -74,15 +74,37 @@ function runtimeInputText(input: RuntimeInput): string {
 }
 
 function runtimeItemText(content: RuntimeItemContent): string {
-  switch (content.kind) {
-    case "user_message": return content.input.map(runtimeInputText).join("\n");
-    case "agent_message": return content.text;
-    case "reasoning": return content.text;
-    case "tool_call": return `${content.name}\n${JSON.stringify(content.arguments, null, 2)}`;
-    case "tool_result": return `${content.name}\n${JSON.stringify(content.output, null, 2)}`;
-    case "plan": return content.steps.join("\n");
-    case "context_compaction": return `上下文压缩 · ${content.checkpoint_id}`;
-    case "system_context_change": return `上下文切换 · ${content.checkpoint_id}`;
+  switch (content.type) {
+    case "userMessage": return content.content.map((item) => {
+      switch (item.type) {
+        case "text": return item.text;
+        case "image": return item.url;
+        case "localImage": return item.path;
+        case "skill": return item.name;
+        case "mention": return item.path;
+      }
+    }).join("\n");
+    case "agentMessage": return content.text;
+    case "reasoning": return [...(content.summary ?? []), ...(content.content ?? [])].join("\n");
+    case "plan": return content.text;
+    case "commandExecution": return content.aggregatedOutput ?? content.command;
+    case "fileChange": return content.status;
+    case "mcpToolCall": return `${content.server}/${content.tool}`;
+    case "dynamicToolCall": return content.tool;
+    case "collabAgentToolCall": return content.tool;
+    case "subAgentActivity": return content.kind;
+    case "webSearch": return content.query;
+    case "imageView": return content.path;
+    case "sleep": return `${content.durationMs}ms`;
+    case "imageGeneration": return content.result;
+    case "hookPrompt": return "Hook prompt";
+    case "enteredReviewMode": return content.review;
+    case "exitedReviewMode": return content.review;
+    case "contextCompaction": return "上下文压缩";
+    case "shellExec": return content.aggregatedOutput ?? content.command;
+    case "fsRead": return content.path;
+    case "fsGrep": return content.pattern;
+    case "fsGlob": return content.pattern;
   }
 }
 

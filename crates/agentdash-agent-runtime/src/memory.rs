@@ -48,6 +48,7 @@ struct MemoryState {
 #[derive(Default)]
 pub struct RuntimeStoreFixture {
     state: Mutex<MemoryState>,
+    live: Mutex<BTreeMap<RuntimeThreadId, tokio::sync::broadcast::Sender<RuntimeEventEnvelope>>>,
     fail_next_commit_at: AtomicU8,
 }
 
@@ -63,6 +64,9 @@ pub enum CommitFailurePoint {
 }
 
 impl RuntimeStoreFixture {
+    pub async fn live_sender_count(&self) -> usize {
+        self.live.lock().await.len()
+    }
     pub fn fail_next_commit(&self) {
         self.fail_next_commit_at(CommitFailurePoint::BeforeWrite);
     }
@@ -359,6 +363,7 @@ impl RuntimeRepository for RuntimeStoreFixture {
 #[async_trait]
 impl RuntimeUnitOfWork for RuntimeStoreFixture {
     async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError> {
+        let live_events = commit.events.clone();
         self.inject_failure(CommitFailurePoint::BeforeWrite)?;
         let mut state = self.state.lock().await;
         let commit_thread_id = commit.projection.thread_id.clone();
@@ -797,6 +802,10 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
         staged.quarantine.extend(commit.quarantine);
         self.inject_failure(CommitFailurePoint::AfterOutbox)?;
         *state = staged;
+        drop(state);
+        for event in live_events {
+            self.publish_durable(event).await;
+        }
         Ok(())
     }
 
@@ -808,17 +817,82 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
 
 #[async_trait]
 impl RuntimeTransientEvents for RuntimeStoreFixture {
-    async fn publish(&self, event: RuntimeEventEnvelope) {
-        self.state
-            .lock()
-            .await
+    async fn publish(&self, mut event: RuntimeEventEnvelope) {
+        const ACTIVE_TURN_REPLAY_LIMIT: usize = 512;
+        let mut state = self.state.lock().await;
+        let entries = state.transient.entry(event.thread_id.clone()).or_default();
+        let coordinate = event
             .transient
-            .entry(event.thread_id.clone())
-            .or_default()
-            .push(event);
+            .as_mut()
+            .expect("transient event coordinate");
+        if entries
+            .last()
+            .and_then(|item| item.transient.as_ref())
+            .is_some_and(|current| {
+                current.binding_id != coordinate.binding_id
+                    || current.stream_generation != coordinate.stream_generation
+                    || current.turn_id != coordinate.turn_id
+            })
+        {
+            entries.clear();
+        }
+        coordinate.sequence = agentdash_agent_runtime_contract::RuntimeTransientSequence(
+            entries
+                .last()
+                .and_then(|item| item.transient.as_ref())
+                .map_or(1, |item| item.sequence.0 + 1),
+        );
+        coordinate.event_id =
+            agentdash_agent_runtime_contract::RuntimeTransientEventId::new(format!(
+                "{}:{}:{}:{}",
+                coordinate.binding_id,
+                coordinate.stream_generation.0,
+                coordinate
+                    .turn_id
+                    .as_ref()
+                    .map_or("thread", |turn| turn.as_str()),
+                coordinate.sequence.0
+            ))
+            .expect("generated transient id");
+        entries.push(event.clone());
+        if entries.len() > ACTIVE_TURN_REPLAY_LIMIT {
+            entries.remove(0);
+        }
+        drop(state);
+        self.publish_durable(event).await;
     }
 
-    async fn read(&self, thread_id: &RuntimeThreadId) -> Vec<RuntimeEventEnvelope> {
+    async fn publish_durable(&self, event: RuntimeEventEnvelope) {
+        let closes_channel = closes_live_channel(&event);
+        let thread_id = event.thread_id.clone();
+        let mut live = self.live.lock().await;
+        let sender = live
+            .entry(event.thread_id.clone())
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0);
+        let _ = sender.send(event);
+        if closes_channel {
+            live.remove(&thread_id);
+        }
+    }
+
+    async fn subscribe(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> tokio::sync::broadcast::Receiver<RuntimeEventEnvelope> {
+        self.live
+            .lock()
+            .await
+            .entry(thread_id.clone())
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0)
+            .subscribe()
+    }
+
+    async fn read(
+        &self,
+        thread_id: &RuntimeThreadId,
+        stream_generation: Option<agentdash_agent_runtime_contract::RuntimeDriverGeneration>,
+        after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    ) -> Vec<RuntimeEventEnvelope> {
         self.state
             .lock()
             .await
@@ -826,7 +900,33 @@ impl RuntimeTransientEvents for RuntimeStoreFixture {
             .get(thread_id)
             .cloned()
             .unwrap_or_default()
+            .into_iter()
+            .filter(|event| {
+                event.transient.as_ref().is_some_and(|coordinate| {
+                    stream_generation
+                        .is_none_or(|generation| coordinate.stream_generation == generation)
+                        && after.is_none_or(|after| coordinate.sequence > after)
+                })
+            })
+            .collect()
     }
+
+    async fn clear(&self, thread_id: &RuntimeThreadId) {
+        self.state.lock().await.transient.remove(thread_id);
+    }
+}
+
+const ACTIVE_LIVE_CHANNEL_CAPACITY: usize = 1024;
+
+fn closes_live_channel(event: &RuntimeEventEnvelope) -> bool {
+    matches!(
+        event.event,
+        agentdash_agent_runtime_contract::RuntimeEvent::BindingLost { .. }
+            | agentdash_agent_runtime_contract::RuntimeEvent::ThreadStatusChanged {
+                status: agentdash_agent_runtime_contract::RuntimeThreadStatus::Closed
+                    | agentdash_agent_runtime_contract::RuntimeThreadStatus::Lost
+            }
+    )
 }
 
 fn valid_activation_transition(

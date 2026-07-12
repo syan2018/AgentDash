@@ -147,10 +147,29 @@ where
                     .persist_transition_violation(state, source, error)
                     .await;
             }
+            let binding_id = source.binding_id.clone();
+            let stream_generation = source.generation;
+            let turn_id = match &source.event {
+                RuntimeEvent::ConversationDelta { turn_id, .. } => Some(turn_id.clone()),
+                _ => None,
+            };
             self.store
                 .publish(RuntimeEventEnvelope {
                     thread_id: state.thread_id,
                     sequence: None,
+                    transient: Some(
+                        agentdash_agent_runtime_contract::RuntimeTransientCoordinate {
+                            binding_id,
+                            stream_generation,
+                            sequence: agentdash_agent_runtime_contract::RuntimeTransientSequence(0),
+                            event_id:
+                                agentdash_agent_runtime_contract::RuntimeTransientEventId::new(
+                                    "pending",
+                                )
+                                .expect("static transient id"),
+                            turn_id,
+                        },
+                    ),
                     revision: state.revision,
                     event: source.event,
                 })
@@ -158,6 +177,14 @@ where
             return Ok(DriverEventAdmission::Transient);
         }
 
+        let closes_live_stream = matches!(
+            source.event,
+            RuntimeEvent::ItemTerminal { .. }
+                | RuntimeEvent::TurnTerminal { .. }
+                | RuntimeEvent::BindingLost { .. }
+                | RuntimeEvent::BindingReestablished { .. }
+        );
+        let thread_id = state.thread_id.clone();
         let expected = state.revision;
         let mut canonical_events = vec![source.event.clone()];
         if let Some(message) = loss_reason(&source.event) {
@@ -194,6 +221,9 @@ where
             })
             .await
             .map_err(store_execute_error)?;
+        if closes_live_stream {
+            self.store.clear(&thread_id).await;
+        }
         Ok(DriverEventAdmission::Durable { sequence })
     }
 
@@ -623,6 +653,11 @@ where
         if subscription.after.is_some_and(|after| after > current) {
             return Err(RuntimeSubscribeError::InvalidCursor);
         }
+        let live = if subscription.include_transient {
+            Some(self.store.subscribe(&subscription.thread_id).await)
+        } else {
+            None
+        };
         let batch = self
             .store
             .events_after(&subscription.thread_id, subscription.after)
@@ -639,11 +674,29 @@ where
         }
         let mut events = batch.events;
         if subscription.include_transient {
-            events.extend(self.store.read(&subscription.thread_id).await);
+            events.extend(
+                self.store
+                    .read(
+                        &subscription.thread_id,
+                        subscription.stream_generation,
+                        subscription.transient_after,
+                    )
+                    .await,
+            );
         }
-        Ok(Box::new(VecEventStream {
-            events: events.into(),
-        }))
+        if let Some(live) = live {
+            Ok(Box::new(LiveEventStream {
+                events: events.into(),
+                live,
+                durable_cursor: subscription.after,
+                transient_cursor: subscription.transient_after,
+                stream_generation: subscription.stream_generation,
+            }))
+        } else {
+            Ok(Box::new(VecEventStream {
+                events: events.into(),
+            }))
+        }
     }
 }
 
@@ -977,6 +1030,70 @@ fn operation_terminals(
 
 struct VecEventStream {
     events: VecDeque<RuntimeEventEnvelope>,
+}
+
+struct LiveEventStream {
+    events: VecDeque<RuntimeEventEnvelope>,
+    live: tokio::sync::broadcast::Receiver<RuntimeEventEnvelope>,
+    durable_cursor: Option<EventSequence>,
+    transient_cursor: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    stream_generation: Option<agentdash_agent_runtime_contract::RuntimeDriverGeneration>,
+}
+
+#[async_trait]
+impl RuntimeEventStream for LiveEventStream {
+    async fn next(&mut self) -> Option<Result<RuntimeEventEnvelope, RuntimeSubscribeError>> {
+        loop {
+            let event = if let Some(event) = self.events.pop_front() {
+                event
+            } else {
+                match self.live.recv().await {
+                    Ok(event) => event,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        return Some(Err(RuntimeSubscribeError::Unavailable {
+                            reason: format!("live runtime stream lagged by {skipped} events"),
+                            retryable: true,
+                        }));
+                    }
+                }
+            };
+            if let Some(sequence) = event.sequence {
+                if self.durable_cursor.is_some_and(|cursor| sequence <= cursor) {
+                    continue;
+                }
+                self.durable_cursor = Some(sequence);
+                if matches!(
+                    event.event,
+                    RuntimeEvent::TurnTerminal { .. }
+                        | RuntimeEvent::BindingLost { .. }
+                        | RuntimeEvent::BindingReestablished { .. }
+                ) {
+                    self.transient_cursor = None;
+                    self.stream_generation = None;
+                }
+                return Some(Ok(event));
+            }
+            let Some(coordinate) = event.transient.as_ref() else {
+                continue;
+            };
+            if self
+                .stream_generation
+                .is_some_and(|generation| coordinate.stream_generation != generation)
+            {
+                continue;
+            }
+            if self
+                .transient_cursor
+                .is_some_and(|cursor| coordinate.sequence <= cursor)
+            {
+                continue;
+            }
+            self.stream_generation = Some(coordinate.stream_generation);
+            self.transient_cursor = Some(coordinate.sequence);
+            return Some(Ok(event));
+        }
+    }
 }
 
 #[async_trait]

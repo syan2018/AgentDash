@@ -1225,9 +1225,10 @@ impl NativeEventMapper {
                     RuntimeEvent::ItemStarted {
                         turn_id: self.runtime_turn_id.clone(),
                         item_id: item.0.clone(),
-                        initial_content: RuntimeItemContent::AgentMessage {
-                            text: String::new(),
-                        },
+                        initial_content: RuntimeItemContent::agent_message(
+                            item.0.as_str(),
+                            String::new(),
+                        ),
                     },
                 ));
             }
@@ -1237,10 +1238,10 @@ impl NativeEventMapper {
                 {
                     mapped.push(self.item_event(
                         &item,
-                        RuntimeEvent::ItemDelta {
+                        RuntimeEvent::ConversationDelta {
                             turn_id: self.runtime_turn_id.clone(),
                             item_id: item.0.clone(),
-                            delta,
+                            delta: agentdash_agent_runtime_contract::RuntimeConversationDelta::AgentMessage { delta },
                         },
                     ));
                 }
@@ -1253,9 +1254,10 @@ impl NativeEventMapper {
                             turn_id: self.runtime_turn_id.clone(),
                             item_id: item.0.clone(),
                             terminal: RuntimeItemTerminal::Completed {
-                                final_content: RuntimeItemContent::AgentMessage {
-                                    text: message_text(&message),
-                                },
+                                final_content: RuntimeItemContent::agent_message(
+                                    item.0.as_str(),
+                                    message_text(&message),
+                                ),
                             },
                         },
                     ));
@@ -1301,10 +1303,12 @@ impl NativeEventMapper {
                     &(runtime_item_id.clone(), source_item_id),
                     RuntimeEvent::InteractionRequested {
                         turn_id: self.runtime_turn_id.clone(),
-                        item_id: Some(runtime_item_id),
+                        item_id: Some(runtime_item_id.clone()),
                         interaction_id: parsed_id(tool_call_id)?,
-                        interaction_kind: RuntimeInteractionKind::PermissionApproval,
-                        prompt: reason,
+                        request: agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_permission_approval(
+                            "native-thread", self.runtime_turn_id.as_str(),
+                            runtime_item_id.as_str(), reason,
+                        ),
                     },
                 ));
             }

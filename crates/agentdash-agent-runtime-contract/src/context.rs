@@ -15,7 +15,7 @@ pub enum ContextCompactionTrigger {
     Automatic,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContextBlock {
     Instruction { text: String },
@@ -39,7 +39,7 @@ pub struct ContextRecipe {
     pub source_item_ids: Vec<RuntimeItemId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct MaterializedContext {
     pub recipe: ContextRecipe,
@@ -48,7 +48,7 @@ pub struct MaterializedContext {
     pub fidelity: ContextFidelity,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct ContextCheckpointView {
     pub checkpoint_id: ContextCheckpointId,

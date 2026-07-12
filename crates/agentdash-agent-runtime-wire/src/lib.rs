@@ -114,7 +114,7 @@ pub enum RuntimeWireExecuteResult {
     Error(RuntimeExecuteError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "status", content = "value", rename_all = "snake_case")]
 pub enum RuntimeWireSnapshotResult {
     Ok(Box<RuntimeSnapshot>),
@@ -130,7 +130,7 @@ pub enum RuntimeWireSubscribeResult {
 
 macro_rules! driver_result {
     ($name:ident, $value:ty) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
         #[serde(tag = "status", content = "value", rename_all = "snake_case")]
         pub enum $name {
             Ok(Box<$value>),
@@ -144,7 +144,7 @@ driver_result!(RuntimeWireDriverBindResult, DriverBinding);
 driver_result!(RuntimeWireDriverDispatchResult, DriverDispatchReceipt);
 driver_result!(RuntimeWireDriverInspectResult, DriverInspection);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum RuntimeWireNotification {
     RuntimeEvent(RuntimeEventEnvelope),

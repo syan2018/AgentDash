@@ -42,6 +42,7 @@ describe("AgentRuntimeCapabilitySummary", () => {
         status: "active",
         active_turn_id: null,
         binding_id: "binding-1",
+        binding_epoch: 0n,
         profile_digest: "sha256:profile",
         bound_profile: profile(),
         active_checkpoint_id: null,

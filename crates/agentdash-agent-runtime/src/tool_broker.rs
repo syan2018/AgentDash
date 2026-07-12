@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use agentdash_agent_runtime_contract::{
     RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeInteractionId,
-    RuntimeInteractionKind, RuntimeItemContent, RuntimeItemId, RuntimeItemTerminal,
-    RuntimeThreadId, RuntimeTurnId, ToolChannel, ToolSetRevision,
+    RuntimeItemContent, RuntimeItemId, RuntimeItemTerminal, RuntimeThreadId, RuntimeTurnId,
+    ToolChannel, ToolSetRevision,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -266,10 +266,11 @@ where
             .ok_or(ToolBrokerError::StaleCoordinates)?;
         if item.turn_id != invocation.coordinates.turn_id
             || item.initial_content
-                != (RuntimeItemContent::ToolCall {
-                    name: invocation.tool_name.clone(),
-                    arguments: invocation.arguments.clone(),
-                })
+                != RuntimeItemContent::temporary_dynamic_tool_call(
+                    invocation.coordinates.item_id.as_str(),
+                    invocation.tool_name.clone(),
+                    invocation.arguments.clone(),
+                )
         {
             return Err(ToolBrokerError::IdempotencyConflict);
         }
@@ -313,13 +314,16 @@ where
             return Ok(());
         }
         let expected = thread.revision;
+        let request = agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_permission_approval(
+            thread.thread_id.as_str(), invocation.coordinates.turn_id.as_str(),
+            invocation.coordinates.item_id.as_str(), reason.to_string(),
+        );
         let events = thread
             .append_events([RuntimeEvent::InteractionRequested {
                 turn_id: invocation.coordinates.turn_id.clone(),
                 item_id: Some(invocation.coordinates.item_id.clone()),
                 interaction_id: interaction_id.clone(),
-                interaction_kind: RuntimeInteractionKind::PermissionApproval,
-                prompt: reason.to_string(),
+                request,
             }])
             .map_err(transition_tool_error)?;
         self.commit_projection(thread, expected, events).await
@@ -383,10 +387,12 @@ fn broker_terminal(call: &ToolBrokerCall) -> Result<RuntimeItemTerminal, ToolBro
     let result = call.result.as_ref().ok_or(ToolBrokerStoreError::Conflict)?;
     Ok(match call.status {
         ToolBrokerCallStatus::Completed => RuntimeItemTerminal::Completed {
-            final_content: RuntimeItemContent::ToolResult {
-                name: call.invocation.tool_name.clone(),
-                output: result.output.clone(),
-            },
+            final_content: RuntimeItemContent::temporary_dynamic_tool_result(
+                call.invocation.coordinates.item_id.as_str(),
+                call.invocation.tool_name.clone(),
+                result.output.clone(),
+                false,
+            ),
         },
         ToolBrokerCallStatus::Cancelled => RuntimeItemTerminal::Cancelled {
             message: call.terminal_message.clone(),

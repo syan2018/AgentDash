@@ -28,6 +28,7 @@ fn envelope_for_thread(thread_id: &str, event: RuntimeEvent) -> RuntimeEventEnve
     RuntimeEventEnvelope {
         thread_id: id(thread_id),
         sequence: None,
+        transient: None,
         revision: RuntimeRevision(1),
         event,
     }
@@ -202,9 +203,7 @@ fn final_item_is_authoritative_and_delta_after_terminal_is_invalid() {
         .observe(&envelope(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
-            initial_content: RuntimeItemContent::AgentMessage {
-                text: String::new(),
-            },
+            initial_content: RuntimeItemContent::agent_message(item_id.as_str(), String::new()),
         }))
         .expect("start item");
     validator
@@ -212,17 +211,20 @@ fn final_item_is_authoritative_and_delta_after_terminal_is_invalid() {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
             terminal: agentdash_agent_runtime_contract::RuntimeItemTerminal::Completed {
-                final_content: agentdash_agent_runtime_contract::RuntimeItemContent::AgentMessage {
-                    text: "authoritative final".to_string(),
-                },
+                final_content: agentdash_agent_runtime_contract::RuntimeItemContent::agent_message(
+                    item_id.as_str(),
+                    "authoritative final",
+                ),
             },
         }))
         .expect("terminal item");
     let error = validator
-        .observe(&envelope(RuntimeEvent::ItemDelta {
+        .observe(&envelope(RuntimeEvent::ConversationDelta {
             turn_id,
             item_id: item_id.clone(),
-            delta: "late".to_string(),
+            delta: agentdash_agent_runtime_contract::RuntimeConversationDelta::AgentMessage {
+                delta: "late".to_string(),
+            },
         }))
         .expect_err("late delta must fail");
     assert_eq!(error, ConformanceViolation::DeltaAfterItemTerminal(item_id));
@@ -236,9 +238,7 @@ fn item_terminal_cannot_change_thread_or_turn_parent() {
         .observe(&envelope(RuntimeEvent::ItemStarted {
             turn_id: id("turn-1"),
             item_id: item_id.clone(),
-            initial_content: RuntimeItemContent::AgentMessage {
-                text: String::new(),
-            },
+            initial_content: RuntimeItemContent::agent_message(item_id.as_str(), String::new()),
         }))
         .expect("start item");
 
@@ -267,9 +267,13 @@ fn interaction_terminal_cannot_change_thread_or_turn_parent() {
             turn_id: id("turn-1"),
             item_id: None,
             interaction_id: interaction_id.clone(),
-            interaction_kind:
-                agentdash_agent_runtime_contract::RuntimeInteractionKind::UserInputRequest,
-            prompt: "need input".to_string(),
+            request:
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_user_input(
+                    "thread-1",
+                    "turn-1",
+                    "thread",
+                    "need input",
+                ),
         }))
         .expect("request interaction");
 

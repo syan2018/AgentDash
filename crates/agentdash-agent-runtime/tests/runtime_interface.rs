@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
 use agentdash_agent_runtime::{
     CommitFailurePoint, DriverEventAdmission, ManagedAgentRuntime, RuntimeRepository,
-    RuntimeStoreFixture,
+    RuntimeStoreFixture, RuntimeTransientEvents,
 };
 use agentdash_agent_runtime_contract::*;
 
@@ -131,7 +131,7 @@ async fn thread_snapshot(
 ) -> RuntimeSnapshot {
     match runtime
         .snapshot(RuntimeSnapshotQuery::Thread {
-            thread_id,
+            thread_id: thread_id.clone(),
             at_revision: None,
         })
         .await
@@ -478,6 +478,8 @@ async fn event_cursor_distinguishes_future_cursor_from_retention_gap() {
                 thread_id: thread_id.clone(),
                 after: Some(EventSequence(1)),
                 include_transient: false,
+                transient_after: None,
+                stream_generation: None,
             })
             .await,
         Err(RuntimeSubscribeError::CursorGap {
@@ -492,6 +494,8 @@ async fn event_cursor_distinguishes_future_cursor_from_retention_gap() {
                 thread_id,
                 after: Some(EventSequence(6)),
                 include_transient: false,
+                transient_after: None,
+                stream_generation: None,
             })
             .await,
         Err(RuntimeSubscribeError::InvalidCursor)
@@ -819,18 +823,18 @@ async fn transient_delta_has_no_durable_cursor() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
-            initial_content: RuntimeItemContent::AgentMessage {
-                text: String::new(),
-            },
+            initial_content: RuntimeItemContent::agent_message(item_id.as_str(), String::new()),
         }))
         .await
         .expect("item");
     assert_eq!(
         runtime
-            .ingest_driver_event(driver(RuntimeEvent::ItemDelta {
+            .ingest_driver_event(driver(RuntimeEvent::ConversationDelta {
                 turn_id,
                 item_id,
-                delta: "token".to_string(),
+                delta: RuntimeConversationDelta::AgentMessage {
+                    delta: "token".to_string()
+                },
             }))
             .await
             .expect("delta"),
@@ -844,9 +848,11 @@ async fn transient_delta_has_no_durable_cursor() {
     assert_eq!(durable.len(), 1);
     let mut stream = runtime
         .events(RuntimeEventSubscription {
-            thread_id,
+            thread_id: thread_id.clone(),
             after: Some(EventSequence(5)),
             include_transient: true,
+            transient_after: None,
+            stream_generation: None,
         })
         .await
         .expect("stream");
@@ -859,14 +865,119 @@ async fn transient_delta_has_no_durable_cursor() {
             .sequence
             .is_some()
     );
+    let transient = stream.next().await.expect("transient").expect("ok");
+    assert!(transient.sequence.is_none());
+    let coordinate = transient.transient.expect("stable transient coordinate");
+    assert_eq!(coordinate.sequence.0, 1);
+    assert_eq!(coordinate.stream_generation, RuntimeDriverGeneration(7));
+    let mut resumed = runtime
+        .events(RuntimeEventSubscription {
+            thread_id: thread_id.clone(),
+            after: Some(EventSequence(6)),
+            include_transient: true,
+            transient_after: Some(coordinate.sequence),
+            stream_generation: Some(coordinate.stream_generation),
+        })
+        .await
+        .expect("resume stream");
     assert!(
-        stream
-            .next()
+        tokio::time::timeout(std::time::Duration::from_millis(20), resumed.next())
             .await
-            .expect("transient")
-            .expect("ok")
-            .sequence
-            .is_none()
+            .is_err(),
+        "live reconnect must wait instead of duplicating replay"
+    );
+    runtime
+        .ingest_driver_event(driver(RuntimeEvent::ConversationDelta {
+            turn_id: id("turn-op-2"),
+            item_id: id("item-1"),
+            delta: RuntimeConversationDelta::AgentMessage {
+                delta: "-live".to_string(),
+            },
+        }))
+        .await
+        .expect("second live delta");
+    let live = tokio::time::timeout(std::time::Duration::from_secs(1), resumed.next())
+        .await
+        .expect("live broadcast timeout")
+        .expect("live event")
+        .expect("live event ok");
+    assert_eq!(live.transient.expect("live coordinate").sequence.0, 2);
+
+    runtime
+        .ingest_driver_event(driver(RuntimeEvent::ItemTerminal {
+            turn_id: id("turn-op-2"),
+            item_id: id("item-1"),
+            terminal: RuntimeItemTerminal::Completed {
+                final_content: RuntimeItemContent::agent_message("item-1", "token"),
+            },
+        }))
+        .await
+        .expect("terminal");
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(1), resumed.next())
+        .await
+        .expect("durable terminal timeout")
+        .expect("durable terminal")
+        .expect("durable terminal ok");
+    assert!(matches!(terminal.event, RuntimeEvent::ItemTerminal { .. }));
+    let replay = store
+        .read(&thread_id, Some(RuntimeDriverGeneration(7)), None)
+        .await;
+    assert!(replay.is_empty(), "durable final item clears live replay");
+}
+
+#[tokio::test]
+async fn closed_live_channels_deliver_terminal_then_release_sender_entries() {
+    let store = RuntimeStoreFixture::default();
+    let thread_id: RuntimeThreadId = id("closed-thread");
+    let mut receiver = store.subscribe(&thread_id).await;
+    store
+        .publish_durable(RuntimeEventEnvelope {
+            thread_id: thread_id.clone(),
+            sequence: Some(EventSequence(1)),
+            transient: None,
+            revision: RuntimeRevision(1),
+            event: RuntimeEvent::ThreadStatusChanged {
+                status: RuntimeThreadStatus::Closed,
+            },
+        })
+        .await;
+    let terminal = receiver
+        .recv()
+        .await
+        .expect("existing receiver gets terminal");
+    assert!(matches!(
+        terminal.event,
+        RuntimeEvent::ThreadStatusChanged {
+            status: RuntimeThreadStatus::Closed
+        }
+    ));
+    assert_eq!(store.live_sender_count().await, 0);
+
+    for index in 0..128 {
+        let closed: RuntimeThreadId = id(&format!("closed-{index}"));
+        let _receiver = store.subscribe(&closed).await;
+        store
+            .publish_durable(RuntimeEventEnvelope {
+                thread_id: closed,
+                sequence: Some(EventSequence(1)),
+                transient: None,
+                revision: RuntimeRevision(1),
+                event: RuntimeEvent::ThreadStatusChanged {
+                    status: RuntimeThreadStatus::Closed,
+                },
+            })
+            .await;
+    }
+    assert_eq!(
+        store.live_sender_count().await,
+        0,
+        "closed threads cannot grow sender map"
+    );
+    let _new_receiver = store.subscribe(&thread_id).await;
+    assert_eq!(
+        store.live_sender_count().await,
+        1,
+        "durable replay subscription recreates a channel"
     );
 }
 
@@ -898,10 +1009,11 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
-            initial_content: RuntimeItemContent::ToolCall {
-                name: "fixture".to_string(),
-                arguments: serde_json::json!({}),
-            },
+            initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
+                item_id.as_str(),
+                "fixture",
+                serde_json::json!({}),
+            ),
         }))
         .await
         .expect("item");
@@ -910,8 +1022,12 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
             turn_id: turn_id.clone(),
             item_id: Some(item_id.clone()),
             interaction_id: interaction_id.clone(),
-            interaction_kind: RuntimeInteractionKind::CommandApproval,
-            prompt: "approve?".to_string(),
+            request: RuntimeInteractionRequest::temporary_command_approval(
+                thread_id.as_str(),
+                turn_id.as_str(),
+                item_id.as_str(),
+                "fixture",
+            ),
         }))
         .await
         .expect("interaction");
@@ -933,19 +1049,19 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
             terminal: RuntimeItemTerminal::Completed {
-                final_content: RuntimeItemContent::AgentMessage {
-                    text: "done".to_string(),
-                },
+                final_content: RuntimeItemContent::agent_message(item_id.as_str(), "done"),
             },
         }))
         .await
         .expect("item terminal");
     assert!(matches!(
         runtime
-            .ingest_driver_event(driver(RuntimeEvent::ItemDelta {
+            .ingest_driver_event(driver(RuntimeEvent::ConversationDelta {
                 turn_id,
                 item_id,
-                delta: "late".to_string(),
+                delta: RuntimeConversationDelta::AgentMessage {
+                    delta: "late".to_string()
+                },
             }))
             .await
             .expect("late delta protocol fact"),
@@ -1010,20 +1126,25 @@ async fn binding_loss_atomically_converges_every_active_entity_to_lost() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
-            initial_content: RuntimeItemContent::ToolCall {
-                name: "fixture".to_string(),
-                arguments: serde_json::json!({}),
-            },
+            initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
+                item_id.as_str(),
+                "fixture",
+                serde_json::json!({}),
+            ),
         }))
         .await
         .expect("item");
     runtime
         .ingest_driver_event(driver(RuntimeEvent::InteractionRequested {
-            turn_id,
-            item_id: Some(item_id),
+            turn_id: turn_id.clone(),
+            item_id: Some(item_id.clone()),
             interaction_id,
-            interaction_kind: RuntimeInteractionKind::CommandApproval,
-            prompt: "approve?".to_string(),
+            request: RuntimeInteractionRequest::temporary_command_approval(
+                thread_id.as_str(),
+                turn_id.as_str(),
+                item_id.as_str(),
+                "fixture",
+            ),
         }))
         .await
         .expect("interaction");
@@ -1091,9 +1212,7 @@ async fn malformed_lifecycle_is_typed_quarantined_and_persists_critical_loss() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: id("item-1"),
-            initial_content: RuntimeItemContent::AgentMessage {
-                text: String::new(),
-            },
+            initial_content: RuntimeItemContent::agent_message("item-1", String::new()),
         }))
         .await
         .expect("item");

@@ -79,6 +79,8 @@ pub struct ReadAgentRunEvents {
     pub target: AgentRunRuntimeTarget,
     pub after: Option<EventSequence>,
     pub include_transient: bool,
+    pub transient_after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    pub stream_generation: Option<agentdash_agent_runtime_contract::RuntimeDriverGeneration>,
 }
 
 #[derive(Debug, Error)]
@@ -660,6 +662,8 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
                 thread_id: binding.thread_id,
                 after: query.after,
                 include_transient: query.include_transient,
+                transient_after: query.transient_after,
+                stream_generation: query.stream_generation,
             })
             .await?)
     }

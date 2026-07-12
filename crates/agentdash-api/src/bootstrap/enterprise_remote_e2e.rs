@@ -744,11 +744,8 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
             if view.snapshot.as_ref().is_some_and(|snapshot| {
                 snapshot.active_turn_id.is_none()
                     && snapshot.transcript.iter().any(|item| {
-                        matches!(
-                            &item.final_content,
-                            RuntimeItemContent::AgentMessage { text }
-                                if text == "enterprise remote completed"
-                        )
+                        item.final_content.agent_message_text()
+                            == Some("enterprise remote completed")
                     })
             }) {
                 break view;
@@ -770,6 +767,8 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                         target: target.clone(),
                         after: None,
                         include_transient: true,
+                        transient_after: None,
+                        stream_generation: None,
                     },
                 )
                 .await
@@ -792,6 +791,8 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                     target: target.clone(),
                     after: None,
                     include_transient: true,
+                    transient_after: None,
+                    stream_generation: None,
                 },
             )
             .await
@@ -808,10 +809,13 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         "unexpected terminal snapshot before compaction: {snapshot:#?}"
     );
     assert!(snapshot.active_turn_id.is_none());
-    assert!(snapshot.transcript.iter().any(|item| matches!(
-        &item.final_content,
-        RuntimeItemContent::AgentMessage { text } if text == "enterprise remote completed"
-    )));
+    assert!(
+        snapshot
+            .transcript
+            .iter()
+            .any(|item| item.final_content.agent_message_text()
+                == Some("enterprise remote completed"))
+    );
     let host_binding = composition
         .host
         .binding(&binding.binding_id)
@@ -973,6 +977,8 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                         target: target.clone(),
                         after: None,
                         include_transient: false,
+                        transient_after: None,
+                        stream_generation: None,
                     },
                 )
                 .await

@@ -198,7 +198,7 @@ pub trait AgentRuntimeCredentialBroker: Send + Sync {
     ) -> Result<CredentialLease, CredentialResolveError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverSurfaceRequest {
     pub binding_id: RuntimeBindingId,
@@ -206,14 +206,14 @@ pub struct DriverSurfaceRequest {
     pub surface_digest: SurfaceDigest,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverInstructionSet {
     pub channel: InstructionChannel,
     pub entries: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverContextSurface {
     pub recipe: ContextRecipe,
@@ -327,7 +327,7 @@ pub struct DriverCompactionActivationRequest {
     pub compaction_id: ContextCompactionId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverContextActivation {
     pub candidate_id: ContextCandidateId,

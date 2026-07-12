@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RuntimeEventEnvelope,
   RuntimeInteractionKind,
+  RuntimeInteractionRequest,
   RuntimeInteractionTerminal,
   RuntimeItemContent,
   RuntimeSnapshot,
@@ -47,24 +48,41 @@ export interface UseAgentRuntimeFeedResult {
 }
 
 function contentView(content: RuntimeItemContent): Pick<AgentRuntimeFeedEntry, "role" | "text"> {
-  switch (content.kind) {
-    case "user_message":
+  switch (content.type) {
+    case "userMessage":
       return {
         role: "user",
-        text: content.input.map((item) => {
-          if (item.kind === "text") return item.text;
-          if (item.kind === "file_reference") return item.uri;
-          if (item.kind === "image") return `[${item.mime_type}]`;
-          return JSON.stringify(item.value);
+        text: content.content.map((item) => {
+          switch (item.type) {
+            case "text": return item.text;
+            case "image": return item.url;
+            case "localImage": return item.path;
+            case "skill": return item.name;
+            case "mention": return item.path;
+          }
         }).join("\n"),
       };
-    case "agent_message": return { role: "agent", text: content.text };
-    case "reasoning": return { role: "reasoning", text: content.text };
-    case "tool_call": return { role: "tool", text: `${content.name} ${JSON.stringify(content.arguments)}` };
-    case "tool_result": return { role: "tool", text: `${content.name}\n${JSON.stringify(content.output, null, 2)}` };
-    case "plan": return { role: "system", text: content.steps.join("\n") };
-    case "context_compaction": return { role: "system", text: `上下文已压缩至 ${content.checkpoint_id}` };
-    case "system_context_change": return { role: "system", text: `上下文切换至 ${content.checkpoint_id}` };
+    case "agentMessage": return { role: "agent", text: content.text };
+    case "reasoning": return { role: "reasoning", text: [...(content.summary ?? []), ...(content.content ?? [])].join("\n") };
+    case "plan": return { role: "system", text: content.text };
+    case "commandExecution": return { role: "tool", text: content.aggregatedOutput ?? content.command };
+    case "fileChange": return { role: "tool", text: content.status };
+    case "mcpToolCall": return { role: "tool", text: `${content.server}/${content.tool}` };
+    case "dynamicToolCall": return { role: "tool", text: content.tool };
+    case "collabAgentToolCall": return { role: "tool", text: content.tool };
+    case "subAgentActivity": return { role: "tool", text: content.kind };
+    case "webSearch": return { role: "tool", text: content.query };
+    case "imageView": return { role: "tool", text: content.path };
+    case "sleep": return { role: "tool", text: `${content.durationMs}ms` };
+    case "imageGeneration": return { role: "tool", text: content.result };
+    case "hookPrompt": return { role: "system", text: "Hook prompt" };
+    case "enteredReviewMode": return { role: "system", text: content.review };
+    case "exitedReviewMode": return { role: "system", text: content.review };
+    case "contextCompaction": return { role: "system", text: "上下文已压缩" };
+    case "shellExec": return { role: "tool", text: content.aggregatedOutput ?? content.command };
+    case "fsRead": return { role: "tool", text: content.path };
+    case "fsGrep": return { role: "tool", text: content.pattern };
+    case "fsGlob": return { role: "tool", text: content.pattern };
   }
 }
 
@@ -77,6 +95,17 @@ function seedFromSnapshot(snapshot: RuntimeSnapshot | null): AgentRuntimeFeedEnt
   }));
 }
 
+function interactionPrompt(request: RuntimeInteractionRequest): string {
+  switch (request.kind) {
+    case "command_approval": return request.params.reason ?? request.params.command ?? "Approve command execution?";
+    case "file_change_approval": return request.params.reason ?? "Approve file changes?";
+    case "permission_approval": return request.params.reason ?? "Approve requested permissions?";
+    case "user_input_request": return request.params.questions.map((question) => question.question).join("\n");
+    case "mcp_elicitation": return request.params.message;
+    case "dynamic_tool_execution": return request.params.tool;
+  }
+}
+
 export function applyRuntimeEvent(
   entries: AgentRuntimeFeedEntry[],
   envelope: RuntimeEventEnvelope,
@@ -84,7 +113,7 @@ export function applyRuntimeEvent(
 ): AgentRuntimeFeedEntry[] {
   const event = envelope.event;
   if (
-    (event.kind === "item_started" || event.kind === "item_delta" || event.kind === "item_terminal")
+    (event.kind === "item_started" || event.kind === "conversation_delta" || event.kind === "item_terminal")
     && baselineItemIds.has(event.item_id)
   ) {
     return entries;
@@ -95,9 +124,10 @@ export function applyRuntimeEvent(
     next.push({ id: event.item_id, turn_id: event.turn_id, ...view, status: "streaming" });
     return next;
   }
-  if (event.kind === "item_delta") {
+  if (event.kind === "conversation_delta") {
     const index = next.findIndex((item) => item.id === event.item_id);
-    if (index >= 0) next[index] = { ...next[index], text: `${next[index].text}${event.delta}` };
+    const delta = event.delta.kind === "mcp_progress" ? event.delta.message : event.delta.delta;
+    if (index >= 0) next[index] = { ...next[index], text: `${next[index].text}${delta}` };
     return next;
   }
   if (event.kind === "item_terminal") {
@@ -115,7 +145,7 @@ export function applyRuntimeEvent(
   if (event.kind === "interaction_requested") {
     const interaction = {
       interaction_id: event.interaction_id,
-      interaction_kind: event.interaction_kind,
+      interaction_kind: event.request.kind,
       terminal: null,
     };
     const index = next.findIndex((entry) => entry.interaction?.interaction_id === event.interaction_id);
@@ -123,7 +153,7 @@ export function applyRuntimeEvent(
       id: `interaction:${event.interaction_id}`,
       turn_id: event.turn_id,
       role: "system",
-      text: event.prompt,
+      text: interactionPrompt(event.request),
       status: "streaming",
       interaction,
     };
@@ -249,8 +279,8 @@ export function useAgentRuntimeFeed(options: UseAgentRuntimeFeedOptions): UseAge
         if (
           envelope.event.kind === "item_terminal"
           && envelope.event.terminal.kind === "completed"
-          && envelope.event.terminal.final_content.kind === "tool_result"
-          && envelope.event.terminal.final_content.name === "task_write"
+          && envelope.event.terminal.final_content.type === "dynamicToolCall"
+          && envelope.event.terminal.final_content.tool === "task_write"
         ) {
           callbackRef.current.onTaskPlanChanged?.();
         }

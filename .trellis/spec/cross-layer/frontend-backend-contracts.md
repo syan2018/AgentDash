@@ -91,8 +91,8 @@ AgentRunCommandReceipt {
 - Composer submit 返回 queued mailbox identity 或 canonical `OperationReceipt`；重复 `client_command_id` 返回同一 operation，不创建第二次 Driver side effect。
 - UI 命令可用性只读取 Runtime snapshot 的 `command_availability`。Lifecycle status、executor kind、Backbone、transcript 或 HTTP success 不能推导 submit/steer/interrupt/compact/resolve 权限。
 - `AgentRunRuntimeBinding` 是 `run_id + agent_id` 到 Runtime thread/Host binding 的唯一产品执行坐标。浏览器不接触 Driver source IDs、Host lease 或 placement credential。
-- Runtime feed 由 snapshot transcript 建立 baseline，再按 durable cursor 消费 `RuntimeEventEnvelope`。重连携带最后 cursor；retention gap/Lost 使用 typed Runtime error。
-- `RuntimeGateway::events(RuntimeEventSubscription)` 当前返回有限 replay batch，不是保持连接的 live subscription。轮询消费者必须使用 `include_transient=false`，只按 `EventSequence` 恢复 durable event；无 cursor 的 transient history 不能在批次重连中消费，否则同一 delta 会被重复应用。真正的 token streaming 必须先提供 live broadcast 或稳定 transient identity/sequence，再由 generated contract显式表达。
+- Runtime feed由snapshot transcript建立baseline，再通过持久NDJSON连接消费durable与live transient事件。订阅携带durable cursor及`transient_generation + transient_sequence`；浏览器按target隔离cursor，terminal清理transient cursor，retention gap/Lagged使用typed Runtime error重连。
+- Gateway使用subscribe-before-replay封住race：先建立per-thread broadcast receiver，再读取durable与active-turn transient replay，去重后持续等待live broadcast。`include_transient=true`只能与generated双cursor合同共同使用；有限replay batch不得替代该连接。
 - 所有直接使用 `fetch` 的NDJSON客户端必须通过 `buildApiPath(agentRunScopedPath(...))` 构造URL；`resolveApiUrl`只拼origin，不会注入`/api`。
 - AgentRun cutover必须维护route ledger：每个前端service方法都要对应仍注册的HTTP route、application owner、generated contract与至少一个contract test。删除router入口时，必须在同一变更中迁移消费者或删除service/contract；文件级替换router不代表cutover完成。
 - Project AgentRun列表使用generated `ProjectAgentRunListView` / `AgentRunListEntryView` / `AgentRunListChildView`。列表Runtime摘要只包含展示需要的`thread_status`与可选`active_turn_id`；Lifecycle状态决定无活跃turn或closed thread的产品展示，但不能参与命令admission。
@@ -127,7 +127,8 @@ AgentRunCommandReceipt {
 | command duplicate | 返回原 operation receipt |
 | binding disconnect | snapshot/event 显示 `Lost`，旧 generation 晚到事件不改变 UI |
 | NDJSON URL 未经过 `buildApiPath` | frontend contract test失败；不得请求缺少`/api`的同名页面路由 |
-| finite replay请求`include_transient=true`并自动重连 | 拒绝该消费者设计；改为durable cursor轮询，等待live transient contract |
+| transient generation变化或sequence重复 | 新generation重置cursor；同generation重复sequence丢弃 |
+| broadcast Lagged | 输出typed retryable error并断流；浏览器携带最后已接受双cursor重连 |
 | workspace/list route在cutover中移除但service仍存在 | route ledger/contract test失败；同一变更迁移projection或删除consumer |
 | Runtime thread为`active`但没有`active_turn_id` | 列表显示idle/ready，不伪造running |
 | Runtime thread为`suspended` | 列表显示独立paused/suspended状态；不得折叠为turn interrupted或据此生成命令权限 |
@@ -143,7 +144,8 @@ AgentRunCommandReceipt {
 - Command-state tests 证明 availability 只取 Runtime snapshot。
 - Feed tests 覆盖 snapshot baseline、durable cursor、duplicate event、reconnect 与 typed stream error。
 - Interaction feed tests保留`interaction_id/kind/prompt/terminal`并证明response控件只消费刷新后的availability；context popup tests覆盖target切换迟到响应。
-- Feed URL test断言完整`/api/agent-runs/{run}/agents/{agent}/runtime/events/stream/ndjson`与`include_transient=false`；Runtime增加live transient contract前不得改回。
+- Feed URL test断言完整`/api/agent-runs/{run}/agents/{agent}/runtime/events/stream/ndjson`、`include_transient=true`及重连时的durable/transient generation/sequence参数。
+- Stream state测试覆盖target切换、generation变化、重复sequence、terminal reset与Lagged后cursor保持。
 - Route ledger test至少枚举AgentRun list/workspace/composer/cancel/runtime/context/events/approval的前端consumer与Axum route，防止cutover静默删入口。
 - Project列表测试覆盖service URL、generated DTO消费、status presentation与state分页/失效刷新；真实产品验证覆盖侧栏、完整列表及列表行导航。
 - Project Agent create E2E 覆盖 lifecycle facts -> ProductDelivery -> binding/thread -> operation response。
@@ -182,7 +184,7 @@ AgentRunCommandReceipt {
 - Base：首条消息排队，响应只有 mailbox identity；worker dispatch 后 workspace refresh 观察 accepted operation 与新 cursor。
 - Bad：前端调用已经没有后端实现的 fork/mailbox endpoint，或根据 `execution_status=running` 自行启用 cancel。
 - Bad：把Runtime `active`直接映射为running，或把`closed`直接映射为completed，会把thread lifecycle误当成turn/产品终态。
-- Bad：有限event batch结束后自动重连并再次消费`cursor=null` transient history，导致相同delta无限追加。
+- Bad：只保存durable cursor或在每次重连从transient sequence 0开始，导致同一delta重复追加。
 - Good：Canvas presentation 用 `canvas://{mount_id}` 打开 tab，并通过当前 AgentFrame surface刷新资源。
 - Bad：把 RuntimeWire frame转成 Backbone JSON 再由 UI 推导 Runtime terminal。
 
@@ -227,11 +229,11 @@ import type {
 ```
 
 ```ts
-// Wrong：只拼origin，且把不可恢复transient history当live stream轮询
-resolveApiUrl(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_transient=true"));
+// Wrong：只携带durable cursor，重连时重复消费active turn delta
+buildApiPath(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_transient=true&after=42"));
 
-// Correct：统一API前缀；有限batch只消费durable cursor
-buildApiPath(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_transient=false"));
+// Correct：统一API前缀并携带同一target最后接受的双cursor
+buildApiPath(agentRunScopedPath(target, "/runtime/events/stream/ndjson?include_transient=true&after=42&transient_generation=7&transient_after=18"));
 ```
 
 ```ts

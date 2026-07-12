@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createRuntimeEventStream, parseRuntimeEventStreamItem } from "./runtimeEventStream";
+import { advanceRuntimeStreamCursor, createRuntimeEventStream, parseRuntimeEventStreamItem, runtimeStreamSearchParams, type RuntimeStreamCursorState } from "./runtimeEventStream";
 
 const mocks = vi.hoisted(() => ({
   authenticatedFetch: vi.fn(),
@@ -22,10 +22,33 @@ beforeEach(() => {
 });
 
 describe("Agent Runtime event stream", () => {
+  const transientItem = (generation: number, sequence: number) => parseRuntimeEventStreamItem({
+    kind: "event", durable_cursor: null,
+    transient_cursor: { binding_id: "binding-1", stream_generation: generation, sequence, event_id: `${generation}:${sequence}`, turn_id: "turn-1" },
+    envelope: { thread_id: "thread-1", sequence: null, transient: { binding_id: "binding-1", stream_generation: generation, sequence, event_id: `${generation}:${sequence}`, turn_id: "turn-1" }, revision: 1, event: { kind: "conversation_delta", turn_id: "turn-1", item_id: "item-1", delta: { kind: "agent_message", delta: "x" } } },
+  })!;
+
+  it("tracks generation, rejects duplicate transient sequences, clears on terminal and isolates targets", () => {
+    let state: RuntimeStreamCursorState = { targetKey: "run-a:agent-a", durable: 4, transient: null, generation: null };
+    let advanced = advanceRuntimeStreamCursor(state, transientItem(7, 2), state.targetKey);
+    expect(advanced.accepted).toBe(true);
+    state = advanced.state;
+    expect(runtimeStreamSearchParams(state).toString()).toBe("after=4&include_transient=true&transient_after=2&stream_generation=7");
+    expect(advanceRuntimeStreamCursor(state, transientItem(7, 2), state.targetKey).accepted).toBe(false);
+    expect(advanceRuntimeStreamCursor(state, transientItem(8, 1), state.targetKey).accepted).toBe(true);
+    const terminal = parseRuntimeEventStreamItem({ kind: "event", durable_cursor: 5, transient_cursor: null, envelope: { thread_id: "thread-1", sequence: 5, transient: null, revision: 2, event: { kind: "turn_terminal", turn_id: "turn-1", terminal: "completed", message: null } } })!;
+    const cleared = advanceRuntimeStreamCursor(state, terminal, state.targetKey).state;
+    expect(cleared.transient).toBeNull();
+    expect(cleared.generation).toBeNull();
+    expect(advanceRuntimeStreamCursor(state, transientItem(7, 3), "run-b:agent-b").state).toMatchObject({ targetKey: "run-b:agent-b", durable: 0, transient: 3 });
+    const lagged = parseRuntimeEventStreamItem({ kind: "error", error: { kind: "unavailable", reason: "lagged", retryable: true } })!;
+    expect(advanceRuntimeStreamCursor(state, lagged, state.targetKey)).toEqual({ state, accepted: false });
+  });
   it("parses the canonical event envelope and durable cursor", () => {
     const parsed = parseRuntimeEventStreamItem({
       kind: "event",
       durable_cursor: 42,
+      transient_cursor: null,
       envelope: {
         thread_id: "thread-1",
         sequence: 42,
@@ -53,7 +76,7 @@ describe("Agent Runtime event stream", () => {
 
     await vi.waitFor(() => expect(mocks.authenticatedFetch).toHaveBeenCalledOnce());
     expect(mocks.authenticatedFetch.mock.calls[0]?.[0]).toBe(
-      "http://api.test/api/agent-runs/run%201/agents/agent%2F1/runtime/events/stream/ndjson?after=41&include_transient=false",
+      "http://api.test/api/agent-runs/run%201/agents/agent%2F1/runtime/events/stream/ndjson?after=41&include_transient=true",
     );
     stream.close();
   });

@@ -14,7 +14,7 @@ use crate::{
     RuntimeStoreError, RuntimeUnitOfWork,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextCheckpoint {
     pub checkpoint_id: ContextCheckpointId,
     pub thread_id: RuntimeThreadId,
@@ -33,7 +33,7 @@ impl ContextCheckpoint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActiveContextHead {
     pub thread_id: RuntimeThreadId,
     pub checkpoint_id: ContextCheckpointId,
@@ -62,7 +62,7 @@ pub enum CompactionTerminal {
     Lost { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextCandidate {
     pub candidate_id: ContextCandidateId,
     pub compaction_id: ContextCompactionId,
@@ -103,7 +103,7 @@ pub struct ContextActivation {
     pub status: ContextActivationStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextHeadWrite {
     pub expected_revision: Option<ContextRevision>,
     pub head: ActiveContextHead,
@@ -132,7 +132,7 @@ pub struct ContextPreparationWorkItem {
     pub status: ContextPreparationStatus,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompactionPreparation {
     pub candidate_id: ContextCandidateId,
     pub compaction_id: ContextCompactionId,

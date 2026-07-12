@@ -11,7 +11,7 @@ use agentdash_agent_runtime_contract::{
     ContextActivationId, ContextBlock, ContextCandidateId, ContextCheckpointId, ContextDigest,
     ContextFidelity, ContextProvenance, ContextRecipe, ContextRecipeRevision,
     DriverCommandEnvelope, DriverEventEnvelope, DriverEventSink, DriverInspection,
-    DriverInspectionQuery, DriverRequestId, RuntimeCommand, RuntimeEvent, RuntimeItemContent,
+    DriverInspectionQuery, DriverRequestId, RuntimeCommand,
 };
 use agentdash_agent_runtime_host::{IntegrationDriverHost, RouteDriverCommand};
 use agentdash_diagnostics::{Subsystem, diag};
@@ -199,27 +199,11 @@ impl RuntimeDurableWorkers {
             .chain(surface.context.blocks)
             .collect::<Vec<_>>();
         let source_item_ids = thread.item_order.clone();
-        let mut item_contents = thread
+        let item_contents = thread
             .items
             .iter()
             .map(|(id, item)| (id.clone(), item.initial_content.clone()))
             .collect::<std::collections::BTreeMap<_, _>>();
-        let event_batch = self
-            .store
-            .events_after(&work.thread_id, None)
-            .await
-            .map_err(|error| RuntimeDurableWorkerError::Store(error.to_string()))?;
-        for event in event_batch.events {
-            if let RuntimeEvent::ItemDelta { item_id, delta, .. } = event.event
-                && let Some(content) = item_contents.get_mut(&item_id)
-            {
-                match content {
-                    RuntimeItemContent::AgentMessage { text }
-                    | RuntimeItemContent::Reasoning { text } => text.push_str(&delta),
-                    _ => {}
-                }
-            }
-        }
         blocks.extend(source_item_ids.iter().filter_map(|item_id| {
             item_contents
                 .get(item_id)

@@ -38,6 +38,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -105,7 +106,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ByteRange {
         pub end: u32,
@@ -123,7 +130,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(transparent)]
     pub struct CodexConversationRoot(pub ThreadItem);
@@ -172,7 +185,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct CollabAgentState {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -199,6 +218,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -295,6 +315,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -381,6 +402,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -573,7 +595,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum CommandAction {
@@ -621,6 +649,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -704,6 +733,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -822,7 +852,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum DynamicToolCallOutputContentItem {
@@ -852,6 +888,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -941,7 +978,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FileUpdateChange {
         pub diff: ::std::string::String,
@@ -971,7 +1014,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct HookPromptFragment {
         #[serde(rename = "hookRunId")]
@@ -995,6 +1044,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -1072,6 +1122,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -1181,7 +1232,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpToolCallAppContext {
         #[serde(
@@ -1236,7 +1293,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpToolCallError {
         pub message: ::std::string::String,
@@ -1263,7 +1326,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpToolCallResult {
         pub content: ::std::vec::Vec<::serde_json::Value>,
@@ -1296,6 +1365,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -1387,7 +1457,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct MemoryCitation {
         pub entries: ::std::vec::Vec<MemoryCitationEntry>,
@@ -1429,7 +1505,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct MemoryCitationEntry {
         #[serde(rename = "lineEnd")]
@@ -1466,6 +1548,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -1543,6 +1626,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -1679,7 +1763,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum PatchChangeKind {
@@ -1707,7 +1797,16 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+        :: schemars :: JsonSchema,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
     )]
     #[serde(transparent)]
     pub struct ReasoningEffort(::std::string::String);
@@ -1781,6 +1880,7 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -1879,7 +1979,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TextElement {
         #[doc = "Byte range in the parent `text` buffer that this element occupies."]
@@ -2707,7 +2813,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum ThreadItem {
@@ -3064,7 +3176,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum UserInput {
@@ -3232,7 +3350,13 @@ pub mod thread_item {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum WebSearchAction {
@@ -3307,6 +3431,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -3388,7 +3513,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AccountLoginCompletedNotification {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -3423,7 +3554,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AccountRateLimitsUpdatedNotification {
         #[serde(rename = "rateLimits")]
@@ -3464,7 +3601,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AccountUpdatedNotification {
         #[serde(
@@ -3522,7 +3665,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ActivePermissionProfile {
         #[doc = "Parent profile identifier from the selected permissions profile's `extends` setting, when present."]
@@ -3599,7 +3748,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AdditionalFileSystemPermissions {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -3650,7 +3805,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AdditionalNetworkPermissions {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -3696,7 +3857,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AgentMessageDeltaNotification {
         pub delta: ::std::string::String,
@@ -3718,6 +3885,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -3828,7 +3996,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AppBranding {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -4001,7 +4175,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AppInfo {
         #[serde(
@@ -4097,7 +4277,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AppListUpdatedNotification {
         pub data: ::std::vec::Vec<AppInfo>,
@@ -4244,7 +4430,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AppMetadata {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -4337,7 +4529,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AppReview {
         pub status: ::std::string::String,
@@ -4381,7 +4579,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AppScreenshot {
         #[serde(
@@ -4412,6 +4616,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -4531,7 +4736,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub enum AskForApproval {
         #[serde(rename = "untrusted")]
@@ -4613,6 +4824,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -4713,6 +4925,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -4794,7 +5007,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ByteRange {
         pub end: u32,
@@ -4812,7 +5031,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(transparent)]
     pub struct CodexConversationRoot(pub ServerNotification);
@@ -4994,7 +5219,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub enum CodexErrorInfo {
         #[serde(rename = "contextWindowExceeded")]
@@ -5094,7 +5325,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct CollabAgentState {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -5121,6 +5358,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -5217,6 +5455,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -5303,6 +5542,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -5389,7 +5629,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct CollaborationMode {
         pub mode: ModeKind,
@@ -5525,7 +5771,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum CommandAction {
@@ -5598,7 +5850,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct CommandExecOutputDeltaNotification {
         #[doc = "`true` on the final streamed chunk for a stream when `outputBytesCap` truncated later output on that stream."]
@@ -5640,6 +5898,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -5733,7 +5992,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct CommandExecutionOutputDeltaNotification {
         pub delta: ::std::string::String,
@@ -5761,6 +6026,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -5844,6 +6110,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -5967,7 +6234,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ConfigWarningNotification {
         #[doc = "Optional extra guidance or error details."]
@@ -6008,7 +6281,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ContextCompactedNotification {
         #[serde(rename = "threadId")]
@@ -6049,7 +6328,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct CreditsSnapshot {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -6092,7 +6377,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct DeprecationNoticeNotification {
         #[doc = "Optional extra guidance, such as migration steps or rationale."]
@@ -6153,7 +6444,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum DynamicToolCallOutputContentItem {
@@ -6183,6 +6480,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -6278,7 +6576,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ErrorNotification {
         pub error: TurnError,
@@ -6317,7 +6621,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ExternalAgentConfigImportCompletedNotification {
         #[serde(rename = "importId")]
@@ -6382,7 +6692,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ExternalAgentConfigImportItemTypeFailure {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -6450,7 +6766,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ExternalAgentConfigImportItemTypeSuccess {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -6490,7 +6812,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ExternalAgentConfigImportProgressNotification {
         #[serde(rename = "importId")]
@@ -6531,7 +6859,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ExternalAgentConfigImportTypeResult {
         pub failures: ::std::vec::Vec<ExternalAgentConfigImportItemTypeFailure>,
@@ -6561,6 +6895,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -6681,7 +7016,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FileChangeOutputDeltaNotification {
         pub delta: ::std::string::String,
@@ -6728,7 +7069,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FileChangePatchUpdatedNotification {
         pub changes: ::std::vec::Vec<FileUpdateChange>,
@@ -6755,6 +7102,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -6889,7 +7237,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum FileSystemPath {
@@ -6926,7 +7280,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FileSystemSandboxEntry {
         pub access: FileSystemAccessMode,
@@ -7057,7 +7417,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "kind")]
     pub enum FileSystemSpecialPath {
@@ -7109,7 +7475,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FileUpdateChange {
         pub diff: ::std::string::String,
@@ -7147,7 +7519,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FsChangedNotification {
         #[doc = "File or directory paths associated with this event."]
@@ -7172,6 +7550,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -7283,7 +7662,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FuzzyFileSearchResult {
         pub file_name: ::std::string::String,
@@ -7315,7 +7700,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FuzzyFileSearchSessionCompletedNotification {
         #[serde(rename = "sessionId")]
@@ -7353,7 +7744,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FuzzyFileSearchSessionUpdatedNotification {
         pub files: ::std::vec::Vec<FuzzyFileSearchResult>,
@@ -7404,7 +7801,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct GitInfo {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -7477,7 +7880,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct GuardianApprovalReview {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -7716,7 +8125,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum GuardianApprovalReviewAction {
@@ -7801,6 +8216,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -7886,6 +8302,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -7962,6 +8379,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -8046,6 +8464,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -8139,7 +8558,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct GuardianWarningNotification {
         #[doc = "Concise guardian warning message for the user."]
@@ -8183,7 +8608,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct HookCompletedNotification {
         pub run: HookRunSummary,
@@ -8219,6 +8650,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -8324,6 +8756,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -8398,6 +8831,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -8483,7 +8917,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct HookOutputEntry {
         pub kind: HookOutputEntryKind,
@@ -8507,6 +8947,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -8600,7 +9041,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct HookPromptFragment {
         #[serde(rename = "hookRunId")]
@@ -8625,6 +9072,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -8795,7 +9243,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct HookRunSummary {
         #[serde(
@@ -8854,6 +9308,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -8936,6 +9391,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -9065,7 +9521,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct HookStartedNotification {
         pub run: HookRunSummary,
@@ -9095,6 +9557,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -9196,7 +9659,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ItemCompletedNotification {
         #[doc = "Unix timestamp (in milliseconds) when this item lifecycle completed."]
@@ -9276,7 +9745,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ItemGuardianApprovalReviewCompletedNotification {
         pub action: GuardianApprovalReviewAction,
@@ -9363,7 +9838,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ItemGuardianApprovalReviewStartedNotification {
         pub action: GuardianApprovalReviewAction,
@@ -9422,7 +9903,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ItemStartedNotification {
         pub item: ThreadItem,
@@ -9446,6 +9933,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -9531,7 +10019,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpServerOauthLoginCompletedNotification {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -9559,6 +10053,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -9630,6 +10125,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -9751,7 +10247,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpServerStatusUpdatedNotification {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -9840,7 +10342,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpToolCallAppContext {
         #[serde(
@@ -9895,7 +10403,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpToolCallError {
         pub message: ::std::string::String,
@@ -9933,7 +10447,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpToolCallProgressNotification {
         #[serde(rename = "itemId")]
@@ -9966,7 +10486,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct McpToolCallResult {
         pub content: ::std::vec::Vec<::serde_json::Value>,
@@ -9999,6 +10525,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10090,7 +10617,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct MemoryCitation {
         pub entries: ::std::vec::Vec<MemoryCitationEntry>,
@@ -10132,7 +10665,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct MemoryCitationEntry {
         #[serde(rename = "lineEnd")]
@@ -10169,6 +10708,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10245,6 +10785,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10317,6 +10858,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10408,7 +10950,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ModelReroutedNotification {
         #[serde(rename = "fromModel")]
@@ -10478,7 +11026,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ModelSafetyBufferingUpdatedNotification {
         #[serde(
@@ -10512,6 +11066,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10598,7 +11153,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ModelVerificationNotification {
         #[serde(rename = "threadId")]
@@ -10622,6 +11183,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10697,6 +11259,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10778,6 +11341,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10853,6 +11417,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -10989,7 +11554,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum PatchChangeKind {
@@ -11020,6 +11591,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -11116,7 +11688,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct PlanDeltaNotification {
         pub delta: ::std::string::String,
@@ -11152,6 +11730,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -11299,7 +11878,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ProcessExitedNotification {
         #[doc = "Process exit code."]
@@ -11361,7 +11946,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ProcessOutputDeltaNotification {
         #[doc = "True on the final streamed chunk for this stream when output was truncated by `outputBytesCap`."]
@@ -11403,6 +11994,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -11481,6 +12073,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -11654,7 +12247,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct RateLimitSnapshot {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -11750,7 +12349,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct RateLimitWindow {
         #[serde(
@@ -11785,6 +12390,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -11856,7 +12462,16 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+        :: schemars :: JsonSchema,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        Eq,
+        Hash,
+        Ord,
+        PartialEq,
+        PartialOrd,
     )]
     #[serde(transparent)]
     pub struct ReasoningEffort(::std::string::String);
@@ -11942,6 +12557,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -12043,7 +12659,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ReasoningSummaryPartAddedNotification {
         #[serde(rename = "itemId")]
@@ -12094,7 +12716,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ReasoningSummaryTextDeltaNotification {
         pub delta: ::std::string::String,
@@ -12146,7 +12774,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ReasoningTextDeltaNotification {
         #[serde(rename = "contentIndex")]
@@ -12177,6 +12811,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -12283,7 +12918,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct RemoteControlStatusChangedNotification {
         #[serde(
@@ -12317,7 +12958,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(untagged)]
     pub enum RequestId {
@@ -12371,7 +13018,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct RequestPermissionProfile {
@@ -12499,7 +13152,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum SandboxPolicy {
@@ -13920,7 +14579,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "method", content = "params")]
     pub enum ServerNotification {
@@ -14494,7 +15159,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ServerRequestResolvedNotification {
         #[serde(rename = "requestId")]
@@ -14550,7 +15221,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub enum SessionSource {
         #[serde(rename = "cli")]
@@ -14613,7 +15290,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct Settings {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -14636,7 +15319,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(transparent)]
     pub struct SkillsChangedNotification(
@@ -14695,7 +15384,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct SpendControlLimitSnapshot {
         pub limit: ::std::string::String,
@@ -14722,6 +15417,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -14878,7 +15574,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub enum SubAgentSource {
         #[serde(rename = "review")]
@@ -14938,7 +15640,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TerminalInteractionNotification {
         #[serde(rename = "itemId")]
@@ -14987,7 +15695,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TextElement {
         #[doc = "Byte range in the parent `text` buffer that this element occupies."]
@@ -15026,7 +15740,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TextPosition {
         #[doc = "1-based column number (in Unicode scalar values)."]
@@ -15057,7 +15777,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TextRange {
         pub end: TextPosition,
@@ -15262,7 +15988,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct Thread {
         #[doc = "Optional random unique nickname assigned to an AgentControl-spawned sub-agent."]
@@ -15368,6 +16100,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -15447,7 +16180,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadArchivedNotification {
         #[serde(rename = "threadId")]
@@ -15474,7 +16213,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadClosedNotification {
         #[serde(rename = "threadId")]
@@ -15501,7 +16246,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadDeletedNotification {
         #[serde(rename = "threadId")]
@@ -15565,7 +16316,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadGoal {
         #[serde(rename = "createdAt")]
@@ -15613,7 +16370,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadGoalClearedNotification {
         #[serde(rename = "threadId")]
@@ -15638,6 +16401,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -15747,7 +16511,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadGoalUpdatedNotification {
         pub goal: ThreadGoal,
@@ -15771,6 +16541,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -16629,7 +17400,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum ThreadItem {
@@ -16927,7 +17704,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadNameUpdatedNotification {
         #[serde(rename = "threadId")]
@@ -16993,7 +17776,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeAudioChunk {
         pub data: ::std::string::String,
@@ -17046,7 +17835,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeClosedNotification {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -17080,7 +17875,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeErrorNotification {
         pub message: ::std::string::String,
@@ -17111,7 +17912,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeItemAddedNotification {
         pub item: ::serde_json::Value,
@@ -17144,7 +17951,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeOutputAudioDeltaNotification {
         pub audio: ThreadRealtimeAudioChunk,
@@ -17177,7 +17990,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeSdpNotification {
         pub sdp: ::std::string::String,
@@ -17220,7 +18039,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeStartedNotification {
         #[serde(
@@ -17264,7 +18089,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeTranscriptDeltaNotification {
         #[doc = "Live transcript delta from the realtime event."]
@@ -17304,7 +18135,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadRealtimeTranscriptDoneNotification {
         pub role: ::std::string::String,
@@ -17406,7 +18243,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadSettings {
         #[serde(
@@ -17465,7 +18308,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadSettingsUpdatedNotification {
         #[serde(rename = "threadId")]
@@ -17484,6 +18333,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -17545,7 +18395,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadStartedNotification {
         pub thread: Thread,
@@ -17633,7 +18489,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type", content = "activeFlags")]
     pub enum ThreadStatus {
@@ -17677,7 +18539,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadStatusChangedNotification {
         pub status: ThreadStatus,
@@ -17718,7 +18586,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadTokenUsage {
         pub last: TokenUsageBreakdown,
@@ -17760,7 +18634,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadTokenUsageUpdatedNotification {
         #[serde(rename = "threadId")]
@@ -17791,7 +18671,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ThreadUnarchivedNotification {
         #[serde(rename = "threadId")]
@@ -17837,7 +18723,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TokenUsageBreakdown {
         #[serde(rename = "cachedInputTokens")]
@@ -17947,7 +18839,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct Turn {
         #[doc = "Unix timestamp (in seconds) when the turn completed."]
@@ -18011,7 +18909,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TurnCompletedNotification {
         #[serde(rename = "threadId")]
@@ -18048,7 +18952,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TurnDiffUpdatedNotification {
         pub diff: ::std::string::String,
@@ -18098,7 +19008,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TurnError {
         #[serde(
@@ -18148,6 +19064,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -18240,7 +19157,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TurnModerationMetadataNotification {
         pub metadata: ::serde_json::Value,
@@ -18272,7 +19195,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TurnPlanStep {
         pub status: TurnPlanStepStatus,
@@ -18294,6 +19223,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -18398,7 +19328,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TurnPlanUpdatedNotification {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -18434,7 +19370,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct TurnStartedNotification {
         #[serde(rename = "threadId")]
@@ -18458,6 +19400,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -18674,7 +19617,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum UserInput {
@@ -18747,7 +19696,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct WarningNotification {
         #[doc = "Concise warning message for the user."]
@@ -18889,7 +19844,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum WebSearchAction {
@@ -18953,7 +19914,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct WindowsSandboxSetupCompletedNotification {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -18976,6 +19943,7 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -19068,7 +20036,13 @@ pub mod server_notification {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct WindowsWorldWritableWarningNotification {
         #[serde(rename = "extraCount")]
@@ -19136,6 +20110,7 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -19244,7 +20219,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AdditionalFileSystemPermissions {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -19295,7 +20276,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AdditionalNetworkPermissions {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -19342,7 +20329,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AdditionalPermissionProfile {
         #[serde(
@@ -19493,7 +20486,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum CommandAction {
@@ -19611,7 +20610,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub enum CommandExecutionApprovalDecision {
         #[doc = "User approved the command."]
@@ -19788,7 +20793,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct CommandExecutionRequestApprovalParams {
         #[doc = "Unique identifier for this specific approval callback.\n\nFor regular shell/unified_exec approvals, this is null.\n\nFor zsh-exec-bridge subcommand approvals, multiple callbacks can belong to one parent `itemId`, so `approvalId` is a distinct opaque callback id (a UUID) used to disambiguate routing."]
@@ -19867,6 +20878,7 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -20001,7 +21013,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum FileSystemPath {
@@ -20038,7 +21056,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FileSystemSandboxEntry {
         pub access: FileSystemAccessMode,
@@ -20169,7 +21193,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "kind")]
     pub enum FileSystemSpecialPath {
@@ -20205,6 +21235,7 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -20268,7 +21299,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct NetworkApprovalContext {
         pub host: ::std::string::String,
@@ -20291,6 +21328,7 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -20380,7 +21418,13 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct NetworkPolicyAmendment {
         pub action: NetworkPolicyRuleAction,
@@ -20401,6 +21445,7 @@ pub mod command_execution_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -20545,7 +21590,13 @@ pub mod file_change_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FileChangeRequestApprovalParams {
         #[doc = "[UNSTABLE] When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today)."]
@@ -20609,6 +21660,7 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -20717,7 +21769,13 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AdditionalFileSystemPermissions {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -20768,7 +21826,13 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct AdditionalNetworkPermissions {
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -20797,6 +21861,7 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -20931,7 +21996,13 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "type")]
     pub enum FileSystemPath {
@@ -20968,7 +22039,13 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct FileSystemSandboxEntry {
         pub access: FileSystemAccessMode,
@@ -21099,7 +22176,13 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "kind")]
     pub enum FileSystemSpecialPath {
@@ -21135,6 +22218,7 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -21239,7 +22323,13 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct PermissionsRequestApprovalParams {
         pub cwd: AbsolutePathBuf,
@@ -21297,7 +22387,13 @@ pub mod permissions_request_approval_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct RequestPermissionProfile {
@@ -21370,7 +22466,13 @@ pub mod tool_request_user_input_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ToolRequestUserInputOption {
         pub description: ::std::string::String,
@@ -21426,7 +22528,13 @@ pub mod tool_request_user_input_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ToolRequestUserInputParams {
         #[serde(
@@ -21493,7 +22601,13 @@ pub mod tool_request_user_input_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct ToolRequestUserInputQuestion {
         pub header: ::std::string::String,
@@ -21578,7 +22692,13 @@ pub mod dynamic_tool_call_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     pub struct DynamicToolCallParams {
         pub arguments: ::serde_json::Value,
@@ -21634,6 +22754,7 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -21738,7 +22859,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationBooleanSchema {
@@ -21765,6 +22892,7 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -21843,7 +22971,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationConstOption {
@@ -21872,7 +23006,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(untagged)]
     pub enum McpElicitationEnumSchema {
@@ -21965,7 +23105,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationLegacyTitledEnumSchema {
@@ -22004,7 +23150,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(untagged)]
     pub enum McpElicitationMultiSelectEnumSchema {
@@ -22098,7 +23250,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationNumberSchema {
@@ -22130,6 +23288,7 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -22202,6 +23361,7 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -22280,7 +23440,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(untagged)]
     pub enum McpElicitationPrimitiveSchema {
@@ -22360,7 +23526,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationSchema {
@@ -22395,7 +23567,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(untagged)]
     pub enum McpElicitationSingleSelectEnumSchema {
@@ -22433,6 +23611,7 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -22583,7 +23762,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationStringSchema {
@@ -22624,6 +23809,7 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
+        :: schemars :: JsonSchema,
         :: serde :: Deserialize,
         :: serde :: Serialize,
         :: ts_rs :: TS,
@@ -22701,7 +23887,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationTitledEnumItems {
@@ -22789,7 +23981,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationTitledMultiSelectEnumSchema {
@@ -22874,7 +24072,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationTitledSingleSelectEnumSchema {
@@ -22916,7 +24120,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationUntitledEnumItems {
@@ -23006,7 +24216,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationUntitledMultiSelectEnumSchema {
@@ -23091,7 +24307,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(deny_unknown_fields)]
     pub struct McpElicitationUntitledSingleSelectEnumSchema {
@@ -23251,7 +24473,13 @@ pub mod mcp_server_elicitation_request_params {
     #[doc = r" ```"]
     #[doc = r" </details>"]
     #[derive(
-        :: serde :: Deserialize, :: serde :: Serialize, :: ts_rs :: TS, Clone, Debug, PartialEq,
+        :: schemars :: JsonSchema,
+        :: serde :: Deserialize,
+        :: serde :: Serialize,
+        :: ts_rs :: TS,
+        Clone,
+        Debug,
+        PartialEq,
     )]
     #[serde(tag = "mode")]
     pub enum McpServerElicitationRequestParams {

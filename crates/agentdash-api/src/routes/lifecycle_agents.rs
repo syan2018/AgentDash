@@ -641,6 +641,8 @@ struct AgentRunRuntimeEventsQuery {
     after: Option<EventSequence>,
     #[serde(default)]
     include_transient: bool,
+    transient_after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    stream_generation: Option<agentdash_agent_runtime_contract::RuntimeDriverGeneration>,
 }
 
 #[derive(Debug, Serialize)]
@@ -648,6 +650,7 @@ struct AgentRunRuntimeEventsQuery {
 enum AgentRunRuntimeEventStreamItem {
     Event {
         durable_cursor: Option<EventSequence>,
+        transient_cursor: Option<agentdash_agent_runtime_contract::RuntimeTransientCoordinate>,
         envelope: Box<RuntimeEventEnvelope>,
     },
     Error {
@@ -732,6 +735,8 @@ async fn stream_agent_run_runtime_events(
             target: agent_run_runtime_target(&context),
             after: query.after,
             include_transient: query.include_transient,
+            transient_after: query.transient_after,
+            stream_generation: query.stream_generation,
         })
         .await
         .map_err(agent_run_runtime_error)?;
@@ -741,6 +746,7 @@ async fn stream_agent_run_runtime_events(
             let item = match next {
                 Ok(envelope) => AgentRunRuntimeEventStreamItem::Event {
                     durable_cursor: envelope.sequence,
+                    transient_cursor: envelope.transient.clone(),
                     envelope: Box::new(envelope),
                 },
                 Err(error) => AgentRunRuntimeEventStreamItem::Error { error },
@@ -941,6 +947,8 @@ fn spawn_runtime_mailbox_watcher(state: Arc<AppState>, target: AgentRunRuntimeTa
                 target: target.clone(),
                 after: None,
                 include_transient: false,
+                transient_after: None,
+                stream_generation: None,
             })
             .await
         else {

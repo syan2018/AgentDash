@@ -93,6 +93,7 @@ runtime_id!(HookDefinitionId);
 runtime_id!(HookRunId);
 runtime_id!(HookEffectId);
 runtime_id!(HookPlanDigest);
+runtime_id!(RuntimeTransientEventId);
 
 macro_rules! revision {
     ($name:ident) => {
@@ -127,6 +128,7 @@ revision!(ToolSetRevision);
 revision!(SurfaceRevision);
 revision!(HookPlanRevision);
 revision!(EventSequence);
+revision!(RuntimeTransientSequence);
 revision!(OperationSequence);
 
 #[cfg(test)]

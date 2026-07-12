@@ -410,7 +410,7 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event.event, RuntimeEvent::ItemDelta { .. }))
+            .any(|event| matches!(event.event, RuntimeEvent::ConversationDelta { .. }))
     );
     assert!(events.iter().any(|event| matches!(
         event.event,
@@ -425,6 +425,7 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
             .observe(&RuntimeEventEnvelope {
                 thread_id: id("runtime-thread-1"),
                 sequence: Some(EventSequence(index as u64 + 1)),
+                transient: None,
                 revision: RuntimeRevision(index as u64 + 1),
                 event: event.event.clone(),
             })

@@ -203,4 +203,8 @@ pub struct RuntimeEventSubscription {
     pub thread_id: RuntimeThreadId,
     pub after: Option<crate::EventSequence>,
     pub include_transient: bool,
+    /// Optional cursor for bounded replay of the currently active live stream.
+    pub transient_after: Option<crate::RuntimeTransientSequence>,
+    /// Rejects replay from an obsolete binding generation after reconnect or target switch.
+    pub stream_generation: Option<crate::RuntimeDriverGeneration>,
 }

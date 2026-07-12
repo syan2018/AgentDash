@@ -2463,18 +2463,20 @@ mod tests {
             panic!("expected thread snapshot")
         };
         assert_eq!(snapshot.status, RuntimeThreadStatus::Active);
-        assert!(snapshot.transcript.iter().any(|item| {
-            matches!(
-                &item.final_content,
-                RuntimeItemContent::AgentMessage { text } if text == "native response"
-            )
-        }));
+        assert!(
+            snapshot
+                .transcript
+                .iter()
+                .any(|item| { item.final_content.agent_message_text() == Some("native response") })
+        );
         let mut events = composition
             .gateway
             .events(RuntimeEventSubscription {
                 thread_id: snapshot.thread_id.clone(),
                 after: None,
                 include_transient: true,
+                transient_after: None,
+                stream_generation: None,
             })
             .await
             .expect("canonical event stream");
@@ -2489,7 +2491,7 @@ mod tests {
             };
             if matches!(
                 event.expect("canonical event").event,
-                RuntimeEvent::ItemDelta { .. }
+                RuntimeEvent::ConversationDelta { .. }
             ) {
                 saw_delta = true;
                 break;
@@ -2969,15 +2971,28 @@ rl.on('line', line => {
         );
         let final_result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
-                let RuntimeSnapshotResult::Thread { snapshot } = composition.gateway.snapshot(RuntimeSnapshotQuery::Thread {
-                    thread_id: binding.thread_id.clone(), at_revision: None,
-                }).await.expect("Codex final snapshot") else { panic!("expected Codex thread snapshot") };
-                if snapshot.pending_interactions.is_empty() && snapshot.transcript.iter().any(|item| matches!(
-                    &item.final_content, RuntimeItemContent::AgentMessage { text } if text == "codex response"
-                )) { break snapshot; }
+                let RuntimeSnapshotResult::Thread { snapshot } = composition
+                    .gateway
+                    .snapshot(RuntimeSnapshotQuery::Thread {
+                        thread_id: binding.thread_id.clone(),
+                        at_revision: None,
+                    })
+                    .await
+                    .expect("Codex final snapshot")
+                else {
+                    panic!("expected Codex thread snapshot")
+                };
+                if snapshot.pending_interactions.is_empty()
+                    && snapshot.transcript.iter().any(|item| {
+                        item.final_content.agent_message_text() == Some("codex response")
+                    })
+                {
+                    break snapshot;
+                }
                 tokio::task::yield_now().await;
             }
-        }).await;
+        })
+        .await;
         let final_snapshot = match final_result {
             Ok(snapshot) => snapshot,
             Err(_) => {

@@ -1,4 +1,5 @@
-use agentdash_agent_runtime_contract::{ContextBlock, RuntimeInput, RuntimeItemContent};
+use agentdash_agent_protocol::{AgentDashThreadItem, codex_app_server_protocol as codex};
+use agentdash_agent_runtime_contract::{ContextBlock, RuntimeInput};
 use agentdash_agent_types::{AgentMessage, ContentPart};
 
 pub(crate) fn inputs_to_message(input: Vec<RuntimeInput>) -> AgentMessage {
@@ -34,25 +35,51 @@ fn context_block_to_message(block: &ContextBlock) -> Option<AgentMessage> {
         ContextBlock::CompactionSummary { summary } => {
             Some(AgentMessage::compaction_summary(summary, 0, 0))
         }
-        ContextBlock::RuntimeItem { content } => match content {
-            RuntimeItemContent::UserMessage { input } => Some(inputs_to_message(input.clone())),
-            RuntimeItemContent::AgentMessage { text } | RuntimeItemContent::Reasoning { text } => {
+        ContextBlock::RuntimeItem { content } => match content.item() {
+            AgentDashThreadItem::Codex(codex::ThreadItem::UserMessage { content, .. }) => {
+                let text = content
+                    .iter()
+                    .filter_map(|part| {
+                        let value = serde_json::to_value(part).ok()?;
+                        value
+                            .get("text")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Some(AgentMessage::user(text))
+            }
+            AgentDashThreadItem::Codex(codex::ThreadItem::AgentMessage { text, .. }) => {
                 Some(AgentMessage::assistant(text))
             }
-            RuntimeItemContent::ToolResult { name, output } => {
+            AgentDashThreadItem::Codex(codex::ThreadItem::Reasoning {
+                summary, content, ..
+            }) => Some(AgentMessage::assistant(
+                summary
+                    .iter()
+                    .chain(content)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )),
+            AgentDashThreadItem::Codex(codex::ThreadItem::DynamicToolCall {
+                tool,
+                content_items,
+                success,
+                ..
+            }) if content_items.is_some() => {
+                let output = serde_json::to_value(content_items).unwrap_or(serde_json::Value::Null);
                 Some(AgentMessage::tool_result_full(
-                    format!("restored-{name}"),
+                    format!("restored-{tool}"),
                     None,
-                    Some(name.clone()),
+                    Some(tool.clone()),
                     vec![ContentPart::text(output.to_string())],
                     Some(output.clone()),
-                    false,
+                    success == &Some(false),
                 ))
             }
-            RuntimeItemContent::ToolCall { .. }
-            | RuntimeItemContent::SystemContextChange { .. }
-            | RuntimeItemContent::ContextCompaction { .. }
-            | RuntimeItemContent::Plan { .. } => None,
+            AgentDashThreadItem::Codex(_) | AgentDashThreadItem::AgentDash(_) => None,
         },
     }
 }

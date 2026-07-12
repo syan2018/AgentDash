@@ -118,6 +118,7 @@ dependencies = [
  "agentdash-diagnostics",
  "base64 0.22.1",
  "chrono",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "tempfile",
@@ -158,6 +159,7 @@ dependencies = [
 name = "agentdash-agent-runtime-contract"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "async-trait",
  "schemars 1.2.1",
  "serde",
@@ -713,6 +715,7 @@ name = "agentdash-integration-native-agent"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent",
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
  "agentdash-agent-types",

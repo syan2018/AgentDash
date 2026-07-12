@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 
 use agentdash_agent_runtime_contract::{
     DriverItemId, DriverTurnId, RuntimeEvent, RuntimeInput, RuntimeInteractionId,
-    RuntimeInteractionKind, RuntimeItemContent, RuntimeItemId, RuntimeItemTerminal, RuntimeTurnId,
-    RuntimeTurnTerminal,
+    RuntimeItemContent, RuntimeItemId, RuntimeItemTerminal, RuntimeTurnId, RuntimeTurnTerminal,
 };
 use codex_app_server_protocol as codex;
 use serde_json::Value;
@@ -48,8 +47,6 @@ pub(crate) enum MappingError {
     InvalidItemPayload(String),
     #[error("Codex item failed owned protocol conformance: {0}")]
     OwnedProtocolMismatch(String),
-    #[error("Codex item family is not admitted by the current Runtime projection: {0}")]
-    UnsupportedItemFamily(&'static str),
 }
 
 impl SourceCoordinateMap {
@@ -143,10 +140,15 @@ impl SourceCoordinateMap {
                 Ok(Some(MappedEvent {
                     source_turn_id: Some(driver_turn(&source_turn)?),
                     source_item_id: Some(driver_item(&source_item)?),
-                    event: RuntimeEvent::ItemDelta {
+                    event: RuntimeEvent::ConversationDelta {
                         turn_id,
                         item_id,
-                        delta,
+                        delta: match method.as_str() {
+                            "item/agentMessage/delta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::AgentMessage { delta },
+                            "item/reasoning/textDelta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::ReasoningText { delta },
+                            "item/plan/delta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::Plan { delta },
+                            _ => unreachable!("method admission is exhaustive"),
+                        },
                     },
                 }))
             }
@@ -181,31 +183,50 @@ impl SourceCoordinateMap {
                 .expect("source interaction coordinates are non-empty");
         self.interactions
             .insert(interaction_key, interaction_id.clone());
-        let (kind, prompt) = match request.method.as_str() {
-            "item/commandExecution/requestApproval" => (
-                RuntimeInteractionKind::CommandApproval,
-                prompt(&request.params, "Approve command execution?"),
-            ),
-            "item/fileChange/requestApproval" => (
-                RuntimeInteractionKind::FileChangeApproval,
-                prompt(&request.params, "Approve file changes?"),
-            ),
-            "item/permissions/requestApproval" => (
-                RuntimeInteractionKind::PermissionApproval,
-                prompt(&request.params, "Approve requested permissions?"),
-            ),
-            "item/tool/requestUserInput" => (
-                RuntimeInteractionKind::UserInputRequest,
-                questions_prompt(&request.params),
-            ),
-            "item/tool/call" => (
-                RuntimeInteractionKind::DynamicToolExecution,
-                prompt(&request.params, "Execute dynamic tool?"),
-            ),
-            "mcpServer/elicitation/request" => (
-                RuntimeInteractionKind::McpElicitation,
-                prompt(&request.params, "MCP server requests input"),
-            ),
+        let interaction_request = match request.method.as_str() {
+            "item/commandExecution/requestApproval" => {
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::CommandApproval {
+                    params: strict_interaction_params::<
+                        codex::CommandExecutionRequestApprovalParams,
+                        _,
+                    >(request.params.clone())?,
+                }
+            }
+            "item/fileChange/requestApproval" => {
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::FileChangeApproval {
+                    params: strict_interaction_params::<codex::FileChangeRequestApprovalParams, _>(
+                        request.params.clone(),
+                    )?,
+                }
+            }
+            "item/permissions/requestApproval" => {
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::PermissionApproval {
+                    params: strict_interaction_params::<codex::PermissionsRequestApprovalParams, _>(
+                        request.params.clone(),
+                    )?,
+                }
+            }
+            "item/tool/requestUserInput" => {
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::UserInputRequest {
+                    params: strict_interaction_params::<codex::ToolRequestUserInputParams, _>(
+                        request.params.clone(),
+                    )?,
+                }
+            }
+            "item/tool/call" => {
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::DynamicToolExecution {
+                    params: strict_interaction_params::<codex::DynamicToolCallParams, _>(
+                        request.params.clone(),
+                    )?,
+                }
+            }
+            "mcpServer/elicitation/request" => {
+                agentdash_agent_runtime_contract::RuntimeInteractionRequest::McpElicitation {
+                    params: strict_interaction_params::<codex::McpServerElicitationRequestParams, _>(
+                        request.params.clone(),
+                    )?,
+                }
+            }
             other => return Err(MappingError::UnsupportedMethod(other.to_string())),
         };
         let item_id = source_item
@@ -221,8 +242,7 @@ impl SourceCoordinateMap {
                 turn_id,
                 item_id,
                 interaction_id,
-                interaction_kind: kind,
-                prompt,
+                request: interaction_request,
             },
         })
     }
@@ -421,70 +441,11 @@ pub(crate) fn item_content(item: &Value) -> Result<RuntimeItemContent, MappingEr
         .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
     let canonical_json = serde_json::to_value(&vendor)
         .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
-    serde_json::from_value::<
+    let owned = serde_json::from_value::<
         agentdash_agent_protocol::generated::codex_v2::thread_item::ThreadItem,
     >(canonical_json)
     .map_err(|error| MappingError::OwnedProtocolMismatch(error.to_string()))?;
-    match vendor {
-        codex::ThreadItem::UserMessage { .. } => {
-            Ok(RuntimeItemContent::UserMessage { input: Vec::new() })
-        }
-        codex::ThreadItem::AgentMessage { text, .. } => {
-            Ok(RuntimeItemContent::AgentMessage { text })
-        }
-        codex::ThreadItem::Reasoning {
-            summary, content, ..
-        } => {
-            let text = summary
-                .into_iter()
-                .chain(content)
-                .collect::<Vec<_>>()
-                .join("\n");
-            Ok(RuntimeItemContent::Reasoning { text })
-        }
-        codex::ThreadItem::Plan { text, .. } => Ok(RuntimeItemContent::Plan { steps: vec![text] }),
-        codex::ThreadItem::DynamicToolCall {
-            tool, arguments, ..
-        }
-        | codex::ThreadItem::McpToolCall {
-            tool, arguments, ..
-        } => Ok(RuntimeItemContent::ToolCall {
-            name: tool,
-            arguments,
-        }),
-        codex::ThreadItem::HookPrompt { .. } => {
-            Err(MappingError::UnsupportedItemFamily("hookPrompt"))
-        }
-        codex::ThreadItem::CommandExecution { .. } => {
-            Err(MappingError::UnsupportedItemFamily("commandExecution"))
-        }
-        codex::ThreadItem::FileChange { .. } => {
-            Err(MappingError::UnsupportedItemFamily("fileChange"))
-        }
-        codex::ThreadItem::CollabAgentToolCall { .. } => {
-            Err(MappingError::UnsupportedItemFamily("collabAgentToolCall"))
-        }
-        codex::ThreadItem::SubAgentActivity { .. } => {
-            Err(MappingError::UnsupportedItemFamily("subAgentActivity"))
-        }
-        codex::ThreadItem::WebSearch(_) => Err(MappingError::UnsupportedItemFamily("webSearch")),
-        codex::ThreadItem::ImageView { .. } => {
-            Err(MappingError::UnsupportedItemFamily("imageView"))
-        }
-        codex::ThreadItem::Sleep { .. } => Err(MappingError::UnsupportedItemFamily("sleep")),
-        codex::ThreadItem::ImageGeneration(_) => {
-            Err(MappingError::UnsupportedItemFamily("imageGeneration"))
-        }
-        codex::ThreadItem::EnteredReviewMode { .. } => {
-            Err(MappingError::UnsupportedItemFamily("enteredReviewMode"))
-        }
-        codex::ThreadItem::ExitedReviewMode { .. } => {
-            Err(MappingError::UnsupportedItemFamily("exitedReviewMode"))
-        }
-        codex::ThreadItem::ContextCompaction { .. } => {
-            Err(MappingError::UnsupportedItemFamily("contextCompaction"))
-        }
-    }
+    Ok(RuntimeItemContent::new(owned.into()))
 }
 
 fn driver_turn(value: impl AsRef<str>) -> Result<DriverTurnId, MappingError> {
@@ -492,6 +453,19 @@ fn driver_turn(value: impl AsRef<str>) -> Result<DriverTurnId, MappingError> {
         method: "source coordinate".to_string(),
         field: "turnId",
     })
+}
+fn strict_interaction_params<V, O>(value: Value) -> Result<Box<O>, MappingError>
+where
+    V: serde::de::DeserializeOwned + serde::Serialize,
+    O: serde::de::DeserializeOwned,
+{
+    let vendor: V = serde_json::from_value(value)
+        .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
+    let canonical = serde_json::to_value(vendor)
+        .map_err(|error| MappingError::InvalidItemPayload(error.to_string()))?;
+    serde_json::from_value(canonical)
+        .map(Box::new)
+        .map_err(|error| MappingError::OwnedProtocolMismatch(error.to_string()))
 }
 fn driver_item(value: impl AsRef<str>) -> Result<DriverItemId, MappingError> {
     DriverItemId::new(value.as_ref()).map_err(|_| MappingError::Missing {
@@ -514,18 +488,6 @@ fn missing(method: &str, field: &'static str) -> MappingError {
         field,
     }
 }
-fn prompt(params: &Value, default: &str) -> String {
-    string(params, "reason")
-        .or_else(|| string(params, "message"))
-        .unwrap_or_else(|| default.to_string())
-}
-fn questions_prompt(params: &Value) -> String {
-    params
-        .get("questions")
-        .map(Value::to_string)
-        .unwrap_or_else(|| "Codex requests user input".to_string())
-}
-
 fn rpc_coordinate(id: &Value) -> String {
     match id {
         Value::String(value) => value.clone(),
@@ -614,6 +576,78 @@ mod tests {
     }
 
     #[test]
+    fn interaction_requests_preserve_generated_owned_params_without_field_projection() {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let fixtures = [
+            (
+                "item/commandExecution/requestApproval",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","itemId":"source-item","approvalId":"approval-1","command":"cargo test","commandActions":[],"environmentId":"env-1","proposedExecpolicyAmendment":["cargo","test"],"reason":"run tests","startedAtMs":123}),
+            ),
+            (
+                "item/fileChange/requestApproval",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","itemId":"source-item","grantRoot":"/workspace","reason":"write","startedAtMs":124}),
+            ),
+            (
+                "item/permissions/requestApproval",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","itemId":"source-item","cwd":cwd,"permissions":{},"reason":"access","startedAtMs":125}),
+            ),
+            (
+                "item/tool/requestUserInput",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","itemId":"source-item","autoResolutionMs":60000,"questions":[{"id":"secret","header":"Token","question":"Enter token","isOther":true,"isSecret":true,"options":[{"label":"Use saved","description":"reuse credential"}]}]}),
+            ),
+            (
+                "mcpServer/elicitation/request",
+                serde_json::json!({"serverName":"docs","threadId":"source-thread","turnId":"source-turn","mode":"form","message":"Configure","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}),
+            ),
+            (
+                "item/tool/call",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","callId":"call-1","namespace":"workspace","tool":"render","arguments":{"uri":"canvas://one"}}),
+            ),
+        ];
+        for (index, (method, params)) in fixtures.into_iter().enumerate() {
+            let mut map = SourceCoordinateMap::default();
+            map.register_turn("source-turn", RuntimeTurnId::new("runtime-turn").unwrap());
+            map.register_item("source-item");
+            let mapped = map
+                .map_server_request(&crate::rpc::RpcServerRequest {
+                    id: serde_json::json!(index),
+                    method: method.to_string(),
+                    params: params.clone(),
+                })
+                .unwrap_or_else(|error| panic!("{method}: {error}"));
+            let RuntimeEvent::InteractionRequested { request, .. } = mapped.event else {
+                panic!("interaction request")
+            };
+            let wire = serde_json::to_value(request).expect("serialize owned request");
+            assert_eq!(wire["params"]["threadId"], params["threadId"]);
+            assert_eq!(wire["params"]["turnId"], params["turnId"]);
+            match method {
+                "item/commandExecution/requestApproval" => {
+                    assert_eq!(wire["params"]["approvalId"], "approval-1")
+                }
+                "item/fileChange/requestApproval" => {
+                    assert_eq!(wire["params"]["grantRoot"], "/workspace")
+                }
+                "item/permissions/requestApproval" => {
+                    assert_eq!(wire["params"]["cwd"], params["cwd"])
+                }
+                "item/tool/requestUserInput" => {
+                    assert_eq!(wire["params"]["autoResolutionMs"], 60000);
+                    assert_eq!(wire["params"]["questions"][0]["isSecret"], true);
+                }
+                "mcpServer/elicitation/request" => {
+                    assert_eq!(wire["params"]["requestedSchema"], params["requestedSchema"])
+                }
+                "item/tool/call" => assert_eq!(wire["params"]["arguments"], params["arguments"]),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
     fn failed_item_is_not_projected_as_completed() {
         let mut map = SourceCoordinateMap::default();
         map.register_turn("source-turn", RuntimeTurnId::new("runtime-turn").unwrap());
@@ -676,12 +710,7 @@ mod tests {
             "phase": "commentary"
         }))
         .expect("typed item");
-        assert_eq!(
-            content,
-            RuntimeItemContent::AgentMessage {
-                text: "typed".to_string()
-            }
-        );
+        assert_eq!(content.agent_message_text(), Some("typed"));
     }
 
     #[test]

@@ -25,6 +25,11 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 pub struct PostgresRuntimeRepository {
     pool: PgPool,
     transient: Arc<tokio::sync::Mutex<BTreeMap<RuntimeThreadId, Vec<RuntimeEventEnvelope>>>>,
+    live: Arc<
+        tokio::sync::Mutex<
+            BTreeMap<RuntimeThreadId, tokio::sync::broadcast::Sender<RuntimeEventEnvelope>>,
+        >,
+    >,
     #[cfg(test)]
     fail_at: Arc<std::sync::atomic::AtomicU8>,
 }
@@ -34,6 +39,7 @@ impl PostgresRuntimeRepository {
         Self {
             pool,
             transient: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+            live: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             #[cfg(test)]
             fail_at: Arc::new(std::sync::atomic::AtomicU8::new(0)),
         }
@@ -69,24 +75,112 @@ impl PostgresRuntimeRepository {
 
 #[async_trait]
 impl RuntimeTransientEvents for PostgresRuntimeRepository {
-    async fn publish(&self, event: RuntimeEventEnvelope) {
-        self.transient
-            .lock()
-            .await
-            .entry(event.thread_id.clone())
-            .or_default()
-            .push(event);
+    async fn publish(&self, mut event: RuntimeEventEnvelope) {
+        const ACTIVE_TURN_REPLAY_LIMIT: usize = 512;
+        let mut transient = self.transient.lock().await;
+        let entries = transient.entry(event.thread_id.clone()).or_default();
+        let coordinate = event
+            .transient
+            .as_mut()
+            .expect("transient event coordinate");
+        if entries
+            .last()
+            .and_then(|item| item.transient.as_ref())
+            .is_some_and(|current| {
+                current.binding_id != coordinate.binding_id
+                    || current.stream_generation != coordinate.stream_generation
+                    || current.turn_id != coordinate.turn_id
+            })
+        {
+            entries.clear();
+        }
+        coordinate.sequence = agentdash_agent_runtime_contract::RuntimeTransientSequence(
+            entries
+                .last()
+                .and_then(|item| item.transient.as_ref())
+                .map_or(1, |item| item.sequence.0 + 1),
+        );
+        coordinate.event_id =
+            agentdash_agent_runtime_contract::RuntimeTransientEventId::new(format!(
+                "{}:{}:{}:{}",
+                coordinate.binding_id,
+                coordinate.stream_generation.0,
+                coordinate
+                    .turn_id
+                    .as_ref()
+                    .map_or("thread", |turn| turn.as_str()),
+                coordinate.sequence.0
+            ))
+            .expect("generated transient id");
+        entries.push(event.clone());
+        if entries.len() > ACTIVE_TURN_REPLAY_LIMIT {
+            entries.remove(0);
+        }
+        drop(transient);
+        self.publish_durable(event).await;
     }
 
-    async fn read(&self, thread_id: &RuntimeThreadId) -> Vec<RuntimeEventEnvelope> {
+    async fn publish_durable(&self, event: RuntimeEventEnvelope) {
+        let closes_channel = matches!(
+            event.event,
+            agentdash_agent_runtime_contract::RuntimeEvent::BindingLost { .. }
+                | agentdash_agent_runtime_contract::RuntimeEvent::ThreadStatusChanged {
+                    status: agentdash_agent_runtime_contract::RuntimeThreadStatus::Closed
+                        | agentdash_agent_runtime_contract::RuntimeThreadStatus::Lost
+                }
+        );
+        let thread_id = event.thread_id.clone();
+        let mut live = self.live.lock().await;
+        let sender = live
+            .entry(event.thread_id.clone())
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0);
+        let _ = sender.send(event);
+        if closes_channel {
+            live.remove(&thread_id);
+        }
+    }
+
+    async fn subscribe(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> tokio::sync::broadcast::Receiver<RuntimeEventEnvelope> {
+        self.live
+            .lock()
+            .await
+            .entry(thread_id.clone())
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0)
+            .subscribe()
+    }
+
+    async fn read(
+        &self,
+        thread_id: &RuntimeThreadId,
+        stream_generation: Option<agentdash_agent_runtime_contract::RuntimeDriverGeneration>,
+        after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    ) -> Vec<RuntimeEventEnvelope> {
         self.transient
             .lock()
             .await
             .get(thread_id)
             .cloned()
             .unwrap_or_default()
+            .into_iter()
+            .filter(|event| {
+                event.transient.as_ref().is_some_and(|coordinate| {
+                    stream_generation
+                        .is_none_or(|generation| coordinate.stream_generation == generation)
+                        && after.is_none_or(|after| coordinate.sequence > after)
+                })
+            })
+            .collect()
+    }
+
+    async fn clear(&self, thread_id: &RuntimeThreadId) {
+        self.transient.lock().await.remove(thread_id);
     }
 }
+
+const ACTIVE_LIVE_CHANNEL_CAPACITY: usize = 1024;
 
 fn encode<T: Serialize>(value: &T, coordinate: &'static str) -> Result<Value, RuntimeStoreError> {
     serde_json::to_value(value).map_err(|error| {
@@ -502,6 +596,7 @@ async fn load_documents<T: DeserializeOwned>(
 #[async_trait]
 impl RuntimeUnitOfWork for PostgresRuntimeRepository {
     async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError> {
+        let live_events = commit.events.clone();
         let mut tx = self.pool.begin().await.map_err(sql_error)?;
         let thread_id = commit.projection.thread_id.clone();
         let current = sqlx::query(
@@ -571,7 +666,11 @@ impl RuntimeUnitOfWork for PostgresRuntimeRepository {
             tx.rollback().await.map_err(sql_error)?;
             return Err(error);
         }
-        tx.commit().await.map_err(sql_error)
+        tx.commit().await.map_err(sql_error)?;
+        for event in live_events {
+            self.publish_durable(event).await;
+        }
+        Ok(())
     }
 
     async fn quarantine(&self, event: QuarantinedDriverEvent) -> Result<(), RuntimeStoreError> {
@@ -2245,6 +2344,98 @@ mod tests {
         )
         .await
         .expect("legacy RuntimeSession schema is physically absent");
+    }
+
+    #[tokio::test]
+    async fn conversation_contract_reset_clears_runtime_graph_without_rewriting_migration_history()
+    {
+        let _serial = serial_test_guard().await;
+        let fixture = fixture("conversation contract reset").await;
+        fixture
+            .runtime
+            .execute(start(&fixture))
+            .await
+            .expect("seed runtime thread and journal");
+        let pool = fixture.store.pool();
+        let history_before: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
+            .fetch_one(pool)
+            .await
+            .expect("migration history before reset");
+
+        let binding_id = format!("binding-{}", fixture.suffix);
+        let mut seed = pool.begin().await.expect("seed transaction");
+        sqlx::query("INSERT INTO projects (id,name,created_at,updated_at) VALUES ('reset-project','Reset project',now(),now())")
+            .execute(&mut *seed).await.expect("seed project");
+        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,topology,status,created_at,updated_at,last_activity_at) VALUES ('reset-run','reset-project','plain','active',now(),now(),now())")
+            .execute(&mut *seed).await.expect("seed lifecycle run");
+        sqlx::query("INSERT INTO lifecycle_agents (id,run_id,project_id,source,status,bootstrap_status) VALUES ('reset-agent','reset-run','reset-project','primary','active','not_applicable')")
+            .execute(&mut *seed).await.expect("seed lifecycle agent");
+        sqlx::query("INSERT INTO agent_runtime_service_instance (id,definition_id,definition_build_digest,revision,config,credentials,placement,desired_state,observed_state,active_generation) VALUES ('reset-service','reset-definition','sha256:definition',1,'{}','{}','{}','active','{}',7)")
+            .execute(&mut *seed).await.expect("seed service instance");
+        sqlx::query("INSERT INTO agent_runtime_service_instance_revision (service_instance_id,revision,instance_snapshot) VALUES ('reset-service',1,'{}')")
+            .execute(&mut *seed).await.expect("seed service revision");
+        sqlx::query("INSERT INTO agent_runtime_service_activation (service_instance_id,instance_revision,driver_generation,protocol_revision,effective_profile,profile_digest,conformance_evidence,instance_snapshot) VALUES ('reset-service',1,7,1,'{}',$1,'{}','{}')")
+            .bind(format!("profile-{}", fixture.suffix)).execute(&mut *seed).await.expect("seed service activation");
+        sqlx::query("INSERT INTO agent_runtime_offer (id,service_instance_id,instance_revision,driver_generation,profile_digest,available,offer) VALUES ('reset-offer','reset-service',1,7,$1,true,'{}')")
+            .bind(format!("profile-{}", fixture.suffix)).execute(&mut *seed).await.expect("seed runtime offer");
+        sqlx::query("INSERT INTO agent_runtime_host_binding (binding_id,thread_id,offer_id,service_instance_id,instance_revision,driver_generation,profile_digest,state,lease_epoch,binding) VALUES ($1,$2,'reset-offer','reset-service',1,7,$3,'active',1,'{}')")
+            .bind(&binding_id).bind(fixture.thread_id.as_str()).bind(format!("profile-{}", fixture.suffix))
+            .execute(&mut *seed).await.expect("seed host binding");
+        sqlx::query("INSERT INTO agent_run_runtime_thread_anchor (run_id,agent_id,runtime_thread_id,bootstrap_runtime_binding_id) VALUES ('reset-run','reset-agent',$1,$2)")
+            .bind(fixture.thread_id.as_str()).bind(&binding_id)
+            .execute(&mut *seed).await.expect("seed AgentRun runtime anchor");
+        sqlx::query("INSERT INTO agent_run_runtime_binding_lineage (run_id,agent_id,binding_epoch,runtime_binding_id,binding) VALUES ('reset-run','reset-agent',1,$1,'{}'::jsonb)")
+            .bind(&binding_id).execute(&mut *seed).await.expect("seed binding lineage");
+        seed.commit().await.expect("commit valid reset graph");
+
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0069_reset_runtime_conversation_contract.sql"
+        ))
+        .execute(pool)
+        .await
+        .expect("reapply conversation reset migration body");
+
+        for table in [
+            "agent_runtime_thread",
+            "agent_runtime_binding",
+            "agent_runtime_source_coordinate",
+            "agent_runtime_event",
+            "agent_run_runtime_thread_anchor",
+            "agent_run_runtime_binding_lineage",
+        ] {
+            let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+                .fetch_one(pool)
+                .await
+                .expect("count reset table");
+            assert_eq!(count, 0, "{table} must be rebuilt by reprovisioning");
+        }
+        let history_after: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations")
+            .fetch_one(pool)
+            .await
+            .expect("migration history after reset");
+        assert_eq!(history_after, history_before);
+        let applied: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=69 AND success)",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("0069 migration history");
+        assert!(applied);
+        for table in [
+            "projects",
+            "lifecycle_runs",
+            "lifecycle_agents",
+            "agent_runtime_service_instance",
+            "agent_runtime_offer",
+        ] {
+            let count: i64 = sqlx::query_scalar(&format!(
+                "SELECT count(*) FROM {table} WHERE id LIKE 'reset-%'"
+            ))
+            .fetch_one(pool)
+            .await
+            .expect("count preserved owner fact");
+            assert_eq!(count, 1, "{table} must survive Runtime reprovision reset");
+        }
     }
 
     #[tokio::test]

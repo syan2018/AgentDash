@@ -68,7 +68,9 @@ struct RuntimeCommit {
 - per-thread `OperationSequence`、`EventSequence`与`RuntimeRevision`单调分配；CAS loser不消费任何序号。
 - idempotency唯一域是`(RuntimeThreadId, IdempotencyKey)`；record持久化actor与完整typed command。只有operation ID、key、actor、command全部一致才返回duplicate receipt。
 - `RuntimeUnitOfWork::commit`必须在一个数据库事务内校验projection CAS和operation/idempotency唯一约束，并写入全部write-set。
-- authoritative event推进durable cursor；transient delta通过`RuntimeTransientEvents`传播，不进入durable cursor或projection revision。
+- authoritative event推进durable cursor；transient conversation delta使用`stream_generation + transient_sequence + event_id`，不进入durable cursor或projection revision。Gateway在读取replay前建立per-thread broadcast订阅，再输出durable/transient replay并持续等待live事件，避免replay/live交界丢失。
+- transient replay只保存当前active turn且上限512条；binding/turn terminal先广播authoritative durable terminal，再清理buffer、重置generation并回收per-thread sender。已持有receiver仍能收到terminal，新订阅从durable replay恢复。
+- `InteractionRequested`直接携带generated owned request params；approval、user input、MCP elicitation与dynamic tool请求不得压缩成`kind + prompt`或从裸JSON摘取展示字段。
 - `RuntimeEventBatch`携带`earliest_available`与`latest_available`；subscription区分future cursor和retention gap。
 - canonical/source坐标与binding generation在任何state transition前校验。stale generation只进入typed quarantine，不推进canonical state。
 - BindingLost、critical protocol violation与非法critical lifecycle在一个`RuntimeCommit`内持久事实、quarantine原事件，并将所有active Item、Interaction、Turn、Operation收敛为typed Lost/terminal。
@@ -95,7 +97,7 @@ struct RuntimeCommit {
 
 - Good：Command在revision 7被接受，事务同时写operation、revision 8 projection、连续events与outbox；Driver worker只在commit后消费outbox。
 - Good：两个并发Command都声明expected revision 7，仅一条commit成功；失败方不占用operation/event sequence。
-- Base：客户端的after cursor仍在retained范围，返回durable tail；`include_transient`只追加当前非权威delta。
+- Base：客户端携带durable cursor与当前transient generation/sequence重连；Gateway去重replay后保持live连接，final durable item覆盖过程delta。
 - Bad：先写operation再尝试写projection/outbox；数据库中间失败会留下无法完成或错误重放的acceptance。
 - Bad：把actor放进idempotency namespace；攻击者或另一主体可换actor复用同一Thread key绕过冲突检查。
 
@@ -106,7 +108,7 @@ struct RuntimeCommit {
 - 并发CAS测试断言唯一成功、连续operation/event sequence与projection/cursor一致。
 - idempotency测试覆盖exact duplicate、same key/different actor、same key/different command与operation ID复用。
 - Driver ingress测试覆盖stale generation、source mismatch、duplicate terminal、runtime-owned event与critical violation Lost收敛。
-- Cursor测试覆盖normal tail、future cursor、retention gap、空retained journal与transient不推进cursor。
+- Cursor测试覆盖normal tail、future cursor、retention gap、空retained journal、subscribe-before-replay race、generation切换、transient重复去重、Lagged重连、terminal reset与transient不推进durable cursor。
 - PostgreSQL adapter落地时必须复用以上behavior suite并增加真实并发transaction/migration测试；in-memory通过不代表数据库原子性已证明。
 
 目标门禁：

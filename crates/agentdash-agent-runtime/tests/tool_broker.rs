@@ -797,10 +797,11 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             event: RuntimeEvent::ItemStarted {
                 turn_id: turn_id.clone(),
                 item_id: item_id.clone(),
-                initial_content: RuntimeItemContent::ToolCall {
-                    name: "code_scan".to_string(),
-                    arguments: arguments.clone(),
-                },
+                initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
+                    item_id.as_str(),
+                    "code_scan",
+                    arguments.clone(),
+                ),
             },
         })
         .await

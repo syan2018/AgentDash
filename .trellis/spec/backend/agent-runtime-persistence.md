@@ -36,6 +36,7 @@ pub trait RuntimeWorkQueue {
 - Context Head 只能指向同一 Thread 下的非 `opaque` immutable checkpoint，并完整匹配 checkpoint revision、digest、fidelity、settings revision 与 tool-set revision。
 - `agent_runtime_binding` 与 `agent_runtime_source_coordinate` 是 Integration Driver Host 所有的坐标事实。Runtime persistence 仅引用并校验它们，不创建、不推进 generation，也不改写 source coordinate。
 - Runtime schema 从新 contract 独立建立；旧 session/connector 表不参与读取、回填或双写。切换与删除旧事实源属于 AgentRun cutover 阶段。
+- Conversation contract发生不兼容替换时使用显式data migration清理Runtime owner graph，不增加旧JSON reader。`0069_reset_runtime_conversation_contract.sql`解除mailbox operation引用并删除Runtime-derived lineage/recovery/anchor、permission、Thread与binding事实，同时保留Project、Lifecycle、mailbox主体及service/offer catalog，供后续重新provision。
 - claim 使用数据库时钟、`FOR UPDATE SKIP LOCKED`、owner、随机 token、到期时间和 attempt。只有仍持有相同 owner/token 且 lease 未过期的 worker 能 ack/release；到期后新 claim 必须生成新 token 并增加 attempt，旧 worker 不得确认新一轮工作。
 - queue 只负责 work 的租约和交付确认，业务状态仍留在各自 runtime/context 表。Activation dispatch 仅能 claim `prepared` activation。
 
@@ -68,6 +69,7 @@ pub trait RuntimeWorkQueue {
 - 对四类 `RuntimeWorkKind` 覆盖 claim 隔离、limit、attempt、ack、release、lease 到期接管和 stale worker fencing。
 - 明确验证 Runtime adapter 不写 binding/source；测试 fixture 需要由 Host 角色显式 seed 坐标。
 - migration guard 必须确认 managed runtime migration 不引用旧 session runtime/connector 表。
+- data reset migration必须用外键有效的完整旧数据图验证清理/保留集合与`_sqlx_migrations`历史；禁止通过`session_replication_role`绕过约束造数。
 
 ## 7. Wrong vs Correct
 

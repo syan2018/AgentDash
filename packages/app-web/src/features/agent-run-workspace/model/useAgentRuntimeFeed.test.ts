@@ -10,6 +10,7 @@ function envelope(event: RuntimeEventEnvelope["event"], sequence: bigint): Runti
   return {
     thread_id: "thread-1",
     sequence,
+    transient: null,
     revision: sequence,
     event,
   };
@@ -22,8 +23,7 @@ describe("Agent Runtime interaction feed", () => {
       turn_id: "turn-1",
       item_id: "item-1",
       interaction_id: "interaction-1",
-      interaction_kind: "permission_approval",
-      prompt: "Allow permission?",
+      request: { kind: "permission_approval", params: { cwd: "/workspace", itemId: "item-1", permissions: {}, reason: "Allow permission?", startedAtMs: 0, threadId: "thread-1", turnId: "turn-1" } },
     }, 1n), new Set());
 
     expect(requested[0]?.interaction).toEqual({
@@ -36,8 +36,7 @@ describe("Agent Runtime interaction feed", () => {
       turn_id: "turn-1",
       item_id: "item-1",
       interaction_id: "interaction-1",
-      interaction_kind: "permission_approval",
-      prompt: "Allow permission?",
+      request: { kind: "permission_approval", params: { cwd: "/workspace", itemId: "item-1", permissions: {}, reason: "Allow permission?", startedAtMs: 0, threadId: "thread-1", turnId: "turn-1" } },
     }, 1n))).toBe(true);
     expect(runtimeEventRequestsRuntimeInspectRefresh(envelope({
       kind: "turn_started",

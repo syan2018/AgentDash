@@ -12,6 +12,7 @@ name = "generate_agent_runtime_contracts"
 path = "src/generate.rs"
 
 [dependencies]
+agentdash-agent-protocol = { workspace = true }
 async-trait = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

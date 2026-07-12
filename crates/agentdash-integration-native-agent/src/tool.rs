@@ -119,10 +119,11 @@ impl AgentTool for NativeRuntimeTool {
                 event: RuntimeEvent::ItemStarted {
                     turn_id: turn_id.clone(),
                     item_id: item_id.clone(),
-                    initial_content: RuntimeItemContent::ToolCall {
-                        name: self.definition.name.clone(),
-                        arguments: args.clone(),
-                    },
+                    initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
+                        item_id.as_str(),
+                        self.definition.name.clone(),
+                        args.clone(),
+                    ),
                 },
             })
             .await

@@ -48,9 +48,9 @@
 
 ### W2 Exit Criteria
 
-- [ ] Runtime journal/snapshot/events保存完整typed conversation payload。
-- [ ] durable cursor与live transient generation/sequence合同通过重连和去重测试。
-- [ ] schema/migration处理完成，无旧payload兼容reader或dual write。
+- [x] Runtime journal/snapshot/events保存完整typed conversation payload。
+- [x] durable cursor与live transient generation/sequence合同通过重连和去重测试。
+- [x] schema/migration处理完成，无旧payload兼容reader或dual write。
 
 ## 4. W3 — Connector / Tool Protocol Projection
 

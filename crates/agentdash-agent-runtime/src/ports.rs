@@ -129,13 +129,13 @@ pub enum DriverEventQuarantineReason {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuarantinedDriverEvent {
     pub event: agentdash_agent_runtime_contract::DriverEventEnvelope,
     pub reason: DriverEventQuarantineReason,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeEventBatch {
     /// Earliest retained event sequence. When the retained journal is empty this is one past the
     /// latest durable sequence, which still lets callers detect a retention gap.
@@ -327,7 +327,18 @@ pub trait RuntimeUnitOfWork: Send + Sync {
 #[async_trait]
 pub trait RuntimeTransientEvents: Send + Sync {
     async fn publish(&self, event: RuntimeEventEnvelope);
-    async fn read(&self, thread_id: &RuntimeThreadId) -> Vec<RuntimeEventEnvelope>;
+    async fn publish_durable(&self, event: RuntimeEventEnvelope);
+    async fn subscribe(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> tokio::sync::broadcast::Receiver<RuntimeEventEnvelope>;
+    async fn read(
+        &self,
+        thread_id: &RuntimeThreadId,
+        stream_generation: Option<RuntimeDriverGeneration>,
+        after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    ) -> Vec<RuntimeEventEnvelope>;
+    async fn clear(&self, thread_id: &RuntimeThreadId);
 }
 
 /// Durable multi-worker lease queue for side effects and recovery work.

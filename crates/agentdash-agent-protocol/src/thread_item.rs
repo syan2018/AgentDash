@@ -28,6 +28,76 @@ pub enum AgentDashThreadItem {
 pub enum AgentDashNativeThreadItem {
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
+    Vfs {
+        id: String,
+        operation: String,
+        resource_uri: Option<String>,
+        status: codex::DynamicToolCallStatus,
+        content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    RuntimeAction {
+        id: String,
+        action_key: String,
+        target_ref: Option<String>,
+        status: codex::DynamicToolCallStatus,
+        content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    WorkspaceModule {
+        id: String,
+        operation: String,
+        resource_uri: Option<String>,
+        status: codex::DynamicToolCallStatus,
+        content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Companion {
+        id: String,
+        operation: String,
+        agent_id: Option<String>,
+        task_id: Option<String>,
+        status: codex::DynamicToolCallStatus,
+        content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Task {
+        id: String,
+        operation: String,
+        task_id: Option<String>,
+        status: codex::DynamicToolCallStatus,
+        content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    Wait {
+        id: String,
+        duration_ms: Option<u64>,
+        poll_interval_ms: Option<u64>,
+        status: codex::DynamicToolCallStatus,
+        content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    LifecycleComplete {
+        id: String,
+        node_id: Option<String>,
+        status: codex::DynamicToolCallStatus,
+        content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
     ShellExec {
         id: String,
         command: String,
@@ -37,6 +107,22 @@ pub enum AgentDashNativeThreadItem {
         status: codex::DynamicToolCallStatus,
         aggregated_output: Option<String>,
         exit_code: Option<i32>,
+        success: Option<bool>,
+    },
+    #[serde(rename_all = "camelCase")]
+    #[ts(rename_all = "camelCase")]
+    TerminalControl {
+        id: String,
+        operation: String,
+        terminal_id: String,
+        arguments: serde_json::Value,
+        input: Option<String>,
+        cols: Option<u16>,
+        rows: Option<u16>,
+        state: Option<String>,
+        aggregated_output: Option<String>,
+        exit_code: Option<i32>,
+        status: codex::DynamicToolCallStatus,
         success: Option<bool>,
     },
     #[serde(rename_all = "camelCase")]
@@ -145,7 +231,15 @@ fn codex_item_id(item: &codex::ThreadItem) -> &str {
 impl AgentDashNativeThreadItem {
     pub fn id(&self) -> &str {
         match self {
-            AgentDashNativeThreadItem::ShellExec { id, .. }
+            AgentDashNativeThreadItem::Vfs { id, .. }
+            | AgentDashNativeThreadItem::RuntimeAction { id, .. }
+            | AgentDashNativeThreadItem::WorkspaceModule { id, .. }
+            | AgentDashNativeThreadItem::Companion { id, .. }
+            | AgentDashNativeThreadItem::Task { id, .. }
+            | AgentDashNativeThreadItem::Wait { id, .. }
+            | AgentDashNativeThreadItem::LifecycleComplete { id, .. }
+            | AgentDashNativeThreadItem::ShellExec { id, .. }
+            | AgentDashNativeThreadItem::TerminalControl { id, .. }
             | AgentDashNativeThreadItem::FsRead { id, .. }
             | AgentDashNativeThreadItem::FsGrep { id, .. }
             | AgentDashNativeThreadItem::FsGlob { id, .. } => id,
@@ -154,25 +248,49 @@ impl AgentDashNativeThreadItem {
 
     pub fn tool_name(&self) -> &'static str {
         match self {
+            AgentDashNativeThreadItem::Vfs { .. } => "vfs",
+            AgentDashNativeThreadItem::RuntimeAction { .. } => "runtime_action",
+            AgentDashNativeThreadItem::WorkspaceModule { .. } => "workspace_module",
+            AgentDashNativeThreadItem::Companion { .. } => "companion",
+            AgentDashNativeThreadItem::Task { .. } => "task",
+            AgentDashNativeThreadItem::Wait { .. } => "wait",
+            AgentDashNativeThreadItem::LifecycleComplete { .. } => "lifecycle_complete",
             AgentDashNativeThreadItem::ShellExec { .. } => "shell_exec",
+            AgentDashNativeThreadItem::TerminalControl { .. } => "terminal_control",
             AgentDashNativeThreadItem::FsRead { .. } => "fs_read",
             AgentDashNativeThreadItem::FsGrep { .. } => "fs_grep",
             AgentDashNativeThreadItem::FsGlob { .. } => "fs_glob",
         }
     }
 
-    pub fn arguments(&self) -> &serde_json::Value {
+    pub fn arguments(&self) -> Option<&serde_json::Value> {
         match self {
             AgentDashNativeThreadItem::ShellExec { arguments, .. }
+            | AgentDashNativeThreadItem::TerminalControl { arguments, .. }
             | AgentDashNativeThreadItem::FsRead { arguments, .. }
             | AgentDashNativeThreadItem::FsGrep { arguments, .. }
-            | AgentDashNativeThreadItem::FsGlob { arguments, .. } => arguments,
+            | AgentDashNativeThreadItem::FsGlob { arguments, .. } => Some(arguments),
+            AgentDashNativeThreadItem::Vfs { .. }
+            | AgentDashNativeThreadItem::RuntimeAction { .. }
+            | AgentDashNativeThreadItem::WorkspaceModule { .. }
+            | AgentDashNativeThreadItem::Companion { .. }
+            | AgentDashNativeThreadItem::Task { .. }
+            | AgentDashNativeThreadItem::Wait { .. }
+            | AgentDashNativeThreadItem::LifecycleComplete { .. } => None,
         }
     }
 
     pub fn status(&self) -> &codex::DynamicToolCallStatus {
         match self {
-            AgentDashNativeThreadItem::ShellExec { status, .. }
+            AgentDashNativeThreadItem::Vfs { status, .. }
+            | AgentDashNativeThreadItem::RuntimeAction { status, .. }
+            | AgentDashNativeThreadItem::WorkspaceModule { status, .. }
+            | AgentDashNativeThreadItem::Companion { status, .. }
+            | AgentDashNativeThreadItem::Task { status, .. }
+            | AgentDashNativeThreadItem::Wait { status, .. }
+            | AgentDashNativeThreadItem::LifecycleComplete { status, .. }
+            | AgentDashNativeThreadItem::ShellExec { status, .. }
+            | AgentDashNativeThreadItem::TerminalControl { status, .. }
             | AgentDashNativeThreadItem::FsRead { status, .. }
             | AgentDashNativeThreadItem::FsGrep { status, .. }
             | AgentDashNativeThreadItem::FsGlob { status, .. } => status,
@@ -181,16 +299,32 @@ impl AgentDashNativeThreadItem {
 
     pub fn content_items(&self) -> Option<&Vec<codex::DynamicToolCallOutputContentItem>> {
         match self {
-            AgentDashNativeThreadItem::FsRead { content_items, .. }
+            AgentDashNativeThreadItem::Vfs { content_items, .. }
+            | AgentDashNativeThreadItem::RuntimeAction { content_items, .. }
+            | AgentDashNativeThreadItem::WorkspaceModule { content_items, .. }
+            | AgentDashNativeThreadItem::Companion { content_items, .. }
+            | AgentDashNativeThreadItem::Task { content_items, .. }
+            | AgentDashNativeThreadItem::Wait { content_items, .. }
+            | AgentDashNativeThreadItem::LifecycleComplete { content_items, .. }
+            | AgentDashNativeThreadItem::FsRead { content_items, .. }
             | AgentDashNativeThreadItem::FsGrep { content_items, .. }
             | AgentDashNativeThreadItem::FsGlob { content_items, .. } => content_items.as_ref(),
-            AgentDashNativeThreadItem::ShellExec { .. } => None,
+            AgentDashNativeThreadItem::ShellExec { .. }
+            | AgentDashNativeThreadItem::TerminalControl { .. } => None,
         }
     }
 
     pub fn success(&self) -> Option<bool> {
         match self {
-            AgentDashNativeThreadItem::ShellExec { success, .. }
+            AgentDashNativeThreadItem::Vfs { success, .. }
+            | AgentDashNativeThreadItem::RuntimeAction { success, .. }
+            | AgentDashNativeThreadItem::WorkspaceModule { success, .. }
+            | AgentDashNativeThreadItem::Companion { success, .. }
+            | AgentDashNativeThreadItem::Task { success, .. }
+            | AgentDashNativeThreadItem::Wait { success, .. }
+            | AgentDashNativeThreadItem::LifecycleComplete { success, .. }
+            | AgentDashNativeThreadItem::ShellExec { success, .. }
+            | AgentDashNativeThreadItem::TerminalControl { success, .. }
             | AgentDashNativeThreadItem::FsRead { success, .. }
             | AgentDashNativeThreadItem::FsGrep { success, .. }
             | AgentDashNativeThreadItem::FsGlob { success, .. } => *success,

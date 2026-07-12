@@ -76,6 +76,13 @@ impl AgentServiceDefinitionRegistry {
         {
             return Err(DefinitionRegistryError::MissingProtocolRevision { definition_id });
         }
+        contribution
+            .conversation_projection
+            .validate_required_families()
+            .map_err(|reason| DefinitionRegistryError::InvalidDefinition {
+                definition_id: definition_id.clone(),
+                reason: format!("conversation projection profile: {reason}"),
+            })?;
         if contribution
             .definition
             .supported_protocol_revisions

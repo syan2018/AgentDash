@@ -1009,11 +1009,7 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
-            initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
-                item_id.as_str(),
-                "fixture",
-                serde_json::json!({}),
-            ),
+            initial_content: RuntimeItemContent::agent_message(item_id.as_str(), "fixture"),
         }))
         .await
         .expect("item");
@@ -1126,11 +1122,7 @@ async fn binding_loss_atomically_converges_every_active_entity_to_lost() {
         .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
             turn_id: turn_id.clone(),
             item_id: item_id.clone(),
-            initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
-                item_id.as_str(),
-                "fixture",
-                serde_json::json!({}),
-            ),
+            initial_content: RuntimeItemContent::agent_message(item_id.as_str(), "fixture"),
         }))
         .await
         .expect("item");

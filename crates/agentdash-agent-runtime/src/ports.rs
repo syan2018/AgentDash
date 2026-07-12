@@ -1,6 +1,7 @@
 use agentdash_agent_runtime_contract::{
     EventSequence, IdempotencyKey, RuntimeBindingId, RuntimeCommand, RuntimeDriverGeneration,
-    RuntimeEventEnvelope, RuntimeOperationId, RuntimeRevision, RuntimeThreadId,
+    RuntimeEvent, RuntimeEventEnvelope, RuntimeOperationId, RuntimeRevision, RuntimeThreadId,
+    RuntimeTurnId,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -326,7 +327,15 @@ pub trait RuntimeUnitOfWork: Send + Sync {
 /// Ephemeral deltas deliberately live outside the authoritative unit of work.
 #[async_trait]
 pub trait RuntimeTransientEvents: Send + Sync {
-    async fn publish(&self, event: RuntimeEventEnvelope);
+    async fn publish_transient(
+        &self,
+        thread_id: RuntimeThreadId,
+        binding_id: RuntimeBindingId,
+        stream_generation: RuntimeDriverGeneration,
+        turn_id: Option<RuntimeTurnId>,
+        revision: RuntimeRevision,
+        event: RuntimeEvent,
+    );
     async fn publish_durable(&self, event: RuntimeEventEnvelope);
     async fn subscribe(
         &self,

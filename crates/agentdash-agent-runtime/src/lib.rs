@@ -12,6 +12,7 @@ mod ports;
 mod surface;
 mod tool_broker;
 
+pub use agentdash_agent_runtime_contract::ToolProtocolProjection;
 pub use context::*;
 pub use gateway::*;
 pub use hook::*;

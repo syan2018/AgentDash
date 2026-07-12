@@ -31,6 +31,9 @@ impl AgentTool for WaitTool {
     fn parameters_schema(&self) -> Value {
         schema_value(schemars::schema_for!(WaitActivityRequest))
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::Wait)
+    }
 
     async fn execute(
         &self,

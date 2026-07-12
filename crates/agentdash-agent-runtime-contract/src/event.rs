@@ -200,6 +200,25 @@ pub enum RuntimeInteractionTerminal {
 #[schemars(transparent)]
 pub struct RuntimeItemContent(pub Box<agentdash_agent_protocol::AgentDashThreadItem>);
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "family", rename_all = "snake_case")]
+pub enum ToolProtocolProjection {
+    Command,
+    FileChange,
+    FsRead,
+    FsGrep,
+    FsGlob,
+    Mcp { server_key: String },
+    Dynamic { namespace: Option<String> },
+    Vfs { operation: String },
+    RuntimeAction { action_key: String },
+    WorkspaceModule { operation: String },
+    Companion { operation: String },
+    Task { operation: String },
+    Wait,
+    LifecycleComplete,
+}
+
 impl RuntimeItemContent {
     pub fn new(item: agentdash_agent_protocol::AgentDashThreadItem) -> Self {
         Self(Box::new(item))
@@ -246,48 +265,39 @@ impl RuntimeItemContent {
         )
     }
 
-    /// Temporary W2 bridge; W3 replaces this with tool-owner projectors.
-    pub fn temporary_dynamic_tool_call(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        arguments: serde_json::Value,
-    ) -> Self {
-        Self::codex_json(serde_json::json!({
-            "type":"dynamicToolCall", "id":id.into(), "tool":name.into(), "arguments":arguments,
-            "status":"inProgress"
-        }))
-    }
-
-    /// Temporary W2 bridge; intentionally does not invent a generic terminal output contract.
-    pub fn temporary_dynamic_tool_result(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        _output: serde_json::Value,
-        failed: bool,
-    ) -> Self {
-        Self::codex_json(serde_json::json!({
-            "type":"dynamicToolCall", "id":id.into(), "tool":name.into(), "arguments":{},
-            "status": if failed { "failed" } else { "completed" }, "success": !failed,
-            "contentItems": null
-        }))
-    }
-
     fn codex_json(value: serde_json::Value) -> Self {
         let item = serde_json::from_value(value).expect("runtime-owned Codex item constructor");
         Self::new(agentdash_agent_protocol::AgentDashThreadItem::Codex(item))
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeConversationDelta {
-    AgentMessage { delta: String },
-    ReasoningText { delta: String },
-    ReasoningSummary { delta: String },
-    CommandOutput { delta: String },
-    FileChangeOutput { delta: String },
-    Plan { delta: String },
-    McpProgress { message: String },
+    AgentMessage {
+        delta: String,
+    },
+    ReasoningText {
+        delta: String,
+    },
+    ReasoningSummary {
+        delta: String,
+    },
+    CommandOutput {
+        delta: String,
+    },
+    FileChangeOutput {
+        delta: String,
+    },
+    Plan {
+        delta: String,
+    },
+    McpProgress {
+        message: String,
+    },
+    ToolProgress {
+        content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -316,6 +326,30 @@ pub struct RuntimeConversationErrorDetails {
     pub http_status: Option<u16>,
     pub request_id: Option<String>,
     pub metadata: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RuntimeProviderStatus {
+    pub phase: RuntimeProviderPhase,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub will_retry: bool,
+    pub delay_ms: Option<u64>,
+    pub reason_code: Option<String>,
+    pub message: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeProviderPhase {
+    Connecting,
+    ConnectedWaitingFirstDelta,
+    Streaming,
+    RetryScheduled,
+    Retrying,
+    Failed,
+    Succeeded,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -379,6 +413,10 @@ pub enum RuntimeEvent {
     ConversationError {
         turn_id: Option<RuntimeTurnId>,
         error: RuntimeConversationError,
+    },
+    ProviderStatus {
+        turn_id: RuntimeTurnId,
+        status: RuntimeProviderStatus,
     },
     ItemTerminal {
         turn_id: RuntimeTurnId,
@@ -451,7 +489,10 @@ pub enum RuntimeEvent {
 
 impl RuntimeEvent {
     pub fn is_transient(&self) -> bool {
-        matches!(self, Self::ConversationDelta { .. })
+        matches!(
+            self,
+            Self::ConversationDelta { .. } | Self::ProviderStatus { .. }
+        )
     }
 }
 

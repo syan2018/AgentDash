@@ -139,6 +139,8 @@ pub fn remote_runtime_contribution(
     let factory_key = definition.factory_key.clone();
     AgentRuntimeDriverContribution {
         definition,
+        conversation_projection:
+            agentdash_integration_api::DriverConversationProjectionProfile::full_fidelity(1),
         factory: Arc::new(RemoteRuntimeDriverFactory::new(factory_key, placements)),
     }
 }
@@ -272,7 +274,7 @@ impl AgentRuntimeDriver for RemoteRuntimeDriver {
 }
 
 enum RemoteInboundSerial {
-    DriverEvent(RuntimeWireEnvelope),
+    OrderedFrame(RuntimeWireEnvelope),
     Disconnected(String, tokio::sync::oneshot::Sender<()>),
     Reconnected,
 }
@@ -284,7 +286,7 @@ impl RemoteRuntimeDriver {
         tokio::spawn(async move {
             while let Some(inbound) = serial_rx.recv().await {
                 match inbound {
-                    RemoteInboundSerial::DriverEvent(envelope) => {
+                    RemoteInboundSerial::OrderedFrame(envelope) => {
                         serial_driver.handle_inbound(envelope).await;
                     }
                     RemoteInboundSerial::Disconnected(reason, acknowledged) => {
@@ -307,9 +309,10 @@ impl RemoteRuntimeDriver {
                             &envelope.frame,
                             RuntimeWireFrame::Notification(notification)
                                 if matches!(notification.as_ref(), RuntimeWireNotification::DriverEvent(_))
-                        ) {
+                        ) || matches!(&envelope.frame, RuntimeWireFrame::Response { .. })
+                        {
                             if serial_tx
-                                .send(RemoteInboundSerial::DriverEvent(*envelope))
+                                .send(RemoteInboundSerial::OrderedFrame(*envelope))
                                 .is_err()
                             {
                                 break;
@@ -522,7 +525,6 @@ impl RemoteRuntimeDriver {
         if self.connection_lost.swap(true, Ordering::AcqRel) {
             return;
         }
-        self.pending.lock().await.clear();
         let bindings = std::mem::take(&mut *self.active_bindings.lock().await);
         for (_, binding) in bindings {
             let _ = binding
@@ -540,6 +542,7 @@ impl RemoteRuntimeDriver {
                 })
                 .await;
         }
+        self.pending.lock().await.clear();
     }
 
     async fn request(
@@ -1180,6 +1183,24 @@ mod tests {
 
     struct AsyncEventDriver;
 
+    struct BlockingSink {
+        entered: tokio::sync::Semaphore,
+        release: tokio::sync::Semaphore,
+    }
+
+    #[async_trait]
+    impl DriverEventSink for BlockingSink {
+        async fn emit(&self, _event: DriverEventEnvelope) -> Result<(), DriverError> {
+            self.entered.add_permits(1);
+            self.release
+                .acquire()
+                .await
+                .expect("release remains open")
+                .forget();
+            Ok(())
+        }
+    }
+
     #[derive(Default)]
     struct RecordingSink {
         events: tokio::sync::Mutex<Vec<DriverEventEnvelope>>,
@@ -1657,6 +1678,105 @@ mod tests {
             RuntimeDriverGeneration(3),
             "source placement generation must be normalized to the canonical cloud generation"
         );
+    }
+
+    #[tokio::test]
+    async fn dispatch_response_waits_for_preceding_driver_event_projection() {
+        let (sent_tx, mut sent_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let driver = Arc::new(RemoteRuntimeDriver {
+            instance_id: id("service-ordered"),
+            generation: RuntimeDriverGeneration(3),
+            source_instance_id: id("source-service-ordered"),
+            source_generation: RuntimeDriverGeneration(8),
+            placement: Arc::new(EpochPlacement {
+                sent: sent_tx,
+                events: tokio::sync::Mutex::new(event_rx),
+            }),
+            host: test_host_ports(),
+            next_frame_id: AtomicU64::new(1),
+            pending: tokio::sync::Mutex::new(HashMap::new()),
+            active_bindings: tokio::sync::Mutex::new(HashMap::new()),
+            connection_lost: AtomicBool::new(false),
+        });
+        driver.clone().start_receive_pump();
+        let sink = Arc::new(BlockingSink {
+            entered: tokio::sync::Semaphore::new(0),
+            release: tokio::sync::Semaphore::new(0),
+        });
+        let mut dispatch = {
+            let driver = driver.clone();
+            let sink = sink.clone();
+            tokio::spawn(async move {
+                driver
+                    .dispatch(
+                        DriverCommandEnvelope {
+                            request_id: id("request-ordered"),
+                            binding_id: id("binding-ordered"),
+                            generation: RuntimeDriverGeneration(3),
+                            source_thread_id: id("source-thread-ordered"),
+                            runtime_turn_id: None,
+                            command: RuntimeCommand::ThreadResume {
+                                thread_id: id("thread-ordered"),
+                            },
+                        },
+                        sink,
+                    )
+                    .await
+            })
+        };
+        let request = sent_rx.recv().await.expect("dispatch request");
+        event_tx
+            .send(RuntimeWirePlacementEvent::Frame(Box::new(
+                RuntimeWireEnvelope {
+                    protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                    frame_id: RuntimeWireFrameId(40),
+                    critical: true,
+                    frame: RuntimeWireFrame::Notification(Box::new(
+                        RuntimeWireNotification::DriverEvent(DriverEventEnvelope {
+                            binding_id: id("binding-ordered"),
+                            generation: RuntimeDriverGeneration(8),
+                            source_thread_id: id("source-thread-ordered"),
+                            source_turn_id: None,
+                            source_item_id: None,
+                            event: RuntimeEvent::BindingEstablished {
+                                binding_id: id("binding-ordered"),
+                            },
+                        }),
+                    )),
+                },
+            )))
+            .expect("preceding event");
+        sink.entered.acquire().await.expect("sink entered").forget();
+        event_tx
+            .send(RuntimeWirePlacementEvent::Frame(Box::new(
+                RuntimeWireEnvelope {
+                    protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                    frame_id: RuntimeWireFrameId(41),
+                    critical: true,
+                    frame: RuntimeWireFrame::Response {
+                        request_frame_id: request.frame_id,
+                        response: RuntimeWireResponse::DriverDispatch(
+                            RuntimeWireDriverDispatchResult::Ok(Box::new(DriverDispatchReceipt {
+                                request_id: id("request-ordered"),
+                                duplicate: false,
+                                applied_tool_set: None,
+                            })),
+                        ),
+                    },
+                },
+            )))
+            .expect("dispatch response");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut dispatch)
+                .await
+                .is_err()
+        );
+        sink.release.add_permits(1);
+        dispatch
+            .await
+            .expect("dispatch task")
+            .expect("dispatch receipt");
     }
 
     #[tokio::test]

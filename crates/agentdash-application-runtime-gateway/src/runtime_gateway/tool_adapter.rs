@@ -80,6 +80,13 @@ impl AgentTool for RuntimeActionToolAdapter {
     fn parameters_schema(&self) -> Value {
         self.spec.parameters_schema.clone()
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(
+            agentdash_agent_types::ToolProtocolProjector::RuntimeAction {
+                action_key: self.spec.action_key.to_string(),
+            },
+        )
+    }
 
     async fn execute(
         &self,

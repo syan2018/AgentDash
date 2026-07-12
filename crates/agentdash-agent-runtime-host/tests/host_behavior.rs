@@ -97,10 +97,9 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             event: RuntimeEvent::ItemStarted {
                 turn_id: id("turn-runtime-coordinate"),
                 item_id: id("runtime-item-coordinate-a"),
-                initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
+                initial_content: RuntimeItemContent::agent_message(
                     "runtime-item-coordinate-a",
                     "first",
-                    json!({}),
                 ),
             },
         },
@@ -113,10 +112,9 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             event: RuntimeEvent::ItemStarted {
                 turn_id: id("turn-runtime-coordinate"),
                 item_id: id("runtime-item-coordinate-b"),
-                initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
+                initial_content: RuntimeItemContent::agent_message(
                     "runtime-item-coordinate-b",
                     "second",
-                    json!({}),
                 ),
             },
         },
@@ -633,6 +631,7 @@ async fn fixture_with_broker_and_probe(
     let registry = AgentServiceDefinitionRegistry::collect([AgentRuntimeDriverContribution {
         definition: service_definition,
         factory: factory.clone(),
+        conversation_projection: DriverConversationProjectionProfile::full_fidelity(1),
     }])
     .expect("registry");
     let repository = Arc::new(EphemeralAgentRuntimeHostRepository::new());
@@ -701,6 +700,7 @@ async fn definition_registry_rejects_duplicate_service_identity() {
     let contribution = AgentRuntimeDriverContribution {
         definition: definition("corp.factory", fixture.full_profile.clone()),
         factory: fixture.factory.clone(),
+        conversation_projection: DriverConversationProjectionProfile::full_fidelity(1),
     };
     let error = match AgentServiceDefinitionRegistry::collect([contribution.clone(), contribution])
     {
@@ -711,6 +711,27 @@ async fn definition_registry_rejects_duplicate_service_identity() {
         error,
         DefinitionRegistryError::DuplicateDefinition { .. }
     ));
+}
+
+#[tokio::test]
+async fn definition_registry_rejects_incomplete_conversation_projection_profile() {
+    let fixture = fixture().await;
+    let mut projection = DriverConversationProjectionProfile::full_fidelity(1);
+    projection
+        .item_families
+        .remove(&DriverConversationItemFamily::Mcp);
+    let contribution = AgentRuntimeDriverContribution {
+        definition: definition("corp.factory", fixture.full_profile.clone()),
+        factory: fixture.factory.clone(),
+        conversation_projection: projection,
+    };
+    let error = match AgentServiceDefinitionRegistry::collect([contribution]) {
+        Ok(_) => panic!("incomplete conversation projection must fail fast"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, DefinitionRegistryError::InvalidDefinition { reason, .. } if reason.contains("missing required conversation family Mcp"))
+    );
 }
 
 fn bound_surface(required: bool) -> BoundAgentSurfaceReference {

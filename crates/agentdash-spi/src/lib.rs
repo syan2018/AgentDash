@@ -27,7 +27,7 @@ pub use agentdash_agent_types::{
 };
 pub use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
-    ToolUpdateCallback,
+    ToolProtocolProjector, ToolUpdateCallback,
 };
 
 // ─── domain re-export ───────────────────────────────────────

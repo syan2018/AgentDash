@@ -22,6 +22,232 @@ fn meta(key: &str, requirement: ContributionRequirement) -> ContributionMeta {
     }
 }
 
+#[test]
+fn tool_projection_matrix_uses_declared_typed_families() {
+    let cases = [
+        (ToolProtocolProjection::Command, "shellExec"),
+        (ToolProtocolProjection::FileChange, "fileChange"),
+        (ToolProtocolProjection::FsRead, "fsRead"),
+        (ToolProtocolProjection::FsGrep, "fsGrep"),
+        (ToolProtocolProjection::FsGlob, "fsGlob"),
+        (
+            ToolProtocolProjection::Mcp {
+                server_key: "server".into(),
+            },
+            "mcpToolCall",
+        ),
+        (
+            ToolProtocolProjection::Dynamic {
+                namespace: Some("declared".into()),
+            },
+            "dynamicToolCall",
+        ),
+        (
+            ToolProtocolProjection::Vfs {
+                operation: "list_mounts".into(),
+            },
+            "vfs",
+        ),
+        (
+            ToolProtocolProjection::RuntimeAction {
+                action_key: "canvas.open".into(),
+            },
+            "runtimeAction",
+        ),
+        (
+            ToolProtocolProjection::WorkspaceModule {
+                operation: "present".into(),
+            },
+            "workspaceModule",
+        ),
+        (
+            ToolProtocolProjection::Companion {
+                operation: "request".into(),
+            },
+            "companion",
+        ),
+        (
+            ToolProtocolProjection::Task {
+                operation: "read".into(),
+            },
+            "task",
+        ),
+        (ToolProtocolProjection::Wait, "wait"),
+        (
+            ToolProtocolProjection::LifecycleComplete,
+            "lifecycleComplete",
+        ),
+    ];
+    for (projection, expected_type) in cases {
+        let tool = ToolContribution {
+            meta: meta("tool:matrix", ContributionRequirement::Required),
+            runtime_name: "matrix_tool".into(),
+            description: "matrix".into(),
+            parameters_schema: serde_json::json!({"type":"object"}),
+            capability_key: "matrix".into(),
+            tool_path: "matrix::tool".into(),
+            allowed_channels: [ToolChannel::DirectCallback].into(),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: projection,
+        };
+        let args = serde_json::json!({"command":"pwd","path":".","pattern":"x","changes":[],"duration_ms":10,"node_id":"node"});
+        let started = tool
+            .project_started("item-matrix", args.clone())
+            .expect("started projection");
+        let output = if expected_type == "mcpToolCall" {
+            serde_json::json!({"content":[]})
+        } else {
+            serde_json::json!({})
+        };
+        let completed = tool
+            .project_completed("item-matrix", args, &output, false)
+            .unwrap_or_else(|error| panic!("{expected_type} completed projection: {error}"));
+        assert_eq!(
+            serde_json::to_value(started).unwrap()["type"],
+            expected_type
+        );
+        assert_eq!(
+            serde_json::to_value(completed).unwrap()["type"],
+            expected_type
+        );
+        let update = tool.project_update(Vec::new());
+        assert!(
+            matches!(update, RuntimeConversationDelta::ToolProgress { content_items } if content_items.is_empty())
+        );
+        let failed_output = if expected_type == "mcpToolCall" {
+            serde_json::json!({"message":"failed"})
+        } else {
+            serde_json::json!({})
+        };
+        let failed = tool
+            .project_completed(
+                "item-matrix-failed",
+                serde_json::json!({"changes":[]}),
+                &failed_output,
+                true,
+            )
+            .unwrap_or_else(|error| panic!("{expected_type} failed projection: {error}"));
+        let failed_json = serde_json::to_value(failed).unwrap();
+        assert_eq!(failed_json["type"], expected_type);
+        assert!(failed_json.get("success").is_some() || failed_json.get("status").is_some());
+    }
+}
+
+#[test]
+fn file_change_projection_preserves_owner_patch_and_terminal_changes() {
+    let tool = ToolContribution {
+        meta: meta("tool:apply-patch", ContributionRequirement::Required),
+        runtime_name: "fs_apply_patch".into(),
+        description: "apply patch".into(),
+        parameters_schema: serde_json::json!({"type":"object"}),
+        capability_key: "fs.write".into(),
+        tool_path: "vfs::apply_patch".into(),
+        allowed_channels: [ToolChannel::DirectCallback].into(),
+        configuration_boundary: ConfigurationBoundary::Binding,
+        protocol_projection: ToolProtocolProjection::FileChange,
+    };
+    let patch =
+        "*** Begin Patch\n*** Update File: main://src/lib.rs\n@@\n-old\n+new\n*** End Patch";
+    let arguments = serde_json::json!({"patch":patch});
+    let started =
+        serde_json::to_value(tool.project_started("patch-1", arguments.clone()).unwrap()).unwrap();
+    assert_eq!(started["changes"][0]["path"], "main://src/lib.rs");
+    assert_eq!(started["changes"][0]["kind"]["type"], "update");
+    assert!(
+        started["changes"][0]["diff"]
+            .as_str()
+            .unwrap()
+            .contains("-old\n+new")
+    );
+    let completed = serde_json::to_value(tool.project_completed(
+        "patch-1",
+        arguments,
+        &serde_json::json!({"changes":[{"path":"main://src/lib.rs","kind":{"type":"update","move_path":null},"diff":patch}]}),
+        false,
+    ).unwrap()).unwrap();
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(completed["changes"][0]["diff"], patch);
+}
+
+#[test]
+fn shell_projection_uses_arguments_for_execution_mode_and_terminal_control_identity() {
+    let tool = ToolContribution {
+        meta: meta("tool:shell-split", ContributionRequirement::Required),
+        runtime_name: "shell_exec".into(),
+        description: "shell".into(),
+        parameters_schema: serde_json::json!({"type":"object"}),
+        capability_key: "shell".into(),
+        tool_path: "vfs::shell".into(),
+        allowed_channels: [ToolChannel::DirectCallback].into(),
+        configuration_boundary: ConfigurationBoundary::Binding,
+        protocol_projection: ToolProtocolProjection::Command,
+    };
+    let platform = serde_json::to_value(
+        tool.project_started("platform", serde_json::json!({"command":"pwd"}))
+            .unwrap(),
+    )
+    .unwrap();
+    let mount = serde_json::to_value(
+        tool.project_started(
+            "mount",
+            serde_json::json!({"command":"pwd","cwd":"main://src"}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(platform["type"], "shellExec");
+    assert_eq!(platform["executionMode"], "platform");
+    assert_eq!(mount["executionMode"], "mountExec");
+    for operation in ["read", "write", "status", "resize", "terminate"] {
+        let arguments = serde_json::json!({
+            "operation": operation, "terminal_id":"term-42", "data":"input", "cols":120, "rows":40
+        });
+        let started =
+            serde_json::to_value(tool.project_started(operation, arguments.clone()).unwrap())
+                .unwrap();
+        assert_eq!(started["type"], "terminalControl");
+        assert_eq!(started["operation"], operation);
+        assert_eq!(started["terminalId"], "term-42");
+        assert_eq!(started["input"], "input");
+        let terminal = serde_json::to_value(tool.project_completed(
+            operation,
+            arguments,
+            &serde_json::json!({"terminal_id":"term-42","state":"completed","aggregated_output":"chunk","exit_code":0}),
+            false,
+        ).unwrap()).unwrap();
+        assert_eq!(terminal["type"], "terminalControl");
+        assert_eq!(terminal["terminalId"], "term-42");
+        assert_eq!(terminal["aggregatedOutput"], "chunk");
+        assert_eq!(terminal["success"], true);
+    }
+}
+
+#[test]
+fn command_projection_reads_owner_terminal_contract() {
+    let tool = ToolContribution {
+        meta: meta("tool:shell", ContributionRequirement::Required),
+        runtime_name: "shell_exec".into(),
+        description: "shell".into(),
+        parameters_schema: serde_json::json!({"type":"object"}),
+        capability_key: "shell".into(),
+        tool_path: "vfs::shell".into(),
+        allowed_channels: [ToolChannel::DirectCallback].into(),
+        configuration_boundary: ConfigurationBoundary::Binding,
+        protocol_projection: ToolProtocolProjection::Command,
+    };
+    let completed = serde_json::to_value(tool.project_completed(
+        "shell-1",
+        serde_json::json!({"command":"printf ok","cwd":"main://"}),
+        &serde_json::json!({"original_command":"printf ok","cwd":"main://","aggregated_output":"ok","exit_code":0,"state":"completed"}),
+        false,
+    ).unwrap()).unwrap();
+    assert_eq!(completed["command"], "printf ok");
+    assert_eq!(completed["cwd"], "main://");
+    assert_eq!(completed["aggregatedOutput"], "ok");
+    assert_eq!(completed["exitCode"], 0);
+    assert_eq!(completed["status"], "completed");
+}
+
 fn context_recipe() -> ContextRecipe {
     ContextRecipe {
         revision: ContextRecipeRevision(3),
@@ -103,6 +329,9 @@ fn compiler_expands_pack_and_preserves_tool_provenance() {
         tool_path: "file_read::workspace_read".to_string(),
         allowed_channels: [ToolChannel::DirectCallback, ToolChannel::McpFacade].into(),
         configuration_boundary: ConfigurationBoundary::Binding,
+        protocol_projection: ToolProtocolProjection::Dynamic {
+            namespace: Some("test".to_string()),
+        },
     };
     let input = AgentSurfaceCompileInput {
         revision: SurfaceRevision(7),
@@ -197,6 +426,9 @@ fn distinct_contribution_keys_cannot_alias_one_tool_runtime_identity() {
             tool_path: path.to_string(),
             allowed_channels: [ToolChannel::DirectCallback].into(),
             configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: ToolProtocolProjection::Dynamic {
+                namespace: Some("test".to_string()),
+            },
         })
     };
 
@@ -371,6 +603,9 @@ fn required_tool_needs_a_callable_bound_channel() {
         tool_path: "file_read::read".to_string(),
         allowed_channels: [ToolChannel::DirectCallback].into(),
         configuration_boundary: ConfigurationBoundary::Binding,
+        protocol_projection: ToolProtocolProjection::Dynamic {
+            namespace: Some("test".to_string()),
+        },
     })]);
 
     let error = surface
@@ -398,6 +633,9 @@ fn required_hot_replace_tool_rejects_a_binding_only_runtime() {
         tool_path: "dynamic::call".to_string(),
         allowed_channels: [ToolChannel::DirectCallback].into(),
         configuration_boundary: ConfigurationBoundary::HotReplace,
+        protocol_projection: ToolProtocolProjection::Dynamic {
+            namespace: Some("test".to_string()),
+        },
     })]);
 
     let error = surface

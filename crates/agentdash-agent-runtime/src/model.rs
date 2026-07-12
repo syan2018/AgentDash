@@ -405,6 +405,7 @@ impl RuntimeThreadState {
             | RuntimeEvent::DriverContextCompactedOpaque
             | RuntimeEvent::TokenUsageUpdated { .. }
             | RuntimeEvent::ConversationError { .. }
+            | RuntimeEvent::ProviderStatus { .. }
             | RuntimeEvent::HookRunAccepted { .. }
             | RuntimeEvent::HookRunStarted { .. }
             | RuntimeEvent::HookRunTerminal { .. } => {}

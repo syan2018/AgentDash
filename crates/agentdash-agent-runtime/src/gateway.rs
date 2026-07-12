@@ -151,28 +151,18 @@ where
             let stream_generation = source.generation;
             let turn_id = match &source.event {
                 RuntimeEvent::ConversationDelta { turn_id, .. } => Some(turn_id.clone()),
+                RuntimeEvent::ProviderStatus { turn_id, .. } => Some(turn_id.clone()),
                 _ => None,
             };
             self.store
-                .publish(RuntimeEventEnvelope {
-                    thread_id: state.thread_id,
-                    sequence: None,
-                    transient: Some(
-                        agentdash_agent_runtime_contract::RuntimeTransientCoordinate {
-                            binding_id,
-                            stream_generation,
-                            sequence: agentdash_agent_runtime_contract::RuntimeTransientSequence(0),
-                            event_id:
-                                agentdash_agent_runtime_contract::RuntimeTransientEventId::new(
-                                    "pending",
-                                )
-                                .expect("static transient id"),
-                            turn_id,
-                        },
-                    ),
-                    revision: state.revision,
-                    event: source.event,
-                })
+                .publish_transient(
+                    state.thread_id,
+                    binding_id,
+                    stream_generation,
+                    turn_id,
+                    state.revision,
+                    source.event,
+                )
                 .await;
             return Ok(DriverEventAdmission::Transient);
         }

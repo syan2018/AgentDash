@@ -349,6 +349,9 @@ impl AgentTool for ShellExecTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<ShellExecParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::Command)
+    }
     async fn execute(
         &self,
         _tool_call_id: &str,
@@ -381,6 +384,23 @@ impl AgentTool for ShellExecTool {
             )
             .execute(&command)
             .await;
+            let aggregated_output = if result.stderr.is_empty() {
+                result.stdout.clone()
+            } else if result.stdout.is_empty() {
+                result.stderr.clone()
+            } else {
+                format!("[stdout]\n{}\n\n[stderr]\n{}", result.stdout, result.stderr)
+            };
+            let mut details = result.details.clone();
+            if let Some(object) = details.as_object_mut() {
+                object.insert("original_command".to_string(), serde_json::json!(command));
+                object.insert("cwd".to_string(), serde_json::json!(result.cwd));
+                object.insert("exit_code".to_string(), serde_json::json!(result.exit_code));
+                object.insert(
+                    "aggregated_output".to_string(),
+                    serde_json::json!(aggregated_output),
+                );
+            }
             return Ok(AgentToolResult {
                 content: vec![ContentPart::text(platform_shell_result_text(
                     &command,
@@ -393,7 +413,7 @@ impl AgentTool for ShellExecTool {
                     &result.stderr,
                 ))],
                 is_error: result.exit_code != 0,
-                details: Some(result.details),
+                details: Some(details),
             });
         }
         let cwd_param = params
@@ -600,6 +620,8 @@ impl AgentTool for ShellExecTool {
                 &rewritten_command,
                 &rewrite_output.rewrites,
                 &result,
+                &display_cwd,
+                &merged,
                 result_truncated,
                 result_omitted_bytes,
             ),
@@ -720,7 +742,7 @@ fn shell_session_snapshot_result(
         ));
     }
     if !merged.is_empty() {
-        lines.push(merged);
+        lines.push(merged.clone());
     }
     AgentToolResult {
         content: vec![ContentPart::text(lines.join("\n"))],
@@ -731,6 +753,7 @@ fn shell_session_snapshot_result(
             "terminal_id": terminal_id,
             "cwd": cwd,
             "state": snapshot.state.as_str(),
+            "aggregated_output": merged,
             "exit_code": snapshot.exit_code,
             "next_seq": snapshot.next_seq,
             "truncated": truncated,
@@ -866,28 +889,26 @@ fn shell_exec_result_details(
     rewritten_command: &str,
     rewrites: &[MaterializationRewrite],
     result: &crate::ExecResult,
+    cwd: &str,
+    aggregated_output: &str,
     truncated: bool,
     omitted_bytes: usize,
 ) -> Option<serde_json::Value> {
-    (!rewrites.is_empty()
-        || result.terminal_id.is_some()
-        || truncated
-        || omitted_bytes > 0)
-        .then(|| {
-        serde_json::json!({
-            "type": "shell_exec",
-            "operation": "start",
-            "original_command": original_command,
-            "executed_command": rewritten_command,
-            "state": result.state.as_str(),
-            "exit_code": result.exit_code,
-            "terminal_id": result.terminal_id.as_deref(),
-            "next_seq": result.next_seq,
-            "truncated": truncated,
-            "omitted_bytes": omitted_bytes,
-            "rewrite": (!rewrites.is_empty()).then(|| vfs_uri_rewrite_details(original_command, rewritten_command, rewrites)),
-        })
-    })
+    Some(serde_json::json!({
+        "type": "shell_exec",
+        "operation": "start",
+        "original_command": original_command,
+        "executed_command": rewritten_command,
+        "state": result.state.as_str(),
+        "exit_code": result.exit_code,
+        "cwd": cwd,
+        "aggregated_output": aggregated_output,
+        "terminal_id": result.terminal_id.as_deref(),
+        "next_seq": result.next_seq,
+        "truncated": truncated,
+        "omitted_bytes": omitted_bytes,
+        "rewrite": (!rewrites.is_empty()).then(|| vfs_uri_rewrite_details(original_command, rewritten_command, rewrites)),
+    }))
 }
 
 fn unresolved_vfs_uri_message(command: &str, vfs: &agentdash_spi::Vfs) -> Option<String> {
@@ -1088,6 +1109,11 @@ mod shell_exec_rewrite_tests {
         assert!(!result.is_error);
         let text = result.content[0].extract_text().expect("text content");
         assert!(text.contains("cwd: platform://"));
+        let details = result.details.expect("platform shell protocol details");
+        assert_eq!(details["original_command"], "pwd");
+        assert_eq!(details["cwd"], "platform://");
+        assert_eq!(details["exit_code"], 0);
+        assert!(details["aggregated_output"].as_str().is_some());
     }
 
     #[tokio::test]
@@ -1121,11 +1147,20 @@ mod shell_exec_rewrite_tests {
     }
 
     #[test]
-    fn shell_exec_result_details_are_absent_without_rewrite() {
-        assert!(
-            shell_exec_result_details("echo ok", "echo ok", &[], &exec_result_fixture(), false, 0)
-                .is_none()
-        );
+    fn shell_exec_result_details_preserve_plain_terminal_fields() {
+        let plain = shell_exec_result_details(
+            "echo ok",
+            "echo ok",
+            &[],
+            &exec_result_fixture(),
+            "main://",
+            "ok",
+            false,
+            0,
+        )
+        .expect("plain command details");
+        assert_eq!(plain["cwd"], "main://");
+        assert_eq!(plain["aggregated_output"], "ok");
 
         let rewrites = vec![rewrite()];
         let details = shell_exec_result_details(
@@ -1133,6 +1168,8 @@ mod shell_exec_rewrite_tests {
             "python \"C:\\Users\\yihao.liao\\AppData\\Local\\agentdash\\materialized\\readonly\\skill-assets\\skills\\abc-user-lookup\\scripts\\lookup.py\" yihao.liao",
             &rewrites,
             &exec_result_fixture(),
+            "main://",
+            "ok",
             false,
             0,
         )
@@ -1152,6 +1189,8 @@ mod shell_exec_rewrite_tests {
             "echo lots",
             &[],
             &exec_result_fixture(),
+            "main://",
+            "lots",
             true,
             1234,
         )

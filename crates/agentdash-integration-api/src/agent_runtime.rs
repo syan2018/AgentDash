@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    sync::Arc,
+};
 
 use agentdash_agent_runtime_contract::{
     AgentRuntimeDriver, ConfigurationBoundary, ContextBlock, ContextCandidateId,
@@ -230,6 +234,7 @@ pub struct DriverToolDefinition {
     pub description: String,
     pub parameters_schema: Value,
     pub channels: Vec<ToolChannel>,
+    pub protocol_projection: agentdash_agent_runtime_contract::ToolProtocolProjection,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -500,4 +505,91 @@ pub trait AgentRuntimeDriverFactory: Send + Sync {
 pub struct AgentRuntimeDriverContribution {
     pub definition: AgentServiceDefinition,
     pub factory: Arc<dyn AgentRuntimeDriverFactory>,
+    pub conversation_projection: DriverConversationProjectionProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverConversationProjectionProfile {
+    pub item_families: BTreeSet<DriverConversationItemFamily>,
+    pub typed_interactions: bool,
+    pub transient_delta_identity: bool,
+    pub usage_and_error_fidelity: bool,
+    pub extension_revision: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DriverConversationItemFamily {
+    Message,
+    Reasoning,
+    Plan,
+    Command,
+    FileChange,
+    Mcp,
+    Dynamic,
+    Vfs,
+    RuntimeAction,
+    WorkspaceModule,
+    Companion,
+    Task,
+    Wait,
+    LifecycleComplete,
+    Context,
+}
+
+impl DriverConversationProjectionProfile {
+    pub fn full_fidelity(extension_revision: u32) -> Self {
+        Self {
+            item_families: [
+                DriverConversationItemFamily::Message,
+                DriverConversationItemFamily::Reasoning,
+                DriverConversationItemFamily::Plan,
+                DriverConversationItemFamily::Command,
+                DriverConversationItemFamily::FileChange,
+                DriverConversationItemFamily::Mcp,
+                DriverConversationItemFamily::Dynamic,
+                DriverConversationItemFamily::Vfs,
+                DriverConversationItemFamily::RuntimeAction,
+                DriverConversationItemFamily::WorkspaceModule,
+                DriverConversationItemFamily::Companion,
+                DriverConversationItemFamily::Task,
+                DriverConversationItemFamily::Wait,
+                DriverConversationItemFamily::LifecycleComplete,
+                DriverConversationItemFamily::Context,
+            ]
+            .into(),
+            typed_interactions: true,
+            transient_delta_identity: true,
+            usage_and_error_fidelity: true,
+            extension_revision,
+        }
+    }
+    pub fn validate_required_families(&self) -> Result<(), String> {
+        let required = [
+            DriverConversationItemFamily::Message,
+            DriverConversationItemFamily::Reasoning,
+            DriverConversationItemFamily::Command,
+            DriverConversationItemFamily::FileChange,
+            DriverConversationItemFamily::Mcp,
+            DriverConversationItemFamily::Context,
+        ];
+        if let Some(missing) = required
+            .into_iter()
+            .find(|family| !self.item_families.contains(family))
+        {
+            return Err(format!("missing required conversation family {missing:?}"));
+        }
+        if !self.typed_interactions
+            || !self.transient_delta_identity
+            || !self.usage_and_error_fidelity
+        {
+            return Err(
+                "typed interactions, transient identity, and usage/error fidelity are required"
+                    .to_string(),
+            );
+        }
+        if self.extension_revision == 0 {
+            return Err("extension revision must be positive".to_string());
+        }
+        Ok(())
+    }
 }

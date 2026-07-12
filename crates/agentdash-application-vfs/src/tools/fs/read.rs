@@ -123,6 +123,9 @@ impl AgentTool for FsReadTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<FsReadParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::FsRead)
+    }
     async fn execute(
         &self,
         _: &str,

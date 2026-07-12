@@ -4,7 +4,8 @@ use std::{
 };
 
 use agentdash_agent_runtime_contract::{
-    EventSequence, IdempotencyKey, RuntimeEventEnvelope, RuntimeOperationId, RuntimeThreadId,
+    EventSequence, IdempotencyKey, RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent,
+    RuntimeEventEnvelope, RuntimeOperationId, RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -817,43 +818,59 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
 
 #[async_trait]
 impl RuntimeTransientEvents for RuntimeStoreFixture {
-    async fn publish(&self, mut event: RuntimeEventEnvelope) {
+    async fn publish_transient(
+        &self,
+        thread_id: RuntimeThreadId,
+        binding_id: RuntimeBindingId,
+        stream_generation: RuntimeDriverGeneration,
+        turn_id: Option<RuntimeTurnId>,
+        revision: RuntimeRevision,
+        event: RuntimeEvent,
+    ) {
         const ACTIVE_TURN_REPLAY_LIMIT: usize = 512;
+        let mut event = RuntimeEventEnvelope {
+            thread_id,
+            sequence: None,
+            transient: None,
+            revision,
+            event,
+        };
         let mut state = self.state.lock().await;
         let entries = state.transient.entry(event.thread_id.clone()).or_default();
-        let coordinate = event
-            .transient
-            .as_mut()
-            .expect("transient event coordinate");
         if entries
             .last()
             .and_then(|item| item.transient.as_ref())
             .is_some_and(|current| {
-                current.binding_id != coordinate.binding_id
-                    || current.stream_generation != coordinate.stream_generation
-                    || current.turn_id != coordinate.turn_id
+                current.binding_id != binding_id
+                    || current.stream_generation != stream_generation
+                    || current.turn_id != turn_id
             })
         {
             entries.clear();
         }
-        coordinate.sequence = agentdash_agent_runtime_contract::RuntimeTransientSequence(
+        let sequence = agentdash_agent_runtime_contract::RuntimeTransientSequence(
             entries
                 .last()
                 .and_then(|item| item.transient.as_ref())
                 .map_or(1, |item| item.sequence.0 + 1),
         );
-        coordinate.event_id =
-            agentdash_agent_runtime_contract::RuntimeTransientEventId::new(format!(
-                "{}:{}:{}:{}",
-                coordinate.binding_id,
-                coordinate.stream_generation.0,
-                coordinate
-                    .turn_id
-                    .as_ref()
-                    .map_or("thread", |turn| turn.as_str()),
-                coordinate.sequence.0
-            ))
-            .expect("generated transient id");
+        let event_id = agentdash_agent_runtime_contract::RuntimeTransientEventId::new(format!(
+            "{}:{}:{}:{}",
+            binding_id,
+            stream_generation.0,
+            turn_id.as_ref().map_or("thread", |turn| turn.as_str()),
+            sequence.0
+        ))
+        .expect("generated transient id");
+        event.transient = Some(
+            agentdash_agent_runtime_contract::RuntimeTransientCoordinate {
+                binding_id,
+                stream_generation,
+                sequence,
+                event_id,
+                turn_id,
+            },
+        );
         entries.push(event.clone());
         if entries.len() > ACTIVE_TURN_REPLAY_LIMIT {
             entries.remove(0);

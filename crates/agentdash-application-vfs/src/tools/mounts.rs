@@ -44,6 +44,11 @@ impl AgentTool for MountsListTool {
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({ "type": "object", "properties": {}, "required": [], "additionalProperties": false })
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::Vfs {
+            operation: "list_mounts".to_string(),
+        })
+    }
     async fn execute(
         &self,
         _: &str,

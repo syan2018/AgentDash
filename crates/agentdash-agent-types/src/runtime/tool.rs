@@ -33,6 +33,27 @@ pub struct AgentToolResult {
 /// 工具执行进度回调
 pub type ToolUpdateCallback = Arc<dyn Fn(AgentToolResult) + Send + Sync>;
 
+/// Owner-declared conversation presentation family. This metadata travels with a tool into the
+/// Business Surface; the Runtime never infers presentation from the runtime tool name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "family", rename_all = "snake_case")]
+pub enum ToolProtocolProjector {
+    Command,
+    FileChange,
+    FsRead,
+    FsGrep,
+    FsGlob,
+    Mcp { server_key: String },
+    Dynamic { namespace: Option<String> },
+    Vfs { operation: String },
+    RuntimeAction { action_key: String },
+    WorkspaceModule { operation: String },
+    Companion { operation: String },
+    Task { operation: String },
+    Wait,
+    LifecycleComplete,
+}
+
 // ─── AgentToolError ─────────────────────────────────────────
 
 #[derive(Debug, Error)]
@@ -56,6 +77,11 @@ pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn parameters_schema(&self) -> serde_json::Value;
+
+    /// Returning `None` is an explicit admission failure at Business Surface compilation.
+    fn protocol_projector(&self) -> Option<ToolProtocolProjector> {
+        None
+    }
 
     fn label(&self) -> &str {
         self.name()

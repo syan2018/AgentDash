@@ -46,6 +46,10 @@ impl PlatformToolBroker {
 - `AgentSurfaceSnapshot` 是业务期望的immutable事实，`BoundAgentSurface`是与实际RuntimeProfile求交后的业务admission结果。Driver Host只能持久化revision/digest/hook refs等轻量reference，不得复制或重新编译contribution。
 - Required contribution不满足即typed incompatible；只有显式optional贡献可以省略。`PromptOnly`不满足callable Tool、exact Workspace/Skill或required Hook语义。
 - Tool需要真实callable route：Direct Callback、session-scoped MCP façade或Driver Native。runtime tool name、tool path、MCP server identity、configuration boundary和schema/provenance必须无冲突。
+- 每个进入最终Tool Catalog的`ToolContribution`必须由owner声明protocol projector与family；Surface compile缺projector即typed reject。Command、FileChange、FS、MCP、VFS、RuntimeAction、Workspace Module、Companion、Task、Wait、LifecycleComplete与explicit Dynamic使用各自typed family，禁止按tool name猜测或以Dynamic作为缺省。
+- Tool item lifecycle的唯一projection owner是`ToolContribution + ManagedRuntimeToolJournal`。Driver/Native callback只传canonical Runtime item/turn、独立source coordinate、binding/generation、tool identity与arguments；不得提前构造另一份ItemStarted/terminal payload。
+- Broker首次accept使用owner projector原子提交authoritative ItemStarted；CAS conflict reload，相同turn与initial payload重放幂等，不同payload返回`IdempotencyConflict`。Tool update通过同一journal进入Runtime transient publisher，由store分配generation内单调sequence与唯一event ID。
+- Shell start按owner arguments区分Platform与MountExec；read/write/status/resize/terminate使用独立TerminalControl variant。ApplyPatch使用真实parser逐entry保存path/kind/diff/move path，多文件patch不得把整包diff复制到每个change。
 - 每个Hook Definition只能绑定一个execution route；required hook必须满足actions、minimum strength、failure policy与acknowledgment。编译结果直接形成WP02 `RuntimeHookPlanBinding`，不重算revision/digest。
 - Broker调用保留Thread、Turn、canonical ToolCall Item、Binding、generation、ToolSet revision、tool/capability/path/channel坐标。外部driver不接收trait object、application delegate、本地VFS对象或credential material。
 - 执行顺序固定为：bound catalog与binding/generation/tool-set校验 -> canonical Item durable accept -> broker call/idempotency accept -> BeforeTool同步Hook（含rewrite/block/approval）-> 再校验binding/capability -> permission -> VFS -> credential materialization -> durable Running -> executor side effect -> AfterTool同步Hook -> broker terminal -> canonical Item terminal convergence。
@@ -66,6 +70,9 @@ impl PlatformToolBroker {
 | 一个Hook definition分配多个route | `ConflictingHookRoute` |
 | stale binding generation/tool-set revision | side effect与broker call前typed reject |
 | 相同Item ID但arguments/channel/provenance不同 | `IdempotencyConflict` |
+| 最终Catalog contribution缺protocol projector | Surface assembly typed reject，不进入Runtime |
+| Driver与Broker对同一tool item提交不同started payload | 拒绝双projection；Driver只调用Broker owner seam |
+| 同一turn连续tool updates | store分配不同sequence/event ID，cursor replay不丢update |
 | BeforeTool block | 不解引用credential、不调用executor，durable terminal |
 | approval required | 先创建canonical Interaction，再进入AwaitingApproval |
 | permission/VFS deny | credential/executor前durable failure |
@@ -86,6 +93,9 @@ impl PlatformToolBroker {
 - Surface测试覆盖确定性编译、各contribution必填字段、所有identity冲突、required/optional/PromptOnly矩阵、Hook唯一route与profile strength。
 - embedded PostgreSQL Lifecycle launch 测试断言：product delivery 前 current AgentFrame 已包含 canonical workspace mount/backend/root/capability/context 与本次 Run execution profile；无 default workspace 的 Project 在 frame construction 边界失败。
 - Broker behavior覆盖Direct/MCP同状态机、rewrite/block/approval、permission/VFS/credential顺序、cancel/timeout/executor failure/result rewrite。
+- Projector matrix枚举最终production catalog，覆盖每个family的started/update/completed/failed/approval/identity；至少Shell与ApplyPatch必须经过真实owner→Registry→Broker→Runtime链。
+- Shell测试覆盖Platform/MountExec、TerminalControl五类操作及command/cwd/output/exit/status；ApplyPatch覆盖add/update/move/delete多文件逐entry diff。
+- Native callback测试使用刻意不同的source/runtime item IDs，证明Broker只消费canonical identity且重复accept幂等。
 - 覆盖duplicate identity、AwaitingApproval与Running crash recovery、effective arguments不可漂移、canonical Item terminal convergence。
 - 真实embedded PostgreSQL覆盖0063 migration、Thread/Turn/Item/Interaction/Binding generation复合FK、accept幂等、typed transition、并发terminal与FK失败全事务回滚。
 - 验证CredentialMaterial不可序列化/调试输出，MCP tool list不含secret。

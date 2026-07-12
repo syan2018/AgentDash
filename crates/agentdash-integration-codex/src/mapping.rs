@@ -129,7 +129,12 @@ impl SourceCoordinateMap {
             }
             "item/started" => self.map_item(&method, &params, false),
             "item/completed" => self.map_item(&method, &params, true),
-            "item/agentMessage/delta" | "item/reasoning/textDelta" | "item/plan/delta" => {
+            "item/agentMessage/delta"
+            | "item/reasoning/textDelta"
+            | "item/reasoning/summaryTextDelta"
+            | "item/plan/delta"
+            | "item/commandExecution/outputDelta"
+            | "item/fileChange/outputDelta" => {
                 let source_turn =
                     string(&params, "turnId").ok_or_else(|| missing(&method, "turnId"))?;
                 let source_item =
@@ -146,8 +151,72 @@ impl SourceCoordinateMap {
                         delta: match method.as_str() {
                             "item/agentMessage/delta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::AgentMessage { delta },
                             "item/reasoning/textDelta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::ReasoningText { delta },
+                            "item/reasoning/summaryTextDelta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::ReasoningSummary { delta },
                             "item/plan/delta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::Plan { delta },
+                            "item/commandExecution/outputDelta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::CommandOutput { delta },
+                            "item/fileChange/outputDelta" => agentdash_agent_runtime_contract::RuntimeConversationDelta::FileChangeOutput { delta },
                             _ => unreachable!("method admission is exhaustive"),
+                        },
+                    },
+                }))
+            }
+            "item/mcpToolCall/progress" => {
+                let source_turn =
+                    string(&params, "turnId").ok_or_else(|| missing(&method, "turnId"))?;
+                let source_item =
+                    string(&params, "itemId").ok_or_else(|| missing(&method, "itemId"))?;
+                let message =
+                    string(&params, "message").ok_or_else(|| missing(&method, "message"))?;
+                Ok(Some(MappedEvent { source_turn_id:Some(driver_turn(&source_turn)?), source_item_id:Some(driver_item(&source_item)?), event:RuntimeEvent::ConversationDelta { turn_id:self.turn_for(&source_turn)?, item_id:self.item_for(&source_item)?, delta:agentdash_agent_runtime_contract::RuntimeConversationDelta::McpProgress { message } } }))
+            }
+            "thread/tokenUsage/updated" => {
+                let source_turn =
+                    string(&params, "turnId").ok_or_else(|| missing(&method, "turnId"))?;
+                let usage = params
+                    .get("tokenUsage")
+                    .and_then(|value| value.get("last"))
+                    .ok_or_else(|| missing(&method, "tokenUsage.last"))?;
+                let number = |field: &'static str| {
+                    usage
+                        .get(field)
+                        .and_then(Value::as_u64)
+                        .ok_or_else(|| missing(&method, field))
+                };
+                Ok(Some(MappedEvent {
+                    source_turn_id: Some(driver_turn(&source_turn)?),
+                    source_item_id: None,
+                    event: RuntimeEvent::TokenUsageUpdated {
+                        turn_id: self.turn_for(&source_turn)?,
+                        usage: agentdash_agent_runtime_contract::RuntimeTokenUsage {
+                            input_tokens: number("inputTokens")?,
+                            cached_input_tokens: number("cachedInputTokens")?,
+                            output_tokens: number("outputTokens")?,
+                            reasoning_output_tokens: number("reasoningOutputTokens")?,
+                            total_tokens: number("totalTokens")?,
+                        },
+                    },
+                }))
+            }
+            "error" => {
+                let source_turn =
+                    string(&params, "turnId").ok_or_else(|| missing(&method, "turnId"))?;
+                let error = params
+                    .get("error")
+                    .ok_or_else(|| missing(&method, "error"))?;
+                Ok(Some(MappedEvent {
+                    source_turn_id: Some(driver_turn(&source_turn)?),
+                    source_item_id: None,
+                    event: RuntimeEvent::ConversationError {
+                        turn_id: Some(self.turn_for(&source_turn)?),
+                        error: agentdash_agent_runtime_contract::RuntimeConversationError {
+                            code: None,
+                            message: string(error, "message")
+                                .ok_or_else(|| missing(&method, "error.message"))?,
+                            retryable: params
+                                .get("willRetry")
+                                .and_then(Value::as_bool)
+                                .ok_or_else(|| missing(&method, "willRetry"))?,
+                            details: None,
                         },
                     },
                 }))
@@ -366,9 +435,30 @@ fn admit_notification(method: &str, params: &Value) -> Result<(), MappingError> 
             codex::ReasoningTextDeltaNotification,
             owned::ReasoningTextDeltaNotification,
         >(params),
+        "item/reasoning/summaryTextDelta" => strict_transcode::<
+            codex::ReasoningSummaryTextDeltaNotification,
+            owned::ReasoningSummaryTextDeltaNotification,
+        >(params),
         "item/plan/delta" => {
             strict_transcode::<codex::PlanDeltaNotification, owned::PlanDeltaNotification>(params)
         }
+        "item/commandExecution/outputDelta" => strict_transcode::<
+            codex::CommandExecutionOutputDeltaNotification,
+            owned::CommandExecutionOutputDeltaNotification,
+        >(params),
+        "item/fileChange/outputDelta" => strict_transcode::<
+            codex::FileChangeOutputDeltaNotification,
+            owned::FileChangeOutputDeltaNotification,
+        >(params),
+        "item/mcpToolCall/progress" => strict_transcode::<
+            codex::McpToolCallProgressNotification,
+            owned::McpToolCallProgressNotification,
+        >(params),
+        "thread/tokenUsage/updated" => strict_transcode::<
+            codex::ThreadTokenUsageUpdatedNotification,
+            owned::ThreadTokenUsageUpdatedNotification,
+        >(params),
+        "error" => strict_transcode::<codex::ErrorNotification, owned::ErrorNotification>(params),
         "thread/compacted" => strict_transcode::<
             codex::ContextCompactedNotification,
             owned::ContextCompactedNotification,
@@ -499,6 +589,53 @@ fn rpc_coordinate(id: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typed_delta_usage_error_and_compaction_matrix_is_admitted() {
+        let mut map = SourceCoordinateMap::default();
+        map.register_turn("source-turn", RuntimeTurnId::new("runtime-turn").unwrap());
+        map.register_item("source-item");
+        let fixtures = [
+            (
+                "item/reasoning/summaryTextDelta",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","itemId":"source-item","delta":"summary","summaryIndex":0}),
+            ),
+            (
+                "item/commandExecution/outputDelta",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","itemId":"source-item","delta":"out"}),
+            ),
+            (
+                "item/fileChange/outputDelta",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","itemId":"source-item","delta":"patch"}),
+            ),
+            (
+                "item/mcpToolCall/progress",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","itemId":"source-item","message":"working"}),
+            ),
+            (
+                "thread/tokenUsage/updated",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","tokenUsage":{"last":{"inputTokens":1,"cachedInputTokens":2,"outputTokens":3,"reasoningOutputTokens":4,"totalTokens":10},"total":{"inputTokens":1,"cachedInputTokens":2,"outputTokens":3,"reasoningOutputTokens":4,"totalTokens":10},"modelContextWindow":null}}),
+            ),
+            (
+                "error",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn","willRetry":true,"error":{"message":"retry","additionalDetails":null,"codexErrorInfo":null}}),
+            ),
+            (
+                "thread/compacted",
+                serde_json::json!({"threadId":"source-thread","turnId":"source-turn"}),
+            ),
+        ];
+        for (method, params) in fixtures {
+            assert!(
+                map.map_notification(RpcServerNotification {
+                    method: method.to_string(),
+                    params
+                })
+                .unwrap_or_else(|error| panic!("{method}: {error}"))
+                .is_some()
+            );
+        }
+    }
     use crate::rpc::RpcServerNotification;
 
     #[test]

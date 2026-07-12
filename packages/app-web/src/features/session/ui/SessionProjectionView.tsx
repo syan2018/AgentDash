@@ -5,6 +5,7 @@ import type {
   RuntimeContextView,
   RuntimeInput,
   RuntimeItemContent,
+  DynamicToolCallOutputContentItem,
 } from "../../../generated/agent-runtime-contracts";
 import {
   compactAgentRunContext,
@@ -73,6 +74,15 @@ function runtimeInputText(input: RuntimeInput): string {
   }
 }
 
+function toolContentText(items: DynamicToolCallOutputContentItem[] | null): string {
+  return (items ?? []).map((item) => {
+    switch (item.type) {
+      case "inputText": return item.text;
+      case "inputImage": return item.imageUrl;
+    }
+  }).join("\n");
+}
+
 function runtimeItemText(content: RuntimeItemContent): string {
   switch (content.type) {
     case "userMessage": return content.content.map((item) => {
@@ -102,9 +112,17 @@ function runtimeItemText(content: RuntimeItemContent): string {
     case "exitedReviewMode": return content.review;
     case "contextCompaction": return "上下文压缩";
     case "shellExec": return content.aggregatedOutput ?? content.command;
+    case "terminalControl": return content.aggregatedOutput ?? `${content.operation}: ${content.terminalId}`;
     case "fsRead": return content.path;
     case "fsGrep": return content.pattern;
     case "fsGlob": return content.pattern;
+    case "vfs": return toolContentText(content.contentItems) || content.resourceUri || content.operation;
+    case "runtimeAction": return toolContentText(content.contentItems) || content.actionKey;
+    case "workspaceModule": return toolContentText(content.contentItems) || content.resourceUri || content.operation;
+    case "companion": return toolContentText(content.contentItems) || content.operation;
+    case "task": return toolContentText(content.contentItems) || content.taskId || content.operation;
+    case "wait": return toolContentText(content.contentItems) || (content.durationMs == null ? "wait" : `${content.durationMs}ms`);
+    case "lifecycleComplete": return toolContentText(content.contentItems) || content.nodeId || "lifecycle complete";
   }
 }
 

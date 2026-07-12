@@ -22,4 +22,5 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 
 [dev-dependencies]
+agentdash-agent-runtime = { workspace = true }
 agentdash-agent-runtime-test-support = { workspace = true }

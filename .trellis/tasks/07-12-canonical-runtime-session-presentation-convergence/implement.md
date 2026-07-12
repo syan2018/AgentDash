@@ -64,10 +64,10 @@
 
 ### W3 Exit Criteria
 
-- [ ] 最终driver inventory全部通过projection conformance。
-- [ ] 最终Tool Catalog每个contribution都有owner-declared projector。
-- [ ] command/file/fs/MCP/dynamic/workspace/companion/task代表性E2E保留typed语义。
-- [ ] 不存在unknown item文本化、按tool name猜测或implicit DynamicToolCall fallback。
+- [x] 最终driver inventory全部通过projection conformance。
+- [x] 最终Tool Catalog每个contribution都有owner-declared projector。
+- [x] command/file/fs/MCP/dynamic/workspace/companion/task代表性E2E保留typed语义。
+- [x] 不存在unknown item文本化、按tool name猜测或implicit DynamicToolCall fallback。
 
 ## 5. W4 — Session Presentation Restoration
 

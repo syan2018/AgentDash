@@ -45,6 +45,9 @@ fn catalog() -> ToolCatalogRevision {
             tool_path: "mcp:code::scan".to_string(),
             allowed_channels: [ToolChannel::DirectCallback, ToolChannel::McpFacade].into(),
             configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: ToolProtocolProjection::Dynamic {
+                namespace: Some("test".to_string()),
+            },
         }],
         mcp_servers: vec![McpContribution {
             meta: ContributionMeta {
@@ -148,6 +151,7 @@ struct RecordingJournal {
     accepted: AtomicUsize,
     approvals: AtomicUsize,
     terminals: AtomicUsize,
+    updates: AtomicUsize,
 }
 
 #[async_trait]
@@ -174,6 +178,15 @@ impl ToolBrokerRuntimeJournal for RecordingJournal {
         _reason: &str,
     ) -> Result<(), ToolBrokerError> {
         self.approvals.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    async fn record_tool_update(
+        &self,
+        _invocation: &ToolBrokerInvocation,
+        content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
+    ) -> Result<(), ToolBrokerError> {
+        assert!(!content_items.is_empty());
+        self.updates.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -245,6 +258,13 @@ impl ToolExecutionPort for RecordingExecutor {
                 .map(String::as_str),
             Some("secret")
         );
+        for index in 1..=3 {
+            let _ = request.updates.send(vec![
+                agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                    text: format!("progress-{index}"),
+                },
+            ]);
+        }
         tokio::time::sleep(self.delay).await;
         Ok(ToolBrokerResult {
             output: serde_json::json!({
@@ -337,6 +357,7 @@ async fn direct_callback_validates_all_guards_and_deduplicates_side_effect() {
     assert_eq!(fixture.executor.calls.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.journal.accepted.load(Ordering::SeqCst), 2);
     assert_eq!(fixture.journal.terminals.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.journal.updates.load(Ordering::SeqCst), 3);
     assert_eq!(
         fixture.credentials.refs.lock().await.as_slice(),
         &["credential:code".to_string()]
@@ -787,26 +808,6 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
     let turn_id: RuntimeTurnId = id("turn-broker-turn-start");
     let item_id: RuntimeItemId = id("item-runtime-journal");
     let arguments = serde_json::json!({"path":"crates"});
-    runtime
-        .ingest_driver_event(DriverEventEnvelope {
-            binding_id: id("binding-broker"),
-            generation: RuntimeDriverGeneration(3),
-            source_thread_id: id("source-thread-broker"),
-            source_turn_id: Some(id("source-turn-broker")),
-            source_item_id: Some(id("source-item-broker")),
-            event: RuntimeEvent::ItemStarted {
-                turn_id: turn_id.clone(),
-                item_id: item_id.clone(),
-                initial_content: RuntimeItemContent::temporary_dynamic_tool_call(
-                    item_id.as_str(),
-                    "code_scan",
-                    arguments.clone(),
-                ),
-            },
-        })
-        .await
-        .expect("authoritative item start");
-
     let invocation = ToolBrokerInvocation {
         coordinates: ToolCallCoordinates {
             thread_id: id("thread-broker"),
@@ -817,19 +818,91 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             tool_set_revision: ToolSetRevision(4),
         },
         tool_name: "code_scan".to_string(),
-        arguments,
+        arguments: arguments.clone(),
         timeout_ms: 1_000,
     };
     let journal = ManagedRuntimeToolJournal::new(store.clone());
     journal
         .accept_tool_call(&invocation, &catalog().tools[0])
         .await
-        .expect("started item matches broker invocation");
+        .expect("broker creates owner-projected item");
+    journal
+        .accept_tool_call(&invocation, &catalog().tools[0])
+        .await
+        .expect("repeated accept is idempotent");
+    let snapshot = store
+        .load_thread(&id("thread-broker"))
+        .await
+        .expect("load runtime")
+        .expect("runtime thread");
+    assert_eq!(
+        snapshot
+            .items
+            .get(&item_id)
+            .expect("broker-started item")
+            .initial_content,
+        catalog().tools[0]
+            .project_started(item_id.as_str(), arguments.clone())
+            .expect("owner projector")
+    );
+    for index in 1..=3 {
+        journal
+            .record_tool_update(
+                &invocation,
+                vec![
+                    agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                        text: format!("progress-{index}"),
+                    },
+                ],
+            )
+            .await
+            .expect("tool progress");
+    }
+    let replay = store
+        .read(&id("thread-broker"), Some(RuntimeDriverGeneration(3)), None)
+        .await;
+    assert_eq!(replay.len(), 3);
+    assert_eq!(
+        replay
+            .iter()
+            .map(|event| event
+                .transient
+                .as_ref()
+                .expect("transient coordinate")
+                .sequence
+                .0)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    let event_ids = replay
+        .iter()
+        .map(|event| {
+            event
+                .transient
+                .as_ref()
+                .expect("transient coordinate")
+                .event_id
+                .clone()
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(event_ids.len(), 3);
+    assert_eq!(
+        store
+            .read(
+                &id("thread-broker"),
+                Some(RuntimeDriverGeneration(3)),
+                Some(RuntimeTransientSequence(1)),
+            )
+            .await
+            .len(),
+        2
+    );
     let call = ToolBrokerCall {
         invocation,
         invocation_digest: "sha256:runtime-journal".to_string(),
         capability_key: "mcp:code".to_string(),
         tool_path: "mcp:code::scan".to_string(),
+        tool: catalog().tools[0].clone(),
         channel: ToolChannel::DirectCallback,
         status: ToolBrokerCallStatus::Completed,
         effective_arguments: Some(serde_json::json!({"path":"crates"})),

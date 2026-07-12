@@ -386,17 +386,44 @@ impl agentdash_agent_runtime::ToolExecutionPort for RegistryToolExecutor {
                 request.idempotency_key.as_str(),
                 request.invocation.arguments,
                 request.cancellation,
-                None,
+                Some({
+                    let updates=request.updates.clone();
+                    Arc::new(move |result: agentdash_agent::AgentToolResult| {
+                        let content_items=result.content.into_iter().filter_map(|part| match part { agentdash_agent::ContentPart::Text { text } => Some(agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText { text }), agentdash_agent::ContentPart::Image { data, .. } => Some(agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputImage { image_url:data }), _ => None }).collect::<Vec<_>>();
+                        if !content_items.is_empty() { let _=updates.send(content_items); }
+                    })
+                }),
             )
             .await
             .map_err(|error| {
                 agentdash_agent_runtime::ToolBrokerError::Execution(error.to_string())
             })?;
-        let output = result.details.unwrap_or_else(|| {
-            serde_json::to_value(result.content).unwrap_or_else(
+        let content_items = result
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                agentdash_agent::ContentPart::Text { text } => {
+                    Some(serde_json::json!({"type":"inputText","text":text}))
+                }
+                agentdash_agent::ContentPart::Image { data, .. } => {
+                    Some(serde_json::json!({"type":"inputImage","imageUrl":data}))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut output = result.details.unwrap_or_else(|| {
+            serde_json::to_value(&result.content).unwrap_or_else(
                 |error| serde_json::json!({"serialization_error": error.to_string()}),
             )
         });
+        if let Some(object) = output.as_object_mut() {
+            object.insert(
+                "content_items".to_string(),
+                serde_json::Value::Array(content_items),
+            );
+        } else {
+            output = serde_json::json!({"value":output,"content_items":content_items});
+        }
         Ok(agentdash_agent_runtime::ToolBrokerResult {
             output,
             is_error: result.is_error,
@@ -658,11 +685,13 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             }
             let capability_key = capability_for_tool(&surface.capability_state, &name)?;
             let parameters_schema = tool.parameters_schema();
+            let protocol_projection = require_tool_protocol_projection(tool.as_ref(), &name)?;
             driver_tools.push(DriverToolDefinition {
                 name: name.clone(),
                 description: tool.description().to_string(),
                 parameters_schema: parameters_schema.clone(),
                 channels: vec![ToolChannel::DirectCallback],
+                protocol_projection: protocol_projection.clone(),
             });
             catalog_tools.push(agentdash_agent_runtime::ToolContribution {
                 meta: agentdash_agent_runtime::ContributionMeta {
@@ -681,6 +710,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                 tool_path: format!("{capability_key}::{name}"),
                 allowed_channels: [ToolChannel::DirectCallback].into(),
                 configuration_boundary: ConfigurationBoundary::Binding,
+                protocol_projection,
             });
         }
         driver_tools.sort_by(|left, right| left.name.cmp(&right.name));
@@ -970,14 +1000,327 @@ fn digest_json(value: &impl serde::Serialize) -> Result<String, AgentRunRuntimeS
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
+fn require_tool_protocol_projection(
+    tool: &dyn agentdash_agent::AgentTool,
+    name: &str,
+) -> Result<
+    agentdash_agent_runtime_contract::ToolProtocolProjection,
+    AgentRunRuntimeSurfaceSourceError,
+> {
+    let projection =
+        tool.protocol_projector()
+            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
+                reason: format!(
+                    "assembled runtime tool `{name}` has no owner-declared protocol projector"
+                ),
+            })?;
+    Ok(match projection {
+        agentdash_agent::ToolProtocolProjector::Command => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Command
+        }
+        agentdash_agent::ToolProtocolProjector::FileChange => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::FileChange
+        }
+        agentdash_agent::ToolProtocolProjector::FsRead => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::FsRead
+        }
+        agentdash_agent::ToolProtocolProjector::FsGrep => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::FsGrep
+        }
+        agentdash_agent::ToolProtocolProjector::FsGlob => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::FsGlob
+        }
+        agentdash_agent::ToolProtocolProjector::Mcp { server_key } => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Mcp { server_key }
+        }
+        agentdash_agent::ToolProtocolProjector::Dynamic { namespace } => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic { namespace }
+        }
+        agentdash_agent::ToolProtocolProjector::Vfs { operation } => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Vfs { operation }
+        }
+        agentdash_agent::ToolProtocolProjector::RuntimeAction { action_key } => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::RuntimeAction { action_key }
+        }
+        agentdash_agent::ToolProtocolProjector::WorkspaceModule { operation } => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::WorkspaceModule { operation }
+        }
+        agentdash_agent::ToolProtocolProjector::Companion { operation } => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Companion { operation }
+        }
+        agentdash_agent::ToolProtocolProjector::Task { operation } => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Task { operation }
+        }
+        agentdash_agent::ToolProtocolProjector::Wait => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Wait
+        }
+        agentdash_agent::ToolProtocolProjector::LifecycleComplete => {
+            agentdash_agent_runtime_contract::ToolProtocolProjection::LifecycleComplete
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_agent_runtime::ToolExecutionPort;
     use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookRequirement;
     use agentdash_spi::{
         CapabilityState, ToolCapability, ToolCapabilityFilter, ToolCluster,
         platform::tool_capability::{CAP_FILE_READ, CAP_WORKSPACE_MODULE},
     };
+
+    struct MissingProjectorTool;
+    #[async_trait]
+    impl agentdash_agent::AgentTool for MissingProjectorTool {
+        fn name(&self) -> &str {
+            "missing_projector"
+        }
+        fn description(&self) -> &str {
+            "fixture"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+        async fn execute(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+            _: tokio_util::sync::CancellationToken,
+            _: Option<agentdash_agent::ToolUpdateCallback>,
+        ) -> Result<agentdash_agent::AgentToolResult, agentdash_agent::AgentToolError> {
+            unreachable!("admission fails before execution")
+        }
+    }
+
+    #[test]
+    fn business_surface_rejects_tool_without_owner_projector() {
+        let error = require_tool_protocol_projection(&MissingProjectorTool, "missing_projector")
+            .expect_err("missing projector must fail admission");
+        assert!(
+            error
+                .to_string()
+                .contains("no owner-declared protocol projector")
+        );
+    }
+
+    #[tokio::test]
+    async fn production_shell_owner_survives_registry_and_terminal_projection() {
+        let tool: DynAgentTool = Arc::new(agentdash_application_vfs::tools::ShellExecTool::new(
+            Arc::new(agentdash_application_vfs::VfsService::new(Arc::new(
+                agentdash_application_vfs::MountProviderRegistryBuilder::new().build(),
+            ))),
+            agentdash_application_vfs::tools::SharedRuntimeVfs::new(agentdash_spi::Vfs {
+                mounts: Vec::new(),
+                default_mount_id: None,
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            }),
+        ));
+        let projection = require_tool_protocol_projection(tool.as_ref(), tool.name()).unwrap();
+        let contribution = agentdash_agent_runtime::ToolContribution {
+            meta: agentdash_agent_runtime::ContributionMeta {
+                key: "tool:shell-exec".into(),
+                source: agentdash_agent_runtime::SurfaceSourceRef {
+                    layer: "platform".into(),
+                    key: "vfs".into(),
+                },
+                priority: 1,
+                requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+            },
+            runtime_name: tool.name().into(),
+            description: tool.description().into(),
+            parameters_schema: tool.parameters_schema(),
+            capability_key: "shell".into(),
+            tool_path: "vfs::shell_exec".into(),
+            allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: projection,
+        };
+        let binding_id = RuntimeBindingId::new("binding-shell-owner").unwrap();
+        let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        registry
+            .put(
+                binding_id.clone(),
+                CompiledAgentRunToolBinding {
+                    runtime_session_id: "session-shell-owner".into(),
+                    run_id: uuid::Uuid::new_v4(),
+                    agent_id: uuid::Uuid::new_v4(),
+                    frame_id: uuid::Uuid::new_v4(),
+                    catalog: agentdash_agent_runtime::ToolCatalogRevision {
+                        revision: ToolSetRevision(1),
+                        digest: "shell-owner".into(),
+                        tools: vec![contribution.clone()],
+                        mcp_servers: Vec::new(),
+                    },
+                    tools: BTreeMap::from([(tool.name().to_string(), tool)]),
+                },
+            )
+            .await
+            .unwrap();
+        let (updates, _updates_rx) = tokio::sync::mpsc::unbounded_channel();
+        let arguments = serde_json::json!({"command":"pwd"});
+        let result = RegistryToolExecutor { registry }
+            .execute(agentdash_agent_runtime::ToolExecutionRequest {
+                idempotency_key: RuntimeItemId::new("shell-owner-item").unwrap(),
+                invocation: agentdash_agent_runtime::ToolBrokerInvocation {
+                    coordinates: agentdash_agent_runtime::ToolCallCoordinates {
+                        thread_id: RuntimeThreadId::new("shell-owner-thread").unwrap(),
+                        turn_id: RuntimeTurnId::new("shell-owner-turn").unwrap(),
+                        item_id: RuntimeItemId::new("shell-owner-item").unwrap(),
+                        binding_id,
+                        binding_generation: RuntimeDriverGeneration(1),
+                        tool_set_revision: ToolSetRevision(1),
+                    },
+                    tool_name: "shell_exec".into(),
+                    arguments: arguments.clone(),
+                    timeout_ms: 1_000,
+                },
+                credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
+                cancellation: tokio_util::sync::CancellationToken::new(),
+                updates,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.output["cwd"], "platform://");
+        assert_eq!(result.output["exit_code"], 0);
+        let terminal = serde_json::to_value(
+            contribution
+                .project_completed("shell-owner-item", arguments, &result.output, false)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(terminal["cwd"], "platform://");
+        assert_eq!(terminal["exitCode"], 0);
+        assert!(terminal["aggregatedOutput"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn production_apply_patch_owner_preserves_changes_on_registry_failure() {
+        let tool: DynAgentTool = Arc::new(agentdash_application_vfs::tools::FsApplyPatchTool::new(
+            Arc::new(agentdash_application_vfs::VfsService::new(Arc::new(
+                agentdash_application_vfs::MountProviderRegistryBuilder::new().build(),
+            ))),
+            agentdash_application_vfs::tools::SharedRuntimeVfs::new(agentdash_spi::Vfs {
+                mounts: Vec::new(),
+                default_mount_id: None,
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            }),
+            None,
+            None,
+        ));
+        let projection = require_tool_protocol_projection(tool.as_ref(), tool.name()).unwrap();
+        let contribution = agentdash_agent_runtime::ToolContribution {
+            meta: agentdash_agent_runtime::ContributionMeta {
+                key: "tool:apply-patch".into(),
+                source: agentdash_agent_runtime::SurfaceSourceRef {
+                    layer: "platform".into(),
+                    key: "vfs".into(),
+                },
+                priority: 1,
+                requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+            },
+            runtime_name: tool.name().into(),
+            description: tool.description().into(),
+            parameters_schema: tool.parameters_schema(),
+            capability_key: "fs.write".into(),
+            tool_path: "vfs::apply_patch".into(),
+            allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: projection,
+        };
+        let binding_id = RuntimeBindingId::new("binding-patch-owner").unwrap();
+        let registry = Arc::new(CompiledAgentRunToolRegistry::default());
+        registry
+            .put(
+                binding_id.clone(),
+                CompiledAgentRunToolBinding {
+                    runtime_session_id: "session-patch-owner".into(),
+                    run_id: uuid::Uuid::new_v4(),
+                    agent_id: uuid::Uuid::new_v4(),
+                    frame_id: uuid::Uuid::new_v4(),
+                    catalog: agentdash_agent_runtime::ToolCatalogRevision {
+                        revision: ToolSetRevision(1),
+                        digest: "patch-owner".into(),
+                        tools: vec![contribution.clone()],
+                        mcp_servers: Vec::new(),
+                    },
+                    tools: BTreeMap::from([(tool.name().to_string(), tool)]),
+                },
+            )
+            .await
+            .unwrap();
+        let patch = "*** Begin Patch\n*** Add File: main://src/new.rs\n+new\n*** Update File: main://src/lib.rs\n*** Move to: main://src/moved.rs\n@@\n-old\n+new\n*** Delete File: main://src/old.rs\n*** End Patch";
+        let arguments = serde_json::json!({"patch":patch});
+        let (updates, _updates_rx) = tokio::sync::mpsc::unbounded_channel();
+        let execution = RegistryToolExecutor { registry }
+            .execute(agentdash_agent_runtime::ToolExecutionRequest {
+                idempotency_key: RuntimeItemId::new("patch-owner-item").unwrap(),
+                invocation: agentdash_agent_runtime::ToolBrokerInvocation {
+                    coordinates: agentdash_agent_runtime::ToolCallCoordinates {
+                        thread_id: RuntimeThreadId::new("patch-owner-thread").unwrap(),
+                        turn_id: RuntimeTurnId::new("patch-owner-turn").unwrap(),
+                        item_id: RuntimeItemId::new("patch-owner-item").unwrap(),
+                        binding_id,
+                        binding_generation: RuntimeDriverGeneration(1),
+                        tool_set_revision: ToolSetRevision(1),
+                    },
+                    tool_name: "fs_apply_patch".into(),
+                    arguments: arguments.clone(),
+                    timeout_ms: 1_000,
+                },
+                credentials: agentdash_agent_runtime::CredentialMaterial::new(BTreeMap::new()),
+                cancellation: tokio_util::sync::CancellationToken::new(),
+                updates,
+            })
+            .await;
+        assert!(
+            execution.is_err(),
+            "missing production mount must fail through Registry"
+        );
+        let started = serde_json::to_value(
+            contribution
+                .project_started("patch-owner-item", arguments.clone())
+                .unwrap(),
+        )
+        .unwrap();
+        let failed = serde_json::to_value(
+            contribution
+                .project_completed(
+                    "patch-owner-item",
+                    arguments,
+                    &serde_json::json!({"message":"mount unavailable"}),
+                    true,
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(started["changes"][0]["path"], "main://src/new.rs");
+        assert_eq!(started["changes"][1]["path"], "main://src/lib.rs");
+        assert_eq!(
+            started["changes"][1]["kind"]["move_path"],
+            "main://src/moved.rs"
+        );
+        assert_eq!(started["changes"].as_array().unwrap().len(), 3);
+        assert_eq!(failed["changes"].as_array().unwrap().len(), 3);
+        for change in failed["changes"].as_array().unwrap() {
+            let diff = change["diff"].as_str().unwrap();
+            let path = change["path"].as_str().unwrap();
+            for other in [
+                "main://src/new.rs",
+                "main://src/lib.rs",
+                "main://src/old.rs",
+            ] {
+                if other != path {
+                    assert!(!diff.contains(other));
+                }
+            }
+        }
+        assert_eq!(failed["status"], "failed");
+    }
 
     fn capability_state_with_platform_tools() -> CapabilityState {
         let mut state =

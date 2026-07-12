@@ -39,8 +39,10 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 - Open negotiation固定protocol revision、transport profile/digest与max-in-flight。双方不满足revision/profile要求时必须在dispatch前typed reject。
 - 每个方向使用严格递增sequence与累计ack。Duplicate frame幂等确认；sequence gap拒绝；超过协商in-flight上限产生backpressure，不丢帧或无限缓冲。
 - Transport是持久双向`send/receive` stream，不是有限request/response exchange。Remote driver使用独立receive pump和frame-id correlation；dispatch receipt返回后的异步DriverEvent必须继续经Arc event sink送达。
+- 同一Remote dispatch的DriverEvent notification与最终Response进入同一个ordered inbound queue。Response只有在此前events完成canonical sink后才能解除Host dispatch/lease；HostPort callback使用独立可重入correlation路径，不能被该顺序屏障阻塞。
 - 同provenance重连按ack cursor清理已确认帧并有序replay未确认帧；provenance任何坐标不同都不能复用stream。一次真实disconnect只产生一次placement loss/binding lost输入。
 - Backend断连按`registry.unregister -> placement Disconnected -> remote driver BindingLost -> acknowledge_disconnect -> inventory.withdraw`收敛。`unregister`必须等待disconnect acknowledgment后返回，因为offer撤销会改变driver可达性；ack是BindingLost处理完成的屏障，不是“事件已入队”的确认。
+- Remote disconnect先向authoritative sink提交一次BindingLost，再关闭pending response correlation；反向顺序会让pending failure与sink各自产生Lost。
 - EOF/transport loss不得伪造Completed；它向Managed Runtime报告Lost输入，由Runtime收敛active operation/Thread状态。旧generation frame在进入Runtime前被fence。
 - Local endpoint只把Driver request交给现有Host-owned Driver；Managed Runtime request必须拒绝，避免本机形成第二Runtime。Local handler通过显式resolver注入，无配置时typed error，不fallback到legacy prompt。
 - Local每个stream拥有独立锁与outbound pump；全局streams registry锁不能跨driver await。Response、notification与delayed event可以在command返回后持续写入WebSocket。
@@ -58,6 +60,7 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 | 同provenance重连 | prune acked并顺序replay unacked |
 | provenance/binding/generation变化后resume | reject，建立新stream |
 | receipt返回后driver发送terminal/event | receive pump继续转发，不丢失 |
+| dispatch response越过前序DriverEvent | response保持pending，直到前序event sink完成 |
 | EOF/断线 | exactly-once BindingLost/Lost输入，不报Completed |
 | Disconnected已入队但remote driver尚未处理 | Relay等待`acknowledge_disconnect`，不得先撤销offer |
 | Local resolver找不到Host driver/generation | typed error，无legacy fallback |
@@ -77,6 +80,7 @@ pub trait RuntimeDriverEndpointResolver: Send + Sync {
 - Relay state测试覆盖negotiation、ordered sequence、duplicate、gap、max-in-flight、ack prune、unacked replay、同/异provenance reconnect与disconnect once。
 - Cloud placement测试必须并发执行`unregister`与`receive`，断言收到Disconnected后只有调用`acknowledge_disconnect`才完成unregister；WebSocket断连集成测试断言offer withdraw发生在该屏障之后。
 - Remote driver测试覆盖response correlation、多个in-flight request、receipt后delayed event、EOF Lost、generation fence及全部receipt字段。
+- Ordered inbound测试阻塞event sink并断言dispatch response仍pending，释放event后response完成；HostPort callback roundtrip必须同时证明可重入无死锁。
 - Local handler loopback覆盖open -> describe/dispatch -> response -> delayed event -> ack，duplicate ack-only与invalid generation。
 - 验证endpoint拒绝Managed Runtime request，handler无resolver时无fallback。
 - Contract/Wire generation与round-trip测试证明typed envelope没有Value中转。

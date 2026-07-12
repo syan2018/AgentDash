@@ -7,6 +7,7 @@ import type {
   RuntimeInteractionTerminal,
   RuntimeItemContent,
   RuntimeSnapshot,
+  DynamicToolCallOutputContentItem,
 } from "../../../generated/agent-runtime-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import { createRuntimeEventStream, type RuntimeEventStream } from "./runtimeEventStream";
@@ -27,6 +28,15 @@ export interface AgentRuntimeFeedEntry {
 interface RuntimeFeedState {
   entries: AgentRuntimeFeedEntry[];
   cursor: number;
+}
+
+function toolContentText(items: DynamicToolCallOutputContentItem[] | null): string {
+  return (items ?? []).map((item) => {
+    switch (item.type) {
+      case "inputText": return item.text;
+      case "inputImage": return item.imageUrl;
+    }
+  }).join("\n");
 }
 
 export interface UseAgentRuntimeFeedOptions {
@@ -80,9 +90,17 @@ function contentView(content: RuntimeItemContent): Pick<AgentRuntimeFeedEntry, "
     case "exitedReviewMode": return { role: "system", text: content.review };
     case "contextCompaction": return { role: "system", text: "上下文已压缩" };
     case "shellExec": return { role: "tool", text: content.aggregatedOutput ?? content.command };
+    case "terminalControl": return { role: "tool", text: content.aggregatedOutput ?? `${content.operation}: ${content.terminalId}` };
     case "fsRead": return { role: "tool", text: content.path };
     case "fsGrep": return { role: "tool", text: content.pattern };
     case "fsGlob": return { role: "tool", text: content.pattern };
+    case "vfs": return { role: "tool", text: toolContentText(content.contentItems) || content.resourceUri || content.operation };
+    case "runtimeAction": return { role: "tool", text: toolContentText(content.contentItems) || content.actionKey };
+    case "workspaceModule": return { role: "tool", text: toolContentText(content.contentItems) || content.resourceUri || content.operation };
+    case "companion": return { role: "tool", text: toolContentText(content.contentItems) || content.operation };
+    case "task": return { role: "tool", text: toolContentText(content.contentItems) || content.taskId || content.operation };
+    case "wait": return { role: "tool", text: toolContentText(content.contentItems) || (content.durationMs == null ? "wait" : `${content.durationMs}ms`) };
+    case "lifecycleComplete": return { role: "tool", text: toolContentText(content.contentItems) || content.nodeId || "lifecycle complete" };
   }
 }
 
@@ -126,7 +144,19 @@ export function applyRuntimeEvent(
   }
   if (event.kind === "conversation_delta") {
     const index = next.findIndex((item) => item.id === event.item_id);
-    const delta = event.delta.kind === "mcp_progress" ? event.delta.message : event.delta.delta;
+    const delta = (() => {
+      switch (event.delta.kind) {
+        case "mcp_progress": return event.delta.message;
+        case "tool_progress": return toolContentText(event.delta.content_items);
+        case "agent_message":
+        case "reasoning_text":
+        case "reasoning_summary":
+        case "command_output":
+        case "file_change_output":
+        case "plan":
+          return event.delta.delta;
+      }
+    })();
     if (index >= 0) next[index] = { ...next[index], text: `${next[index].text}${delta}` };
     return next;
   }

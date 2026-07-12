@@ -141,6 +141,9 @@ impl AgentTool for FsGrepTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<FsGrepParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::FsGrep)
+    }
     async fn execute(
         &self,
         _: &str,

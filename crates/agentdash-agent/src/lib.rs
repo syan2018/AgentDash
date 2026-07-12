@@ -31,6 +31,6 @@ pub use types::{
     ProviderVisibleContextStats, RuntimeContextTransformDelegate, RuntimeProviderObserverDelegate,
     RuntimeToolPolicyDelegate, RuntimeTurnBoundaryDelegate, StopDecision, StopReason,
     ThinkingLevel, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision,
-    ToolCallInfo, ToolDefinition, ToolExecutionMode, ToolUpdateCallback, TransformContextInput,
-    TransformContextOutput, TurnControlDecision,
+    ToolCallInfo, ToolDefinition, ToolExecutionMode, ToolProtocolProjector, ToolUpdateCallback,
+    TransformContextInput, TransformContextOutput, TurnControlDecision,
 };

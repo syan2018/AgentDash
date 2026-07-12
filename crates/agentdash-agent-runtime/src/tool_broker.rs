@@ -1,9 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use agentdash_agent_runtime_contract::{
-    RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeInteractionId,
-    RuntimeItemContent, RuntimeItemId, RuntimeItemTerminal, RuntimeThreadId, RuntimeTurnId,
-    ToolChannel, ToolSetRevision,
+    RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeInteractionId, RuntimeItemId,
+    RuntimeItemTerminal, RuntimeThreadId, RuntimeTurnId, ToolChannel, ToolSetRevision,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -65,6 +64,7 @@ pub struct ToolBrokerCall {
     pub invocation_digest: String,
     pub capability_key: String,
     pub tool_path: String,
+    pub tool: ToolContribution,
     pub channel: ToolChannel,
     pub status: ToolBrokerCallStatus,
     /// The arguments acknowledged by the synchronous BeforeTool boundary. They are persisted
@@ -145,6 +145,9 @@ pub struct ToolExecutionRequest {
     pub invocation: ToolBrokerInvocation,
     pub credentials: CredentialMaterial,
     pub cancellation: CancellationToken,
+    pub updates: tokio::sync::mpsc::UnboundedSender<
+        Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
+    >,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -232,6 +235,12 @@ pub trait ToolBrokerRuntimeJournal: Send + Sync {
         interaction_id: &RuntimeInteractionId,
         reason: &str,
     ) -> Result<(), ToolBrokerError>;
+
+    async fn record_tool_update(
+        &self,
+        invocation: &ToolBrokerInvocation,
+        content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
+    ) -> Result<(), ToolBrokerError>;
 }
 
 /// Canonical Runtime journal used by production ToolBroker callbacks.
@@ -252,29 +261,47 @@ impl<S> ManagedRuntimeToolJournal<S> {
 #[async_trait]
 impl<S> ToolBrokerRuntimeJournal for ManagedRuntimeToolJournal<S>
 where
-    S: RuntimeRepository + RuntimeUnitOfWork + 'static,
+    S: RuntimeRepository + RuntimeUnitOfWork + crate::RuntimeTransientEvents + 'static,
 {
     async fn accept_tool_call(
         &self,
         invocation: &ToolBrokerInvocation,
-        _tool: &ToolContribution,
+        tool: &ToolContribution,
     ) -> Result<(), ToolBrokerError> {
-        let thread = self.load_matching_thread(invocation).await?;
-        let item = thread
-            .items
-            .get(&invocation.coordinates.item_id)
-            .ok_or(ToolBrokerError::StaleCoordinates)?;
-        if item.turn_id != invocation.coordinates.turn_id
-            || item.initial_content
-                != RuntimeItemContent::temporary_dynamic_tool_call(
-                    invocation.coordinates.item_id.as_str(),
-                    invocation.tool_name.clone(),
-                    invocation.arguments.clone(),
-                )
-        {
-            return Err(ToolBrokerError::IdempotencyConflict);
+        let initial_content = tool
+            .project_started(
+                invocation.coordinates.item_id.as_str(),
+                invocation.arguments.clone(),
+            )
+            .map_err(|error| ToolBrokerError::Execution(error.to_string()))?;
+        loop {
+            let mut thread = self.load_matching_thread(invocation).await?;
+            if let Some(item) = thread.items.get(&invocation.coordinates.item_id) {
+                return if item.turn_id == invocation.coordinates.turn_id
+                    && item.initial_content == initial_content
+                {
+                    Ok(())
+                } else {
+                    Err(ToolBrokerError::IdempotencyConflict)
+                };
+            }
+            let expected = thread.revision;
+            let events = thread
+                .append_events([RuntimeEvent::ItemStarted {
+                    turn_id: invocation.coordinates.turn_id.clone(),
+                    item_id: invocation.coordinates.item_id.clone(),
+                    initial_content: initial_content.clone(),
+                }])
+                .map_err(transition_tool_error)?;
+            match self
+                .commit_projection_store_result(thread, expected, events)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(RuntimeStoreError::ProjectionConflict { .. }) => continue,
+                Err(error) => return Err(store_tool_error(error)),
+            }
         }
-        Ok(())
     }
 
     async fn record_tool_terminal(&self, call: &ToolBrokerCall) -> Result<(), ToolBrokerError> {
@@ -328,6 +355,32 @@ where
             .map_err(transition_tool_error)?;
         self.commit_projection(thread, expected, events).await
     }
+
+    async fn record_tool_update(
+        &self,
+        invocation: &ToolBrokerInvocation,
+        content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
+    ) -> Result<(), ToolBrokerError> {
+        let thread = self.load_matching_thread(invocation).await?;
+        self.store
+            .publish_transient(
+                thread.thread_id,
+                invocation.coordinates.binding_id.clone(),
+                invocation.coordinates.binding_generation,
+                Some(invocation.coordinates.turn_id.clone()),
+                thread.revision,
+                RuntimeEvent::ConversationDelta {
+                    turn_id: invocation.coordinates.turn_id.clone(),
+                    item_id: invocation.coordinates.item_id.clone(),
+                    delta:
+                        agentdash_agent_runtime_contract::RuntimeConversationDelta::ToolProgress {
+                            content_items,
+                        },
+                },
+            )
+            .await;
+        Ok(())
+    }
 }
 
 impl<S> ManagedRuntimeToolJournal<S>
@@ -359,6 +412,17 @@ where
         expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
         events: Vec<agentdash_agent_runtime_contract::RuntimeEventEnvelope>,
     ) -> Result<(), ToolBrokerError> {
+        self.commit_projection_store_result(projection, expected_projection_revision, events)
+            .await
+            .map_err(store_tool_error)
+    }
+
+    async fn commit_projection_store_result(
+        &self,
+        projection: crate::RuntimeThreadState,
+        expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
+        events: Vec<agentdash_agent_runtime_contract::RuntimeEventEnvelope>,
+    ) -> Result<(), RuntimeStoreError> {
         self.store
             .commit(RuntimeCommit {
                 expected_projection_revision: Some(expected_projection_revision),
@@ -379,7 +443,6 @@ where
                 quarantine: Vec::new(),
             })
             .await
-            .map_err(store_tool_error)
     }
 }
 
@@ -387,22 +450,34 @@ fn broker_terminal(call: &ToolBrokerCall) -> Result<RuntimeItemTerminal, ToolBro
     let result = call.result.as_ref().ok_or(ToolBrokerStoreError::Conflict)?;
     Ok(match call.status {
         ToolBrokerCallStatus::Completed => RuntimeItemTerminal::Completed {
-            final_content: RuntimeItemContent::temporary_dynamic_tool_result(
-                call.invocation.coordinates.item_id.as_str(),
-                call.invocation.tool_name.clone(),
-                result.output.clone(),
-                false,
-            ),
+            final_content: call
+                .tool
+                .project_completed(
+                    call.invocation.coordinates.item_id.as_str(),
+                    call.effective_arguments
+                        .clone()
+                        .unwrap_or_else(|| call.invocation.arguments.clone()),
+                    &result.output,
+                    false,
+                )
+                .map_err(|error| ToolBrokerError::Execution(error.to_string()))?,
         },
         ToolBrokerCallStatus::Cancelled => RuntimeItemTerminal::Cancelled {
             message: call.terminal_message.clone(),
         },
         ToolBrokerCallStatus::Failed | ToolBrokerCallStatus::TimedOut => {
-            RuntimeItemTerminal::Failed {
-                message: call
-                    .terminal_message
-                    .clone()
-                    .or_else(|| Some(result.output.to_string())),
+            RuntimeItemTerminal::Completed {
+                final_content: call
+                    .tool
+                    .project_completed(
+                        call.invocation.coordinates.item_id.as_str(),
+                        call.effective_arguments
+                            .clone()
+                            .unwrap_or_else(|| call.invocation.arguments.clone()),
+                        &result.output,
+                        true,
+                    )
+                    .map_err(|error| ToolBrokerError::Execution(error.to_string()))?,
             }
         }
         ToolBrokerCallStatus::Accepted
@@ -672,6 +747,7 @@ impl PlatformToolBroker {
             invocation_digest: invocation_digest.clone(),
             capability_key: tool.capability_key.clone(),
             tool_path: tool.tool_path.clone(),
+            tool: tool.clone(),
             channel,
             status: ToolBrokerCallStatus::Accepted,
             effective_arguments: None,
@@ -877,21 +953,25 @@ impl PlatformToolBroker {
             return self.terminal_outcome(terminal, duplicate).await;
         }
 
+        let (update_sender, mut update_receiver) = tokio::sync::mpsc::unbounded_channel();
         let request = ToolExecutionRequest {
             idempotency_key: invocation.coordinates.item_id.clone(),
             invocation: invocation.clone(),
             credentials,
             cancellation: cancellation.clone(),
+            updates: update_sender,
         };
-        let execution = tokio::select! {
-            _ = cancellation.cancelled() => ToolExecutionCompletion::Cancelled,
-            result = tokio::time::timeout(
-                Duration::from_millis(invocation.timeout_ms),
-                self.executor.execute(request),
-            ) => match result {
-                Ok(result) => ToolExecutionCompletion::Finished(result),
-                Err(_) => ToolExecutionCompletion::TimedOut,
-            },
+        let execution_future = tokio::time::timeout(
+            Duration::from_millis(invocation.timeout_ms),
+            self.executor.execute(request),
+        );
+        tokio::pin!(execution_future);
+        let execution = loop {
+            tokio::select! {
+                _ = cancellation.cancelled() => break ToolExecutionCompletion::Cancelled,
+                result = &mut execution_future => break match result { Ok(result) => ToolExecutionCompletion::Finished(result), Err(_) => ToolExecutionCompletion::TimedOut },
+                Some(content_items) = update_receiver.recv() => self.journal.record_tool_update(&invocation, content_items).await?,
+            }
         };
         let execution = match execution {
             ToolExecutionCompletion::Finished(Ok(result)) => (None, result, None),

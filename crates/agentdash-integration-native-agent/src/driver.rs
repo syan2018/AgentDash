@@ -21,7 +21,7 @@ use crate::{
     context::{NativeBindingContext, NativeToolCallContext},
     hook::{NativeHookDelegate, supported_hook},
     mapping::{context_blocks_to_messages, inputs_to_message, message_text},
-    tool::{NativeRuntimeTool, NativeToolEventContext},
+    tool::NativeRuntimeTool,
 };
 
 const PROTOCOL_REVISION: u32 = 1;
@@ -196,7 +196,9 @@ pub fn native_agent_contribution(
         "additionalProperties": false
     });
     let schema_digest = digest_json(&config_schema);
+    let conversation_projection = native_conversation_projection();
     AgentRuntimeDriverContribution {
+        conversation_projection,
         definition: AgentServiceDefinition {
             provenance: AgentServiceProvenance {
                 definition_id: AgentServiceDefinitionId::new(DEFINITION_ID)
@@ -220,6 +222,16 @@ pub fn native_agent_contribution(
         },
         factory: Arc::new(NativeAgentDriverFactory::new(resolver)),
     }
+}
+
+fn native_conversation_projection() -> agentdash_integration_api::DriverConversationProjectionProfile
+{
+    let mut profile =
+        agentdash_integration_api::DriverConversationProjectionProfile::full_fidelity(1);
+    profile
+        .item_families
+        .remove(&agentdash_integration_api::DriverConversationItemFamily::Plan);
+    profile
 }
 
 pub fn native_runtime_trust_manifest() -> AgentRuntimeTrustManifest {
@@ -339,7 +351,7 @@ struct NativeThread {
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
     context_revision: RwLock<ContextRevision>,
-    tool_events: Arc<RwLock<Option<NativeToolEventContext>>>,
+    tool_item_identities: Arc<RwLock<BTreeMap<(DriverTurnId, DriverItemId), RuntimeItemId>>>,
 }
 
 impl NativeAgentDriver {
@@ -386,7 +398,7 @@ impl NativeAgentDriver {
         let surface = binding.surface.read().await.clone();
         let active_turn = Arc::new(RwLock::new(None));
         let active_runtime_turn = Arc::new(RwLock::new(None));
-        let tool_events = Arc::new(RwLock::new(None));
+        let tool_item_identities = Arc::new(RwLock::new(BTreeMap::new()));
         let mut agent = Agent::new(
             self.bridge.clone(),
             AgentConfig {
@@ -415,7 +427,7 @@ impl NativeAgentDriver {
                 active_turn: active_turn.clone(),
                 active_runtime_turn: active_runtime_turn.clone(),
                 tool_set_revision: surface.tools.revision,
-                events: tool_events.clone(),
+                item_identities: tool_item_identities.clone(),
             },
             self.host.tools.clone(),
         ));
@@ -427,7 +439,7 @@ impl NativeAgentDriver {
             active_turn,
             active_runtime_turn,
             context_revision: RwLock::new(ContextRevision(0)),
-            tool_events,
+            tool_item_identities,
         });
         let mut slot = binding.thread.write().await;
         Ok(slot.get_or_insert_with(|| thread.clone()).clone())
@@ -454,12 +466,6 @@ impl NativeAgentDriver {
                 })?;
         *thread.active_turn.write().await = Some(source_turn_id.clone());
         *thread.active_runtime_turn.write().await = Some(runtime_turn_id.clone());
-        *thread.tool_events.write().await = Some(NativeToolEventContext {
-            sink: sink.clone(),
-            binding_id: envelope.binding_id.clone(),
-            generation: envelope.generation,
-            source_thread_id: binding.source_thread_id.clone(),
-        });
         let result = async {
             let (mut events, handle) = {
                 let mut agent = thread.agent.lock().await;
@@ -516,7 +522,6 @@ impl NativeAgentDriver {
         .await;
         *thread.active_turn.write().await = None;
         *thread.active_runtime_turn.write().await = None;
-        *thread.tool_events.write().await = None;
         result
     }
 }
@@ -831,7 +836,7 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                         active_turn: thread.active_turn.clone(),
                         active_runtime_turn: thread.active_runtime_turn.clone(),
                         tool_set_revision: updated_surface.tools.revision,
-                        events: thread.tool_events.clone(),
+                        item_identities: thread.tool_item_identities.clone(),
                     },
                     self.host.tools.clone(),
                 ));
@@ -1217,7 +1222,11 @@ impl NativeEventMapper {
                 }));
             }
             AgentEvent::AgentStart | AgentEvent::TurnStart => {}
-            AgentEvent::MessageStart { .. } => {
+            AgentEvent::MessageStart { message } => {
+                if matches!(&message, agentdash_agent::AgentMessage::Assistant { content, tool_calls, .. } if content.is_empty() && !tool_calls.is_empty()) {
+                    self.current_item=None;
+                    return Ok(mapped);
+                }
                 let item = self.next_item()?;
                 self.current_item = Some(item.clone());
                 mapped.push(self.item_event(
@@ -1241,13 +1250,17 @@ impl NativeEventMapper {
                         RuntimeEvent::ConversationDelta {
                             turn_id: self.runtime_turn_id.clone(),
                             item_id: item.0.clone(),
-                            delta: agentdash_agent_runtime_contract::RuntimeConversationDelta::AgentMessage { delta },
+                            delta: delta,
                         },
                     ));
                 }
             }
             AgentEvent::MessageEnd { message } => {
                 if let Some(item) = self.current_item.take() {
+                    if let agentdash_agent::AgentMessage::Assistant { usage:Some(usage), .. }=&message
+                        && usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output)>0 {
+                        mapped.push(self.event(RuntimeEvent::TokenUsageUpdated { turn_id:self.runtime_turn_id.clone(), usage:agentdash_agent_runtime_contract::RuntimeTokenUsage { input_tokens:usage.input, cached_input_tokens:usage.cache_read_input.saturating_add(usage.cache_creation_input), output_tokens:usage.output, reasoning_output_tokens:0, total_tokens:usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output) } }));
+                    }
                     mapped.push(self.item_event(
                         &item,
                         RuntimeEvent::ItemTerminal {
@@ -1276,6 +1289,13 @@ impl NativeEventMapper {
             }
             AgentEvent::RunError { error } if !self.turn_terminal => {
                 self.turn_terminal = true;
+                mapped.push(self.event(RuntimeEvent::ConversationError {
+                    turn_id: Some(self.runtime_turn_id.clone()),
+                    error: agentdash_agent_runtime_contract::RuntimeConversationError {
+                        code: error.code.clone(), message:error.message.clone(), retryable:error.retryable,
+                        details: Some(agentdash_agent_runtime_contract::RuntimeConversationErrorDetails { error_type:Some(format!("{:?}",error.kind)), http_status:error.http_status, request_id:None, metadata:[("provider".to_string(),error.provider.clone().unwrap_or_default()),("model".to_string(),error.model.clone().unwrap_or_default())].into() }),
+                    },
+                }));
                 mapped.push(self.event(RuntimeEvent::TurnTerminal {
                     turn_id: self.runtime_turn_id.clone(),
                     terminal: RuntimeTurnTerminal::Failed,
@@ -1339,7 +1359,14 @@ impl NativeEventMapper {
                     ));
                 }
             }
-            AgentEvent::ProviderAttemptStatus { .. } | AgentEvent::ToolExecutionUpdate { .. } => {}
+            AgentEvent::ProviderAttemptStatus { status } if matches!(status.phase, agentdash_agent::ProviderAttemptPhase::RetryScheduled | agentdash_agent::ProviderAttemptPhase::Retrying | agentdash_agent::ProviderAttemptPhase::Failed) => mapped.push(self.event(RuntimeEvent::ProviderStatus { turn_id:self.runtime_turn_id.clone(), status:agentdash_agent_runtime_contract::RuntimeProviderStatus { phase:match status.phase { agentdash_agent::ProviderAttemptPhase::RetryScheduled=>agentdash_agent_runtime_contract::RuntimeProviderPhase::RetryScheduled, agentdash_agent::ProviderAttemptPhase::Retrying=>agentdash_agent_runtime_contract::RuntimeProviderPhase::Retrying, agentdash_agent::ProviderAttemptPhase::Failed=>agentdash_agent_runtime_contract::RuntimeProviderPhase::Failed, _=>unreachable!("guarded provider phase") }, attempt:status.attempt, max_attempts:status.max_attempts, will_retry:status.will_retry, delay_ms:status.delay_ms, reason_code:status.reason_code, message:status.message, provider:status.provider, model:status.model } })),
+            AgentEvent::ProviderAttemptStatus { .. } => {}
+            AgentEvent::ToolExecutionUpdate { tool_call_id, partial_result, .. } => {
+                let runtime_item_id:RuntimeItemId=parsed_id(tool_call_id.clone())?;
+                let source_item_id:DriverItemId=parsed_id(tool_call_id)?;
+                let items=partial_result.get("content_items").cloned().map(serde_json::from_value).transpose().map_err(|error|DriverError::ProtocolViolation { reason:format!("native tool update is not typed content_items: {error}"), critical:true })?.unwrap_or_default();
+                mapped.push(self.item_event(&(runtime_item_id.clone(),source_item_id),RuntimeEvent::ConversationDelta { turn_id:self.runtime_turn_id.clone(), item_id:runtime_item_id, delta:agentdash_agent_runtime_contract::RuntimeConversationDelta::ToolProgress { content_items:items } }));
+            }
         }
         Ok(mapped)
     }
@@ -1401,10 +1428,20 @@ impl From<RuntimeEvent> for MappedEvent {
     }
 }
 
-fn stream_delta(event: AssistantStreamEvent) -> Option<String> {
+fn stream_delta(
+    event: AssistantStreamEvent,
+) -> Option<agentdash_agent_runtime_contract::RuntimeConversationDelta> {
     match event {
-        AssistantStreamEvent::TextDelta { text, .. }
-        | AssistantStreamEvent::ThinkingDelta { text, .. } => Some(text),
+        AssistantStreamEvent::TextDelta { text, .. } => Some(
+            agentdash_agent_runtime_contract::RuntimeConversationDelta::AgentMessage {
+                delta: text,
+            },
+        ),
+        AssistantStreamEvent::ThinkingDelta { text, .. } => Some(
+            agentdash_agent_runtime_contract::RuntimeConversationDelta::ReasoningText {
+                delta: text,
+            },
+        ),
         _ => None,
     }
 }
@@ -1560,5 +1597,48 @@ mod tests {
                 .expect("duplicate agent terminal")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn native_provider_and_tool_updates_preserve_typed_runtime_events() {
+        let mut mapper = NativeEventMapper::new(
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+        );
+        let provider = mapper
+            .map(AgentEvent::ProviderAttemptStatus {
+                status: agentdash_agent::ProviderAttemptStatus {
+                    phase: agentdash_agent::ProviderAttemptPhase::RetryScheduled,
+                    attempt: 2,
+                    max_attempts: 3,
+                    will_retry: true,
+                    delay_ms: Some(10),
+                    reason_code: Some("rate_limit".into()),
+                    message: Some("retry".into()),
+                    provider: Some("provider".into()),
+                    model: Some("model".into()),
+                },
+            })
+            .unwrap();
+        assert!(
+            matches!(&provider[0].event,RuntimeEvent::ProviderStatus { status, .. } if status.phase==agentdash_agent_runtime_contract::RuntimeProviderPhase::RetryScheduled && status.will_retry)
+        );
+        let update=mapper.map(AgentEvent::ToolExecutionUpdate { tool_call_id:"tool-item".into(), tool_name:"read".into(), args:serde_json::json!({}), partial_result:serde_json::json!({"content_items":[{"type":"inputText","text":"progress"}]}) }).unwrap();
+        assert!(
+            matches!(&update[0].event,RuntimeEvent::ConversationDelta { delta:agentdash_agent_runtime_contract::RuntimeConversationDelta::ToolProgress { content_items }, .. } if content_items.len()==1)
+        );
+    }
+
+    #[test]
+    fn native_projection_profile_does_not_claim_plan_events_absent_from_agent_core() {
+        let profile = native_conversation_projection();
+        assert!(
+            !profile
+                .item_families
+                .contains(&agentdash_integration_api::DriverConversationItemFamily::Plan)
+        );
+        profile
+            .validate_required_families()
+            .expect("native required families");
     }
 }

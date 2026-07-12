@@ -425,6 +425,11 @@ impl AgentTool for TaskReadTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<TaskReadParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::Task {
+            operation: "read".to_string(),
+        })
+    }
 
     async fn execute(
         &self,
@@ -459,6 +464,11 @@ impl AgentTool for TaskWriteTool {
 
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<TaskWriteParams>()
+    }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::Task {
+            operation: "write".to_string(),
+        })
     }
 
     async fn execute(

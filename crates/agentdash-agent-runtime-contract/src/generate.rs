@@ -1,6 +1,6 @@
 use std::{env, fs, path::Path};
 
-use agentdash_agent_runtime_contract::RuntimeContractSchema;
+use agentdash_agent_runtime_contract::{RuntimeContractSchema, ToolProtocolProjection};
 use schemars::schema_for;
 use ts_rs::TS;
 
@@ -13,6 +13,8 @@ fn main() {
 
     let temp = tempfile::tempdir().expect("create generation directory");
     RuntimeContractSchema::export_all_to(temp.path()).expect("export runtime contract types");
+    ToolProtocolProjection::export_all_to(temp.path())
+        .expect("export tool protocol projection descriptor");
     let mut declarations = Vec::new();
     collect_typescript(temp.path(), &mut declarations);
     declarations.sort();

@@ -1168,6 +1168,11 @@ impl AgentTool for CompanionRequestTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<CompanionRequestParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::Companion {
+            operation: "request".to_string(),
+        })
+    }
 
     async fn execute(
         &self,
@@ -2105,6 +2110,11 @@ impl AgentTool for CompanionRespondTool {
 
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<CompanionRespondParams>()
+    }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::Companion {
+            operation: "respond".to_string(),
+        })
     }
 
     async fn execute(

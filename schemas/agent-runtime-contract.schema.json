@@ -1854,6 +1854,26 @@
             "turn_id": {
               "type": "string"
             },
+            "status": {
+              "$ref": "#/$defs/RuntimeProviderStatus"
+            },
+            "kind": {
+              "type": "string",
+              "const": "provider_status"
+            }
+          },
+          "required": [
+            "kind",
+            "turn_id",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "turn_id": {
+              "type": "string"
+            },
             "item_id": {
               "type": "string"
             },
@@ -3733,6 +3753,329 @@
             "id": {
               "type": "string"
             },
+            "operation": {
+              "type": "string"
+            },
+            "resourceUri": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "vfs"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "operation",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "actionKey": {
+              "type": "string"
+            },
+            "targetRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "runtimeAction"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "actionKey",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "resourceUri": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "workspaceModule"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "operation",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "agentId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "taskId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "companion"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "operation",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "task"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "operation",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "pollIntervalMs": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "wait"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "nodeId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "contentItems": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "lifecycleComplete"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
             "command": {
               "type": "string"
             },
@@ -3778,6 +4121,85 @@
             "id",
             "command",
             "executionMode",
+            "arguments",
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "terminalId": {
+              "type": "string"
+            },
+            "arguments": true,
+            "input": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cols": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "rows": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "state": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "aggregatedOutput": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "exitCode": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "status": {
+              "$ref": "#/$defs/DynamicToolCallStatus"
+            },
+            "success": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "terminalControl"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "operation",
+            "terminalId",
             "arguments",
             "status"
           ]
@@ -4097,6 +4519,25 @@
             "kind",
             "message"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content_items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DynamicToolCallOutputContentItem"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "tool_progress"
+            }
+          },
+          "required": [
+            "kind",
+            "content_items"
+          ]
         }
       ]
     },
@@ -4201,6 +4642,77 @@
       },
       "required": [
         "metadata"
+      ]
+    },
+    "RuntimeProviderStatus": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "$ref": "#/$defs/RuntimeProviderPhase"
+        },
+        "attempt": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_attempts": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "will_retry": {
+          "type": "boolean"
+        },
+        "delay_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reason_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "phase",
+        "attempt",
+        "max_attempts",
+        "will_retry"
+      ]
+    },
+    "RuntimeProviderPhase": {
+      "type": "string",
+      "enum": [
+        "connecting",
+        "connected_waiting_first_delta",
+        "streaming",
+        "retry_scheduled",
+        "retrying",
+        "failed",
+        "succeeded"
       ]
     },
     "RuntimeItemTerminal": {

@@ -1438,9 +1438,9 @@ fn interaction_result(
                 .collect::<serde_json::Map<_, _>>();
             Ok(json!({ "answers": answers }))
         }
-        ("item/tool/call", InteractionResponse::DynamicToolResult { output }) => Ok(
-            json!({ "contentItems": [{ "type": "inputText", "text": output.to_string() }], "success": true }),
-        ),
+        ("item/tool/call", InteractionResponse::DynamicToolResult { output }) => {
+            Ok(json!({ "contentItems": dynamic_tool_content(output)?, "success": true }))
+        }
         ("mcpServer/elicitation/request", InteractionResponse::McpElicitation { value }) => {
             Ok(value.clone())
         }
@@ -1450,22 +1450,25 @@ fn interaction_result(
     }
 }
 
-fn dynamic_tool_content(output: &Value) -> Vec<Value> {
+fn dynamic_tool_content(output: &Value) -> Result<Vec<Value>, DriverError> {
     if let Some(items) = output.get("contentItems").and_then(Value::as_array) {
-        return items.clone();
+        return Ok(items.clone());
     }
     if let Some(items) = output.as_array() {
         return items.iter().map(|item| {
             match item.get("type").and_then(Value::as_str) {
-                Some("image") | Some("input_image") => json!({
+                Some("image") | Some("input_image") => Ok(json!({
                     "type": "inputImage",
                     "imageUrl": item.get("url").or_else(|| item.get("imageUrl")).cloned().unwrap_or(Value::Null)
-                }),
-                _ => json!({ "type": "inputText", "text": item.get("text").and_then(Value::as_str).map(ToOwned::to_owned).unwrap_or_else(|| item.to_string()) }),
+                })),
+                Some("text") | Some("input_text") => Ok(json!({ "type": "inputText", "text": item.get("text").and_then(Value::as_str).unwrap_or_default() })),
+                _ => return Err(DriverError::Rejected { reason:"dynamic tool result content item must be typed text/image".to_string() }),
             }
-        }).collect();
+        }).collect::<Result<Vec<_>,_>>();
     }
-    vec![json!({ "type": "inputText", "text": output.to_string() })]
+    Err(DriverError::Rejected {
+        reason: "dynamic tool result requires typed contentItems".to_string(),
+    })
 }
 
 fn digest_profile(profile: &RuntimeProfile) -> ProfileDigest {
@@ -1676,7 +1679,8 @@ mod tests {
         let content = dynamic_tool_content(&json!([
             { "type": "image", "url": "data:image/png;base64,AA==" },
             { "type": "text", "text": "done" }
-        ]));
+        ]))
+        .expect("typed dynamic content");
         assert_eq!(content[0]["type"], "inputImage");
         assert_eq!(content[0]["imageUrl"], "data:image/png;base64,AA==");
         assert_eq!(content[1]["text"], "done");

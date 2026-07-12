@@ -144,6 +144,7 @@ dependencies = [
 name = "agentdash-agent-runtime"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
  "async-trait",
@@ -716,6 +717,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
+ "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-test-support",
  "agentdash-agent-types",

@@ -65,6 +65,11 @@ impl AgentTool for RelayMcpToolAdapter {
     fn parameters_schema(&self) -> serde_json::Value {
         self.surface.parameters_schema.clone()
     }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::Mcp {
+            server_key: self.surface.server_name.clone(),
+        })
+    }
 
     async fn execute(
         &self,

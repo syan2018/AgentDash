@@ -174,6 +174,11 @@ impl AgentTool for EnterpriseEchoTool {
     fn parameters_schema(&self) -> serde_json::Value {
         json!({"type":"object"})
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent::ToolProtocolProjector> {
+        Some(agentdash_agent::ToolProtocolProjector::Dynamic {
+            namespace: Some("enterprise_test".to_string()),
+        })
+    }
 
     async fn execute(
         &self,
@@ -184,7 +189,7 @@ impl AgentTool for EnterpriseEchoTool {
     ) -> Result<AgentToolResult, AgentToolError> {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(AgentToolResult {
-            content: Vec::new(),
+            content: vec![ContentPart::text("enterprise echo completed")],
             is_error: false,
             details: Some(json!({"echoed": args})),
         })
@@ -329,6 +334,10 @@ fn materialized_surface(thread_id: RuntimeThreadId) -> MaterializedDriverSurface
                 description: "Enterprise reverse RuntimeWire tool".to_string(),
                 parameters_schema: json!({"type":"object"}),
                 channels: vec![ToolChannel::DirectCallback],
+                protocol_projection:
+                    agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic {
+                        namespace: Some("enterprise_test".to_string()),
+                    },
             }],
         },
         hooks: DriverHookSurface {
@@ -398,6 +407,10 @@ impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
                             tool_path: "enterprise::echo".to_string(),
                             allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
                             configuration_boundary: ConfigurationBoundary::Binding,
+                            protocol_projection:
+                                agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic {
+                                    namespace: Some("enterprise_test".to_string()),
+                                },
                         }],
                         mcp_servers: Vec::new(),
                     },
@@ -627,15 +640,32 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         })
         .await
         .expect("register local backend");
+    let local_runtime_frames = Arc::new(AtomicUsize::new(0));
+    let local_driver_events = Arc::new(AtomicUsize::new(0));
+    let cloud_runtime_acks = Arc::new(AtomicUsize::new(0));
     let relay_registry = registry.clone();
     let relay_handler = handler.clone();
+    let relay_local_runtime_frames = local_runtime_frames.clone();
+    let relay_local_driver_events = local_driver_events.clone();
+    let relay_cloud_runtime_acks = cloud_runtime_acks.clone();
     let relay = tokio::spawn(async move {
         loop {
             tokio::select! {
                 Some(message) = cloud_to_local.recv() => {
+                    if matches!(message, RelayMessage::RuntimeWireAck { .. }) {
+                        relay_cloud_runtime_acks.fetch_add(1, Ordering::SeqCst);
+                    }
                     route_local_message(&relay_handler, &relay_registry, message).await;
                 }
                 Some(message) = local_to_cloud.recv() => {
+                    if matches!(message, RelayMessage::RuntimeWireFrame { .. }) {
+                        relay_local_runtime_frames.fetch_add(1, Ordering::SeqCst);
+                    }
+                    if matches!(&message, RelayMessage::RuntimeWireFrame { payload, .. }
+                        if matches!(&payload.envelope.frame, agentdash_agent_runtime_wire::RuntimeWireFrame::Notification(notification)
+                            if matches!(notification.as_ref(), agentdash_agent_runtime_wire::RuntimeWireNotification::DriverEvent(_)))) {
+                        relay_local_driver_events.fetch_add(1, Ordering::SeqCst);
+                    }
                     relay_registry.handle_runtime_wire_message(BACKEND_ID, &message).await;
                 }
                 else => break,
@@ -727,6 +757,18 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         RuntimeMailboxSubmitOutcome::Queued { .. } => panic!("idle mailbox must dispatch"),
     };
     assert!(!receipt.duplicate);
+    let mut runtime_events = runtime
+        .read_events(
+            agentdash_application_agentrun::agent_run::ReadAgentRunEvents {
+                target: target.clone(),
+                after: None,
+                include_transient: true,
+                transient_after: None,
+                stream_generation: None,
+            },
+        )
+        .await
+        .expect("subscribe to canonical runtime events");
     assert_eq!(
         tokio::time::timeout(
             std::time::Duration::from_secs(20),
@@ -738,24 +780,24 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         1
     );
 
-    let terminal_view = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+    let terminal_event = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         loop {
-            let view = runtime.inspect(target.clone()).await.expect("inspect");
-            if view.snapshot.as_ref().is_some_and(|snapshot| {
-                snapshot.active_turn_id.is_none()
-                    && snapshot.transcript.iter().any(|item| {
-                        item.final_content.agent_message_text()
-                            == Some("enterprise remote completed")
-                    })
-            }) {
-                break view;
+            let envelope = runtime_events
+                .next()
+                .await
+                .expect("canonical runtime event stream remains open")
+                .expect("canonical runtime event");
+            if matches!(envelope.event, RuntimeEvent::TurnTerminal { .. }) {
+                break envelope;
             }
-            tokio::task::yield_now().await;
         }
     })
     .await;
-    let view = match terminal_view {
-        Ok(view) => view,
+    let view = match terminal_event {
+        Ok(_) => runtime
+            .inspect(target.clone())
+            .await
+            .expect("terminal inspect"),
         Err(_) => {
             let diagnostic = runtime
                 .inspect(target.clone())
@@ -774,11 +816,20 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                 .await
                 .expect("read timeout diagnostic events");
             let mut events = Vec::new();
-            while let Some(event) = stream.next().await {
+            while let Ok(Some(event)) =
+                tokio::time::timeout(std::time::Duration::from_millis(100), stream.next()).await
+            {
                 events.push(event.expect("timeout diagnostic event"));
             }
             panic!(
-                "enterprise remote terminal snapshot timeout: {diagnostic:#?}; events={events:#?}"
+                "enterprise remote terminal snapshot timeout: bridge_calls={}, tool_calls={}, hook_calls={}, local_runtime_frames={}, local_driver_events={}, cloud_runtime_acks={}, relay_finished={}; {diagnostic:#?}; events={events:#?}",
+                bridge.calls.load(Ordering::SeqCst),
+                tool_calls.load(Ordering::SeqCst),
+                hooks.0.load(Ordering::SeqCst),
+                local_runtime_frames.load(Ordering::SeqCst),
+                local_driver_events.load(Ordering::SeqCst),
+                cloud_runtime_acks.load(Ordering::SeqCst),
+                relay.is_finished()
             );
         }
     };
@@ -798,7 +849,9 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
             .await
             .expect("read terminal diagnostic events");
         let mut events = Vec::new();
-        while let Some(event) = stream.next().await {
+        while let Ok(Some(event)) =
+            tokio::time::timeout(std::time::Duration::from_millis(100), stream.next()).await
+        {
             events.push(event.expect("terminal diagnostic event"));
         }
         panic!("unexpected terminal snapshot before compaction: {snapshot:#?}; events={events:#?}");

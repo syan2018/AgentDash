@@ -46,7 +46,8 @@ pub use runtime::hooks_io::{
     ToolApprovalOutcome, ToolApprovalRequest,
 };
 pub use runtime::tool::{
-    AgentTool, AgentToolError, AgentToolResult, DynAgentTool, ToolDefinition, ToolUpdateCallback,
+    AgentTool, AgentToolError, AgentToolResult, DynAgentTool, ToolDefinition,
+    ToolProtocolProjector, ToolUpdateCallback,
 };
 pub use token_estimation::{
     chars_to_tokens, estimate_content_tokens, estimate_message_tokens, estimate_request_tokens,

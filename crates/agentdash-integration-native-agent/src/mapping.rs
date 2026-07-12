@@ -70,11 +70,24 @@ fn context_block_to_message(block: &ContextBlock) -> Option<AgentMessage> {
                 ..
             }) if content_items.is_some() => {
                 let output = serde_json::to_value(content_items).unwrap_or(serde_json::Value::Null);
+                let content = content_items
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|item| match item {
+                        codex::DynamicToolCallOutputContentItem::InputText { text } => {
+                            ContentPart::text(text)
+                        }
+                        codex::DynamicToolCallOutputContentItem::InputImage { image_url } => {
+                            ContentPart::image("image/*", image_url)
+                        }
+                    })
+                    .collect();
                 Some(AgentMessage::tool_result_full(
                     format!("restored-{tool}"),
                     None,
                     Some(tool.clone()),
-                    vec![ContentPart::text(output.to_string())],
+                    content,
                     Some(output.clone()),
                     success == &Some(false),
                 ))

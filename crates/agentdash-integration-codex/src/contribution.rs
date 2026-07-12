@@ -46,6 +46,8 @@ pub fn codex_runtime_contribution_with_launcher(
     let profile = codex_runtime_profile();
     AgentRuntimeDriverContribution {
         definition: definition(profile),
+        conversation_projection:
+            agentdash_integration_api::DriverConversationProjectionProfile::full_fidelity(1),
         factory: Arc::new(CodexRuntimeDriverFactory::with_launcher(
             FACTORY_KEY.clone(),
             launcher,

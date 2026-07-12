@@ -144,6 +144,11 @@ impl AgentTool for WorkspaceModuleInvokeUnavailableTool {
             "additionalProperties": false
         })
     }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
+            operation: "invoke_unavailable".to_string(),
+        })
+    }
 
     async fn execute(
         &self,

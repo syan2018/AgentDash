@@ -160,6 +160,11 @@ impl AgentTool for WorkspaceModuleListTool {
             "additionalProperties": false
         })
     }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
+            operation: "list".to_string(),
+        })
+    }
 
     async fn execute(
         &self,
@@ -300,6 +305,11 @@ impl AgentTool for WorkspaceModuleDescribeTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<WorkspaceModuleDescribeParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
+            operation: "describe".to_string(),
+        })
+    }
 
     async fn execute(
         &self,
@@ -427,6 +437,11 @@ impl AgentTool for WorkspaceModuleOperateTool {
 
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<WorkspaceModuleOperateParams>()
+    }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
+            operation: "operate".to_string(),
+        })
     }
 
     async fn execute(
@@ -826,6 +841,11 @@ impl AgentTool for WorkspaceModuleInvokeTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<WorkspaceModuleInvokeParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
+            operation: "invoke".to_string(),
+        })
+    }
 
     async fn execute(
         &self,
@@ -972,6 +992,11 @@ impl AgentTool for WorkspaceModulePresentTool {
 
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<WorkspaceModulePresentParams>()
+    }
+    fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
+        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
+            operation: "present".to_string(),
+        })
     }
 
     async fn execute(

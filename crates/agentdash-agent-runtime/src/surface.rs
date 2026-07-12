@@ -4,7 +4,8 @@ use agentdash_agent_runtime_contract::{
     ConfigurationBoundary, ContextBlock, ContextRecipe, DeliveryMechanism, HookAction,
     HookDefinitionId, HookFailurePolicy, HookPlanDigest, HookPlanRevision, HookPoint,
     InputModality, InstructionChannel, RuntimeProfile, RuntimeThreadId, SemanticStrength,
-    SurfaceDigest, SurfaceRevision, ToolChannel, ToolSetRevision, WorkspaceCapability,
+    SurfaceDigest, SurfaceRevision, ToolChannel, ToolProtocolProjection, ToolSetRevision,
+    WorkspaceCapability,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -65,6 +66,530 @@ pub struct ToolContribution {
     pub tool_path: String,
     pub allowed_channels: BTreeSet<ToolChannel>,
     pub configuration_boundary: ConfigurationBoundary,
+    pub protocol_projection: ToolProtocolProjection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ToolProjectionError {
+    #[error("tool protocol projection is invalid: {0}")]
+    Invalid(String),
+}
+
+impl ToolContribution {
+    pub fn project_update(
+        &self,
+        content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
+    ) -> agentdash_agent_runtime_contract::RuntimeConversationDelta {
+        agentdash_agent_runtime_contract::RuntimeConversationDelta::ToolProgress { content_items }
+    }
+    pub fn project_started(
+        &self,
+        item_id: &str,
+        arguments: serde_json::Value,
+    ) -> Result<agentdash_agent_runtime_contract::RuntimeItemContent, ToolProjectionError> {
+        use agentdash_agent_protocol::codex_app_server_protocol as codex;
+        use agentdash_agent_protocol::{AgentDashNativeThreadItem as Native, AgentDashThreadItem};
+
+        let item = match &self.protocol_projection {
+            ToolProtocolProjection::Command => shell_started_item(item_id, arguments),
+            ToolProtocolProjection::FsRead => AgentDashThreadItem::AgentDash(Native::FsRead {
+                id: item_id.to_string(),
+                path: string_field(&arguments, "path"),
+                offset: usize_field(&arguments, "offset"),
+                limit: usize_field(&arguments, "limit"),
+                arguments,
+                status: codex::DynamicToolCallStatus::InProgress,
+                content_items: None,
+                success: None,
+            }),
+            ToolProtocolProjection::FsGrep => AgentDashThreadItem::AgentDash(Native::FsGrep {
+                id: item_id.to_string(),
+                pattern: string_field(&arguments, "pattern"),
+                path: optional_string_field(&arguments, "path"),
+                glob: optional_string_field(&arguments, "glob"),
+                file_type: optional_string_field(&arguments, "file_type"),
+                output_mode: optional_string_field(&arguments, "output_mode"),
+                head_limit: usize_field(&arguments, "head_limit"),
+                offset: usize_field(&arguments, "offset"),
+                arguments,
+                status: codex::DynamicToolCallStatus::InProgress,
+                content_items: None,
+                success: None,
+            }),
+            ToolProtocolProjection::FsGlob => AgentDashThreadItem::AgentDash(Native::FsGlob {
+                id: item_id.to_string(),
+                pattern: string_field(&arguments, "pattern"),
+                path: optional_string_field(&arguments, "path"),
+                max_results: usize_field(&arguments, "max_results"),
+                arguments,
+                status: codex::DynamicToolCallStatus::InProgress,
+                content_items: None,
+                success: None,
+            }),
+            ToolProtocolProjection::FileChange => codex_projected_item(
+                serde_json::json!({"type":"fileChange","id":item_id,"changes":arguments.get("changes").cloned().unwrap_or_else(||serde_json::Value::Array(file_changes_from_patch(&arguments))),"status":"inProgress"}),
+            )?,
+            ToolProtocolProjection::Mcp { server_key } => codex_projected_item(
+                serde_json::json!({"type":"mcpToolCall","id":item_id,"server":server_key,"tool":self.runtime_name,"arguments":arguments,"status":"inProgress"}),
+            )?,
+            ToolProtocolProjection::Dynamic { namespace } => dynamic_item(
+                item_id,
+                self.runtime_name.as_str(),
+                namespace.clone(),
+                arguments,
+                false,
+                false,
+                None,
+            )?,
+            ToolProtocolProjection::Vfs { operation } => {
+                AgentDashThreadItem::AgentDash(Native::Vfs {
+                    id: item_id.to_string(),
+                    operation: operation.clone(),
+                    resource_uri: optional_string_field(&arguments, "resource_uri")
+                        .or_else(|| optional_string_field(&arguments, "uri")),
+                    status: codex::DynamicToolCallStatus::InProgress,
+                    content_items: None,
+                    success: None,
+                })
+            }
+            ToolProtocolProjection::RuntimeAction { action_key } => {
+                AgentDashThreadItem::AgentDash(Native::RuntimeAction {
+                    id: item_id.to_string(),
+                    action_key: action_key.clone(),
+                    target_ref: optional_string_field(&arguments, "target_ref"),
+                    status: codex::DynamicToolCallStatus::InProgress,
+                    content_items: None,
+                    success: None,
+                })
+            }
+            ToolProtocolProjection::WorkspaceModule { operation } => {
+                AgentDashThreadItem::AgentDash(Native::WorkspaceModule {
+                    id: item_id.to_string(),
+                    operation: operation.clone(),
+                    resource_uri: optional_string_field(&arguments, "resource_uri")
+                        .or_else(|| optional_string_field(&arguments, "uri")),
+                    status: codex::DynamicToolCallStatus::InProgress,
+                    content_items: None,
+                    success: None,
+                })
+            }
+            ToolProtocolProjection::Companion { operation } => {
+                AgentDashThreadItem::AgentDash(Native::Companion {
+                    id: item_id.to_string(),
+                    operation: operation.clone(),
+                    agent_id: optional_string_field(&arguments, "agent_id"),
+                    task_id: optional_string_field(&arguments, "task_id"),
+                    status: codex::DynamicToolCallStatus::InProgress,
+                    content_items: None,
+                    success: None,
+                })
+            }
+            ToolProtocolProjection::Task { operation } => {
+                AgentDashThreadItem::AgentDash(Native::Task {
+                    id: item_id.to_string(),
+                    operation: operation.clone(),
+                    task_id: optional_string_field(&arguments, "task_id"),
+                    status: codex::DynamicToolCallStatus::InProgress,
+                    content_items: None,
+                    success: None,
+                })
+            }
+            ToolProtocolProjection::Wait => AgentDashThreadItem::AgentDash(Native::Wait {
+                id: item_id.to_string(),
+                duration_ms: arguments
+                    .get("duration_ms")
+                    .and_then(serde_json::Value::as_u64),
+                poll_interval_ms: arguments
+                    .get("poll_interval_ms")
+                    .and_then(serde_json::Value::as_u64),
+                status: codex::DynamicToolCallStatus::InProgress,
+                content_items: None,
+                success: None,
+            }),
+            ToolProtocolProjection::LifecycleComplete => {
+                AgentDashThreadItem::AgentDash(Native::LifecycleComplete {
+                    id: item_id.to_string(),
+                    node_id: optional_string_field(&arguments, "node_id"),
+                    status: codex::DynamicToolCallStatus::InProgress,
+                    content_items: None,
+                    success: None,
+                })
+            }
+        };
+        Ok(agentdash_agent_runtime_contract::RuntimeItemContent::new(
+            item,
+        ))
+    }
+
+    pub fn project_completed(
+        &self,
+        item_id: &str,
+        arguments: serde_json::Value,
+        output: &serde_json::Value,
+        failed: bool,
+    ) -> Result<agentdash_agent_runtime_contract::RuntimeItemContent, ToolProjectionError> {
+        use agentdash_agent_protocol::codex_app_server_protocol as codex;
+        use agentdash_agent_protocol::{AgentDashNativeThreadItem as Native, AgentDashThreadItem};
+        let status = if failed {
+            codex::DynamicToolCallStatus::Failed
+        } else {
+            codex::DynamicToolCallStatus::Completed
+        };
+        let item = match &self.protocol_projection {
+            ToolProtocolProjection::Command => {
+                shell_terminal_item(item_id, arguments, output, status, failed)
+            }
+            ToolProtocolProjection::FsRead => AgentDashThreadItem::AgentDash(Native::FsRead {
+                id: item_id.to_string(),
+                path: string_field(&arguments, "path"),
+                offset: usize_field(&arguments, "offset"),
+                limit: usize_field(&arguments, "limit"),
+                arguments,
+                status,
+                content_items: content_items(output)?,
+                success: Some(!failed),
+            }),
+            ToolProtocolProjection::FsGrep => AgentDashThreadItem::AgentDash(Native::FsGrep {
+                id: item_id.to_string(),
+                pattern: string_field(&arguments, "pattern"),
+                path: optional_string_field(&arguments, "path"),
+                glob: optional_string_field(&arguments, "glob"),
+                file_type: optional_string_field(&arguments, "file_type"),
+                output_mode: optional_string_field(&arguments, "output_mode"),
+                head_limit: usize_field(&arguments, "head_limit"),
+                offset: usize_field(&arguments, "offset"),
+                arguments,
+                status,
+                content_items: content_items(output)?,
+                success: Some(!failed),
+            }),
+            ToolProtocolProjection::FsGlob => AgentDashThreadItem::AgentDash(Native::FsGlob {
+                id: item_id.to_string(),
+                pattern: string_field(&arguments, "pattern"),
+                path: optional_string_field(&arguments, "path"),
+                max_results: usize_field(&arguments, "max_results"),
+                arguments,
+                status,
+                content_items: content_items(output)?,
+                success: Some(!failed),
+            }),
+            ToolProtocolProjection::FileChange => codex_projected_item(
+                serde_json::json!({"type":"fileChange","id":item_id,"changes":output.get("changes").cloned().or_else(||arguments.get("changes").cloned()).unwrap_or_else(||serde_json::Value::Array(file_changes_from_patch(&arguments))),"status":if failed{"failed"}else{"completed"}}),
+            )?,
+            ToolProtocolProjection::Mcp { server_key } => {
+                let (result, error) = if failed {
+                    let message = output
+                        .get("message")
+                        .or_else(|| output.get("error"))
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            ToolProjectionError::Invalid(
+                                "MCP failure output requires message/error".to_string(),
+                            )
+                        })?;
+                    (
+                        serde_json::Value::Null,
+                        serde_json::json!({"message":message}),
+                    )
+                } else {
+                    (output.clone(), serde_json::Value::Null)
+                };
+                codex_projected_item(
+                    serde_json::json!({"type":"mcpToolCall","id":item_id,"server":server_key,"tool":self.runtime_name,"arguments":arguments,"status":if failed{"failed"}else{"completed"},"result":result,"error":error}),
+                )?
+            }
+            ToolProtocolProjection::Dynamic { namespace } => dynamic_item(
+                item_id,
+                self.runtime_name.as_str(),
+                namespace.clone(),
+                arguments,
+                true,
+                failed,
+                content_items(output)?,
+            )?,
+            ToolProtocolProjection::Vfs { operation } => {
+                AgentDashThreadItem::AgentDash(Native::Vfs {
+                    id: item_id.to_string(),
+                    operation: operation.clone(),
+                    resource_uri: optional_string_field(&arguments, "resource_uri")
+                        .or_else(|| optional_string_field(&arguments, "uri")),
+                    status,
+                    content_items: content_items(output)?,
+                    success: Some(!failed),
+                })
+            }
+            ToolProtocolProjection::RuntimeAction { action_key } => {
+                AgentDashThreadItem::AgentDash(Native::RuntimeAction {
+                    id: item_id.to_string(),
+                    action_key: action_key.clone(),
+                    target_ref: optional_string_field(&arguments, "target_ref"),
+                    status,
+                    content_items: content_items(output)?,
+                    success: Some(!failed),
+                })
+            }
+            ToolProtocolProjection::WorkspaceModule { operation } => {
+                AgentDashThreadItem::AgentDash(Native::WorkspaceModule {
+                    id: item_id.to_string(),
+                    operation: operation.clone(),
+                    resource_uri: optional_string_field(&arguments, "resource_uri")
+                        .or_else(|| optional_string_field(&arguments, "uri")),
+                    status,
+                    content_items: content_items(output)?,
+                    success: Some(!failed),
+                })
+            }
+            ToolProtocolProjection::Companion { operation } => {
+                AgentDashThreadItem::AgentDash(Native::Companion {
+                    id: item_id.to_string(),
+                    operation: operation.clone(),
+                    agent_id: optional_string_field(&arguments, "agent_id"),
+                    task_id: optional_string_field(&arguments, "task_id"),
+                    status,
+                    content_items: content_items(output)?,
+                    success: Some(!failed),
+                })
+            }
+            ToolProtocolProjection::Task { operation } => {
+                AgentDashThreadItem::AgentDash(Native::Task {
+                    id: item_id.to_string(),
+                    operation: operation.clone(),
+                    task_id: optional_string_field(&arguments, "task_id"),
+                    status,
+                    content_items: content_items(output)?,
+                    success: Some(!failed),
+                })
+            }
+            ToolProtocolProjection::Wait => AgentDashThreadItem::AgentDash(Native::Wait {
+                id: item_id.to_string(),
+                duration_ms: arguments
+                    .get("duration_ms")
+                    .and_then(serde_json::Value::as_u64),
+                poll_interval_ms: arguments
+                    .get("poll_interval_ms")
+                    .and_then(serde_json::Value::as_u64),
+                status,
+                content_items: content_items(output)?,
+                success: Some(!failed),
+            }),
+            ToolProtocolProjection::LifecycleComplete => {
+                AgentDashThreadItem::AgentDash(Native::LifecycleComplete {
+                    id: item_id.to_string(),
+                    node_id: optional_string_field(&arguments, "node_id"),
+                    status,
+                    content_items: content_items(output)?,
+                    success: Some(!failed),
+                })
+            }
+        };
+        Ok(agentdash_agent_runtime_contract::RuntimeItemContent::new(
+            item,
+        ))
+    }
+}
+
+fn shell_operation(arguments: &serde_json::Value) -> String {
+    optional_string_field(arguments, "operation").unwrap_or_else(|| "start".to_string())
+}
+
+fn shell_execution_mode(
+    arguments: &serde_json::Value,
+) -> agentdash_agent_protocol::ShellExecExecutionMode {
+    match optional_string_field(arguments, "cwd")
+        .as_deref()
+        .map(str::trim)
+    {
+        None | Some("") | Some("platform://") => {
+            agentdash_agent_protocol::ShellExecExecutionMode::Platform
+        }
+        Some(_) => agentdash_agent_protocol::ShellExecExecutionMode::MountExec,
+    }
+}
+
+fn shell_started_item(
+    item_id: &str,
+    arguments: serde_json::Value,
+) -> agentdash_agent_protocol::AgentDashThreadItem {
+    use agentdash_agent_protocol::codex_app_server_protocol::DynamicToolCallStatus;
+    use agentdash_agent_protocol::{AgentDashNativeThreadItem as Native, AgentDashThreadItem};
+    let operation = shell_operation(&arguments);
+    if operation == "start" {
+        AgentDashThreadItem::AgentDash(Native::ShellExec {
+            id: item_id.to_string(),
+            command: string_field(&arguments, "command"),
+            cwd: optional_string_field(&arguments, "cwd"),
+            execution_mode: shell_execution_mode(&arguments),
+            arguments,
+            status: DynamicToolCallStatus::InProgress,
+            aggregated_output: None,
+            exit_code: None,
+            success: None,
+        })
+    } else {
+        AgentDashThreadItem::AgentDash(Native::TerminalControl {
+            id: item_id.to_string(),
+            operation,
+            terminal_id: string_field(&arguments, "terminal_id"),
+            input: optional_string_field(&arguments, "data"),
+            cols: usize_field(&arguments, "cols").and_then(|v| u16::try_from(v).ok()),
+            rows: usize_field(&arguments, "rows").and_then(|v| u16::try_from(v).ok()),
+            arguments,
+            state: None,
+            aggregated_output: None,
+            exit_code: None,
+            status: DynamicToolCallStatus::InProgress,
+            success: None,
+        })
+    }
+}
+
+fn shell_terminal_item(
+    item_id: &str,
+    arguments: serde_json::Value,
+    output: &serde_json::Value,
+    status: agentdash_agent_protocol::codex_app_server_protocol::DynamicToolCallStatus,
+    failed: bool,
+) -> agentdash_agent_protocol::AgentDashThreadItem {
+    use agentdash_agent_protocol::{AgentDashNativeThreadItem as Native, AgentDashThreadItem};
+    let operation = shell_operation(&arguments);
+    if operation == "start" {
+        AgentDashThreadItem::AgentDash(Native::ShellExec {
+            id: item_id.to_string(),
+            command: optional_string_field(output, "original_command")
+                .unwrap_or_else(|| string_field(&arguments, "command")),
+            cwd: optional_string_field(output, "cwd")
+                .or_else(|| optional_string_field(&arguments, "cwd")),
+            execution_mode: shell_execution_mode(&arguments),
+            arguments,
+            status,
+            aggregated_output: optional_string_field(output, "aggregated_output"),
+            exit_code: output
+                .get("exit_code")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|v| i32::try_from(v).ok()),
+            success: Some(!failed),
+        })
+    } else {
+        AgentDashThreadItem::AgentDash(Native::TerminalControl {
+            id: item_id.to_string(),
+            operation,
+            terminal_id: optional_string_field(output, "terminal_id")
+                .unwrap_or_else(|| string_field(&arguments, "terminal_id")),
+            input: optional_string_field(&arguments, "data"),
+            cols: usize_field(&arguments, "cols").and_then(|v| u16::try_from(v).ok()),
+            rows: usize_field(&arguments, "rows").and_then(|v| u16::try_from(v).ok()),
+            arguments,
+            state: optional_string_field(output, "state")
+                .or_else(|| optional_string_field(output, "status")),
+            aggregated_output: optional_string_field(output, "aggregated_output"),
+            exit_code: output
+                .get("exit_code")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|v| i32::try_from(v).ok()),
+            status,
+            success: Some(!failed),
+        })
+    }
+}
+
+fn string_field(value: &serde_json::Value, key: &str) -> String {
+    optional_string_field(value, key).unwrap_or_default()
+}
+fn optional_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+fn usize_field(value: &serde_json::Value, key: &str) -> Option<usize> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|v| usize::try_from(v).ok())
+}
+fn content_items(
+    value: &serde_json::Value,
+) -> Result<
+    Option<Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>>,
+    ToolProjectionError,
+> {
+    let Some(items) = value.get("content_items") else {
+        return Ok(None);
+    };
+    serde_json::from_value(items.clone())
+        .map(Some)
+        .map_err(|e| ToolProjectionError::Invalid(e.to_string()))
+}
+
+fn file_changes_from_patch(arguments: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(patch) = arguments.get("patch").and_then(serde_json::Value::as_str) else {
+        return Vec::new();
+    };
+    patch_entry_diffs(patch)
+        .into_iter()
+        .filter_map(|diff| {
+            let lines = diff.lines().collect::<Vec<_>>();
+            let header = lines.first()?;
+            let (path, kind) = if let Some(path) = header.strip_prefix("*** Add File: ") {
+                (path, serde_json::json!({"type":"add"}))
+            } else if let Some(path) = header.strip_prefix("*** Delete File: ") {
+                (path, serde_json::json!({"type":"delete"}))
+            } else if let Some(path) = header.strip_prefix("*** Update File: ") {
+                let move_path = lines
+                    .get(1)
+                    .and_then(|next| next.strip_prefix("*** Move to: "));
+                (
+                    path,
+                    serde_json::json!({"type":"update","move_path":move_path}),
+                )
+            } else {
+                return None;
+            };
+            Some(serde_json::json!({"path":path.trim(),"kind":kind,"diff":diff}))
+        })
+        .collect()
+}
+
+fn patch_entry_diffs(patch: &str) -> Vec<String> {
+    let mut diffs = Vec::new();
+    let mut current = Vec::new();
+    for line in patch.lines() {
+        let starts_entry = line.starts_with("*** Add File: ")
+            || line.starts_with("*** Delete File: ")
+            || line.starts_with("*** Update File: ");
+        if starts_entry && !current.is_empty() {
+            diffs.push(current.join("\n"));
+            current.clear();
+        }
+        if (starts_entry || !current.is_empty()) && line != "*** End Patch" {
+            current.push(line.to_string());
+        }
+    }
+    if !current.is_empty() {
+        diffs.push(current.join("\n"));
+    }
+    diffs
+}
+fn codex_projected_item(
+    value: serde_json::Value,
+) -> Result<agentdash_agent_protocol::AgentDashThreadItem, ToolProjectionError> {
+    serde_json::from_value(value)
+        .map(agentdash_agent_protocol::AgentDashThreadItem::Codex)
+        .map_err(|e| ToolProjectionError::Invalid(e.to_string()))
+}
+fn dynamic_item(
+    item_id: &str,
+    tool: &str,
+    namespace: Option<String>,
+    arguments: serde_json::Value,
+    completed: bool,
+    failed: bool,
+    content_items: Option<Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>>,
+) -> Result<agentdash_agent_protocol::AgentDashThreadItem, ToolProjectionError> {
+    let value = serde_json::json!({"type":"dynamicToolCall","id":item_id,"tool":tool,"namespace":namespace,"arguments":arguments,"status":if failed{"failed"}else if completed{"completed"}else{"inProgress"},"success":if completed{Some(!failed)}else{None},"contentItems":content_items});
+    serde_json::from_value(value)
+        .map(agentdash_agent_protocol::AgentDashThreadItem::Codex)
+        .map_err(|e| ToolProjectionError::Invalid(e.to_string()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,6 +792,8 @@ pub enum SurfaceCompileError {
     ConflictingContribution { key: String },
     #[error("tool `{key}` parameters schema must be a JSON object")]
     InvalidToolSchema { key: String },
+    #[error("tool `{key}` protocol projector is invalid: {reason}")]
+    InvalidToolProjector { key: String, reason: String },
     #[error("tool runtime identity `{runtime_name}` is contributed more than once")]
     ConflictingToolRuntimeName { runtime_name: String },
     #[error("tool path `{tool_path}` is contributed more than once")]
@@ -776,6 +1303,25 @@ fn validate_contribution(contribution: &CapabilityContribution) -> Result<(), Su
                     key: meta.key.clone(),
                     field: "allowed_channels",
                 });
+            }
+            let projector_key = match &value.protocol_projection {
+                ToolProtocolProjection::Mcp { server_key } => Some(("server_key", server_key)),
+                ToolProtocolProjection::WorkspaceModule { operation }
+                | ToolProtocolProjection::Companion { operation }
+                | ToolProtocolProjection::Task { operation }
+                | ToolProtocolProjection::Vfs { operation } => Some(("operation", operation)),
+                ToolProtocolProjection::RuntimeAction { action_key } => {
+                    Some(("action_key", action_key))
+                }
+                _ => None,
+            };
+            if let Some((field, value)) = projector_key {
+                if value.trim().is_empty() {
+                    return Err(SurfaceCompileError::InvalidToolProjector {
+                        key: meta.key.clone(),
+                        reason: format!("{field} must not be empty"),
+                    });
+                }
             }
             Ok(())
         }

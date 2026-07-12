@@ -93,6 +93,9 @@ impl AgentTool for CompleteLifecycleNodeTool {
     fn parameters_schema(&self) -> serde_json::Value {
         schema_value::<CompleteLifecycleNodeParams>()
     }
+    fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
+        Some(agentdash_agent_types::ToolProtocolProjector::LifecycleComplete)
+    }
 
     async fn execute(
         &self,

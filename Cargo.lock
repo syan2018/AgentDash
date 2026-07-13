@@ -740,9 +740,12 @@ dependencies = [
 name = "agentdash-integration-remote-runtime"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-test-support",
  "agentdash-agent-runtime-wire",
  "agentdash-integration-api",
+ "agentdash-relay",
  "async-trait",
  "serde",
  "serde_json",

@@ -35,6 +35,15 @@ pub struct ModelMeta {
     pub source: ModelProfileSource,
 }
 
+/// Executable bridge and the exact catalog model selected for it.
+///
+/// Keeping these together prevents downstream runtimes from resolving the bridge from one
+/// catalog snapshot while independently guessing presentation/runtime metadata from another.
+pub struct ResolvedProviderBridge {
+    pub bridge: Arc<dyn LlmBridge>,
+    pub model: ModelMeta,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelProfileSource {
     Discovered,
@@ -564,6 +573,27 @@ pub async fn resolve_effective_bridge_for_scope(
     provider_id: &str,
     model_id: Option<&str>,
 ) -> Result<Arc<dyn LlmBridge>, ProviderBridgeResolveError> {
+    Ok(resolve_effective_bridge_with_model_for_scope(
+        repo,
+        credential_repo,
+        secret_codec,
+        scope,
+        provider_id,
+        model_id,
+    )
+    .await?
+    .bridge)
+}
+
+/// Resolve the executable bridge and its exact model metadata from one catalog selection.
+pub async fn resolve_effective_bridge_with_model_for_scope(
+    repo: &dyn LlmProviderRepository,
+    credential_repo: Option<&dyn LlmProviderCredentialRepository>,
+    secret_codec: &dyn LlmSecretCodec,
+    scope: &ProviderCredentialScope,
+    provider_id: &str,
+    model_id: Option<&str>,
+) -> Result<ResolvedProviderBridge, ProviderBridgeResolveError> {
     let providers =
         repo.list_all()
             .await
@@ -603,7 +633,8 @@ pub async fn resolve_effective_bridge_for_scope(
             provider_id: provider_id.to_string(),
             reason,
         })?;
-    Ok(built.entry.create_bridge(&model.id))
+    let bridge = built.entry.create_bridge(&model.id);
+    Ok(ResolvedProviderBridge { bridge, model })
 }
 
 pub async fn build_effective_provider_profile(

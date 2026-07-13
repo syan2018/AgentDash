@@ -84,6 +84,8 @@ impl NativeHookDelegate {
                     item_id,
                     binding_id: self.binding_id.clone(),
                     generation: self.generation,
+                    hook_plan_revision: self.surface.revision,
+                    hook_plan_digest: self.surface.digest.clone(),
                     source_thread_id: self.source_thread_id.clone(),
                     source_turn_id,
                     source_item_id: source_item_id.clone(),

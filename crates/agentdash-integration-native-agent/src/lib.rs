@@ -7,11 +7,12 @@ mod context;
 mod driver;
 mod hook;
 mod mapping;
+mod presentation;
 mod tool;
 
 pub use driver::{
-    NativeAgentDriver, NativeAgentDriverFactory, NativeAgentRuntimeIntegration,
-    NativeAgentServiceConfig, NativeBridgeResolveError, NativeBridgeResolver,
-    NativeCredentialScope, native_agent_contribution, native_runtime_profile,
-    native_runtime_trust_manifest,
+    NATIVE_STREAM_USAGE_RESERVE_TOKENS, NativeAgentDriver, NativeAgentDriverFactory,
+    NativeAgentRuntimeIntegration, NativeAgentServiceConfig, NativeBridgeResolveError,
+    NativeBridgeResolver, NativeCredentialScope, NativePresentationMetadata, ResolvedNativeBridge,
+    native_agent_contribution, native_runtime_profile, native_runtime_trust_manifest,
 };

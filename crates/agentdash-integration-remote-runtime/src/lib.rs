@@ -535,10 +535,12 @@ impl RemoteRuntimeDriver {
                     source_thread_id: binding.source_thread_id,
                     source_turn_id: binding.source_turn_id,
                     source_item_id: None,
-                    event: RuntimeEvent::BindingLost {
+                    source_request_id: None,
+                    source_entry_index: None,
+                    facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::BindingLost {
                         binding_id: binding.binding_id,
                         reason: reason.clone(),
-                    },
+                    })],
                 })
                 .await;
         }
@@ -1128,6 +1130,14 @@ impl DriverEventSink for ForwardingSink {
 mod tests {
     use std::{collections::BTreeSet, str::FromStr};
 
+    use agentdash_agent_runtime_test_support::session_parity::{
+        NormalizedPresentationEvent, PresentationDurability as StrictDurability,
+        compare_ordered_presentation_events,
+    };
+    use agentdash_relay::{
+        RelayMessage, RuntimeRelayFrame, RuntimeRelayProvenance, RuntimeRelayStreamId,
+    };
+
     use super::*;
 
     fn id<T: FromStr>(value: &str) -> T
@@ -1390,9 +1400,13 @@ mod tests {
                     source_thread_id: command.source_thread_id,
                     source_turn_id: None,
                     source_item_id: None,
-                    event: RuntimeEvent::BindingEstablished {
-                        binding_id: command.binding_id,
-                    },
+                    source_request_id: None,
+                    source_entry_index: None,
+                    facts: vec![RuntimeJournalFact::Internal(
+                        RuntimeEvent::BindingEstablished {
+                            binding_id: command.binding_id,
+                        },
+                    )],
                 })
                 .await
                 .expect("forward delayed event");
@@ -1650,6 +1664,7 @@ mod tests {
             .dispatch(
                 DriverCommandEnvelope {
                     request_id: id("request-1"),
+                    presentation_thread_id: id("presentation-thread-1"),
                     binding_id: id("binding-1"),
                     generation: RuntimeDriverGeneration(3),
                     source_thread_id: id("source-thread-1"),
@@ -1712,6 +1727,7 @@ mod tests {
                     .dispatch(
                         DriverCommandEnvelope {
                             request_id: id("request-ordered"),
+                            presentation_thread_id: id("presentation-thread-ordered"),
                             binding_id: id("binding-ordered"),
                             generation: RuntimeDriverGeneration(3),
                             source_thread_id: id("source-thread-ordered"),
@@ -1739,9 +1755,13 @@ mod tests {
                             source_thread_id: id("source-thread-ordered"),
                             source_turn_id: None,
                             source_item_id: None,
-                            event: RuntimeEvent::BindingEstablished {
-                                binding_id: id("binding-ordered"),
-                            },
+                            source_request_id: None,
+                            source_entry_index: None,
+                            facts: vec![RuntimeJournalFact::Internal(
+                                RuntimeEvent::BindingEstablished {
+                                    binding_id: id("binding-ordered"),
+                                },
+                            )],
                         }),
                     )),
                 },
@@ -1873,6 +1893,7 @@ mod tests {
                     .dispatch(
                         DriverCommandEnvelope {
                             request_id: id("request-epoch-1"),
+                            presentation_thread_id: id("presentation-thread-epoch-1"),
                             binding_id: id("binding-epoch-1"),
                             generation: RuntimeDriverGeneration(5),
                             source_thread_id: id("source-epoch-1"),
@@ -1932,8 +1953,10 @@ mod tests {
         .await
         .expect("Lost event timeout");
         assert!(matches!(
-            sink.events.lock().await[0].event,
-            RuntimeEvent::BindingLost { .. }
+            sink.events.lock().await[0].facts.as_slice(),
+            [RuntimeJournalFact::Internal(
+                RuntimeEvent::BindingLost { .. }
+            )]
         ));
 
         event_tx
@@ -1995,9 +2018,13 @@ mod tests {
                             source_thread_id: id("source-epoch-1"),
                             source_turn_id: None,
                             source_item_id: None,
-                            event: RuntimeEvent::BindingEstablished {
-                                binding_id: id("binding-epoch-1"),
-                            },
+                            source_request_id: None,
+                            source_entry_index: None,
+                            facts: vec![RuntimeJournalFact::Internal(
+                                RuntimeEvent::BindingEstablished {
+                                    binding_id: id("binding-epoch-1"),
+                                },
+                            )],
                         }),
                     )),
                 },
@@ -2005,5 +2032,133 @@ mod tests {
             .expect("late old-binding event");
         tokio::task::yield_now().await;
         assert_eq!(sink.events.lock().await.len(), 1);
+    }
+
+    #[test]
+    fn remote_wire_and_relay_match_all_three_main_oracle_goldens_strictly() {
+        fn normalize(records: &serde_json::Value) -> Vec<NormalizedPresentationEvent> {
+            records
+                .as_array()
+                .expect("scenario records")
+                .iter()
+                .map(|record| NormalizedPresentationEvent {
+                    durability: match record["durability"].as_str().unwrap() {
+                        "durable" => StrictDurability::Durable,
+                        "ephemeral" => StrictDurability::Ephemeral,
+                        other => panic!("unknown durability {other}"),
+                    },
+                    event: record["event"].clone(),
+                })
+                .collect()
+        }
+
+        let golden: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/main-oracle-presentation.json"))
+                .expect("parse Remote/Relay Main oracle golden");
+        assert_eq!(
+            golden["oracle_commit"],
+            "957fa9d60ea3d67efa1bb278fe5b376cf0c34598"
+        );
+        assert_eq!(
+            golden["source_sha256"],
+            "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05"
+        );
+        let scenarios = golden["scenarios"].as_object().unwrap();
+        let expected_source_entry_index = golden["source_entry_index"].as_u64().unwrap() as u32;
+        assert_eq!(scenarios.len(), 3);
+        for (scenario, expected_records) in scenarios {
+            let mut current = Vec::new();
+            let mut current_source_entry_indices = Vec::new();
+            for (index, record) in expected_records.as_array().unwrap().iter().enumerate() {
+                let durability = match record["durability"].as_str().unwrap() {
+                    "durable" => PresentationDurability::Durable,
+                    "ephemeral" => PresentationDurability::Ephemeral,
+                    other => panic!("unknown durability {other}"),
+                };
+                let protected: agentdash_agent_protocol::BackboneEvent =
+                    serde_json::from_value(record["event"].clone())
+                        .expect("deserialize protected Main body into owned protocol");
+                let envelope = RuntimeWireEnvelope {
+                    protocol_revision: RUNTIME_WIRE_PROTOCOL_REVISION,
+                    frame_id: RuntimeWireFrameId(701 + index as u64),
+                    critical: true,
+                    frame: RuntimeWireFrame::Notification(Box::new(
+                        RuntimeWireNotification::DriverEvent(DriverEventEnvelope {
+                            binding_id: id("binding-presentation"),
+                            generation: RuntimeDriverGeneration(9),
+                            source_thread_id: id("source-presentation"),
+                            source_turn_id: Some(id("source-turn-presentation")),
+                            source_item_id: None,
+                            source_request_id: None,
+                            source_entry_index: Some(expected_source_entry_index),
+                            facts: vec![RuntimeJournalFact::Presentation(
+                                ImmutablePresentationEvent::new(durability, protected),
+                            )],
+                        }),
+                    )),
+                };
+                let wire_bytes = serde_json::to_vec(&envelope).expect("encode Runtime Wire frame");
+                let DecodedRuntimeWireFrame::Known(wire_decoded) =
+                    decode_frame(&wire_bytes).expect("decode Runtime Wire frame")
+                else {
+                    panic!("presentation driver event must be a known frame");
+                };
+                let relay = RelayMessage::RuntimeWireFrame {
+                    id: format!("runtime-wire-{index}"),
+                    payload: Box::new(RuntimeRelayFrame {
+                        stream_id: RuntimeRelayStreamId("runtime-stream".to_string()),
+                        sequence: index as u64 + 1,
+                        provenance: RuntimeRelayProvenance {
+                            service_definition_id: AgentServiceDefinitionId::new(
+                                "native-definition",
+                            )
+                            .unwrap(),
+                            service_instance_id: id("native-instance"),
+                            driver_generation: RuntimeDriverGeneration(9),
+                            host_incarnation_id: id("host-incarnation"),
+                            host_id: "host-1".to_string(),
+                            transport_id: AgentRuntimePlacementId::new("transport-1").unwrap(),
+                        },
+                        envelope: *wire_decoded,
+                    }),
+                };
+                let relay_bytes = serde_json::to_vec(&relay).expect("encode Relay message");
+                let RelayMessage::RuntimeWireFrame { payload, .. } =
+                    serde_json::from_slice(&relay_bytes).expect("decode Relay message")
+                else {
+                    panic!("expected relayed Runtime Wire frame");
+                };
+                let RuntimeWireFrame::Notification(notification) = payload.envelope.frame else {
+                    panic!("expected notification frame");
+                };
+                let RuntimeWireNotification::DriverEvent(event) = *notification else {
+                    panic!("expected driver event");
+                };
+                current_source_entry_indices.push(event.source_entry_index);
+                let RuntimeJournalFact::Presentation(presentation) = &event.facts[0] else {
+                    panic!("expected presentation fact");
+                };
+                current.push(NormalizedPresentationEvent {
+                    durability: match presentation.durability {
+                        PresentationDurability::Durable => StrictDurability::Durable,
+                        PresentationDurability::Ephemeral => StrictDurability::Ephemeral,
+                    },
+                    event: serde_json::to_value(&presentation.event)
+                        .expect("serialize relayed protected body"),
+                });
+            }
+            compare_ordered_presentation_events(&normalize(expected_records), &current)
+                .unwrap_or_else(|error| panic!("strict parity failed for {scenario}: {error}"));
+            assert_eq!(
+                expected_records
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|_| Some(expected_source_entry_index))
+                    .collect::<Vec<_>>(),
+                current_source_entry_indices,
+                "source entry coordinates drifted through Runtime Wire/Relay for {scenario}"
+            );
+        }
     }
 }

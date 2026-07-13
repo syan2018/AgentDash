@@ -17,6 +17,33 @@ use tokio_util::sync::CancellationToken;
 
 use crate::context::{NativeBindingContext, NativeToolCallContext};
 
+fn decode_completed_content(
+    output: &serde_json::Value,
+) -> Result<Vec<ContentPart>, AgentToolError> {
+    let Some(items) = output.get("content_items") else {
+        return Ok(Vec::new());
+    };
+    let items = serde_json::from_value::<
+        Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
+    >(items.clone())
+    .map_err(|error| {
+        AgentToolError::ExecutionFailed(format!(
+            "native tool callback returned invalid typed content_items: {error}"
+        ))
+    })?;
+    Ok(items
+        .into_iter()
+        .map(|item| match item {
+            agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText { text } => {
+                ContentPart::text(text)
+            }
+            agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputImage {
+                image_url,
+            } => ContentPart::image("image/*", image_url),
+        })
+        .collect())
+}
+
 pub(crate) struct NativeRuntimeTool {
     definition: DriverToolDefinition,
     binding_id: RuntimeBindingId,
@@ -82,28 +109,11 @@ impl AgentTool for NativeRuntimeTool {
             P::Dynamic { namespace } => agentdash_agent_types::ToolProtocolProjector::Dynamic {
                 namespace: namespace.clone(),
             },
-            P::Vfs { operation } => agentdash_agent_types::ToolProtocolProjector::Vfs {
-                operation: operation.clone(),
-            },
-            P::RuntimeAction { action_key } => {
-                agentdash_agent_types::ToolProtocolProjector::RuntimeAction {
-                    action_key: action_key.clone(),
-                }
-            }
-            P::WorkspaceModule { operation } => {
-                agentdash_agent_types::ToolProtocolProjector::WorkspaceModule {
-                    operation: operation.clone(),
-                }
-            }
-            P::Companion { operation } => agentdash_agent_types::ToolProtocolProjector::Companion {
-                operation: operation.clone(),
-            },
-            P::Task { operation } => agentdash_agent_types::ToolProtocolProjector::Task {
-                operation: operation.clone(),
-            },
-            P::Wait => agentdash_agent_types::ToolProtocolProjector::Wait,
-            P::LifecycleComplete => agentdash_agent_types::ToolProtocolProjector::LifecycleComplete,
         })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some(self.definition.parity_fixture_id.clone())
     }
 
     async fn execute(
@@ -176,11 +186,14 @@ impl AgentTool for NativeRuntimeTool {
         };
         let outcome = outcome.map_err(AgentToolError::ExecutionFailed)?;
         match outcome {
-            DriverToolOutcome::Completed { output, is_error } => Ok(AgentToolResult {
-                content: output.get("content_items").and_then(|items| serde_json::from_value::<Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>>(items.clone()).ok()).unwrap_or_default().into_iter().map(|item| match item { agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText { text } => ContentPart::text(text), agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputImage { image_url } => ContentPart::image("image/*", image_url) }).collect(),
-                is_error,
-                details: Some(output),
-            }),
+            DriverToolOutcome::Completed { output, is_error } => {
+                let content = decode_completed_content(&output)?;
+                Ok(AgentToolResult {
+                    content,
+                    is_error,
+                    details: Some(output),
+                })
+            }
             DriverToolOutcome::InteractionRequired { reason, .. } => {
                 Err(AgentToolError::ExecutionFailed(format!(
                     "tool interaction must be resolved before callback completion: {reason}"
@@ -209,6 +222,18 @@ mod tests {
         T::Err: std::fmt::Debug,
     {
         value.parse().expect("valid test id")
+    }
+
+    #[test]
+    fn malformed_native_callback_content_is_an_explicit_failure() {
+        let error = decode_completed_content(&serde_json::json!({
+            "content_items": [{"type":"inputText"}]
+        }))
+        .expect_err("missing typed text must not be silently dropped");
+        assert!(
+            error.to_string().contains("invalid typed content_items"),
+            "{error}"
+        );
     }
 
     struct Allow;
@@ -338,6 +363,8 @@ mod tests {
             allowed_channels: [ToolChannel::DirectCallback].into(),
             configuration_boundary: ConfigurationBoundary::Binding,
             protocol_projection: projection,
+            presentation_emitter: ToolPresentationEmitter::ToolBroker,
+            parity_fixture_id: format!("main_tool_{name}_lifecycle"),
         }
     }
 
@@ -382,12 +409,63 @@ mod tests {
         }
     }
 
+    struct TestTerminalPresentationProjector;
+
+    impl RuntimeApplicationPresentationProjector for TestTerminalPresentationProjector {
+        fn project_terminal(
+            &self,
+            context: RuntimeTerminalPresentationContext,
+        ) -> Result<Vec<RuntimePresentationInput>, RuntimeApplicationPresentationProjectionError>
+        {
+            let terminal_type = match context.terminal {
+                RuntimeTurnTerminal::Completed => "turn_completed",
+                RuntimeTurnTerminal::Interrupted => "turn_interrupted",
+                RuntimeTurnTerminal::Lost => "turn_lost",
+                RuntimeTurnTerminal::Refused
+                | RuntimeTurnTerminal::LimitReached
+                | RuntimeTurnTerminal::Failed => "turn_failed",
+            };
+            Ok(vec![RuntimePresentationInput {
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(context.presentation_thread_id.to_string()),
+                    source_turn_id: Some(context.presentation_turn_id.to_string()),
+                    source_item_id: None,
+                    source_request_id: Some(format!(
+                        "test-turn-terminal:{}:{terminal_type}",
+                        context.runtime_turn_id
+                    )),
+                    source_entry_index: None,
+                },
+                event: ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                            key: "turn_terminal".into(),
+                            value: serde_json::json!({
+                                "terminal_type": terminal_type,
+                                "message": context.message,
+                                "diagnostic": context.diagnostic,
+                                "started_at_ms": context.started_at_ms,
+                                "completed_at_ms": context.completed_at_ms,
+                            }),
+                        },
+                    ),
+                ),
+            }])
+        }
+    }
+
     #[tokio::test]
     async fn native_tool_uses_broker_owner_projection_for_patch_shell_and_replay() {
         let store = Arc::new(RuntimeStoreFixture::default());
-        let runtime = ManagedAgentRuntime::new(store.clone());
+        let runtime =
+            ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
         runtime
             .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
                 meta: OperationMeta {
                     operation_id: id("native-thread-start"),
                     idempotency_key: id("native-thread-key"),
@@ -398,26 +476,39 @@ mod tests {
                 },
                 command: RuntimeCommand::ThreadStart {
                     thread_id: id("native-thread"),
+                    presentation_thread_id: id("native-presentation-thread"),
+                    presentation_turn_id: None,
                     binding_id: id("native-binding"),
                     driver_generation: RuntimeDriverGeneration(7),
                     source_thread_id: id("native-source-thread"),
                     profile_digest: id("native-profile"),
                     bound_profile: Box::new(profile()),
                     input: Vec::new(),
-                    surface_digest: id("native-surface"),
+                    surface: Box::new(RuntimeSurfaceDescriptor {
+                        source_frame_id: "native-tool-frame-1".to_string(),
+                        surface_revision: SurfaceRevision(1),
+                        surface_digest: id("native-surface"),
+                        vfs_digest: "native-vfs".to_string(),
+                        context_recipe_revision: ContextRecipeRevision(1),
+                        context_digest: id("native-context"),
+                        settings_revision: ThreadSettingsRevision(0),
+                        tool_set_revision: ToolSetRevision(4),
+                        tool_set_digest: "native-tool-set-4".to_string(),
+                        hook_plan: BoundRuntimeHookPlan {
+                            revision: HookPlanRevision(1),
+                            digest: id("native-hooks"),
+                            entries: Vec::new(),
+                        },
+                        terminal_hook_effect_binding: None,
+                    }),
                     settings_revision: ThreadSettingsRevision(0),
-                    tool_set_revision: ToolSetRevision(4),
-                    hook_plan: BoundRuntimeHookPlan {
-                        revision: HookPlanRevision(1),
-                        digest: id("native-hooks"),
-                        entries: Vec::new(),
-                    },
                 },
             })
             .await
             .expect("start thread");
         runtime
             .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
                 meta: OperationMeta {
                     operation_id: id("native-turn-start"),
                     idempotency_key: id("native-turn-key"),
@@ -428,6 +519,7 @@ mod tests {
                 },
                 command: RuntimeCommand::TurnStart {
                     thread_id: id("native-thread"),
+                    presentation_turn_id: id("native-source-turn"),
                     input: Vec::new(),
                 },
             })
@@ -475,6 +567,7 @@ mod tests {
                 parameters_schema: serde_json::json!({}),
                 channels: vec![ToolChannel::DirectCallback],
                 protocol_projection: ToolProtocolProjection::FileChange,
+                parity_fixture_id: "main_tool_fs_apply_patch_lifecycle".into(),
             },
             binding.clone(),
             call.clone(),
@@ -501,6 +594,7 @@ mod tests {
                 parameters_schema: serde_json::json!({}),
                 channels: vec![ToolChannel::DirectCallback],
                 protocol_projection: ToolProtocolProjection::Command,
+                parity_fixture_id: "main_tool_shell_exec_lifecycle".into(),
             },
             binding,
             call,

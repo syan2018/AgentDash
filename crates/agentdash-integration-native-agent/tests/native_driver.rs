@@ -7,7 +7,8 @@ use agentdash_agent_types::{AgentMessage, ContentPart};
 use agentdash_integration_api::*;
 use agentdash_integration_native_agent::{
     NativeAgentServiceConfig, NativeBridgeResolveError, NativeBridgeResolver,
-    NativeCredentialScope, native_agent_contribution,
+    NativeCredentialScope, NativePresentationMetadata, ResolvedNativeBridge,
+    native_agent_contribution,
 };
 use async_trait::async_trait;
 use futures::stream;
@@ -109,8 +110,14 @@ impl NativeBridgeResolver for Resolver {
         &self,
         _instance: &ActivatedAgentServiceInstance,
         _host: &RuntimeDriverHostPorts,
-    ) -> Result<Arc<dyn LlmBridge>, NativeBridgeResolveError> {
-        Ok(Arc::new(EchoBridge))
+    ) -> Result<ResolvedNativeBridge, NativeBridgeResolveError> {
+        Ok(ResolvedNativeBridge {
+            bridge: Arc::new(EchoBridge),
+            presentation: NativePresentationMetadata {
+                model_context_window: 200_000,
+                reserve_tokens: 0,
+            },
+        })
     }
 }
 
@@ -282,32 +289,45 @@ fn fixture_surface() -> MaterializedDriverSurface {
             }],
         },
         workspace: DriverWorkspaceSurface {
+            digest: "sha256:workspace-empty".to_string(),
             capabilities: Vec::new(),
             roots: Vec::new(),
         },
     }
 }
 
-fn thread_start(input: Vec<RuntimeInput>) -> RuntimeCommand {
+fn thread_start(presentation_turn_id: &str, input: Vec<RuntimeInput>) -> RuntimeCommand {
     let profile = native_agent_contribution(Arc::new(Resolver))
         .definition
         .service_profile_upper_bound;
     RuntimeCommand::ThreadStart {
         thread_id: id("runtime-thread-1"),
+        presentation_thread_id: id("presentation-thread-1"),
+        presentation_turn_id: Some(id(presentation_turn_id)),
         binding_id: id("binding-1"),
         driver_generation: RuntimeDriverGeneration(4),
         source_thread_id: id("native-thread-binding-1"),
         profile_digest: id("native-profile"),
         bound_profile: Box::new(profile),
         input,
-        surface_digest: id("sha256:native-surface"),
+        surface: Box::new(RuntimeSurfaceDescriptor {
+            source_frame_id: "native-fixture-frame-7".to_string(),
+            surface_revision: SurfaceRevision(7),
+            surface_digest: id("sha256:native-surface"),
+            vfs_digest: "sha256:workspace-empty".to_string(),
+            context_recipe_revision: ContextRecipeRevision(1),
+            context_digest: id("sha256:context-0"),
+            settings_revision: ThreadSettingsRevision(1),
+            tool_set_revision: ToolSetRevision(3),
+            tool_set_digest: "sha256:tools-3".to_string(),
+            hook_plan: BoundRuntimeHookPlan {
+                revision: HookPlanRevision(1),
+                digest: id("sha256:native-hook-plan"),
+                entries: Vec::new(),
+            },
+            terminal_hook_effect_binding: None,
+        }),
         settings_revision: ThreadSettingsRevision(1),
-        tool_set_revision: ToolSetRevision(3),
-        hook_plan: BoundRuntimeHookPlan {
-            revision: HookPlanRevision(1),
-            digest: id("sha256:native-hook-plan"),
-            entries: Vec::new(),
-        },
     }
 }
 
@@ -388,13 +408,17 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-turn-1"),
+                presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
                 runtime_turn_id: Some(id("turn-request-turn-1")),
-                command: thread_start(vec![RuntimeInput::Text {
-                    text: "hello".to_string(),
-                }]),
+                command: thread_start(
+                    "native-turn-request-turn-1",
+                    vec![RuntimeInput::Text {
+                        text: "hello".to_string(),
+                    }],
+                ),
             },
             sink.clone(),
         )
@@ -402,25 +426,85 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
         .expect("native turn");
 
     let events = sink.0.lock().await;
+    let internal = events
+        .iter()
+        .flat_map(|event| event.facts.iter())
+        .filter_map(|fact| match fact {
+            RuntimeJournalFact::Internal(event) => Some(event),
+            RuntimeJournalFact::Presentation(_) => None,
+        })
+        .collect::<Vec<_>>();
     assert!(
-        events
+        internal
             .iter()
-            .any(|event| matches!(event.event, RuntimeEvent::TurnStarted { .. }))
+            .any(|event| matches!(event, RuntimeEvent::TurnStarted { .. }))
     );
     assert!(
-        events
+        internal
             .iter()
-            .any(|event| matches!(event.event, RuntimeEvent::ConversationDelta { .. }))
+            .all(|event| !matches!(event, RuntimeEvent::ConversationDelta { .. }))
     );
-    assert!(events.iter().any(|event| matches!(
-        event.event,
+    assert!(internal.iter().any(|event| matches!(
+        event,
         RuntimeEvent::TurnTerminal {
             terminal: RuntimeTurnTerminal::Completed,
             ..
         }
     )));
+    assert!(
+        events
+            .iter()
+            .flat_map(|event| event.facts.iter())
+            .any(|fact| { matches!(fact, RuntimeJournalFact::Presentation(_)) })
+    );
+    assert!(
+        events
+            .iter()
+            .flat_map(|event| event.facts.iter())
+            .any(|fact| {
+                matches!(
+                    fact,
+                    RuntimeJournalFact::Presentation(ImmutablePresentationEvent {
+                        durability: PresentationDurability::Ephemeral,
+                        event: agentdash_agent_protocol::BackboneEvent::AgentMessageDelta(_),
+                    })
+                )
+            })
+    );
+    let presentation_thread_ids = events
+        .iter()
+        .flat_map(|event| event.facts.iter())
+        .filter_map(|fact| match fact {
+            RuntimeJournalFact::Presentation(presentation) => {
+                let value = serde_json::to_value(&presentation.event)
+                    .expect("serialize native protected presentation body");
+                value
+                    .pointer("/payload/threadId")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            }
+            RuntimeJournalFact::Internal(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(!presentation_thread_ids.is_empty());
+    assert!(
+        presentation_thread_ids
+            .iter()
+            .all(|thread_id| thread_id == "presentation-thread-1")
+    );
+    assert!(events.iter().all(|event| {
+        let first_presentation = event
+            .facts
+            .iter()
+            .position(|fact| matches!(fact, RuntimeJournalFact::Presentation(_)));
+        first_presentation.is_none_or(|index| {
+            event.facts[..index]
+                .iter()
+                .all(|fact| matches!(fact, RuntimeJournalFact::Internal(_)))
+        })
+    }));
     let mut validator = RuntimeTraceValidator::default();
-    for (index, event) in events.iter().enumerate() {
+    for (index, event) in internal.into_iter().enumerate() {
         validator
             .observe(&RuntimeEventEnvelope {
                 thread_id: id("runtime-thread-1"),
@@ -428,7 +512,7 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
                 sequence: Some(EventSequence(index as u64 + 1)),
                 transient: None,
                 revision: RuntimeRevision(index as u64 + 1),
-                event: event.event.clone(),
+                event: event.clone(),
             })
             .expect("native event trace remains conformant");
     }
@@ -457,6 +541,7 @@ async fn native_compaction_activation_is_exact_and_idempotently_inspectable() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-compact-1"),
+                presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
@@ -508,6 +593,7 @@ async fn native_fork_imports_the_requested_checkpoint_and_preserves_its_digest()
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-fork-1"),
+                presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
@@ -571,6 +657,7 @@ async fn native_resume_reuses_the_source_thread_and_materialized_context_digest(
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-resume-1"),
+                presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-resume"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: source_thread_id.clone(),
@@ -604,6 +691,7 @@ async fn native_hot_tool_replace_returns_and_replays_exact_apply_receipt() {
     let (driver, binding) = driver_fixture().await;
     let command = DriverCommandEnvelope {
         request_id: id("request-tools-4"),
+        presentation_thread_id: id("presentation-thread-1"),
         binding_id: id("binding-1"),
         generation: RuntimeDriverGeneration(4),
         source_thread_id: binding.source_thread_id,
@@ -643,13 +731,17 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: failed_request_id,
+                presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id.clone(),
                 runtime_turn_id: Some(id("turn-request-turn-fail")),
-                command: thread_start(vec![RuntimeInput::Text {
-                    text: "hello".to_string(),
-                }]),
+                command: thread_start(
+                    "native-turn-request-turn-fail",
+                    vec![RuntimeInput::Text {
+                        text: "hello".to_string(),
+                    }],
+                ),
             },
             Arc::new(FailingSink),
         )
@@ -660,6 +752,7 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-interrupt-stale"),
+                presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
@@ -695,14 +788,18 @@ async fn native_descriptor_does_not_claim_prompt_flattened_input_modalities() {
         .dispatch(
             DriverCommandEnvelope {
                 request_id: id("request-structured-input"),
+                presentation_thread_id: id("presentation-thread-1"),
                 binding_id: id("binding-1"),
                 generation: RuntimeDriverGeneration(4),
                 source_thread_id: binding.source_thread_id,
                 runtime_turn_id: Some(id("turn-request-structured-input")),
-                command: thread_start(vec![RuntimeInput::Structured {
-                    schema: "example".to_string(),
-                    value: json!({"value": 1}),
-                }]),
+                command: thread_start(
+                    "native-turn-request-structured-input",
+                    vec![RuntimeInput::Structured {
+                        schema: "example".to_string(),
+                        value: json!({"value": 1}),
+                    }],
+                ),
             },
             sink.clone(),
         )

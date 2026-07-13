@@ -14,3 +14,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+agentdash-agent-protocol = { workspace = true }
+agentdash-agent-runtime-test-support = { workspace = true }
+agentdash-relay = { workspace = true }

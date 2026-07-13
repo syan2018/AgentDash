@@ -1,0 +1,64 @@
+{
+  "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+  "source": "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs",
+  "source_sha256": "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05",
+  "oracle_source_path": "crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs",
+  "oracle_source_sha256": "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05",
+  "oracle_source_blob": "ec0cfdf485a231090ba538c546c9c681d6ece1fb",
+  "oracle_test_source": "crates/agentdash-executor/src/connectors/pi_agent/connector_tests.rs",
+  "oracle_test_source_sha256": "43eb493aaf08cf749ba857ce97f6fc4c55367203eb7f9c0e9792613032f5e94d",
+  "oracle_test_source_blob": "2e0edfdf25aba4dda36d1d6100fa09fa4475ba99",
+  "capture_harness_path": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+  "capture_test_function": "pinned_main_native_mapper_matches_all_committed_scenarios",
+  "capture_build_path": "crates/agentdash-agent-runtime-test-support/build.rs",
+  "capture_method": "The pinned-main-capture feature compiles the fixed Main stream mapper, executes the seven AgentEvent scenario inputs, applies only the declared Codex 0.144.1 nullable overlay and deterministic capture clock, and compares every protected event body to this committed fixture.",
+  "compatibility_transforms": [
+    "ErrorNotification.codex_error_info Option wrapping",
+    "TurnError.additional_details Option wrapping",
+    "CodexErrorInfo.http_status_code Option wrapping",
+    "AgentMessage phase and memoryCitation canonical null",
+    "DynamicToolCall namespace/contentItems/durationMs/success canonical null",
+    "deterministic capture clock for presentation timestamps"
+  ],
+  "fixed_event_timestamp_ms": 1783684800000,
+  "source_entry_index": 0,
+  "scenarios": {
+    "assistant_message_delta_terminal": [
+      { "durability": "ephemeral", "event": { "type": "agent_message_delta", "payload": { "delta": "answer", "itemId": "runtime-turn:0:msg", "threadId": "native-thread", "turnId": "runtime-turn" } } },
+      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "agentMessage", "id": "runtime-turn:0:msg", "memoryCitation": null, "phase": null, "text": "answer" }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } }
+    ],
+    "reasoning_text_summary_terminal": [
+      { "durability": "ephemeral", "event": { "type": "reasoning_text_delta", "payload": { "contentIndex": 0, "delta": "thought", "itemId": "runtime-turn:0:reason", "threadId": "native-thread", "turnId": "runtime-turn" } } },
+      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "reasoning", "content": ["thought"], "id": "runtime-turn:0:reason", "summary": [] }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } }
+    ],
+    "item_started_updated_completed": [
+      { "durability": "durable", "event": { "type": "item_started", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": null, "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "inProgress", "success": null, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "startedAtMs": 1783684800000 } } },
+      { "durability": "ephemeral", "event": { "type": "item_updated", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": [{ "type": "inputText", "text": "partial" }], "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "inProgress", "success": null, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "updatedAtMs": 1783684800000 } } },
+      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "dynamicToolCall", "arguments": { "path": "main://README.md" }, "contentItems": [{ "type": "inputText", "text": "complete" }], "durationMs": null, "id": "turn_001:tool_001", "namespace": null, "status": "completed", "success": true, "tool": "read" }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } }
+    ],
+    "usage_context": [
+      { "durability": "ephemeral", "event": { "type": "agent_message_delta", "payload": { "delta": "answer", "itemId": "runtime-turn:0:msg", "threadId": "native-thread", "turnId": "runtime-turn" } } },
+      { "durability": "durable", "event": { "type": "item_completed", "payload": { "item": { "type": "agentMessage", "id": "runtime-turn:0:msg", "memoryCitation": null, "phase": null, "text": "answer" }, "threadId": "native-thread", "turnId": "runtime-turn", "completedAtMs": 1783684800000 } } },
+      { "durability": "durable", "event": { "type": "token_usage_updated", "payload": { "threadId": "native-thread", "turnId": "runtime-turn", "tokenUsage": { "total": { "totalTokens": 19, "inputTokens": 10, "cachedInputTokens": 5, "outputTokens": 4, "reasoningOutputTokens": 0 }, "last": { "totalTokens": 19, "inputTokens": 10, "cachedInputTokens": 5, "outputTokens": 4, "reasoningOutputTokens": 0 }, "modelContextWindow": 200000, "context": { "providerContextTokens": 15, "pendingEstimateTokens": 0, "currentContextTokens": 15, "cumulativeTotalTokens": 19, "modelContextWindow": 200000, "effectiveContextWindow": 200000, "reserveTokens": 0, "source": "provider" } } } } }
+    ],
+    "provider_phases_error": [
+      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "connecting", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "connected_waiting_first_delta", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "streaming", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "retry_scheduled", "attempt": 1, "max_attempts": 2, "will_retry": true, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "retrying", "attempt": 1, "max_attempts": 2, "will_retry": true, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "failed", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+      { "durability": "ephemeral", "event": { "type": "platform", "payload": { "kind": "provider_attempt_status", "data": { "turn_id": "runtime-turn", "phase": "succeeded", "attempt": 1, "max_attempts": 2, "will_retry": false, "delay_ms": 250, "reason_code": "rate_limit", "message": "provider phase", "provider": "provider", "model": "model" } } } },
+      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "runtime_terminal_diagnostic", "data": { "kind": "provider", "message": "provider failed", "retryable": false } } } },
+      { "durability": "durable", "event": { "type": "error", "payload": { "error": { "additionalDetails": "kind=Provider", "codexErrorInfo": "other", "message": "provider failed" }, "threadId": "native-thread", "turnId": "runtime-turn", "willRetry": false } } }
+    ],
+    "thread_status_title_compaction": [
+      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "session_meta_update", "data": { "key": "context_compaction_failed", "value": { "lifecycle_item_id": "compaction-1", "status": "failed", "error": "compaction failed", "metadata": null } } } } },
+      { "durability": "durable", "event": { "type": "error", "payload": { "error": { "additionalDetails": "context_compaction_item_id=compaction-1", "codexErrorInfo": null, "message": "compaction failed" }, "threadId": "native-thread", "turnId": "runtime-turn", "willRetry": false } } }
+    ],
+    "interactions_all_connectors": [
+      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "session_meta_update", "data": { "key": "approval_requested", "value": { "tool_call_id": "approval-1", "tool_name": "shell_exec", "reason": "permission required", "args": { "command": "echo ok" }, "details": { "scope": "workspace" }, "entry_index": 0 } } } } },
+      { "durability": "durable", "event": { "type": "platform", "payload": { "kind": "session_meta_update", "data": { "key": "approval_resolved", "value": { "tool_call_id": "approval-1", "tool_name": "shell_exec", "approved": true, "reason": "approved", "args": { "command": "echo ok" }, "entry_index": 0 } } } } }
+    ]
+  }
+}

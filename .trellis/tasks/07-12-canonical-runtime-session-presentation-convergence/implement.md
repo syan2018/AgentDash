@@ -240,10 +240,10 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] 无phantom tool card源事件。
-- [ ] reasoning refresh后仍有独立durable terminal。
-- [ ] Native全场景与main fixturedeep equal。
-- [ ] Remote serialize/relay/deserialize前后protected bodydeep equal。
+- [x] 无phantom tool card源事件。
+- [x] reasoning refresh后仍有独立durable terminal。
+- [x] Native全场景与main fixturedeep equal。
+- [x] Remote serialize/relay/deserialize前后protected bodydeep equal。
 
 ### Commit
 

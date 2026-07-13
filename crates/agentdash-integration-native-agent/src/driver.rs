@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
     str::FromStr,
     sync::Arc,
@@ -20,7 +20,12 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     context::{NativeBindingContext, NativeToolCallContext},
     hook::{NativeHookDelegate, supported_hook},
-    mapping::{context_blocks_to_messages, inputs_to_message, message_text},
+    mapping::{context_blocks_to_messages, inputs_to_message, message_content},
+    presentation::{
+        ChunkEmitState, NativeSessionItemIdentity, StreamMapperEventState,
+        StreamMapperRuntimeContext, ToolCallEmitState,
+        convert_event_to_envelopes_with_runtime_context, run_error_terminal_diagnostic,
+    },
     tool::NativeRuntimeTool,
 };
 
@@ -28,6 +33,9 @@ const PROTOCOL_REVISION: u32 = 1;
 const FACTORY_KEY: &str = "agentdash.native_agent";
 const DEFINITION_ID: &str = "agentdash.native_agent";
 const CONFORMANCE_SUITE: &str = "agentdash-native-runtime-conformance-v1";
+/// Main Pi production stream-usage contract. This is presentation metadata, not the automatic
+/// compaction policy (whose default reserve is owned by the compaction layer).
+pub const NATIVE_STREAM_USAGE_RESERVE_TOKENS: u64 = 0;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum NativeBridgeResolveError {
@@ -91,7 +99,21 @@ pub trait NativeBridgeResolver: Send + Sync {
         &self,
         instance: &ActivatedAgentServiceInstance,
         host: &RuntimeDriverHostPorts,
-    ) -> Result<Arc<dyn LlmBridge>, NativeBridgeResolveError>;
+    ) -> Result<ResolvedNativeBridge, NativeBridgeResolveError>;
+}
+
+/// Provider-bound metadata required to render Native Agent events faithfully.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativePresentationMetadata {
+    pub model_context_window: u64,
+    pub reserve_tokens: u64,
+}
+
+/// One atomic provider/model resolution. Both fields describe the same selected model and
+/// compaction policy, so presentation never has to infer metadata after bridge construction.
+pub struct ResolvedNativeBridge {
+    pub bridge: Arc<dyn LlmBridge>,
+    pub presentation: NativePresentationMetadata,
 }
 
 pub struct NativeAgentDriverFactory {
@@ -147,7 +169,7 @@ impl AgentRuntimeDriverFactory for NativeAgentDriverFactory {
         instance: ActivatedAgentServiceInstance,
         host: RuntimeDriverHostPorts,
     ) -> Result<Arc<dyn AgentRuntimeDriver>, DriverFactoryError> {
-        let bridge =
+        let resolved =
             self.resolver
                 .resolve(&instance, &host)
                 .await
@@ -159,7 +181,7 @@ impl AgentRuntimeDriverFactory for NativeAgentDriverFactory {
                         DriverFactoryError::Unavailable { reason, retryable }
                     }
                 })?;
-        Ok(Arc::new(NativeAgentDriver::new(instance, bridge, host)))
+        Ok(Arc::new(NativeAgentDriver::new(instance, resolved, host)))
     }
 }
 
@@ -327,6 +349,7 @@ pub struct NativeAgentDriver {
     generation: RuntimeDriverGeneration,
     profile: RuntimeProfile,
     bridge: Arc<dyn LlmBridge>,
+    presentation_metadata: NativePresentationMetadata,
     host: RuntimeDriverHostPorts,
     bindings: RwLock<BTreeMap<RuntimeBindingId, Arc<NativeBinding>>>,
     dispatch_receipts: Mutex<BTreeMap<DriverRequestId, DriverDispatchReceipt>>,
@@ -348,6 +371,7 @@ struct NativeBinding {
 
 struct NativeThread {
     agent: Mutex<Agent>,
+    presentation_context: StreamMapperRuntimeContext,
     active_turn: Arc<RwLock<Option<DriverTurnId>>>,
     active_runtime_turn: Arc<RwLock<Option<RuntimeTurnId>>>,
     context_revision: RwLock<ContextRevision>,
@@ -357,14 +381,15 @@ struct NativeThread {
 impl NativeAgentDriver {
     fn new(
         instance: ActivatedAgentServiceInstance,
-        bridge: Arc<dyn LlmBridge>,
+        resolved: ResolvedNativeBridge,
         host: RuntimeDriverHostPorts,
     ) -> Self {
         Self {
             service_instance_id: instance.instance_id,
             generation: instance.generation,
             profile: native_runtime_profile(),
-            bridge,
+            bridge: resolved.bridge,
+            presentation_metadata: resolved.presentation,
             host,
             bindings: RwLock::new(BTreeMap::new()),
             dispatch_receipts: Mutex::new(BTreeMap::new()),
@@ -432,10 +457,25 @@ impl NativeAgentDriver {
             self.host.tools.clone(),
         ));
         agent
-            .replace_messages(context_blocks_to_messages(&surface.context.blocks))
+            .replace_messages(context_blocks_to_messages(&surface.context.blocks)?)
             .await;
+        let presentation_identity = NativeSessionItemIdentity::new();
+        for block in &surface.context.blocks {
+            if let ContextBlock::RuntimeItem { content } = block {
+                presentation_identity.observe_tool_result_item_id(content.item().id());
+            }
+        }
         let thread = Arc::new(NativeThread {
             agent: Mutex::new(agent),
+            presentation_context: StreamMapperRuntimeContext {
+                model_context_window: Some(self.presentation_metadata.model_context_window),
+                reserve_tokens: self.presentation_metadata.reserve_tokens,
+                session_identity: presentation_identity,
+                fixed_event_timestamp_ms: None,
+                tool_protocol_projectors: Arc::new(std::sync::RwLock::new(
+                    tool_protocol_projectors(&surface.tools),
+                )),
+            },
             active_turn,
             active_runtime_turn,
             context_revision: RwLock::new(ContextRevision(0)),
@@ -470,34 +510,40 @@ impl NativeAgentDriver {
             let (mut events, handle) = {
                 let mut agent = thread.agent.lock().await;
                 agent
-                    .prompt(inputs_to_message(input))
+                    .prompt(inputs_to_message(input)?)
                     .map_err(|error| DriverError::Rejected {
                         reason: error.to_string(),
                     })?
             };
-            let mut mapper = NativeEventMapper::new(runtime_turn_id, source_turn_id);
+            let mut mapper = NativeEventMapper::new(
+                envelope.presentation_thread_id.to_string(),
+                runtime_turn_id,
+                source_turn_id,
+                thread.presentation_context.clone(),
+            );
             while let Some(event) = events.next().await {
                 let terminal = matches!(event, AgentEvent::AgentEnd { .. });
                 for mapped in mapper.map(event)? {
-                    if let RuntimeEvent::ItemTerminal {
-                        turn_id,
-                        item_id,
-                        terminal: RuntimeItemTerminal::Completed { final_content },
-                    } = &mapped.event
-                        && let Some(source_item_id) = &mapped.source_item_id
-                    {
-                        binding
-                            .projected_items
-                            .write()
-                            .await
-                            .push(DriverProjectedItem {
-                                source_turn_id: mapped.source_turn_id.clone().unwrap_or_else(
-                                    || parsed_id(turn_id.to_string()).expect("mapped turn id"),
-                                ),
-                                source_item_id: source_item_id.clone(),
-                                content: final_content.clone(),
-                            });
-                        let _ = item_id;
+                    for fact in &mapped.facts {
+                        if let RuntimeJournalFact::Internal(RuntimeEvent::ItemTerminal {
+                            turn_id,
+                            terminal: RuntimeItemTerminal::Completed { final_content },
+                            ..
+                        }) = fact
+                            && let Some(source_item_id) = &mapped.source_item_id
+                        {
+                            binding
+                                .projected_items
+                                .write()
+                                .await
+                                .push(DriverProjectedItem {
+                                    source_turn_id: mapped.source_turn_id.clone().unwrap_or_else(
+                                        || parsed_id(turn_id.to_string()).expect("mapped turn id"),
+                                    ),
+                                    source_item_id: source_item_id.clone(),
+                                    content: final_content.clone(),
+                                });
+                        }
                     }
                     emit_driver_event(envelope, &binding.source_thread_id, mapped, sink.clone())
                         .await?;
@@ -709,7 +755,7 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                     .agent
                     .lock()
                     .await
-                    .steer(inputs_to_message(input))
+                    .steer(inputs_to_message(input)?)
                     .await;
             }
             RuntimeCommand::TurnInterrupt {
@@ -776,7 +822,7 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                         .await
                         .replace_messages(context_blocks_to_messages(
                             &activation.materialized.blocks,
-                        ))
+                        )?)
                         .await;
                     *thread.context_revision.write().await = activation.context_revision;
                     let activated_digest = activation.materialized.digest.to_string();
@@ -840,6 +886,12 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                     },
                     self.host.tools.clone(),
                 ));
+                *thread
+                    .presentation_context
+                    .tool_protocol_projectors
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                    tool_protocol_projectors(&updated_surface.tools);
                 applied_tool_set = Some(DriverToolSetApplyReceipt {
                     revision: expected_tool_set_revision,
                     digest: tool_set_digest,
@@ -900,7 +952,7 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                     .agent
                     .lock()
                     .await
-                    .replace_messages(context_blocks_to_messages(&activation.materialized.blocks))
+                    .replace_messages(context_blocks_to_messages(&activation.materialized.blocks)?)
                     .await;
                 *thread.context_revision.write().await = activation.context_revision;
                 binding.applied_candidates.write().await.insert(
@@ -1074,6 +1126,16 @@ fn binding_receipt(binding: &NativeBinding, surface: &MaterializedDriverSurface)
     }
 }
 
+fn tool_protocol_projectors(
+    surface: &DriverToolSurface,
+) -> HashMap<String, ToolProtocolProjection> {
+    surface
+        .tools
+        .iter()
+        .map(|tool| (tool.name.clone(), tool.protocol_projection.clone()))
+        .collect()
+}
+
 fn command_inputs(command: &RuntimeCommand) -> Option<&[RuntimeInput]> {
     match command {
         RuntimeCommand::ThreadStart { input, .. } | RuntimeCommand::TurnStart { input, .. } => {
@@ -1192,33 +1254,109 @@ fn surface_system_prompt(surface: &MaterializedDriverSurface) -> String {
 }
 
 struct NativeEventMapper {
+    session_id: String,
     runtime_turn_id: RuntimeTurnId,
     source_turn_id: DriverTurnId,
     next_item: u64,
     current_item: Option<(RuntimeItemId, DriverItemId)>,
     turn_started: bool,
     turn_terminal: bool,
+    presentation_entry_index: u32,
+    chunk_emit_states: HashMap<String, ChunkEmitState>,
+    tool_call_states: HashMap<String, ToolCallEmitState>,
+    presentation_context: StreamMapperRuntimeContext,
 }
 
 impl NativeEventMapper {
-    fn new(runtime_turn_id: RuntimeTurnId, source_turn_id: DriverTurnId) -> Self {
+    fn new(
+        session_id: String,
+        runtime_turn_id: RuntimeTurnId,
+        source_turn_id: DriverTurnId,
+        presentation_context: StreamMapperRuntimeContext,
+    ) -> Self {
         Self {
+            session_id,
             runtime_turn_id,
             source_turn_id,
             next_item: 0,
             current_item: None,
             turn_started: false,
             turn_terminal: false,
+            presentation_entry_index: 0,
+            chunk_emit_states: HashMap::new(),
+            tool_call_states: HashMap::new(),
+            presentation_context,
         }
     }
 
     fn map(&mut self, event: AgentEvent) -> Result<Vec<MappedEvent>, DriverError> {
+        let presentation_source_item_id = match &event {
+            AgentEvent::MessageUpdate {
+                event:
+                    AssistantStreamEvent::ToolCallStart { tool_call_id, .. }
+                    | AssistantStreamEvent::ToolCallDelta { tool_call_id, .. },
+                ..
+            }
+            | AgentEvent::ToolExecutionStart { tool_call_id, .. }
+            | AgentEvent::ToolExecutionUpdate { tool_call_id, .. }
+            | AgentEvent::ToolExecutionPendingApproval { tool_call_id, .. }
+            | AgentEvent::ToolExecutionApprovalResolved { tool_call_id, .. }
+            | AgentEvent::ToolExecutionEnd { tool_call_id, .. } => {
+                Some(parsed_id(tool_call_id.clone())?)
+            }
+            AgentEvent::AgentStart
+            | AgentEvent::AgentEnd { .. }
+            | AgentEvent::TurnStart
+            | AgentEvent::TurnEnd { .. }
+            | AgentEvent::MessageStart { .. }
+            | AgentEvent::MessageUpdate { .. }
+            | AgentEvent::MessageEnd { .. }
+            | AgentEvent::ContextCompactionStarted { .. }
+            | AgentEvent::ContextCompactionNoop { .. }
+            | AgentEvent::ContextCompacted { .. }
+            | AgentEvent::ContextCompactionFailed { .. }
+            | AgentEvent::ProviderAttemptStatus { .. }
+            | AgentEvent::RunError { .. } => None,
+        };
+        let presentation_source_request_id = match &event {
+            AgentEvent::ToolExecutionPendingApproval { tool_call_id, .. }
+            | AgentEvent::ToolExecutionApprovalResolved { tool_call_id, .. } => {
+                Some(tool_call_id.clone())
+            }
+            _ => None,
+        };
+        let source = agentdash_agent_protocol::SourceInfo {
+            connector_id: FACTORY_KEY.to_string(),
+            connector_type: "pi_agent".to_string(),
+            executor_id: None,
+        };
+        let presentation = convert_event_to_envelopes_with_runtime_context(
+            &event,
+            &self.session_id,
+            &source,
+            self.runtime_turn_id.as_str(),
+            StreamMapperEventState {
+                entry_index: &mut self.presentation_entry_index,
+                chunk_emit_states: &mut self.chunk_emit_states,
+                tool_call_states: &mut self.tool_call_states,
+            },
+            self.presentation_context.clone(),
+        )
+        .map_err(|error| DriverError::ProtocolViolation {
+            reason: error.to_string(),
+            critical: true,
+        })?;
         let mut mapped = Vec::new();
         match event {
             AgentEvent::AgentStart | AgentEvent::TurnStart if !self.turn_started => {
                 self.turn_started = true;
                 mapped.push(self.event(RuntimeEvent::TurnStarted {
                     turn_id: self.runtime_turn_id.clone(),
+                    presentation_turn_id:
+                        agentdash_agent_runtime_contract::PresentationTurnId::new(
+                            self.source_turn_id.to_string(),
+                        )
+                        .expect("validated Native source turn identity"),
                 }));
             }
             AgentEvent::AgentStart | AgentEvent::TurnStart => {}
@@ -1241,20 +1379,7 @@ impl NativeEventMapper {
                     },
                 ));
             }
-            AgentEvent::MessageUpdate { event, .. } => {
-                if let Some(item) = self.current_item.clone()
-                    && let Some(delta) = stream_delta(event)
-                {
-                    mapped.push(self.item_event(
-                        &item,
-                        RuntimeEvent::ConversationDelta {
-                            turn_id: self.runtime_turn_id.clone(),
-                            item_id: item.0.clone(),
-                            delta: delta,
-                        },
-                    ));
-                }
-            }
+            AgentEvent::MessageUpdate { .. } => {}
             AgentEvent::MessageEnd { message } => {
                 if let Some(item) = self.current_item.take() {
                     if let agentdash_agent::AgentMessage::Assistant { usage:Some(usage), .. }=&message
@@ -1267,10 +1392,7 @@ impl NativeEventMapper {
                             turn_id: self.runtime_turn_id.clone(),
                             item_id: item.0.clone(),
                             terminal: RuntimeItemTerminal::Completed {
-                                final_content: RuntimeItemContent::agent_message(
-                                    item.0.as_str(),
-                                    message_text(&message),
-                                ),
+                                final_content: message_content(&message, item.0.as_str())?,
                             },
                         },
                     ));
@@ -1285,6 +1407,7 @@ impl NativeEventMapper {
                     turn_id: self.runtime_turn_id.clone(),
                     terminal: RuntimeTurnTerminal::Completed,
                     message: None,
+                    diagnostic: None,
                 }));
             }
             AgentEvent::RunError { error } if !self.turn_terminal => {
@@ -1300,18 +1423,14 @@ impl NativeEventMapper {
                     turn_id: self.runtime_turn_id.clone(),
                     terminal: RuntimeTurnTerminal::Failed,
                     message: Some(error.to_string()),
+                    diagnostic: Some(run_error_terminal_diagnostic(&error)),
                 }));
             }
             AgentEvent::RunError { .. } | AgentEvent::AgentEnd { .. } => {}
             AgentEvent::ContextCompactionStarted { .. }
             | AgentEvent::ContextCompactionNoop { .. }
             | AgentEvent::ContextCompacted { .. }
-            | AgentEvent::ContextCompactionFailed { .. } => {
-                return Err(DriverError::ProtocolViolation {
-                    reason: "Agent Core attempted runtime-owned compaction lifecycle".to_string(),
-                    critical: true,
-                });
-            }
+            | AgentEvent::ContextCompactionFailed { .. } => {}
             AgentEvent::ToolExecutionPendingApproval {
                 tool_call_id,
                 reason,
@@ -1362,13 +1481,56 @@ impl NativeEventMapper {
             AgentEvent::ProviderAttemptStatus { status } if matches!(status.phase, agentdash_agent::ProviderAttemptPhase::RetryScheduled | agentdash_agent::ProviderAttemptPhase::Retrying | agentdash_agent::ProviderAttemptPhase::Failed) => mapped.push(self.event(RuntimeEvent::ProviderStatus { turn_id:self.runtime_turn_id.clone(), status:agentdash_agent_runtime_contract::RuntimeProviderStatus { phase:match status.phase { agentdash_agent::ProviderAttemptPhase::RetryScheduled=>agentdash_agent_runtime_contract::RuntimeProviderPhase::RetryScheduled, agentdash_agent::ProviderAttemptPhase::Retrying=>agentdash_agent_runtime_contract::RuntimeProviderPhase::Retrying, agentdash_agent::ProviderAttemptPhase::Failed=>agentdash_agent_runtime_contract::RuntimeProviderPhase::Failed, _=>unreachable!("guarded provider phase") }, attempt:status.attempt, max_attempts:status.max_attempts, will_retry:status.will_retry, delay_ms:status.delay_ms, reason_code:status.reason_code, message:status.message, provider:status.provider, model:status.model } })),
             AgentEvent::ProviderAttemptStatus { .. } => {}
             AgentEvent::ToolExecutionUpdate { tool_call_id, partial_result, .. } => {
-                let runtime_item_id:RuntimeItemId=parsed_id(tool_call_id.clone())?;
-                let source_item_id:DriverItemId=parsed_id(tool_call_id)?;
-                let items=partial_result.get("content_items").cloned().map(serde_json::from_value).transpose().map_err(|error|DriverError::ProtocolViolation { reason:format!("native tool update is not typed content_items: {error}"), critical:true })?.unwrap_or_default();
-                mapped.push(self.item_event(&(runtime_item_id.clone(),source_item_id),RuntimeEvent::ConversationDelta { turn_id:self.runtime_turn_id.clone(), item_id:runtime_item_id, delta:agentdash_agent_runtime_contract::RuntimeConversationDelta::ToolProgress { content_items:items } }));
+                let _: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem> = partial_result
+                    .get("content_items")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|error| DriverError::ProtocolViolation {
+                        reason: format!("native tool update is not typed content_items: {error}"),
+                        critical: true,
+                    })?
+                    .unwrap_or_default();
+                let _ = tool_call_id;
             }
         }
-        Ok(mapped)
+        let source_turn_id = mapped
+            .iter()
+            .find_map(|mapped| mapped.source_turn_id.clone())
+            .or_else(|| Some(self.source_turn_id.clone()));
+        let source_item_id = mapped
+            .iter()
+            .rev()
+            .find_map(|mapped| mapped.source_item_id.clone())
+            .or(presentation_source_item_id);
+        let facts = mapped
+            .into_iter()
+            .flat_map(|mapped| mapped.facts)
+            .collect::<Vec<_>>();
+        let mut output = Vec::with_capacity(usize::from(!facts.is_empty()) + presentation.len());
+        if !facts.is_empty() {
+            output.push(MappedEvent {
+                source_turn_id: source_turn_id.clone(),
+                source_item_id: source_item_id.clone(),
+                source_request_id: presentation_source_request_id.clone(),
+                source_entry_index: None,
+                facts,
+            });
+        }
+        output.extend(presentation.into_iter().map(|envelope| {
+            let source_entry_index = envelope.trace.entry_index;
+            let durability = presentation_durability(&envelope.event);
+            MappedEvent {
+                source_turn_id: source_turn_id.clone(),
+                source_item_id: source_item_id.clone(),
+                source_request_id: presentation_source_request_id.clone(),
+                source_entry_index,
+                facts: vec![RuntimeJournalFact::Presentation(
+                    ImmutablePresentationEvent::new(durability, envelope.event),
+                )],
+            }
+        }));
+        Ok(output)
     }
 
     fn next_item(&mut self) -> Result<(RuntimeItemId, DriverItemId), DriverError> {
@@ -1381,7 +1543,9 @@ impl NativeEventMapper {
         MappedEvent {
             source_turn_id: Some(self.source_turn_id.clone()),
             source_item_id: None,
-            event,
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(event)],
         }
     }
 
@@ -1389,15 +1553,40 @@ impl NativeEventMapper {
         MappedEvent {
             source_turn_id: Some(self.source_turn_id.clone()),
             source_item_id: Some(item.1.clone()),
-            event,
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(event)],
         }
+    }
+}
+
+fn presentation_durability(
+    event: &agentdash_agent_protocol::BackboneEvent,
+) -> PresentationDurability {
+    use agentdash_agent_protocol::{BackboneEvent, PlatformEvent};
+    if matches!(
+        event,
+        BackboneEvent::AgentMessageDelta(_)
+            | BackboneEvent::ReasoningTextDelta(_)
+            | BackboneEvent::ReasoningSummaryDelta(_)
+            | BackboneEvent::CommandOutputDelta(_)
+            | BackboneEvent::FileChangeDelta(_)
+            | BackboneEvent::McpToolCallProgress(_)
+            | BackboneEvent::ItemUpdated(_)
+            | BackboneEvent::Platform(PlatformEvent::ProviderAttemptStatus(_))
+    ) {
+        PresentationDurability::Ephemeral
+    } else {
+        PresentationDurability::Durable
     }
 }
 
 struct MappedEvent {
     source_turn_id: Option<DriverTurnId>,
     source_item_id: Option<DriverItemId>,
-    event: RuntimeEvent,
+    source_request_id: Option<String>,
+    source_entry_index: Option<u32>,
+    facts: Vec<RuntimeJournalFact>,
 }
 
 async fn emit_driver_event(
@@ -1413,7 +1602,9 @@ async fn emit_driver_event(
         source_thread_id: source_thread_id.clone(),
         source_turn_id: mapped.source_turn_id,
         source_item_id: mapped.source_item_id,
-        event: mapped.event,
+        source_request_id: mapped.source_request_id,
+        source_entry_index: mapped.source_entry_index,
+        facts: mapped.facts,
     })
     .await
 }
@@ -1423,26 +1614,10 @@ impl From<RuntimeEvent> for MappedEvent {
         Self {
             source_turn_id: None,
             source_item_id: None,
-            event,
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(event)],
         }
-    }
-}
-
-fn stream_delta(
-    event: AssistantStreamEvent,
-) -> Option<agentdash_agent_runtime_contract::RuntimeConversationDelta> {
-    match event {
-        AssistantStreamEvent::TextDelta { text, .. } => Some(
-            agentdash_agent_runtime_contract::RuntimeConversationDelta::AgentMessage {
-                delta: text,
-            },
-        ),
-        AssistantStreamEvent::ThinkingDelta { text, .. } => Some(
-            agentdash_agent_runtime_contract::RuntimeConversationDelta::ReasoningText {
-                delta: text,
-            },
-        ),
-        _ => None,
     }
 }
 
@@ -1538,20 +1713,75 @@ fn context_error(error: DriverContextError) -> DriverError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_agent_runtime_test_support::session_parity::{
+        NormalizedPresentationEvent, PresentationDurability as StrictDurability,
+        compare_ordered_presentation_events,
+    };
+
+    fn presentation_context(
+        session_identity: Arc<NativeSessionItemIdentity>,
+    ) -> StreamMapperRuntimeContext {
+        presentation_context_with_reserve(session_identity, NATIVE_STREAM_USAGE_RESERVE_TOKENS)
+    }
+
+    fn presentation_context_with_reserve(
+        session_identity: Arc<NativeSessionItemIdentity>,
+        reserve_tokens: u64,
+    ) -> StreamMapperRuntimeContext {
+        StreamMapperRuntimeContext {
+            model_context_window: Some(200_000),
+            reserve_tokens,
+            session_identity,
+            fixed_event_timestamp_ms: Some(1_783_684_800_000),
+            tool_protocol_projectors: Arc::new(std::sync::RwLock::new(HashMap::from([
+                (
+                    "read".to_string(),
+                    ToolProtocolProjection::Dynamic { namespace: None },
+                ),
+                ("shell_exec".to_string(), ToolProtocolProjection::Command),
+                (
+                    "fs_apply_patch".to_string(),
+                    ToolProtocolProjection::FileChange,
+                ),
+            ]))),
+        }
+    }
+
+    fn internal_events(mapped: &[MappedEvent]) -> Vec<&RuntimeEvent> {
+        mapped
+            .iter()
+            .flat_map(|mapped| mapped.facts.iter())
+            .filter_map(|fact| match fact {
+                RuntimeJournalFact::Internal(event) => Some(event),
+                RuntimeJournalFact::Presentation(_) => None,
+            })
+            .collect()
+    }
+
+    fn presentation_events(mapped: &[MappedEvent]) -> Vec<&ImmutablePresentationEvent> {
+        mapped
+            .iter()
+            .flat_map(|mapped| mapped.facts.iter())
+            .filter_map(RuntimeJournalFact::as_presentation)
+            .collect()
+    }
 
     #[test]
     fn native_provider_iterations_map_to_one_canonical_turn_lifecycle() {
         let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
             parsed_id("runtime-turn").expect("runtime turn"),
             parsed_id("source-turn").expect("source turn"),
+            presentation_context(NativeSessionItemIdentity::new()),
         );
         let started = mapper.map(AgentEvent::AgentStart).expect("agent start");
         assert!(matches!(
-            started.as_slice(),
-            [MappedEvent {
-                event: RuntimeEvent::TurnStarted { .. },
-                ..
-            }]
+            internal_events(&started).as_slice(),
+            [RuntimeEvent::TurnStarted {
+                turn_id,
+                presentation_turn_id,
+            }] if turn_id.as_str() == "runtime-turn"
+                && presentation_turn_id.as_str() == "source-turn"
         ));
         assert!(
             mapper
@@ -1580,12 +1810,9 @@ mod tests {
             })
             .expect("agent terminal");
         assert!(matches!(
-            terminal.as_slice(),
-            [MappedEvent {
-                event: RuntimeEvent::TurnTerminal {
-                    terminal: RuntimeTurnTerminal::Completed,
-                    ..
-                },
+            internal_events(&terminal).as_slice(),
+            [RuntimeEvent::TurnTerminal {
+                terminal: RuntimeTurnTerminal::Completed,
                 ..
             }]
         ));
@@ -1602,8 +1829,10 @@ mod tests {
     #[test]
     fn native_provider_and_tool_updates_preserve_typed_runtime_events() {
         let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
             parsed_id("runtime-turn").unwrap(),
             parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
         );
         let provider = mapper
             .map(AgentEvent::ProviderAttemptStatus {
@@ -1621,12 +1850,796 @@ mod tests {
             })
             .unwrap();
         assert!(
-            matches!(&provider[0].event,RuntimeEvent::ProviderStatus { status, .. } if status.phase==agentdash_agent_runtime_contract::RuntimeProviderPhase::RetryScheduled && status.will_retry)
+            matches!(internal_events(&provider).as_slice(), [RuntimeEvent::ProviderStatus { status, .. }] if status.phase==agentdash_agent_runtime_contract::RuntimeProviderPhase::RetryScheduled && status.will_retry)
         );
-        let update=mapper.map(AgentEvent::ToolExecutionUpdate { tool_call_id:"tool-item".into(), tool_name:"read".into(), args:serde_json::json!({}), partial_result:serde_json::json!({"content_items":[{"type":"inputText","text":"progress"}]}) }).unwrap();
+        let update=mapper.map(AgentEvent::ToolExecutionUpdate { tool_call_id:"tool-item".into(), tool_name:"read".into(), args:serde_json::json!({"path":"main://README.md"}), partial_result:serde_json::json!({"content":[{"type":"text","text":"progress"}],"is_error":false,"details":null}) }).unwrap();
+        assert!(internal_events(&update).is_empty());
+        assert!(!presentation_events(&update).is_empty());
+    }
+
+    #[test]
+    fn native_message_start_has_no_phantom_presentation_and_terminals_are_independent() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+        let partial = agentdash_agent::AgentMessage::assistant("");
+        let started = mapper
+            .map(AgentEvent::MessageStart {
+                message: partial.clone(),
+            })
+            .expect("message start");
         assert!(
-            matches!(&update[0].event,RuntimeEvent::ConversationDelta { delta:agentdash_agent_runtime_contract::RuntimeConversationDelta::ToolProgress { content_items }, .. } if content_items.len()==1)
+            started
+                .iter()
+                .flat_map(|mapped| mapped.facts.iter())
+                .all(|fact| !matches!(fact, RuntimeJournalFact::Presentation(_)))
         );
+
+        let text = mapper
+            .map(AgentEvent::MessageUpdate {
+                message: partial.clone(),
+                event: AssistantStreamEvent::TextDelta {
+                    content_index: 0,
+                    text: "answer".to_string(),
+                },
+            })
+            .expect("text delta");
+        let reasoning = mapper
+            .map(AgentEvent::MessageUpdate {
+                message: partial,
+                event: AssistantStreamEvent::ThinkingDelta {
+                    content_index: 1,
+                    id: Some("reasoning-1".to_string()),
+                    text: "thought".to_string(),
+                },
+            })
+            .expect("reasoning delta");
+        let completed = mapper
+            .map(AgentEvent::MessageEnd {
+                message: agentdash_agent::AgentMessage::Assistant {
+                    content: vec![
+                        agentdash_agent::ContentPart::text("answer"),
+                        agentdash_agent::ContentPart::reasoning("thought", None, None),
+                    ],
+                    tool_calls: Vec::new(),
+                    stop_reason: None,
+                    error_message: None,
+                    usage: Some(agentdash_agent::TokenUsage {
+                        input: 10,
+                        cache_read_input: 2,
+                        cache_creation_input: 3,
+                        output: 4,
+                    }),
+                    timestamp: Some(1),
+                },
+            })
+            .expect("message terminal");
+
+        let presentation = text
+            .iter()
+            .chain(reasoning.iter())
+            .chain(completed.iter())
+            .flat_map(|mapped| mapped.facts.iter())
+            .filter_map(RuntimeJournalFact::as_presentation)
+            .collect::<Vec<_>>();
+        assert_eq!(presentation.len(), 5);
+        assert!(matches!(
+            &presentation[0].event,
+            agentdash_agent_protocol::BackboneEvent::AgentMessageDelta(_)
+        ));
+        assert!(matches!(
+            &presentation[1].event,
+            agentdash_agent_protocol::BackboneEvent::ReasoningTextDelta(_)
+        ));
+        assert!(matches!(
+            &presentation[2].event,
+            agentdash_agent_protocol::BackboneEvent::ItemCompleted(notification)
+                if matches!(&notification.item, agentdash_agent_protocol::AgentDashThreadItem::Codex(agentdash_agent_protocol::CodexThreadItem::AgentMessage { .. }))
+        ));
+        assert!(matches!(
+            &presentation[3].event,
+            agentdash_agent_protocol::BackboneEvent::ItemCompleted(notification)
+                if matches!(&notification.item, agentdash_agent_protocol::AgentDashThreadItem::Codex(agentdash_agent_protocol::CodexThreadItem::Reasoning { .. }))
+        ));
+        let agentdash_agent_protocol::BackboneEvent::TokenUsageUpdated(usage) =
+            &presentation[4].event
+        else {
+            panic!("usage must remain the final presentation event");
+        };
+        assert_eq!(usage.token_usage.model_context_window, Some(200_000));
+        assert_eq!(
+            usage.token_usage.context.model_context_window,
+            Some(200_000)
+        );
+        assert_eq!(
+            usage.token_usage.context.effective_context_window,
+            Some(200_000)
+        );
+        assert_eq!(
+            usage.token_usage.context.reserve_tokens,
+            i64::try_from(NATIVE_STREAM_USAGE_RESERVE_TOKENS).unwrap()
+        );
+        assert_eq!(
+            presentation[0].durability,
+            PresentationDurability::Ephemeral
+        );
+        assert_eq!(
+            presentation[1].durability,
+            PresentationDurability::Ephemeral
+        );
+        assert!(
+            presentation[2..]
+                .iter()
+                .all(|event| event.durability == PresentationDurability::Durable)
+        );
+    }
+
+    #[test]
+    fn native_usage_preserves_an_explicit_nonzero_stream_reserve() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context_with_reserve(NativeSessionItemIdentity::new(), 8_192),
+        );
+        mapper
+            .map(AgentEvent::MessageStart {
+                message: agentdash_agent::AgentMessage::assistant(""),
+            })
+            .unwrap();
+        let completed = mapper
+            .map(AgentEvent::MessageEnd {
+                message: agentdash_agent::AgentMessage::Assistant {
+                    content: vec![agentdash_agent::ContentPart::text("answer")],
+                    tool_calls: Vec::new(),
+                    stop_reason: None,
+                    error_message: None,
+                    usage: Some(agentdash_agent::TokenUsage {
+                        input: 10,
+                        cache_read_input: 2,
+                        cache_creation_input: 3,
+                        output: 4,
+                    }),
+                    timestamp: Some(1),
+                },
+            })
+            .unwrap();
+        let usage = presentation_events(&completed)
+            .into_iter()
+            .find_map(|event| match &event.event {
+                agentdash_agent_protocol::BackboneEvent::TokenUsageUpdated(usage) => Some(usage),
+                _ => None,
+            })
+            .expect("usage presentation");
+        assert_eq!(usage.token_usage.context.reserve_tokens, 8_192);
+    }
+
+    #[test]
+    fn native_vendor_tool_stream_is_the_single_complete_presentation_emitter() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+        let arguments = serde_json::json!({"path":"main://README.md"});
+        let started = mapper
+            .map(AgentEvent::ToolExecutionStart {
+                tool_call_id: "tool-1".to_string(),
+                tool_name: "read".to_string(),
+                args: arguments.clone(),
+            })
+            .expect("tool start");
+        let updated = mapper
+            .map(AgentEvent::ToolExecutionUpdate {
+                tool_call_id: "tool-1".to_string(),
+                tool_name: "read".to_string(),
+                args: arguments.clone(),
+                partial_result: serde_json::json!({
+                    "content": [{"type":"text","text":"partial"}],
+                    "content_items": [{"type":"inputText","text":"partial"}],
+                    "is_error": false,
+                    "details": null
+                }),
+            })
+            .expect("tool update");
+        let completed = mapper
+            .map(AgentEvent::ToolExecutionEnd {
+                tool_call_id: "tool-1".to_string(),
+                tool_name: "read".to_string(),
+                result: serde_json::json!({
+                    "content": [{"type":"text","text":"complete"}],
+                    "is_error": false,
+                    "details": null
+                }),
+                is_error: false,
+            })
+            .expect("tool terminal");
+
+        let started_presentation = presentation_events(&started);
+        let updated_presentation = presentation_events(&updated);
+        let completed_presentation = presentation_events(&completed);
+        assert_eq!(started_presentation.len(), 1);
+        assert_eq!(updated_presentation.len(), 1);
+        assert_eq!(completed_presentation.len(), 1);
+        let item_id = match &started_presentation[0].event {
+            agentdash_agent_protocol::BackboneEvent::ItemStarted(notification) => {
+                notification.item.id().to_string()
+            }
+            other => panic!("unexpected tool start: {other:?}"),
+        };
+        assert!(matches!(
+            &updated_presentation[0].event,
+            agentdash_agent_protocol::BackboneEvent::ItemUpdated(notification)
+                if notification.item.id() == item_id
+        ));
+        assert!(matches!(
+            &completed_presentation[0].event,
+            agentdash_agent_protocol::BackboneEvent::ItemCompleted(notification)
+                if notification.item.id() == item_id
+        ));
+        assert_eq!(
+            updated_presentation[0].durability,
+            PresentationDurability::Ephemeral
+        );
+        assert_eq!(
+            completed_presentation[0].durability,
+            PresentationDurability::Durable
+        );
+    }
+
+    #[test]
+    fn native_tool_family_comes_only_from_the_owner_projector() {
+        let context = presentation_context(NativeSessionItemIdentity::new());
+        context.tool_protocol_projectors.write().unwrap().insert(
+            "renamed_command".to_string(),
+            ToolProtocolProjection::Command,
+        );
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            context,
+        );
+
+        let started = mapper
+            .map(AgentEvent::ToolExecutionStart {
+                tool_call_id: "command-1".to_string(),
+                tool_name: "renamed_command".to_string(),
+                args: serde_json::json!({"command":"echo owner"}),
+            })
+            .expect("owner command projector");
+        let body = serde_json::to_value(&presentation_events(&started)[0].event)
+            .expect("presentation JSON");
+        assert_eq!(body["payload"]["item"]["type"], "shellExec");
+        assert_eq!(body["payload"]["item"]["id"], "turn_001:cmd_001");
+    }
+
+    #[test]
+    fn native_missing_projector_is_a_typed_protocol_failure() {
+        let context = presentation_context(NativeSessionItemIdentity::new());
+        context.tool_protocol_projectors.write().unwrap().clear();
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            context,
+        );
+
+        let error = match mapper.map(AgentEvent::ToolExecutionStart {
+            tool_call_id: "unknown-1".to_string(),
+            tool_name: "unknown_tool".to_string(),
+            args: serde_json::json!({}),
+        }) {
+            Err(error) => error,
+            Ok(_) => panic!("missing projector must fail"),
+        };
+        assert!(matches!(
+            error,
+            DriverError::ProtocolViolation { critical: true, ref reason }
+                if reason.contains("no owner-declared protocol projector")
+        ));
+    }
+
+    #[test]
+    fn native_dynamic_and_file_change_families_do_not_fallback() {
+        let context = presentation_context(NativeSessionItemIdentity::new());
+        {
+            let mut projectors = context.tool_protocol_projectors.write().unwrap();
+            projectors.insert(
+                "explicit_dynamic".to_string(),
+                ToolProtocolProjection::Dynamic {
+                    namespace: Some("owner.namespace".to_string()),
+                },
+            );
+            projectors.insert(
+                "renamed_patch".to_string(),
+                ToolProtocolProjection::FileChange,
+            );
+        }
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            context,
+        );
+
+        let dynamic = mapper
+            .map(AgentEvent::ToolExecutionStart {
+                tool_call_id: "dynamic-1".to_string(),
+                tool_name: "explicit_dynamic".to_string(),
+                args: serde_json::json!({"value":1}),
+            })
+            .expect("explicit dynamic projector");
+        let body = serde_json::to_value(&presentation_events(&dynamic)[0].event)
+            .expect("presentation JSON");
+        assert_eq!(body["payload"]["item"]["type"], "dynamicToolCall");
+        assert_eq!(body["payload"]["item"]["namespace"], "owner.namespace");
+
+        let error = match mapper.map(AgentEvent::ToolExecutionStart {
+            tool_call_id: "patch-1".to_string(),
+            tool_name: "renamed_patch".to_string(),
+            args: serde_json::json!({"patch":"not an apply-patch document"}),
+        }) {
+            Err(error) => error,
+            Ok(_) => panic!("invalid FileChange must not become DynamicToolCall"),
+        };
+        assert!(matches!(
+            error,
+            DriverError::ProtocolViolation { critical: true, ref reason }
+                if reason.contains("file_change")
+        ));
+    }
+
+    #[test]
+    fn native_tool_presentation_identity_is_session_scoped_across_turns() {
+        let identity = NativeSessionItemIdentity::new();
+        let mut first_turn = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn-1").unwrap(),
+            parsed_id("source-turn-1").unwrap(),
+            presentation_context(identity.clone()),
+        );
+        let mut second_turn = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn-2").unwrap(),
+            parsed_id("source-turn-2").unwrap(),
+            presentation_context(identity),
+        );
+
+        let start = |mapper: &mut NativeEventMapper, tool_call_id: &str| {
+            mapper
+                .map(AgentEvent::ToolExecutionStart {
+                    tool_call_id: tool_call_id.to_string(),
+                    tool_name: "read".to_string(),
+                    args: serde_json::json!({"path":"main://README.md"}),
+                })
+                .expect("tool start")
+        };
+        let first = start(&mut first_turn, "tool-1");
+        let second = start(&mut second_turn, "tool-2");
+        let item_id = |mapped: &[MappedEvent]| match &presentation_events(mapped)[0].event {
+            agentdash_agent_protocol::BackboneEvent::ItemStarted(notification) => {
+                notification.item.id().to_string()
+            }
+            other => panic!("unexpected tool start: {other:?}"),
+        };
+
+        assert_eq!(item_id(&first), "turn_001:tool_001");
+        assert_eq!(item_id(&second), "turn_002:tool_002");
+    }
+
+    #[test]
+    fn native_provider_error_and_approval_keep_main_presentation_families() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+        let phases = [
+            agentdash_agent::ProviderAttemptPhase::Connecting,
+            agentdash_agent::ProviderAttemptPhase::ConnectedWaitingFirstDelta,
+            agentdash_agent::ProviderAttemptPhase::Streaming,
+            agentdash_agent::ProviderAttemptPhase::RetryScheduled,
+            agentdash_agent::ProviderAttemptPhase::Retrying,
+            agentdash_agent::ProviderAttemptPhase::Failed,
+            agentdash_agent::ProviderAttemptPhase::Succeeded,
+        ];
+        for phase in phases {
+            let mapped = mapper
+                .map(AgentEvent::ProviderAttemptStatus {
+                    status: agentdash_agent::ProviderAttemptStatus {
+                        phase,
+                        attempt: 1,
+                        max_attempts: 2,
+                        will_retry: matches!(
+                            phase,
+                            agentdash_agent::ProviderAttemptPhase::RetryScheduled
+                                | agentdash_agent::ProviderAttemptPhase::Retrying
+                        ),
+                        delay_ms: None,
+                        reason_code: None,
+                        message: None,
+                        provider: Some("provider".to_string()),
+                        model: Some("model".to_string()),
+                    },
+                })
+                .expect("provider phase");
+            let events = presentation_events(&mapped);
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].durability, PresentationDurability::Ephemeral);
+            assert!(matches!(
+                &events[0].event,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::ProviderAttemptStatus(_)
+                )
+            ));
+        }
+
+        let requested = mapper
+            .map(AgentEvent::ToolExecutionPendingApproval {
+                tool_call_id: "approval-1".to_string(),
+                tool_name: "shell_exec".to_string(),
+                args: serde_json::json!({"command":"echo ok"}),
+                reason: "permission required".to_string(),
+                details: Some(serde_json::json!({"scope":"workspace"})),
+            })
+            .expect("approval requested");
+        let resolved = mapper
+            .map(AgentEvent::ToolExecutionApprovalResolved {
+                tool_call_id: "approval-1".to_string(),
+                tool_name: "shell_exec".to_string(),
+                args: serde_json::json!({"command":"echo ok"}),
+                approved: true,
+                reason: Some("approved".to_string()),
+            })
+            .expect("approval resolved");
+        for mapped in [&requested, &resolved] {
+            let events = presentation_events(mapped);
+            assert_eq!(events.len(), 1);
+            assert!(matches!(
+                &events[0].event,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { .. }
+                )
+            ));
+        }
+
+        let failure = mapper
+            .map(AgentEvent::RunError {
+                error: agentdash_agent::AgentRunError::new(
+                    agentdash_agent::AgentRunErrorKind::Provider,
+                    "provider failed",
+                ),
+            })
+            .expect("run error");
+        let events = presentation_events(&failure);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0].event,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::RuntimeTerminalDiagnostic(_)
+            )
+        ));
+        assert!(matches!(
+            &events[1].event,
+            agentdash_agent_protocol::BackboneEvent::Error(_)
+        ));
+        assert!(
+            events
+                .iter()
+                .all(|event| event.durability == PresentationDurability::Durable)
+        );
+    }
+
+    #[test]
+    fn native_w5_scenarios_match_main_oracle_golden_strictly() {
+        fn snapshot(events: Vec<AgentEvent>) -> serde_json::Value {
+            let mut mapper = NativeEventMapper::new(
+                "native-thread".to_string(),
+                parsed_id("runtime-turn").unwrap(),
+                parsed_id("source-turn").unwrap(),
+                presentation_context(NativeSessionItemIdentity::new()),
+            );
+            let records = events
+                .into_iter()
+                .flat_map(|event| mapper.map(event).unwrap())
+                .flat_map(|mapped| {
+                    let source_entry_index = mapped.source_entry_index;
+                    mapped.facts.into_iter().filter_map(move |fact| match fact {
+                        RuntimeJournalFact::Presentation(event) => Some(serde_json::json!({
+                            "source_entry_index": source_entry_index,
+                            "durability": match event.durability {
+                                PresentationDurability::Durable => "durable",
+                                PresentationDurability::Ephemeral => "ephemeral",
+                            },
+                            "event": event.event,
+                        })),
+                        RuntimeJournalFact::Internal(_) => None,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::Value::Array(records)
+        }
+
+        let partial = agentdash_agent::AgentMessage::assistant("");
+        let usage_message = agentdash_agent::AgentMessage::Assistant {
+            content: vec![agentdash_agent::ContentPart::text("answer")],
+            tool_calls: Vec::new(),
+            stop_reason: None,
+            error_message: None,
+            usage: Some(agentdash_agent::TokenUsage {
+                input: 10,
+                cache_read_input: 2,
+                cache_creation_input: 3,
+                output: 4,
+            }),
+            timestamp: Some(1),
+        };
+        let mut scenarios = serde_json::Map::new();
+        scenarios.insert(
+            "assistant_message_delta_terminal".into(),
+            snapshot(vec![
+                AgentEvent::MessageStart {
+                    message: partial.clone(),
+                },
+                AgentEvent::MessageUpdate {
+                    message: partial.clone(),
+                    event: AssistantStreamEvent::TextDelta {
+                        content_index: 0,
+                        text: "answer".into(),
+                    },
+                },
+                AgentEvent::MessageEnd {
+                    message: agentdash_agent::AgentMessage::assistant("answer"),
+                },
+            ]),
+        );
+        scenarios.insert(
+            "reasoning_text_summary_terminal".into(),
+            snapshot(vec![
+                AgentEvent::MessageStart {
+                    message: partial.clone(),
+                },
+                AgentEvent::MessageUpdate {
+                    message: partial.clone(),
+                    event: AssistantStreamEvent::ThinkingDelta {
+                        content_index: 0,
+                        id: Some("reasoning-1".into()),
+                        text: "thought".into(),
+                    },
+                },
+                AgentEvent::MessageEnd {
+                    message: agentdash_agent::AgentMessage::Assistant {
+                        content: vec![agentdash_agent::ContentPart::reasoning(
+                            "thought", None, None,
+                        )],
+                        tool_calls: Vec::new(),
+                        stop_reason: None,
+                        error_message: None,
+                        usage: None,
+                        timestamp: Some(1),
+                    },
+                },
+            ]),
+        );
+        let args = serde_json::json!({"path":"main://README.md"});
+        scenarios.insert(
+            "item_started_updated_completed".into(),
+            snapshot(vec![
+                AgentEvent::ToolExecutionStart {
+                    tool_call_id: "tool-1".into(),
+                    tool_name: "read".into(),
+                    args: args.clone(),
+                },
+                AgentEvent::ToolExecutionUpdate {
+                    tool_call_id: "tool-1".into(),
+                    tool_name: "read".into(),
+                    args: args.clone(),
+                    partial_result: serde_json::json!({
+                        "content": [{"type":"text","text":"partial"}],
+                        "content_items": [{"type":"inputText","text":"partial"}],
+                        "is_error": false,
+                        "details": null
+                    }),
+                },
+                AgentEvent::ToolExecutionEnd {
+                    tool_call_id: "tool-1".into(),
+                    tool_name: "read".into(),
+                    result: serde_json::json!({
+                        "content": [{"type":"text","text":"complete"}],
+                        "is_error": false,
+                        "details": null
+                    }),
+                    is_error: false,
+                },
+            ]),
+        );
+        scenarios.insert(
+            "usage_context".into(),
+            snapshot(vec![
+                AgentEvent::MessageStart {
+                    message: partial.clone(),
+                },
+                AgentEvent::MessageEnd {
+                    message: usage_message,
+                },
+            ]),
+        );
+        scenarios.insert(
+            "provider_phases_error".into(),
+            snapshot(
+                [
+                    agentdash_agent::ProviderAttemptPhase::Connecting,
+                    agentdash_agent::ProviderAttemptPhase::ConnectedWaitingFirstDelta,
+                    agentdash_agent::ProviderAttemptPhase::Streaming,
+                    agentdash_agent::ProviderAttemptPhase::RetryScheduled,
+                    agentdash_agent::ProviderAttemptPhase::Retrying,
+                    agentdash_agent::ProviderAttemptPhase::Failed,
+                    agentdash_agent::ProviderAttemptPhase::Succeeded,
+                ]
+                .into_iter()
+                .map(|phase| AgentEvent::ProviderAttemptStatus {
+                    status: agentdash_agent::ProviderAttemptStatus {
+                        phase,
+                        attempt: 1,
+                        max_attempts: 2,
+                        will_retry: matches!(
+                            phase,
+                            agentdash_agent::ProviderAttemptPhase::RetryScheduled
+                                | agentdash_agent::ProviderAttemptPhase::Retrying
+                        ),
+                        delay_ms: Some(250),
+                        reason_code: Some("rate_limit".into()),
+                        message: Some("provider phase".into()),
+                        provider: Some("provider".into()),
+                        model: Some("model".into()),
+                    },
+                })
+                .chain([AgentEvent::RunError {
+                    error: agentdash_agent::AgentRunError::new(
+                        agentdash_agent::AgentRunErrorKind::Provider,
+                        "provider failed",
+                    ),
+                }])
+                .collect(),
+            ),
+        );
+        scenarios.insert(
+            "thread_status_title_compaction".into(),
+            snapshot(vec![AgentEvent::ContextCompactionFailed {
+                item_id: "compaction-1".into(),
+                error: "compaction failed".into(),
+                metadata: None,
+            }]),
+        );
+        scenarios.insert(
+            "interactions_all_connectors".into(),
+            snapshot(vec![
+                AgentEvent::ToolExecutionPendingApproval {
+                    tool_call_id: "approval-1".into(),
+                    tool_name: "shell_exec".into(),
+                    args: serde_json::json!({"command":"echo ok"}),
+                    reason: "permission required".into(),
+                    details: Some(serde_json::json!({"scope":"workspace"})),
+                },
+                AgentEvent::ToolExecutionApprovalResolved {
+                    tool_call_id: "approval-1".into(),
+                    tool_name: "shell_exec".into(),
+                    args: serde_json::json!({"command":"echo ok"}),
+                    approved: true,
+                    reason: Some("approved".into()),
+                },
+            ]),
+        );
+        fn normalize(records: &serde_json::Value) -> Vec<NormalizedPresentationEvent> {
+            records
+                .as_array()
+                .expect("scenario records")
+                .iter()
+                .map(|record| NormalizedPresentationEvent {
+                    durability: match record["durability"].as_str().unwrap() {
+                        "durable" => StrictDurability::Durable,
+                        "ephemeral" => StrictDurability::Ephemeral,
+                        other => panic!("unknown durability {other}"),
+                    },
+                    event: record["event"].clone(),
+                })
+                .collect()
+        }
+
+        fn source_entry_indices(records: &serde_json::Value) -> Vec<Option<u32>> {
+            records
+                .as_array()
+                .expect("scenario records")
+                .iter()
+                .map(|record| {
+                    record["source_entry_index"]
+                        .as_u64()
+                        .map(|value| value as u32)
+                })
+                .collect()
+        }
+
+        let golden: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/main-oracle-presentation.json"))
+                .expect("parse fixed Main oracle golden");
+        assert_eq!(
+            golden["oracle_commit"],
+            "957fa9d60ea3d67efa1bb278fe5b376cf0c34598"
+        );
+        assert_eq!(
+            golden["source_sha256"],
+            "d2e1cea154e40e8f66aa8e5ec36ef0cd57ebee78332f157a22c639a4db4bbb05"
+        );
+        assert_eq!(
+            golden["oracle_test_source_sha256"],
+            "43eb493aaf08cf749ba857ce97f6fc4c55367203eb7f9c0e9792613032f5e94d"
+        );
+        let expected = golden["scenarios"].as_object().unwrap();
+        let expected_source_entry_index = golden["source_entry_index"].as_u64().unwrap() as u32;
+        assert_eq!(expected.len(), 7);
+        assert_eq!(scenarios.len(), 7);
+        for (scenario, main_records) in expected {
+            let current_records = scenarios
+                .get(scenario)
+                .unwrap_or_else(|| panic!("missing current scenario {scenario}"));
+            compare_ordered_presentation_events(
+                &normalize(main_records),
+                &normalize(current_records),
+            )
+            .unwrap_or_else(|error| panic!("strict parity failed for {scenario}: {error:?}"));
+            assert_eq!(
+                vec![Some(expected_source_entry_index); main_records.as_array().unwrap().len()],
+                source_entry_indices(current_records),
+                "source entry coordinates drifted for {scenario}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_presentation_carriers_keep_each_main_source_entry() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+        let first = mapper
+            .map(AgentEvent::MessageEnd {
+                message: agentdash_agent::AgentMessage::assistant("first"),
+            })
+            .unwrap();
+        let second = mapper
+            .map(AgentEvent::MessageEnd {
+                message: agentdash_agent::AgentMessage::assistant("second"),
+            })
+            .unwrap();
+        let presentation_indices = |mapped: &[MappedEvent]| {
+            mapped
+                .iter()
+                .filter(|mapped| {
+                    matches!(
+                        mapped.facts.as_slice(),
+                        [RuntimeJournalFact::Presentation(_)]
+                    )
+                })
+                .map(|mapped| mapped.source_entry_index)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(presentation_indices(&first), vec![Some(0), Some(0)]);
+        assert_eq!(presentation_indices(&second), vec![Some(1), Some(1)]);
+        assert!(first.iter().chain(&second).all(|mapped| {
+            mapped.source_entry_index.is_none()
+                || matches!(
+                    mapped.facts.as_slice(),
+                    [RuntimeJournalFact::Presentation(_)]
+                )
+        }));
     }
 
     #[test]

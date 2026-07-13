@@ -386,10 +386,10 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] backend route/service ledger与main一致或仅多出不改变main行为的internal Runtime endpoint。
-- [ ] frontend AgentRun outer file/behavior ledger清零。
-- [ ] fork/mailbox/context/approval/redirect/status/system side-effect E2E通过。
-- [ ] 不在前端伪造command set、mailbox waiting/action或stale guard。
+- [x] backend route/service ledger与main一致或仅多出不改变main行为的internal Runtime endpoint。
+- [x] frontend AgentRun outer file/behavior ledger清零。
+- [x] fork/mailbox/context/approval/redirect/status/system side-effect E2E通过。
+- [x] 不在前端伪造command set、mailbox waiting/action或stale guard。
 
 ### Commit
 

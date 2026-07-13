@@ -163,17 +163,14 @@ pub struct AgentRunRuntimeOptionsRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[serde(deny_unknown_fields)]
 pub struct CreateProjectAgentRunRequest {
     /// canonical 用户输入，与 steer / lifecycle message 同形。
     pub input: Vec<codex::UserInput>,
     pub client_command_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub model_selection: Option<AgentRunModelSelectionRequest>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub runtime_options: Option<AgentRunRuntimeOptionsRequest>,
+    #[ts(type = "JsonValue")]
+    pub executor_config: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub subject_ref: Option<SubjectRefDto>,

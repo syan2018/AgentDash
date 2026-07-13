@@ -1,4 +1,7 @@
-import type { ControlPlaneProjectionChanged } from "../../../generated/backbone-protocol";
+import type {
+  BackboneEvent,
+  ControlPlaneProjectionChanged,
+} from "../../../generated/backbone-protocol";
 import {
   workspaceModulePresentationFromPlatformEventData,
   workspaceModulePresentedTabTarget,
@@ -14,7 +17,6 @@ export interface AgentRunWorkspacePanelTarget {
   uri?: string;
   options?: { refreshContent?: boolean };
 }
-
 export interface AgentRunWorkspacePanelOpenPlan {
   target: AgentRunWorkspacePanelTarget;
   afterWorkspaceRefresh: boolean;
@@ -93,6 +95,14 @@ function projectionRefreshReason(change: ControlPlaneProjectionChanged): string 
   return "control_plane:" + change.projection + ":" + change.reason;
 }
 
+function extractControlPlaneProjectionChanged(
+  event: BackboneEvent,
+): ControlPlaneProjectionChanged | null {
+  if (event.type !== "platform") return null;
+  if (event.payload.kind !== "control_plane_projection_changed") return null;
+  return event.payload.data;
+}
+
 function planWorkspaceModulePresented(
   change: ControlPlaneProjectionChanged,
 ): AgentRunControlPlaneEffectPlan {
@@ -116,7 +126,7 @@ function planWorkspaceModulePresented(
   };
 }
 
-export function planAgentRunControlPlaneProjectionChanged(
+function planControlPlaneProjectionChanged(
   change: ControlPlaneProjectionChanged,
 ): AgentRunControlPlaneEffectPlan {
   const reason = projectionRefreshReason(change);
@@ -174,4 +184,24 @@ export function planAgentRunControlPlaneProjectionChanged(
   }
 
   return plan;
+}
+
+export function planAgentRunSystemEvent(
+  eventType: string,
+  event: BackboneEvent,
+): AgentRunControlPlaneEffectPlan {
+  const controlPlaneChange = extractControlPlaneProjectionChanged(event);
+  if (controlPlaneChange) {
+    return planControlPlaneProjectionChanged(controlPlaneChange);
+  }
+
+  switch (eventType) {
+    case "hook_event":
+    case "hook_action_resolved":
+      return {
+        hookRuntimeRefresh: { reason: eventType },
+      };
+    default:
+      return {};
+  }
 }

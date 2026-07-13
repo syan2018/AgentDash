@@ -188,11 +188,16 @@ fn lazy_repository_set() -> RepositorySet {
         gate_result_delivery_marker_repo: lifecycle_gate_repo,
         agent_lineage_repo,
         agent_run_lineage_repo,
+        agent_run_fork_graph_store: Arc::new(PostgresAgentRunForkGraphStore::new(pool.clone())),
+        agent_run_delete_store: Arc::new(PostgresAgentRunDeleteStore::new(pool.clone())),
         agent_run_runtime_binding_repo: runtime_binding_repo,
         agent_run_runtime_provisioner: Arc::new(SharedAgentRunRuntimeProvisionerHandle::default()),
         workflow_agent_run_delivery:
             agentdash_application_ports::workflow_agent_run_delivery::SharedWorkflowAgentRunDeliveryHandle::default(),
         agent_run_mailbox_repo: mailbox_repo,
+        agent_run_command_receipt_repo: Arc::new(PostgresAgentRunCommandReceiptRepository::new(
+            pool.clone(),
+        )),
         agent_frame_construction: frame_construction,
         workflow_agent_frame_materialization: workflow_materialization,
         project_agent_lifecycle_launch: project_launch,

@@ -545,6 +545,7 @@ impl ChannelService {
         Ok(ChannelMailboxMaterializationCommand {
             delivery_id: intent.id,
             message: NewAgentRunMailboxMessage {
+                id: None,
                 run_id,
                 agent_id,
                 origin: mailbox_origin_from_channel_address(&intent.message.address),

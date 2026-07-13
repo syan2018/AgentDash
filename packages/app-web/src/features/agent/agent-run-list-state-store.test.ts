@@ -86,6 +86,7 @@ function agentRunListInvalidated(projectId: string): ProjectEventStreamEnvelope 
         frame_id: null,
         gate_id: null,
         mailbox_message_id: null,
+        delivery_runtime_session_id: null,
         workspace_module_presentation: null,
       },
     },
@@ -105,6 +106,7 @@ function mailboxInvalidated(projectId: string): ProjectEventStreamEnvelope {
         frame_id: null,
         gate_id: null,
         mailbox_message_id: null,
+        delivery_runtime_session_id: null,
         workspace_module_presentation: null,
       },
     },
@@ -296,6 +298,17 @@ describe("agent-run list state store", () => {
 
     expect(shortcutSource).not.toContain("setInterval");
     expect(activeListSource).not.toContain("setInterval");
+  });
+
+  it("ActiveAgentRunList 主行删除入口使用确认、刷新列表状态和安全导航", () => {
+    const source = readFileSync(new URL("./active-agent-run-list.tsx", import.meta.url), "utf8");
+
+    expect(source).toContain("CardMenu");
+    expect(source).toContain("ConfirmDialog");
+    expect(source).toContain("entry: AgentRunListEntryView");
+    expect(source).toContain("deleteAgentRun(projectId, deleteTarget.runId)");
+    expect(source).toContain('refreshProjectAgentRuns(projectId, "agent_run_deleted")');
+    expect(source).toContain('navigate("/dashboard/agent")');
   });
 
 });

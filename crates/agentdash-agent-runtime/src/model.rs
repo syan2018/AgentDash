@@ -32,9 +32,11 @@ pub struct RuntimeItemState {
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeItemTerminal>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeInteractionState {
     pub turn_id: RuntimeTurnId,
+    pub item_id: Option<RuntimeItemId>,
+    pub request: agentdash_agent_runtime_contract::RuntimeInteractionRequest,
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeInteractionTerminal>,
 }
 
@@ -343,7 +345,7 @@ impl RuntimeThreadState {
                 turn_id,
                 item_id,
                 interaction_id,
-                ..
+                request,
             } => {
                 self.require_active_turn(turn_id)?;
                 if let Some(item_id) = item_id {
@@ -358,6 +360,8 @@ impl RuntimeThreadState {
                     interaction_id.clone(),
                     RuntimeInteractionState {
                         turn_id: turn_id.clone(),
+                        item_id: item_id.clone(),
+                        request: request.clone(),
                         phase: EntityPhase::Active,
                     },
                 );
@@ -632,6 +636,20 @@ impl RuntimeThreadState {
                 matches!(state.phase, EntityPhase::Active).then_some(id.clone())
             })
             .collect();
+        let pending_interaction_details = self
+            .interactions
+            .iter()
+            .filter_map(|(interaction_id, state)| {
+                matches!(state.phase, EntityPhase::Active).then(|| {
+                    agentdash_agent_runtime_contract::PendingRuntimeInteractionView {
+                        interaction_id: interaction_id.clone(),
+                        turn_id: state.turn_id.clone(),
+                        item_id: state.item_id.clone(),
+                        request: state.request.clone(),
+                    }
+                })
+            })
+            .collect();
         let command_availability = agentdash_agent_runtime_contract::RuntimeCommandKind::all()
             .into_iter()
             .map(|kind| {
@@ -672,6 +690,7 @@ impl RuntimeThreadState {
             settings_revision: self.settings_revision,
             tool_set_revision: self.tool_set_revision,
             pending_interactions,
+            pending_interaction_details,
             command_availability,
             transcript: self.presentation_transcript.clone(),
             transcript_fidelity: agentdash_agent_runtime_contract::ContextFidelity::EventProjected,

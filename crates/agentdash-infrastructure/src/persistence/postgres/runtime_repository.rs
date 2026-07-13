@@ -1196,9 +1196,11 @@ async fn claim_context_preparation(
     limit: i64,
 ) -> Result<Vec<RuntimeWorkClaim>, RuntimeStoreError> {
     let rows = sqlx::query(
-        "WITH candidates AS (SELECT compaction_id FROM agent_context_preparation \
-         WHERE status='pending' AND (claim_token IS NULL OR claim_expires_at_ms <= $1) \
-         ORDER BY created_at LIMIT $5 FOR UPDATE SKIP LOCKED) \
+        "WITH candidates AS (SELECT q.compaction_id FROM agent_context_preparation q \
+         JOIN agent_runtime_thread t ON t.id=q.thread_id \
+         WHERE q.status='pending' AND t.active_turn_id IS NULL \
+         AND (q.claim_token IS NULL OR q.claim_expires_at_ms <= $1) \
+         ORDER BY q.created_at LIMIT $5 FOR UPDATE OF q SKIP LOCKED) \
          UPDATE agent_context_preparation q SET claim_token=$2,claim_owner=$3,claim_expires_at_ms=$4,\
          attempt_count=q.attempt_count+1,last_error=NULL,updated_at=now() FROM candidates c \
          WHERE q.compaction_id=c.compaction_id RETURNING q.compaction_id,q.record,q.attempt_count",
@@ -3929,6 +3931,16 @@ mod tests {
             .execute(start(&fixture))
             .await
             .expect("start runtime thread");
+        let active_turn_id = format!("active-turn-{}", fixture.suffix);
+        sqlx::query(
+            "INSERT INTO agent_runtime_turn (id,thread_id,phase,state) VALUES ($1,$2,'active',$3)",
+        )
+        .bind(&active_turn_id)
+        .bind(fixture.thread_id.as_str())
+        .bind(serde_json::json!({}))
+        .execute(fixture.store.pool())
+        .await
+        .expect("seed active turn projection");
         let compaction_id: ContextCompactionId = id(&format!("compaction-{}", fixture.suffix));
         let operation_id: RuntimeOperationId = id(&format!("compact-operation-{}", fixture.suffix));
         fixture
@@ -3953,6 +3965,12 @@ mod tests {
             })
             .await
             .expect("accept compaction");
+        sqlx::query("UPDATE agent_runtime_thread SET active_turn_id=$1 WHERE id=$2")
+            .bind(&active_turn_id)
+            .bind(fixture.thread_id.as_str())
+            .execute(fixture.store.pool())
+            .await
+            .expect("mark active turn projection");
 
         let request = |kind, owner: &str| RuntimeWorkClaimRequest {
             kind,
@@ -3960,6 +3978,20 @@ mod tests {
             lease_duration_ms: 30_000,
             limit: 1,
         };
+        let blocked_while_active = fixture
+            .store
+            .claim(request(
+                RuntimeWorkKind::ContextPreparation,
+                "blocked-prepare-worker",
+            ))
+            .await
+            .expect("active turn blocks preparation");
+        assert!(blocked_while_active.is_empty());
+        sqlx::query("UPDATE agent_runtime_thread SET active_turn_id=NULL WHERE id=$1")
+            .bind(fixture.thread_id.as_str())
+            .execute(fixture.store.pool())
+            .await
+            .expect("finish active turn projection");
         let preparation_claim = fixture
             .store
             .claim(request(

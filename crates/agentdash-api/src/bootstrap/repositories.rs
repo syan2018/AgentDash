@@ -24,7 +24,8 @@ use agentdash_application_shared_library::{
 };
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentFrameRepository,
-    PostgresAgentLineageRepository, PostgresAgentRunLineageRepository,
+    PostgresAgentLineageRepository, PostgresAgentRunCommandReceiptRepository,
+    PostgresAgentRunDeleteStore, PostgresAgentRunForkGraphStore, PostgresAgentRunLineageRepository,
     PostgresAgentRunMailboxRepository, PostgresAgentRuntimeCompositionRepository,
     PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
     PostgresBackendRepository, PostgresCanvasRepository, PostgresCanvasRuntimeStateRepository,
@@ -143,6 +144,8 @@ pub(crate) async fn build_repositories(
     let agent_run_runtime_binding_repo =
         Arc::new(PostgresAgentRuntimeCompositionRepository::new(pool.clone()));
     let agent_run_mailbox_repo = Arc::new(PostgresAgentRunMailboxRepository::new(pool.clone()));
+    let agent_run_command_receipt_repo =
+        Arc::new(PostgresAgentRunCommandReceiptRepository::new(pool.clone()));
     let agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort> =
         Arc::new(AgentRunLaunchAnchorFrameConstructionAdapter::new(
             agent_frame_repo.clone(),
@@ -172,6 +175,8 @@ pub(crate) async fn build_repositories(
         },
     ));
 
+    let agent_run_fork_graph_store = Arc::new(PostgresAgentRunForkGraphStore::new(pool.clone()));
+    let agent_run_delete_store = Arc::new(PostgresAgentRunDeleteStore::new(pool.clone()));
     let permission_grant_repo =
         Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
 
@@ -211,11 +216,14 @@ pub(crate) async fn build_repositories(
         gate_result_delivery_marker_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),
         agent_run_lineage_repo: agent_run_lineage_repo.clone(),
+        agent_run_fork_graph_store,
+        agent_run_delete_store,
         agent_run_runtime_binding_repo: agent_run_runtime_binding_repo.clone(),
         agent_run_runtime_provisioner: Arc::new(runtime_provisioner_handle),
         workflow_agent_run_delivery:
             agentdash_application_ports::workflow_agent_run_delivery::SharedWorkflowAgentRunDeliveryHandle::default(),
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
+        agent_run_command_receipt_repo: agent_run_command_receipt_repo.clone(),
         agent_frame_construction,
         workflow_agent_frame_materialization,
         project_agent_lifecycle_launch,

@@ -1,25 +1,22 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { InteractionResponse } from "../../../generated/agent-runtime-contracts";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ExecutorConfig } from "../../../services/executor";
-import { respondAgentRunInteraction } from "../../../services/agentRunRuntime";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { useTaskPlanStore } from "../../../stores/taskPlanStore";
 import type {
+  AgentRunWorkspaceView,
   CreateProjectAgentRunRequest,
   ProjectAgentRunStartResult,
   ProjectAgentSummary,
 } from "../../../types";
-import type {
-  AgentRunProductView,
-  ConversationModelConfigView,
-} from "../../../generated/workflow-contracts";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type {
   AgentRunWorkspaceState,
 } from "../../workspace-panel/model/useAgentRunWorkspaceState";
 import {
   planAgentRunMessageSent,
+  planAgentRunSystemEvent,
   planAgentRunTurnEnded,
   planAgentRunWorkspaceModuleOpened,
   resolveAgentRunSubmitCommand,
@@ -35,6 +32,7 @@ import {
   conversationCommandByKind,
   isCompleteExecutorConfig,
   projectAgentRunChatCommandState,
+  projectAgentRunChatMailboxModel,
   resolveExecutorConfigForConversationCommand,
 } from "./conversationCommandState";
 import { useAgentRunWorkspaceCommands } from "./useAgentRunWorkspaceCommands";
@@ -57,13 +55,14 @@ export interface UseAgentRunWorkspaceControlPlaneOptions {
     payload: CreateProjectAgentRunRequest,
   ) => Promise<ProjectAgentRunStartResult>;
   onDraftStarted: (response: ProjectAgentRunStartResult) => void;
+  onAgentRunRedirect: (target: { runId: string; agentId: string }) => void;
   refreshAgentRunList: (reason: string) => void;
   refreshWorkspaceModuleCatalog: () => void;
   openWorkspacePanel: (target: AgentRunWorkspacePanelTarget) => void;
 }
 
 interface UseAgentRunWorkspaceControlPlaneResult {
-  workspaceControl: AgentRunProductView | null;
+  workspaceControl: AgentRunWorkspaceView | null;
   chatModel: AgentRunChatModel;
   chatIntents: AgentRunChatViewIntents;
   refreshAgentRunWorkspaceState: () => Promise<unknown>;
@@ -71,6 +70,7 @@ interface UseAgentRunWorkspaceControlPlaneResult {
   handleMessageSent: () => void;
   handleTurnEnd: () => void;
   handleTaskPlanChanged: () => void;
+  handleSystemEvent: (eventType: string, event: BackboneEvent) => void;
   handleWorkspaceModuleOpened: () => void;
 }
 
@@ -88,6 +88,7 @@ export function useAgentRunWorkspaceControlPlane({
   taskExecutorSummary = null,
   createProjectAgentRun,
   onDraftStarted,
+  onAgentRunRedirect,
   refreshAgentRunList,
   refreshWorkspaceModuleCatalog,
   openWorkspacePanel,
@@ -150,7 +151,7 @@ export function useAgentRunWorkspaceControlPlane({
         : null;
     }
     if (!currentRunId || !currentAgentId) return null;
-    const frameId = workspaceControl?.current_frame?.frame_ref.frame_id ?? "pending";
+    const frameId = workspaceControl?.frame_runtime?.frame_ref.frame_id ?? "pending";
     return `agentrun:${currentRunId}:${currentAgentId}:${frameId}`;
   }, [
     currentAgentId,
@@ -158,20 +159,12 @@ export function useAgentRunWorkspaceControlPlane({
     draftProjectAgentKey,
     draftProjectId,
     isProjectAgentDraft,
-    workspaceControl?.current_frame?.frame_ref.frame_id,
+    workspaceControl?.frame_runtime?.frame_ref.frame_id,
   ]);
 
   const executorHint = draftProjectAgent?.executor.executor
     ?? traceExecutorHint
     ?? null;
-  const runtimeModelConfig = useMemo<ConversationModelConfigView>(
-    () => workspaceControl?.current_frame?.model_config ?? {
-      status: "model_required",
-      missing_fields: ["agent_frame"],
-      message: "current AgentFrame 尚未就绪。",
-    },
-    [workspaceControl?.current_frame?.model_config],
-  );
 
   const commandState = useMemo(
     () => isProjectAgentDraft
@@ -183,10 +176,9 @@ export function useAgentRunWorkspaceControlPlane({
           explicitExecutorConfigOverride,
         })
       : buildAgentRunConversationCommandState({
-          modelConfig: runtimeModelConfig,
+          conversation: workspaceControl?.conversation,
           workspaceStateStatus: agentRunWorkspaceState.status,
           workspaceStateError: agentRunWorkspaceState.error,
-          runtimeSnapshot: agentRunWorkspaceState.runtime_inspect?.snapshot,
         }),
     [
       agentRunWorkspaceState.error,
@@ -196,18 +188,28 @@ export function useAgentRunWorkspaceControlPlane({
       draftProjectId,
       explicitExecutorConfigOverride,
       isProjectAgentDraft,
-      runtimeModelConfig,
-      agentRunWorkspaceState.runtime_inspect?.snapshot,
+      workspaceControl?.conversation,
     ],
   );
+
+  const conversationMailbox = workspaceControl?.conversation?.mailbox;
 
   const {
     handleAgentRunCommand,
     handleCancelAgentRun,
+    handlePromoteMailboxMessage,
+    handleDeleteMailboxMessage,
+    handleResumeMailbox,
+    handleRecallMailboxMessage,
+    handleMoveMailboxMessage,
+    handleForkFromMessageRef,
+    recalledInput,
+    clearRecalledInput,
   } = useAgentRunWorkspaceCommands({
     currentRunId,
     currentAgentId,
     chatCommandState: commandState,
+    conversationMailbox,
     draftProjectId,
     draftProjectAgentKey,
     draftReady: Boolean(draftProjectId && draftProjectAgentKey && draftProjectAgent),
@@ -215,6 +217,7 @@ export function useAgentRunWorkspaceControlPlane({
     fetchAndIngestLifecycleRun,
     refreshWorkspaceState: refreshAgentRunWorkspaceState,
     scheduleHookRuntimeRefresh,
+    onAgentRunRedirect,
     resolveExecutorConfig: resolveExecutorConfigForConversationCommand,
     isCompleteExecutorConfig,
     onDraftStarted,
@@ -241,53 +244,86 @@ export function useAgentRunWorkspaceControlPlane({
     refreshAgentRunList("agent_run_cancelled");
   }, [handleCancelAgentRun, refreshAgentRunList]);
 
-  const resolveInteraction = useCallback(async (
-    interactionId: string,
-    response: InteractionResponse,
-  ) => {
-    if (!currentRunId || !currentAgentId) {
-      throw new Error("当前 AgentRun Runtime target 不可用。");
-    }
-    await respondAgentRunInteraction(
-      { runId: currentRunId, agentId: currentAgentId },
-      interactionId,
-      response,
-    );
-  }, [currentAgentId, currentRunId]);
+  const promoteMailboxMessage = useCallback((messageId: string) => {
+    void (async () => {
+      await handlePromoteMailboxMessage(messageId);
+      refreshAgentRunList("mailbox_message_promoted");
+    })();
+  }, [handlePromoteMailboxMessage, refreshAgentRunList]);
 
-  const runtimeInteractionRequested = useCallback(() => {
-    void refreshAgentRunWorkspaceState().catch(() => {});
-  }, [refreshAgentRunWorkspaceState]);
+  const deleteMailboxMessage = useCallback((messageId: string) => {
+    void (async () => {
+      await handleDeleteMailboxMessage(messageId);
+      refreshAgentRunList("mailbox_message_deleted");
+    })();
+  }, [handleDeleteMailboxMessage, refreshAgentRunList]);
+
+  const resumeMailbox = useCallback(() => {
+    void (async () => {
+      await handleResumeMailbox();
+      refreshAgentRunList("mailbox_resumed");
+    })();
+  }, [handleResumeMailbox, refreshAgentRunList]);
+
+  const recallMailboxMessage = useCallback((messageId: string) => {
+    void (async () => {
+      await handleRecallMailboxMessage(messageId);
+      refreshAgentRunList("mailbox_message_recalled");
+    })();
+  }, [handleRecallMailboxMessage, refreshAgentRunList]);
+
+  const moveMailboxMessage = useCallback((messageId: string, afterMessageId: string | null) => {
+    void (async () => {
+      await handleMoveMailboxMessage(messageId, afterMessageId);
+      refreshAgentRunList("mailbox_message_moved");
+    })();
+  }, [handleMoveMailboxMessage, refreshAgentRunList]);
 
   const chatModel = useMemo<AgentRunChatModel>(() => ({
-    runtimeInspect: agentRunWorkspaceState.runtime_inspect,
     executorHint,
     agentDefaults: draftProjectAgent?.effective_executor_config
-      ?? workspaceControl?.current_frame?.model_config.effective_executor_config
+      ?? workspaceControl?.conversation?.model_config.effective_executor_config
       ?? taskExecutorSummary,
     executorStateKey,
     commandState: projectAgentRunChatCommandState(commandState),
     compactContextCommand: conversationCommandByKind(commandState.commands.commands, "compact_context"),
+    mailbox: projectAgentRunChatMailboxModel(commandState, conversationMailbox),
+    statusBarRunId: currentRunId,
+    statusBarAgentId: currentAgentId,
+    injectedInputValue: recalledInput,
   }), [
-    agentRunWorkspaceState.runtime_inspect,
     commandState,
+    conversationMailbox,
+    currentAgentId,
+    currentRunId,
     draftProjectAgent?.effective_executor_config,
     executorHint,
     executorStateKey,
-    workspaceControl?.current_frame?.model_config.effective_executor_config,
+    recalledInput,
+    workspaceControl?.conversation?.model_config.effective_executor_config,
     taskExecutorSummary,
   ]);
 
   const chatIntents = useMemo<AgentRunChatViewIntents>(() => ({
     submitComposer,
     cancelAction,
-    resolveInteraction,
-    runtimeInteractionRequested,
     setExecutorConfigOverride: setExplicitExecutorConfigOverride,
+    promoteMailboxMessage,
+    deleteMailboxMessage,
+    resumeMailbox,
+    recallMailboxMessage,
+    moveMailboxMessage,
+    forkFromMessageRef: handleForkFromMessageRef,
+    injectedInputConsumed: clearRecalledInput,
   }), [
     cancelAction,
-    resolveInteraction,
-    runtimeInteractionRequested,
+    clearRecalledInput,
+    deleteMailboxMessage,
+    handleForkFromMessageRef,
+    moveMailboxMessage,
+    promoteMailboxMessage,
+    recallMailboxMessage,
+    resumeMailbox,
     setExplicitExecutorConfigOverride,
     submitComposer,
   ]);
@@ -355,6 +391,10 @@ export function useAgentRunWorkspaceControlPlane({
     refreshStatusBarTasks();
   }, [refreshStatusBarTasks]);
 
+  const handleSystemEvent = useCallback((eventType: string, event: BackboneEvent) => {
+    applyControlPlaneEffectPlan(planAgentRunSystemEvent(eventType, event));
+  }, [applyControlPlaneEffectPlan]);
+
   const handleWorkspaceModuleOpened = useCallback(() => {
     applyControlPlaneEffectPlan(planAgentRunWorkspaceModuleOpened());
   }, [applyControlPlaneEffectPlan]);
@@ -368,6 +408,7 @@ export function useAgentRunWorkspaceControlPlane({
     handleMessageSent,
     handleTurnEnd,
     handleTaskPlanChanged,
+    handleSystemEvent,
     handleWorkspaceModuleOpened,
   };
 }

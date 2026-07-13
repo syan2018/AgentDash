@@ -1,5 +1,6 @@
-﻿import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import type { AgentRunWorkspaceView } from "../types";
 import { useWorkspaceTabStore, type WorkspaceTabLayoutOptions } from "../stores/workspaceTabStore";
 import {
   buildAgentRunConversationCommandState,
@@ -11,10 +12,12 @@ import type {
   WorkspaceModulePresentation,
 } from "../generated/workspace-module-contracts";
 import type {
-  ConversationModelConfigView,
+  AgentRunOwnershipView,
+  ConversationCommandView,
+  ConversationKeyboardMapView,
 } from "../generated/workflow-contracts";
-import type { RuntimeSnapshot } from "../generated/agent-runtime-contracts";
-import type { ProjectAgentSummary } from "../types";
+import type { AgentRunWorkspaceListEntry, ProjectAgentSummary } from "../types";
+import { collectCompanionSubagentRefs } from "./AgentRunWorkspacePage.companionRefs";
 import {
   activeCanvasMountIdsFromRuntimeSurface,
   openUserCanvasModule,
@@ -26,61 +29,162 @@ import {
   workspaceModulePresentedTabTarget,
 } from "./AgentRunWorkspacePage.workspaceModulePresentation";
 
-const resolvedModelConfig: ConversationModelConfigView = {
-  status: "resolved",
-  missing_fields: [],
-  effective_executor_config: {
-    executor: "CODEX",
-    source: "frame_execution_profile",
-  },
+const ownership: AgentRunOwnershipView = {
+  run_created_by_user_id: "owner-user",
+  agent_created_by_user_id: "owner-user",
+  current_user_controls_run: true,
 };
 
-function runtimeSnapshot(activeTurnId: string | null): RuntimeSnapshot {
+function workspaceView(
+  controlStatus: "running" | "ready" | "completed" | "terminal",
+  commands: ConversationCommandView[] = [],
+  keyboard: ConversationKeyboardMapView = {},
+): AgentRunWorkspaceView {
   return {
-    thread_id: "thread-1",
-    revision: 1n,
-    latest_event_sequence: 0n,
-    captured_at_ms: 0n,
-    status: "active",
-    active_turn_id: activeTurnId,
-    binding_id: "binding-1",
-    binding_epoch: 0n,
-    profile_digest: "sha256:profile",
-    bound_profile: {
-      reference_class: "managed_thread",
-      input: { modalities: ["text"] },
-      instruction: { channels: ["system"], configuration_boundary: "thread_start" },
-      tools: { channels: [], configuration_boundary: "turn_start", cancellation: true },
-      workspace: { capabilities: [], mechanism: "host_adapted_exact" },
-      interactions: { kinds: [], durable_correlation: true },
-      lifecycle: ["turn_start", "turn_steer"],
-      hooks: { points: [], configuration_boundary: "thread_start" },
-      context: { capabilities: ["read"], fidelity: "platform_exact", activation_idempotent: true },
-      telemetry_config: [],
+    run_ref: { run_id: "run-1" },
+    agent_ref: { run_id: "run-1", agent_id: "agent-1" },
+    project_id: "project-1",
+    shell: {
+      display_title: "Workspace",
+      title_source: "session_meta",
+      delivery_status: controlStatus,
+      last_activity_at: "2026-06-12T00:00:00.000Z",
     },
-    active_checkpoint_id: null,
-    context_revision: 1n,
-    settings_revision: 1n,
-    tool_set_revision: 1n,
-    pending_interactions: [],
-    command_availability: {
-      [activeTurnId ? "turn_steer" : "turn_start"]: { status: "available" },
+    control_plane: {
+      status: controlStatus === "running" ? "running" : controlStatus === "ready" ? "ready" : "terminal",
+      ownership,
     },
-    transcript: [],
-    transcript_fidelity: "platform_exact",
+    agent: {
+      agent_ref: { run_id: "run-1", agent_id: "agent-1" },
+      project_id: "project-1",
+      source: "project_agent",
+      status: controlStatus,
+      created_at: "2026-06-12T00:00:00.000Z",
+      updated_at: "2026-06-12T00:00:00.000Z",
+    },
+    subject_associations: [],
+    children: [],
+    conversation: {
+      snapshot_id: "snapshot-1",
+      identity: {
+        run_ref: { run_id: "run-1" },
+        agent_ref: { run_id: "run-1", agent_id: "agent-1" },
+        project_id: "project-1",
+      },
+      lifecycle_context: { subject_associations: [] },
+      execution: {
+        status: controlStatus === "running" ? "running_active" : controlStatus === "ready" ? "ready" : "terminal",
+      },
+      model_config: {
+        status: "resolved",
+        missing_fields: [],
+      },
+      commands: {
+        ownership,
+        commands,
+        keyboard,
+      },
+      mailbox: {
+        visible_message_count: 0,
+        paused: false,
+        user_attention: false,
+        messages: [],
+        waiting_items: [],
+      },
+      diagnostics: [],
+    },
   };
 }
 
+describe("AgentRun list child presentation parity", () => {
+  it("preserves Main display fields, depth-first nested order, and navigation coordinates", () => {
+    const entries: AgentRunWorkspaceListEntry[] = [{
+      run_ref: { run_id: "run-1" },
+      agent_ref: { run_id: "run-1", agent_id: "agent-root" },
+      title: "Root",
+      lifecycle_status: "running",
+      last_activity_at: "2026-07-10T00:00:00Z",
+      source: "project_agent",
+      subagent_count: 3,
+      children: [{
+        run_ref: { run_id: "run-1" },
+        agent_ref: { run_id: "run-1", agent_id: "agent-child-a" },
+        title: "Child A",
+        lifecycle_status: "running",
+        last_activity_at: "2026-07-10T00:01:00Z",
+        source: "subagent",
+        children: [{
+          run_ref: { run_id: "run-1" },
+          agent_ref: { run_id: "run-1", agent_id: "agent-grandchild" },
+          title: "Grandchild",
+          lifecycle_status: "completed",
+          last_activity_at: "2026-07-10T00:02:00Z",
+          source: "subagent",
+          children: [],
+        }],
+      }, {
+        run_ref: { run_id: "run-1" },
+        agent_ref: { run_id: "run-1", agent_id: "agent-child-b" },
+        title: "Child B",
+        lifecycle_status: "failed",
+        last_activity_at: "2026-07-10T00:03:00Z",
+        source: "subagent",
+        children: [],
+      }],
+    }];
+
+    expect(collectCompanionSubagentRefs(entries, "run-1")).toEqual([
+      {
+        run_id: "run-1",
+        agent_id: "agent-child-a",
+        display_title: "Child A",
+        delivery_status: "running",
+        last_activity_at: "2026-07-10T00:01:00Z",
+      },
+      {
+        run_id: "run-1",
+        agent_id: "agent-grandchild",
+        display_title: "Grandchild",
+        delivery_status: "completed",
+        last_activity_at: "2026-07-10T00:02:00Z",
+      },
+      {
+        run_id: "run-1",
+        agent_id: "agent-child-b",
+        display_title: "Child B",
+        delivery_status: "failed",
+        last_activity_at: "2026-07-10T00:03:00Z",
+      },
+    ]);
+  });
+});
+
 function commandState(
   workspaceStateStatus: "ready" | "refreshing" | "error" | "idle" | "loading",
-  snapshot: RuntimeSnapshot | null,
+  workspace: AgentRunWorkspaceView | null,
 ) {
   return buildAgentRunConversationCommandState({
     workspaceStateStatus,
     workspaceStateError: workspaceStateStatus === "error" ? "refresh failed" : null,
-    modelConfig: resolvedModelConfig,
-    runtimeSnapshot: snapshot,
+    conversation: workspace?.conversation,
   });
+}
+
+function command(kind: ConversationCommandView["kind"], commandId: string): ConversationCommandView {
+  return {
+    kind,
+    command_id: commandId,
+    enabled: true,
+    requires_input: true,
+    executor_config_policy: "required",
+    placement: ["composer_primary"],
+    stale_guard: {
+      snapshot_id: `snapshot-${commandId}`,
+      run_id: "run-1",
+      agent_id: "agent-1",
+      active_turn_id: undefined,
+    },
+  };
 }
 
 function presentation(params: {
@@ -261,7 +365,7 @@ describe("AgentRun workspace conversation command authority", () => {
     }).modelConfig.status).toBe("resolved");
   });
 
-  it("splits local draft model selection from the ProjectAgent executor", () => {
+  it("resolves local draft start payload executor_config from the explicit override", () => {
     const agent: ProjectAgentSummary = {
       key: "agent-1",
       display_name: "Agent",
@@ -301,54 +405,70 @@ describe("AgentRun workspace conversation command authority", () => {
     expect({
       input: [],
       client_command_id: "cmd-1",
-      model_selection: {
-        provider_id: executorConfig?.provider_id,
-        model_id: executorConfig?.model_id,
-        agent_id: executorConfig?.agent_id,
-        thinking_level: executorConfig?.thinking_level,
-      },
+      executor_config: executorConfig,
     }).toMatchObject({
-      model_selection: {
+      executor_config: {
+        executor: "PI_AGENT",
         provider_id: "openai",
         model_id: "gpt-5.4-mini",
       },
     });
   });
 
-  it("uses Runtime snapshot availability for ready submit", () => {
-    const state = commandState("ready", runtimeSnapshot(null));
+  it("uses snapshot keyboard mapping for ready Ctrl/Cmd+Enter submit_message", () => {
+    const submit = command("submit_message", "cmd-submit");
+    const state = commandState("ready", workspaceView("ready", [submit], {
+      enter: "cmd-submit",
+      ctrl_enter: "cmd-submit",
+    }));
 
-    expect(state.commands.keyboard.enter).toBe("runtime:turn_start");
-    expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
-    expect(state.commands.commands.find((item) => item.command_id === "runtime:turn_start")?.kind).toBe("submit_message");
+    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-submit");
+    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.kind).toBe("submit_message");
   });
 
-  it("switches running submit to Runtime steer", () => {
-    const state = commandState("ready", runtimeSnapshot("turn-1"));
+  it("exposes running submit only when snapshot maps it", () => {
+    const submit = {
+      ...command("submit_message", "cmd-submit"),
+      stale_guard: {
+        snapshot_id: "snapshot-cmd-submit",
+        run_id: "run-1",
+        agent_id: "agent-1",
+        active_turn_id: "turn-1",
+      },
+    };
+    const state = commandState("ready", workspaceView("running", [submit], {
+      enter: "cmd-submit",
+      ctrl_enter: "cmd-submit",
+    }));
 
-    expect(state.commands.keyboard.enter).toBe("runtime:turn_steer");
-    expect(state.activeTurnId).toBe("turn-1");
+    expect(state.commands.keyboard.enter).toBe("cmd-submit");
+    expect(state.commands.keyboard.ctrl_enter).toBe("cmd-submit");
+    expect(state.commands.commands.find((item) => item.command_id === "cmd-submit")?.stale_guard.active_turn_id).toBe("turn-1");
   });
 
-  it("does not infer command enablement without a Runtime snapshot", () => {
-    const state = commandState("ready", null);
+  it("does not infer command enablement from top-level control_plane status", () => {
+    const state = commandState("ready", workspaceView("running"));
 
-    expect(state.executionStatus).toBe("ready");
+    expect(state.executionStatus).toBe("running_active");
     expect(state.commands.commands).toHaveLength(0);
     expect(state.commands.keyboard.enter).toBeUndefined();
     expect(state.commands.keyboard.ctrl_enter).toBeUndefined();
   });
 
   it("freezes stale backend commands while projection is refreshing", () => {
-    const state = commandState("refreshing", runtimeSnapshot("turn-1"));
+    const state = commandState("refreshing", workspaceView("running", [
+      command("submit_message", "cmd-submit"),
+    ], { enter: "cmd-submit" }));
 
     expect(state.executionStatus).toBe("refreshing");
     expect(state.commands.keyboard.enter).toBeUndefined();
     expect(state.commands.commands).toHaveLength(0);
   });
 
-  it("requires Runtime snapshot before exposing commands", () => {
-    const state = commandState("ready", null);
+  it("requires conversation snapshot before exposing commands", () => {
+    const workspace = workspaceView("terminal");
+    workspace.conversation = undefined;
+    const state = commandState("ready", workspace);
 
     expect(state.executionStatus).toBe("ready");
     expect(state.commands.commands).toHaveLength(0);

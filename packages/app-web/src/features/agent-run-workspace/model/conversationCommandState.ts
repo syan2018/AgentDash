@@ -1,4 +1,7 @@
-﻿import type {
+import type {
+  ConversationCommandSetView,
+  ConversationCommandView,
+  ConversationMailboxSnapshotView,
   ConversationModelConfigView,
 } from "../../../generated/workflow-contracts";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
@@ -6,23 +9,18 @@ import type { ProjectAgentSummary } from "../../../types";
 import type {
   SessionChatCommandModel,
   SessionChatCommandState,
+  SessionChatMailboxModel,
   SessionChatModel,
   SessionChatModelConfig,
   SessionChatSubmitIntent,
   SessionChatViewIntents,
 } from "../../session";
 import type { ExecutorConfig } from "../../../services/executor";
-import type {
-  AgentRunComposerDeliveryIntent,
-} from "../../../generated/agent-run-mailbox-contracts";
-import type {
-  RuntimeCommandKind,
-  RuntimeSnapshot,
-} from "../../../generated/agent-runtime-contracts";
 
-// Adapter boundary to the reusable SessionChatView shell; AgentRun command authority stays in the Runtime snapshot.
+// Adapter boundary to the reusable SessionChatView shell; AgentRun command authority stays in the conversation snapshot.
 export type AgentRunChatCommandModel = SessionChatCommandModel;
 export type AgentRunChatCommandState = SessionChatCommandState;
+export type AgentRunChatMailboxModel = SessionChatMailboxModel;
 export type AgentRunChatModel = SessionChatModel;
 export type AgentRunChatModelConfig = SessionChatModelConfig;
 export type AgentRunChatSubmitIntent = SessionChatSubmitIntent;
@@ -39,39 +37,25 @@ export interface LocalDraftStartAction {
   requires_input: true;
   executor_config_policy: "required";
 }
-
-export interface RuntimeAgentRunAction {
-  source: "runtime_snapshot";
-  kind: "submit_message" | "cancel" | "compact_context";
-  command_id: string;
-  enabled: boolean;
-  unavailable_reason?: string;
-  disabled_code?: string;
-  shortcut?: "enter" | "ctrl_enter";
-  delivery_intent?: AgentRunComposerDeliveryIntent;
-  requires_input: boolean;
-  executor_config_policy: "forbidden";
-}
-
-export type AgentRunConversationCommand = RuntimeAgentRunAction | LocalDraftStartAction;
-
-interface AgentRunCommandSet {
-  commands: AgentRunConversationCommand[];
-  keyboard: { enter?: string; ctrl_enter?: string };
-}
+export type AgentRunConversationCommand = ConversationCommandView | LocalDraftStartAction;
 
 export interface AgentRunConversationCommandState {
   mode: "draft" | "runtime";
   executionStatus: string;
   activeTurnId?: string | null;
-  commands: AgentRunCommandSet;
+  commands: ConversationCommandSetView;
   localDraftAction?: LocalDraftStartAction;
   modelConfig: ConversationModelConfigView;
   helperText?: string;
 }
 
-function emptyCommandSet(): AgentRunCommandSet {
+function emptyCommandSet(): ConversationCommandSetView {
   return {
+    ownership: {
+      run_created_by_user_id: "system",
+      agent_created_by_user_id: "system",
+      current_user_controls_run: false,
+    },
     commands: [],
     keyboard: {},
   };
@@ -151,7 +135,6 @@ export function resolveExecutorConfigForConversationCommand(input: {
   modelConfig: ConversationModelConfigView;
   explicitExecutorConfigOverride?: ExecutorConfig;
 }): ExecutorConfig | undefined {
-  if (input.command.executor_config_policy === "forbidden") return undefined;
   const effectiveConfig = executorConfigFromConversationModel(input.modelConfig);
   const overrideConfig = input.explicitExecutorConfigOverride;
   if (input.modelConfig.status === "model_required" && isCompleteExecutorConfig(overrideConfig)) {
@@ -241,10 +224,13 @@ export function buildDraftConversationCommandState(input: {
 }
 
 export function buildAgentRunConversationCommandState(input: {
-  modelConfig: ConversationModelConfigView;
+  conversation: {
+    execution: { status: string; active_turn_id?: string; reason?: string };
+    commands: ConversationCommandSetView;
+    model_config: ConversationModelConfigView;
+  } | null | undefined;
   workspaceStateStatus: string;
   workspaceStateError: string | null;
-  runtimeSnapshot?: RuntimeSnapshot | null;
 }): AgentRunConversationCommandState {
   if (input.workspaceStateStatus !== "ready") {
     const reason = input.workspaceStateError ?? "当前 AgentRun 工作台状态正在刷新。";
@@ -252,64 +238,37 @@ export function buildAgentRunConversationCommandState(input: {
       mode: "runtime",
       executionStatus: input.workspaceStateStatus,
       commands: emptyCommandSet(),
-      modelConfig: input.modelConfig,
+      modelConfig: {
+        status: "model_required",
+        missing_fields: [],
+        message: reason,
+      },
       helperText: reason,
     };
   }
 
-  const runtimeSnapshot = input.runtimeSnapshot ?? null;
-  if (!runtimeSnapshot) {
-    const reason = "Agent Runtime snapshot 尚未就绪。";
+  if (!input.conversation) {
+    const reason = "当前 AgentRun 尚未返回 conversation snapshot。";
     return {
       mode: "runtime",
       executionStatus: "ready",
       commands: emptyCommandSet(),
-      modelConfig: input.modelConfig,
+      modelConfig: {
+        status: "model_required",
+        missing_fields: [],
+        message: reason,
+      },
       helperText: reason,
     };
   }
 
-  const action = (
-    kind: RuntimeAgentRunAction["kind"],
-    runtimeKind: RuntimeCommandKind,
-    requiresInput: boolean,
-    shortcut?: RuntimeAgentRunAction["shortcut"],
-  ): RuntimeAgentRunAction => {
-    const availability = runtimeSnapshot.command_availability[runtimeKind];
-    const available = availability?.status === "available";
-    return {
-      source: "runtime_snapshot",
-      kind,
-      command_id: `runtime:${runtimeKind}`,
-      enabled: available,
-      unavailable_reason: available
-        ? undefined
-        : availability?.status === "unavailable"
-          ? availability.reason
-          : "Agent Runtime snapshot 尚未声明该命令可用。",
-      disabled_code: available ? undefined : "runtime_command_unavailable",
-      shortcut,
-      delivery_intent: runtimeKind === "turn_steer" ? "steer" : undefined,
-      requires_input: requiresInput,
-      executor_config_policy: "forbidden",
-    };
-  };
-  const submitKind: RuntimeCommandKind = runtimeSnapshot.active_turn_id ? "turn_steer" : "turn_start";
-  const submit = action("submit_message", submitKind, true, "enter");
-  const commands: AgentRunCommandSet = {
-    commands: [
-      submit,
-      action("cancel", "turn_interrupt", false),
-      action("compact_context", "context_compact", false),
-    ],
-    keyboard: { enter: submit.command_id },
-  };
   return {
     mode: "runtime",
-    executionStatus: runtimeSnapshot.active_turn_id ? "running_active" : "ready",
-    activeTurnId: runtimeSnapshot.active_turn_id ?? undefined,
-    commands,
-    modelConfig: input.modelConfig,
+    executionStatus: input.conversation.execution.status,
+    activeTurnId: input.conversation.execution.active_turn_id,
+    commands: input.conversation.commands,
+    modelConfig: input.conversation.model_config,
+    helperText: input.conversation.execution.reason,
   };
 }
 
@@ -333,7 +292,6 @@ function projectCommand(command: AgentRunConversationCommand): AgentRunChatComma
     requires_input: command.requires_input,
     executor_config_policy: normalizeExecutorConfigPolicy(command.executor_config_policy),
     shortcut: normalizeShortcut(command.shortcut),
-    delivery_intent: command.source === "runtime_snapshot" ? command.delivery_intent : undefined,
   };
 }
 
@@ -347,10 +305,17 @@ function projectModelConfig(modelConfig: ConversationModelConfigView): AgentRunC
 }
 
 export function conversationCommandByKind(
-  commands: AgentRunConversationCommand[],
-  kind: AgentRunConversationCommand["kind"],
-): AgentRunConversationCommand | undefined {
+  commands: ConversationCommandView[],
+  kind: ConversationCommandView["kind"],
+): ConversationCommandView | undefined {
   return commands.find((command) => command.kind === kind);
+}
+
+export function mailboxRowCommand(
+  commands: ConversationCommandView[],
+  kind: ConversationCommandView["kind"],
+): ConversationCommandView | undefined {
+  return commands.find((command) => command.kind === kind && command.placement.includes("mailbox_row"));
 }
 
 export function projectAgentRunChatCommandState(
@@ -379,5 +344,26 @@ export function projectAgentRunChatCommandState(
     cancelCommand: cancelCommand ? projectCommand(cancelCommand) : undefined,
     modelConfig: projectModelConfig(commandState.modelConfig),
     helperText: commandState.helperText,
+  };
+}
+
+export function projectAgentRunChatMailboxModel(
+  commandState: AgentRunConversationCommandState,
+  mailbox: ConversationMailboxSnapshotView | null | undefined,
+): AgentRunChatMailboxModel {
+  const promoteCommand = mailboxRowCommand(commandState.commands.commands, "promote_mailbox_message");
+  const deleteCommand = mailboxRowCommand(commandState.commands.commands, "delete_mailbox_message");
+
+  return {
+    messages: mailbox?.messages ?? [],
+    waiting_items: mailbox?.waiting_items ?? [],
+    state: mailbox?.state,
+    paused: Boolean(mailbox?.paused || mailbox?.state?.paused),
+    user_attention: Boolean(mailbox?.user_attention),
+    hide_system_steer_messages: Boolean(mailbox?.state?.hide_system_steer_messages),
+    can_resume: Boolean(mailbox?.state?.can_resume),
+    resumeAction: mailbox?.resume_command ? projectCommand(mailbox.resume_command) : undefined,
+    promoteAction: promoteCommand ? projectCommand(promoteCommand) : undefined,
+    deleteAction: deleteCommand ? projectCommand(deleteCommand) : undefined,
   };
 }

@@ -360,6 +360,8 @@ pub struct AgentRunMailboxMessage {
     pub order_key: i64,
     pub source_dedup_key: Option<String>,
     pub accepted_runtime_operation_id: Option<String>,
+    pub accepted_agent_run_turn_id: Option<String>,
+    pub accepted_protocol_turn_id: Option<String>,
     pub claim_token: Option<Uuid>,
     pub claimed_at: Option<DateTime<Utc>>,
     pub claim_expires_at: Option<DateTime<Utc>>,
@@ -379,6 +381,9 @@ pub struct AgentRunMailboxMessage {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewAgentRunMailboxMessage {
+    /// Preallocated durable identity. Producers that embed the mailbox id in a persisted
+    /// presentation coordinate allocate it once before the first insert.
+    pub id: Option<Uuid>,
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub origin: MailboxMessageOrigin,
@@ -462,8 +467,16 @@ pub trait AgentRunMailboxRepository: Send + Sync {
         id: Uuid,
         claim_token: Uuid,
         operation_id: String,
+        agent_run_turn_id: Option<String>,
+        protocol_turn_id: Option<String>,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let _ = (id, claim_token, operation_id);
+        let _ = (
+            id,
+            claim_token,
+            operation_id,
+            agent_run_turn_id,
+            protocol_turn_id,
+        );
         Err(DomainError::InvalidConfig(
             "mailbox repository does not implement canonical runtime operation receipts"
                 .to_string(),

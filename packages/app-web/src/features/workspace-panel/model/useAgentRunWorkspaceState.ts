@@ -1,14 +1,13 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { AgentRunCurrentFrameView, AgentRunProductView } from "../../../generated/workflow-contracts";
-import type { AgentFrameHookRuntimeInfo } from "../../../types";
+import type {
+  AgentFrameHookRuntimeInfo,
+  AgentFrameRuntimeView,
+  AgentRunWorkspaceView,
+} from "../../../types";
 import type { ResolvedVfsSurface } from "../../../generated/vfs-contracts";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchAgentRunWorkspace } from "../../../services/lifecycle";
-import {
-  fetchAgentRunRuntimeInspect,
-  type AgentRunRuntimeInspectResponse,
-} from "../../../services/agentRunRuntime";
 import type { WorkspaceRuntimeStateStatus } from "../../workspace-runtime";
 
 export interface AgentRunWorkspaceState {
@@ -16,14 +15,11 @@ export interface AgentRunWorkspaceState {
   agent_id: string | null;
   source_key: string | null;
   status: WorkspaceRuntimeStateStatus;
-  workspace: AgentRunProductView | null;
-  runtime_inspect: AgentRunRuntimeInspectResponse | null;
+  workspace: AgentRunWorkspaceView | null;
   runtime_surface: ResolvedVfsSurface | null;
   hook_runtime: AgentFrameHookRuntimeInfo | null;
-  frame: AgentRunCurrentFrameView | null;
+  frame: AgentFrameRuntimeView | null;
   runtime_surface_error: string | null;
-  workspace_error: string | null;
-  runtime_inspect_error: string | null;
   error: string | null;
 }
 
@@ -42,13 +38,10 @@ export function emptyAgentRunWorkspaceState(): AgentRunWorkspaceState {
     source_key: null,
     status: "idle",
     workspace: null,
-    runtime_inspect: null,
     runtime_surface: null,
     hook_runtime: null,
     frame: null,
     runtime_surface_error: null,
-    workspace_error: null,
-    runtime_inspect_error: null,
     error: null,
   };
 }
@@ -67,9 +60,9 @@ function errorMessage(error: unknown): string {
 }
 
 export function agentRunWorkspaceResourceSurface(
-  workspace: AgentRunProductView,
+  workspace: AgentRunWorkspaceView,
 ): ResolvedVfsSurface | null {
-  return workspace.resource_surface ?? null;
+  return workspace.conversation?.resource_surface ?? workspace.resource_surface ?? null;
 }
 
 export function beginAgentRunWorkspaceStateLoad(
@@ -97,46 +90,29 @@ export function beginAgentRunWorkspaceStateLoad(
   };
 }
 
-export function settleAgentRunWorkspaceStateLoad(
+export function failAgentRunWorkspaceStateLoad(
   current: AgentRunWorkspaceState,
   runId: string,
   agentId: string,
   sourceKey: string,
   mode: AgentRunWorkspaceLoadMode,
-  workspaceResult: PromiseSettledResult<AgentRunProductView>,
-  runtimeInspectResult: PromiseSettledResult<AgentRunRuntimeInspectResponse>,
+  message: string,
 ): AgentRunWorkspaceState {
-  const preserveCurrent = mode === "refresh" && stateMatches(current, runId, agentId, sourceKey);
-  const workspace = workspaceResult.status === "fulfilled"
-    ? workspaceResult.value
-    : preserveCurrent ? current.workspace : null;
-  const runtimeInspect = runtimeInspectResult.status === "fulfilled"
-    ? runtimeInspectResult.value
-    : preserveCurrent ? current.runtime_inspect : null;
-  const workspaceError = workspaceResult.status === "rejected"
-    ? errorMessage(workspaceResult.reason)
-    : null;
-  const runtimeInspectError = runtimeInspectResult.status === "rejected"
-    ? errorMessage(runtimeInspectResult.reason)
-    : null;
+  if (mode === "refresh" && stateMatches(current, runId, agentId, sourceKey)) {
+    return {
+      ...current,
+      status: "error",
+      error: message,
+    };
+  }
+
   return {
+    ...emptyAgentRunWorkspaceState(),
     run_id: runId,
     agent_id: agentId,
     source_key: sourceKey,
-    status: workspace ? "ready" : "error",
-    workspace,
-    runtime_inspect: runtimeInspect,
-    runtime_surface: workspaceResult.status === "fulfilled"
-      ? agentRunWorkspaceResourceSurface(workspaceResult.value)
-      : preserveCurrent ? current.runtime_surface : null,
-    hook_runtime: preserveCurrent ? current.hook_runtime : null,
-    frame: workspaceResult.status === "fulfilled"
-      ? workspaceResult.value.current_frame ?? null
-      : preserveCurrent ? current.frame : null,
-    runtime_surface_error: preserveCurrent ? current.runtime_surface_error : null,
-    workspace_error: workspaceError,
-    runtime_inspect_error: runtimeInspectError,
-    error: workspaceError ?? runtimeInspectError,
+    status: "error",
+    error: message,
   };
 }
 
@@ -147,6 +123,7 @@ export function useAgentRunWorkspaceState({
 }: UseAgentRunWorkspaceStateInput) {
   const [state, setState] = useState<AgentRunWorkspaceState>(() => emptyAgentRunWorkspaceState());
   const setAgent = useLifecycleStore((s) => s.setAgent);
+  const setFrame = useLifecycleStore((s) => s.setFrame);
 
   const loadWorkspaceState = useCallback(async (
     rid: string,
@@ -154,34 +131,44 @@ export function useAgentRunWorkspaceState({
     skey: string,
     canCommit: () => boolean = () => true,
     mode: AgentRunWorkspaceLoadMode = "replace",
-  ): Promise<AgentRunProductView | null> => {
+  ): Promise<AgentRunWorkspaceView | null> => {
     await Promise.resolve();
     if (!canCommit()) return null;
     setState((current) => beginAgentRunWorkspaceStateLoad(current, rid, aid, skey, mode));
 
-    const [workspaceResult, runtimeInspectResult] = await Promise.allSettled([
-        fetchAgentRunWorkspace(rid, aid),
-        fetchAgentRunRuntimeInspect({ runId: rid, agentId: aid }),
-    ]);
-    if (!canCommit()) {
-      return workspaceResult.status === "fulfilled" ? workspaceResult.value : null;
+    try {
+      const workspace = await fetchAgentRunWorkspace(rid, aid);
+      const runtimeSurface = agentRunWorkspaceResourceSurface(workspace);
+      if (!canCommit()) return workspace;
+      if (workspace.agent) setAgent(workspace.agent);
+      if (workspace.frame_runtime) setFrame(workspace.frame_runtime);
+      setState({
+        run_id: rid,
+        agent_id: aid,
+        source_key: skey,
+        status: "ready",
+        workspace,
+        runtime_surface: runtimeSurface,
+        hook_runtime: null,
+        frame: workspace.frame_runtime ?? null,
+        runtime_surface_error: null,
+        error: null,
+      });
+      return workspace;
+    } catch (error: unknown) {
+      if (!canCommit()) return null;
+      const message = errorMessage(error);
+      setState((current) => failAgentRunWorkspaceStateLoad(
+        current,
+        rid,
+        aid,
+        skey,
+        mode,
+        message,
+      ));
+      return null;
     }
-    const workspace = workspaceResult.status === "fulfilled" ? workspaceResult.value : null;
-
-    if (workspace) {
-      setAgent(workspace.agent);
-    }
-    setState((current) => settleAgentRunWorkspaceStateLoad(
-      current,
-      rid,
-      aid,
-      skey,
-      mode,
-      workspaceResult,
-      runtimeInspectResult,
-    ));
-    return workspace;
-  }, [setAgent]);
+  }, [setAgent, setFrame]);
 
   useEffect(() => {
     if (!runId || !agentId || !sourceKey) return;

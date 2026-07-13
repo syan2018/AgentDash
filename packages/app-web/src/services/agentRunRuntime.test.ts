@@ -36,12 +36,22 @@ describe("AgentRun runtime service", () => {
   it("submits context compaction as command-only intent", async () => {
     await compactAgentRunContext("run/1", "agent/1", {
       client_command_id: "command-compact",
+      command: {
+        command_id: "snapshot:compact",
+        command_kind: "compact_context",
+        stale_guard: { snapshot_id: "snapshot", run_id: "run/1", agent_id: "agent/1" },
+      },
     });
 
     expect(mocks.apiPostMock).toHaveBeenCalledWith(
       "/agent-runs/run%2F1/agents/agent%2F1/runtime/context/compact",
       {
         client_command_id: "command-compact",
+        command: {
+          command_id: "snapshot:compact",
+          command_kind: "compact_context",
+          stale_guard: { snapshot_id: "snapshot", run_id: "run/1", agent_id: "agent/1" },
+        },
       },
     );
   });

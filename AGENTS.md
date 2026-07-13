@@ -39,3 +39,4 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 - 任何时候禁止为了完成自己的任务碰工作区存在的修改，即使这些修改导致测试失败。不要摧毁并行会话的工作成果
 - VS Code / rust-analyzer 可能自动运行 `cargo check --workspace --all-targets` 并长时间占用 Cargo build directory 锁；手动 Cargo 命令看似卡住时，先观察当前 `cargo` / `rustc` / `rust-analyzer` 进程，因为等待锁通常比强行终止更能保留 IDE 与并行会话的缓存状态
 - Windows 上 `pnpm dev:desktop` 可能出现 WebView2 `0x80070057` 创建失败但 `agentdash-local-tauri` 进程仍存活；此时 renderer 和登录桥接并未运行，不能以壳进程存在判断 Desktop Runtime credential claim 已触发，应结合窗口内容、Tauri日志与server端`last_claimed_at`确认真实链路
+- `postgresql_embedded` 测试若并发复用同一 data root，多个 PostgreSQL 启动流程可能在初始化阶段相互竞争并失败，且不会进入业务断言；需要让共享 data root 的 embedded PostgreSQL 测试串行启动，或为测试分配隔离的数据目录。

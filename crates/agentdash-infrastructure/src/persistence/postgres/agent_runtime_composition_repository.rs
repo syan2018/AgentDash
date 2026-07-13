@@ -126,7 +126,9 @@ impl AgentRuntimeSurfaceBroker for PostgresAgentRuntimeCompositionRepository {
         let surface: MaterializedDriverSurface = row
             .map(|row| serde_json::from_value(row.get("materialized")))
             .transpose()
-            .map_err(|error| DriverSurfaceError::InvalidMaterialization { reason: error.to_string() })?
+            .map_err(|error| DriverSurfaceError::InvalidMaterialization {
+                reason: error.to_string(),
+            })?
             .ok_or_else(|| DriverSurfaceError::Unavailable {
                 reason: "bound surface does not exist".to_string(),
                 retryable: false,
@@ -156,7 +158,9 @@ impl AgentRuntimeSurfaceBroker for PostgresAgentRuntimeCompositionRepository {
         let surface: MaterializedDriverSurface = row
             .map(|row| serde_json::from_value(row.get("materialized")))
             .transpose()
-            .map_err(|error| DriverSurfaceError::InvalidMaterialization { reason: error.to_string() })?
+            .map_err(|error| DriverSurfaceError::InvalidMaterialization {
+                reason: error.to_string(),
+            })?
             .ok_or(DriverSurfaceError::Stale)?;
         Ok(surface.tools)
     }
@@ -192,7 +196,10 @@ impl agentdash_agent_runtime::RuntimeSurfaceReferenceValidator
             || surface.hooks.revision != target.hook_plan.revision
             || surface.hooks.digest != target.hook_plan.digest
         {
-            return Err("materialized Runtime surface components do not match the adoption descriptor".to_string());
+            return Err(
+                "materialized Runtime surface components do not match the adoption descriptor"
+                    .to_string(),
+            );
         }
         Ok(())
     }

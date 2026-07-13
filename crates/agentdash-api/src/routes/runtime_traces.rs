@@ -1,4 +1,6 @@
 use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
+use agentdash_contracts::session::SessionProjectionViewResponse;
 use uuid::Uuid;
 
 use crate::{app_state::AppState, rpc::ApiError};
@@ -34,7 +36,6 @@ pub async fn ensure_runtime_trace_permission(
     load_project_with_permission(state, user, run.project_id, permission).await?;
     Ok(())
 }
-
 async fn load_lifecycle_run_for_session(
     state: &AppState,
     run_id: Uuid,
@@ -45,6 +46,23 @@ async fn load_lifecycle_run_for_session(
         .get_by_id(run_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_run 不存在: {run_id}")))
+}
+
+pub(crate) async fn load_runtime_trace_context_projection(
+    state: &AppState,
+    target: AgentRunRuntimeTarget,
+) -> Result<SessionProjectionViewResponse, ApiError> {
+    state
+        .services
+        .agent_run_journal
+        .build_context_projection_read_model(
+            agentdash_application_agentrun::agent_run::AgentRunJournalQuery {
+                run_id: target.run_id,
+                agent_id: target.agent_id,
+            },
+        )
+        .await
+        .map_err(ApiError::from)
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -49,7 +49,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn create_run_contract_rejects_legacy_executor_config() {
+    fn create_run_contract_accepts_executor_config() {
         let result = serde_json::from_value::<CreateProjectAgentRunRequest>(serde_json::json!({
             "input": [],
             "client_command_id": "cmd-1",
@@ -58,36 +58,10 @@ mod tests {
             }
         }));
 
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn run_config_override_preserves_project_agent_executor() {
-        let base = agentdash_spi::AgentConfig {
-            executor: "PI_AGENT".to_string(),
-            provider_id: Some("default-provider".to_string()),
-            model_id: Some("default-model".to_string()),
-            ..agentdash_spi::AgentConfig::default()
-        };
-        let effective = apply_run_config(
-            base,
-            Some(
-                &agentdash_contracts::project_agent::AgentRunModelSelectionRequest {
-                    provider_id: Some("run-provider".to_string()),
-                    model_id: Some("run-model".to_string()),
-                    agent_id: None,
-                    thinking_level: Some(ThinkingLevel::High),
-                },
-            ),
-            None,
-        );
-
-        assert_eq!(effective.executor, "PI_AGENT");
-        assert_eq!(effective.provider_id.as_deref(), Some("run-provider"));
-        assert_eq!(effective.model_id.as_deref(), Some("run-model"));
+        let request = result.expect("executor_config remains accepted");
         assert_eq!(
-            effective.thinking_level,
-            Some(agentdash_spi::ThinkingLevel::High)
+            request.executor_config,
+            Some(serde_json::json!({ "executor": "CODEX" }))
         );
     }
 
@@ -188,22 +162,21 @@ pub async fn create_project_agent_run(
     let project_agent_context = build_project_agent_context(&project_agent)
         .await
         .map_err(ApiError::Internal)?;
-    let has_run_config_override = req.model_selection.is_some() || req.runtime_options.is_some();
-    let (effective_executor_config, executor_config_source) = if has_run_config_override {
-        (
-            apply_run_config(
+    let executor_config_override = req
+        .executor_config
+        .clone()
+        .map(serde_json::from_value::<agentdash_spi::AgentConfig>)
+        .transpose()
+        .map_err(|error| ApiError::BadRequest(format!("executor_config 非法: {error}")))?;
+    let (effective_executor_config, executor_config_source) =
+        if let Some(config) = executor_config_override {
+            (config, ConversationModelConfigSourceModel::UserOverride)
+        } else {
+            (
                 project_agent_context.executor_config.clone(),
-                req.model_selection.as_ref(),
-                req.runtime_options.as_ref(),
-            ),
-            ConversationModelConfigSourceModel::UserOverride,
-        )
-    } else {
-        (
-            project_agent_context.executor_config.clone(),
-            ConversationModelConfigSourceModel::ProjectAgentPreset,
-        )
-    };
+                ConversationModelConfigSourceModel::ProjectAgentPreset,
+            )
+        };
     if !crate::routes::execution_profiles::is_known_execution_profile(
         &state,
         effective_executor_config.executor.trim(),
@@ -264,13 +237,14 @@ pub async fn create_project_agent_run(
             .await
             .map_err(ApiError::from)?;
     }
-    let presentation_input =
-        agentdash_application_agentrun::agent_run::AgentRunPresentationInput {
-            content: req.input.clone(),
-            source: agentdash_agent_protocol::UserInputSource::core_composer(),
-            submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
-            started_at_seconds: chrono::Utc::now().timestamp(),
-        };
+    let presentation = agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
+        content: req.input.clone(),
+        source: agentdash_agent_protocol::UserInputSource::core_composer(),
+        launch_source:
+            agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
+        submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+        started_at_seconds: chrono::Utc::now().timestamp(),
+    };
     let input = super::lifecycle_agents::runtime_input_from_codex(req.input)?;
     let delivery = state
         .services
@@ -282,7 +256,7 @@ pub async fn create_project_agent_run(
                 dispatch.delivery_runtime_ref.to_string(),
             )
             .map_err(|error| ApiError::Internal(error.to_string()))?,
-            presentation_input,
+            presentation,
             input,
             actor: RuntimeActor::User {
                 subject: current_user.user_id.clone(),
@@ -290,6 +264,7 @@ pub async fn create_project_agent_run(
             client_command_id: req.client_command_id.clone(),
             backend_selection,
             identity: Some(current_user.clone()),
+            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
         })
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -300,24 +275,10 @@ pub async fn create_project_agent_run(
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::Internal("Lifecycle launch 未产出 AgentFrame".to_string()))?;
-    let binding = state
-        .repos
-        .agent_run_runtime_binding_repo
-        .load(
-            &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget {
-                run_id: runtime_refs.run_ref,
-                agent_id: runtime_refs.agent_ref,
-            },
-        )
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
     let operation_id = delivery
         .operation_receipt
         .as_ref()
         .map(|receipt| receipt.operation_id.to_string());
-    let runtime_thread_id = binding
-        .as_ref()
-        .map(|binding| binding.thread_id.to_string());
     let receipt = AgentRunCommandReceipt {
         client_command_id: req.client_command_id,
         status: if delivery.queued {
@@ -330,7 +291,6 @@ pub async fn create_project_agent_run(
             .operation_receipt
             .as_ref()
             .is_some_and(|receipt| receipt.duplicate),
-        accepted_runtime_operation_id: operation_id.clone(),
         message: None,
     };
     let run_ref = LifecycleRunRefDto {
@@ -349,19 +309,18 @@ pub async fn create_project_agent_run(
         run_ref: run_ref.clone(),
         agent_ref: agent_ref.clone(),
         frame_ref: Some(frame_ref.clone()),
-        runtime_thread_id: runtime_thread_id.clone(),
-        runtime_operation_id: operation_id.clone(),
+        turn_id: operation_id.map(|operation_id| format!("turn-{operation_id}")),
     };
     let initial_message = AgentRunMessageCommandResponse {
         command_receipt: receipt.clone(),
         outcome: if delivery.queued {
             AgentRunMessageCommandOutcome::Queued
         } else {
-            AgentRunMessageCommandOutcome::Dispatched
+            AgentRunMessageCommandOutcome::Launched
         },
-        mailbox_message_id: delivery
-            .queued
-            .then(|| delivery.mailbox_message_id.to_string()),
+        mailbox_message: None,
+        accepted_refs: None,
+        fork: None,
     };
     Ok(Json(ProjectAgentRunStartResult {
         command_receipt: receipt,
@@ -384,42 +343,7 @@ pub async fn create_project_agent_run(
     }))
 }
 
-fn apply_run_config(
-    mut base: agentdash_spi::AgentConfig,
-    model_selection: Option<&agentdash_contracts::project_agent::AgentRunModelSelectionRequest>,
-    runtime_options: Option<&agentdash_contracts::project_agent::AgentRunRuntimeOptionsRequest>,
-) -> agentdash_spi::AgentConfig {
-    if let Some(selection) = model_selection {
-        if selection.provider_id.is_some() {
-            base.provider_id = selection.provider_id.clone();
-        }
-        if selection.model_id.is_some() {
-            base.model_id = selection.model_id.clone();
-        }
-        if selection.agent_id.is_some() {
-            base.agent_id = selection.agent_id.clone();
-        }
-        if let Some(level) = selection.thinking_level {
-            base.thinking_level = Some(match level {
-                ThinkingLevel::Off => agentdash_spi::ThinkingLevel::Off,
-                ThinkingLevel::Minimal => agentdash_spi::ThinkingLevel::Minimal,
-                ThinkingLevel::Low => agentdash_spi::ThinkingLevel::Low,
-                ThinkingLevel::Medium => agentdash_spi::ThinkingLevel::Medium,
-                ThinkingLevel::High => agentdash_spi::ThinkingLevel::High,
-                ThinkingLevel::Xhigh => agentdash_spi::ThinkingLevel::Xhigh,
-            });
-        }
-    }
-    if let Some(permission_policy) = runtime_options
-        .and_then(|options| options.permission_policy.as_ref())
-        .cloned()
-    {
-        base.permission_policy = Some(permission_policy);
-    }
-    base
-}
-
-fn backend_selection_input(
+pub(crate) fn backend_selection_input(
     selection: &BackendSelectionRequestDto,
 ) -> Result<BackendSelectionInput, ApiError> {
     let mode = match selection.mode {

@@ -14,6 +14,7 @@ use agentdash_domain::{
         LifecycleRun, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
     },
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use uuid::Uuid;
 
 use crate::ApplicationError;
@@ -119,7 +120,7 @@ impl ProjectAgentRunListQuery {
             .limit
             .unwrap_or(DEFAULT_PAGE_LIMIT)
             .clamp(1, MAX_PAGE_LIMIT);
-        let cursor = input.cursor.map(decode_cursor).transpose()?;
+        let cursor = input.cursor.and_then(decode_cursor);
         let project_agents = self
             .project_agent_repo
             .list_by_project(input.project_id)
@@ -277,7 +278,7 @@ fn project_children(
     if depth >= MAX_AGENT_LINEAGE_DEPTH {
         return Vec::new();
     }
-    children
+    let mut projected = children
         .get(&parent_id)
         .into_iter()
         .flatten()
@@ -306,7 +307,9 @@ fn project_children(
                 children: nested,
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    projected.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));
+    projected
 }
 
 fn lineage_forest(
@@ -358,31 +361,26 @@ fn run_sort_key(run: &LifecycleRun) -> (i64, Uuid) {
 }
 
 fn encode_cursor(run: &LifecycleRun) -> String {
-    format!("{}:{}", run.last_activity_at.timestamp_millis(), run.id)
+    URL_SAFE_NO_PAD
+        .encode(format!("{}:{}", run.last_activity_at.timestamp_millis(), run.id).as_bytes())
 }
 
-fn decode_cursor(cursor: &str) -> Result<(i64, Uuid), ApplicationError> {
-    let (millis, id) = cursor
-        .split_once(':')
-        .ok_or_else(|| ApplicationError::BadRequest("无效的 AgentRun list cursor".to_string()))?;
-    Ok((
-        millis
-            .parse()
-            .map_err(|_| ApplicationError::BadRequest("无效的 AgentRun list cursor".to_string()))?,
-        Uuid::parse_str(id)
-            .map_err(|_| ApplicationError::BadRequest("无效的 AgentRun list cursor".to_string()))?,
-    ))
+fn decode_cursor(cursor: &str) -> Option<(i64, Uuid)> {
+    let bytes = URL_SAFE_NO_PAD.decode(cursor.as_bytes()).ok()?;
+    let raw = String::from_utf8(bytes).ok()?;
+    let (millis, id) = raw.split_once(':')?;
+    Some((millis.parse().ok()?, Uuid::parse_str(id).ok()?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use agentdash_agent_runtime_contract::{
-        OperationReceipt, RuntimeContextView, RuntimeEventStream,
+        OperationReceipt, RuntimeContextView, RuntimeEventStream, RuntimePresentationAppendReceipt,
     };
     use agentdash_application_agentrun::agent_run::{
-        AgentRunRuntimeError, AgentRunRuntimeView, GuardedAgentRunCommand, ReadAgentRunEvents,
-        ResolveAgentRunInteraction, SendAgentRunMessage, SteerAgentRunTurn,
+        AgentRunRuntimeError, AgentRunRuntimeView, ForkAgentRunRuntime, GuardedAgentRunCommand,
+        ReadAgentRunEvents, ResolveAgentRunInteraction, SendAgentRunMessage, SteerAgentRunTurn,
     };
     use agentdash_domain::workflow::AgentSource;
     use agentdash_test_support::workflow::{
@@ -398,6 +396,13 @@ mod tests {
 
     #[async_trait]
     impl AgentRunRuntime for FixtureRuntime {
+        async fn append_presentation(
+            &self,
+            _: agentdash_application_agentrun::agent_run::AppendAgentRunPresentation,
+        ) -> Result<RuntimePresentationAppendReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
         async fn inspect(
             &self,
             target: AgentRunRuntimeTarget,
@@ -418,6 +423,16 @@ mod tests {
             &self,
             _: SendAgentRunMessage,
         ) -> Result<OperationReceipt, AgentRunRuntimeError> {
+            Err(AgentRunRuntimeError::BindingNotFound)
+        }
+
+        async fn fork_runtime(
+            &self,
+            _: ForkAgentRunRuntime,
+        ) -> Result<
+            agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBinding,
+            AgentRunRuntimeError,
+        > {
             Err(AgentRunRuntimeError::BindingNotFound)
         }
 
@@ -511,9 +526,56 @@ mod tests {
     #[test]
     fn cursor_round_trip_uses_run_activity_and_id() {
         let run = LifecycleRun::new_plain(Uuid::new_v4());
+        let cursor = encode_cursor(&run);
+        assert!(!cursor.contains(':'), "Main cursor must remain opaque");
+        assert_eq!(decode_cursor(&cursor).expect("cursor"), run_sort_key(&run));
+        assert_eq!(decode_cursor("not-a-main-cursor"), None);
+    }
+
+    #[test]
+    fn child_projection_sorts_every_level_by_main_last_activity_order() {
+        let run_id = Uuid::new_v4();
+        let root = Uuid::new_v4();
+        let older = Uuid::new_v4();
+        let newer = Uuid::new_v4();
+        let facts = HashMap::from([
+            (
+                older,
+                AgentFacts {
+                    title: "Older".to_string(),
+                    source: "subagent".to_string(),
+                    lifecycle_status: "completed".to_string(),
+                    last_activity_at: "2026-07-10T00:01:00Z".to_string(),
+                    project_agent_label: None,
+                    runtime: None,
+                    subject: None,
+                },
+            ),
+            (
+                newer,
+                AgentFacts {
+                    title: "Newer".to_string(),
+                    source: "subagent".to_string(),
+                    lifecycle_status: "running".to_string(),
+                    last_activity_at: "2026-07-10T00:02:00Z".to_string(),
+                    project_agent_label: None,
+                    runtime: None,
+                    subject: None,
+                },
+            ),
+        ]);
+        let children = HashMap::from([(root, vec![older, newer])]);
+        let mut projected_agent_ids = HashSet::from([root]);
+
+        let projected =
+            project_children(run_id, root, &children, &facts, 0, &mut projected_agent_ids);
+
         assert_eq!(
-            decode_cursor(&encode_cursor(&run)).expect("cursor"),
-            run_sort_key(&run)
+            projected
+                .iter()
+                .map(|child| child.agent_id)
+                .collect::<Vec<_>>(),
+            vec![newer, older]
         );
     }
 

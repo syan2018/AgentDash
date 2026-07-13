@@ -98,8 +98,8 @@ impl PostgresAgentRunMailboxRepository {
     }
 }
 
-const MAILBOX_COLS: &str = "id,run_id,agent_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,accepted_runtime_operation_id,claim_token,claimed_at,claim_expires_at,payload_json,executor_config_json,launch_planning_input,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
-const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.accepted_runtime_operation_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.payload_json,m.executor_config_json,m.launch_planning_input,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
+const MAILBOX_COLS: &str = "id,run_id,agent_id,origin,source_namespace,source_kind,source_ref,source_correlation_ref,source_actor,source_route,source_display_label_key,source_metadata,delivery,delivery_json,barrier,drain_mode,status,priority,order_key,source_dedup_key,accepted_runtime_operation_id,accepted_agent_run_turn_id,accepted_protocol_turn_id,claim_token,claimed_at,claim_expires_at,payload_json,executor_config_json,launch_planning_input,preview,has_images,retain_payload,attempt_count,last_error,created_at,updated_at,consumed_at,deleted_at";
+const MAILBOX_COLS_M: &str = "m.id,m.run_id,m.agent_id,m.origin,m.source_namespace,m.source_kind,m.source_ref,m.source_correlation_ref,m.source_actor,m.source_route,m.source_display_label_key,m.source_metadata,m.delivery,m.delivery_json,m.barrier,m.drain_mode,m.status,m.priority,m.order_key,m.source_dedup_key,m.accepted_runtime_operation_id,m.accepted_agent_run_turn_id,m.accepted_protocol_turn_id,m.claim_token,m.claimed_at,m.claim_expires_at,m.payload_json,m.executor_config_json,m.launch_planning_input,m.preview,m.has_images,m.retain_payload,m.attempt_count,m.last_error,m.created_at,m.updated_at,m.consumed_at,m.deleted_at";
 const STATE_COLS: &str =
     "run_id,agent_id,paused,pause_reason,pause_message,backend_selection_preference,updated_at";
 
@@ -127,7 +127,7 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         &self,
         message: NewAgentRunMailboxMessage,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
-        let id = Uuid::new_v4();
+        let id = message.id.unwrap_or_else(Uuid::new_v4);
         let now = Utc::now();
         let order_key = self
             .next_order_key(message.run_id, message.agent_id)
@@ -337,17 +337,22 @@ impl AgentRunMailboxRepository for PostgresAgentRunMailboxRepository {
         id: Uuid,
         claim_token: Uuid,
         operation_id: String,
+        agent_run_turn_id: Option<String>,
+        protocol_turn_id: Option<String>,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         let now = Utc::now();
         sqlx::query_as::<_, AgentRunMailboxMessageRow>(&format!(
             "UPDATE agent_run_mailbox_messages SET \
-             status=$1,accepted_runtime_operation_id=$2,last_error=NULL,\
+             status=$1,accepted_runtime_operation_id=$2,accepted_agent_run_turn_id=$3,\
+             accepted_protocol_turn_id=$4,last_error=NULL,\
              claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL,\
-             consumed_at=COALESCE(consumed_at,$3),updated_at=$3 \
-             WHERE id=$4 AND claim_token=$5 RETURNING {MAILBOX_COLS}"
+             consumed_at=COALESCE(consumed_at,$5),updated_at=$5 \
+             WHERE id=$6 AND claim_token=$7 RETURNING {MAILBOX_COLS}"
         ))
         .bind(MailboxMessageStatus::Dispatched.as_str())
         .bind(operation_id)
+        .bind(agent_run_turn_id)
+        .bind(protocol_turn_id)
         .bind(now)
         .bind(id.to_string())
         .bind(claim_token.to_string())
@@ -708,6 +713,8 @@ struct AgentRunMailboxMessageRow {
     order_key: i64,
     source_dedup_key: Option<String>,
     accepted_runtime_operation_id: Option<String>,
+    accepted_agent_run_turn_id: Option<String>,
+    accepted_protocol_turn_id: Option<String>,
     claim_token: Option<String>,
     claimed_at: Option<DateTime<Utc>>,
     claim_expires_at: Option<DateTime<Utc>>,
@@ -752,6 +759,8 @@ impl TryFrom<AgentRunMailboxMessageRow> for AgentRunMailboxMessage {
             order_key: row.order_key,
             source_dedup_key: row.source_dedup_key,
             accepted_runtime_operation_id: row.accepted_runtime_operation_id,
+            accepted_agent_run_turn_id: row.accepted_agent_run_turn_id,
+            accepted_protocol_turn_id: row.accepted_protocol_turn_id,
             claim_token: row
                 .claim_token
                 .as_deref()
@@ -879,6 +888,7 @@ mod tests {
 
     fn message(run_id: Uuid, agent_id: Uuid) -> NewAgentRunMailboxMessage {
         NewAgentRunMailboxMessage {
+            id: None,
             run_id,
             agent_id,
             origin: MailboxMessageOrigin::User,
@@ -947,5 +957,125 @@ mod tests {
             .expect("exists");
         assert_eq!(recovered.status, MailboxMessageStatus::Blocked);
         assert!(recovered.accepted_runtime_operation_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn accepted_turn_refs_migration_supports_clean_and_existing_schema_upgrade() {
+        let (pool, _runtime) = test_pool().await;
+        for column in ["accepted_agent_run_turn_id", "accepted_protocol_turn_id"] {
+            let present: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_run_mailbox_messages' AND column_name=$1)",
+            )
+            .bind(column)
+            .fetch_one(&pool)
+            .await
+            .expect("read clean mailbox accepted ref column");
+            assert!(present, "missing clean migration column {column}");
+        }
+
+        sqlx::query(
+            "ALTER TABLE agent_run_mailbox_messages DROP COLUMN accepted_agent_run_turn_id, DROP COLUMN accepted_protocol_turn_id",
+        )
+        .execute(&pool)
+        .await
+        .expect("restore pre-0072 mailbox schema");
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version=72")
+            .execute(&pool)
+            .await
+            .expect("rewind 0072 migration marker");
+        crate::migration::run_postgres_migrations(&pool)
+            .await
+            .expect("upgrade pre-0072 mailbox schema");
+
+        let repo = PostgresAgentRunMailboxRepository::new(pool.clone());
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        insert_agent_run(&pool, run_id, agent_id).await;
+        let created = repo
+            .create_message(message(run_id, agent_id))
+            .await
+            .expect("create mailbox message after upgrade");
+        let claim_token = Uuid::new_v4();
+        repo.claim_next(AgentRunMailboxClaimRequest {
+            run_id,
+            agent_id,
+            barriers: vec![ConsumptionBarrier::ImmediateIfIdle],
+            drain_mode: Some(MailboxDrainMode::One),
+            limit: 1,
+            claim_token,
+            claim_expires_at: Utc::now() + chrono::Duration::minutes(1),
+        })
+        .await
+        .expect("claim mailbox message");
+        seed_runtime_operation(&pool, "operation-1").await;
+        let accepted = repo
+            .mark_runtime_operation_accepted(
+                created.id,
+                claim_token,
+                "operation-1".to_string(),
+                Some("agent-run-turn-1".to_string()),
+                Some("protocol-turn-1".to_string()),
+            )
+            .await
+            .expect("persist accepted refs");
+        assert_eq!(
+            accepted.accepted_agent_run_turn_id.as_deref(),
+            Some("agent-run-turn-1")
+        );
+        assert_eq!(
+            accepted.accepted_protocol_turn_id.as_deref(),
+            Some("protocol-turn-1")
+        );
+    }
+
+    async fn seed_runtime_operation(pool: &PgPool, operation_id: &str) {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let binding_id = format!("binding-{suffix}");
+        let source_thread_id = format!("source-{suffix}");
+        let thread_id = format!("runtime-{suffix}");
+        sqlx::query(
+            "INSERT INTO agent_runtime_binding (id,driver_generation,profile_digest) VALUES ($1,1,$2)",
+        )
+        .bind(&binding_id)
+        .bind(format!("profile-{suffix}"))
+        .execute(pool)
+        .await
+        .expect("seed runtime binding");
+        sqlx::query(
+            "INSERT INTO agent_runtime_source_coordinate (binding_id,source_thread_id,thread_id) VALUES ($1,$2,$3)",
+        )
+        .bind(&binding_id)
+        .bind(&source_thread_id)
+        .bind(&thread_id)
+        .execute(pool)
+        .await
+        .expect("seed runtime source coordinate");
+        sqlx::query(
+            "INSERT INTO agent_runtime_thread \
+             (id,revision,next_event_sequence,next_operation_sequence,status,active_turn_id,binding_id,driver_generation,source_thread_id,profile_digest,active_checkpoint_id,context_revision,settings_revision,tool_set_revision,projection) \
+             VALUES ($1,0,0,2,'active',NULL,$2,1,$3,$4,NULL,0,0,0,$5)",
+        )
+        .bind(&thread_id)
+        .bind(&binding_id)
+        .bind(&source_thread_id)
+        .bind(format!("profile-{suffix}"))
+        .bind(json!({}))
+        .execute(pool)
+        .await
+        .expect("seed runtime thread");
+        sqlx::query(
+            "INSERT INTO agent_runtime_operation \
+             (id,thread_id,operation_sequence,idempotency_key,accepted_revision,status,actor,command,terminal,record) \
+             VALUES ($1,$2,1,$3,0,'active',$4,$5,NULL,$6)",
+        )
+        .bind(operation_id)
+        .bind(&thread_id)
+        .bind(format!("key-{suffix}"))
+        .bind(json!({"kind":"system","component":"mailbox-migration-test"}))
+        .bind(json!({"kind":"turn_start","thread_id":thread_id,"input":[]}))
+        .bind(json!({}))
+        .execute(pool)
+        .await
+        .expect("seed canonical runtime operation");
     }
 }

@@ -945,6 +945,8 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
         id: Uuid,
         claim_token: Uuid,
         operation_id: String,
+        agent_run_turn_id: Option<String>,
+        protocol_turn_id: Option<String>,
     ) -> Result<AgentRunMailboxMessage, DomainError> {
         let mut messages = self.messages.lock().await;
         let message = messages
@@ -957,6 +959,8 @@ impl AgentRunMailboxRepository for MemoryAgentRunMailboxRepository {
             })?;
         message.status = MailboxMessageStatus::Dispatched;
         message.accepted_runtime_operation_id = Some(operation_id);
+        message.accepted_agent_run_turn_id = agent_run_turn_id;
+        message.accepted_protocol_turn_id = protocol_turn_id;
         message.claim_token = None;
         message.claim_expires_at = None;
         message.consumed_at = Some(Utc::now());
@@ -1124,7 +1128,7 @@ impl MemoryAgentRunMailboxRepository {
 fn mailbox_message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailboxMessage {
     let now = Utc::now();
     AgentRunMailboxMessage {
-        id: Uuid::new_v4(),
+        id: message.id.unwrap_or_else(Uuid::new_v4),
         run_id: message.run_id,
         agent_id: message.agent_id,
         origin: message.origin,
@@ -1137,6 +1141,8 @@ fn mailbox_message_from_new(message: NewAgentRunMailboxMessage) -> AgentRunMailb
         order_key: now.timestamp_micros(),
         source_dedup_key: message.source_dedup_key,
         accepted_runtime_operation_id: None,
+        accepted_agent_run_turn_id: None,
+        accepted_protocol_turn_id: None,
         claim_token: None,
         claimed_at: None,
         claim_expires_at: None,

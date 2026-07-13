@@ -4,8 +4,9 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_agent_runtime_host::{
     AgentRuntimeHostRepository, AgentServiceDefinitionId, AgentServiceInstance,
-    AgentServiceOfferId, AppliedSurface, BoundAgentSurfaceReference, DriverLease, HostStoreError, RuntimeBinding,
-    RuntimeBindingState, RuntimeDriverCoordinate, RuntimeOffer, RuntimeSourceCoordinate,
+    AgentServiceOfferId, AppliedSurface, BoundAgentSurfaceReference, DriverLease, HostStoreError,
+    RuntimeBinding, RuntimeBindingState, RuntimeDriverCoordinate, RuntimeOffer,
+    RuntimeSourceCoordinate,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

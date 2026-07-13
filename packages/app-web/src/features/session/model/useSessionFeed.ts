@@ -9,7 +9,7 @@ import { useMemo } from "react";
 import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import { useSessionStream } from "./useSessionStream";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import type { AgentDashThreadItem } from "../../../generated/backbone-protocol";
+import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { parseBoundedOutputText } from "./boundedOutput";
 import { getPlatformEventPolicy } from "./systemEventPolicy";
 import { isRecord } from "./platformEvent";
@@ -21,7 +21,6 @@ import type {
   SessionDisplayItem,
   AggregatedEntryGroup,
   SessionEventEnvelope,
-  SessionPresentationEvent,
   TokenUsageInfo,
 } from "./types";
 
@@ -30,7 +29,6 @@ export interface UseSessionFeedOptions {
   activeTurnId?: string | null;
   enableAggregation?: boolean;
   enabled?: boolean;
-  onRuntimeInspectInvalidated?: () => void;
 }
 
 export interface UseSessionFeedResult {
@@ -49,14 +47,14 @@ export interface UseSessionFeedResult {
   tokenUsage: TokenUsageInfo | null;
 }
 
-function extractThreadItem(event: SessionPresentationEvent): AgentDashThreadItem | null {
+function extractThreadItem(event: BackboneEvent): AgentDashThreadItem | null {
   if (event.type === "item_started" || event.type === "item_updated" || event.type === "item_completed") {
     return event.payload.item;
   }
   return null;
 }
 
-function isToolBurstEvent(event: SessionPresentationEvent): boolean {
+function isToolBurstEvent(event: BackboneEvent): boolean {
   const item = extractThreadItem(event);
   return item != null && isToolBurstEligible(item);
 }
@@ -101,7 +99,7 @@ function hasBoundedOutputEntry(entry: SessionDisplayEntry): boolean {
   return itemTextOutputs(item).some((text) => parseBoundedOutputText(text) != null);
 }
 
-function isContextFrameEvent(event: SessionPresentationEvent): boolean {
+function isContextFrameEvent(event: BackboneEvent): boolean {
   return (
     event.type === "platform" &&
     event.payload.kind === "session_meta_update" &&
@@ -109,7 +107,7 @@ function isContextFrameEvent(event: SessionPresentationEvent): boolean {
   );
 }
 
-function isWillRetryErrorEvent(event: SessionPresentationEvent): boolean {
+function isWillRetryErrorEvent(event: BackboneEvent): boolean {
   return event.type === "error" && event.payload.willRetry === true;
 }
 
@@ -148,6 +146,10 @@ function classifyEntry(
     return "tool_like";
   }
 
+  if (event.type === "turn_started" || event.type === "turn_completed") {
+    return "neutral";
+  }
+
   if (
     event.type === "reasoning_text_delta" ||
     event.type === "reasoning_summary_delta"
@@ -173,6 +175,8 @@ function classifyEntry(
 
   if (
     event.type === "token_usage_updated" ||
+    event.type === "thread_status_changed" ||
+    event.type === "executor_context_compacted" ||
     event.type === "turn_diff_updated" ||
     event.type === "plan_delta"
   ) {
@@ -239,11 +243,11 @@ function createCtxSideGroup(entry: SessionDisplayEntry): AggregatedContextFrameG
   };
 }
 
-function isThinkingEvent(event: SessionPresentationEvent): boolean {
+function isThinkingEvent(event: BackboneEvent): boolean {
   return event.type === "reasoning_text_delta" || event.type === "reasoning_summary_delta";
 }
 
-function isAgentMessageEvent(event: SessionPresentationEvent): boolean {
+function isAgentMessageEvent(event: BackboneEvent): boolean {
   return event.type === "agent_message_delta";
 }
 
@@ -610,7 +614,7 @@ function readNumberField(record: Record<string, unknown>, key: string): number |
 }
 
 function eventTurnId(event: SessionEventEnvelope): string | undefined {
-  return event.turn_id;
+  return event.turn_id ?? event.notification.trace.turnId ?? undefined;
 }
 
 function ensureTurnMeta(
@@ -643,31 +647,55 @@ function updateTurnMeta(
   if (patch.activity !== undefined) meta.activity = patch.activity;
 }
 
+function turnStartedAtMs(startedAtSeconds: number | null | undefined): number | undefined {
+  if (typeof startedAtSeconds !== "number" || !Number.isFinite(startedAtSeconds)) {
+    return undefined;
+  }
+  return startedAtSeconds * 1000;
+}
+
+function normalizeTurnStatus(status: string): TurnStatus {
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "interrupted") return "interrupted";
+  return "active";
+}
+
 function extractTurnTerminalMeta(event: SessionEventEnvelope): {
   turnId: string;
   status: TurnStatus;
   startedAtMs?: number;
   durationMs?: number;
 } | null {
-  const bbEvent = event.event;
+  const bbEvent = event.notification.event;
+  if (bbEvent.type === "turn_completed") {
+    const turn = bbEvent.payload.turn;
+    return {
+      turnId: turn.id,
+      status: normalizeTurnStatus(turn.status),
+      startedAtMs: turnStartedAtMs(turn.startedAt),
+      durationMs: turn.durationMs ?? undefined,
+    };
+  }
+
   if (
     bbEvent.type !== "platform" ||
     bbEvent.payload.kind !== "session_meta_update" ||
-    bbEvent.payload.data.key !== "runtime_turn_terminal" ||
+    bbEvent.payload.data.key !== "turn_terminal" ||
     !isRecord(bbEvent.payload.data.value)
   ) {
     return null;
   }
 
   const value = bbEvent.payload.data.value;
-  const terminalType = readStringField(value, "terminal");
+  const terminalType = readStringField(value, "terminal_type");
   const turnId = readStringField(value, "turn_id") ?? eventTurnId(event);
   if (!terminalType || !turnId) {
     return null;
   }
   const status: TurnStatus =
-    terminalType === "completed" ? "completed"
-    : terminalType === "interrupted" ? "interrupted"
+    terminalType === "turn_completed" ? "completed"
+    : terminalType === "turn_interrupted" ? "interrupted"
     : "failed";
   return {
     turnId,
@@ -685,13 +713,12 @@ export function segmentByTurn(
   const turnMeta = new Map<string, TurnMeta>();
 
   for (const event of rawEvents) {
-    const bbEvent = event.event;
+    const bbEvent = event.notification.event;
 
-    if (bbEvent.type === "platform" && bbEvent.payload.kind === "session_meta_update" && bbEvent.payload.data.key === "runtime_turn_started" && isRecord(bbEvent.payload.data.value)) {
-      const turnId = readStringField(bbEvent.payload.data.value, "turn_id");
-      if (turnId) updateTurnMeta(turnMeta, turnId, event.event_seq, {
+    if (bbEvent.type === "turn_started") {
+      updateTurnMeta(turnMeta, bbEvent.payload.turn.id, event.event_seq, {
         status: "active",
-        startedAtMs: readNumberField(bbEvent.payload.data.value, "started_at_ms") ?? event.occurred_at_ms,
+        startedAtMs: turnStartedAtMs(bbEvent.payload.turn.startedAt),
       });
     }
 
@@ -811,7 +838,6 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     activeTurnId,
     enableAggregation = true,
     enabled,
-    onRuntimeInspectInvalidated,
   } = options;
   const { prefs } = useDebugPrefs();
 
@@ -830,7 +856,6 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
   } = useSessionStream({
     agentRunTarget,
     enabled,
-    onRuntimeInspectInvalidated,
   });
 
   const displayItems = useMemo(() => {

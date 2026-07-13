@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { ThreadItem } from "../../../generated/backbone-protocol";
-import type { SessionEventEnvelope, SessionPresentationEvent } from "./types";
+import type {
+  BackboneEnvelope,
+  BackboneEvent,
+  ProviderAttemptPhase,
+  ThreadItem,
+} from "../../../generated/backbone-protocol";
+import type { SessionEventEnvelope } from "./types";
 import {
   createInitialStreamState,
   reduceStreamState,
@@ -8,15 +13,33 @@ import {
   shouldFlushStreamEventImmediately,
 } from "./sessionStreamReducer";
 
-function streamEvent(event_seq: number, event: SessionPresentationEvent): SessionEventEnvelope {
+function envelope(event: BackboneEvent): BackboneEnvelope {
+  return {
+    sessionId: "s1",
+    source: {
+      connectorId: "connector",
+      connectorType: "test",
+      executorId: null,
+    },
+    trace: {
+      turnId: "turn-1",
+      entryIndex: 0,
+    },
+    observedAt: "2026-06-11T00:00:00.000Z",
+    event,
+  };
+}
+
+function streamEvent(event_seq: number, event: BackboneEvent): SessionEventEnvelope {
   return {
     session_id: "s1",
     event_seq,
     occurred_at_ms: event_seq,
+    committed_at_ms: event_seq,
     session_update_type: event.type,
     turn_id: "turn-1",
     entry_index: 0,
-    event,
+    notification: envelope(event),
   };
 }
 
@@ -39,16 +62,24 @@ function ephemeralAgentDelta(ephemeralSeq: number, delta: string): SessionEventE
 
 function ephemeralProviderAttemptStatus(
   ephemeralSeq: number,
-  phase = "connected_waiting_first_delta",
+  phase: ProviderAttemptPhase = "connected_waiting_first_delta",
 ): SessionEventEnvelope {
   return {
     ...streamEvent(ephemeralSeq, {
       type: "platform",
       payload: {
-        kind: "session_meta_update",
+        kind: "provider_attempt_status",
         data: {
-          key: "runtime_provider_status",
-          value: { turn_id: "turn-1", phase },
+          turn_id: "turn-1",
+          phase,
+          attempt: 1,
+          max_attempts: 3,
+          will_retry: false,
+          delay_ms: null,
+          reason_code: null,
+          message: null,
+          provider: null,
+          model: null,
         },
       },
     }),
@@ -63,9 +94,9 @@ function turnTerminal(event_seq: number): SessionEventEnvelope {
     payload: {
       kind: "session_meta_update",
       data: {
-        key: "runtime_turn_terminal",
+        key: "turn_terminal",
         value: {
-          terminal: "completed",
+          terminal_type: "turn_completed",
           turn_id: "turn-1",
           duration_ms: 100,
         },
@@ -282,7 +313,7 @@ describe("sessionStreamReducer", () => {
     ]);
 
     expect(state.rawEvents).toHaveLength(1);
-    expect(state.rawEvents[0]?.event.type).toBe("error");
+    expect(state.rawEvents[0]?.notification.event.type).toBe("error");
     expect(state.entries).toHaveLength(0);
     expect(state.lastAppliedSeq).toBe(1);
   });
@@ -295,9 +326,9 @@ describe("sessionStreamReducer", () => {
         payload: {
           kind: "session_meta_update",
           data: {
-            key: "runtime_turn_terminal",
+            key: "turn_terminal",
             value: {
-              terminal: "failed",
+              terminal_type: "turn_failed",
               turn_id: "turn-1",
               message: "provider disconnected",
             },

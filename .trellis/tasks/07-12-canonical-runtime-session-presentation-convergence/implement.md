@@ -359,10 +359,10 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] frontend file ledger除显式allowlist外差异为零。
-- [ ] user/assistant/reasoning/plan/tool/context/usage/error/interaction/round fixtures通过原renderer。
-- [ ] 用户不会变Agent/CHANNEL；无phantom tool card；reasoning刷新不丢。
-- [ ] `pnpm --filter app-web test`相关session tests与typecheck通过。
+- [x] frontend file ledger除显式allowlist外差异为零。
+- [x] user/assistant/reasoning/plan/tool/context/usage/error/interaction/round fixtures通过原renderer。
+- [x] 用户不会变Agent/CHANNEL；无phantom tool card；reasoning刷新不丢。
+- [x] `pnpm --filter app-web test`相关session tests与typecheck通过。
 
 ### Commit
 

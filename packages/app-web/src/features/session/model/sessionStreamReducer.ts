@@ -1,6 +1,5 @@
-import type { AgentDashThreadItem } from "../../../generated/backbone-protocol";
+import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import type {
-  SessionPresentationEvent,
   SessionDisplayEntry,
   SessionEventEnvelope,
   SessionItemFreshness,
@@ -25,8 +24,6 @@ export interface SessionStreamState {
    * ephemeral seq 与 durable event_seq 不同语义，互不干扰。
    */
   lastEphemeralSeq: number;
-  /** 当前 transient lane 的 Runtime stream generation。 */
-  lastEphemeralGeneration: number | null;
 }
 
 export function createInitialStreamState(initialEntries: SessionDisplayEntry[]): SessionStreamState {
@@ -38,7 +35,6 @@ export function createInitialStreamState(initialEntries: SessionDisplayEntry[]):
     providerWaitingSeqs: new Map(),
     lastAppliedSeq,
     lastEphemeralSeq: 0,
-    lastEphemeralGeneration: null,
   };
 }
 
@@ -46,14 +42,12 @@ function threadItemId(item: AgentDashThreadItem): string {
   return item.id;
 }
 
-function getItemIdFromEvent(event: SessionPresentationEvent): string | undefined {
+function getItemIdFromEvent(event: BackboneEvent): string | undefined {
   switch (event.type) {
     case "item_started":
     case "item_updated":
     case "item_completed":
       return threadItemId(event.payload.item);
-    case "item_terminal":
-      return event.payload.itemId;
     case "command_output_delta":
     case "file_change_delta":
     case "mcp_tool_call_progress":
@@ -62,14 +56,12 @@ function getItemIdFromEvent(event: SessionPresentationEvent): string | undefined
     case "reasoning_summary_delta":
     case "plan_delta":
       return event.payload.itemId;
-    case "interaction_requested":
-      return event.payload.itemId ?? event.payload.interactionId;
     default:
       return undefined;
   }
 }
 
-function makeTimelineOrder(event: SessionEventEnvelope, bbEvent: SessionPresentationEvent): TimelineOrder {
+function makeTimelineOrder(event: SessionEventEnvelope, bbEvent: BackboneEvent): TimelineOrder {
   if (!event.ephemeral) {
     return { kind: "durable", seq: event.event_seq };
   }
@@ -96,7 +88,7 @@ const ITEM_FRESHNESS_RANK: Record<SessionItemFreshness, number> = {
   completed: 3,
 };
 
-function freshnessForEvent(event: SessionPresentationEvent): SessionItemFreshness | undefined {
+function freshnessForEvent(event: BackboneEvent): SessionItemFreshness | undefined {
   switch (event.type) {
     case "item_started":
       return "started";
@@ -109,7 +101,6 @@ function freshnessForEvent(event: SessionPresentationEvent): SessionItemFreshnes
     case "reasoning_summary_delta":
       return "progress";
     case "item_completed":
-    case "item_terminal":
       return "completed";
     default:
       return undefined;
@@ -130,7 +121,7 @@ function isFreshEnough(
 function mergeEntryMetadata(
   existing: SessionDisplayEntry,
   event: SessionEventEnvelope,
-  bbEvent: SessionPresentationEvent,
+  bbEvent: BackboneEvent,
   incomingFreshness: SessionItemFreshness | undefined,
 ): SessionDisplayEntry {
   const timelineOrder = makeTimelineOrder(event, bbEvent);
@@ -142,7 +133,7 @@ function mergeEntryMetadata(
 
   return {
     ...existing,
-    timestamp: event.occurred_at_ms,
+    timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? existing.timestamp,
     eventSeq: event.ephemeral && existing.timelineOrder?.kind === "durable"
       ? existing.eventSeq
       : event.event_seq,
@@ -157,7 +148,7 @@ function mergeEntryMetadata(
 function withEntryMetadata(
   entry: SessionDisplayEntry,
   event: SessionEventEnvelope,
-  bbEvent: SessionPresentationEvent,
+  bbEvent: BackboneEvent,
 ): SessionDisplayEntry {
   return {
     ...entry,
@@ -174,7 +165,7 @@ function getCommandAggregatedOutput(item: AgentDashThreadItem): string | null {
   return item.aggregatedOutput ?? null;
 }
 
-function isWillRetryErrorEvent(event: SessionPresentationEvent): boolean {
+function isWillRetryErrorEvent(event: BackboneEvent): boolean {
   return event.type === "error" && event.payload.willRetry === true;
 }
 
@@ -184,38 +175,42 @@ function readStringField(record: Record<string, unknown>, key: string): string |
 }
 
 function eventTurnId(event: SessionEventEnvelope): string | undefined {
-  return event.turn_id;
+  return event.turn_id ?? event.notification.trace.turnId ?? undefined;
 }
 
 function extractProviderAttemptStatus(event: SessionEventEnvelope): { turnId?: string; phase: string } | null {
-  const bbEvent = event.event;
+  const bbEvent = event.notification.event;
   if (bbEvent.type !== "platform" || !isRecord(bbEvent.payload)) {
     return null;
   }
 
-  const platform = bbEvent.payload;
-  if (platform.kind !== "session_meta_update" || platform.data.key !== "runtime_provider_status" || !isRecord(platform.data.value)) {
+  const platform: Record<string, unknown> = bbEvent.payload;
+  const kind = readStringField(platform, "kind");
+  if (kind !== "provider_attempt_status" || !isRecord(platform.data)) {
     return null;
   }
 
-  const data = platform.data.value;
-  const phase = readStringField(data, "phase");
+  const phase = readStringField(platform.data, "phase");
   if (!phase) {
     return null;
   }
 
   return {
-    turnId: readStringField(data, "turn_id") ?? eventTurnId(event),
+    turnId: readStringField(platform.data, "turn_id") ?? eventTurnId(event),
     phase,
   };
 }
 
 export function extractTerminalTurnId(event: SessionEventEnvelope): string | null {
-  const bbEvent = event.event;
+  const bbEvent = event.notification.event;
+  if (bbEvent.type === "turn_completed") {
+    return bbEvent.payload.turn.id;
+  }
+
   if (
     bbEvent.type !== "platform" ||
     bbEvent.payload.kind !== "session_meta_update" ||
-    bbEvent.payload.data.key !== "runtime_turn_terminal" ||
+    bbEvent.payload.data.key !== "turn_terminal" ||
     !isRecord(bbEvent.payload.data.value)
   ) {
     return null;
@@ -250,7 +245,7 @@ function updateProviderWaitingSeqs(
   return next;
 }
 
-function buildEntryId(event: SessionEventEnvelope, bbEvent: SessionPresentationEvent): string {
+function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): string {
   const itemId = getItemIdFromEvent(bbEvent);
   if (itemId) {
     return `item:${itemId}`;
@@ -277,11 +272,11 @@ function buildEntryId(event: SessionEventEnvelope, bbEvent: SessionPresentationE
   return `event:${event.event_seq}`;
 }
 
-export function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: SessionPresentationEvent): SessionDisplayEntry {
+export function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneEvent): SessionDisplayEntry {
   const entry: SessionDisplayEntry = {
     id: buildEntryId(event, bbEvent),
-    sessionId: event.session_id,
-    timestamp: event.occurred_at_ms,
+    sessionId: event.notification.sessionId,
+    timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
     eventSeq: event.event_seq,
     timelineOrder: makeTimelineOrder(event, bbEvent),
     progressSeq: event.ephemeral ? event.event_seq : undefined,
@@ -317,9 +312,9 @@ function synthesizeAssistantDeltaEvent(
   event: SessionEventEnvelope,
   itemId: string,
   text: string,
-): SessionPresentationEvent {
+): BackboneEvent {
   const base = {
-    threadId: event.session_id,
+    threadId: event.notification.sessionId,
     turnId: event.turn_id ?? "",
     itemId,
     delta: text,
@@ -342,8 +337,8 @@ function isThreadItemEntry(entry: SessionDisplayEntry): boolean {
 }
 
 function sameTimelineSlot(entry: SessionDisplayEntry, event: SessionEventEnvelope): boolean {
-  const turnId = event.turn_id;
-  const entryIndex = event.entry_index;
+  const turnId = event.turn_id ?? event.notification.trace.turnId ?? undefined;
+  const entryIndex = event.entry_index ?? event.notification.trace.entryIndex ?? undefined;
   return (
     turnId != null &&
     entryIndex != null &&
@@ -401,7 +396,7 @@ function finalizeAssistantDelta(
     const existing = entries[i];
     if (existing && existing.id === targetId) {
       const next = [...entries];
-      const merged = mergeEntryMetadata(existing, event, event.event, "completed");
+      const merged = mergeEntryMetadata(existing, event, event.notification.event, "completed");
       // 保留既有 delta event（渲染分发依赖 event.type），仅 finalize 文本与流式标记。
       next[i] = { ...merged, accumulatedText: text, isStreaming: false };
       return next;
@@ -412,20 +407,20 @@ function finalizeAssistantDelta(
   const syntheticEvent = synthesizeAssistantDeltaEvent(kind, event, itemId, text);
   const syntheticEntry = withEntryMetadata({
     id: targetId,
-    sessionId: event.session_id,
-    timestamp: event.occurred_at_ms,
+    sessionId: event.notification.sessionId,
+    timestamp: event.committed_at_ms ?? event.occurred_at_ms ?? Date.now(),
     eventSeq: event.event_seq,
     event: syntheticEvent,
     turnId: event.turn_id ?? undefined,
     entryIndex: event.entry_index ?? undefined,
     accumulatedText: text,
     isStreaming: false,
-  }, event, event.event);
+  }, event, event.notification.event);
   return insertHydratedAssistantEntry(entries, syntheticEntry, event, kind);
 }
 
 function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnvelope): SessionDisplayEntry[] {
-  const bbEvent = event.event;
+  const bbEvent: BackboneEvent = event.notification.event;
 
   if (bbEvent.type === "agent_message_delta") {
     const entryId = buildEntryId(event, bbEvent);
@@ -518,11 +513,11 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     }
     if (finalItem.type === "reasoning") {
       let next = prev;
-      const contentText = (finalItem.content ?? []).join("");
+      const contentText = finalItem.content.join("");
       if (contentText) {
         next = finalizeAssistantDelta(next, event, "reasoning_text_delta", finalItem.id, contentText);
       }
-      const summaryText = (finalItem.summary ?? []).join("");
+      const summaryText = finalItem.summary.join("");
       if (summaryText) {
         next = finalizeAssistantDelta(next, event, "reasoning_summary_delta", finalItem.id, summaryText);
       }
@@ -556,24 +551,6 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     ];
   }
 
-  if (bbEvent.type === "item_terminal") {
-    const targetId = `item:${bbEvent.payload.itemId}`;
-    for (let i = prev.length - 1; i >= 0; i -= 1) {
-      const existing = prev[i];
-      if (!existing || existing.id !== targetId) continue;
-      const next = [...prev];
-      next[i] = {
-        ...mergeEntryMetadata(existing, event, bbEvent, "completed"),
-        isStreaming: false,
-        isPendingApproval: false,
-        terminalFailure: bbEvent.payload.terminal,
-        terminalMessage: bbEvent.payload.message,
-      };
-      return next;
-    }
-    return prev;
-  }
-
   if (bbEvent.type === "command_output_delta" || bbEvent.type === "file_change_delta" ||
       bbEvent.type === "mcp_tool_call_progress") {
     const itemId = bbEvent.payload.itemId;
@@ -599,6 +576,10 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return prev;
   }
 
+  if (bbEvent.type === "turn_started" || bbEvent.type === "turn_completed") {
+    return prev;
+  }
+
   if (bbEvent.type === "turn_plan_updated") {
     return [...prev, makeDisplayEntry(event, bbEvent)];
   }
@@ -613,17 +594,6 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
 
   if (bbEvent.type === "approval_request") {
     return [...prev, { ...makeDisplayEntry(event, bbEvent), isPendingApproval: true }];
-  }
-
-  if (bbEvent.type === "interaction_requested") {
-    return [...prev, makeDisplayEntry(event, bbEvent)];
-  }
-
-  if (bbEvent.type === "interaction_terminal") {
-    return prev.filter((entry) => !(
-      entry.event.type === "interaction_requested"
-      && entry.event.payload.interactionId === bbEvent.payload.interactionId
-    ));
   }
 
   if (bbEvent.type === "user_input_submitted") {
@@ -654,31 +624,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
   if (bbEvent.type === "platform") {
     const platform = bbEvent.payload;
 
-    if (platform.kind === "session_meta_update" && platform.data.key === "runtime_tool_progress" && isRecord(platform.data.value)) {
-      const itemId = readStringField(platform.data.value, "item_id");
-      const contentItems = platform.data.value.content_items;
-      if (!itemId || !Array.isArray(contentItems)) return prev;
-      const targetId = `item:${itemId}`;
-      for (let i = prev.length - 1; i >= 0; i -= 1) {
-        const existing = prev[i];
-        if (!existing || existing.id !== targetId) continue;
-        const current = existing.event;
-        if (current.type !== "item_started" && current.type !== "item_updated") return prev;
-        if (current.payload.item.type !== "dynamicToolCall") return prev;
-        const next = [...prev];
-        next[i] = {
-          ...mergeEntryMetadata(existing, event, bbEvent, "progress"),
-          event: {
-            type: "item_updated",
-            payload: {
-              ...current.payload,
-              updatedAtMs: event.occurred_at_ms,
-              item: { ...current.payload.item, contentItems: contentItems as typeof current.payload.item.contentItems },
-            },
-          },
-        };
-        return next;
-      }
+    if (platform.kind === "provider_attempt_status") {
       return prev;
     }
 
@@ -688,7 +634,7 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
 
     if (platform.kind === "session_meta_update") {
       const key = platform.data.key;
-      if (key === "session_meta_updated" || key === "acp_passthrough" || key === "runtime_provider_status") {
+      if (key === "session_meta_updated" || key === "acp_passthrough") {
         return prev;
       }
       return [...prev, makeDisplayEntry(event, bbEvent)];
@@ -697,7 +643,8 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
-  if (bbEvent.type === "turn_diff_updated") {
+  if (bbEvent.type === "thread_status_changed" || bbEvent.type === "executor_context_compacted" ||
+      bbEvent.type === "turn_diff_updated") {
     return prev;
   }
 
@@ -708,17 +655,9 @@ function orderIncomingEvents(incomingEvents: SessionEventEnvelope[]): SessionEve
   const durableEvents = incomingEvents
     .filter((event) => !event.ephemeral)
     .sort((a, b) => a.event_seq - b.event_seq);
-  const ephemeralEvents: SessionEventEnvelope[] = [];
-  const generationGroups = new Map<number | null, SessionEventEnvelope[]>();
-  for (const event of incomingEvents.filter((candidate) => candidate.ephemeral)) {
-    const generation = event.transient_generation ?? null;
-    const group = generationGroups.get(generation);
-    if (group) group.push(event);
-    else generationGroups.set(generation, [event]);
-  }
-  for (const group of generationGroups.values()) {
-    ephemeralEvents.push(...group.sort((a, b) => a.event_seq - b.event_seq));
-  }
+  const ephemeralEvents = incomingEvents
+    .filter((event) => event.ephemeral)
+    .sort((a, b) => a.event_seq - b.event_seq);
   let durableIndex = 0;
   let ephemeralIndex = 0;
 
@@ -748,21 +687,11 @@ export function reduceStreamState(
   let providerWaitingSeqs = prev.providerWaitingSeqs;
   let lastAppliedSeq = prev.lastAppliedSeq;
   let lastEphemeralSeq = prev.lastEphemeralSeq;
-  let lastEphemeralGeneration = prev.lastEphemeralGeneration;
 
   // 同一 lane 内分别按各自 seq 去重/排序，但保留 incoming batch 的 durable/ephemeral lane 位置。
   // 这样 ephemeral_seq 不会和 durable event_seq 共轴比较，也不会把整批 progress 先于 durable lifecycle 应用。
   for (const event of orderIncomingEvents(incomingEvents)) {
     if (event.ephemeral) {
-      if (
-        event.transient_generation != null
-        && event.transient_generation !== lastEphemeralGeneration
-      ) {
-        entries = entries.filter((entry) => entry.timelineOrder?.kind === "durable");
-        lastEphemeralGeneration = event.transient_generation;
-        lastEphemeralSeq = 0;
-        providerWaitingSeqs = new Map();
-      }
       if (event.event_seq <= lastEphemeralSeq) {
         continue;
       }
@@ -779,7 +708,7 @@ export function reduceStreamState(
     rawEvents = [...rawEvents, event];
     providerWaitingSeqs = updateProviderWaitingSeqs(providerWaitingSeqs, event);
     entries = applyEventToEntries(entries, event);
-    const usage = extractTokenUsageFromEvent(event.event);
+    const usage = extractTokenUsageFromEvent(event.notification.event);
     if (usage) {
       tokenUsage = tokenUsage ? { ...tokenUsage, ...usage } : usage;
     }
@@ -793,7 +722,6 @@ export function reduceStreamState(
     providerWaitingSeqs,
     lastAppliedSeq,
     lastEphemeralSeq,
-    lastEphemeralGeneration,
   };
 }
 
@@ -805,22 +733,13 @@ export function reduceStreamState(
  * 不触碰已累积的 entries / rawEvents / durable 游标。
  */
 export function resetEphemeralCursor(prev: SessionStreamState): SessionStreamState {
-  if (
-    prev.lastEphemeralSeq === 0
-    && prev.lastEphemeralGeneration == null
-    && prev.providerWaitingSeqs.size === 0
-  ) {
+  if (prev.lastEphemeralSeq === 0 && prev.providerWaitingSeqs.size === 0) {
     return prev;
   }
-  return {
-    ...prev,
-    providerWaitingSeqs: new Map(),
-    lastEphemeralSeq: 0,
-    lastEphemeralGeneration: null,
-  };
+  return { ...prev, providerWaitingSeqs: new Map(), lastEphemeralSeq: 0 };
 }
 
 export function shouldFlushStreamEventImmediately(event: SessionEventEnvelope): boolean {
-  const t = event.event.type;
+  const t = event.notification.event.type;
   return t === "item_started" || t === "item_completed" || t === "approval_request";
 }

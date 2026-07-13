@@ -3,7 +3,8 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 
 import { SessionProjectionView } from "./SessionProjectionView";
 
-import type { SessionMessageRefDto } from "../../../generated/session-contracts";
+import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
+import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
 import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import type {
@@ -97,7 +98,7 @@ function ContextUsageRing({
   usage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey: number;
-  compactContextCommand?: SessionChatCommandModel;
+  compactContextCommand?: ConversationCommandView;
 }) {
   const [hover, setHover] = useState(false);
   const [open, setOpen] = useState(false);
@@ -631,7 +632,7 @@ export function SessionChatComposer({
   tokenUsage: TokenUsageInfo | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   projectionRefreshKey: number;
-  compactContextCommand?: SessionChatCommandModel;
+  compactContextCommand?: ConversationCommandView;
   onAtTrigger: (query: string) => void;
   onFileSelected: (file: FileEntry) => void;
   onInputChange: (value: string) => void;

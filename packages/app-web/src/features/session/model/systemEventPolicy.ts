@@ -1,4 +1,4 @@
-import type { SessionPresentationEvent } from "./types";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { extractPlatformEventData, extractPlatformEventType, isRecord } from "./platformEvent";
 
 export type PlatformFeedBoundary = "hard" | "soft" | "neutral";
@@ -33,14 +33,15 @@ const RENDERABLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "workspace_module_present_failed",
   "context_frame",
   "session_branch_forked",
+  "session_rewound",
   "session_rebuilt",
   "turn_discarded",
 ]);
 
 const VERBOSE_SYSTEM_EVENT_TYPES = new Set<string>([
+  "provider_attempt_status",
   "provider_retry",
   "provider_status",
-  "runtime_provider_status",
 ]);
 
 const SILENT_HOOK_DECISIONS = new Set<string>([
@@ -107,7 +108,7 @@ function isSignificantHookEvent(data: Record<string, unknown> | null): boolean {
   return false;
 }
 
-function isContextFrameEvent(event: SessionPresentationEvent): boolean {
+function isContextFrameEvent(event: BackboneEvent): boolean {
   return (
     event.type === "platform" &&
     event.payload.kind === "session_meta_update" &&
@@ -116,7 +117,7 @@ function isContextFrameEvent(event: SessionPresentationEvent): boolean {
 }
 
 export function getPlatformEventPolicy(
-  event: SessionPresentationEvent,
+  event: BackboneEvent,
   options: PlatformEventPolicyOptions = {},
 ): PlatformEventPolicy {
   const eventType = extractPlatformEventType(event);
@@ -156,24 +157,24 @@ export function getPlatformEventPolicy(
   };
 }
 
-export function isTaskEventUpdate(event: SessionPresentationEvent): boolean {
+export function isTaskEventUpdate(event: BackboneEvent): boolean {
   return getPlatformEventPolicy(event).isTaskEvent;
 }
 
 export function isRenderableSystemEventUpdate(
-  event: SessionPresentationEvent,
+  event: BackboneEvent,
   options?: PlatformEventPolicyOptions,
 ): boolean {
   return getPlatformEventPolicy(event, options).isRenderableSystemEvent;
 }
 
 export function isRenderablePlatformEvent(
-  event: SessionPresentationEvent,
+  event: BackboneEvent,
   options?: PlatformEventPolicyOptions,
 ): boolean {
   return getPlatformEventPolicy(event, options).isRenderablePlatformEvent;
 }
 
-export function shouldNotifyRenderableSystemEvent(event: SessionPresentationEvent): boolean {
+export function shouldNotifyRenderableSystemEvent(event: BackboneEvent): boolean {
   return getPlatformEventPolicy(event).isRenderableSystemEvent;
 }

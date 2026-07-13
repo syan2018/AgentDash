@@ -1,14 +1,19 @@
 import type { ReactNode } from "react";
 
-import type { InteractionResponse } from "../../../generated/agent-runtime-contracts";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { ConversationEffectiveExecutorConfigView } from "../../../generated/project-agent-contracts";
 import type {
-  AgentRunComposerDeliveryIntent,
   BackendSelectionRequestDto,
+  MailboxMessageView,
+  MailboxStateView,
+  SessionMessageRefDto,
 } from "../../../generated/agent-run-mailbox-contracts";
+import type {
+  ConversationCommandView,
+  ConversationWaitingItemView,
+} from "../../../generated/workflow-contracts";
 import type { ExecutorConfig } from "../../../services/executor";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
-import type { AgentRunRuntimeInspectResponse } from "../../../services/agentRunRuntime";
 import type { TaskSessionExecutorSummary } from "../../../types/context";
 import type { ProjectAgentExecutor } from "../../../types";
 import type { ImageAttachment } from "./composer/useImageAttachments";
@@ -37,7 +42,6 @@ export interface SessionChatCommandModel {
   requires_input: boolean;
   executor_config_policy: "required" | "optional" | "forbidden";
   shortcut?: "enter" | "ctrl_enter";
-  delivery_intent?: AgentRunComposerDeliveryIntent;
 }
 
 export interface SessionChatCommandState {
@@ -55,9 +59,21 @@ export interface SessionChatCommandState {
   helperText?: string;
 }
 
+export interface SessionChatMailboxModel {
+  messages: MailboxMessageView[];
+  waiting_items: ConversationWaitingItemView[];
+  state?: MailboxStateView;
+  paused: boolean;
+  user_attention: boolean;
+  hide_system_steer_messages: boolean;
+  can_resume: boolean;
+  resumeAction?: SessionChatCommandModel;
+  promoteAction?: SessionChatCommandModel;
+  deleteAction?: SessionChatCommandModel;
+}
+
 export interface SessionChatModel {
   agentRunTarget?: AgentRunRuntimeTarget | null;
-  runtimeInspect?: AgentRunRuntimeInspectResponse | null;
   companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
   workspaceId?: string | null;
   executorHint?: string | null;
@@ -65,7 +81,10 @@ export interface SessionChatModel {
   executorStateKey?: string | null;
   showExecutorSelector?: boolean;
   commandState: SessionChatCommandState;
-  compactContextCommand?: SessionChatCommandModel;
+  compactContextCommand?: ConversationCommandView;
+  mailbox: SessionChatMailboxModel;
+  statusBarRunId?: string | null;
+  statusBarAgentId?: string | null;
   injectedInputValue?: string | null;
 }
 
@@ -75,15 +94,19 @@ export interface SessionChatSubmitIntent {
   executorConfig?: ExecutorConfig;
   backendSelection?: BackendSelectionRequestDto;
   imageAttachments?: ImageAttachment[];
-  deliveryIntent?: AgentRunComposerDeliveryIntent;
+  deliveryIntent?: string;
 }
 
 export interface SessionChatViewIntents {
   submitComposer: (intent: SessionChatSubmitIntent) => Promise<void>;
   cancelAction?: () => Promise<void>;
-  resolveInteraction?: (interactionId: string, response: InteractionResponse) => Promise<void>;
-  runtimeInteractionRequested?: () => void;
   setExecutorConfigOverride?: (config: ExecutorConfig | null) => void;
+  promoteMailboxMessage?: (messageId: string) => void;
+  deleteMailboxMessage?: (messageId: string) => void;
+  resumeMailbox?: () => void;
+  recallMailboxMessage?: (messageId: string) => void;
+  moveMailboxMessage?: (messageId: string, afterMessageId: string | null) => void;
+  forkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
   injectedInputConsumed?: () => void;
 }
 
@@ -100,6 +123,9 @@ export interface SessionChatViewProps {
 
   /** Agent turn 结束时回调（turn_completed / turn_failed） */
   onTurnEnd?: () => void;
+
+  /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
+  onSystemEvent?: (eventType: string, event: BackboneEvent) => void;
 
   /** task_write 工具完成时回调；用于刷新外部 Task plan 展示。 */
   onTaskPlanChanged?: () => void;

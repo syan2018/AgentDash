@@ -28,15 +28,19 @@ import {
   SessionChatStream,
 } from "./SessionChatViewParts";
 import {
+  collectAllPlatformEvents,
+  collectTurnLifecycleEvents,
+  computeProjectionRefreshKey,
   isAgentRunWorkspaceActionRunning,
+  rawEventsBelongToRuntimeStreamTarget,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
-import type { SessionChatCommandModel, SessionChatSubmitIntent, SessionChatViewProps } from "./SessionChatViewTypes";
+import type { SessionChatCommandModel, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
+import { SessionStatusBar } from "../../agent-run-workspace/ui";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 import { SessionWorkspacePanelActionProvider } from "./SessionWorkspacePanelActionProvider";
-import { SessionRuntimeInteractionProvider } from "./SessionRuntimeInteractionContext";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -59,6 +63,7 @@ export function SessionChatView({
   intents,
   onMessageSent,
   onTurnEnd,
+  onSystemEvent,
   onTaskPlanChanged,
   headerSlot,
   inputPrefix,
@@ -71,7 +76,6 @@ export function SessionChatView({
 }: SessionChatViewProps) {
   const {
     agentRunTarget,
-    runtimeInspect,
     workspaceId,
     executorHint,
     agentDefaults,
@@ -79,15 +83,21 @@ export function SessionChatView({
     showExecutorSelector = true,
     commandState,
     compactContextCommand,
+    mailbox,
+    statusBarRunId,
+    statusBarAgentId,
     injectedInputValue,
     companionSubagents,
   } = model;
   const {
     submitComposer,
     cancelAction,
-    resolveInteraction,
-    runtimeInteractionRequested,
     setExecutorConfigOverride,
+    promoteMailboxMessage,
+    deleteMailboxMessage,
+    resumeMailbox,
+    recallMailboxMessage,
+    moveMailboxMessage,
     injectedInputConsumed,
   } = intents;
   const [isSending, setIsSending] = useState(false);
@@ -285,10 +295,21 @@ export function SessionChatView({
     agentRunTarget,
     activeTurnId: commandState.activeTurnId ?? null,
     enabled: hasRuntimeStreamTarget,
-    onRuntimeInspectInvalidated: runtimeInteractionRequested,
   });
 
-  const projectionRefreshKey = rawEvents.at(-1)?.event_seq ?? 0;
+  const projectionRefreshKey = useMemo(
+    () => computeProjectionRefreshKey(rawEvents),
+    [rawEvents],
+  );
+  const rawEventsBelongToCurrentSession = useMemo(
+    () => rawEventsBelongToRuntimeStreamTarget({ rawEvents, agentRunTarget }),
+    [agentRunTarget, rawEvents],
+  );
+  const canApplyLiveEventSideEffects =
+    hasRuntimeStreamTarget &&
+    rawEventsBelongToCurrentSession &&
+    rawEvents.length > 0 &&
+    historyReplayBoundarySeq != null;
 
   // ─── Action running 检测 ──────────────────────────────
 
@@ -298,25 +319,32 @@ export function SessionChatView({
 
   const onTurnEndRef = useRef(onTurnEnd);
   useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
+  const onSystemEventRef = useRef(onSystemEvent);
+  const lastSystemEventSeqRef = useRef<number | null>(null);
+  useEffect(() => { onSystemEventRef.current = onSystemEvent; }, [onSystemEvent]);
   const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
   const lastTaskToolEventSeqRef = useRef<number | null>(null);
   const lastTurnLifecycleEventSeqRef = useRef<number | null>(null);
   useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
   useEffect(() => {
+    lastSystemEventSeqRef.current = null;
     lastTaskToolEventSeqRef.current = null;
     lastTurnLifecycleEventSeqRef.current = null;
   }, [agentRunTargetKey]);
 
   useEffect(() => {
-    if (!hasRuntimeStreamTarget || rawEvents.length === 0) return;
+    if (!hasRuntimeStreamTarget || !rawEventsBelongToCurrentSession || rawEvents.length === 0) return;
     const afterSeq = lastTurnLifecycleEventSeqRef.current ?? 0;
     lastTurnLifecycleEventSeqRef.current = afterSeq;
+    const result = collectTurnLifecycleEvents(rawEvents, afterSeq);
+    lastTurnLifecycleEventSeqRef.current = result.lastSeenSeq;
     let terminalSeen = false;
-    for (const item of rawEvents) {
-      if (item.event_seq <= afterSeq) continue;
-      lastTurnLifecycleEventSeqRef.current = Math.max(lastTurnLifecycleEventSeqRef.current ?? 0, item.event_seq);
-      const presentation = item.event;
-      if (presentation.type === "platform" && presentation.payload.kind === "session_meta_update" && presentation.payload.data.key === "runtime_turn_terminal") terminalSeen = true;
+    for (const item of result.items) {
+      if (item.eventType === "turn_started") {
+        continue;
+      } else {
+        terminalSeen = true;
+      }
     }
     if (terminalSeen) {
       onTurnEndRef.current?.();
@@ -326,10 +354,23 @@ export function SessionChatView({
     hasRuntimeStreamTarget,
     historyReplayBoundarySeq,
     rawEvents,
+    rawEventsBelongToCurrentSession,
   ]);
 
   useEffect(() => {
-    if (historyReplayBoundarySeq == null) return;
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
+    const afterSeq = lastSystemEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastSystemEventSeqRef.current = afterSeq;
+    const result = collectAllPlatformEvents(rawEvents, afterSeq);
+    lastSystemEventSeqRef.current = result.lastSeenSeq;
+    if (result.items.length === 0) return;
+    for (const item of result.items) {
+      onSystemEventRef.current?.(item.eventType, item.event);
+    }
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
+
+  useEffect(() => {
+    if (!canApplyLiveEventSideEffects || historyReplayBoundarySeq == null) return;
     const afterSeq = lastTaskToolEventSeqRef.current ?? historyReplayBoundarySeq;
     lastTaskToolEventSeqRef.current = afterSeq;
     let lastSeenSeq = afterSeq;
@@ -337,7 +378,7 @@ export function SessionChatView({
     for (const event of rawEvents) {
       if (!event || event.event_seq <= afterSeq) continue;
       lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-      const bbEvent = event.event;
+      const bbEvent = event.notification.event;
       if (bbEvent.type !== "item_completed") continue;
       const item = bbEvent.payload.item;
       if (
@@ -351,7 +392,7 @@ export function SessionChatView({
     }
     lastTaskToolEventSeqRef.current = lastSeenSeq;
     if (changed) onTaskPlanChangedRef.current?.();
-  }, [historyReplayBoundarySeq, rawEvents]);
+  }, [canApplyLiveEventSideEffects, historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
 
@@ -371,7 +412,7 @@ export function SessionChatView({
   const commandActionRef = useRef(submitComposer);
   useEffect(() => { commandActionRef.current = submitComposer; }, [submitComposer]);
 
-  const handleSubmit = useCallback(async (command: SessionChatCommandModel | undefined, deliveryIntent?: SessionChatSubmitIntent["deliveryIntent"]) => {
+  const handleSubmit = useCallback(async (command: SessionChatCommandModel | undefined, deliveryIntent?: string) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
@@ -400,7 +441,7 @@ export function SessionChatView({
         prompt: trimmed,
         executorConfig,
         imageAttachments: images.length > 0 ? images : undefined,
-        deliveryIntent: deliveryIntent ?? command.delivery_intent,
+        deliveryIntent,
       });
 
       execConfig.recordUsage();
@@ -449,14 +490,6 @@ export function SessionChatView({
       setIsCancelling(false);
     }
   }, [cancelAction, commandState.cancelCommand]);
-
-  const handleResolveInteraction = useCallback(async (
-    interactionId: string,
-    response: import("../../../generated/agent-runtime-contracts").InteractionResponse,
-  ) => {
-    if (!resolveInteraction) throw new Error("当前控制面不支持 interaction response。");
-    await resolveInteraction(interactionId, response);
-  }, [resolveInteraction]);
 
   // ─── 文件引用 & 键盘 ─────────────────────────────────
 
@@ -559,15 +592,12 @@ export function SessionChatView({
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
   const displayError = sendError ?? (hasRuntimeStreamTarget ? wsError?.message : null) ?? null;
+  const mailboxMessages = mailbox.messages;
 
   // ─── 渲染 ────────────────────────────────────────────
 
   return (
     <SessionWorkspacePanelActionProvider openWorkspacePanel={openWorkspacePanel}>
-      <SessionRuntimeInteractionProvider
-        availability={runtimeInspect?.snapshot?.command_availability.interaction_respond}
-        resolve={resolveInteraction ? handleResolveInteraction : undefined}
-      >
       <div className="flex h-full flex-col overflow-hidden">
       {/* 内置状态栏 — 可通过 showStatusBar=false 隐藏 */}
       {showStatusBar && (
@@ -609,11 +639,24 @@ export function SessionChatView({
         isLoading={isLoading}
         streamingEntryId={streamingEntryId}
         streamPrefixContent={streamPrefixContent}
+        onForkFromMessageRef={intents.forkFromMessageRef}
         onScroll={handleScroll}
       />
 
-      {/* 输入区 */}
+      {/* Mailbox 消息 + 输入区 */}
       <div onPaste={handlePaste} onDrop={handleDrop} onDragOver={handleDragOver}>
+        <SessionStatusBar
+          runId={statusBarRunId}
+          agentId={statusBarAgentId}
+          messages={mailboxMessages}
+          mailbox={mailbox}
+          onPromote={promoteMailboxMessage ?? (() => {})}
+          onDelete={deleteMailboxMessage ?? (() => {})}
+          onResume={resumeMailbox}
+          onRecall={recallMailboxMessage}
+          onMove={moveMailboxMessage}
+        />
+
         <SessionChatComposer
           commandState={commandState}
           discovery={discovery}
@@ -649,7 +692,6 @@ export function SessionChatView({
         />
       </div>
       </div>
-      </SessionRuntimeInteractionProvider>
     </SessionWorkspacePanelActionProvider>
   );
 }

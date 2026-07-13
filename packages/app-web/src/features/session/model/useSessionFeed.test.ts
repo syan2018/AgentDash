@@ -6,17 +6,14 @@ import type {
   AggregatedThinkingGroup,
   SessionEventEnvelope,
 } from "./types";
-import type { ThreadItem } from "../../../generated/backbone-protocol";
-import type { SessionPresentationEvent } from "./types";
-
-type BackboneEvent = SessionPresentationEvent;
+import type { BackboneEnvelope, BackboneEvent, ThreadItem, Turn } from "../../../generated/backbone-protocol";
 
 let nextSeq = 1;
 function seq(): number {
   return nextSeq++;
 }
 
-function asEntry(id: string, event: SessionPresentationEvent, extra?: Partial<SessionDisplayEntry>): SessionDisplayEntry {
+function asEntry(id: string, event: BackboneEvent, extra?: Partial<SessionDisplayEntry>): SessionDisplayEntry {
   return {
     id,
     sessionId: "s1",
@@ -199,39 +196,75 @@ function mkUserInputEntry(id: string, text: string, eventSeq?: number): SessionD
   return asEntry(id, event, { accumulatedText: text, turnId: "u1", eventSeq });
 }
 
-function rawEvent(eventSeq: number, event: SessionPresentationEvent, turnId = "u1"): SessionEventEnvelope {
+function backboneEnvelope(event: BackboneEvent, turnId = "u1"): BackboneEnvelope {
+  return {
+    sessionId: "s1",
+    source: {
+      connectorId: "connector",
+      connectorType: "test",
+      executorId: null,
+    },
+    trace: {
+      turnId,
+      entryIndex: 0,
+    },
+    observedAt: "2026-06-23T00:00:00.000Z",
+    event,
+  };
+}
+
+function rawEvent(eventSeq: number, event: BackboneEvent, turnId = "u1"): SessionEventEnvelope {
   return {
     session_id: "s1",
     event_seq: eventSeq,
     occurred_at_ms: eventSeq,
+    committed_at_ms: eventSeq,
     session_update_type: event.type,
     turn_id: turnId,
     entry_index: 0,
-    event,
+    notification: backboneEnvelope(event, turnId),
+  };
+}
+
+function turnPayload(
+  id: string,
+  status: Turn["status"],
+  durationMs: number | null,
+  opts?: { startedAt?: number | null },
+): Turn {
+  return {
+    id,
+    items: [],
+    itemsView: "full",
+    status,
+    error: null,
+    startedAt: opts?.startedAt ?? null,
+    completedAt: null,
+    durationMs,
   };
 }
 
 function rawTurnStarted(eventSeq: number, turnId = "u1", startedAt?: number): SessionEventEnvelope {
   return rawEvent(eventSeq, {
-    type: "platform",
+    type: "turn_started",
     payload: {
-      kind: "session_meta_update",
-      data: { key: "runtime_turn_started", value: { turn_id: turnId, started_at_ms: startedAt == null ? null : startedAt * 1_000 } },
+      threadId: "t1",
+      turn: turnPayload(turnId, "inProgress", null, { startedAt }),
     },
   }, turnId);
 }
 
 function rawTurnCompleted(
   eventSeq: number,
-  status: "completed" | "failed" | "interrupted",
+  status: Turn["status"],
   durationMs: number,
   turnId = "u1",
 ): SessionEventEnvelope {
   return rawEvent(eventSeq, {
-    type: "platform",
+    type: "turn_completed",
     payload: {
-      kind: "session_meta_update",
-      data: { key: "runtime_turn_terminal", value: { turn_id: turnId, terminal: status, duration_ms: durationMs } },
+      threadId: "t1",
+      turn: turnPayload(turnId, status, durationMs),
     },
   }, turnId);
 }
@@ -247,9 +280,9 @@ function rawTurnTerminal(
     payload: {
       kind: "session_meta_update",
       data: {
-        key: "runtime_turn_terminal",
+        key: "turn_terminal",
         value: {
-          terminal: terminalType === "turn_completed" ? "completed" : terminalType === "turn_interrupted" ? "interrupted" : "failed",
+          terminal_type: terminalType,
           turn_id: turnId,
           duration_ms: durationMs,
           message: terminalType,
@@ -269,7 +302,7 @@ function rawProviderAttemptStatus(
     payload: {
       kind: "session_meta_update",
       data: {
-        key: "runtime_provider_status",
+        key: "provider_attempt_status",
         value: {
           turn_id: turnId,
           ...value,
@@ -280,12 +313,12 @@ function rawProviderAttemptStatus(
 }
 
 function mkProviderStatusEntry(id: string): SessionDisplayEntry {
-  const event: SessionPresentationEvent = {
+  const event: BackboneEvent = {
     type: "platform",
     payload: {
       kind: "session_meta_update",
       data: {
-        key: "runtime_provider_status",
+        key: "provider_attempt_status",
         value: {
           turn_id: "u1",
           phase: "retrying",
@@ -300,17 +333,17 @@ function mkProviderStatusEntry(id: string): SessionDisplayEntry {
 }
 
 function mkTurnStarted(id = "ts"): SessionDisplayEntry {
-  const event: SessionPresentationEvent = {
-    type: "platform",
-    payload: { kind: "session_meta_update", data: { key: "runtime_turn_started", value: { turn_id: "u1" } } },
+  const event: BackboneEvent = {
+    type: "turn_started",
+    payload: { threadId: "t1", turn: { id: "u1" } as unknown as never },
   };
   return asEntry(id, event);
 }
 
 function mkTurnCompleted(id = "tc"): SessionDisplayEntry {
-  const event: SessionPresentationEvent = {
-    type: "platform",
-    payload: { kind: "session_meta_update", data: { key: "runtime_turn_terminal", value: { turn_id: "u1", terminal: "completed" } } },
+  const event: BackboneEvent = {
+    type: "turn_completed",
+    payload: { threadId: "t1", turn: { id: "u1" } as unknown as never },
   };
   return asEntry(id, event);
 }

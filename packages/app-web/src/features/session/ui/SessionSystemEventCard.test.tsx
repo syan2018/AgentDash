@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { SessionPresentationEvent } from "../model/types";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { JsonValue } from "../../../generated/common-contracts";
 import { parseContextFrame, type ContextFrame } from "../model/contextFrame";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
@@ -11,7 +11,7 @@ type JsonObject = { [key: string]: JsonValue | undefined };
 
 describe("SessionSystemEventCard", () => {
   it("放行并渲染 session_branch_forked 事件", () => {
-    const event: SessionPresentationEvent = {
+    const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
@@ -35,7 +35,7 @@ describe("SessionSystemEventCard", () => {
 
   it("放行并渲染 context_frame 事件", () => {
     const frameData = sampleContextFrameData();
-    const event: SessionPresentationEvent = {
+    const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
@@ -57,7 +57,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("context_frame 事件没有 parsed frame 时不渲染", () => {
-    const event: SessionPresentationEvent = {
+    const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
@@ -72,7 +72,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("有 injections 的 context_injected 应展示注入卡片", () => {
-    const event: SessionPresentationEvent = {
+    const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "hook_trace",
@@ -114,7 +114,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("companion_human_request 不再作为 session system event 渲染", () => {
-    const event: SessionPresentationEvent = {
+    const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
@@ -144,7 +144,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("没有 injections 的 context_injected 不再显示空壳 CTX", () => {
-    const event: SessionPresentationEvent = {
+    const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "hook_trace",
@@ -178,7 +178,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("session_start 的 context_injected 在 injections 为空时隐藏", () => {
-    const event: SessionPresentationEvent = {
+    const event: BackboneEvent = {
       type: "platform",
       payload: {
         kind: "hook_trace",
@@ -211,6 +211,33 @@ describe("SessionSystemEventCard", () => {
     expect(renderToStaticMarkup(<SessionSystemEventCard event={event} />)).toBe("");
   });
 
+  it("session_rewound 长 provider message 默认不展开完整 HTML", () => {
+    const htmlBody = `<html><head><style>${"body{}".repeat(80)}</style></head><body>UNIQUE_REWOUND_HTML_TAIL</body></html>`;
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "session_rewound",
+        data: {
+          discarded_turn_id: "turn-failed",
+          discarded_entry_index: 1,
+          stable_event_seq: 42n,
+          stable_turn_id: "turn-stable",
+          reason: "runtime_failure",
+          replacement_turn_id: null,
+          message: `执行器运行错误: Pi Agent loop 错误: LLM 桥接错误: Codex API 返回 403 Forbidden: ${htmlBody}`,
+        },
+      },
+    };
+
+    expect(isRenderableSystemEventUpdate(event)).toBe(true);
+    const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
+
+    expect(markup).toContain("SESSION_REWOUND");
+    expect(markup).toContain("Codex API 返回 403 Forbidden");
+    expect(markup).toContain("丢弃轮次：turn-failed");
+    expect(markup).toContain("稳定轮次：turn-stable");
+    expect(markup).not.toContain("UNIQUE_REWOUND_HTML_TAIL");
+  });
 });
 
 function sampleContextFrameData(): JsonObject {

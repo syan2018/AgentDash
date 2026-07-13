@@ -1,7 +1,7 @@
 /**
  * 会话条目渲染组件
  *
- * 根据 SessionPresentationEvent 类型渲染不同的 UI：
+ * 根据 BackboneEvent 类型渲染不同的 UI：
  * - agent_message_delta → SessionMessageCard (agent)
  * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
  * - item_started / item_updated / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
@@ -16,7 +16,6 @@
 import { memo, useState } from "react";
 import { ST } from "./bodies/cardBodyTokens";
 import { ContextFrameStream } from "./ContextFrameStream";
-import { SessionRuntimeInteractionCard } from "./SessionRuntimeInteractionContext";
 import {
   isAggregatedGroup,
   isAggregatedContextFrameGroup,
@@ -163,8 +162,10 @@ export function SingleEntry({
         <ToolCallCardShell
           kind={card.kind}
           header={card.header}
-          status={entry.terminalFailure ? "failed" : card.status}
+          status={card.status}
           isPendingApproval={isPendingApproval}
+          agentRunTarget={agentRunTarget}
+          itemId={threadItem.id}
           durationMs={card.durationMs}
         >
           {card.body}
@@ -186,12 +187,6 @@ export function SingleEntry({
         </div>
       );
     }
-
-    case "interaction_requested":
-      return <SessionRuntimeInteractionCard interactionId={event.payload.interactionId} kind={event.payload.request.kind} />;
-
-    case "interaction_terminal":
-      return null;
 
     case "error": {
       return <SessionErrorCard notification={event.payload} />;
@@ -239,7 +234,7 @@ export function SingleEntry({
 
 function SessionErrorCard({ notification }: { notification: ErrorNotification }) {
   const { error } = notification;
-  const errorInfo = formatCodexErrorInfo(error.codexErrorInfo ?? null);
+  const errorInfo = formatCodexErrorInfo(error.codexErrorInfo);
   const messageProjection = projectDiagnosticText(error.message);
   const details = error.additionalDetails?.trim() ?? "";
   const detailProjection = details.length > 0 ? projectDiagnosticDetails(details) : null;
@@ -297,28 +292,28 @@ function SessionErrorCard({ notification }: { notification: ErrorNotification })
   );
 }
 
-function formatCodexErrorInfo(info: CodexErrorInfo | null): string | null {
+function formatCodexErrorInfo(info: CodexErrorInfo | null | undefined): string | null {
   if (info == null) return null;
   if (typeof info === "string") return info;
   if ("httpConnectionFailed" in info) {
-    return formatHttpErrorInfo("http_connection_failed", info.httpConnectionFailed.httpStatusCode ?? null);
+    return formatHttpErrorInfo("http_connection_failed", info.httpConnectionFailed.httpStatusCode);
   }
   if ("responseStreamConnectionFailed" in info) {
     return formatHttpErrorInfo(
       "response_stream_connection_failed",
-      info.responseStreamConnectionFailed.httpStatusCode ?? null,
+      info.responseStreamConnectionFailed.httpStatusCode,
     );
   }
   if ("responseStreamDisconnected" in info) {
     return formatHttpErrorInfo(
       "response_stream_disconnected",
-      info.responseStreamDisconnected.httpStatusCode ?? null,
+      info.responseStreamDisconnected.httpStatusCode,
     );
   }
   if ("responseTooManyFailedAttempts" in info) {
     return formatHttpErrorInfo(
       "response_too_many_failed_attempts",
-      info.responseTooManyFailedAttempts.httpStatusCode ?? null,
+      info.responseTooManyFailedAttempts.httpStatusCode,
     );
   }
   if ("activeTurnNotSteerable" in info) {
@@ -327,7 +322,7 @@ function formatCodexErrorInfo(info: CodexErrorInfo | null): string | null {
   return null;
 }
 
-function formatHttpErrorInfo(kind: string, httpStatusCode: number | null): string {
+function formatHttpErrorInfo(kind: string, httpStatusCode: number | null | undefined): string {
   return httpStatusCode == null ? kind : `${kind}:HTTP ${httpStatusCode}`;
 }
 

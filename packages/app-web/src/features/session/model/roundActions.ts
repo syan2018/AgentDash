@@ -1,5 +1,5 @@
-import type { SessionMessageRefDto } from "../../../generated/session-contracts";
-import type { SessionPresentationEvent } from "./types";
+import type { SessionMessageRefDto } from "../../../generated/agent-run-mailbox-contracts";
+import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import type { SessionDisplayEntry } from "./types";
 import type { TurnSegment } from "./useSessionFeed";
 
@@ -15,7 +15,7 @@ export interface RoundActionModel {
   };
 }
 
-type AgentMessageEvent = Extract<SessionPresentationEvent, { type: "agent_message_delta" }>;
+type AgentMessageEvent = Extract<BackboneEvent, { type: "agent_message_delta" }>;
 type AgentMessageDisplayEntry = SessionDisplayEntry & { event: AgentMessageEvent };
 
 function isAgentMessageEntry(value: unknown): value is AgentMessageDisplayEntry {

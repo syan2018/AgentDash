@@ -1,24 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-
+import { useCallback, useEffect, useState } from "react";
 import type {
-  ContextBlock,
-  RuntimeContextView,
-  RuntimeInput,
-  RuntimeItemContent,
-  DynamicToolCallOutputContentItem,
-} from "../../../generated/agent-runtime-contracts";
+  SessionProjectionSegmentViewResponse,
+  SessionProjectionViewResponse,
+} from "../../../generated/session-contracts";
+import type { ConversationCommandView } from "../../../generated/workflow-contracts";
 import {
   compactAgentRunContext,
-  fetchAgentRunRuntimeContext,
+  fetchAgentRunRuntimeContextProjection,
   type AgentRunRuntimeTarget,
 } from "../../../services/agentRunRuntime";
 import type { TokenUsageInfo } from "../model/types";
 import {
-  shouldApplyRuntimeContextResponse,
-  type RuntimeContextRequestToken,
-} from "../model/runtimeContextRequest";
-import type { SessionChatCommandModel } from "./SessionChatViewTypes";
-import {
+  commandPrecondition,
   contextCompactionOutcomeMessage,
   newClientCommandId,
 } from "./sessionProjectionCompactionAction";
@@ -27,19 +20,32 @@ export interface SessionProjectionViewProps {
   agentRunTarget?: AgentRunRuntimeTarget | null;
   refreshKey?: number;
   tokenUsage?: TokenUsageInfo | null;
-  compactContextCommand?: SessionChatCommandModel;
+  compactContextCommand?: ConversationCommandView;
+  /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
   embedded?: boolean;
 }
 
 export interface SessionProjectionViewPanelProps {
-  context: RuntimeContextView | null;
+  projection: SessionProjectionViewResponse | null;
   agentRunTarget?: AgentRunRuntimeTarget | null;
   tokenUsage?: TokenUsageInfo | null;
-  compactContextCommand?: SessionChatCommandModel;
+  compactContextCommand?: ConversationCommandView;
   isLoading?: boolean;
   error?: string | null;
   onRefresh?: () => void;
+  /** 浮层模式：去掉整页内联的外层留白/边框，适配 popover 容器 */
   embedded?: boolean;
+}
+
+async function fetchSessionProjectionForTarget({
+  agentRunTarget,
+}: {
+  agentRunTarget?: AgentRunRuntimeTarget | null;
+}): Promise<SessionProjectionViewResponse | null> {
+  if (agentRunTarget) {
+    return fetchAgentRunRuntimeContextProjection(agentRunTarget);
+  }
+  return null;
 }
 
 interface ContextCompactionActionState {
@@ -49,10 +55,24 @@ interface ContextCompactionActionState {
 
 function CompactContextIcon({ loading }: { loading: boolean }) {
   if (loading) {
-    return <span aria-hidden="true" className="h-3.5 w-3.5 animate-spin rounded-[8px] border border-current border-t-transparent" />;
+    return (
+      <span
+        aria-hidden="true"
+        className="h-3.5 w-3.5 animate-spin rounded-[8px] border border-current border-t-transparent"
+      />
+    );
   }
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M8 3v5H3" />
       <path d="M16 21v-5h5" />
       <path d="M3 8l6-6" />
@@ -65,91 +85,163 @@ function CompactContextIcon({ loading }: { loading: boolean }) {
   );
 }
 
-function runtimeInputText(input: RuntimeInput): string {
-  switch (input.kind) {
-    case "text": return input.text;
-    case "file_reference": return input.uri;
-    case "image": return `[image ${input.mime_type}]`;
-    case "structured": return JSON.stringify(input.value, null, 2);
+interface ContextCategoryRow {
+  id: string;
+  label: string;
+  tokens: number;
+  source: string;
+  deferred?: boolean;
+}
+
+function formatNumber(value: number | undefined): string {
+  if (value == null) return "-";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+function formatRange(segment: SessionProjectionSegmentViewResponse): string {
+  if (segment.source_range) {
+    return `#${segment.source_range.start_event_seq}-#${segment.source_range.end_event_seq}`;
+  }
+  if (segment.source_event_seq != null) {
+    return `#${segment.source_event_seq}`;
+  }
+  return "unbound";
+}
+
+function originLabel(value: string): string {
+  switch (value) {
+    case "projection":
+      return "projection";
+    case "event":
+      return "event";
+    default:
+      return value;
   }
 }
 
-function toolContentText(items: DynamicToolCallOutputContentItem[] | null): string {
-  return (items ?? []).map((item) => {
-    switch (item.type) {
-      case "inputText": return item.text;
-      case "inputImage": return item.imageUrl;
-    }
-  }).join("\n");
-}
-
-function runtimeItemText(content: RuntimeItemContent): string {
-  switch (content.type) {
-    case "userMessage": return content.content.map((item) => {
-      switch (item.type) {
-        case "text": return item.text;
-        case "image": return item.url;
-        case "localImage": return item.path;
-        case "skill": return item.name;
-        case "mention": return item.path;
-      }
-    }).join("\n");
-    case "agentMessage": return content.text;
-    case "reasoning": return [...(content.summary ?? []), ...(content.content ?? [])].join("\n");
-    case "plan": return content.text;
-    case "commandExecution": return content.aggregatedOutput ?? content.command;
-    case "fileChange": return content.status;
-    case "mcpToolCall": return `${content.server}/${content.tool}`;
-    case "dynamicToolCall": return content.tool;
-    case "collabAgentToolCall": return content.tool;
-    case "subAgentActivity": return content.kind;
-    case "webSearch": return content.query;
-    case "imageView": return content.path;
-    case "sleep": return `${content.durationMs}ms`;
-    case "imageGeneration": return content.result;
-    case "hookPrompt": return "Hook prompt";
-    case "enteredReviewMode": return content.review;
-    case "exitedReviewMode": return content.review;
-    case "contextCompaction": return "上下文压缩";
-    case "shellExec": return content.aggregatedOutput ?? content.command;
-    case "terminalControl": return content.aggregatedOutput ?? `${content.operation}: ${content.terminalId}`;
-    case "fsRead": return content.path;
-    case "fsGrep": return content.pattern;
-    case "fsGlob": return content.pattern;
-    case "vfs": return toolContentText(content.contentItems) || content.resourceUri || content.operation;
-    case "runtimeAction": return toolContentText(content.contentItems) || content.actionKey;
-    case "workspaceModule": return toolContentText(content.contentItems) || content.resourceUri || content.operation;
-    case "companion": return toolContentText(content.contentItems) || content.operation;
-    case "task": return toolContentText(content.contentItems) || content.taskId || content.operation;
-    case "wait": return toolContentText(content.contentItems) || (content.durationMs == null ? "wait" : `${content.durationMs}ms`);
-    case "lifecycleComplete": return toolContentText(content.contentItems) || content.nodeId || "lifecycle complete";
+function roleLabel(value: string): string {
+  switch (value) {
+    case "compaction_summary":
+      return "summary";
+    case "tool_result":
+      return "tool";
+    default:
+      return value;
   }
 }
 
-function contextBlockView(block: ContextBlock): { label: string; text: string } {
-  switch (block.kind) {
-    case "instruction": return { label: "Instruction", text: block.text };
-    case "input": return { label: "Input", text: block.input.map(runtimeInputText).join("\n") };
-    case "runtime_item": return { label: "Runtime item", text: runtimeItemText(block.content) };
-    case "compaction_summary": return { label: "Compaction summary", text: block.summary };
+function buildContextCategories(
+  projection: SessionProjectionViewResponse | null,
+  tokenUsage: TokenUsageInfo | null | undefined,
+): ContextCategoryRow[] {
+  const rows: ContextCategoryRow[] = (projection?.context_usage.categories ?? []).map((category) => ({
+    id: category.kind,
+    label: category.label,
+    tokens: category.token_estimate,
+    source: category.deferred ? `${category.source} · deferred` : category.source,
+    deferred: category.deferred,
+  }));
+  if (tokenUsage && tokenUsage.pendingEstimateTokens > 0) {
+    rows.push({
+      id: "pending_estimate",
+      label: "待确认估算",
+      tokens: tokenUsage.pendingEstimateTokens,
+      source: "local_estimate",
+    });
   }
+  if (tokenUsage && tokenUsage.reserveTokens > 0) {
+    rows.push({
+      id: "reserve",
+      label: "预留缓冲",
+      tokens: tokenUsage.reserveTokens,
+      source: "policy",
+    });
+  }
+  const contextWindow = tokenUsage?.effectiveContextWindow ?? tokenUsage?.modelContextWindow;
+  if (tokenUsage && contextWindow) {
+    const reserveToSubtract = tokenUsage.effectiveContextWindow == null ? tokenUsage.reserveTokens : 0;
+    const freeTokens = Math.max(
+      0,
+      contextWindow - tokenUsage.currentContextTokens - reserveToSubtract,
+    );
+    rows.push({
+      id: "free_space",
+      label: "剩余空间",
+      tokens: freeTokens,
+      source: "derived",
+    });
+  }
+  return rows;
 }
 
-function ContextBlockRow({ block, index }: { block: ContextBlock; index: number }) {
-  const view = contextBlockView(block);
+function SegmentRow({ segment }: { segment: SessionProjectionSegmentViewResponse }) {
+  const provenance = segment.provenance;
   return (
-    <div className="grid gap-2 border-t border-border/70 px-3 py-2.5 text-xs md:grid-cols-[140px_1fr]">
-      <div className="flex items-start gap-2 text-muted-foreground">
-        <span className="font-mono text-[10px]">#{index + 1}</span>
-        <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 text-[10px] font-medium">{view.label}</span>
+    <div className="grid gap-2 border-t border-border/70 px-3 py-2.5 text-xs md:grid-cols-[160px_1fr]">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground">
+            {originLabel(segment.origin)}
+          </span>
+          <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {roleLabel(segment.role)}
+          </span>
+          {segment.synthetic && (
+            <span className="rounded-[6px] border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+              synthetic
+            </span>
+          )}
+        </div>
+        <div className="truncate font-mono text-[11px] text-muted-foreground" title={segment.id}>
+          {segment.segment_type}
+        </div>
+        <div className="font-mono text-[11px] text-muted-foreground/70">
+          {formatRange(segment)}
+        </div>
       </div>
-      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-foreground/85">{view.text || "(empty)"}</pre>
+      <div className="min-w-0 space-y-1.5">
+        <p className="line-clamp-3 whitespace-pre-wrap text-foreground/85">
+          {segment.preview || "(empty)"}
+        </p>
+        <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+          {provenance.compaction_id && (
+            <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 font-mono">
+              {provenance.compaction_id}
+            </span>
+          )}
+          {provenance.strategy && (
+            <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">
+              {provenance.strategy}
+            </span>
+          )}
+          {provenance.trigger && (
+            <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">
+              {provenance.trigger}
+            </span>
+          )}
+          {provenance.phase && (
+            <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">
+              {provenance.phase}
+            </span>
+          )}
+          <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 font-mono">
+            {segment.message_ref.turn_id}:{segment.message_ref.entry_index}
+          </span>
+          {segment.token_estimate != null && (
+            <span className="rounded-[6px] bg-secondary px-1.5 py-0.5">
+              {formatNumber(segment.token_estimate)} tokens
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 export function SessionProjectionViewPanel({
-  context,
+  projection,
   agentRunTarget = null,
   tokenUsage,
   compactContextCommand,
@@ -159,104 +251,217 @@ export function SessionProjectionViewPanel({
   embedded = false,
 }: SessionProjectionViewPanelProps) {
   const [compactAction, setCompactAction] = useState<ContextCompactionActionState>({ kind: "none" });
+  const categories = buildContextCategories(projection, tokenUsage);
+  const messageBreakdown = projection?.context_usage.messages;
+  const topTools = projection?.context_usage.top_tools ?? [];
+  const topAttachments = projection?.context_usage.top_attachments ?? [];
   const compactPending = compactAction.kind === "pending";
-  const compactUnavailableReason = compactContextCommand?.unavailable_reason
+  const compactUnavailableReason =
+    compactContextCommand?.unavailable_reason
     ?? compactContextCommand?.disabled_code
     ?? "当前不可压缩";
-  const compactDisabled = !agentRunTarget
-    || !compactContextCommand?.enabled
+  const compactDisabled =
+    !agentRunTarget
+    || !compactContextCommand
+    || !compactContextCommand.enabled
     || compactPending;
-
+  const compactButtonTitle = compactPending
+    ? "压缩请求提交中"
+    : compactContextCommand?.enabled
+      ? "压缩上下文"
+      : compactUnavailableReason;
   const handleCompactContext = useCallback(async () => {
     if (!agentRunTarget || !compactContextCommand || compactPending) return;
     if (!compactContextCommand.enabled) {
-      setCompactAction({ kind: "error", message: compactUnavailableReason });
+      setCompactAction({
+        kind: "error",
+        message: compactUnavailableReason,
+      });
       return;
     }
     setCompactAction({ kind: "pending", message: "提交中" });
     try {
-      const receipt = await compactAgentRunContext(agentRunTarget.runId, agentRunTarget.agentId, {
+      const response = await compactAgentRunContext(agentRunTarget.runId, agentRunTarget.agentId, {
         client_command_id: newClientCommandId(),
+        command: commandPrecondition(compactContextCommand),
       });
-      setCompactAction({ kind: "success", message: contextCompactionOutcomeMessage(receipt) });
+      const failedOutcome = response.outcome === "blocked" || response.outcome === "failed";
+      setCompactAction({
+        kind: failedOutcome ? "error" : "success",
+        message: contextCompactionOutcomeMessage(response),
+      });
       onRefresh?.();
-    } catch (compactError) {
+    } catch (err) {
       setCompactAction({
         kind: "error",
-        message: compactError instanceof Error ? compactError.message : "压缩请求失败",
+        message: err instanceof Error ? err.message : "压缩请求失败",
       });
     }
-  }, [agentRunTarget, compactContextCommand, compactPending, compactUnavailableReason, onRefresh]);
-
+  }, [
+    agentRunTarget,
+    compactContextCommand,
+    compactPending,
+    compactUnavailableReason,
+    onRefresh,
+  ]);
   const card = (
-    <div className={embedded
-      ? "w-full overflow-hidden rounded-[12px] bg-popover shadow-lg"
-      : "mx-auto w-full max-w-4xl overflow-hidden rounded-[8px] border border-border bg-secondary/20"}
-    >
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">CONTEXT</span>
-        {context ? (
-          <>
-            <span className="text-xs text-muted-foreground">{context.fidelity}</span>
-            <span className="text-xs text-muted-foreground">{context.blocks.length} blocks</span>
-            {tokenUsage && <span className="text-xs text-muted-foreground">当前 {tokenUsage.currentContextTokens.toLocaleString()} tokens</span>}
-          </>
-        ) : (
-          <span className="text-xs text-muted-foreground">{isLoading ? "加载中" : "暂无 active context"}</span>
-        )}
-        <div className="ml-auto flex items-center gap-1.5">
-          {compactAction.message && (
-            <span className={`max-w-48 truncate text-xs ${compactAction.kind === "error" ? "text-destructive" : "text-muted-foreground"}`} title={compactAction.message}>
-              {compactAction.message}
+      <div
+        className={
+          embedded
+            ? "w-full overflow-hidden rounded-[10px] border border-border bg-popover shadow-lg"
+            : "mx-auto w-full max-w-4xl rounded-[8px] border border-border bg-secondary/20"
+        }
+      >
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+          <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+            CONTEXT
+          </span>
+          {projection ? (
+            <>
+              <span className="text-xs text-muted-foreground">
+                v{projection.projection_version} · head #{projection.head_event_seq}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {formatNumber(projection.message_count)} segments
+              </span>
+              {projection.token_estimate != null && (
+                <span className="text-xs text-muted-foreground">
+                  {formatNumber(projection.token_estimate)} tokens
+                </span>
+              )}
+              {tokenUsage && (
+                <span className="text-xs text-muted-foreground">
+                  当前 {formatNumber(tokenUsage.currentContextTokens)}
+                  {tokenUsage.effectiveContextWindow != null && ` / ${formatNumber(tokenUsage.effectiveContextWindow)}`}
+                </span>
+              )}
+              {projection.active_compaction_id && (
+                <span className="truncate rounded-[6px] bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                  {projection.active_compaction_id}
+                </span>
+              )}
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              {isLoading ? "加载中" : "暂无投影"}
             </span>
           )}
-          {compactContextCommand && (
+          <div className="ml-auto flex items-center gap-1.5">
+            {compactAction.message && (
+              <span
+                className={`max-w-40 truncate text-xs ${
+                  compactAction.kind === "error" ? "text-destructive" : "text-muted-foreground"
+                }`}
+                title={compactAction.message}
+              >
+                {compactAction.message}
+              </span>
+            )}
+            {compactContextCommand && (
+              <button
+                type="button"
+                onClick={() => { void handleCompactContext(); }}
+                disabled={compactDisabled}
+                title={compactButtonTitle}
+                aria-label="手动压缩上下文"
+                className="inline-flex h-7 items-center gap-1 rounded-[8px] border border-border bg-background px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <CompactContextIcon loading={compactPending} />
+                <span>{compactPending ? "提交中" : "压缩"}</span>
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => { void handleCompactContext(); }}
-              disabled={compactDisabled}
-              title={compactContextCommand.enabled ? "压缩上下文" : compactUnavailableReason}
-              className="inline-flex h-7 items-center gap-1 rounded-[8px] border border-border bg-background px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={onRefresh}
+              disabled={isLoading}
+              className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
             >
-              <CompactContextIcon loading={compactPending} />
-              <span>{compactPending ? "提交中" : "压缩"}</span>
+              {isLoading ? "刷新中" : "刷新"}
             </button>
-          )}
-          <button type="button" onClick={onRefresh} disabled={isLoading} className="rounded-[8px] border border-border bg-background px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50">
-            {isLoading ? "刷新中" : "刷新"}
-          </button>
+          </div>
         </div>
+        {error && (
+          <div className="border-t border-border px-3 py-2 text-xs text-destructive">
+            {error}
+          </div>
+        )}
+        {(categories.length > 0 || projection) && (
+          <div className="grid gap-3 border-t border-border px-3 py-3 text-xs md:grid-cols-[1fr_1fr]">
+            <div className="space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                构成
+              </div>
+              <div className="space-y-1">
+                {categories.map((category) => (
+                  <div key={category.id} className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-foreground/80">{category.label}</span>
+                    <span className="rounded-[6px] bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                      {category.source}
+                    </span>
+                    <span className="w-14 text-right font-mono text-muted-foreground">
+                      {formatNumber(category.tokens)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                消息明细
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+                <span>用户 {formatNumber(messageBreakdown?.user_message_tokens)}</span>
+                <span>助手 {formatNumber(messageBreakdown?.assistant_message_tokens)}</span>
+                <span>工具调用 {formatNumber(messageBreakdown?.tool_call_tokens)}</span>
+                <span>工具结果 {formatNumber(messageBreakdown?.tool_result_tokens)}</span>
+                <span>附件 {formatNumber(messageBreakdown?.attachment_tokens)}</span>
+              </div>
+              {topTools.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Top Tools
+                  </div>
+                  {topTools.map((tool) => (
+                    <div key={tool.name} className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-foreground/80">{tool.name}</span>
+                      <span className="font-mono text-muted-foreground">
+                        {formatNumber(tool.call_tokens)} / {formatNumber(tool.result_tokens)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {topAttachments.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Top Attachments
+                  </div>
+                  {topAttachments.map((attachment) => (
+                    <div key={attachment.name} className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-foreground/80">{attachment.name}</span>
+                      <span className="font-mono text-muted-foreground">
+                        {formatNumber(attachment.tokens)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {projection && projection.segments.length > 0 && (
+          <div className="max-h-72 overflow-y-auto">
+            {projection.segments.map((segment) => (
+              <SegmentRow key={segment.id} segment={segment} />
+            ))}
+          </div>
+        )}
+        {projection && projection.segments.length === 0 && (
+          <div className="border-t border-border px-3 py-4 text-xs text-muted-foreground">
+            当前 projection 没有可展示 segment。
+          </div>
+        )}
       </div>
-      {error && <div className="border-t border-border px-3 py-2 text-xs text-destructive">{error}</div>}
-      {context && (
-        <div className="grid gap-3 border-t border-border px-3 py-3 text-xs md:grid-cols-2">
-          <div className="space-y-1 text-muted-foreground">
-            <div className="text-[10px] font-semibold uppercase tracking-wider">Active head</div>
-            {context.head ? (
-              <>
-                <div className="break-all font-mono text-foreground/80">{context.head.checkpoint_id}</div>
-                <div>revision {String(context.head.revision)} · {context.head.fidelity}</div>
-                <div>settings {String(context.head.provenance.settings_revision)} · tools {String(context.head.provenance.tool_set_revision)}</div>
-                <div className="break-all font-mono text-[10px]">{context.head.digest}</div>
-              </>
-            ) : <div>尚无 active head</div>}
-          </div>
-          <div className="space-y-1 text-muted-foreground">
-            <div className="text-[10px] font-semibold uppercase tracking-wider">Checkpoint</div>
-            {context.checkpoint ? (
-              <>
-                <div className="break-all font-mono text-foreground/80">{context.checkpoint.checkpoint_id}</div>
-                <div>revision {String(context.checkpoint.revision)} · recipe {String(context.checkpoint.materialized.recipe.revision)}</div>
-                <div>{context.checkpoint.materialized.recipe.source_item_ids.length} source items</div>
-                <div className="break-all font-mono text-[10px]">{context.checkpoint.materialized.digest}</div>
-              </>
-            ) : <div>尚无 materialized checkpoint</div>}
-          </div>
-        </div>
-      )}
-      {context?.blocks.map((block, index) => <ContextBlockRow key={`${block.kind}:${index}`} block={block} index={index} />)}
-      {context && context.blocks.length === 0 && <div className="border-t border-border px-3 py-4 text-xs text-muted-foreground">当前 context 没有 materialized blocks。</div>}
-    </div>
   );
   if (embedded) return card;
   return <div className="border-b border-border bg-background px-5 py-3">{card}</div>;
@@ -269,74 +474,33 @@ export function SessionProjectionView({
   compactContextCommand,
   embedded = false,
 }: SessionProjectionViewProps) {
-  const targetKey = agentRunTarget
-    ? `${agentRunTarget.runId}:${agentRunTarget.agentId}`
-    : "no-agent-run-target";
-  return (
-    <SessionProjectionViewForTarget
-      key={targetKey}
-      agentRunTarget={agentRunTarget}
-      refreshKey={refreshKey}
-      tokenUsage={tokenUsage}
-      compactContextCommand={compactContextCommand}
-      embedded={embedded}
-    />
-  );
-}
-
-function SessionProjectionViewForTarget({
-  agentRunTarget,
-  refreshKey,
-  tokenUsage,
-  compactContextCommand,
-  embedded,
-}: Required<Pick<SessionProjectionViewProps, "refreshKey" | "embedded">>
-  & Omit<SessionProjectionViewProps, "refreshKey" | "embedded">) {
-  const [context, setContext] = useState<RuntimeContextView | null>(null);
+  const [projection, setProjection] = useState<SessionProjectionViewResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const generationRef = useRef(0);
-  const latestRequestRef = useRef<RuntimeContextRequestToken | null>(null);
-  const mountedRef = useRef(true);
-  const targetKey = agentRunTarget
-    ? `${agentRunTarget.runId}:${agentRunTarget.agentId}`
-    : "no-agent-run-target";
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
 
   const refresh = useCallback(async () => {
-    if (!agentRunTarget) return;
-    const request = {
-      target_key: targetKey,
-      generation: generationRef.current + 1,
-    };
-    generationRef.current = request.generation;
-    latestRequestRef.current = request;
+    if (!agentRunTarget) {
+      setProjection(null);
+      return;
+    }
     setIsLoading(true);
     setError(null);
     try {
-      const next = await fetchAgentRunRuntimeContext(agentRunTarget);
-      if (!shouldApplyRuntimeContextResponse(mountedRef.current, latestRequestRef.current, request)) return;
-      setContext(next);
-    } catch (contextError) {
-      if (!shouldApplyRuntimeContextResponse(mountedRef.current, latestRequestRef.current, request)) return;
-      setError(contextError instanceof Error ? contextError.message : "加载模型上下文失败");
+      const next = await fetchSessionProjectionForTarget({ agentRunTarget });
+      setProjection(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载模型上下文失败");
     } finally {
-      if (shouldApplyRuntimeContextResponse(mountedRef.current, latestRequestRef.current, request)) {
-        setIsLoading(false);
-      }
+      setIsLoading(false);
     }
-  }, [agentRunTarget, targetKey]);
+  }, [agentRunTarget]);
 
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
-      if (!cancelled) void refresh();
+      if (!cancelled) {
+        void refresh();
+      }
     });
     return () => {
       cancelled = true;
@@ -345,13 +509,13 @@ function SessionProjectionViewForTarget({
 
   return (
     <SessionProjectionViewPanel
-      context={context}
+      projection={projection}
       agentRunTarget={agentRunTarget}
       tokenUsage={tokenUsage}
       compactContextCommand={compactContextCommand}
       isLoading={isLoading}
       error={error}
-      onRefresh={() => { void refresh(); }}
+      onRefresh={() => void refresh()}
       embedded={embedded}
     />
   );

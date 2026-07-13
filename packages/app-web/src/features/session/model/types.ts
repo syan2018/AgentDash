@@ -6,9 +6,11 @@
  */
 
 export type {
-  PlatformEvent,
+  BackboneEvent,
+  BackboneEnvelope,
   ThreadItem,
   AgentDashThreadItem,
+  PlatformEvent,
   HookTracePayload,
   HookTraceData,
   HookTraceCompletion,
@@ -24,10 +26,14 @@ export type {
   CommandExecutionOutputDeltaNotification,
   FileChangeOutputDeltaNotification,
   McpToolCallProgressNotification,
+  TurnStartedNotification,
+  TurnCompletedNotification,
   TurnDiffUpdatedNotification,
   TurnPlanUpdatedNotification,
   PlanDeltaNotification,
   ThreadTokenUsageUpdatedNotification,
+  ThreadStatusChangedNotification,
+  ContextCompactedNotification,
   ApprovalRequest,
   ErrorNotification,
   Turn,
@@ -48,24 +54,9 @@ export type {
 } from "../../../generated/backbone-protocol";
 
 import type {
-  AgentMessageDeltaNotification,
+  BackboneEvent,
   AgentDashThreadItem,
-  ApprovalRequest,
-  CommandExecutionOutputDeltaNotification,
-  ErrorNotification,
-  FileChangeOutputDeltaNotification,
-  ItemCompletedNotification,
-  ItemStartedNotification,
-  ItemUpdatedNotification,
-  McpToolCallProgressNotification,
-  PlanDeltaNotification,
   PlatformEvent,
-  ReasoningSummaryTextDeltaNotification,
-  ReasoningTextDeltaNotification,
-  ThreadTokenUsageUpdatedNotification,
-  TurnDiffUpdatedNotification,
-  TurnPlanUpdatedNotification,
-  UserInputSubmittedNotification,
   UserInput,
   UserInputSource,
   ThreadTokenUsage,
@@ -73,73 +64,11 @@ import type {
   NormalizedContextUsage,
   ContextUsageSource,
 } from "../../../generated/backbone-protocol";
-import type {
-  RuntimeInteractionRequest,
-  RuntimeInteractionTerminal,
-} from "../../../generated/agent-runtime-contracts";
+import type { SessionEventResponse } from "../../../generated/session-contracts";
 import type { ContextFrame } from "./contextFrame";
 import { resolveKind } from "./threadItemKind";
 
 type JsonRecord = Record<string, unknown>;
-
-export type SessionPresentationEvent =
-  | { type: "agent_message_delta"; payload: AgentMessageDeltaNotification }
-  | { type: "reasoning_text_delta"; payload: ReasoningTextDeltaNotification }
-  | { type: "reasoning_summary_delta"; payload: ReasoningSummaryTextDeltaNotification }
-  | { type: "item_started"; payload: ItemStartedNotification }
-  | { type: "item_updated"; payload: ItemUpdatedNotification }
-  | { type: "item_completed"; payload: ItemCompletedNotification }
-  | {
-      type: "item_terminal";
-      payload: {
-        threadId: string;
-        turnId: string;
-        itemId: string;
-        terminal: "failed" | "cancelled" | "lost";
-        message: string | null;
-      };
-    }
-  | { type: "command_output_delta"; payload: CommandExecutionOutputDeltaNotification }
-  | { type: "file_change_delta"; payload: FileChangeOutputDeltaNotification }
-  | { type: "mcp_tool_call_progress"; payload: McpToolCallProgressNotification }
-  | { type: "turn_diff_updated"; payload: TurnDiffUpdatedNotification }
-  | { type: "user_input_submitted"; payload: UserInputSubmittedNotification }
-  | { type: "turn_plan_updated"; payload: TurnPlanUpdatedNotification }
-  | { type: "plan_delta"; payload: PlanDeltaNotification }
-  | { type: "token_usage_updated"; payload: ThreadTokenUsageUpdatedNotification }
-  | { type: "approval_request"; payload: ApprovalRequest }
-  | {
-      type: "interaction_requested";
-      payload: {
-        interactionId: string;
-        itemId: string | null;
-        request: RuntimeInteractionRequest;
-      };
-    }
-  | {
-      type: "interaction_terminal";
-      payload: {
-        interactionId: string;
-        terminal: RuntimeInteractionTerminal;
-      };
-    }
-  | { type: "error"; payload: ErrorNotification }
-  | { type: "platform"; payload: PlatformEvent };
-
-export interface SessionPresentationEnvelope {
-  session_id: string;
-  event_seq: number;
-  occurred_at_ms: number;
-  session_update_type: string;
-  turn_id?: string;
-  entry_index?: number;
-  tool_call_id?: string;
-  event: SessionPresentationEvent;
-  ephemeral?: boolean;
-  transient_generation?: number;
-}
-
-export type SessionEventEnvelope = SessionPresentationEnvelope;
 
 function isRecord(value: unknown): value is JsonRecord {
   return value != null && typeof value === "object" && !Array.isArray(value);
@@ -438,6 +367,11 @@ export function partitionUserInputs(input: readonly UserInput[]): PartitionedUse
 
 // ==================== 前端扩展类型 ====================
 
+export type SessionEventEnvelope = SessionEventResponse & {
+  /** 进度态事件标记：仅 live 显示，不写入可重放 rawEvents backlog。 */
+  ephemeral?: boolean;
+};
+
 /** UI 时间线顺序来源：durable 与 ephemeral progress 使用不同坐标。 */
 export type TimelineOrder =
   | { kind: "durable"; seq: number }
@@ -462,7 +396,7 @@ export type ToolAggregationType =
 
 /**
  * 显示条目 — entries 数组中的基本单元。
- * 每条 SessionPresentationEvent 归并后对应一个 SessionDisplayEntry。
+ * 每条 BackboneEvent 归并后对应一个 SessionDisplayEntry。
  */
 export interface SessionDisplayEntry {
   id: string;
@@ -476,14 +410,11 @@ export interface SessionDisplayEntry {
   progressSeq?: number;
   /** 同 item lifecycle freshness：completed > progress > started。 */
   itemFreshness?: SessionItemFreshness;
-  event: SessionPresentationEvent;
+  event: BackboneEvent;
   turnId?: string;
   entryIndex?: number;
   isStreaming?: boolean;
   isPendingApproval?: boolean;
-  /** canonical Runtime 对同一 item 的非成功终态；覆盖卡片展示状态，不另建错误卡。 */
-  terminalFailure?: "failed" | "cancelled" | "lost";
-  terminalMessage?: string | null;
   /** delta 累积后的文本（用于 agent_message_delta / reasoning_text_delta 等） */
   accumulatedText?: string;
   /** model 层解析后的 context frame，供 UI 直接渲染。 */
@@ -616,8 +547,8 @@ export function isDisplayEntry(
 
 // ==================== 工具函数 ====================
 
-/** 从 SessionPresentationEvent 获取显示文本 */
-export function extractTextFromEvent(event: SessionPresentationEvent): string {
+/** 从 BackboneEvent 获取显示文本 */
+export function extractTextFromEvent(event: BackboneEvent): string {
   switch (event.type) {
     case "agent_message_delta":
       return event.payload.delta;
@@ -692,8 +623,8 @@ export function getThreadItemKind(item: AgentDashThreadItem): string {
   return resolveKind(item).kind;
 }
 
-/** 从 SessionPresentationEvent 判断是否是系统/平台事件 */
-export function isPlatformEvent(event: SessionPresentationEvent): event is { type: "platform"; payload: PlatformEvent } {
+/** 从 BackboneEvent 判断是否是系统/平台事件 */
+export function isPlatformEvent(event: BackboneEvent): event is { type: "platform"; payload: PlatformEvent } {
   return event.type === "platform";
 }
 
@@ -706,7 +637,7 @@ export function getPlatformEventKey(event: PlatformEvent): string | null {
 }
 
 /** 提取 token 用量信息 */
-export function extractTokenUsageFromEvent(event: SessionPresentationEvent): TokenUsageInfo | null {
+export function extractTokenUsageFromEvent(event: BackboneEvent): TokenUsageInfo | null {
   if (event.type !== "token_usage_updated") return null;
   const usage: ThreadTokenUsage = event.payload.tokenUsage;
   const context = normalizeContextUsage(usage.context, usage);

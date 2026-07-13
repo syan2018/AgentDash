@@ -6,7 +6,8 @@
  */
 
 import type { ReactNode } from "react";
-import type { BackboneEvent, HookTraceData } from "../../../generated/backbone-protocol";
+import type { HookTraceData } from "../../../generated/backbone-protocol";
+import type { SessionPresentationEvent } from "../model/types";
 import {
   extractPlatformEventType,
   extractPlatformEventData,
@@ -21,7 +22,7 @@ import { useDebugPrefs } from "../../../hooks/use-debug-prefs";
 import type { ContextFrame } from "../model/contextFrame";
 
 export interface SessionSystemEventCardProps {
-  event: BackboneEvent;
+  event: SessionPresentationEvent;
   sessionId?: string;
   contextFrame?: ContextFrame;
 }
@@ -564,7 +565,7 @@ function buildGenericDetailLines(eventType: string, data: Record<string, unknown
 }
 
 function extractHookEventData(
-  event: BackboneEvent,
+  event: SessionPresentationEvent,
   value: Record<string, unknown> | null,
 ): HookEventData | null {
   if (event.type === "platform" && event.payload.kind === "hook_trace") {

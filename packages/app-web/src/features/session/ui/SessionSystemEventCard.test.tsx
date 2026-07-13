@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { SessionPresentationEvent } from "../model/types";
 import type { JsonValue } from "../../../generated/common-contracts";
 import { parseContextFrame, type ContextFrame } from "../model/contextFrame";
 import { SessionSystemEventCard } from "./SessionSystemEventCard";
@@ -11,7 +11,7 @@ type JsonObject = { [key: string]: JsonValue | undefined };
 
 describe("SessionSystemEventCard", () => {
   it("放行并渲染 session_branch_forked 事件", () => {
-    const event: BackboneEvent = {
+    const event: SessionPresentationEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
@@ -35,7 +35,7 @@ describe("SessionSystemEventCard", () => {
 
   it("放行并渲染 context_frame 事件", () => {
     const frameData = sampleContextFrameData();
-    const event: BackboneEvent = {
+    const event: SessionPresentationEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
@@ -57,7 +57,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("context_frame 事件没有 parsed frame 时不渲染", () => {
-    const event: BackboneEvent = {
+    const event: SessionPresentationEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
@@ -72,7 +72,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("有 injections 的 context_injected 应展示注入卡片", () => {
-    const event: BackboneEvent = {
+    const event: SessionPresentationEvent = {
       type: "platform",
       payload: {
         kind: "hook_trace",
@@ -114,7 +114,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("companion_human_request 不再作为 session system event 渲染", () => {
-    const event: BackboneEvent = {
+    const event: SessionPresentationEvent = {
       type: "platform",
       payload: {
         kind: "session_meta_update",
@@ -144,7 +144,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("没有 injections 的 context_injected 不再显示空壳 CTX", () => {
-    const event: BackboneEvent = {
+    const event: SessionPresentationEvent = {
       type: "platform",
       payload: {
         kind: "hook_trace",
@@ -178,7 +178,7 @@ describe("SessionSystemEventCard", () => {
   });
 
   it("session_start 的 context_injected 在 injections 为空时隐藏", () => {
-    const event: BackboneEvent = {
+    const event: SessionPresentationEvent = {
       type: "platform",
       payload: {
         kind: "hook_trace",

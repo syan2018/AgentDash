@@ -27,6 +27,7 @@ fn envelope(event: RuntimeEvent) -> RuntimeEventEnvelope {
 fn envelope_for_thread(thread_id: &str, event: RuntimeEvent) -> RuntimeEventEnvelope {
     RuntimeEventEnvelope {
         thread_id: id(thread_id),
+        occurred_at_ms: 0,
         sequence: None,
         transient: None,
         revision: RuntimeRevision(1),

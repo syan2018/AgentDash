@@ -830,6 +830,7 @@ impl RuntimeTransientEvents for RuntimeStoreFixture {
         const ACTIVE_TURN_REPLAY_LIMIT: usize = 512;
         let mut event = RuntimeEventEnvelope {
             thread_id,
+            occurred_at_ms: crate::model::current_time_ms(),
             sequence: None,
             transient: None,
             revision,

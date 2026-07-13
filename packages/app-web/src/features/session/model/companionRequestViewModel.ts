@@ -1,4 +1,4 @@
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { SessionPresentationEvent } from "./types";
 import { extractPlatformEventData, isRecord } from "./platformEvent";
 
 export interface CompanionCapabilityGrantViewModel {
@@ -28,7 +28,7 @@ export interface CompanionRequestSubmission {
   label: string;
 }
 
-export function parseCompanionRequest(event: BackboneEvent): CompanionRequestViewModel {
+export function parseCompanionRequest(event: SessionPresentationEvent): CompanionRequestViewModel {
   const data = extractPlatformEventData(event);
   const payload = isRecord(data?.payload) ? data.payload : null;
 

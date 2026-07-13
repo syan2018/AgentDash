@@ -537,6 +537,7 @@ impl RuntimeThreadState {
             self.next_event_sequence.0 += 1;
             envelopes.push(RuntimeEventEnvelope {
                 thread_id: self.thread_id.clone(),
+                occurred_at_ms: current_time_ms(),
                 sequence: Some(self.next_event_sequence),
                 transient: None,
                 revision: self.revision,
@@ -575,6 +576,8 @@ impl RuntimeThreadState {
         RuntimeSnapshot {
             thread_id: self.thread_id.clone(),
             revision: self.revision,
+            latest_event_sequence: self.next_event_sequence,
+            captured_at_ms: current_time_ms(),
             status: self.status,
             active_turn_id: self.active_turn_id.clone(),
             binding_id: self.binding_id.clone(),
@@ -618,6 +621,15 @@ impl RuntimeThreadState {
             transcript_fidelity: agentdash_agent_runtime_contract::ContextFidelity::EventProjected,
         }
     }
+}
+
+pub(crate) fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 trait RuntimeCommandKinds {

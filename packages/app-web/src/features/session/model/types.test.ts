@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { SessionPresentationEvent } from "./types";
 import type { AggregatedContextFrameGroup } from "./types";
 import {
   deriveSessionInputSourceView,
@@ -9,7 +9,7 @@ import {
 
 describe("extractTokenUsageFromEvent", () => {
   it("区分当前上下文、pending estimate 和累计用量", () => {
-    const event: BackboneEvent = {
+    const event: SessionPresentationEvent = {
       type: "token_usage_updated",
       payload: {
         threadId: "thread-1",

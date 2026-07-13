@@ -500,6 +500,8 @@ impl RuntimeEvent {
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeEventEnvelope {
     pub thread_id: RuntimeThreadId,
+    /// Authoritative producer timestamp used by presentation projections.
+    pub occurred_at_ms: u64,
     pub sequence: Option<EventSequence>,
     /// Present only for live, non-durable events. Together these coordinates form a stable
     /// reconnect cursor inside one binding generation; they are never persisted as journal facts.

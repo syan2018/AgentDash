@@ -21,6 +21,15 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
 #[derive(Clone)]
 pub struct PostgresRuntimeRepository {
     pool: PgPool,
@@ -87,6 +96,7 @@ impl RuntimeTransientEvents for PostgresRuntimeRepository {
         const ACTIVE_TURN_REPLAY_LIMIT: usize = 512;
         let mut event = RuntimeEventEnvelope {
             thread_id,
+            occurred_at_ms: current_time_ms(),
             sequence: None,
             transient: None,
             revision,

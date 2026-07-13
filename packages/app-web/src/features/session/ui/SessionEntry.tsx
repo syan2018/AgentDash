@@ -1,7 +1,7 @@
 /**
  * 会话条目渲染组件
  *
- * 根据 BackboneEvent 类型渲染不同的 UI：
+ * 根据 SessionPresentationEvent 类型渲染不同的 UI：
  * - agent_message_delta → SessionMessageCard (agent)
  * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
  * - item_started / item_updated / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
@@ -16,6 +16,7 @@
 import { memo, useState } from "react";
 import { ST } from "./bodies/cardBodyTokens";
 import { ContextFrameStream } from "./ContextFrameStream";
+import { SessionRuntimeInteractionCard } from "./SessionRuntimeInteractionContext";
 import {
   isAggregatedGroup,
   isAggregatedContextFrameGroup,
@@ -162,7 +163,7 @@ export function SingleEntry({
         <ToolCallCardShell
           kind={card.kind}
           header={card.header}
-          status={card.status}
+          status={entry.terminalFailure ? "failed" : card.status}
           isPendingApproval={isPendingApproval}
           durationMs={card.durationMs}
         >
@@ -185,6 +186,12 @@ export function SingleEntry({
         </div>
       );
     }
+
+    case "interaction_requested":
+      return <SessionRuntimeInteractionCard interactionId={event.payload.interactionId} kind={event.payload.request.kind} />;
+
+    case "interaction_terminal":
+      return null;
 
     case "error": {
       return <SessionErrorCard notification={event.payload} />;

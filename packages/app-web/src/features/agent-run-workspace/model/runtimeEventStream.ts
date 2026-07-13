@@ -4,6 +4,10 @@ import { registerStreamConnection } from "../../../api/streamRegistry";
 import type { RuntimeEventEnvelope } from "../../../generated/agent-runtime-contracts";
 import type { RuntimeSubscribeError } from "../../../generated/agent-runtime-contracts";
 import {
+  isGeneratedRuntimeTransientCoordinate,
+  parseGeneratedRuntimeEventEnvelope,
+} from "../../../generated/agent-runtime-validators";
+import {
   agentRunScopedPath,
   type AgentRunRuntimeEventStreamItem,
   type AgentRunRuntimeTarget,
@@ -38,7 +42,7 @@ export function advanceRuntimeStreamCursor(
   item: AgentRunRuntimeEventStreamItem,
   targetKey: string,
 ): { state: RuntimeStreamCursorState; accepted: boolean } {
-  let next = state.targetKey === targetKey
+  const next = state.targetKey === targetKey
     ? { ...state }
     : { targetKey, durable: 0, transient: null, generation: null };
   if (item.kind === "error") return { state: next, accepted: false };
@@ -69,36 +73,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isRuntimeEventEnvelope(value: unknown): value is RuntimeEventEnvelope {
-  return isRecord(value)
-    && typeof value.thread_id === "string"
-    && isRecord(value.event)
-    && typeof value.event.kind === "string";
-}
-
 function isRuntimeSubscribeError(value: unknown): value is RuntimeSubscribeError {
   return isRecord(value) && typeof value.kind === "string";
 }
 
 function isTransientCursor(value: unknown): boolean {
-  return isRecord(value)
-    && typeof value.binding_id === "string"
-    && typeof value.stream_generation === "number"
-    && typeof value.sequence === "number"
-    && typeof value.event_id === "string";
+  return isGeneratedRuntimeTransientCoordinate(value);
 }
 
 export function parseRuntimeEventStreamItem(value: unknown): AgentRunRuntimeEventStreamItem | null {
   if (!isRecord(value) || typeof value.kind !== "string") return null;
   if (value.kind === "event") {
+    const envelope = parseGeneratedRuntimeEventEnvelope(value.envelope);
     if (
-      !(value.durable_cursor === null || typeof value.durable_cursor === "number")
+      !(value.durable_cursor === null || (typeof value.durable_cursor === "number" && Number.isSafeInteger(value.durable_cursor) && value.durable_cursor >= 0))
       || !(value.transient_cursor === null || isTransientCursor(value.transient_cursor))
-      || !isRuntimeEventEnvelope(value.envelope)
+      || !envelope.ok
     ) {
       return null;
     }
-    return { kind: "event", durable_cursor: value.durable_cursor, transient_cursor: value.transient_cursor, envelope: value.envelope } as AgentRunRuntimeEventStreamItem;
+    return { kind: "event", durable_cursor: value.durable_cursor, transient_cursor: value.transient_cursor, envelope: envelope.value } as AgentRunRuntimeEventStreamItem;
   }
   if (value.kind === "error" && isRuntimeSubscribeError(value.error)) {
     return { kind: "error", error: value.error };

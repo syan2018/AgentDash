@@ -3,7 +3,9 @@ import type { KeyboardEvent, ReactNode, RefObject } from "react";
 
 import { SessionProjectionView } from "./SessionProjectionView";
 
+import type { SessionMessageRefDto } from "../../../generated/session-contracts";
 import type { AgentRunRuntimeTarget } from "../../../services/agentRunRuntime";
+import type { CompanionSubagentKnownAgentRef } from "../model/companionSubagentDispatch";
 import type {
   useExecutorConfig,
   useExecutorDiscoveredOptions,
@@ -17,8 +19,12 @@ import {
   RichInput,
   type RichInputRef,
 } from "../../file-reference";
-import type { TokenUsageInfo } from "../model/types";
+import { isAggregatedGroup, isAggregatedThinkingGroup, isDisplayEntry } from "../model/types";
+import type { SessionDisplayItem, SessionDisplayEntry, TokenUsageInfo } from "../model/types";
+import { buildRoundActionModel, type RoundActionModel } from "../model/roundActions";
+import type { TurnActivityStatus, TurnSegment } from "../model/useSessionFeed";
 import { isSessionComposerSubmitDisabled } from "./SessionChatComposerState";
+import { SessionEntry } from "./SessionEntry";
 import type { SessionChatCommandModel, SessionChatCommandState } from "./SessionChatViewTypes";
 import type { ImageAttachment } from "./composer/useImageAttachments";
 import { ImageAttachmentPreview } from "./composer/ImageAttachmentPreview";
@@ -64,6 +70,12 @@ function removeReferenceMarkers(prompt: string, relPath: string): string {
   next = next.replace(/[ \t]+\n/g, "\n");
   next = next.replace(/\n{3,}/g, "\n\n");
   return next;
+}
+
+function getItemKey(item: SessionDisplayItem): string {
+  if (isAggregatedGroup(item)) return item.groupKey;
+  if (isAggregatedThinkingGroup(item)) return item.groupKey;
+  return item.id;
 }
 
 /**
@@ -214,6 +226,353 @@ export function SessionChatStatusBar({
         <span className={`inline-block h-1.5 w-1.5 rounded-[8px] ${connectionColor}`} />
         {connectionLabel}
       </span>
+    </div>
+  );
+}
+
+export function SessionChatStream({
+  containerRef,
+  displayItems,
+  turnSegments,
+  agentRunTarget,
+  companionSubagents,
+  hasRuntimeStreamTarget,
+  isLoading,
+  streamingEntryId,
+  streamPrefixContent,
+  onForkFromMessageRef,
+  onScroll,
+}: {
+  containerRef: RefObject<HTMLDivElement | null>;
+  displayItems: SessionDisplayItem[];
+  turnSegments?: TurnSegment[];
+  agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
+  hasRuntimeStreamTarget: boolean;
+  isLoading: boolean;
+  streamingEntryId: string | null;
+  streamPrefixContent?: ReactNode;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
+  onScroll: () => void;
+}) {
+  return (
+    <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
+      {hasRuntimeStreamTarget && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
+        <div className="flex h-full items-center justify-center">
+          <div className="text-center">
+            <div className="mx-auto h-8 w-8 animate-spin rounded-[12px] border-2 border-primary border-t-transparent" />
+            <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
+          </div>
+        </div>
+      ) : (hasRuntimeStreamTarget && displayItems.length > 0) || streamPrefixContent ? (
+        <div className="mx-auto w-full max-w-4xl space-y-1.5 px-5 py-6">
+          {streamPrefixContent}
+          {turnSegments && turnSegments.length > 0 ? (
+            turnSegments.map((segment, idx) => (
+              <TurnSection
+                key={segment.turnId ?? `gap-${idx}`}
+                segment={segment}
+                agentRunTarget={agentRunTarget}
+                companionSubagents={companionSubagents}
+                streamingEntryId={streamingEntryId}
+                onForkFromMessageRef={onForkFromMessageRef}
+              />
+            ))
+          ) : (
+            displayItems.map((item, idx) => {
+              const key = getItemKey(item);
+              const followed = isToolGroup(item) && hasFollowingAgentMessage(displayItems, idx);
+              return (
+                <div key={key}>
+                  <SessionEntry
+                    item={item}
+                    agentRunTarget={agentRunTarget}
+                    companionSubagents={companionSubagents}
+                    isStreaming={key === streamingEntryId}
+                    followedByMessage={followed}
+                  />
+                </div>
+              );
+            })
+          )}
+        </div>
+      ) : (
+        <div className="flex h-full items-center justify-center">
+          <div className="text-center">
+            <div className="mx-auto mb-4 w-fit rounded-[8px] border border-dashed border-border bg-secondary px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              {agentRunTarget ? "Workspace" : "Session"}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {hasRuntimeStreamTarget ? "会话已就绪，继续发送消息" : "对话尚未开始，仍可发送可用命令"}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 判断 displayItem 是否是 agent 文本消息 */
+function isAgentMessage(item: SessionDisplayItem): boolean {
+  if (!isDisplayEntry(item)) return false;
+  return (item as SessionDisplayEntry).event.type === "agent_message_delta";
+}
+
+/** 判断当前 item 是否是 aggregated tool group */
+function isToolGroup(item: SessionDisplayItem): boolean {
+  return isAggregatedGroup(item);
+}
+
+/** 列表中某 tool group 后面是否紧跟 agent message */
+function hasFollowingAgentMessage(items: SessionDisplayItem[], idx: number): boolean {
+  for (let i = idx + 1; i < items.length; i++) {
+    const next = items[i]!;
+    if (isAgentMessage(next)) return true;
+    if (isToolGroup(next)) continue;
+    if (isAggregatedThinkingGroup(next)) continue;
+    break;
+  }
+  return false;
+}
+
+function formatTurnDuration(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}m ${s}s`;
+}
+
+function formatTurnDurationSuffix(ms: number | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
+  return ` ${formatTurnDuration(ms)}`;
+}
+
+function terminalTurnLabel(status: TurnSegment["status"]): string | null {
+  switch (status) {
+    case "completed":
+      return "已处理";
+    case "failed":
+      return "执行失败";
+    case "interrupted":
+      return "执行已中断";
+    default:
+      return null;
+  }
+}
+
+function turnActivityClassName(activity: TurnActivityStatus): string {
+  switch (activity.kind) {
+    case "retry_exhausted":
+      return "border-destructive/20 bg-destructive/8 text-destructive";
+    case "reconnecting":
+      return "border-warning/25 bg-warning/10 text-warning";
+    case "connecting":
+    default:
+      return "border-info/20 bg-info/8 text-info";
+  }
+}
+
+function TurnActivityStrip({ activity }: { activity: TurnActivityStatus }) {
+  return (
+    <div className={`flex w-fit items-center gap-1.5 rounded-[8px] border px-2.5 py-1 text-xs ${turnActivityClassName(activity)}`}>
+      <span className="inline-block h-1.5 w-1.5 rounded-[8px] bg-current" />
+      <span>{activity.label}</span>
+    </div>
+  );
+}
+
+function useActiveTurnElapsedMs(startedAtMs: number | undefined, active: boolean): number | undefined {
+  const [clock, setClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active || startedAtMs == null) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active, startedAtMs]);
+
+  if (!active || startedAtMs == null) return undefined;
+  return Math.max(clock - startedAtMs, 0);
+}
+
+function TurnSection({
+  segment,
+  agentRunTarget,
+  companionSubagents,
+  streamingEntryId,
+  onForkFromMessageRef,
+}: {
+  segment: TurnSegment;
+  agentRunTarget?: AgentRunRuntimeTarget | null;
+  companionSubagents?: readonly CompanionSubagentKnownAgentRef[];
+  streamingEntryId: string | null;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
+}) {
+  const isTerminal = segment.status !== "active";
+  const terminalLabel = terminalTurnLabel(segment.status);
+  const headerLabel = terminalLabel ?? (segment.turnId ? "执行中" : null);
+  const activeElapsedMs = useActiveTurnElapsedMs(segment.startedAtMs, segment.status === "active");
+  const displayDurationMs = segment.durationMs ?? activeElapsedMs;
+  const [collapsed, setCollapsed] = useState(false);
+  const [prevStatus, setPrevStatus] = useState(segment.status);
+
+  if (segment.status !== prevStatus) {
+    setPrevStatus(segment.status);
+    if (isTerminal && prevStatus === "active") {
+      setCollapsed(true);
+    }
+  }
+
+  if (!collapsed) {
+    return (
+      <div className="space-y-1.5">
+        {segment.activity && (
+          <TurnActivityStrip activity={segment.activity} />
+        )}
+        {headerLabel && (
+          <button
+            type="button"
+            onClick={() => setCollapsed(true)}
+            className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/40 transition-colors hover:text-muted-foreground/60 hover:bg-secondary/30"
+          >
+            <span className="h-px flex-1 max-w-6 bg-border/40" />
+            <span>{headerLabel}{formatTurnDurationSuffix(displayDurationMs)}</span>
+            <span className="h-px flex-1 bg-border/40" />
+          </button>
+        )}
+        {segment.items.map((item, idx) => {
+          const key = getItemKey(item);
+          const followed = isToolGroup(item) && hasFollowingAgentMessage(segment.items, idx);
+          return (
+            <div key={key}>
+              <SessionEntry
+                item={item}
+                agentRunTarget={agentRunTarget}
+                companionSubagents={companionSubagents}
+                isStreaming={key === streamingEntryId}
+                followedByMessage={followed}
+              />
+            </div>
+          );
+        })}
+        <RoundActionToolbar
+          actionModel={buildRoundActionModel(segment)}
+          onForkFromMessageRef={onForkFromMessageRef}
+        />
+      </div>
+    );
+  }
+
+  // 折叠态：只显示 summary bar + 最终输出
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        className="flex items-center gap-2 rounded-[6px] px-2 py-0.5 text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground/70 hover:bg-secondary/30"
+      >
+        <span className="text-muted-foreground/40">▶</span>
+        <span>{headerLabel ?? "会话段落"}{formatTurnDurationSuffix(displayDurationMs)}</span>
+        <span className="h-px flex-1 bg-border/40" />
+      </button>
+      {segment.finalOutput && (
+        <SessionEntry
+          item={segment.finalOutput}
+          agentRunTarget={agentRunTarget}
+          companionSubagents={companionSubagents}
+          isStreaming={getItemKey(segment.finalOutput) === streamingEntryId}
+        />
+      )}
+      <RoundActionToolbar
+        actionModel={buildRoundActionModel(segment)}
+        onForkFromMessageRef={onForkFromMessageRef}
+      />
+    </div>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function ForkIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <circle cx="12" cy="18" r="2" />
+      <path d="M6 8v2a4 4 0 0 0 4 4h2" />
+      <path d="M18 8v2a4 4 0 0 1-4 4h-2" />
+      <path d="M12 14v2" />
+    </svg>
+  );
+}
+
+function RoundActionToolbar({
+  actionModel,
+  onForkFromMessageRef,
+}: {
+  actionModel: RoundActionModel;
+  onForkFromMessageRef?: (forkPointRef: SessionMessageRefDto) => Promise<void>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [forking, setForking] = useState(false);
+  const forkPointRef = actionModel.forkFromHere.forkPointRef;
+  const canFork = Boolean(actionModel.forkFromHere.enabled && forkPointRef && onForkFromMessageRef);
+  const forkDisabledReason = onForkFromMessageRef
+    ? actionModel.forkFromHere.disabledReason
+    : "当前视图没有 AgentRun fork 入口。";
+
+  const handleCopy = async () => {
+    if (!actionModel.copyLastAgentReply.enabled) return;
+    await navigator.clipboard.writeText(actionModel.copyLastAgentReply.text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  };
+
+  const handleFork = async () => {
+    if (!canFork || !forkPointRef || !onForkFromMessageRef || forking) return;
+    setForking(true);
+    try {
+      await onForkFromMessageRef(forkPointRef);
+    } finally {
+      setForking(false);
+    }
+  };
+
+  if (!actionModel.copyLastAgentReply.enabled && !actionModel.forkFromHere.forkPointRef) {
+    return null;
+  }
+
+  return (
+    <div className="group/round-actions flex justify-end pt-1">
+      <div className="flex items-center gap-1 rounded-[8px] border border-border/40 bg-background/70 px-1 py-0.5 opacity-35 transition-opacity focus-within:opacity-100 hover:opacity-100">
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!actionModel.copyLastAgentReply.enabled}
+          title={actionModel.copyLastAgentReply.enabled ? "复制当前轮次最后一条 Agent 回复" : "当前轮次没有可复制的 Agent 回复"}
+          aria-label="复制当前轮次最后一条 Agent 回复"
+          onClick={() => { void handleCopy(); }}
+        >
+          {copied ? <span className="text-[10px] font-medium">OK</span> : <CopyIcon />}
+        </button>
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!canFork || forking}
+          title={canFork ? "从当前稳定轮次 fork AgentRun" : forkDisabledReason ?? "当前轮次不可 fork"}
+          aria-label="从当前稳定轮次 fork AgentRun"
+          onClick={() => { void handleFork(); }}
+        >
+          {forking ? <span className="h-3 w-3 animate-spin rounded-[8px] border border-current border-t-transparent" /> : <ForkIcon />}
+        </button>
+      </div>
     </div>
   );
 }

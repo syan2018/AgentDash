@@ -6,11 +6,11 @@ use ts_rs::TS;
 
 use crate::{
     ActiveContextHeadView, BindingEpoch, CommandAvailability, ContextBlock, ContextCheckpointId,
-    ContextCheckpointView, ContextFidelity, ContextRevision, IdempotencyKey, OperationReceipt,
-    ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand, RuntimeCommandKind,
-    RuntimeInteractionId, RuntimeOperationId, RuntimeOperationTerminal, RuntimeProfile,
-    RuntimeRevision, RuntimeThreadId, RuntimeThreadStatus, RuntimeTurnId, ThreadSettingsRevision,
-    ToolSetRevision,
+    ContextCheckpointView, ContextFidelity, ContextRevision, EventSequence, IdempotencyKey,
+    OperationReceipt, ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand,
+    RuntimeCommandKind, RuntimeInteractionId, RuntimeOperationId, RuntimeOperationTerminal,
+    RuntimeProfile, RuntimeRevision, RuntimeThreadId, RuntimeThreadStatus, RuntimeTurnId,
+    ThreadSettingsRevision, ToolSetRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -18,6 +18,10 @@ use crate::{
 pub struct RuntimeSnapshot {
     pub thread_id: RuntimeThreadId,
     pub revision: RuntimeRevision,
+    /// Durable journal cursor atomically represented by this snapshot.
+    pub latest_event_sequence: EventSequence,
+    /// Authoritative time at which this presentation baseline was materialized.
+    pub captured_at_ms: u64,
     pub status: RuntimeThreadStatus,
     pub active_turn_id: Option<RuntimeTurnId>,
     pub binding_id: RuntimeBindingId,

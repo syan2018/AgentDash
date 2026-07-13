@@ -39,6 +39,8 @@ describe("AgentRuntimeCapabilitySummary", () => {
       snapshot: {
         thread_id: "thread-1",
         revision: 1n,
+        latest_event_sequence: 0n,
+        captured_at_ms: 0n,
         status: "active",
         active_turn_id: null,
         binding_id: "binding-1",

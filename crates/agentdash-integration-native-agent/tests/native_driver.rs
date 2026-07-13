@@ -424,6 +424,7 @@ async fn native_driver_applies_surface_and_emits_complete_turn_trace() {
         validator
             .observe(&RuntimeEventEnvelope {
                 thread_id: id("runtime-thread-1"),
+                occurred_at_ms: 0,
                 sequence: Some(EventSequence(index as u64 + 1)),
                 transient: None,
                 revision: RuntimeRevision(index as u64 + 1),

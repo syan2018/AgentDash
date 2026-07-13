@@ -190,6 +190,44 @@ async fn acceptance_projection_journal_and_outbox_commit_atomically() {
 }
 
 #[tokio::test]
+async fn snapshot_cursor_is_the_latest_included_durable_event() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("thread id");
+    let snapshot = thread_snapshot(&runtime, thread_id.clone()).await;
+    assert_eq!(snapshot.latest_event_sequence, EventSequence(3));
+    assert!(
+        store
+            .events_after(&thread_id, Some(snapshot.latest_event_sequence))
+            .await
+            .expect("events after snapshot")
+            .events
+            .is_empty()
+    );
+
+    assert!(matches!(
+        runtime
+            .ingest_driver_event(driver(RuntimeEvent::ThreadStatusChanged {
+                status: RuntimeThreadStatus::Suspended,
+            }))
+            .await
+            .expect("driver event"),
+        DriverEventAdmission::Durable { .. }
+    ));
+    let after = store
+        .events_after(&thread_id, Some(snapshot.latest_event_sequence))
+        .await
+        .expect("new events")
+        .events;
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].sequence, Some(EventSequence(4)));
+}
+
+#[tokio::test]
 async fn accepted_operation_is_readable_by_canonical_operation_identity() {
     let (_store, runtime) = fixture();
     let receipt = runtime.execute(start()).await.expect("start accepted");
@@ -933,6 +971,7 @@ async fn closed_live_channels_deliver_terminal_then_release_sender_entries() {
     store
         .publish_durable(RuntimeEventEnvelope {
             thread_id: thread_id.clone(),
+            occurred_at_ms: 0,
             sequence: Some(EventSequence(1)),
             transient: None,
             revision: RuntimeRevision(1),
@@ -959,6 +998,7 @@ async fn closed_live_channels_deliver_terminal_then_release_sender_entries() {
         store
             .publish_durable(RuntimeEventEnvelope {
                 thread_id: closed,
+                occurred_at_ms: 0,
                 sequence: Some(EventSequence(1)),
                 transient: None,
                 revision: RuntimeRevision(1),

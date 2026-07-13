@@ -80,10 +80,10 @@
 
 ### W4 Exit Criteria
 
-- [ ] 原session presentation组件图恢复为生产入口。
-- [ ] `AgentRuntimeFeed/useAgentRuntimeFeed`与平行view model删除。
-- [ ] `af21f9d7c^`关键UI行为清单逐项通过新envelope驱动测试。
-- [ ] 当前canonical command availability、interaction与后续产品projection修复未被回滚。
+- [x] 原session presentation组件图恢复为生产入口。
+- [x] `AgentRuntimeFeed/useAgentRuntimeFeed`与平行view model删除。
+- [x] `af21f9d7c^`关键UI行为清单逐项通过新envelope驱动测试。
+- [x] 当前canonical command availability、interaction与后续产品projection修复未被回滚。
 
 ## 6. 主任务最终审查
 

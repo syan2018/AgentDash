@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { InteractionResponse } from "../../../generated/agent-runtime-contracts";
+import { useSessionFeed } from "../model";
 import type { ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
@@ -25,22 +25,18 @@ import type { FileEntry } from "../../../services/filePicker";
 import {
   SessionChatComposer,
   SessionChatStatusBar,
+  SessionChatStream,
 } from "./SessionChatViewParts";
 import {
   isAgentRunWorkspaceActionRunning,
   resolveExecutorFromHint,
   toExecutorConfigSource,
 } from "./SessionChatViewModel";
-import type {
-  SessionChatCommandModel,
-  SessionChatSubmitIntent,
-  SessionChatViewProps,
-} from "./SessionChatViewTypes";
+import type { SessionChatCommandModel, SessionChatSubmitIntent, SessionChatViewProps } from "./SessionChatViewTypes";
 import { useImageAttachments } from "./composer/useImageAttachments";
-import { AgentRuntimeFeed } from "../../agent-run-workspace/ui/AgentRuntimeFeed";
-import { useAgentRuntimeFeed } from "../../agent-run-workspace/model/useAgentRuntimeFeed";
 import { isSessionModelRequirementSatisfied } from "./SessionChatComposerState";
 import { SessionWorkspacePanelActionProvider } from "./SessionWorkspacePanelActionProvider";
+import { SessionRuntimeInteractionProvider } from "./SessionRuntimeInteractionContext";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -84,6 +80,7 @@ export function SessionChatView({
     commandState,
     compactContextCommand,
     injectedInputValue,
+    companionSubagents,
   } = model;
   const {
     submitComposer,
@@ -273,21 +270,25 @@ export function SessionChatView({
   const hasRuntimeStreamTarget = agentRunTarget != null;
 
   const {
-    entries: runtimeEntries,
-    durableCursor,
+    displayItems,
+    turnSegments,
+    rawEntries,
+    rawEvents,
+    historyReplayBoundarySeq,
     isConnected,
     isLoading,
-    error: runtimeStreamError,
+    error: wsError,
     reconnect,
-  } = useAgentRuntimeFeed({
-    target: agentRunTarget ?? null,
-    snapshot: runtimeInspect?.snapshot ?? null,
+    streamingEntryId,
+    tokenUsage,
+  } = useSessionFeed({
+    agentRunTarget,
+    activeTurnId: commandState.activeTurnId ?? null,
     enabled: hasRuntimeStreamTarget,
-    onTurnTerminal: onTurnEnd,
-    onTaskPlanChanged,
     onRuntimeInspectInvalidated: runtimeInteractionRequested,
   });
-  const projectionRefreshKey = durableCursor;
+
+  const projectionRefreshKey = rawEvents.at(-1)?.event_seq ?? 0;
 
   // ─── Action running 检测 ──────────────────────────────
 
@@ -295,13 +296,69 @@ export function SessionChatView({
     executionStatus: commandState.executionStatus,
   });
 
+  const onTurnEndRef = useRef(onTurnEnd);
+  useEffect(() => { onTurnEndRef.current = onTurnEnd; }, [onTurnEnd]);
+  const onTaskPlanChangedRef = useRef(onTaskPlanChanged);
+  const lastTaskToolEventSeqRef = useRef<number | null>(null);
+  const lastTurnLifecycleEventSeqRef = useRef<number | null>(null);
+  useEffect(() => { onTaskPlanChangedRef.current = onTaskPlanChanged; }, [onTaskPlanChanged]);
+  useEffect(() => {
+    lastTaskToolEventSeqRef.current = null;
+    lastTurnLifecycleEventSeqRef.current = null;
+  }, [agentRunTargetKey]);
+
+  useEffect(() => {
+    if (!hasRuntimeStreamTarget || rawEvents.length === 0) return;
+    const afterSeq = lastTurnLifecycleEventSeqRef.current ?? 0;
+    lastTurnLifecycleEventSeqRef.current = afterSeq;
+    let terminalSeen = false;
+    for (const item of rawEvents) {
+      if (item.event_seq <= afterSeq) continue;
+      lastTurnLifecycleEventSeqRef.current = Math.max(lastTurnLifecycleEventSeqRef.current ?? 0, item.event_seq);
+      const presentation = item.event;
+      if (presentation.type === "platform" && presentation.payload.kind === "session_meta_update" && presentation.payload.data.key === "runtime_turn_terminal") terminalSeen = true;
+    }
+    if (terminalSeen) {
+      onTurnEndRef.current?.();
+    }
+  }, [
+    agentRunTarget,
+    hasRuntimeStreamTarget,
+    historyReplayBoundarySeq,
+    rawEvents,
+  ]);
+
+  useEffect(() => {
+    if (historyReplayBoundarySeq == null) return;
+    const afterSeq = lastTaskToolEventSeqRef.current ?? historyReplayBoundarySeq;
+    lastTaskToolEventSeqRef.current = afterSeq;
+    let lastSeenSeq = afterSeq;
+    let changed = false;
+    for (const event of rawEvents) {
+      if (!event || event.event_seq <= afterSeq) continue;
+      lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
+      const bbEvent = event.event;
+      if (bbEvent.type !== "item_completed") continue;
+      const item = bbEvent.payload.item;
+      if (
+        item.type === "dynamicToolCall"
+        && item.tool === "task_write"
+        && item.status === "completed"
+        && item.success !== false
+      ) {
+        changed = true;
+      }
+    }
+    lastTaskToolEventSeqRef.current = lastSeenSeq;
+    if (changed) onTaskPlanChangedRef.current?.();
+  }, [historyReplayBoundarySeq, rawEvents]);
 
   // ─── 自动滚动 ────────────────────────────────────────
 
   useEffect(() => {
     if (!containerRef.current || !shouldScrollRef.current) return;
     containerRef.current.scrollTop = containerRef.current.scrollHeight;
-  }, [runtimeEntries]);
+  }, [displayItems.length, rawEntries, streamingEntryId]);
 
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
@@ -314,10 +371,7 @@ export function SessionChatView({
   const commandActionRef = useRef(submitComposer);
   useEffect(() => { commandActionRef.current = submitComposer; }, [submitComposer]);
 
-  const handleSubmit = useCallback(async (
-    command: SessionChatCommandModel | undefined,
-    deliveryIntent?: SessionChatSubmitIntent["deliveryIntent"],
-  ) => {
+  const handleSubmit = useCallback(async (command: SessionChatCommandModel | undefined, deliveryIntent?: SessionChatSubmitIntent["deliveryIntent"]) => {
     const promptText = richInputRef.current?.getValue() ?? "";
     const trimmed = promptText.trim();
     const images = imageAttach.attachments;
@@ -398,7 +452,7 @@ export function SessionChatView({
 
   const handleResolveInteraction = useCallback(async (
     interactionId: string,
-    response: InteractionResponse,
+    response: import("../../../generated/agent-runtime-contracts").InteractionResponse,
   ) => {
     if (!resolveInteraction) throw new Error("当前控制面不支持 interaction response。");
     await resolveInteraction(interactionId, response);
@@ -418,14 +472,17 @@ export function SessionChatView({
       if (e.key !== "Enter") return;
       if (e.shiftKey) return; // Shift+Enter = 换行
 
-      const keyboardCommandId = commandState.keyboard.enter;
+      const isSteer = e.ctrlKey || e.metaKey;
+      const keyboardCommandId = isSteer
+        ? commandState.keyboard.ctrl_enter
+        : commandState.keyboard.enter;
       const command = commandById(keyboardCommandId);
       if (!command) return;
 
       e.preventDefault();
-      void handleSubmit(command);
+      void handleSubmit(command, isSteer ? "steer" : undefined);
     },
-    [commandById, commandState.keyboard.enter, fileRef, handleSubmit],
+    [commandById, commandState.keyboard.ctrl_enter, commandState.keyboard.enter, fileRef, handleSubmit],
   );
 
   // 图片粘贴（Ctrl+V 含图片时拦截）
@@ -501,12 +558,16 @@ export function SessionChatView({
     ? "bg-muted-foreground/40"
     : isConnected ? "bg-success" : isLoading ? "bg-warning animate-pulse" : "bg-destructive";
 
-  const displayError = sendError ?? (hasRuntimeStreamTarget ? runtimeStreamError?.message : null) ?? null;
+  const displayError = sendError ?? (hasRuntimeStreamTarget ? wsError?.message : null) ?? null;
 
   // ─── 渲染 ────────────────────────────────────────────
 
   return (
     <SessionWorkspacePanelActionProvider openWorkspacePanel={openWorkspacePanel}>
+      <SessionRuntimeInteractionProvider
+        availability={runtimeInspect?.snapshot?.command_availability.interaction_respond}
+        resolve={resolveInteraction ? handleResolveInteraction : undefined}
+      >
       <div className="flex h-full flex-col overflow-hidden">
       {/* 内置状态栏 — 可通过 showStatusBar=false 隐藏 */}
       {showStatusBar && (
@@ -529,7 +590,7 @@ export function SessionChatView({
                 {displayError}
               </div>
             </div>
-            {runtimeStreamError && !isConnected && hasRuntimeStreamTarget && (
+            {wsError && !isConnected && hasRuntimeStreamTarget && (
               <button type="button" onClick={reconnect} className="shrink-0 rounded-md bg-destructive/20 px-2 py-0.5 text-xs hover:bg-destructive/30">
                 重新连接
               </button>
@@ -538,15 +599,17 @@ export function SessionChatView({
         </div>
       )}
 
-      <AgentRuntimeFeed
-        key={agentRunTargetKey ?? "agent-runtime-feed"}
+      <SessionChatStream
         containerRef={containerRef}
-        entries={runtimeEntries}
+        displayItems={displayItems}
+        turnSegments={turnSegments}
+        agentRunTarget={agentRunTarget}
+        companionSubagents={companionSubagents}
+        hasRuntimeStreamTarget={hasRuntimeStreamTarget}
         isLoading={isLoading}
+        streamingEntryId={streamingEntryId}
         streamPrefixContent={streamPrefixContent}
         onScroll={handleScroll}
-        interactionAvailability={runtimeInspect?.snapshot?.command_availability.interaction_respond}
-        onResolveInteraction={handleResolveInteraction}
       />
 
       {/* 输入区 */}
@@ -570,7 +633,7 @@ export function SessionChatView({
           richInputRef={richInputRef}
           showExecutorSelector={showExecutorSelector}
           workspaceId={workspaceId}
-          tokenUsage={null}
+          tokenUsage={tokenUsage}
           agentRunTarget={agentRunTarget}
           projectionRefreshKey={projectionRefreshKey}
           compactContextCommand={compactContextCommand}
@@ -586,6 +649,7 @@ export function SessionChatView({
         />
       </div>
       </div>
+      </SessionRuntimeInteractionProvider>
     </SessionWorkspacePanelActionProvider>
   );
 }

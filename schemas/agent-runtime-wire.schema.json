@@ -2504,6 +2504,18 @@
           "format": "uint64",
           "minimum": 0
         },
+        "latest_event_sequence": {
+          "description": "Durable journal cursor atomically represented by this snapshot.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "captured_at_ms": {
+          "description": "Authoritative time at which this presentation baseline was materialized.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
         "status": {
           "$ref": "#/$defs/RuntimeThreadStatus"
         },
@@ -2606,6 +2618,8 @@
       "required": [
         "thread_id",
         "revision",
+        "latest_event_sequence",
+        "captured_at_ms",
         "status",
         "binding_id",
         "binding_epoch",
@@ -6683,6 +6697,12 @@
         "thread_id": {
           "type": "string"
         },
+        "occurred_at_ms": {
+          "description": "Authoritative producer timestamp used by presentation projections.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
         "sequence": {
           "type": [
             "integer",
@@ -6713,6 +6733,7 @@
       },
       "required": [
         "thread_id",
+        "occurred_at_ms",
         "revision",
         "event"
       ]

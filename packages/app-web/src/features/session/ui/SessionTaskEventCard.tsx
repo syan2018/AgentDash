@@ -4,13 +4,13 @@
  * 仅渲染 platform event 中以 task_ 开头的事件。
  */
 
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
+import type { SessionPresentationEvent } from "../model/types";
 import { extractPlatformEventType, extractPlatformEventData, extractPlatformEventMessage, isRecord } from "../model/platformEvent";
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { EventFullCard } from "./EventCards";
 
 export interface SessionTaskEventCardProps {
-  event: BackboneEvent;
+  event: SessionPresentationEvent;
 }
 
 const TASK_EVENT_LABELS: Record<string, string> = {

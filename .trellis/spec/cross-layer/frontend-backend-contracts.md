@@ -93,6 +93,7 @@ AgentRunCommandReceipt {
 - `AgentRunRuntimeBinding` 是 `run_id + agent_id` 到 Runtime thread/Host binding 的唯一产品执行坐标。浏览器不接触 Driver source IDs、Host lease 或 placement credential。
 - Runtime feed由snapshot transcript建立baseline，再通过持久NDJSON连接消费durable与live transient事件。订阅携带durable cursor及`transient_generation + transient_sequence`；浏览器按target隔离cursor，terminal清理transient cursor，retention gap/Lagged使用typed Runtime error重连。
 - Gateway使用subscribe-before-replay封住race：先建立per-thread broadcast receiver，再读取durable与active-turn transient replay，去重后持续等待live broadcast。`include_transient=true`只能与generated双cursor合同共同使用；有限replay batch不得替代该连接。
+- Runtime snapshot携带`latest_event_sequence`与`captured_at_ms`，event envelope携带权威`occurred_at_ms`。前端先hydrate snapshot transcript，再从latest sequence订阅；generated validator拒绝缺失/非法timestamp、revision与durable/transient shape，前端不得使用`Date.now()`补造wire事实。
 - 所有直接使用 `fetch` 的NDJSON客户端必须通过 `buildApiPath(agentRunScopedPath(...))` 构造URL；`resolveApiUrl`只拼origin，不会注入`/api`。
 - AgentRun cutover必须维护route ledger：每个前端service方法都要对应仍注册的HTTP route、application owner、generated contract与至少一个contract test。删除router入口时，必须在同一变更中迁移消费者或删除service/contract；文件级替换router不代表cutover完成。
 - Project AgentRun列表使用generated `ProjectAgentRunListView` / `AgentRunListEntryView` / `AgentRunListChildView`。列表Runtime摘要只包含展示需要的`thread_status`与可选`active_turn_id`；Lifecycle状态决定无活跃turn或closed thread的产品展示，但不能参与命令admission。

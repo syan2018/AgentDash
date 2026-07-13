@@ -1,18 +1,19 @@
 /**
  * Backbone Platform 事件提取工具
  *
- * 统一从 BackboneEvent::Platform 提取展示层关心的
+ * 统一从 SessionPresentationEvent::Platform 提取展示层关心的
  * event type / message / data，避免散落在 UI 组件里重复判断。
  */
 
-import type { BackboneEvent, PlatformEvent } from "../../../generated/backbone-protocol";
+import type { PlatformEvent } from "../../../generated/backbone-protocol";
+import type { SessionPresentationEvent } from "./types";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 /** 从 PlatformEvent 提取可渲染事件类型。 */
-export function extractPlatformEventType(event: BackboneEvent): string | null {
+export function extractPlatformEventType(event: SessionPresentationEvent): string | null {
   if (event.type !== "platform") return null;
   const platform: PlatformEvent = event.payload;
 
@@ -30,7 +31,7 @@ export function extractPlatformEventType(event: BackboneEvent): string | null {
 }
 
 /** 从 PlatformEvent 提取可渲染数据体。 */
-export function extractPlatformEventData(event: BackboneEvent): Record<string, unknown> | null {
+export function extractPlatformEventData(event: SessionPresentationEvent): Record<string, unknown> | null {
   if (event.type !== "platform") return null;
   const platform: PlatformEvent = event.payload;
 
@@ -67,7 +68,7 @@ export function extractPlatformEventData(event: BackboneEvent): Record<string, u
 }
 
 /** 从 PlatformEvent 提取可渲染 message。 */
-export function extractPlatformEventMessage(event: BackboneEvent): string | null {
+export function extractPlatformEventMessage(event: SessionPresentationEvent): string | null {
   if (event.type !== "platform") return null;
   const platform: PlatformEvent = event.payload;
 
@@ -89,7 +90,7 @@ export function extractPlatformEventMessage(event: BackboneEvent): string | null
 /**
  * 从 PlatformEvent::HookTrace 中提取 hook 事件信息。
  */
-export function extractHookTraceInfo(event: BackboneEvent): {
+export function extractHookTraceInfo(event: SessionPresentationEvent): {
   eventType: string | null;
   message: string | null;
   data: unknown;

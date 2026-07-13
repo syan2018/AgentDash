@@ -1,0 +1,129 @@
+{
+  "reference_path": "D:\\Projects\\AgentDash-main-reference",
+  "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+  "task_start_commit": "c1961d521e6feaae000314368abc5f4097722dbd",
+  "harness_files": [
+    {
+      "path": "crates/agentdash-agent-runtime-test-support/src/session_parity.rs",
+      "sha256": "07e01921cfcbdf62125eb4fd033998e72cfcfeb989403dd5ef17f761f8e6dc64"
+    },
+    {
+      "path": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/user-submit.json",
+      "sha256": "2189abb461ee5f9b5a16f29b088572efaf6aacf33bde789b1c7fe8f07a91bc9c"
+    },
+    {
+      "path": "scripts/session-parity/vitest-main.config.ts",
+      "sha256": "a889cee03aef002f1316e2ea6e9caa09b4abff44018faecd6e8b63efb727c58d"
+    },
+    {
+      "path": "scripts/session-parity/mainFrontendEvidence.test.tsx",
+      "sha256": "c1cd655a8ac059c58b0fad47521f34d69dd9dee81f2b6bf546f204519f758ff9"
+    },
+    {
+      "path": "scripts/session-parity/Test-PinnedMainJournal.ps1",
+      "sha256": "4bbff0e708f1e31773cecd3e70c47f113b83c419daad1bbae5e0f543228543f7"
+    },
+    {
+      "path": "scripts/session-parity/Test-SessionParityEvidence.ps1",
+      "sha256": "44b957ca9c92155f8d2408e507e3abd7fc14421570df966872709ace8ed4e5c8"
+    },
+    {
+      "path": "scripts/session-parity/Test-SessionParityOracle.ps1",
+      "sha256": "6ef91b24f2030fa7233473ad95022332126b789395de8e8703d45ef32a18e426"
+    },
+    {
+      "path": "scripts/session-parity/Test-PinnedMainJournalReplay.ps1",
+      "sha256": "225786a69a56db80cf468ed594a3de732f71a033c1510afa3eeb215dccb107fe"
+    },
+    {
+      "path": "scripts/session-parity/Test-CurrentJournalControls.ps1",
+      "sha256": "97fcd21bf211b59191c2d68944259e149d927ea15b281de2374ceb965c237ae8"
+    },
+    {
+      "path": "scripts/session-parity/Test-CurrentRuntimePresentationMigration.ps1",
+      "sha256": "f4e70d4747ef05caaf7b528a9097235df4daf19007c69ce30465f8778ff916e4"
+    },
+    {
+      "path": "scripts/session-parity/Test-PinnedMainLifecycleVfs.ps1",
+      "sha256": "c4143c89addb312e236e42f38a55650c1e868373a58c7291e996deb9a491131a"
+    },
+    {
+      "path": "scripts/session-parity/pinned-journal-capture/.cargo/config.toml",
+      "sha256": "cd4613fd1529072d2139135ec15e70c9c61ef07ca4bb323409502ceea54bc13e"
+    },
+    {
+      "path": "scripts/session-parity/pinned-journal-capture/Cargo.toml",
+      "sha256": "07637561fb8eeefe14917680cd92f864b715ea9f54a0acdf94be262d785f04ec"
+    },
+    {
+      "path": "scripts/session-parity/pinned-journal-capture/Cargo.lock",
+      "sha256": "555d73550c171eb321a50d42427b3afb4c69ed8d288f52285475948f67e1385a"
+    },
+    {
+      "path": "scripts/session-parity/pinned-journal-capture/src/main.rs",
+      "sha256": "e19ea2f02a54996c3c54c380b4c6fe8d774814ac5c4f090f854d495223b07381"
+    },
+    {
+      "path": "scripts/session-parity/pinned-lifecycle-vfs-capture/.cargo/config.toml",
+      "sha256": "cd4613fd1529072d2139135ec15e70c9c61ef07ca4bb323409502ceea54bc13e"
+    },
+    {
+      "path": "scripts/session-parity/pinned-lifecycle-vfs-capture/Cargo.toml",
+      "sha256": "e6ee58d51f18a1e52164587c25da9ba72d55e93f4e47e23cac56c9138486d2cc"
+    },
+    {
+      "path": "scripts/session-parity/pinned-lifecycle-vfs-capture/Cargo.lock",
+      "sha256": "caf98c23189dbe3ec18a3a43c83c2426d789d8ef2b63104a611bc6f7aba4eb14"
+    },
+    {
+      "path": "scripts/session-parity/pinned-lifecycle-vfs-capture/src/main.rs",
+      "sha256": "bec7fc9422504f9c239a4ea85b4d441bd5b821dd34dea939f029aa2547849f20"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "crates/agentdash-contracts/src/runtime/session.rs",
+      "sha256": "a22c25945756a0fc764f513429c3d61912665adef2bea487b75f81401c9483cd"
+    },
+    {
+      "path": "crates/agentdash-agent-protocol/src/backbone/event.rs",
+      "sha256": "860aae0455bd87b3d7bcb61c808f83eff37bc727da917e05849010bb815c2e75"
+    },
+    {
+      "path": "crates/agentdash-agent-protocol/src/backbone/platform.rs",
+      "sha256": "28271383cd127633579ac26e75062131550a1328f28961e5c2e43a18dfa119ba"
+    },
+    {
+      "path": "crates/agentdash-agent-runtime-contract/src/event.rs",
+      "sha256": "b71a186530b6a052f5e9b6f3618c655faeb00f6e7baa7c93015a87b876965d78"
+    },
+    {
+      "path": "crates/agentdash-application-agentrun/src/agent_run/runtime_session_boundary.rs",
+      "sha256": "ef25c295f00e26f36289798f33fd793ade5de03a6279322f9f9a9dcbfe9fd9e7"
+    },
+    {
+      "path": "crates/agentdash-application-agentrun/src/agent_run/journal.rs",
+      "sha256": "e4358d28b76a5a7d48a84b8680ef76ceb0d2e505d1b8313734b2e837670d4281"
+    },
+    {
+      "path": "packages/app-web/src/features/session/model/types.ts",
+      "sha256": "9d78c93cbe792d590ee45f88f93b84cac5f525b69a1f217187963b3244be5b72"
+    },
+    {
+      "path": "crates/agentdash-integration-codex/src/driver.rs",
+      "sha256": "ffb983bd82c434d702a1256547dd907932cb6310bae8d10d9c7e49fb4cb785c0"
+    },
+    {
+      "path": "crates/agentdash-infrastructure/src/persistence/postgres/runtime_repository.rs",
+      "sha256": "bf40fb1b07f30b1504980a571451dbf3b88cca210e42a00a1c2b51aa002cf306"
+    },
+    {
+      "path": "crates/agentdash-infrastructure/migrations/0074_reset_runtime_presentation_contract.sql",
+      "sha256": "3f3e0b21f6ba5ea5cf931f95920cba3f0983141683f8e702aa0e7754687bc4cb"
+    }
+  ],
+  "absent_legacy_paths": [
+    "crates/agentdash-application-runtime-session/src/session/hub_support.rs",
+    "crates/agentdash-application-runtime-session/src/session/launch/commit.rs"
+  ]
+}

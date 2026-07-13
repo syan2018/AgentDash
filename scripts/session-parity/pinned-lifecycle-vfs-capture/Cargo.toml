@@ -1,0 +1,20 @@
+[package]
+name = "pinned-lifecycle-vfs-capture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+agentdash-agent-protocol = { path = "../../../../AgentDash-main-reference/crates/agentdash-agent-protocol" }
+agentdash-application-lifecycle = { path = "../../../../AgentDash-main-reference/crates/agentdash-application-lifecycle" }
+agentdash-application-vfs = { path = "../../../../AgentDash-main-reference/crates/agentdash-application-vfs" }
+agentdash-domain = { path = "../../../../AgentDash-main-reference/crates/agentdash-domain" }
+agentdash-spi = { path = "../../../../AgentDash-main-reference/crates/agentdash-spi" }
+agentdash-test-support = { path = "../../../../AgentDash-main-reference/crates/agentdash-test-support" }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+uuid = { version = "1", features = ["v4", "serde"] }

@@ -1,0 +1,111 @@
+{
+  "provenance": {
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "capture_method": "deterministic transcription of the fixed Main journal builders and typed route envelopes",
+    "source_files": [
+      {
+        "path": "crates/agentdash-application-agentrun/src/agent_run/journal.rs",
+        "sha256": "28d5baec887694f6e1fac49785b96d29a9815307a12a51651497e9d4556330bb"
+      },
+      {
+        "path": "crates/agentdash-api/src/routes/lifecycle_agents.rs",
+        "sha256": "f43b0620bc50bdf72212162c962fec03f49c31a45b11beeedcca709a215d40fa"
+      }
+    ],
+    "source_symbols": [
+      "AgentRunJournalService::load_visible_journal_page",
+      "build_stream_subscription",
+      "agent_run_journal_stream_ndjson",
+      "project_event_to_agent_run_journal"
+    ],
+    "fixed_clock": "2026-07-10T12:00:00Z",
+    "capture_note": "The expected ordering and wrappers are transcribed from Main production functions; current Runtime helpers are not used to generate this asset."
+  },
+  "frames": [
+    {
+      "type": "event",
+      "session_id": "agentrun:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222",
+      "event_seq": 1,
+      "occurred_at_ms": 1783684800000,
+      "committed_at_ms": 1783684800000,
+      "session_update_type": "platform",
+      "turn_id": "turn-main-journal-1",
+      "entry_index": 0,
+      "notification": {
+        "sessionId": "agentrun:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222",
+        "source": {
+          "connectorId": "main-journal-fixture",
+          "connectorType": "native"
+        },
+        "trace": {
+          "turnId": "turn-main-journal-1",
+          "entryIndex": 0
+        },
+        "observedAt": "2026-07-10T12:00:00Z",
+        "event": {
+          "type": "platform",
+          "payload": {
+            "kind": "session_meta_update",
+            "data": {
+              "key": "journal-durable-1",
+              "value": {
+                "fixed_id": "event-main-journal-1",
+                "nullable": null,
+                "ordered": ["first", "second", "third"],
+                "source_timestamp_ms": 1783684800000
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "event",
+      "session_id": "agentrun:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222",
+      "event_seq": 2,
+      "occurred_at_ms": 1783684800001,
+      "committed_at_ms": 1783684800001,
+      "session_update_type": "platform",
+      "turn_id": "turn-main-journal-1",
+      "entry_index": 1,
+      "notification": {
+        "sessionId": "agentrun:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222",
+        "source": {
+          "connectorId": "main-journal-fixture",
+          "connectorType": "native"
+        },
+        "trace": {
+          "turnId": "turn-main-journal-1",
+          "entryIndex": 1
+        },
+        "observedAt": "2026-07-10T12:00:00.001Z",
+        "event": {
+          "type": "platform",
+          "payload": {
+            "kind": "session_meta_update",
+            "data": {
+              "key": "journal-durable-2",
+              "value": {
+                "fixed_id": "event-main-journal-2",
+                "nullable": null,
+                "ordered": [3, 2, 1],
+                "source_timestamp_ms": 1783684800001
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "get": { "snapshot_seq": 2, "event_seq": [1, 2], "has_more": false, "next_after_seq": 2 },
+    "paging": [
+      { "after_seq": 0, "limit": 1, "event_seq": [1], "has_more": true, "next_after_seq": 1 },
+      { "after_seq": 1, "limit": 1, "event_seq": [2], "has_more": false, "next_after_seq": 2 }
+    ],
+    "initial_stream": ["event:1", "event:2", "connected:2"],
+    "live_stream": ["event:3"],
+    "reconnect_from_1": ["event:2", "connected:2"],
+    "refresh_event_seq": [1, 2]
+  }
+}

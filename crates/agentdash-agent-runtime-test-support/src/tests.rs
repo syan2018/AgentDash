@@ -99,6 +99,7 @@ fn exactly_one_terminal_trace_is_accepted() {
     validator
         .observe(&envelope(RuntimeEvent::TurnStarted {
             turn_id: turn_id.clone(),
+            presentation_turn_id: id("presentation-turn-1"),
         }))
         .expect("start turn");
     validator
@@ -106,6 +107,7 @@ fn exactly_one_terminal_trace_is_accepted() {
             turn_id,
             terminal: agentdash_agent_runtime_contract::RuntimeTurnTerminal::Lost,
             message: Some("driver result became unknowable".to_string()),
+            diagnostic: None,
         }))
         .expect("terminal turn");
     validator

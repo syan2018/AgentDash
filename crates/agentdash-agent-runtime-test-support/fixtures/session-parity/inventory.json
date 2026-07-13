@@ -1,0 +1,69 @@
+{
+  "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+  "status": "final_complete",
+  "evidence_manifest": "evidence-manifest.json",
+  "backbone_events": [
+    { "variant": "agent_message_delta", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "assistant_message_delta_terminal" },
+    { "variant": "reasoning_text_delta", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "reasoning_text_summary_terminal" },
+    { "variant": "reasoning_summary_delta", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "reasoning_text_summary_terminal" },
+    { "variant": "item_started", "main_owner": "connector/tool lifecycle producer", "current_owner": "W4/W5/W6", "fixture_id": "item_started_updated_completed" },
+    { "variant": "item_updated", "main_owner": "connector/tool progress producer", "current_owner": "W4/W5/W6", "fixture_id": "item_started_updated_completed" },
+    { "variant": "item_completed", "main_owner": "connector/tool lifecycle producer", "current_owner": "W4/W5/W6", "fixture_id": "item_started_updated_completed" },
+    { "variant": "command_output_delta", "main_owner": "command/shell producer", "current_owner": "W4/W5/W6", "fixture_id": "tool_command_shell" },
+    { "variant": "file_change_delta", "main_owner": "file/apply-patch producer", "current_owner": "W4/W5/W6", "fixture_id": "tool_file_apply_patch" },
+    { "variant": "mcp_tool_call_progress", "main_owner": "MCP producer", "current_owner": "W4/W5/W6", "fixture_id": "tool_mcp_dynamic" },
+    { "variant": "turn_started", "main_owner": "application/connector turn producer", "current_owner": "W4/W5/W7", "fixture_id": "turn_started_completed_failed_interrupted_rewind" },
+    { "variant": "turn_completed", "main_owner": "application/connector turn producer", "current_owner": "W4/W5/W7", "fixture_id": "turn_started_completed_failed_interrupted_rewind" },
+    { "variant": "turn_diff_updated", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "plan_and_diff" },
+    { "variant": "user_input_submitted", "main_owner": "AgentRun/runtime-session submit producer", "current_owner": "W7", "fixture_id": "input_prompt_text" },
+    { "variant": "turn_plan_updated", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "plan_and_diff" },
+    { "variant": "plan_delta", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "plan_and_diff" },
+    { "variant": "token_usage_updated", "main_owner": "Codex/Native stream mapper", "current_owner": "W4/W5", "fixture_id": "usage_context" },
+    { "variant": "thread_status_changed", "main_owner": "Codex/application status producer", "current_owner": "W4/W7", "fixture_id": "thread_status_title_compaction" },
+    { "variant": "executor_context_compacted", "main_owner": "Codex/Native compaction producer", "current_owner": "W4/W5", "fixture_id": "thread_status_title_compaction" },
+    { "variant": "approval_request", "main_owner": "connector/tool interaction producer", "current_owner": "W4/W5/W6", "fixture_id": "interactions_main_comparable_connectors" },
+    { "variant": "error", "main_owner": "connector/application error producer", "current_owner": "W4/W5/W7", "fixture_id": "provider_phases_error" },
+    { "variant": "platform", "main_owner": "application/platform producers", "current_owner": "W7", "fixture_id": "hook_terminal_pty_control_plane" }
+  ],
+  "platform_events": [
+    { "variant": "executor_session_bound", "main_owner": "connector binding producer", "current_owner": "W4/W5/W7", "fixture_id": "thread_status_title_compaction" },
+    { "variant": "source_session_title_updated", "main_owner": "connector/title producer", "current_owner": "W4/W7", "fixture_id": "thread_status_title_compaction" },
+    { "variant": "hook_trace", "main_owner": "hook trace producer", "current_owner": "W7", "fixture_id": "hook_terminal_pty_control_plane" },
+    { "variant": "session_meta_update", "main_owner": "application session-meta producer", "current_owner": "W7", "fixture_id": "delivery_system_workflow_companion" },
+    { "variant": "provider_attempt_status", "main_owner": "Native/application provider producer", "current_owner": "W5/W7", "fixture_id": "provider_phases_error" },
+    { "variant": "runtime_terminal_diagnostic", "main_owner": "Native/application diagnostic producer", "current_owner": "W5/W7", "fixture_id": "provider_phases_error" },
+    { "variant": "session_rewound", "main_owner": "runtime-session rewind producer", "current_owner": "W7", "fixture_id": "turn_started_completed_failed_interrupted_rewind" },
+    { "variant": "control_plane_projection_changed", "main_owner": "workspace/application projection producer", "current_owner": "W7", "fixture_id": "hook_terminal_pty_control_plane" },
+    { "variant": "terminal_output", "main_owner": "terminal producer", "current_owner": "W7", "fixture_id": "hook_terminal_pty_control_plane" },
+    { "variant": "pty_terminal_state_changed", "main_owner": "PTY lifecycle producer", "current_owner": "W7", "fixture_id": "hook_terminal_pty_control_plane" }
+  ],
+  "drivers": [
+    { "id": "codex", "owner": "W4 agentdash-integration-codex", "implementation_status": "strict_fixture_partial_coverage", "conformance_test": "codex_main_presentation_fixture_is_deep_equal_without_payload_normalization", "strict_method_case_count": 41, "complete_fixture_ids": ["plan_and_diff"], "composite_fixture_ids": ["thread_status_title_compaction", "interactions_main_comparable_connectors"], "partial_fixture_ids": ["assistant_message_delta_terminal", "reasoning_text_summary_terminal", "tool_command_shell", "tool_file_apply_patch", "tool_mcp_dynamic", "usage_context"], "protocol_extension_fixture_ids": ["interactions_agentdash_extension_boundary"], "fixture_ids": ["assistant_message_delta_terminal", "reasoning_text_summary_terminal", "plan_and_diff", "item_started_updated_completed", "usage_context", "thread_status_title_compaction", "interactions_main_comparable_connectors", "interactions_agentdash_extension_boundary"] },
+    { "id": "native", "owner": "W5 agentdash-integration-native-agent", "implementation_status": "strict_fixture_partial_coverage", "conformance_test": "native_w5_scenarios_match_main_oracle_golden_strictly", "strict_scenario_count": 7, "complete_fixture_ids": ["assistant_message_delta_terminal", "reasoning_text_summary_terminal", "item_started_updated_completed", "usage_context", "provider_phases_error"], "composite_fixture_ids": ["thread_status_title_compaction", "interactions_main_comparable_connectors"], "partial_fixture_ids": [], "fixture_ids": ["assistant_message_delta_terminal", "reasoning_text_summary_terminal", "item_started_updated_completed", "usage_context", "provider_phases_error", "thread_status_title_compaction", "interactions_main_comparable_connectors"] },
+    { "id": "remote_relay", "owner": "W5 remote Runtime/Relay", "implementation_status": "strict_fixture_partial_coverage", "conformance_test": "remote_wire_and_relay_match_all_three_main_oracle_goldens_strictly", "strict_scenario_count": 3, "complete_fixture_ids": ["item_started_updated_completed", "journal_get_initial_live_reconnect_refresh"], "composite_fixture_ids": ["interactions_main_comparable_connectors"], "partial_fixture_ids": [], "fixture_ids": ["item_started_updated_completed", "interactions_main_comparable_connectors", "journal_get_initial_live_reconnect_refresh"] }
+  ],
+  "tool_families": [
+    { "id": "command_shell", "owner": "W6 final catalog owner plus W4/W5 vendor emitter", "evidence_status": "golden_verified", "fixture_id": "tool_command_shell" },
+    { "id": "file_apply_patch", "owner": "W6 final catalog owner plus W4/W5 vendor emitter", "evidence_status": "golden_verified", "fixture_id": "tool_file_apply_patch" },
+    { "id": "mcp_dynamic", "owner": "W6 final catalog owner plus W4/W5 vendor emitter", "evidence_status": "golden_verified", "fixture_id": "tool_mcp_dynamic" },
+    { "id": "fs_read_grep_glob", "owner": "W6 final catalog owner", "evidence_status": "golden_verified", "fixture_id": "tool_fs_read_grep_glob" },
+    { "id": "workspace_canvas_vfs", "owner": "W6 final catalog owner", "evidence_status": "golden_verified", "fixture_id": "tool_workspace_companion_task_wait" },
+    { "id": "companion_task_wait", "owner": "W6 final catalog owner", "evidence_status": "golden_verified", "fixture_id": "tool_workspace_companion_task_wait" },
+    { "id": "terminal_control", "owner": "W6/W7 producer owner", "evidence_status": "golden_verified", "fixture_id": "hook_terminal_pty_control_plane" }
+  ],
+  "application_producers": [
+    { "id": "user_prompt_steer", "owner": "W7", "evidence_status": "golden_verified", "fixture_ids": ["input_prompt_text", "input_steer", "input_image_local_image_skill_mention"] },
+    { "id": "system_workflow_companion_delivery", "owner": "W7", "evidence_status": "golden_verified", "fixture_ids": ["delivery_system_workflow_companion"] },
+    { "id": "turn_terminal_rewind", "owner": "W7", "evidence_status": "golden_verified", "fixture_ids": ["turn_started_completed_failed_interrupted_rewind"] },
+    { "id": "title_status", "owner": "W7", "fixture_ids": ["thread_status_title_compaction"] },
+    { "id": "hook_context_terminal_control", "owner": "W7", "fixture_ids": ["hook_terminal_pty_control_plane", "usage_context"] },
+    { "id": "fork_mailbox_round_lineage", "owner": "W7/W10", "fixture_ids": ["journal_fork_heartbeat_lagged_closed", "agentrun_fork_mailbox_context_lineage_status"] },
+    { "id": "agentrun_workspace_application_owner", "owner": "W10 restored application workspace module with adaptation only at the canonical Runtime port boundary", "evidence_status": "golden_verified", "fixture_ids": ["agentrun_fork_mailbox_context_lineage_status"] },
+    { "id": "lifecycle_vfs_projection", "owner": "W10 lifecycle VFS projection", "evidence_status": "golden_verified", "fixture_ids": ["lifecycle_vfs_messages_tool_results_summaries"] }
+  ],
+  "frontend_surfaces": [
+    { "id": "session_submit_refresh", "owner": "W9 features/session reducer and renderer", "evidence_status": "golden_verified", "fixture_id": "frontend_submit_no_phantom_refresh" },
+    { "id": "session_tool_progress", "owner": "W9 features/session reducer and renderer", "evidence_status": "golden_verified", "fixture_id": "frontend_tool_progress_renderer" },
+    { "id": "session_interaction_response", "owner": "W9 AgentDash interaction service", "evidence_status": "extension_verified", "fixture_id": "frontend_interaction_response_extension" }
+  ]
+}

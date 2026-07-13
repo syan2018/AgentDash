@@ -1,0 +1,18 @@
+[package]
+name = "pinned-journal-capture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+agentdash-agent-protocol = { path = "../../../../AgentDash-main-reference/crates/agentdash-agent-protocol" }
+agentdash-application-agentrun = { path = "../../../../AgentDash-main-reference/crates/agentdash-application-agentrun" }
+agentdash-application-runtime-session = { path = "../../../../AgentDash-main-reference/crates/agentdash-application-runtime-session" }
+agentdash-contracts = { path = "../../../../AgentDash-main-reference/crates/agentdash-contracts" }
+agentdash-spi = { path = "../../../../AgentDash-main-reference/crates/agentdash-spi" }
+async-trait = "0.1"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+uuid = { version = "1", features = ["serde"] }

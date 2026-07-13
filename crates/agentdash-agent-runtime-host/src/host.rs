@@ -1,16 +1,20 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use agentdash_agent_runtime_contract::{
     AgentRuntimeDriver, DriverBindIntent, DriverBindRequest, DriverCommandEnvelope,
     DriverDispatchReceipt, DriverError, DriverEventEnvelope, DriverEventSink, ProfileDigest,
-    ProfileProvenance, RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeProfile,
-    RuntimeServiceInstanceId, RuntimeThreadId, intersect_profile_layers,
+    ProfileProvenance, RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent, RuntimeJournalFact,
+    RuntimeProfile, RuntimeServiceInstanceId, RuntimeThreadId, intersect_profile_layers,
 };
 use agentdash_diagnostics::{Subsystem, diag};
 use agentdash_integration_api::{
     ActivatedAgentServiceInstance, AgentRuntimeCredentialBroker, AgentRuntimeCredentialRef,
     AgentRuntimeCredentialSlot, AgentServiceOfferId, CredentialLease, CredentialResolveError,
-    CredentialSlotDefinition, RuntimeDriverHostPorts,
+    CredentialSlotDefinition, DriverSurfaceRequest, RuntimeDriverHostPorts,
 };
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Utc};
@@ -787,7 +791,7 @@ impl IntegrationDriverHost {
                 reason: "surface or required hook application is not acknowledged".to_string(),
             });
         }
-        let lease = self
+        let _lease = self
             .repository
             .validate_lease(
                 &binding.id,
@@ -797,21 +801,124 @@ impl IntegrationDriverHost {
                 Utc::now(),
             )
             .await?;
+        let adopted_surface = match &command.envelope.command {
+            agentdash_agent_runtime_contract::RuntimeCommand::SurfaceAdopt { target, .. } => Some(
+                self.ports
+                    .surfaces
+                    .materialize(DriverSurfaceRequest {
+                        binding_id: binding.id.clone(),
+                        surface_revision: target.surface_revision,
+                        surface_digest: target.surface_digest.clone(),
+                    })
+                    .await
+                    .map_err(|error| AgentRuntimeHostError::DispatchRejected {
+                        reason: error.to_string(),
+                    })?,
+            ),
+            _ => None,
+        };
         let driver = self.driver_for_offer(&offer).await?;
         let fenced_sink = Arc::new(GenerationFencedEventSink {
-            binding_id: binding.id,
+            binding_id: binding.id.clone(),
             generation: binding.driver_generation,
             source_thread_id: source.source_thread_id,
-            lease_epoch: lease.epoch,
-            lease_owner: lease.owner,
-            lease_token: lease.token,
+            service_instance_id: binding.service_instance_id.clone(),
+            instance_revision: binding.instance_revision,
+            offer_id: binding.offer_id.clone(),
             repository: self.repository.clone(),
             inner: sink,
         });
-        driver
+        let receipt = driver
             .dispatch(command.envelope, fenced_sink)
             .await
-            .map_err(Into::into)
+            .map_err(AgentRuntimeHostError::from)?;
+        match adopted_surface {
+            Some(surface) => {
+                let applied = receipt.applied_surface.as_ref().ok_or_else(|| {
+                    AgentRuntimeHostError::DispatchRejected {
+                        reason: "surface adoption driver receipt is missing applied_surface"
+                            .to_string(),
+                    }
+                })?;
+                if applied.descriptor.surface_revision != surface.revision
+                    || applied.descriptor.surface_digest != surface.digest
+                    || applied.descriptor.tool_set_revision != surface.tools.revision
+                    || applied.descriptor.tool_set_digest != surface.tools.digest
+                    || applied.descriptor.hook_plan.revision != surface.hooks.revision
+                    || applied.descriptor.hook_plan.digest != surface.hooks.digest
+                {
+                    return Err(AgentRuntimeHostError::DispatchRejected {
+                        reason:
+                            "surface adoption driver receipt does not match broker materialization"
+                                .to_string(),
+                    });
+                }
+                let target_bound = BoundAgentSurfaceReference {
+                    revision: surface.revision,
+                    digest: surface.digest.clone(),
+                    tool_set_revision: surface.tools.revision,
+                    tool_set_digest: surface.tools.digest.clone(),
+                    hook_plan_revision: Some(surface.hooks.revision),
+                    hook_plan_digest: Some(surface.hooks.digest.clone()),
+                    hook_artifact_digest: surface.hooks.artifact_digest.clone(),
+                    hook_configuration_boundary: surface.hooks.configuration_boundary,
+                    required_hooks: surface
+                        .hooks
+                        .bindings
+                        .iter()
+                        .map(|hook| agentdash_agent_runtime_contract::HookRequirement {
+                            point: hook.point,
+                            actions: hook.actions.iter().copied().collect::<BTreeSet<_>>(),
+                            minimum_strength: hook.strength,
+                            failure_policy: hook.failure_policy,
+                            required: hook.required,
+                        })
+                        .collect(),
+                };
+                let applied_surface = AppliedSurface {
+                    revision: surface.revision,
+                    digest: surface.digest,
+                    tool_set_revision: surface.tools.revision,
+                    tool_set_digest: surface.tools.digest,
+                    hook_plan_revision: Some(surface.hooks.revision),
+                    hook_plan_digest: Some(surface.hooks.digest),
+                    hooks: applied
+                        .applied_hooks
+                        .iter()
+                        .map(|hook| HookApplyStatus {
+                            point: hook.point,
+                            acknowledged: hook.acknowledged,
+                            artifact_digest: hook.artifact_digest.clone(),
+                        })
+                        .collect(),
+                };
+                let mut candidate = binding.clone();
+                candidate.bound_surface = target_bound.clone();
+                candidate.applied_surface = Some(applied_surface.clone());
+                if !candidate.dispatch_admitted(&offer.effective_profile.profile) {
+                    return Err(AgentRuntimeHostError::DispatchRejected {
+                        reason: "adopted surface or required hook application is not acknowledged"
+                            .to_string(),
+                    });
+                }
+                self.repository
+                    .adopt_surface(
+                        &binding.id,
+                        binding.driver_generation,
+                        &binding.bound_surface,
+                        target_bound,
+                        applied_surface,
+                    )
+                    .await?;
+            }
+            None if receipt.applied_surface.is_some() => {
+                return Err(AgentRuntimeHostError::DispatchRejected {
+                    reason: "driver returned an unexpected applied_surface receipt".to_string(),
+                });
+            }
+            None => {}
+        }
+        Ok(receipt)
     }
 
     pub async fn binding(
@@ -1016,9 +1123,9 @@ struct GenerationFencedEventSink {
     binding_id: RuntimeBindingId,
     generation: RuntimeDriverGeneration,
     source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
-    lease_epoch: u64,
-    lease_owner: String,
-    lease_token: String,
+    service_instance_id: RuntimeServiceInstanceId,
+    instance_revision: u64,
+    offer_id: AgentServiceOfferId,
     repository: Arc<dyn AgentRuntimeHostRepository>,
     inner: Arc<dyn DriverEventSink>,
 }
@@ -1032,19 +1139,12 @@ impl DriverEventSink for GenerationFencedEventSink {
         {
             return Err(DriverError::StaleGeneration);
         }
-        let binding_lost = matches!(&event.event, RuntimeEvent::BindingLost { .. });
-        if !binding_lost {
-            self.repository
-                .validate_lease(
-                    &self.binding_id,
-                    self.generation,
-                    &self.lease_owner,
-                    &self.lease_token,
-                    Utc::now(),
-                )
-                .await
-                .map_err(|_| DriverError::StaleGeneration)?;
-        }
+        let binding_lost = event.facts.iter().any(|fact| {
+            matches!(
+                fact,
+                RuntimeJournalFact::Internal(RuntimeEvent::BindingLost { .. })
+            )
+        });
         let binding = self
             .repository
             .load_binding(&self.binding_id)
@@ -1057,64 +1157,66 @@ impl DriverEventSink for GenerationFencedEventSink {
         if binding.driver_generation != self.generation
             || binding.state != crate::RuntimeBindingState::Active
             || binding.source_thread_id.as_ref() != Some(&self.source_thread_id)
-            || binding.lease_epoch != self.lease_epoch
+            || binding.service_instance_id != self.service_instance_id
+            || binding.instance_revision != self.instance_revision
+            || binding.offer_id != self.offer_id
         {
             return Err(DriverError::StaleGeneration);
         }
         let mut coordinates = Vec::new();
-        match &event.event {
-            RuntimeEvent::TurnStarted { turn_id } | RuntimeEvent::TurnTerminal { turn_id, .. } => {
-                let source_turn_id =
-                    event
-                        .source_turn_id
-                        .clone()
-                        .ok_or_else(|| DriverError::ProtocolViolation {
+        for fact in &event.facts {
+            let RuntimeJournalFact::Internal(runtime_event) = fact else {
+                continue;
+            };
+            match runtime_event {
+                RuntimeEvent::TurnStarted { turn_id, .. }
+                | RuntimeEvent::TurnTerminal { turn_id, .. } => {
+                    let source_turn_id = event.source_turn_id.clone().ok_or_else(|| {
+                        DriverError::ProtocolViolation {
                             reason: "turn lifecycle event is missing source turn coordinate"
                                 .to_string(),
                             critical: true,
-                        })?;
-                coordinates.push(RuntimeDriverCoordinate::Turn {
-                    runtime_turn_id: turn_id.clone(),
-                    source_turn_id,
-                });
-            }
-            RuntimeEvent::ItemStarted {
-                turn_id, item_id, ..
-            }
-            | RuntimeEvent::ConversationDelta {
-                turn_id, item_id, ..
-            }
-            | RuntimeEvent::ItemTerminal {
-                turn_id, item_id, ..
-            } => {
-                let source_turn_id =
-                    event
-                        .source_turn_id
-                        .clone()
-                        .ok_or_else(|| DriverError::ProtocolViolation {
+                        }
+                    })?;
+                    coordinates.push(RuntimeDriverCoordinate::Turn {
+                        runtime_turn_id: turn_id.clone(),
+                        source_turn_id,
+                    });
+                }
+                RuntimeEvent::ItemStarted {
+                    turn_id, item_id, ..
+                }
+                | RuntimeEvent::ConversationDelta {
+                    turn_id, item_id, ..
+                }
+                | RuntimeEvent::ItemTerminal {
+                    turn_id, item_id, ..
+                } => {
+                    let source_turn_id = event.source_turn_id.clone().ok_or_else(|| {
+                        DriverError::ProtocolViolation {
                             reason: "item lifecycle event is missing source turn coordinate"
                                 .to_string(),
                             critical: true,
-                        })?;
-                let source_item_id =
-                    event
-                        .source_item_id
-                        .clone()
-                        .ok_or_else(|| DriverError::ProtocolViolation {
+                        }
+                    })?;
+                    let source_item_id = event.source_item_id.clone().ok_or_else(|| {
+                        DriverError::ProtocolViolation {
                             reason: "item lifecycle event is missing source item coordinate"
                                 .to_string(),
                             critical: true,
-                        })?;
-                coordinates.push(RuntimeDriverCoordinate::Turn {
-                    runtime_turn_id: turn_id.clone(),
-                    source_turn_id,
-                });
-                coordinates.push(RuntimeDriverCoordinate::Item {
-                    runtime_item_id: item_id.clone(),
-                    source_item_id,
-                });
+                        }
+                    })?;
+                    coordinates.push(RuntimeDriverCoordinate::Turn {
+                        runtime_turn_id: turn_id.clone(),
+                        source_turn_id,
+                    });
+                    coordinates.push(RuntimeDriverCoordinate::Item {
+                        runtime_item_id: item_id.clone(),
+                        source_item_id,
+                    });
+                }
+                _ => {}
             }
-            _ => {}
         }
         self.inner.emit(event).await?;
         if binding_lost {
@@ -1157,12 +1259,14 @@ impl DriverEventSink for GenerationFencedEventSink {
                         source_thread_id: self.source_thread_id.clone(),
                         source_turn_id: None,
                         source_item_id: None,
-                        event: RuntimeEvent::BindingLost {
+                        source_request_id: None,
+                        source_entry_index: None,
+                        facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::BindingLost {
                             binding_id: self.binding_id.clone(),
                             reason: format!(
                                 "Host driver-coordinate indexing failed after Runtime acceptance: {error}"
                             ),
-                        },
+                        })],
                     })
                     .await?;
                 break;

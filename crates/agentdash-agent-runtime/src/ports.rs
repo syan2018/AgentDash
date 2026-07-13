@@ -1,7 +1,8 @@
 use agentdash_agent_runtime_contract::{
-    EventSequence, IdempotencyKey, RuntimeBindingId, RuntimeCommand, RuntimeDriverGeneration,
-    RuntimeEvent, RuntimeEventEnvelope, RuntimeOperationId, RuntimeRevision, RuntimeThreadId,
-    RuntimeTurnId,
+    EventSequence, IdempotencyKey, ImmutablePresentationEvent, PresentationThreadId,
+    RuntimeBindingId, RuntimeCommand, RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope,
+    RuntimeJournalRecord, RuntimeOperationId, RuntimePresentationCoordinate, RuntimeRevision,
+    RuntimeThreadId, RuntimeTurnId,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,7 @@ use crate::{
 pub struct RuntimeOutboxEntry {
     pub operation_id: RuntimeOperationId,
     pub thread_id: RuntimeThreadId,
+    pub presentation_thread_id: PresentationThreadId,
     pub binding_id: RuntimeBindingId,
     pub binding_epoch: agentdash_agent_runtime_contract::BindingEpoch,
     pub generation: RuntimeDriverGeneration,
@@ -25,10 +27,70 @@ pub struct RuntimeOutboxEntry {
 impl RuntimeOutboxEntry {
     pub fn matches_thread_binding(&self, thread: &RuntimeThreadState) -> bool {
         self.thread_id == thread.thread_id
+            && self.presentation_thread_id == thread.presentation_thread_id
             && self.binding_id == thread.binding_id
             && self.binding_epoch == thread.binding_epoch
             && self.generation == thread.driver_generation
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RuntimeTerminalApplicationEffectId(String);
+
+impl RuntimeTerminalApplicationEffectId {
+    pub fn new(value: impl Into<String>) -> Result<Self, RuntimeStoreError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(RuntimeStoreError::Unavailable(
+                "terminal application effect id must not be empty".to_string(),
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeTerminalApplicationEffectOutboxEntry {
+    pub effect_id: RuntimeTerminalApplicationEffectId,
+    pub runtime_thread_id: RuntimeThreadId,
+    pub presentation_thread_id: PresentationThreadId,
+    pub runtime_turn_id: RuntimeTurnId,
+    pub presentation_turn_id: agentdash_agent_runtime_contract::PresentationTurnId,
+    pub terminal_event_sequence: EventSequence,
+    pub terminal: agentdash_agent_runtime_contract::RuntimeTurnTerminal,
+    pub message: Option<String>,
+    pub diagnostic: Option<agentdash_agent_protocol::RuntimeTerminalDiagnostic>,
+    pub started_at_ms: Option<u64>,
+    pub completed_at_ms: u64,
+    pub binding_id: RuntimeBindingId,
+    pub driver_generation: RuntimeDriverGeneration,
+    pub surface_revision: agentdash_agent_runtime_contract::SurfaceRevision,
+    pub surface_digest: agentdash_agent_runtime_contract::SurfaceDigest,
+    pub source_thread_id: String,
+    pub source_turn_id: Option<String>,
+    pub terminal_hook_effect_binding:
+        Option<agentdash_agent_runtime_contract::RuntimeTerminalHookEffectBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeTerminalApplicationEffectClaimRequest {
+    pub owner: RuntimeWorkerId,
+    pub lease_duration_ms: u64,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeTerminalApplicationEffectClaim {
+    pub entry: RuntimeTerminalApplicationEffectOutboxEntry,
+    pub token: RuntimeWorkClaimToken,
+    pub owner: RuntimeWorkerId,
+    pub lease_expires_at_ms: i64,
+    pub attempt: u32,
 }
 
 /// A durable work category. Each category retains its own business state; the queue only owns
@@ -117,6 +179,8 @@ pub struct ContextActivationOutboxEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DriverEventQuarantineReason {
     CanonicalThreadNotFound,
+    EmptyFactBatch,
+    TransientInternalFact,
     StaleBinding {
         expected_binding_id: RuntimeBindingId,
         expected_generation: RuntimeDriverGeneration,
@@ -145,6 +209,15 @@ pub struct RuntimeEventBatch {
     pub events: Vec<RuntimeEventEnvelope>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeJournalBatch {
+    /// Earliest retained durable journal sequence. An empty retained journal is
+    /// represented by one past the latest durable sequence.
+    pub earliest_available: EventSequence,
+    pub latest_available: EventSequence,
+    pub records: Vec<RuntimeJournalRecord>,
+}
+
 /// Complete write-set for one optimistic runtime transaction.
 #[derive(Debug, Clone)]
 pub struct RuntimeCommit {
@@ -158,8 +231,9 @@ pub struct RuntimeCommit {
         RuntimeOperationId,
         agentdash_agent_runtime_contract::RuntimeOperationTerminal,
     )>,
-    pub events: Vec<RuntimeEventEnvelope>,
+    pub records: Vec<RuntimeJournalRecord>,
     pub outbox: Vec<RuntimeOutboxEntry>,
+    pub terminal_application_effects: Vec<RuntimeTerminalApplicationEffectOutboxEntry>,
     pub context_activation_outbox: Vec<ContextActivationOutboxEntry>,
     pub context_preparation_work_items: Vec<ContextPreparationWorkItem>,
     pub context_checkpoints: Vec<ContextCheckpoint>,
@@ -170,6 +244,21 @@ pub struct RuntimeCommit {
     pub hook_runs: Vec<crate::HookRun>,
     pub hook_effects: Vec<crate::HookEffect>,
     pub quarantine: Vec<QuarantinedDriverEvent>,
+}
+
+pub fn internal_journal_records(
+    events: Vec<RuntimeEventEnvelope>,
+) -> Result<Vec<RuntimeJournalRecord>, RuntimeStoreError> {
+    events
+        .into_iter()
+        .map(|event| {
+            RuntimeJournalRecord::from_internal_envelope(event).map_err(|error| {
+                RuntimeStoreError::Unavailable(format!(
+                    "invalid internal runtime journal record: {error}"
+                ))
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
@@ -255,11 +344,30 @@ pub trait RuntimeRepository: Send + Sync {
         key: &IdempotencyKey,
     ) -> Result<Option<RuntimeOperationRecord>, RuntimeStoreError>;
 
-    async fn events_after(
+    async fn journal_records_after(
         &self,
         thread_id: &RuntimeThreadId,
         after: Option<EventSequence>,
-    ) -> Result<RuntimeEventBatch, RuntimeStoreError>;
+    ) -> Result<RuntimeJournalBatch, RuntimeStoreError>;
+
+    /// Internal Runtime state-machine view over the single journal source.
+    /// Session presentation must consume `journal_records_after` instead.
+    async fn internal_events_after(
+        &self,
+        thread_id: &RuntimeThreadId,
+        after: Option<EventSequence>,
+    ) -> Result<RuntimeEventBatch, RuntimeStoreError> {
+        let batch = self.journal_records_after(thread_id, after).await?;
+        Ok(RuntimeEventBatch {
+            earliest_available: batch.earliest_available,
+            latest_available: batch.latest_available,
+            events: batch
+                .records
+                .iter()
+                .filter_map(RuntimeJournalRecord::to_internal_envelope)
+                .collect(),
+        })
+    }
 
     async fn load_context_head(
         &self,
@@ -319,7 +427,20 @@ pub trait RuntimeRepository: Send + Sync {
 /// Atomic unit-of-work boundary for journal + projection + operation + outbox.
 #[async_trait]
 pub trait RuntimeUnitOfWork: Send + Sync {
-    async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError>;
+    async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError> {
+        self.commit_with_live_presentation_publication(commit, true)
+            .await
+    }
+
+    /// Commits the authoritative write-set while allowing the caller to defer only the
+    /// presentation live broadcast. Durable storage and the internal Runtime live stream still
+    /// complete before this method returns. Callers that defer must publish the committed
+    /// presentation records explicitly after success.
+    async fn commit_with_live_presentation_publication(
+        &self,
+        commit: RuntimeCommit,
+        publish_live_presentations: bool,
+    ) -> Result<(), RuntimeStoreError>;
 
     async fn quarantine(&self, event: QuarantinedDriverEvent) -> Result<(), RuntimeStoreError>;
 }
@@ -336,6 +457,17 @@ pub trait RuntimeTransientEvents: Send + Sync {
         revision: RuntimeRevision,
         event: RuntimeEvent,
     );
+    async fn publish_transient_presentation(
+        &self,
+        thread_id: RuntimeThreadId,
+        binding_id: RuntimeBindingId,
+        stream_generation: RuntimeDriverGeneration,
+        turn_id: Option<RuntimeTurnId>,
+        revision: RuntimeRevision,
+        coordinate: RuntimePresentationCoordinate,
+        event: ImmutablePresentationEvent,
+    );
+    async fn publish_durable_presentation(&self, record: RuntimeJournalRecord);
     async fn publish_durable(&self, event: RuntimeEventEnvelope);
     async fn subscribe(
         &self,
@@ -347,6 +479,16 @@ pub trait RuntimeTransientEvents: Send + Sync {
         stream_generation: Option<RuntimeDriverGeneration>,
         after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
     ) -> Vec<RuntimeEventEnvelope>;
+    async fn subscribe_presentation(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> tokio::sync::broadcast::Receiver<RuntimeJournalRecord>;
+    async fn read_presentation(
+        &self,
+        thread_id: &RuntimeThreadId,
+        stream_generation: Option<RuntimeDriverGeneration>,
+        after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    ) -> Vec<RuntimeJournalRecord>;
     async fn clear(&self, thread_id: &RuntimeThreadId);
 }
 
@@ -363,6 +505,25 @@ pub trait RuntimeWorkQueue: Send + Sync {
     async fn release(
         &self,
         claim: &RuntimeWorkClaim,
+        error: String,
+    ) -> Result<(), RuntimeStoreError>;
+}
+
+#[async_trait]
+pub trait RuntimeTerminalApplicationEffectOutbox: Send + Sync {
+    async fn claim_terminal_application_effects(
+        &self,
+        request: RuntimeTerminalApplicationEffectClaimRequest,
+    ) -> Result<Vec<RuntimeTerminalApplicationEffectClaim>, RuntimeStoreError>;
+
+    async fn ack_terminal_application_effect(
+        &self,
+        claim: &RuntimeTerminalApplicationEffectClaim,
+    ) -> Result<(), RuntimeStoreError>;
+
+    async fn release_terminal_application_effect(
+        &self,
+        claim: &RuntimeTerminalApplicationEffectClaim,
         error: String,
     ) -> Result<(), RuntimeStoreError>;
 }

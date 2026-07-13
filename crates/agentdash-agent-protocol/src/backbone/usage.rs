@@ -1,8 +1,9 @@
 use crate::codex_app_server_protocol as codex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadTokenUsageUpdatedNotification {
     pub thread_id: String,
@@ -10,7 +11,7 @@ pub struct ThreadTokenUsageUpdatedNotification {
     pub token_usage: ThreadTokenUsage,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadTokenUsage {
     pub total: TokenUsageBreakdown,
@@ -20,7 +21,7 @@ pub struct ThreadTokenUsage {
     pub context: NormalizedContextUsage,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenUsageBreakdown {
     #[ts(type = "number")]
@@ -35,7 +36,7 @@ pub struct TokenUsageBreakdown {
     pub reasoning_output_tokens: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ContextUsageSource {
     Provider,
@@ -43,7 +44,7 @@ pub enum ContextUsageSource {
     LocalEstimate,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedContextUsage {
     #[ts(type = "number")]

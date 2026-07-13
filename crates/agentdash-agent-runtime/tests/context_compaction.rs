@@ -7,6 +7,9 @@ use agentdash_agent_runtime::{
 };
 use agentdash_agent_runtime_contract::*;
 
+mod support;
+use support::TestTerminalPresentationProjector;
+
 fn id<T: FromStr>(value: &str) -> T
 where
     T::Err: std::fmt::Debug,
@@ -70,17 +73,35 @@ fn initial_hook_plan() -> BoundRuntimeHookPlan {
     }
 }
 
+fn initial_surface() -> RuntimeSurfaceDescriptor {
+    RuntimeSurfaceDescriptor {
+        source_frame_id: "frame-1".to_string(),
+        surface_revision: SurfaceRevision(1),
+        surface_digest: id("surface-1"),
+        vfs_digest: "vfs-1".to_string(),
+        context_recipe_revision: ContextRecipeRevision(1),
+        context_digest: id("context-1"),
+        settings_revision: ThreadSettingsRevision(0),
+        tool_set_revision: ToolSetRevision(0),
+        tool_set_digest: "tools-1".to_string(),
+        hook_plan: initial_hook_plan(),
+        terminal_hook_effect_binding: None,
+    }
+}
+
 fn fixture() -> (
     Arc<RuntimeStoreFixture>,
     ManagedAgentRuntime<RuntimeStoreFixture>,
 ) {
     let store = Arc::new(RuntimeStoreFixture::default());
-    let runtime = ManagedAgentRuntime::new(store.clone());
+    let runtime =
+        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
     (store, runtime)
 }
 
 fn envelope(operation: &str, key: &str, command: RuntimeCommand) -> RuntimeCommandEnvelope {
     RuntimeCommandEnvelope {
+        presentation: Vec::new(),
         meta: OperationMeta {
             operation_id: id(operation),
             idempotency_key: id(key),
@@ -104,16 +125,16 @@ async fn start_and_accept_compaction(
             "thread-key",
             RuntimeCommand::ThreadStart {
                 thread_id: id("thread-source-1"),
+                presentation_thread_id: id("presentation-thread-1"),
+                presentation_turn_id: None,
                 binding_id: id("binding-1"),
                 driver_generation: RuntimeDriverGeneration(4),
                 source_thread_id: id("source-1"),
                 profile_digest: id("profile-1"),
                 bound_profile: Box::new(profile()),
                 input: Vec::new(),
-                surface_digest: id("surface-1"),
+                surface: Box::new(initial_surface()),
                 settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(0),
-                hook_plan: initial_hook_plan(),
             },
         ))
         .await
@@ -263,16 +284,16 @@ async fn compaction_acceptance_and_recovery_work_are_atomic() {
             "thread-key",
             RuntimeCommand::ThreadStart {
                 thread_id: id("thread-source-1"),
+                presentation_thread_id: id("presentation-thread-1"),
+                presentation_turn_id: None,
                 binding_id: id("binding-1"),
                 driver_generation: RuntimeDriverGeneration(4),
                 source_thread_id: id("source-1"),
                 profile_digest: id("profile-1"),
                 bound_profile: Box::new(profile()),
                 input: Vec::new(),
-                surface_digest: id("surface-1"),
+                surface: Box::new(initial_surface()),
                 settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(0),
-                hook_plan: initial_hook_plan(),
             },
         ))
         .await
@@ -312,7 +333,7 @@ async fn compaction_acceptance_and_recovery_work_are_atomic() {
     );
     assert!(
         store
-            .events_after(&thread_id, None)
+            .internal_events_after(&thread_id, None)
             .await
             .expect("events")
             .events
@@ -519,7 +540,7 @@ async fn applied_confirmation_survives_a_head_cas_crash_and_recovery_is_reentran
         .await
         .expect("retry");
     let durable_event_count = store
-        .events_after(&thread_id, None)
+        .internal_events_after(&thread_id, None)
         .await
         .expect("events")
         .events
@@ -548,7 +569,7 @@ async fn applied_confirmation_survives_a_head_cas_crash_and_recovery_is_reentran
         .expect("idempotent retry");
     assert_eq!(
         store
-            .events_after(&thread_id, None)
+            .internal_events_after(&thread_id, None)
             .await
             .expect("events")
             .events
@@ -715,8 +736,9 @@ async fn durable_activation_status_cannot_move_back_from_terminal_to_prepared() 
             projection,
             operation: None,
             operation_terminals: Vec::new(),
-            events: Vec::new(),
+            records: Vec::new(),
             outbox: Vec::new(),
+            terminal_application_effects: Vec::new(),
             context_activation_outbox: Vec::new(),
             context_preparation_work_items: Vec::new(),
             context_checkpoints: Vec::new(),
@@ -802,16 +824,16 @@ async fn opaque_driver_compaction_never_advances_platform_context_head() {
             "thread-key",
             RuntimeCommand::ThreadStart {
                 thread_id: id("thread-source-1"),
+                presentation_thread_id: id("presentation-thread-1"),
+                presentation_turn_id: None,
                 binding_id: id("binding-1"),
                 driver_generation: RuntimeDriverGeneration(4),
                 source_thread_id: id("source-1"),
                 profile_digest: id("profile-1"),
                 bound_profile: Box::new(profile()),
                 input: Vec::new(),
-                surface_digest: id("surface-1"),
+                surface: Box::new(initial_surface()),
                 settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(0),
-                hook_plan: initial_hook_plan(),
             },
         ))
         .await
@@ -837,7 +859,7 @@ async fn opaque_driver_compaction_never_advances_platform_context_head() {
     assert_eq!(state.context_revision, ContextRevision(0));
     assert!(
         store
-            .events_after(&thread_id, None)
+            .internal_events_after(&thread_id, None)
             .await
             .expect("events")
             .events
@@ -913,6 +935,7 @@ async fn unverifiable_activation_desynchronizes_the_thread_and_blocks_new_turns(
                 "turn-key",
                 RuntimeCommand::TurnStart {
                     thread_id,
+                    presentation_turn_id: id("presentation-turn-context-1"),
                     input: Vec::new(),
                 },
             ))

@@ -13,6 +13,7 @@ pub mod hook_plan;
 pub mod ids;
 pub mod profile;
 pub mod snapshot;
+pub mod terminal_hook_effect;
 
 pub use availability::*;
 pub use command::*;
@@ -25,6 +26,7 @@ pub use hook_plan::*;
 pub use ids::*;
 pub use profile::*;
 pub use snapshot::*;
+pub use terminal_hook_effect::*;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -39,6 +41,8 @@ pub struct RuntimeContractSchema {
     pub execute_error: RuntimeExecuteError,
     pub snapshot_query: RuntimeSnapshotQuery,
     pub event: RuntimeEventEnvelope,
+    pub immutable_presentation_event: ImmutablePresentationEvent,
+    pub journal_record: RuntimeJournalRecord,
     pub event_subscription: RuntimeEventSubscription,
     pub snapshot: RuntimeSnapshot,
     pub snapshot_result: RuntimeSnapshotResult,
@@ -78,6 +82,8 @@ mod schema_tests {
             "execute_error",
             "snapshot_query",
             "event",
+            "immutable_presentation_event",
+            "journal_record",
             "event_subscription",
             "snapshot",
             "snapshot_error",
@@ -98,6 +104,45 @@ mod schema_tests {
             "driver_error",
         ] {
             assert!(properties.contains_key(family), "missing {family} schema");
+        }
+    }
+
+    #[test]
+    fn presentation_event_schema_is_the_exhaustive_backbone_union() {
+        let schema = schemars::schema_for!(RuntimeContractSchema);
+        let schema = serde_json::to_value(schema).expect("serialize runtime contract schema");
+        let presentation = schema
+            .pointer("/properties/immutable_presentation_event")
+            .expect("immutable presentation schema root");
+        assert!(
+            presentation
+                .to_string()
+                .contains("ImmutablePresentationEvent"),
+            "presentation root must reference its typed definition"
+        );
+        let backbone = schema
+            .pointer("/$defs/BackboneEvent")
+            .expect("BackboneEvent must be present in typed schema definitions");
+        let variants = backbone
+            .get("oneOf")
+            .and_then(serde_json::Value::as_array)
+            .expect("BackboneEvent must be an exhaustive union");
+        assert!(
+            variants.len() >= 16,
+            "BackboneEvent variants were collapsed"
+        );
+        let backbone_json = backbone.to_string();
+        for discriminant in [
+            "agent_message_delta",
+            "item_completed",
+            "user_input_submitted",
+            "approval_request",
+            "platform",
+        ] {
+            assert!(
+                backbone_json.contains(discriminant),
+                "BackboneEvent schema is missing {discriminant}"
+            );
         }
     }
 }

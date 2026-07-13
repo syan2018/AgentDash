@@ -1,6 +1,7 @@
 use crate::codex_app_server_protocol as codex;
 use agentdash_agent_types::ContentPart;
 use agentdash_diagnostics::{DiagnosticErrorContext, Subsystem, diag, diag_error};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
@@ -15,14 +16,14 @@ use crate::{ContentBlock, EmbeddedResourceResource};
 /// 并在边界补 `From/Into codex::UserInput`，调用方无需改动。
 pub type UserInputBlock = codex::UserInput;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum UserInputSubmissionKind {
     Prompt,
     Steer,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInputSource {
     pub namespace: String,
@@ -73,7 +74,7 @@ impl UserInputSource {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInputSubmittedNotification {
     pub thread_id: String,

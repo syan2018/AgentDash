@@ -183,6 +183,246 @@
           "schema_sha256": "81fc07724af4da0dbdd7c594319ff306bf34d99f9e6ad1ede0a058d1e159e1a7"
         }
       ],
+      "server_notification_schema_paths": [
+        {
+          "schema_path": "#/definitions/TurnError/properties/additionalDetails",
+          "schema_sha256": "67f0689e1c8ccd3216aeecbb51d53b4c1317267308d341e1b8af082aae3310af"
+        },
+        {
+          "schema_path": "#/definitions/TurnError/properties/codexErrorInfo",
+          "schema_sha256": "10daedac9c1391368783ac616be99c403332ba59a178fb8e0f14616a85ec4228"
+        },
+        {
+          "schema_path": "#/definitions/GuardianApprovalReviewAction/oneOf/4/properties/connectorId",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/GuardianApprovalReviewAction/oneOf/4/properties/connectorName",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/GuardianApprovalReviewAction/oneOf/4/properties/toolTitle",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/GuardianApprovalReviewAction/oneOf/5/properties/reason",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/RequestPermissionProfile/properties/fileSystem",
+          "schema_sha256": "ac880011bca5ea0bf82620b36712456cb8802ecbebce2cfd6b570f1d9f0d28b9"
+        },
+        {
+          "schema_path": "#/definitions/RequestPermissionProfile/properties/network",
+          "schema_sha256": "739a38bd1baf284715e8ab20983ff55cc8c9b53d8d5ad5f0f9e23b649bfd1ddd"
+        },
+        {
+          "schema_path": "#/definitions/AdditionalFileSystemPermissions/properties/read",
+          "schema_sha256": "c1715f3e6d735ff6529fa7a64a62e1da7c6049e74aea10d54992f80baa6fb881"
+        },
+        {
+          "schema_path": "#/definitions/AdditionalFileSystemPermissions/properties/write",
+          "schema_sha256": "c1715f3e6d735ff6529fa7a64a62e1da7c6049e74aea10d54992f80baa6fb881"
+        },
+        {
+          "schema_path": "#/definitions/FileSystemSpecialPath/oneOf/2/properties/subpath",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/FileSystemSpecialPath/oneOf/5/properties/subpath",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/AdditionalNetworkPermissions/properties/enabled",
+          "schema_sha256": "355815181a415ef7fffb17add2cd540eb596dfb13193fbaefcce9b50053e5b48"
+        },
+        {
+          "schema_path": "#/definitions/GuardianApprovalReview/properties/rationale",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/GuardianApprovalReview/properties/riskLevel",
+          "schema_sha256": "8fe7635ddf51d587a8c5109b6b2de8808473315aae544769e7828ae95d05a3b1"
+        },
+        {
+          "schema_path": "#/definitions/GuardianApprovalReview/properties/userAuthorization",
+          "schema_sha256": "fd37344d4a4134a530de7254cde80530594ad165c8f0abc2f3bb22824fa3b6e3"
+        },
+        {
+          "schema_path": "#/definitions/ItemGuardianApprovalReviewStartedNotification/properties/targetItemId",
+          "schema_sha256": "ccdc26c03147a3985b63da626a68bdd0bf755f4a2fe1204d5a6a1565d1d4e3c5"
+        },
+        {
+          "schema_path": "#/definitions/ItemGuardianApprovalReviewCompletedNotification/properties/targetItemId",
+          "schema_sha256": "ccdc26c03147a3985b63da626a68bdd0bf755f4a2fe1204d5a6a1565d1d4e3c5"
+        },
+        {
+          "schema_path": "#/definitions/PatchChangeKind/oneOf/2/properties/move_path",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/ModelSafetyBufferingUpdatedNotification/properties/fasterModel",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/WarningNotification/properties/threadId",
+          "schema_sha256": "f90956ed33560fe5f19438b1b661139c94252ac3a865f0bd379437f8926dbced"
+        },
+        {
+          "schema_path": "#/definitions/DeprecationNoticeNotification/properties/details",
+          "schema_sha256": "01f4b5d879b96f1fef6f251fcd8f025e22e3fa3e372d8dc874bac6e11d4c5f51"
+        },
+        {
+          "schema_path": "#/definitions/ConfigWarningNotification/properties/details",
+          "schema_sha256": "c76a1c9388923849903c333d261e246759cfb2d6562331c5ad7de8d7c846b56d"
+        },
+        {
+          "schema_path": "#/definitions/AdditionalFileSystemPermissions/properties/entries",
+          "schema_sha256": "de759f86425a5713e93103ca63994abcfc4bf7f571881adadcaa63620820563c"
+        },
+        {
+          "schema_path": "#/definitions/AdditionalFileSystemPermissions/properties/globScanMaxDepth",
+          "schema_sha256": "3d0e0063c9ebe41694bb84955086ba0256af6c7d8c22110c07f7ca8f57ea354e"
+        },
+        {
+          "schema_path": "#/definitions/ConfigWarningNotification/properties/path",
+          "schema_sha256": "a7b995227bf02d4b85c2cae6fdba7976aa2f802b2bdda915857f5f8f391949b1"
+        },
+        {
+          "schema_path": "#/definitions/ConfigWarningNotification/properties/range",
+          "schema_sha256": "c44e0357b29ca217d720ebed8642a701ae386d5648338673e6afd4cc72f41a5f"
+        },
+        {
+          "schema_path": "#/definitions/Turn/properties/completedAt",
+          "schema_sha256": "693f17a8081be4c8c564f6fea365c046ee1d4e6a2c0911d82ae6cc91739797d2"
+        },
+        {
+          "schema_path": "#/definitions/Turn/properties/durationMs",
+          "schema_sha256": "0f639cc00e55d34b75c971d641cdcd4f4e27e9a8c22ff94f1cfc783506941294"
+        },
+        {
+          "schema_path": "#/definitions/Turn/properties/error",
+          "schema_sha256": "f90fbc7d0e718693ffe6ada1b77dddcee5125672bd82768de281abb7162e0026"
+        },
+        {
+          "schema_path": "#/definitions/Turn/properties/startedAt",
+          "schema_sha256": "8b717adbb707f775c7d900cb2647a619e15dde073baf5b26a625517a5e5fb6e4"
+        },
+        {
+          "schema_path": "#/definitions/CodexErrorInfo/oneOf/1/properties/httpConnectionFailed/properties/httpStatusCode",
+          "schema_sha256": "b99378e5bfe8ccc5af87b171b65ea725149e27dae782eccf7b2110c85b8645cb"
+        },
+        {
+          "schema_path": "#/definitions/CodexErrorInfo/oneOf/2/properties/responseStreamConnectionFailed/properties/httpStatusCode",
+          "schema_sha256": "b99378e5bfe8ccc5af87b171b65ea725149e27dae782eccf7b2110c85b8645cb"
+        },
+        {
+          "schema_path": "#/definitions/CodexErrorInfo/oneOf/3/properties/responseStreamDisconnected/properties/httpStatusCode",
+          "schema_sha256": "b99378e5bfe8ccc5af87b171b65ea725149e27dae782eccf7b2110c85b8645cb"
+        },
+        {
+          "schema_path": "#/definitions/CodexErrorInfo/oneOf/4/properties/responseTooManyFailedAttempts/properties/httpStatusCode",
+          "schema_sha256": "b99378e5bfe8ccc5af87b171b65ea725149e27dae782eccf7b2110c85b8645cb"
+        },
+        {
+          "schema_path": "#/definitions/TextElement/properties/placeholder",
+          "schema_sha256": "dcbbb2c240fc632629f1222311e1654df847e81867441bbf29ab510177be33b0"
+        },
+        {
+          "schema_path": "#/definitions/UserInput/oneOf/1/properties/detail",
+          "schema_sha256": "b8d15e373c3f9e9b7b492763b6bc4a08ab5b03d504280b9b2e9876c5a57e89e9"
+        },
+        {
+          "schema_path": "#/definitions/UserInput/oneOf/2/properties/detail",
+          "schema_sha256": "b8d15e373c3f9e9b7b492763b6bc4a08ab5b03d504280b9b2e9876c5a57e89e9"
+        },
+        {
+          "schema_path": "#/definitions/CommandAction/oneOf/1/properties/path",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/CommandAction/oneOf/2/properties/path",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/CommandAction/oneOf/2/properties/query",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/McpToolCallAppContext/properties/actionName",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/McpToolCallAppContext/properties/appName",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/McpToolCallAppContext/properties/linkId",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/McpToolCallAppContext/properties/resourceUri",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/McpToolCallAppContext/properties/templateId",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/WebSearchAction/oneOf/0/properties/queries",
+          "schema_sha256": "8f26457b53885f595875388a939f54e76b3d0aec86c11e6dce3cd025fac8380b"
+        },
+        {
+          "schema_path": "#/definitions/WebSearchAction/oneOf/0/properties/query",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/WebSearchAction/oneOf/1/properties/url",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/WebSearchAction/oneOf/2/properties/pattern",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/WebSearchAction/oneOf/2/properties/url",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        },
+        {
+          "schema_path": "#/definitions/TurnPlanUpdatedNotification/properties/explanation",
+          "schema_sha256": "cd49941f1a90808c0c692f85bc803a6dd936c9153aaac4a725cf9030c3fc9089"
+        }
+      ],
+      "server_notification_session_roots": [
+        "AgentMessageDeltaNotification",
+        "ReasoningTextDeltaNotification",
+        "ReasoningSummaryTextDeltaNotification",
+        "ItemGuardianApprovalReviewStartedNotification",
+        "ItemGuardianApprovalReviewCompletedNotification",
+        "CommandExecutionOutputDeltaNotification",
+        "FileChangeOutputDeltaNotification",
+        "McpToolCallProgressNotification",
+        "TerminalInteractionNotification",
+        "FileChangePatchUpdatedNotification",
+        "ServerRequestResolvedNotification",
+        "TurnStartedNotification",
+        "TurnCompletedNotification",
+        "TurnDiffUpdatedNotification",
+        "TurnPlanUpdatedNotification",
+        "PlanDeltaNotification",
+        "ReasoningSummaryPartAddedNotification",
+        "ThreadStatusChangedNotification",
+        "ContextCompactedNotification",
+        "ModelReroutedNotification",
+        "ModelVerificationNotification",
+        "TurnModerationMetadataNotification",
+        "ModelSafetyBufferingUpdatedNotification",
+        "WarningNotification",
+        "GuardianWarningNotification",
+        "DeprecationNoticeNotification",
+        "ConfigWarningNotification",
+        "ErrorNotification"
+      ],
       "request_schema_paths": [
         {
           "qualified_path": "CommandExecutionRequestApprovalParams#/properties/environmentId",

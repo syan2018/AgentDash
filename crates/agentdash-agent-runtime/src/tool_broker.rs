@@ -239,6 +239,7 @@ pub trait ToolBrokerRuntimeJournal: Send + Sync {
     async fn record_tool_update(
         &self,
         invocation: &ToolBrokerInvocation,
+        tool: &ToolContribution,
         content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
     ) -> Result<(), ToolBrokerError>;
 }
@@ -268,6 +269,14 @@ where
         invocation: &ToolBrokerInvocation,
         tool: &ToolContribution,
     ) -> Result<(), ToolBrokerError> {
+        if tool.presentation_emitter
+            != agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker
+        {
+            return Err(ToolBrokerError::Execution(format!(
+                "tool `{}` is not owned by the ToolBroker presentation emitter",
+                tool.runtime_name
+            )));
+        }
         let initial_content = tool
             .project_started(
                 invocation.coordinates.item_id.as_str(),
@@ -286,6 +295,7 @@ where
                 };
             }
             let expected = thread.revision;
+            let recorded_at_ms = crate::model::current_time_ms();
             let events = thread
                 .append_events([RuntimeEvent::ItemStarted {
                     turn_id: invocation.coordinates.turn_id.clone(),
@@ -293,8 +303,32 @@ where
                     initial_content: initial_content.clone(),
                 }])
                 .map_err(transition_tool_error)?;
+            let mut records = crate::internal_journal_records(events).map_err(store_tool_error)?;
+            records.push(
+                thread
+                    .append_durable_fact(
+                        agentdash_agent_runtime_contract::RuntimeJournalFact::Presentation(
+                            agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                                agentdash_agent_runtime_contract::PresentationDurability::Durable,
+                                agentdash_agent_protocol::BackboneEvent::ItemStarted(
+                                    agentdash_agent_protocol::ItemStartedNotification {
+                                        item: initial_content.item().clone(),
+                                        thread_id: thread.presentation_thread_id.to_string(),
+                                        turn_id: invocation.coordinates.turn_id.to_string(),
+                                        started_at_ms: timestamp_i64(recorded_at_ms),
+                                    },
+                                ),
+                            ),
+                        ),
+                        recorded_at_ms,
+                        Some(invocation.coordinates.binding_id.clone()),
+                        None,
+                        tool_presentation_coordinate(invocation),
+                    )
+                    .map_err(transition_tool_error)?,
+            );
             match self
-                .commit_projection_store_result(thread, expected, events)
+                .commit_projection_records_store_result(thread, expected, records)
                 .await
             {
                 Ok(()) => return Ok(()),
@@ -320,14 +354,46 @@ where
             EntityPhase::Active => {}
         }
         let expected = thread.revision;
+        let recorded_at_ms = crate::model::current_time_ms();
         let events = thread
             .append_events([RuntimeEvent::ItemTerminal {
                 turn_id: call.invocation.coordinates.turn_id.clone(),
                 item_id: call.invocation.coordinates.item_id.clone(),
-                terminal,
+                terminal: terminal.clone(),
             }])
             .map_err(transition_tool_error)?;
-        self.commit_projection(thread, expected, events).await
+        let mut records = crate::internal_journal_records(events).map_err(store_tool_error)?;
+        let final_content = match &terminal {
+            RuntimeItemTerminal::Completed { final_content } => final_content.clone(),
+            RuntimeItemTerminal::Failed { .. }
+            | RuntimeItemTerminal::Cancelled { .. }
+            | RuntimeItemTerminal::Lost { .. } => broker_terminal_content(call)?,
+        };
+        records.push(
+            thread
+                .append_durable_fact(
+                    agentdash_agent_runtime_contract::RuntimeJournalFact::Presentation(
+                        agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                            agentdash_agent_runtime_contract::PresentationDurability::Durable,
+                            agentdash_agent_protocol::BackboneEvent::ItemCompleted(
+                                agentdash_agent_protocol::ItemCompletedNotification {
+                                    item: final_content.item().clone(),
+                                    thread_id: thread.presentation_thread_id.to_string(),
+                                    turn_id: call.invocation.coordinates.turn_id.to_string(),
+                                    completed_at_ms: timestamp_i64(recorded_at_ms),
+                                },
+                            ),
+                        ),
+                    ),
+                    recorded_at_ms,
+                    Some(call.invocation.coordinates.binding_id.clone()),
+                    None,
+                    tool_presentation_coordinate(&call.invocation),
+                )
+                .map_err(transition_tool_error)?,
+        );
+        self.commit_projection_records(thread, expected, records)
+            .await
     }
 
     async fn request_tool_approval(
@@ -359,24 +425,62 @@ where
     async fn record_tool_update(
         &self,
         invocation: &ToolBrokerInvocation,
+        tool: &ToolContribution,
         content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
     ) -> Result<(), ToolBrokerError> {
         let thread = self.load_matching_thread(invocation).await?;
+        let event = if matches!(
+            tool.protocol_projection,
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Command
+        ) {
+            let delta = content_items
+                .into_iter()
+                .filter_map(|item| match item {
+                    agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                        text,
+                    } => Some(text),
+                    agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputImage {
+                        ..
+                    } => None,
+                })
+                .collect::<String>();
+            agentdash_agent_protocol::BackboneEvent::CommandOutputDelta(
+                agentdash_agent_protocol::codex_app_server_protocol::CommandExecutionOutputDeltaNotification {
+                    thread_id: thread.presentation_thread_id.to_string(),
+                    turn_id: invocation.coordinates.turn_id.to_string(),
+                    item_id: invocation.coordinates.item_id.to_string(),
+                    delta,
+                },
+            )
+        } else {
+            let item = tool
+                .project_updated(
+                    invocation.coordinates.item_id.as_str(),
+                    invocation.arguments.clone(),
+                    content_items,
+                )
+                .map_err(|error| ToolBrokerError::Execution(error.to_string()))?;
+            agentdash_agent_protocol::BackboneEvent::ItemUpdated(
+                agentdash_agent_protocol::ItemUpdatedNotification {
+                    item: item.item().clone(),
+                    thread_id: thread.presentation_thread_id.to_string(),
+                    turn_id: invocation.coordinates.turn_id.to_string(),
+                    updated_at_ms: timestamp_i64(crate::model::current_time_ms()),
+                },
+            )
+        };
         self.store
-            .publish_transient(
+            .publish_transient_presentation(
                 thread.thread_id,
                 invocation.coordinates.binding_id.clone(),
                 invocation.coordinates.binding_generation,
                 Some(invocation.coordinates.turn_id.clone()),
                 thread.revision,
-                RuntimeEvent::ConversationDelta {
-                    turn_id: invocation.coordinates.turn_id.clone(),
-                    item_id: invocation.coordinates.item_id.clone(),
-                    delta:
-                        agentdash_agent_runtime_contract::RuntimeConversationDelta::ToolProgress {
-                            content_items,
-                        },
-                },
+                tool_presentation_coordinate(invocation),
+                agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                    agentdash_agent_runtime_contract::PresentationDurability::Ephemeral,
+                    event,
+                ),
             )
             .await;
         Ok(())
@@ -423,13 +527,42 @@ where
         expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
         events: Vec<agentdash_agent_runtime_contract::RuntimeEventEnvelope>,
     ) -> Result<(), RuntimeStoreError> {
+        self.commit_projection_records_store_result(
+            projection,
+            expected_projection_revision,
+            crate::internal_journal_records(events)?,
+        )
+        .await
+    }
+
+    async fn commit_projection_records(
+        &self,
+        projection: crate::RuntimeThreadState,
+        expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
+        records: Vec<agentdash_agent_runtime_contract::RuntimeJournalRecord>,
+    ) -> Result<(), ToolBrokerError> {
+        self.commit_projection_records_store_result(
+            projection,
+            expected_projection_revision,
+            records,
+        )
+        .await
+        .map_err(store_tool_error)
+    }
+
+    async fn commit_projection_records_store_result(
+        &self,
+        projection: crate::RuntimeThreadState,
+        expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
+        records: Vec<agentdash_agent_runtime_contract::RuntimeJournalRecord>,
+    ) -> Result<(), RuntimeStoreError> {
         self.store
             .commit(RuntimeCommit {
                 expected_projection_revision: Some(expected_projection_revision),
                 projection,
                 operation: None,
                 operation_terminals: Vec::new(),
-                events,
+                records,
                 outbox: Vec::new(),
                 context_activation_outbox: Vec::new(),
                 context_preparation_work_items: Vec::new(),
@@ -444,6 +577,41 @@ where
             })
             .await
     }
+}
+
+fn timestamp_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn tool_presentation_coordinate(
+    invocation: &ToolBrokerInvocation,
+) -> agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
+    agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
+        runtime_turn_id: Some(invocation.coordinates.turn_id.clone()),
+        runtime_item_id: Some(invocation.coordinates.item_id.clone()),
+        interaction_id: None,
+        source_thread_id: None,
+        source_turn_id: None,
+        source_item_id: Some(invocation.coordinates.item_id.to_string()),
+        source_request_id: None,
+        source_entry_index: None,
+    }
+}
+
+fn broker_terminal_content(
+    call: &ToolBrokerCall,
+) -> Result<agentdash_agent_runtime_contract::RuntimeItemContent, ToolBrokerError> {
+    let result = call.result.as_ref().ok_or(ToolBrokerStoreError::Conflict)?;
+    call.tool
+        .project_completed(
+            call.invocation.coordinates.item_id.as_str(),
+            call.effective_arguments
+                .clone()
+                .unwrap_or_else(|| call.invocation.arguments.clone()),
+            &result.output,
+            call.status != ToolBrokerCallStatus::Completed,
+        )
+        .map_err(|error| ToolBrokerError::Execution(error.to_string()))
 }
 
 fn broker_terminal(call: &ToolBrokerCall) -> Result<RuntimeItemTerminal, ToolBrokerError> {
@@ -970,7 +1138,7 @@ impl PlatformToolBroker {
             tokio::select! {
                 _ = cancellation.cancelled() => break ToolExecutionCompletion::Cancelled,
                 result = &mut execution_future => break match result { Ok(result) => ToolExecutionCompletion::Finished(result), Err(_) => ToolExecutionCompletion::TimedOut },
-                Some(content_items) = update_receiver.recv() => self.journal.record_tool_update(&invocation, content_items).await?,
+                Some(content_items) = update_receiver.recv() => self.journal.record_tool_update(&invocation, tool, content_items).await?,
             }
         };
         let execution = match execution {

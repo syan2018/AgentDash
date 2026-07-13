@@ -4,14 +4,16 @@ use std::{
 };
 
 use agentdash_agent_runtime_contract::{
-    EventSequence, IdempotencyKey, RuntimeBindingId, RuntimeDriverGeneration, RuntimeEvent,
-    RuntimeEventEnvelope, RuntimeOperationId, RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
+    EventSequence, IdempotencyKey, ImmutablePresentationEvent, RuntimeBindingId,
+    RuntimeCarrierMetadata, RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope,
+    RuntimeJournalFact, RuntimeJournalRecord, RuntimeOperationId, RuntimePresentationCoordinate,
+    RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use crate::{
-    QuarantinedDriverEvent, RuntimeCommit, RuntimeEventBatch, RuntimeOperationRecord,
+    QuarantinedDriverEvent, RuntimeCommit, RuntimeJournalBatch, RuntimeOperationRecord,
     RuntimeRepository, RuntimeStoreError, RuntimeThreadState, RuntimeTransientEvents,
     RuntimeUnitOfWork,
 };
@@ -21,8 +23,10 @@ struct MemoryState {
     threads: BTreeMap<RuntimeThreadId, RuntimeThreadState>,
     operations: BTreeMap<RuntimeOperationId, RuntimeOperationRecord>,
     idempotency: BTreeMap<(RuntimeThreadId, IdempotencyKey), RuntimeOperationId>,
-    events: BTreeMap<RuntimeThreadId, Vec<RuntimeEventEnvelope>>,
+    journal: BTreeMap<RuntimeThreadId, Vec<RuntimeJournalRecord>>,
     outbox: Vec<crate::RuntimeOutboxEntry>,
+    terminal_application_effects:
+        BTreeMap<crate::RuntimeTerminalApplicationEffectId, MemoryTerminalApplicationEffectState>,
     context_activation_outbox: BTreeMap<
         agentdash_agent_runtime_contract::ContextActivationId,
         crate::ContextActivationOutboxEntry,
@@ -43,6 +47,23 @@ struct MemoryState {
     hook_plans: BTreeMap<RuntimeThreadId, crate::RuntimeHookPlanBinding>,
     quarantine: Vec<QuarantinedDriverEvent>,
     transient: BTreeMap<RuntimeThreadId, Vec<RuntimeEventEnvelope>>,
+    presentation_transient: BTreeMap<RuntimeThreadId, Vec<RuntimeJournalRecord>>,
+}
+
+#[derive(Clone)]
+struct MemoryTerminalApplicationEffectState {
+    entry: crate::RuntimeTerminalApplicationEffectOutboxEntry,
+    attempt_count: u32,
+    claim: Option<MemoryTerminalApplicationEffectClaimLease>,
+    completed: bool,
+    last_error: Option<String>,
+}
+
+#[derive(Clone)]
+struct MemoryTerminalApplicationEffectClaimLease {
+    token: crate::RuntimeWorkClaimToken,
+    owner: crate::RuntimeWorkerId,
+    expires_at_ms: i64,
 }
 
 /// Transactional fixture used by interface tests and future infrastructure adapters.
@@ -50,6 +71,8 @@ struct MemoryState {
 pub struct RuntimeStoreFixture {
     state: Mutex<MemoryState>,
     live: Mutex<BTreeMap<RuntimeThreadId, tokio::sync::broadcast::Sender<RuntimeEventEnvelope>>>,
+    presentation_live:
+        Mutex<BTreeMap<RuntimeThreadId, tokio::sync::broadcast::Sender<RuntimeJournalRecord>>>,
     fail_next_commit_at: AtomicU8,
 }
 
@@ -81,6 +104,18 @@ impl RuntimeStoreFixture {
         self.state.lock().await.outbox.clone()
     }
 
+    pub async fn terminal_application_effects(
+        &self,
+    ) -> Vec<crate::RuntimeTerminalApplicationEffectOutboxEntry> {
+        self.state
+            .lock()
+            .await
+            .terminal_application_effects
+            .values()
+            .map(|state| state.entry.clone())
+            .collect()
+    }
+
     pub async fn quarantined(&self) -> Vec<QuarantinedDriverEvent> {
         self.state.lock().await.quarantine.clone()
     }
@@ -100,8 +135,13 @@ impl RuntimeStoreFixture {
         thread_id: &RuntimeThreadId,
         sequence: EventSequence,
     ) {
-        if let Some(events) = self.state.lock().await.events.get_mut(thread_id) {
-            events.retain(|event| event.sequence.is_none_or(|current| current > sequence));
+        if let Some(records) = self.state.lock().await.journal.get_mut(thread_id) {
+            records.retain(|record| {
+                record
+                    .carrier()
+                    .sequence
+                    .is_none_or(|current| current > sequence)
+            });
         }
     }
 
@@ -172,29 +212,32 @@ impl RuntimeRepository for RuntimeStoreFixture {
             .cloned())
     }
 
-    async fn events_after(
+    async fn journal_records_after(
         &self,
         thread_id: &RuntimeThreadId,
         after: Option<EventSequence>,
-    ) -> Result<RuntimeEventBatch, RuntimeStoreError> {
+    ) -> Result<RuntimeJournalBatch, RuntimeStoreError> {
         let state = self.state.lock().await;
-        let retained = state.events.get(thread_id);
+        let retained = state.journal.get(thread_id);
         let latest_available = state
             .threads
             .get(thread_id)
             .map_or(EventSequence(0), |thread| thread.next_event_sequence);
-        Ok(RuntimeEventBatch {
+        Ok(RuntimeJournalBatch {
             earliest_available: retained
-                .and_then(|events| events.first())
-                .and_then(|event| event.sequence)
+                .and_then(|records| records.first())
+                .and_then(|record| record.carrier().sequence)
                 .unwrap_or(EventSequence(latest_available.0.saturating_add(1))),
             latest_available,
-            events: retained
+            records: retained
                 .into_iter()
                 .flatten()
-                .filter(|event| {
+                .filter(|record| {
                     after.is_none_or(|cursor| {
-                        event.sequence.is_some_and(|sequence| sequence > cursor)
+                        record
+                            .carrier()
+                            .sequence
+                            .is_some_and(|sequence| sequence > cursor)
                     })
                 })
                 .cloned()
@@ -363,8 +406,22 @@ impl RuntimeRepository for RuntimeStoreFixture {
 
 #[async_trait]
 impl RuntimeUnitOfWork for RuntimeStoreFixture {
-    async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError> {
-        let live_events = commit.events.clone();
+    async fn commit_with_live_presentation_publication(
+        &self,
+        commit: RuntimeCommit,
+        publish_live_presentations: bool,
+    ) -> Result<(), RuntimeStoreError> {
+        let live_events = commit
+            .records
+            .iter()
+            .filter_map(RuntimeJournalRecord::to_internal_envelope)
+            .collect::<Vec<_>>();
+        let live_presentations = commit
+            .records
+            .iter()
+            .filter(|record| record.as_presentation().is_some())
+            .cloned()
+            .collect::<Vec<_>>();
         self.inject_failure(CommitFailurePoint::BeforeWrite)?;
         let mut state = self.state.lock().await;
         let commit_thread_id = commit.projection.thread_id.clone();
@@ -378,6 +435,11 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
                 actual: current,
             });
         }
+        let previous_event_sequence = state
+            .threads
+            .get(&commit.projection.thread_id)
+            .map_or(EventSequence(0), |thread| thread.next_event_sequence);
+        validate_journal_records(&commit, previous_event_sequence)?;
         if current.is_none()
             && state.threads.values().any(|thread| {
                 thread.binding_id == commit.projection.binding_id
@@ -441,12 +503,12 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
                 .terminal = Some(terminal);
         }
         self.inject_failure(CommitFailurePoint::AfterOperation)?;
-        for event in commit.events {
+        for record in commit.records {
             staged
-                .events
-                .entry(event.thread_id.clone())
+                .journal
+                .entry(record.carrier().thread_id.clone())
                 .or_default()
-                .push(event);
+                .push(record);
         }
         self.inject_failure(CommitFailurePoint::AfterEvents)?;
         if let Some(binding) = commit.hook_plan_binding {
@@ -536,6 +598,42 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
             staged.hook_effects.insert(effect.effect_id.clone(), effect);
         }
         staged.outbox.extend(commit.outbox);
+        for entry in commit.terminal_application_effects {
+            if entry.runtime_thread_id != commit_thread_id
+                || !staged
+                    .journal
+                    .get(&commit_thread_id)
+                    .into_iter()
+                    .flatten()
+                    .any(|record| {
+                        record.carrier().sequence == Some(entry.terminal_event_sequence)
+                            && is_turn_terminal_presentation(record)
+                    })
+            {
+                return Err(RuntimeStoreError::Unavailable(
+                    "terminal application effect must reference its committed turn_terminal presentation"
+                        .to_string(),
+                ));
+            }
+            if let Some(existing) = staged.terminal_application_effects.get(&entry.effect_id) {
+                if existing.entry != entry {
+                    return Err(RuntimeStoreError::Unavailable(
+                        "terminal application effect identity was reused".to_string(),
+                    ));
+                }
+                continue;
+            }
+            staged.terminal_application_effects.insert(
+                entry.effect_id.clone(),
+                MemoryTerminalApplicationEffectState {
+                    entry,
+                    attempt_count: 0,
+                    claim: None,
+                    completed: false,
+                    last_error: None,
+                },
+            );
+        }
         for entry in commit.context_activation_outbox {
             if let Some(existing) = staged.context_activation_outbox.get(&entry.activation_id)
                 && existing != &entry
@@ -807,6 +905,11 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
         for event in live_events {
             self.publish_durable(event).await;
         }
+        if publish_live_presentations {
+            for record in live_presentations {
+                self.publish_durable_presentation(record).await;
+            }
+        }
         Ok(())
     }
 
@@ -814,6 +917,150 @@ impl RuntimeUnitOfWork for RuntimeStoreFixture {
         self.state.lock().await.quarantine.push(event);
         Ok(())
     }
+}
+
+#[async_trait]
+impl crate::RuntimeTerminalApplicationEffectOutbox for RuntimeStoreFixture {
+    async fn claim_terminal_application_effects(
+        &self,
+        request: crate::RuntimeTerminalApplicationEffectClaimRequest,
+    ) -> Result<Vec<crate::RuntimeTerminalApplicationEffectClaim>, RuntimeStoreError> {
+        if request.owner.as_str().trim().is_empty()
+            || request.lease_duration_ms == 0
+            || request.limit == 0
+        {
+            return Err(RuntimeStoreError::InvalidWorkClaim(
+                "terminal application effect claim requires owner, positive lease, and positive limit"
+                    .to_string(),
+            ));
+        }
+        let now = i64::try_from(crate::model::current_time_ms()).map_err(|_| {
+            RuntimeStoreError::InvalidWorkClaim("current time exceeds i64".to_string())
+        })?;
+        let lease_duration = i64::try_from(request.lease_duration_ms).map_err(|_| {
+            RuntimeStoreError::InvalidWorkClaim("lease duration exceeds i64".to_string())
+        })?;
+        let expires_at_ms = now.checked_add(lease_duration).ok_or_else(|| {
+            RuntimeStoreError::InvalidWorkClaim("lease expiration overflow".to_string())
+        })?;
+        let mut state = self.state.lock().await;
+        let mut claims = Vec::new();
+        for effect in state.terminal_application_effects.values_mut() {
+            if claims.len() >= request.limit as usize
+                || effect.completed
+                || effect
+                    .claim
+                    .as_ref()
+                    .is_some_and(|claim| claim.expires_at_ms > now)
+            {
+                continue;
+            }
+            effect.attempt_count = effect.attempt_count.saturating_add(1);
+            effect.last_error = None;
+            let token = crate::RuntimeWorkClaimToken(format!(
+                "terminal-effect:{}:{}:{}",
+                effect.entry.effect_id.as_str(),
+                effect.attempt_count,
+                now
+            ));
+            effect.claim = Some(MemoryTerminalApplicationEffectClaimLease {
+                token: token.clone(),
+                owner: request.owner.clone(),
+                expires_at_ms,
+            });
+            claims.push(crate::RuntimeTerminalApplicationEffectClaim {
+                entry: effect.entry.clone(),
+                token,
+                owner: request.owner.clone(),
+                lease_expires_at_ms: expires_at_ms,
+                attempt: effect.attempt_count,
+            });
+        }
+        Ok(claims)
+    }
+
+    async fn ack_terminal_application_effect(
+        &self,
+        claim: &crate::RuntimeTerminalApplicationEffectClaim,
+    ) -> Result<(), RuntimeStoreError> {
+        let mut state = self.state.lock().await;
+        let effect = state
+            .terminal_application_effects
+            .get_mut(&claim.entry.effect_id)
+            .ok_or(RuntimeStoreError::WorkClaimConflict)?;
+        let owned = effect
+            .claim
+            .as_ref()
+            .is_some_and(|lease| lease.owner == claim.owner && lease.token == claim.token);
+        if !owned || effect.completed {
+            return Err(RuntimeStoreError::WorkClaimConflict);
+        }
+        effect.completed = true;
+        effect.claim = None;
+        effect.last_error = None;
+        Ok(())
+    }
+
+    async fn release_terminal_application_effect(
+        &self,
+        claim: &crate::RuntimeTerminalApplicationEffectClaim,
+        error: String,
+    ) -> Result<(), RuntimeStoreError> {
+        let mut state = self.state.lock().await;
+        let effect = state
+            .terminal_application_effects
+            .get_mut(&claim.entry.effect_id)
+            .ok_or(RuntimeStoreError::WorkClaimConflict)?;
+        let owned = effect
+            .claim
+            .as_ref()
+            .is_some_and(|lease| lease.owner == claim.owner && lease.token == claim.token);
+        if !owned || effect.completed {
+            return Err(RuntimeStoreError::WorkClaimConflict);
+        }
+        effect.claim = None;
+        effect.last_error = Some(error);
+        Ok(())
+    }
+}
+
+fn validate_journal_records(
+    commit: &RuntimeCommit,
+    previous: EventSequence,
+) -> Result<(), RuntimeStoreError> {
+    let mut expected = previous.0;
+    for record in &commit.records {
+        expected = expected.checked_add(1).ok_or_else(|| {
+            RuntimeStoreError::Unavailable("runtime journal sequence overflow".to_string())
+        })?;
+        if record.carrier().thread_id != commit.projection.thread_id
+            || record.carrier().sequence != Some(EventSequence(expected))
+            || record.carrier().transient.is_some()
+        {
+            return Err(RuntimeStoreError::Unavailable(
+                "runtime commit contains a non-contiguous, transient, or cross-thread journal record"
+                    .to_string(),
+            ));
+        }
+    }
+    if commit.projection.next_event_sequence != EventSequence(expected) {
+        return Err(RuntimeStoreError::Unavailable(
+            "runtime projection event cursor does not match the committed journal".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_turn_terminal_presentation(record: &RuntimeJournalRecord) -> bool {
+    matches!(
+        record.fact(),
+        RuntimeJournalFact::Presentation(ImmutablePresentationEvent {
+            event: agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+            ),
+            ..
+        }) if key == "turn_terminal"
+    )
 }
 
 #[async_trait]
@@ -880,6 +1127,94 @@ impl RuntimeTransientEvents for RuntimeStoreFixture {
         self.publish_durable(event).await;
     }
 
+    async fn publish_transient_presentation(
+        &self,
+        thread_id: RuntimeThreadId,
+        binding_id: RuntimeBindingId,
+        stream_generation: RuntimeDriverGeneration,
+        turn_id: Option<RuntimeTurnId>,
+        revision: RuntimeRevision,
+        mut coordinate: RuntimePresentationCoordinate,
+        event: ImmutablePresentationEvent,
+    ) {
+        const ACTIVE_TURN_REPLAY_LIMIT: usize = 512;
+        let mut state = self.state.lock().await;
+        let entries = state
+            .presentation_transient
+            .entry(thread_id.clone())
+            .or_default();
+        if entries
+            .last()
+            .and_then(|record| record.carrier().transient.as_ref())
+            .is_some_and(|current| {
+                current.binding_id != binding_id
+                    || current.stream_generation != stream_generation
+                    || current.turn_id != turn_id
+            })
+        {
+            entries.clear();
+        }
+        let sequence = agentdash_agent_runtime_contract::RuntimeTransientSequence(
+            entries
+                .last()
+                .and_then(|record| record.carrier().transient.as_ref())
+                .map_or(1, |current| current.sequence.0 + 1),
+        );
+        let event_id = agentdash_agent_runtime_contract::RuntimeTransientEventId::new(format!(
+            "{}:{}:{}:{}",
+            binding_id,
+            stream_generation.0,
+            turn_id.as_ref().map_or("thread", |turn| turn.as_str()),
+            sequence.0
+        ))
+        .expect("generated transient presentation id");
+        coordinate.runtime_turn_id = turn_id.clone().or(coordinate.runtime_turn_id);
+        let record = RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: thread_id.clone(),
+                recorded_at_ms: crate::model::current_time_ms(),
+                sequence: None,
+                transient: Some(
+                    agentdash_agent_runtime_contract::RuntimeTransientCoordinate {
+                        binding_id: binding_id.clone(),
+                        stream_generation,
+                        sequence,
+                        event_id,
+                        turn_id,
+                    },
+                ),
+                revision,
+                operation_id: None,
+                append_idempotency_key: None,
+                binding_id: Some(binding_id),
+                coordinate,
+            },
+            RuntimeJournalFact::Presentation(event),
+        )
+        .expect("ephemeral presentation carrier");
+        entries.push(record.clone());
+        if entries.len() > ACTIVE_TURN_REPLAY_LIMIT {
+            entries.remove(0);
+        }
+        drop(state);
+        let mut live = self.presentation_live.lock().await;
+        let sender = live
+            .entry(thread_id)
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0);
+        let _ = sender.send(record);
+    }
+
+    async fn publish_durable_presentation(&self, record: RuntimeJournalRecord) {
+        debug_assert!(record.carrier().sequence.is_some());
+        debug_assert!(record.as_presentation().is_some());
+        let thread_id = record.carrier().thread_id.clone();
+        let mut live = self.presentation_live.lock().await;
+        let sender = live
+            .entry(thread_id)
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0);
+        let _ = sender.send(record);
+    }
+
     async fn publish_durable(&self, event: RuntimeEventEnvelope) {
         let closes_channel = closes_live_channel(&event);
         let thread_id = event.thread_id.clone();
@@ -929,8 +1264,51 @@ impl RuntimeTransientEvents for RuntimeStoreFixture {
             .collect()
     }
 
+    async fn subscribe_presentation(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> tokio::sync::broadcast::Receiver<RuntimeJournalRecord> {
+        self.presentation_live
+            .lock()
+            .await
+            .entry(thread_id.clone())
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0)
+            .subscribe()
+    }
+
+    async fn read_presentation(
+        &self,
+        thread_id: &RuntimeThreadId,
+        stream_generation: Option<RuntimeDriverGeneration>,
+        after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    ) -> Vec<RuntimeJournalRecord> {
+        self.state
+            .lock()
+            .await
+            .presentation_transient
+            .get(thread_id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|record| {
+                record
+                    .carrier()
+                    .transient
+                    .as_ref()
+                    .is_some_and(|coordinate| {
+                        stream_generation
+                            .is_none_or(|generation| coordinate.stream_generation == generation)
+                            && after.is_none_or(|after| coordinate.sequence > after)
+                    })
+            })
+            .collect()
+    }
+
     async fn clear(&self, thread_id: &RuntimeThreadId) {
-        self.state.lock().await.transient.remove(thread_id);
+        let mut state = self.state.lock().await;
+        state.transient.remove(thread_id);
+        state.presentation_transient.remove(thread_id);
+        drop(state);
     }
 }
 

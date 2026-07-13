@@ -9,7 +9,7 @@ use ts_rs::TS;
 use crate::{
     ContextCandidateId, ContextCheckpointId, DriverBindingId, DriverItemId, DriverRequestId,
     DriverThreadId, DriverTurnId, HookPlanDigest, HookPlanRevision, HookPoint, ProfileDigest,
-    RuntimeBindingId, RuntimeCommand, RuntimeEvent, RuntimeProfile, RuntimeServiceInstanceId,
+    RuntimeBindingId, RuntimeCommand, RuntimeJournalFact, RuntimeProfile, RuntimeServiceInstanceId,
     RuntimeTurnId, SurfaceDigest, SurfaceRevision, ToolSetRevision,
 };
 
@@ -77,6 +77,7 @@ pub struct DriverHookApplyStatus {
 #[serde(rename_all = "snake_case")]
 pub struct DriverCommandEnvelope {
     pub request_id: DriverRequestId,
+    pub presentation_thread_id: crate::PresentationThreadId,
     pub binding_id: RuntimeBindingId,
     pub generation: crate::RuntimeDriverGeneration,
     pub source_thread_id: DriverThreadId,
@@ -109,7 +110,15 @@ pub struct DriverEventEnvelope {
     pub source_thread_id: DriverThreadId,
     pub source_turn_id: Option<DriverTurnId>,
     pub source_item_id: Option<DriverItemId>,
-    pub event: RuntimeEvent,
+    /// Original vendor request identity. Numeric JSON-RPC ids use their exact
+    /// decimal representation; string ids are preserved byte-for-byte.
+    pub source_request_id: Option<String>,
+    /// Producer-owned entry order for this source emission. Different entry
+    /// indices must be emitted in different driver envelopes.
+    pub source_entry_index: Option<u32>,
+    /// Ordered facts produced from one source event. Internal state facts and
+    /// immutable presentation facts are committed in this exact order.
+    pub facts: Vec<RuntimeJournalFact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

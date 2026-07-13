@@ -24,10 +24,13 @@ pub struct RuntimeSnapshot {
     pub captured_at_ms: u64,
     pub status: RuntimeThreadStatus,
     pub active_turn_id: Option<RuntimeTurnId>,
+    /// Main-compatible source-session turn identity paired with the canonical active turn.
+    pub active_presentation_turn_id: Option<crate::PresentationTurnId>,
     pub binding_id: RuntimeBindingId,
     pub binding_epoch: BindingEpoch,
     pub profile_digest: ProfileDigest,
     pub bound_profile: RuntimeProfile,
+    pub surface: crate::RuntimeSurfaceDescriptor,
     pub active_checkpoint_id: Option<ContextCheckpointId>,
     pub context_revision: ContextRevision,
     pub settings_revision: ThreadSettingsRevision,
@@ -41,9 +44,12 @@ pub struct RuntimeSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeTranscriptItem {
-    pub turn_id: RuntimeTurnId,
-    pub item_id: crate::RuntimeItemId,
-    pub final_content: crate::RuntimeItemContent,
+    pub source_thread_id: String,
+    pub source_turn_id: String,
+    pub source_item_id: String,
+    /// The complete terminal presentation fact is retained verbatim. Consumers
+    /// must not reconstruct a session event from a narrower transcript shape.
+    pub terminal_event: crate::ImmutablePresentationEvent,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -56,12 +62,13 @@ pub struct RuntimeContextView {
     pub fidelity: ContextFidelity,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct RuntimeOperationView {
     pub operation_id: RuntimeOperationId,
     pub idempotency_key: IdempotencyKey,
     pub actor: RuntimeActor,
+    pub presentation: Vec<crate::RuntimePresentationInput>,
     pub command: RuntimeCommand,
     pub receipt: OperationReceipt,
     pub terminal: Option<RuntimeOperationTerminal>,

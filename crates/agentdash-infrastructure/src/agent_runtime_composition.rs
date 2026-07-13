@@ -4,19 +4,18 @@ use crate::{
     PostgresAgentRuntimeCompositionRepository, PostgresAgentRuntimeContextBroker,
     PostgresAgentRuntimeHostRepository, PostgresRuntimeRepository,
 };
-use agentdash_agent::LlmBridge;
 use agentdash_agent_runtime::{
-    ManagedAgentRuntime, PlatformToolBroker, RuntimeRepository, RuntimeWorkClaim,
-    RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkPayload, RuntimeWorkQueue,
-    RuntimeWorkerId, ToolBrokerCallStatus, ToolBrokerInvocation, ToolBrokerOutcome,
-    ToolCallCoordinates,
+    ManagedAgentRuntime, PlatformToolBroker, RuntimeRepository, RuntimeTransientEvents,
+    RuntimeWorkClaim, RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkPayload,
+    RuntimeWorkQueue, RuntimeWorkerId, ToolBrokerCallStatus, ToolBrokerInvocation,
+    ToolBrokerOutcome, ToolCallCoordinates,
 };
 use agentdash_agent_runtime_contract::{
     AgentRuntimeGateway, BindingEpoch, BoundRuntimeHookPlan, DriverBindIntent,
     DriverCommandEnvelope, DriverError, DriverEventEnvelope, DriverEventSink, DriverRequestId,
     IdempotencyKey, OperationMeta, ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand,
-    RuntimeCommandEnvelope, RuntimeEvent, RuntimeHookPlanBinding, RuntimeOperationId,
-    RuntimeRecoveryIntentId, RuntimeServiceInstanceId, RuntimeThreadId,
+    RuntimeCommandEnvelope, RuntimeEvent, RuntimeHookPlanBinding, RuntimeJournalFact,
+    RuntimeOperationId, RuntimeRecoveryIntentId, RuntimeServiceInstanceId, RuntimeThreadId,
 };
 use agentdash_agent_runtime_host::{
     ActivateAgentServiceInstance, AgentRuntimeHostError, AgentRuntimeHostRepository,
@@ -42,12 +41,14 @@ use agentdash_integration_api::{
     MaterializedDriverSurface, RuntimeDriverHostPorts,
 };
 use agentdash_integration_native_agent::{
-    NativeAgentRuntimeIntegration, NativeAgentServiceConfig, NativeBridgeResolveError,
-    NativeBridgeResolver, NativeCredentialScope, native_runtime_profile,
+    NATIVE_STREAM_USAGE_RESERVE_TOKENS, NativeAgentRuntimeIntegration, NativeAgentServiceConfig,
+    NativeBridgeResolveError, NativeBridgeResolver, NativeCredentialScope,
+    NativePresentationMetadata, ResolvedNativeBridge, native_runtime_profile,
     native_runtime_trust_manifest,
 };
 use agentdash_llm_provider::{
-    ProviderBridgeResolveError, ProviderCredentialScope, resolve_effective_bridge_for_scope,
+    ProviderBridgeResolveError, ProviderCredentialScope,
+    resolve_effective_bridge_with_model_for_scope,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -165,14 +166,14 @@ impl NativeBridgeResolver for RepositoryNativeBridgeResolver {
         &self,
         instance: &ActivatedAgentServiceInstance,
         _host: &RuntimeDriverHostPorts,
-    ) -> Result<Arc<dyn LlmBridge>, NativeBridgeResolveError> {
+    ) -> Result<ResolvedNativeBridge, NativeBridgeResolveError> {
         let config = NativeAgentServiceConfig::from_instance(instance)?;
         let scope = match config.credential_scope {
             NativeCredentialScope::Platform => ProviderCredentialScope::Platform,
             NativeCredentialScope::User { user_id } => ProviderCredentialScope::User { user_id },
         };
 
-        resolve_effective_bridge_for_scope(
+        let resolved = resolve_effective_bridge_with_model_for_scope(
             self.provider_repository.as_ref(),
             Some(self.credential_repository.as_ref()),
             self.secret_codec.as_ref(),
@@ -181,7 +182,14 @@ impl NativeBridgeResolver for RepositoryNativeBridgeResolver {
             Some(&config.model),
         )
         .await
-        .map_err(map_provider_bridge_error)
+        .map_err(map_provider_bridge_error)?;
+        Ok(ResolvedNativeBridge {
+            bridge: resolved.bridge,
+            presentation: NativePresentationMetadata {
+                model_context_window: resolved.model.context_window,
+                reserve_tokens: NATIVE_STREAM_USAGE_RESERVE_TOKENS,
+            },
+        })
     }
 }
 
@@ -210,6 +218,7 @@ fn map_provider_bridge_error(error: ProviderBridgeResolveError) -> NativeBridgeR
 
 #[derive(Debug, Clone)]
 pub struct NativeAgentRunSurfacePlan {
+    pub source_frame_id: String,
     pub executor: String,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -241,6 +250,7 @@ pub trait NativeAgentRunSurfaceCompiler: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct PreparedAgentRunRuntime {
+    pub source_frame_id: String,
     pub service_instance_id: RuntimeServiceInstanceId,
     pub definition_id: AgentServiceDefinitionId,
     pub service_config: serde_json::Value,
@@ -378,6 +388,7 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             }
         })?;
         Ok(PreparedAgentRunRuntime {
+            source_frame_id: plan.source_frame_id,
             service_instance_id,
             definition_id: definition.provenance.definition_id.clone(),
             service_config,
@@ -437,6 +448,25 @@ fn bound_surface_reference(surface: &MaterializedDriverSurface) -> BoundAgentSur
             .iter()
             .map(hook_requirement)
             .collect(),
+    }
+}
+
+fn runtime_surface_descriptor(
+    source_frame_id: String,
+    surface: &MaterializedDriverSurface,
+    hook_plan: BoundRuntimeHookPlan,
+) -> agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
+    agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
+        source_frame_id,
+        surface_revision: surface.revision,
+        surface_digest: surface.digest.clone(),
+        vfs_digest: surface.workspace.digest.clone(),
+        context_recipe_revision: surface.context.recipe.revision,
+        context_digest: surface.context.digest.clone(),
+        settings_revision: surface.context.recipe.provenance.settings_revision,
+        tool_set_revision: surface.tools.revision,
+        tool_set_digest: surface.tools.digest.clone(),
+        hook_plan,
     }
 }
 
@@ -769,6 +799,11 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             }
         };
         let hook_plan = prepared.hook_plan.plan.clone();
+        let surface_descriptor = runtime_surface_descriptor(
+            prepared.source_frame_id.clone(),
+            &prepared.surface,
+            hook_plan,
+        );
         let host_binding = self
             .host
             .bind(BindRuntimeRequest {
@@ -787,9 +822,9 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             )
         })?;
         let settings_revision = prepared.surface.context.recipe.provenance.settings_revision;
-        let tool_set_revision = prepared.surface.tools.revision;
         let binding = AgentRunRuntimeBinding {
             target: request.target.clone(),
+            presentation_thread_id: request.presentation_thread_id.clone(),
             thread_id,
             binding_id,
             binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
@@ -798,10 +833,8 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             profile_digest: offer.profile_digest,
             profile_provenance: offer.effective_profile.provenance,
             bound_profile: offer.effective_profile.profile,
-            surface_digest: prepared.surface.digest,
+            surface: surface_descriptor,
             settings_revision,
-            tool_set_revision,
-            hook_plan,
         };
         self.bindings.insert(binding).await
     }
@@ -984,6 +1017,7 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
         );
         let binding = AgentRunRuntimeBinding {
             target: old.target.clone(),
+            presentation_thread_id: old.presentation_thread_id.clone(),
             thread_id: old.thread_id.clone(),
             binding_id: proposed,
             binding_epoch: epoch,
@@ -992,10 +1026,8 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             profile_digest: offer.profile_digest.clone(),
             profile_provenance: offer.effective_profile.provenance.clone(),
             bound_profile: offer.effective_profile.profile.clone(),
-            surface_digest: old.surface_digest.clone(),
+            surface: old.surface.clone(),
             settings_revision: old.settings_revision,
-            tool_set_revision: old.tool_set_revision,
-            hook_plan: old.hook_plan.clone(),
         };
         self.bindings
             .append_lineage(old, binding.clone(), &intent.id)
@@ -1004,6 +1036,7 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
         if let Err(error) = self
             .gateway
             .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
                 meta: OperationMeta {
                     operation_id: RuntimeOperationId::new(op.clone())
                         .expect("recovery operation id"),
@@ -1375,6 +1408,7 @@ impl RuntimeOutboxWorker {
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id,
+                    presentation_thread_id: entry.presentation_thread_id.clone(),
                     binding_id: entry.binding_id.clone(),
                     generation: entry.generation,
                     source_thread_id: thread.source_thread_id.clone(),
@@ -1415,10 +1449,12 @@ impl RuntimeOutboxWorker {
                         source_thread_id: thread.source_thread_id,
                         source_turn_id: None,
                         source_item_id: None,
-                        event: RuntimeEvent::BindingLost {
+                        source_request_id: Some(entry.operation_id.as_str().to_string()),
+                        source_entry_index: None,
+                        facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::BindingLost {
                             binding_id: entry.binding_id.clone(),
                             reason,
-                        },
+                        })],
                     })
                     .await
                     .map_err(|error| RuntimeOutboxWorkerError::Host(error.to_string()))?;
@@ -1497,7 +1533,9 @@ pub struct AgentRuntimeComposition {
     pub outbox_worker: Arc<RuntimeOutboxWorker>,
     pub durable_workers: Arc<crate::agent_runtime_workers::RuntimeDurableWorkers>,
     pub work_queue: Arc<dyn RuntimeWorkQueue>,
+    pub presentation_events: Arc<dyn RuntimeTransientEvents>,
     pub managed_runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
+    pub surfaces: Arc<dyn AgentRunRuntimeSurfaceStore>,
 }
 
 pub type NativeAgentRuntimeComposition = AgentRuntimeComposition;
@@ -1536,18 +1574,22 @@ pub fn build_agent_runtime_composition(
     ));
     let bindings: Arc<dyn AgentRunRuntimeBindingRepository> = composition_repository.clone();
     let surface_store: Arc<dyn AgentRunRuntimeSurfaceStore> = composition_repository.clone();
-    let runtime = Arc::new(ManagedAgentRuntime::new(runtime_repository.clone()));
+    let runtime = Arc::new(
+        ManagedAgentRuntime::new(runtime_repository.clone())
+            .with_surface_validator(composition_repository.clone()),
+    );
     let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let provisioner: Arc<dyn AgentRunRuntimeProvisioner> =
         Arc::new(HostAgentRunRuntimeProvisioner::new(
             host.clone(),
             host_repository_port,
             bindings.clone(),
-            surface_store,
+            surface_store.clone(),
             input.surface_source,
             gateway.clone(),
         ));
     let work_queue: Arc<dyn RuntimeWorkQueue> = runtime_repository.clone();
+    let presentation_events: Arc<dyn RuntimeTransientEvents> = runtime_repository.clone();
     let outbox_worker = Arc::new(RuntimeOutboxWorker::new(
         runtime_repository.clone(),
         runtime.clone(),
@@ -1570,7 +1612,9 @@ pub fn build_agent_runtime_composition(
         outbox_worker,
         durable_workers,
         work_queue,
+        presentation_events,
         managed_runtime: runtime,
+        surfaces: surface_store,
     })
 }
 
@@ -1735,6 +1779,23 @@ mod tests {
     use futures::stream;
     use sqlx::postgres::PgConnectOptions;
     use uuid::Uuid;
+
+    fn snapshot_contains_agent_message(snapshot: &RuntimeSnapshot, expected: &str) -> bool {
+        snapshot.transcript.iter().any(|entry| {
+            let agentdash_agent_protocol::BackboneEvent::ItemCompleted(completed) =
+                &entry.terminal_event.event
+            else {
+                return false;
+            };
+            let agentdash_agent_protocol::AgentDashThreadItem::Codex(
+                agentdash_agent_protocol::CodexThreadItem::AgentMessage { text, .. },
+            ) = &completed.item
+            else {
+                return false;
+            };
+            text == expected
+        })
+    }
 
     #[test]
     fn outbox_classifies_missing_driver_binding_as_binding_lost() {
@@ -1952,8 +2013,14 @@ mod tests {
             &self,
             _instance: &ActivatedAgentServiceInstance,
             _host: &RuntimeDriverHostPorts,
-        ) -> Result<Arc<dyn LlmBridge>, NativeBridgeResolveError> {
-            Ok(Arc::new(EchoBridge))
+        ) -> Result<ResolvedNativeBridge, NativeBridgeResolveError> {
+            Ok(ResolvedNativeBridge {
+                bridge: Arc::new(EchoBridge),
+                presentation: NativePresentationMetadata {
+                    model_context_window: 200_000,
+                    reserve_tokens: NATIVE_STREAM_USAGE_RESERVE_TOKENS,
+                },
+            })
         }
     }
 
@@ -2003,6 +2070,7 @@ mod tests {
                 }
             })?;
             Ok(PreparedAgentRunRuntime {
+                source_frame_id: "fixture-frame".to_string(),
                 service_instance_id: parsed("codex-tracer-service"),
                 definition_id: self.definition.provenance.definition_id.clone(),
                 service_config: json!({
@@ -2045,6 +2113,7 @@ mod tests {
             _binding_id: &RuntimeBindingId,
         ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
             Ok(NativeAgentRunSurfacePlan {
+                source_frame_id: "fixture-frame".to_string(),
                 executor: "PI_AGENT".to_string(),
                 provider: Some("openai".to_string()),
                 model: Some("gpt-test".to_string()),
@@ -2175,6 +2244,7 @@ mod tests {
                 ],
             },
             workspace: DriverWorkspaceSurface {
+                digest: "workspace-fixture".to_string(),
                 capabilities: Vec::new(),
                 roots: vec!["workspace://project".to_string()],
             },
@@ -2223,6 +2293,48 @@ mod tests {
             .await
             .expect("migrate tracer database");
         (pool, runtime, permit)
+    }
+
+    #[tokio::test]
+    async fn surface_version_migration_supports_clean_and_existing_schema_upgrade() {
+        let (pool, _runtime, _serial) = test_database().await;
+        let definition: String = sqlx::query_scalar(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='agent_runtime_surface_snapshot'::regclass AND contype='p'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read clean surface snapshot primary key");
+        assert!(definition.contains("binding_id"));
+        assert!(definition.contains("surface_revision"));
+        assert!(definition.contains("surface_digest"));
+
+        sqlx::query("ALTER TABLE agent_runtime_surface_snapshot DROP CONSTRAINT agent_runtime_surface_snapshot_pkey, ADD PRIMARY KEY (binding_id)")
+            .execute(&pool)
+            .await
+            .expect("restore pre-0071 surface primary key");
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version=71")
+            .execute(&pool)
+            .await
+            .expect("rewind latest migration marker");
+        crate::migration::run_postgres_migrations(&pool)
+            .await
+            .expect("upgrade pre-0071 surface schema");
+        let upgraded: String = sqlx::query_scalar(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='agent_runtime_surface_snapshot'::regclass AND contype='p'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read upgraded surface snapshot primary key");
+        assert!(upgraded.contains("binding_id"));
+        assert!(upgraded.contains("surface_revision"));
+        assert!(upgraded.contains("surface_digest"));
+        let applied: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM _sqlx_migrations WHERE version=71 AND success",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read 0071 migration history");
+        assert_eq!(applied, 1);
     }
 
     #[tokio::test]
@@ -2286,6 +2398,10 @@ mod tests {
         );
         let request = AgentRunRuntimeProvisionRequest {
             target: AgentRunRuntimeTarget { run_id, agent_id },
+            presentation_thread_id: agentdash_agent_runtime_contract::PresentationThreadId::new(
+                "presentation-production-native",
+            )
+            .expect("presentation thread id"),
             identity: Some(AuthIdentity {
                 auth_mode: AuthMode::Enterprise,
                 user_id: "account-user-1".to_string(),
@@ -2400,12 +2516,23 @@ mod tests {
             .provisioner
             .provision(&AgentRunRuntimeProvisionRequest {
                 target,
+                presentation_thread_id:
+                    agentdash_agent_runtime_contract::PresentationThreadId::new(
+                        "presentation-native-tracer",
+                    )
+                    .expect("presentation thread id"),
                 identity: None,
                 backend_selection: None,
             })
             .await
             .expect("provision Native tracer");
+        assert_ne!(
+            binding.presentation_thread_id.as_str(),
+            binding.thread_id.as_str(),
+            "product presentation identity must remain independent from runtime identity",
+        );
         let command = RuntimeCommandEnvelope {
+            presentation: Vec::new(),
             meta: OperationMeta {
                 operation_id: parsed("native-tracer-start-operation"),
                 idempotency_key: parsed("native-tracer-start-key"),
@@ -2416,6 +2543,7 @@ mod tests {
             },
             command: RuntimeCommand::ThreadStart {
                 thread_id: binding.thread_id.clone(),
+                presentation_thread_id: binding.presentation_thread_id.clone(),
                 binding_id: binding.binding_id.clone(),
                 driver_generation: binding.driver_generation,
                 source_thread_id: binding.source_thread_id.clone(),
@@ -2424,10 +2552,8 @@ mod tests {
                 input: vec![RuntimeInput::Text {
                     text: "hello native tracer".to_string(),
                 }],
-                surface_digest: binding.surface_digest.clone(),
+                surface: Box::new(binding.surface.clone()),
                 settings_revision: binding.settings_revision,
-                tool_set_revision: binding.tool_set_revision,
-                hook_plan: binding.hook_plan.clone(),
             },
         };
         let first = composition
@@ -2443,6 +2569,51 @@ mod tests {
         assert!(!first.duplicate);
         assert!(replay.duplicate);
         assert_eq!(first.operation_id, replay.operation_id);
+        let mut presentation_live = composition
+            .presentation_events
+            .subscribe_presentation(&binding.thread_id)
+            .await;
+        let presentation_delta = tokio::spawn(async move {
+            let mut observed = Vec::new();
+            loop {
+                match presentation_live.recv().await {
+                    Ok(record) => {
+                        let variant = record
+                            .as_presentation()
+                            .map(|event| {
+                                serde_json::to_value(&event.event)
+                                    .expect("serialize observed presentation")["type"]
+                                    .as_str()
+                                    .unwrap_or("<missing-type>")
+                                    .to_string()
+                            })
+                            .unwrap_or_else(|| "<internal>".to_string());
+                        observed.push(format!(
+                            "{variant}:durability={:?}:transient={}",
+                            record.as_presentation().map(|event| event.durability),
+                            record.carrier().transient.is_some()
+                        ));
+                        if record.carrier().transient.is_some()
+                            && matches!(
+                                record.as_presentation(),
+                                Some(event)
+                                    if event.durability == PresentationDurability::Ephemeral
+                                        && matches!(
+                                            &event.event,
+                                            agentdash_agent_protocol::BackboneEvent::AgentMessageDelta(_)
+                                        )
+                            )
+                        {
+                            return (true, observed);
+                        }
+                    }
+                    Err(error) => {
+                        observed.push(format!("recv_error={error:?}"));
+                        return (false, observed);
+                    }
+                }
+            }
+        });
         assert_eq!(
             composition
                 .outbox_worker
@@ -2463,45 +2634,24 @@ mod tests {
             panic!("expected thread snapshot")
         };
         assert_eq!(snapshot.status, RuntimeThreadStatus::Active);
+        assert!(snapshot_contains_agent_message(
+            &snapshot,
+            "native response"
+        ));
+        let (saw_delta, observed_presentation) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), presentation_delta)
+                .await
+                .expect("presentation live task timeout")
+                .expect("presentation live task");
         assert!(
-            snapshot
-                .transcript
-                .iter()
-                .any(|item| { item.final_content.agent_message_text() == Some("native response") })
+            saw_delta,
+            "Native delta must be live ephemeral presentation; observed={observed_presentation:?}"
         );
-        let mut events = composition
-            .gateway
-            .events(RuntimeEventSubscription {
-                thread_id: snapshot.thread_id.clone(),
-                after: None,
-                include_transient: true,
-                transient_after: None,
-                stream_generation: None,
-            })
-            .await
-            .expect("canonical event stream");
-        let mut saw_delta = false;
-        for _ in 0..32 {
-            let Some(event) =
-                tokio::time::timeout(std::time::Duration::from_secs(1), events.next())
-                    .await
-                    .expect("event stream timeout")
-            else {
-                break;
-            };
-            if matches!(
-                event.expect("canonical event").event,
-                RuntimeEvent::ConversationDelta { .. }
-            ) {
-                saw_delta = true;
-                break;
-            }
-        }
-        assert!(saw_delta);
 
         composition
             .gateway
             .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
                 meta: OperationMeta {
                     operation_id: parsed("native-tracer-compaction-operation"),
                     idempotency_key: parsed("native-tracer-compaction-key"),
@@ -2786,24 +2936,27 @@ mod tests {
             r#"const readline = require('readline');
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 const send = value => { console.error('codex-tracer-send', value.method || 'response', value.id || 'notification'); process.stdout.write(JSON.stringify(value) + '\n'); };
+const threadId = 'codex-source-thread-1';
 const turnId = 'codex-source-turn-1';
+const activeTurn = { id: turnId, items: [], itemsView: 'full', status: 'inProgress' };
 rl.on('line', line => {
   const message = JSON.parse(line);
   console.error('codex-tracer-recv', message.method || 'response', message.id || 'notification');
   if (message.method === 'initialize') send({ id: message.id, result: { capabilities: {} } });
-  else if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'codex-source-thread-1' } } });
+  else if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: threadId } } });
+  else if (message.method === 'thread/resume') send({ id: message.id, result: { thread: { id: threadId } } });
   else if (message.method === 'turn/start') {
-    send({ id: message.id, result: { turn: { id: turnId } } });
+    send({ id: message.id, result: { turn: activeTurn } });
     setTimeout(() => {
-      send({ method: 'turn/started', params: { turn: { id: turnId } } });
-      send({ method: 'item/started', params: { turnId, item: { id: 'codex-item-1', type: 'agentMessage', text: '' } } });
-      send({ method: 'item/agentMessage/delta', params: { turnId, itemId: 'codex-item-1', delta: 'codex ' } });
-      send({ id: 700, method: 'item/commandExecution/requestApproval', params: { turnId, itemId: 'codex-item-1', reason: 'approve tracer command' } });
+      send({ method: 'turn/started', params: { threadId, turn: activeTurn } });
+      send({ method: 'item/started', params: { threadId, turnId, item: { id: 'codex-item-1', type: 'agentMessage', text: '', phase: null, memoryCitation: null }, startedAtMs: 1000 } });
+      send({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId: 'codex-item-1', delta: 'codex ' } });
+      send({ id: 700, method: 'item/permissions/requestApproval', params: { threadId, turnId, itemId: 'codex-item-1', cwd: process.cwd(), permissions: {}, reason: 'approve tracer access', startedAtMs: 1 } });
     }, 10);
   } else if (message.id === 700 && !message.method) {
-    send({ method: 'item/agentMessage/delta', params: { turnId, itemId: 'codex-item-1', delta: 'response' } });
-    send({ method: 'item/completed', params: { turnId, item: { id: 'codex-item-1', type: 'agentMessage', status: 'completed', text: 'codex response' } } });
-    send({ method: 'turn/completed', params: { turn: { id: turnId, status: 'completed' } } });
+    send({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId: 'codex-item-1', delta: 'response' } });
+    send({ method: 'item/completed', params: { threadId, turnId, item: { id: 'codex-item-1', type: 'agentMessage', text: 'codex response', phase: null, memoryCitation: null }, completedAtMs: 2000 } });
+    send({ method: 'turn/completed', params: { threadId, turn: { ...activeTurn, status: 'completed', completedAt: 2, durationMs: 1000 } } });
   }
 });
 "#,
@@ -2850,12 +3003,23 @@ rl.on('line', line => {
             .provisioner
             .provision(&AgentRunRuntimeProvisionRequest {
                 target,
+                presentation_thread_id:
+                    agentdash_agent_runtime_contract::PresentationThreadId::new(
+                        "presentation-codex-tracer",
+                    )
+                    .expect("presentation thread id"),
                 identity: None,
                 backend_selection: None,
             })
             .await
             .expect("provision Codex binding");
+        assert_ne!(
+            binding.presentation_thread_id.as_str(),
+            binding.thread_id.as_str(),
+            "product presentation identity must remain independent from runtime identity",
+        );
         let start = RuntimeCommandEnvelope {
+            presentation: Vec::new(),
             meta: OperationMeta {
                 operation_id: parsed("codex-tracer-start-operation"),
                 idempotency_key: parsed("codex-tracer-start-key"),
@@ -2866,6 +3030,7 @@ rl.on('line', line => {
             },
             command: RuntimeCommand::ThreadStart {
                 thread_id: binding.thread_id.clone(),
+                presentation_thread_id: binding.presentation_thread_id.clone(),
                 binding_id: binding.binding_id.clone(),
                 driver_generation: binding.driver_generation,
                 source_thread_id: binding.source_thread_id.clone(),
@@ -2874,10 +3039,8 @@ rl.on('line', line => {
                 input: vec![RuntimeInput::Text {
                     text: "hello codex tracer".to_string(),
                 }],
-                surface_digest: binding.surface_digest.clone(),
+                surface: Box::new(binding.surface.clone()),
                 settings_revision: binding.settings_revision,
-                tool_set_revision: binding.tool_set_revision,
-                hook_plan: binding.hook_plan.clone(),
             },
         };
         assert!(
@@ -2937,12 +3100,26 @@ rl.on('line', line => {
                     })
                     .await
                     .expect("Codex diagnostic snapshot");
-                panic!("Codex interaction timeout; snapshot={snapshot:?}")
+                let events: Vec<serde_json::Value> = sqlx::query_scalar(
+                    "SELECT record FROM agent_runtime_event ORDER BY event_sequence",
+                )
+                .fetch_all(&pool)
+                .await
+                .expect("load Codex runtime event diagnostics");
+                let quarantine: Vec<serde_json::Value> =
+                    sqlx::query_scalar("SELECT record FROM agent_runtime_quarantine ORDER BY id")
+                        .fetch_all(&pool)
+                        .await
+                        .expect("load Codex quarantine diagnostics");
+                panic!(
+                    "Codex interaction timeout; snapshot={snapshot:?}; events={events:?}; quarantine={quarantine:?}"
+                )
             }
         };
         composition
             .gateway
             .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
                 meta: OperationMeta {
                     operation_id: parsed("codex-tracer-interaction-operation"),
                     idempotency_key: parsed("codex-tracer-interaction-key"),
@@ -2982,10 +3159,9 @@ rl.on('line', line => {
                 else {
                     panic!("expected Codex thread snapshot")
                 };
-                if snapshot.pending_interactions.is_empty()
-                    && snapshot.transcript.iter().any(|item| {
-                        item.final_content.agent_message_text() == Some("codex response")
-                    })
+                if snapshot.active_turn_id.is_none()
+                    && snapshot.pending_interactions.is_empty()
+                    && snapshot_contains_agent_message(&snapshot, "codex response")
                 {
                     break snapshot;
                 }
@@ -3004,19 +3180,127 @@ rl.on('line', line => {
                     })
                     .await
                     .expect("Codex terminal diagnostic snapshot");
-                let events: Vec<serde_json::Value> = sqlx::query_scalar(
-                    "SELECT envelope FROM agent_runtime_event WHERE thread_id=$1 ORDER BY event_sequence",
+                let records: Vec<serde_json::Value> = sqlx::query_scalar(
+                    "SELECT record FROM agent_runtime_event WHERE thread_id=$1 ORDER BY event_sequence",
                 )
                 .bind(binding.thread_id.as_str())
                 .fetch_all(&pool)
                 .await
                 .expect("Codex diagnostic events");
-                panic!("Codex terminal snapshot timeout; snapshot={snapshot:?}; events={events:?}")
+                panic!(
+                    "Codex terminal snapshot timeout; snapshot={snapshot:?}; records={records:?}"
+                )
             }
         };
         let serialized = serde_json::to_string(&final_snapshot).expect("snapshot serializes");
         assert!(!serialized.contains("item/agentMessage/delta"));
         assert!(!serialized.contains("turn/completed"));
+
+        let original_surface = composition
+            .surfaces
+            .load_surface(&binding.binding_id)
+            .await
+            .expect("load original Codex surface")
+            .expect("original Codex surface exists");
+        let mut adopted = original_surface.clone();
+        adopted.revision = SurfaceRevision(adopted.revision.0 + 1);
+        adopted.digest = parsed("sha256:codex-tracer-surface-adopted");
+        adopted.workspace.digest = "sha256:codex-tracer-workspace-adopted".to_string();
+        adopted.context.recipe.revision = ContextRecipeRevision(
+            adopted.context.recipe.revision.0 + 1,
+        );
+        adopted.context.digest = parsed("sha256:codex-tracer-context-adopted");
+        adopted.tools.revision = ToolSetRevision(adopted.tools.revision.0 + 1);
+        adopted.tools.digest = "sha256:codex-tracer-tools-adopted".to_string();
+        adopted.hooks.revision = HookPlanRevision(adopted.hooks.revision.0 + 1);
+        adopted.hooks.digest = parsed("sha256:codex-tracer-hooks-adopted");
+        composition
+            .surfaces
+            .put_surface(&binding.binding_id, &adopted)
+            .await
+            .expect("persist adopted Codex surface version");
+        let broker = PostgresAgentRuntimeCompositionRepository::new(pool.clone());
+        let retained = agentdash_integration_api::AgentRuntimeSurfaceBroker::materialize(
+            &broker,
+            DriverSurfaceRequest {
+                binding_id: binding.binding_id.clone(),
+                surface_revision: original_surface.revision,
+                surface_digest: original_surface.digest.clone(),
+            },
+        )
+        .await
+        .expect("old surface version remains readable for in-flight outbox");
+        assert_eq!(retained, original_surface);
+        let target_surface = runtime_surface_descriptor(
+            "codex-tracer-frame-adopted".to_string(),
+            &adopted,
+            BoundRuntimeHookPlan {
+                revision: adopted.hooks.revision,
+                digest: adopted.hooks.digest.clone(),
+                entries: Vec::new(),
+            },
+        );
+        let RuntimeSnapshotResult::Thread { snapshot: adoption_base } = composition
+            .gateway
+            .snapshot(RuntimeSnapshotQuery::Thread {
+                thread_id: binding.thread_id.clone(),
+                at_revision: None,
+            })
+            .await
+            .expect("load immediate pre-adoption Runtime snapshot")
+        else {
+            panic!("expected pre-adoption Runtime thread snapshot")
+        };
+        composition
+            .gateway
+            .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
+                meta: OperationMeta {
+                    operation_id: parsed("codex-tracer-surface-adopt-operation"),
+                    idempotency_key: parsed("codex-tracer-surface-adopt-key"),
+                    expected_thread_revision: Some(adoption_base.revision),
+                    actor: RuntimeActor::System {
+                        component: "codex-production-tracer".to_string(),
+                    },
+                },
+                command: RuntimeCommand::SurfaceAdopt {
+                    thread_id: binding.thread_id.clone(),
+                    expected_surface_revision: adoption_base.surface.surface_revision,
+                    expected_surface_digest: adoption_base.surface.surface_digest.clone(),
+                    target: Box::new(target_surface.clone()),
+                },
+            })
+            .await
+            .expect("accept Codex full surface adoption");
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                composition.outbox_worker.run_once(8),
+            )
+            .await
+            .expect("Codex SurfaceAdopt dispatch timeout")
+            .expect("dispatch Codex SurfaceAdopt"),
+            1
+        );
+        let adopted_binding = composition
+            .host
+            .binding(&binding.binding_id)
+            .await
+            .expect("load adopted Host binding");
+        assert_eq!(adopted_binding.bound_surface.revision, adopted.revision);
+        assert_eq!(adopted_binding.bound_surface.digest, adopted.digest);
+        let RuntimeSnapshotResult::Thread { snapshot } = composition
+            .gateway
+            .snapshot(RuntimeSnapshotQuery::Thread {
+                thread_id: binding.thread_id,
+                at_revision: None,
+            })
+            .await
+            .expect("load adopted Runtime snapshot")
+        else {
+            panic!("expected adopted Runtime thread snapshot")
+        };
+        assert_eq!(snapshot.surface, target_surface);
     }
 
     #[tokio::test]
@@ -3046,6 +3330,10 @@ rl.on('line', line => {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
             },
+            presentation_thread_id: agentdash_agent_runtime_contract::PresentationThreadId::new(
+                "presentation-account",
+            )
+            .expect("presentation thread id"),
             identity: Some(AuthIdentity {
                 auth_mode: AuthMode::Enterprise,
                 user_id: "account-user-1".to_string(),

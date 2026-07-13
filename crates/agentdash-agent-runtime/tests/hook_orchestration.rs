@@ -3,6 +3,9 @@ use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 use agentdash_agent_runtime::*;
 use agentdash_agent_runtime_contract::*;
 
+mod support;
+use support::TestTerminalPresentationProjector;
+
 fn id<T: FromStr>(value: &str) -> T
 where
     T::Err: std::fmt::Debug,
@@ -52,13 +55,15 @@ fn fixture() -> (
     ManagedAgentRuntime<RuntimeStoreFixture>,
 ) {
     let store = Arc::new(RuntimeStoreFixture::default());
-    let runtime = ManagedAgentRuntime::new(store.clone());
+    let runtime =
+        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
     (store, runtime)
 }
 
 async fn start(runtime: &ManagedAgentRuntime<RuntimeStoreFixture>) -> RuntimeThreadId {
     runtime
         .execute(RuntimeCommandEnvelope {
+            presentation: Vec::new(),
             meta: OperationMeta {
                 operation_id: id("operation-start"),
                 idempotency_key: id("key-start"),
@@ -69,20 +74,32 @@ async fn start(runtime: &ManagedAgentRuntime<RuntimeStoreFixture>) -> RuntimeThr
             },
             command: RuntimeCommand::ThreadStart {
                 thread_id: id("thread-source-hook"),
+                presentation_thread_id: id("presentation-thread-hook"),
+                presentation_turn_id: None,
                 binding_id: id("binding-hook"),
                 driver_generation: RuntimeDriverGeneration(1),
                 source_thread_id: id("source-hook"),
                 profile_digest: id("profile-hook"),
                 bound_profile: Box::new(profile()),
                 input: Vec::new(),
-                surface_digest: id("surface-hook"),
+                surface: Box::new(RuntimeSurfaceDescriptor {
+                    source_frame_id: "frame-hook".to_string(),
+                    surface_revision: SurfaceRevision(1),
+                    surface_digest: id("surface-hook"),
+                    vfs_digest: "vfs-hook".to_string(),
+                    context_recipe_revision: ContextRecipeRevision(1),
+                    context_digest: id("context-hook"),
+                    settings_revision: ThreadSettingsRevision(0),
+                    tool_set_revision: ToolSetRevision(0),
+                    tool_set_digest: "tools-hook".to_string(),
+                    hook_plan: BoundRuntimeHookPlan {
+                        revision: HookPlanRevision(1),
+                        digest: id("hook-plan-empty-1"),
+                        entries: Vec::new(),
+                    },
+                    terminal_hook_effect_binding: None,
+                }),
                 settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(0),
-                hook_plan: BoundRuntimeHookPlan {
-                    revision: HookPlanRevision(1),
-                    digest: id("hook-plan-empty-1"),
-                    entries: Vec::new(),
-                },
             },
         })
         .await

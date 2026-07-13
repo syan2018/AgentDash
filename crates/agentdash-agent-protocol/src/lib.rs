@@ -14,7 +14,8 @@ pub use backbone::platform::{
     ControlPlaneProjection, ControlPlaneProjectionChangeReason, ControlPlaneProjectionChanged,
     ControlPlaneWorkspaceModulePresentation, HookTraceCompletion, HookTraceData,
     HookTraceDiagnostic, HookTraceInjection, HookTracePayload, HookTraceSeverity, HookTraceTrigger,
-    PlatformEvent,
+    PlatformEvent, ProviderAttemptPhase, ProviderAttemptStatus, RuntimeTerminalDiagnostic,
+    SessionRewindReason, SessionRewound,
 };
 pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
@@ -33,13 +34,21 @@ pub mod codex_app_server_protocol {
     pub use crate::generated::codex_v2::file_change_request_approval_params::FileChangeRequestApprovalParams;
     pub use crate::generated::codex_v2::permissions_request_approval_params::PermissionsRequestApprovalParams;
     pub use crate::generated::codex_v2::server_notification::{
-        AgentMessageDeltaNotification, CommandExecutionOutputDeltaNotification, ErrorNotification,
-        FileChangeOutputDeltaNotification, ItemCompletedNotification, ItemStartedNotification,
-        McpToolCallProgressNotification, PlanDeltaNotification,
+        AgentMessageDeltaNotification, CommandExecutionOutputDeltaNotification,
+        ConfigWarningNotification, ContextCompactedNotification, DeprecationNoticeNotification,
+        ErrorNotification, FileChangeOutputDeltaNotification, FileChangePatchUpdatedNotification,
+        GuardianWarningNotification, ItemCompletedNotification,
+        ItemGuardianApprovalReviewCompletedNotification,
+        ItemGuardianApprovalReviewStartedNotification, ItemStartedNotification,
+        McpToolCallProgressNotification, ModelReroutedNotification,
+        ModelSafetyBufferingUpdatedNotification, ModelVerificationNotification,
+        PlanDeltaNotification, ReasoningSummaryPartAddedNotification,
         ReasoningSummaryTextDeltaNotification, ReasoningTextDeltaNotification, RequestId,
-        ThreadTokenUsage, ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown, Turn,
-        TurnDiffUpdatedNotification, TurnError, TurnPlanStep, TurnPlanStepStatus,
-        TurnPlanUpdatedNotification, TurnStatus,
+        ServerRequestResolvedNotification, TerminalInteractionNotification,
+        ThreadStatusChangedNotification, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification,
+        TokenUsageBreakdown, Turn, TurnCompletedNotification, TurnDiffUpdatedNotification,
+        TurnError, TurnModerationMetadataNotification, TurnPlanStep, TurnPlanStepStatus,
+        TurnPlanUpdatedNotification, TurnStartedNotification, TurnStatus, WarningNotification,
     };
     pub use crate::generated::codex_v2::thread_item::*;
     pub use crate::generated::codex_v2::tool_request_user_input_params::ToolRequestUserInputParams;
@@ -90,6 +99,7 @@ mod tests {
                 frame_id: Some("frame-1".to_string()),
                 gate_id: Some("gate-1".to_string()),
                 mailbox_message_id: Some("mailbox-1".to_string()),
+                delivery_runtime_session_id: None,
                 workspace_module_presentation: None,
             }),
         ));
@@ -105,5 +115,34 @@ mod tests {
         assert_eq!(value["payload"]["data"]["frame_id"], "frame-1");
         assert_eq!(value["payload"]["data"]["gate_id"], "gate-1");
         assert_eq!(value["payload"]["data"]["mailbox_message_id"], "mailbox-1");
+    }
+
+    #[test]
+    fn backbone_json_schema_support_does_not_change_serde_shape() {
+        let fixture = serde_json::json!({
+            "type": "item_completed",
+            "payload": {
+                "item": {
+                    "type": "dynamicToolCall",
+                    "id": "item-1",
+                    "namespace": null,
+                    "tool": "fixture",
+                    "arguments": { "nullable": null },
+                    "status": "completed",
+                    "contentItems": null,
+                    "success": true,
+                    "durationMs": null
+                },
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "completedAtMs": 123_i64
+            }
+        });
+        let event: BackboneEvent =
+            serde_json::from_value(fixture.clone()).expect("deserialize backbone fixture");
+        assert_eq!(
+            serde_json::to_value(event).expect("serialize backbone fixture"),
+            fixture
+        );
     }
 }

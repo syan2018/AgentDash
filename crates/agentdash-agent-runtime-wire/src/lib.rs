@@ -4,8 +4,8 @@ use agentdash_agent_runtime_contract::{
     DriverBindRequest, DriverBinding, DriverCommandEnvelope, DriverDescribeRequest,
     DriverDispatchReceipt, DriverError, DriverEventEnvelope, DriverInspection,
     DriverInspectionQuery, OperationReceipt, RuntimeCommandEnvelope, RuntimeDescriptor,
-    RuntimeEventEnvelope, RuntimeEventSubscription, RuntimeExecuteError, RuntimeSnapshot,
-    RuntimeSnapshotError, RuntimeSnapshotQuery, RuntimeSubscribeError,
+    RuntimeEventEnvelope, RuntimeEventSubscription, RuntimeExecuteError, RuntimeJournalRecord,
+    RuntimeSnapshot, RuntimeSnapshotError, RuntimeSnapshotQuery, RuntimeSubscribeError,
 };
 use agentdash_integration_api::{
     DriverCompactionActivationRequest, DriverContextActivation, DriverContextCheckpointRequest,
@@ -147,6 +147,9 @@ driver_result!(RuntimeWireDriverInspectResult, DriverInspection);
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum RuntimeWireNotification {
+    JournalFact(RuntimeJournalRecord),
+    /// Runtime-only state/audit events. Session presentation consumers must use
+    /// `journal_fact` and filter for `RuntimeJournalFact::Presentation`.
     RuntimeEvent(RuntimeEventEnvelope),
     DriverEvent(DriverEventEnvelope),
     Heartbeat {
@@ -300,5 +303,16 @@ mod tests {
         let schema = schemars::schema_for!(RuntimeWireEnvelope);
         let schema = serde_json::to_value(schema).expect("serialize Runtime Wire schema");
         assert!(schema.to_string().contains("request_frame_id"));
+    }
+
+    #[test]
+    fn journal_fact_wire_schema_keeps_the_typed_backbone_union() {
+        let schema = schemars::schema_for!(RuntimeWireEnvelope);
+        let schema = serde_json::to_value(schema).expect("serialize Runtime Wire schema");
+        let schema = schema.to_string();
+        assert!(schema.contains("journal_fact"));
+        assert!(schema.contains("BackboneEvent"));
+        assert!(schema.contains("item_completed"));
+        assert!(schema.contains("platform"));
     }
 }

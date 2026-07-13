@@ -22,6 +22,59 @@ where
     value.parse().expect("valid test id")
 }
 
+struct TestTerminalPresentationProjector;
+
+impl RuntimeApplicationPresentationProjector for TestTerminalPresentationProjector {
+    fn project_terminal(
+        &self,
+        context: RuntimeTerminalPresentationContext,
+    ) -> Result<Vec<RuntimePresentationInput>, RuntimeApplicationPresentationProjectionError> {
+        let terminal_type = match context.terminal {
+            RuntimeTurnTerminal::Completed => "turn_completed",
+            RuntimeTurnTerminal::Interrupted => "turn_interrupted",
+            RuntimeTurnTerminal::Lost => "turn_lost",
+            RuntimeTurnTerminal::Refused
+            | RuntimeTurnTerminal::LimitReached
+            | RuntimeTurnTerminal::Failed => "turn_failed",
+        };
+        Ok(vec![RuntimePresentationInput {
+            coordinate: RuntimePresentationCoordinate {
+                runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                runtime_item_id: None,
+                interaction_id: None,
+                source_thread_id: Some(context.presentation_thread_id.to_string()),
+                source_turn_id: Some(context.presentation_turn_id.to_string()),
+                source_item_id: None,
+                source_request_id: Some(format!(
+                    "test-turn-terminal:{}:{terminal_type}",
+                    context.runtime_turn_id
+                )),
+                source_entry_index: None,
+            },
+            event: ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                serde_json::from_value(json!({
+                    "type": "platform",
+                    "payload": {
+                        "kind": "session_meta_update",
+                        "data": {
+                            "key": "turn_terminal",
+                            "value": {
+                                "terminal_type": terminal_type,
+                                "message": context.message,
+                                "diagnostic": context.diagnostic,
+                                "started_at_ms": context.started_at_ms,
+                                "completed_at_ms": context.completed_at_ms
+                            }
+                        }
+                    }
+                }))
+                .expect("终态 presentation 必须满足协议"),
+            ),
+        }])
+    }
+}
+
 #[tokio::test]
 async fn coordinate_index_failure_degrades_host_without_replaying_committed_runtime_event() {
     let fixture = fixture().await;
@@ -39,9 +92,13 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
         .expect("bind");
     let source_thread_id = binding.source_thread_id.clone().expect("source thread");
     let runtime_store = Arc::new(RuntimeStoreFixture::default());
-    let runtime = Arc::new(ManagedAgentRuntime::new(runtime_store.clone()));
+    let runtime = Arc::new(ManagedAgentRuntime::new(
+        runtime_store.clone(),
+        Arc::new(TestTerminalPresentationProjector),
+    ));
     runtime
         .execute(RuntimeCommandEnvelope {
+            presentation: Vec::new(),
             meta: OperationMeta {
                 operation_id: id("runtime-coordinate-thread-start"),
                 idempotency_key: id("runtime-coordinate-thread-start-key"),
@@ -52,26 +109,39 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             },
             command: RuntimeCommand::ThreadStart {
                 thread_id: binding.thread_id.clone(),
+                presentation_thread_id: id("presentation-coordinate-health"),
+                presentation_turn_id: None,
                 binding_id: binding.id.clone(),
                 driver_generation: binding.driver_generation,
                 source_thread_id: source_thread_id.clone(),
                 profile_digest: binding.profile_digest.clone(),
                 bound_profile: Box::new(fixture.full_profile.clone()),
                 input: Vec::new(),
-                surface_digest: binding.bound_surface.digest.clone(),
+                surface: Box::new(RuntimeSurfaceDescriptor {
+                    source_frame_id: "host-coordinate-frame".to_string(),
+                    surface_revision: binding.bound_surface.revision,
+                    surface_digest: binding.bound_surface.digest.clone(),
+                    vfs_digest: "sha256:host-coordinate-vfs".to_string(),
+                    context_recipe_revision: ContextRecipeRevision(1),
+                    context_digest: id("sha256:host-coordinate-context"),
+                    settings_revision: ThreadSettingsRevision(0),
+                    tool_set_revision: binding.bound_surface.tool_set_revision,
+                    tool_set_digest: binding.bound_surface.tool_set_digest.clone(),
+                    hook_plan: BoundRuntimeHookPlan {
+                        revision: HookPlanRevision(1),
+                        digest: id("runtime-coordinate-hook-plan"),
+                        entries: Vec::new(),
+                    },
+                    terminal_hook_effect_binding: None,
+                }),
                 settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: binding.bound_surface.tool_set_revision,
-                hook_plan: BoundRuntimeHookPlan {
-                    revision: HookPlanRevision(1),
-                    digest: id("runtime-coordinate-hook-plan"),
-                    entries: Vec::new(),
-                },
             },
         })
         .await
         .expect("runtime thread start");
     runtime
         .execute(RuntimeCommandEnvelope {
+            presentation: Vec::new(),
             meta: OperationMeta {
                 operation_id: id("runtime-coordinate"),
                 idempotency_key: id("runtime-coordinate-key"),
@@ -82,6 +152,7 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             },
             command: RuntimeCommand::TurnStart {
                 thread_id: binding.thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-coordinate-health"),
                 input: Vec::new(),
             },
         })
@@ -94,14 +165,16 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             source_thread_id: source_thread_id.clone(),
             source_turn_id: Some(id("source-turn-coordinate")),
             source_item_id: Some(id("source-item-collision")),
-            event: RuntimeEvent::ItemStarted {
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::ItemStarted {
                 turn_id: id("turn-runtime-coordinate"),
                 item_id: id("runtime-item-coordinate-a"),
                 initial_content: RuntimeItemContent::agent_message(
                     "runtime-item-coordinate-a",
                     "first",
                 ),
-            },
+            })],
         },
         DriverEventEnvelope {
             binding_id: binding.id.clone(),
@@ -109,14 +182,16 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             source_thread_id: source_thread_id.clone(),
             source_turn_id: Some(id("source-turn-coordinate")),
             source_item_id: Some(id("source-item-collision")),
-            event: RuntimeEvent::ItemStarted {
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::ItemStarted {
                 turn_id: id("turn-runtime-coordinate"),
                 item_id: id("runtime-item-coordinate-b"),
                 initial_content: RuntimeItemContent::agent_message(
                     "runtime-item-coordinate-b",
                     "second",
                 ),
-            },
+            })],
         },
     ];
     let lease = fixture
@@ -131,12 +206,14 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
     let command = RouteDriverCommand {
         envelope: DriverCommandEnvelope {
             request_id: id("request-coordinate-health"),
+            presentation_thread_id: id("presentation-coordinate-health"),
             binding_id: binding.id.clone(),
             generation: binding.driver_generation,
             source_thread_id,
             runtime_turn_id: Some(id("turn-coordinate-health")),
             command: RuntimeCommand::TurnStart {
                 thread_id: binding.thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-coordinate-health"),
                 input: Vec::new(),
             },
         },
@@ -184,8 +261,9 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
         operation.terminal,
         Some(RuntimeOperationTerminal::Lost { .. })
     ));
+    let expected_operation_id = id("runtime-coordinate");
     let events = runtime_store
-        .events_after(&binding.thread_id, None)
+        .internal_events_after(&binding.thread_id, None)
         .await
         .expect("runtime events")
         .events;
@@ -195,7 +273,7 @@ async fn coordinate_index_failure_degrades_host_without_replaying_committed_runt
             .filter(|event| matches!(
                 &event.event,
                 RuntimeEvent::OperationTerminal { operation_id, .. }
-                    if operation_id == &id("runtime-coordinate")
+                    if operation_id == &expected_operation_id
             ))
             .count(),
         1
@@ -425,6 +503,7 @@ struct TestDriver {
     dispatch_count: AtomicUsize,
     emit_barrier: Mutex<Option<(Arc<Notify>, Arc<Notify>)>>,
     extra_events: Mutex<Vec<DriverEventEnvelope>>,
+    captured_sink: Mutex<Option<Arc<dyn DriverEventSink>>>,
     mismatch_resume_source: AtomicBool,
 }
 
@@ -467,6 +546,7 @@ impl AgentRuntimeDriver for TestDriver {
         sink: Arc<dyn DriverEventSink>,
     ) -> Result<DriverDispatchReceipt, DriverError> {
         self.dispatch_count.fetch_add(1, Ordering::SeqCst);
+        *self.captured_sink.lock().await = Some(sink.clone());
         if let Some((started, proceed)) = self.emit_barrier.lock().await.clone() {
             started.notify_one();
             proceed.notified().await;
@@ -477,9 +557,13 @@ impl AgentRuntimeDriver for TestDriver {
             source_thread_id: command.source_thread_id.clone(),
             source_turn_id: None,
             source_item_id: None,
-            event: RuntimeEvent::BindingEstablished {
-                binding_id: command.binding_id.clone(),
-            },
+            source_request_id: Some(command.request_id.as_str().to_string()),
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(
+                RuntimeEvent::BindingEstablished {
+                    binding_id: command.binding_id.clone(),
+                },
+            )],
         })
         .await?;
         for mut event in self.extra_events.lock().await.clone() {
@@ -492,6 +576,7 @@ impl AgentRuntimeDriver for TestDriver {
             request_id: command.request_id,
             duplicate: false,
             applied_tool_set: None,
+            applied_surface: None,
         })
     }
 
@@ -608,6 +693,7 @@ async fn fixture_with_broker_and_probe(
         dispatch_count: AtomicUsize::new(0),
         emit_barrier: Mutex::new(None),
         extra_events: Mutex::new(Vec::new()),
+        captured_sink: Mutex::new(None),
         mismatch_resume_source: AtomicBool::new(false),
     });
     let factory = Arc::new(TestFactory {
@@ -932,12 +1018,14 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
         .expect("lease");
     let envelope = DriverCommandEnvelope {
         request_id: id("request-1"),
+        presentation_thread_id: id("presentation-thread-1"),
         binding_id: binding.id.clone(),
         generation: binding.driver_generation,
         source_thread_id: binding.source_thread_id.clone().expect("source"),
         runtime_turn_id: Some(id("turn-1")),
         command: RuntimeCommand::TurnStart {
             thread_id: binding.thread_id.clone(),
+            presentation_turn_id: id("presentation-turn-1"),
             input: vec![],
         },
     };
@@ -1015,7 +1103,7 @@ async fn required_hook_must_be_acknowledged_before_dispatch() {
 }
 
 #[tokio::test]
-async fn event_sink_revalidates_lease_after_takeover() {
+async fn event_sink_does_not_confuse_dispatch_lease_takeover_with_driver_replacement() {
     let fixture = fixture().await;
     let offer = activate(&fixture).await;
     let binding = fixture
@@ -1051,12 +1139,14 @@ async fn event_sink_revalidates_lease_after_takeover() {
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id: id("request-event-fence"),
+                    presentation_thread_id: id("presentation-event-fence"),
                     binding_id: dispatch_binding_id,
                     generation,
                     source_thread_id: binding.source_thread_id.expect("source"),
                     runtime_turn_id: Some(id("turn-event-fence")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id,
+                        presentation_turn_id: id("presentation-turn-event-fence"),
                         input: vec![],
                     },
                 },
@@ -1080,15 +1170,188 @@ async fn event_sink_revalidates_lease_after_takeover() {
         .await
         .expect("take over expired lease");
     proceed.notify_one();
-    let error = dispatch
+    dispatch
         .await
         .expect("dispatch task")
-        .expect_err("old event producer is fenced after takeover");
+        .expect("same binding identity remains the current driver producer");
+    assert_eq!(sink.0.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn persistent_event_sink_accepts_notifications_after_dispatch_lease_release() {
+    let fixture = fixture().await;
+    let offer = activate(&fixture).await;
+    let binding = fixture
+        .host
+        .bind(BindRuntimeRequest {
+            binding_id: id("binding-persistent-event"),
+            thread_id: id("thread-persistent-event"),
+            offer_id: offer.id,
+            bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Start,
+        })
+        .await
+        .expect("bind");
+    let source_thread_id = binding.source_thread_id.clone().expect("source");
+    let lease = fixture
+        .host
+        .acquire_driver_lease(&binding.id)
+        .await
+        .expect("lease");
+    let sink = Arc::new(RecordingSink(AtomicUsize::new(0)));
+    fixture
+        .host
+        .dispatch(
+            RouteDriverCommand {
+                envelope: DriverCommandEnvelope {
+                    request_id: id("request-persistent-event"),
+                    presentation_thread_id: id("presentation-persistent-event"),
+                    binding_id: binding.id.clone(),
+                    generation: binding.driver_generation,
+                    source_thread_id: source_thread_id.clone(),
+                    runtime_turn_id: Some(id("turn-persistent-event")),
+                    command: RuntimeCommand::TurnStart {
+                        thread_id: binding.thread_id.clone(),
+                        presentation_turn_id: id("presentation-turn-persistent-event"),
+                        input: Vec::new(),
+                    },
+                },
+                lease_owner: lease.owner.clone(),
+                lease_token: lease.token.clone(),
+            },
+            sink.clone(),
+        )
+        .await
+        .expect("dispatch response");
+    fixture
+        .host
+        .release_driver_lease(&lease)
+        .await
+        .expect("release dispatch lease");
+
+    fixture
+        .factory
+        .driver
+        .captured_sink
+        .lock()
+        .await
+        .clone()
+        .expect("persistent driver sink")
+        .emit(DriverEventEnvelope {
+            binding_id: binding.id,
+            generation: binding.driver_generation,
+            source_thread_id,
+            source_turn_id: None,
+            source_item_id: None,
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(
+                RuntimeEvent::ThreadStatusChanged {
+                    status: RuntimeThreadStatus::Active,
+                },
+            )],
+        })
+        .await
+        .expect("post-response notification remains admitted");
+    assert_eq!(sink.0.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn rebind_fences_the_previous_persistent_event_sink() {
+    let fixture = fixture().await;
+    let offer = activate(&fixture).await;
+    let binding = fixture
+        .host
+        .bind(BindRuntimeRequest {
+            binding_id: id("binding-before-rebind"),
+            thread_id: id("thread-persistent-rebind"),
+            offer_id: offer.id.clone(),
+            bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Start,
+        })
+        .await
+        .expect("initial bind");
+    let source_thread_id = binding.source_thread_id.clone().expect("source");
+    let lease = fixture
+        .host
+        .acquire_driver_lease(&binding.id)
+        .await
+        .expect("lease");
+    fixture
+        .host
+        .dispatch(
+            RouteDriverCommand {
+                envelope: DriverCommandEnvelope {
+                    request_id: id("request-before-rebind"),
+                    presentation_thread_id: id("presentation-before-rebind"),
+                    binding_id: binding.id.clone(),
+                    generation: binding.driver_generation,
+                    source_thread_id: source_thread_id.clone(),
+                    runtime_turn_id: Some(id("turn-before-rebind")),
+                    command: RuntimeCommand::TurnStart {
+                        thread_id: binding.thread_id.clone(),
+                        presentation_turn_id: id("presentation-turn-before-rebind"),
+                        input: Vec::new(),
+                    },
+                },
+                lease_owner: lease.owner.clone(),
+                lease_token: lease.token.clone(),
+            },
+            Arc::new(RecordingSink(AtomicUsize::new(0))),
+        )
+        .await
+        .expect("dispatch response");
+    fixture
+        .host
+        .release_driver_lease(&lease)
+        .await
+        .expect("release dispatch lease");
+    let old_sink = fixture
+        .factory
+        .driver
+        .captured_sink
+        .lock()
+        .await
+        .clone()
+        .expect("old persistent sink");
+    fixture
+        .repository
+        .mark_binding_lost(&binding.id, binding.driver_generation)
+        .await
+        .expect("retire old binding");
+    fixture
+        .host
+        .bind(BindRuntimeRequest {
+            binding_id: id("binding-after-rebind"),
+            thread_id: binding.thread_id,
+            offer_id: offer.id,
+            bound_surface: bound_surface(false),
+            intent: DriverBindIntent::Resume {
+                source_thread_id: source_thread_id.clone(),
+            },
+        })
+        .await
+        .expect("replacement bind");
+
     assert!(matches!(
-        error,
-        AgentRuntimeHostError::Driver(DriverError::StaleGeneration)
+        old_sink
+            .emit(DriverEventEnvelope {
+                binding_id: binding.id,
+                generation: binding.driver_generation,
+                source_thread_id,
+                source_turn_id: None,
+                source_item_id: None,
+                source_request_id: None,
+                source_entry_index: None,
+                facts: vec![RuntimeJournalFact::Internal(
+                    RuntimeEvent::ThreadStatusChanged {
+                        status: RuntimeThreadStatus::Active,
+                    },
+                )],
+            })
+            .await,
+        Err(DriverError::StaleGeneration)
     ));
-    assert_eq!(sink.0.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -1126,12 +1389,14 @@ async fn binding_loss_atomically_invalidates_lease_and_fences_late_event() {
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id: id("request-loss-event-fence"),
+                    presentation_thread_id: id("presentation-loss-event-fence"),
                     binding_id: binding.id,
                     generation,
                     source_thread_id: binding.source_thread_id.expect("source"),
                     runtime_turn_id: Some(id("turn-loss-event-fence")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id,
+                        presentation_turn_id: id("presentation-turn-loss-event-fence"),
                         input: vec![],
                     },
                 },
@@ -1529,12 +1794,14 @@ async fn old_binding_recovers_from_activation_snapshot_after_instance_config_upd
             RouteDriverCommand {
                 envelope: DriverCommandEnvelope {
                     request_id: id("request-snapshot"),
+                    presentation_thread_id: id("presentation-snapshot"),
                     binding_id: binding.id,
                     generation: binding.driver_generation,
                     source_thread_id: binding.source_thread_id.expect("source"),
                     runtime_turn_id: Some(id("turn-snapshot")),
                     command: RuntimeCommand::TurnStart {
                         thread_id: binding.thread_id,
+                        presentation_turn_id: id("presentation-turn-snapshot"),
                         input: vec![],
                     },
                 },

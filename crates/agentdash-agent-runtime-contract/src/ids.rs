@@ -67,6 +67,9 @@ macro_rules! runtime_id {
 }
 
 runtime_id!(RuntimeThreadId);
+runtime_id!(PresentationThreadId);
+runtime_id!(PresentationTurnId);
+runtime_id!(PresentationItemId);
 runtime_id!(RuntimeTurnId);
 runtime_id!(RuntimeItemId);
 runtime_id!(RuntimeInteractionId);
@@ -93,6 +96,9 @@ runtime_id!(HookDefinitionId);
 runtime_id!(HookRunId);
 runtime_id!(HookEffectId);
 runtime_id!(HookPlanDigest);
+runtime_id!(RuntimeTerminalHookEffectHandlerType);
+runtime_id!(RuntimeTerminalHookEffectHandlerId);
+runtime_id!(RuntimeHookEffectKind);
 runtime_id!(RuntimeTransientEventId);
 
 macro_rules! revision {

@@ -4,8 +4,8 @@ use agentdash_agent_runtime::{
     ActiveContextHead, ContextActivation, ContextActivationOutboxEntry, ContextActivationStatus,
     ContextCandidate, ContextCheckpoint, ContextHeadWrite, ContextPreparationStatus,
     ContextPreparationWorkItem, ContextStoreInvariant, EntityPhase, HookEffect, HookRun,
-    HookRunStatus, QuarantinedDriverEvent, RuntimeCommit, RuntimeEventBatch,
-    RuntimeHookPlanBinding, RuntimeInteractionState, RuntimeItemState, RuntimeOperationRecord,
+    HookRunStatus, QuarantinedDriverEvent, RuntimeCommit, RuntimeHookPlanBinding,
+    RuntimeInteractionState, RuntimeItemState, RuntimeJournalBatch, RuntimeOperationRecord,
     RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError, RuntimeThreadState,
     RuntimeTransientEvents, RuntimeTurnState, RuntimeUnitOfWork, RuntimeWorkClaim,
     RuntimeWorkClaimRequest, RuntimeWorkClaimToken, RuntimeWorkIdentity, RuntimeWorkKind,
@@ -13,8 +13,10 @@ use agentdash_agent_runtime::{
 };
 use agentdash_agent_runtime_contract::{
     ContextActivationId, ContextCheckpointId, ContextCompactionId, ContextFidelity, EventSequence,
-    HookEffectId, HookRunId, IdempotencyKey, RuntimeBindingId, RuntimeEventEnvelope,
-    RuntimeOperationId, RuntimeOperationTerminal, RuntimeRevision, RuntimeThreadId,
+    HookEffectId, HookRunId, IdempotencyKey, ImmutablePresentationEvent, RuntimeBindingId,
+    RuntimeCarrierMetadata, RuntimeDriverGeneration, RuntimeEventEnvelope, RuntimeJournalFact,
+    RuntimeJournalRecord, RuntimeOperationId, RuntimeOperationTerminal,
+    RuntimePresentationCoordinate, RuntimeRevision, RuntimeThreadId, RuntimeTurnId,
 };
 use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
@@ -34,9 +36,16 @@ fn current_time_ms() -> u64 {
 pub struct PostgresRuntimeRepository {
     pool: PgPool,
     transient: Arc<tokio::sync::Mutex<BTreeMap<RuntimeThreadId, Vec<RuntimeEventEnvelope>>>>,
+    presentation_transient:
+        Arc<tokio::sync::Mutex<BTreeMap<RuntimeThreadId, Vec<RuntimeJournalRecord>>>>,
     live: Arc<
         tokio::sync::Mutex<
             BTreeMap<RuntimeThreadId, tokio::sync::broadcast::Sender<RuntimeEventEnvelope>>,
+        >,
+    >,
+    presentation_live: Arc<
+        tokio::sync::Mutex<
+            BTreeMap<RuntimeThreadId, tokio::sync::broadcast::Sender<RuntimeJournalRecord>>,
         >,
     >,
     #[cfg(test)]
@@ -48,7 +57,9 @@ impl PostgresRuntimeRepository {
         Self {
             pool,
             transient: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+            presentation_transient: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             live: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+            presentation_live: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
             #[cfg(test)]
             fail_at: Arc::new(std::sync::atomic::AtomicU8::new(0)),
         }
@@ -146,6 +157,81 @@ impl RuntimeTransientEvents for PostgresRuntimeRepository {
         self.publish_durable(event).await;
     }
 
+    async fn publish_transient_presentation(
+        &self,
+        thread_id: RuntimeThreadId,
+        binding_id: RuntimeBindingId,
+        stream_generation: RuntimeDriverGeneration,
+        turn_id: Option<RuntimeTurnId>,
+        revision: RuntimeRevision,
+        mut coordinate: RuntimePresentationCoordinate,
+        event: ImmutablePresentationEvent,
+    ) {
+        const ACTIVE_TURN_REPLAY_LIMIT: usize = 512;
+        let mut transient = self.presentation_transient.lock().await;
+        let entries = transient.entry(thread_id.clone()).or_default();
+        if entries
+            .last()
+            .and_then(|record| record.carrier().transient.as_ref())
+            .is_some_and(|current| {
+                current.binding_id != binding_id
+                    || current.stream_generation != stream_generation
+                    || current.turn_id != turn_id
+            })
+        {
+            entries.clear();
+        }
+        let sequence = agentdash_agent_runtime_contract::RuntimeTransientSequence(
+            entries
+                .last()
+                .and_then(|record| record.carrier().transient.as_ref())
+                .map_or(1, |current| current.sequence.0 + 1),
+        );
+        let event_id = agentdash_agent_runtime_contract::RuntimeTransientEventId::new(format!(
+            "{}:{}:{}:{}",
+            binding_id,
+            stream_generation.0,
+            turn_id.as_ref().map_or("thread", |turn| turn.as_str()),
+            sequence.0
+        ))
+        .expect("generated transient presentation id");
+        coordinate.runtime_turn_id = turn_id.clone().or(coordinate.runtime_turn_id);
+        let record = RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: thread_id.clone(),
+                recorded_at_ms: current_time_ms(),
+                sequence: None,
+                transient: Some(
+                    agentdash_agent_runtime_contract::RuntimeTransientCoordinate {
+                        binding_id: binding_id.clone(),
+                        stream_generation,
+                        sequence,
+                        event_id,
+                        turn_id,
+                    },
+                ),
+                revision,
+                operation_id: None,
+                append_idempotency_key: None,
+                binding_id: Some(binding_id),
+                coordinate,
+            },
+            RuntimeJournalFact::Presentation(event),
+        )
+        .expect("ephemeral presentation carrier");
+        entries.push(record.clone());
+        if entries.len() > ACTIVE_TURN_REPLAY_LIMIT {
+            entries.remove(0);
+        }
+        drop(transient);
+
+        let mut live = self.presentation_live.lock().await;
+        let sender = live
+            .entry(thread_id)
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0);
+        let _ = sender.send(record);
+    }
+
     async fn publish_durable(&self, event: RuntimeEventEnvelope) {
         let closes_channel = matches!(
             event.event,
@@ -201,8 +287,48 @@ impl RuntimeTransientEvents for PostgresRuntimeRepository {
             .collect()
     }
 
+    async fn subscribe_presentation(
+        &self,
+        thread_id: &RuntimeThreadId,
+    ) -> tokio::sync::broadcast::Receiver<RuntimeJournalRecord> {
+        self.presentation_live
+            .lock()
+            .await
+            .entry(thread_id.clone())
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0)
+            .subscribe()
+    }
+
+    async fn read_presentation(
+        &self,
+        thread_id: &RuntimeThreadId,
+        stream_generation: Option<RuntimeDriverGeneration>,
+        after: Option<agentdash_agent_runtime_contract::RuntimeTransientSequence>,
+    ) -> Vec<RuntimeJournalRecord> {
+        self.presentation_transient
+            .lock()
+            .await
+            .get(thread_id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|record| {
+                record
+                    .carrier()
+                    .transient
+                    .as_ref()
+                    .is_some_and(|coordinate| {
+                        stream_generation
+                            .is_none_or(|generation| coordinate.stream_generation == generation)
+                            && after.is_none_or(|after| coordinate.sequence > after)
+                    })
+            })
+            .collect()
+    }
+
     async fn clear(&self, thread_id: &RuntimeThreadId) {
         self.transient.lock().await.remove(thread_id);
+        self.presentation_transient.lock().await.remove(thread_id);
     }
 }
 
@@ -407,11 +533,11 @@ impl RuntimeRepository for PostgresRuntimeRepository {
             .transpose()
     }
 
-    async fn events_after(
+    async fn journal_records_after(
         &self,
         thread_id: &RuntimeThreadId,
         after: Option<EventSequence>,
-    ) -> Result<RuntimeEventBatch, RuntimeStoreError> {
+    ) -> Result<RuntimeJournalBatch, RuntimeStoreError> {
         let latest = sqlx::query_scalar::<_, i64>(
             "SELECT next_event_sequence FROM agent_runtime_thread WHERE id=$1",
         )
@@ -421,7 +547,7 @@ impl RuntimeRepository for PostgresRuntimeRepository {
         .map_err(sql_error)?
         .ok_or(RuntimeStoreError::NotFound)?;
         let rows = sqlx::query(
-            "SELECT event_sequence,envelope FROM agent_runtime_event \
+            "SELECT event_sequence,record FROM agent_runtime_event \
              WHERE thread_id=$1 AND event_sequence>$2 ORDER BY event_sequence",
         )
         .bind(thread_id.as_str())
@@ -440,15 +566,15 @@ impl RuntimeRepository for PostgresRuntimeRepository {
         .await
         .map_err(sql_error)?;
         let latest = i64_to_u64(latest, "agent_runtime_thread.next_event_sequence")?;
-        Ok(RuntimeEventBatch {
+        Ok(RuntimeJournalBatch {
             earliest_available: EventSequence(match earliest {
                 Some(value) => i64_to_u64(value, "agent_runtime_event.event_sequence")?,
                 None => latest.saturating_add(1),
             }),
             latest_available: EventSequence(latest),
-            events: rows
+            records: rows
                 .into_iter()
-                .map(|row| decode(row.get::<Value, _>(1), "agent_runtime_event.envelope"))
+                .map(|row| decode(row.get::<Value, _>(1), "agent_runtime_event.record"))
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -622,7 +748,17 @@ async fn load_documents<T: DeserializeOwned>(
 #[async_trait]
 impl RuntimeUnitOfWork for PostgresRuntimeRepository {
     async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError> {
-        let live_events = commit.events.clone();
+        let live_events = commit
+            .records
+            .iter()
+            .filter_map(RuntimeJournalRecord::to_internal_envelope)
+            .collect::<Vec<_>>();
+        let live_presentations = commit
+            .records
+            .iter()
+            .filter(|record| record.as_presentation().is_some())
+            .cloned()
+            .collect::<Vec<_>>();
         let mut tx = self.pool.begin().await.map_err(sql_error)?;
         let thread_id = commit.projection.thread_id.clone();
         let current = sqlx::query(
@@ -671,7 +807,7 @@ impl RuntimeUnitOfWork for PostgresRuntimeRepository {
             tx.rollback().await.map_err(sql_error)?;
             return Err(error);
         }
-        write_events(&mut tx, &commit.events).await?;
+        write_journal_records(&mut tx, &commit.records).await?;
         write_entity_projection(&mut tx, &commit.projection).await?;
         if let Err(error) = self.inject_failure(3) {
             tx.rollback().await.map_err(sql_error)?;
@@ -695,6 +831,14 @@ impl RuntimeUnitOfWork for PostgresRuntimeRepository {
         tx.commit().await.map_err(sql_error)?;
         for event in live_events {
             self.publish_durable(event).await;
+        }
+        for record in live_presentations {
+            let thread_id = record.carrier().thread_id.clone();
+            let mut live = self.presentation_live.lock().await;
+            let sender = live
+                .entry(thread_id)
+                .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0);
+            let _ = sender.send(record);
         }
         Ok(())
     }
@@ -724,12 +868,13 @@ fn validate_commit_sequences(
     previous_operation_sequence: u64,
 ) -> Result<(), RuntimeStoreError> {
     let mut expected_event_sequence = previous_event_sequence;
-    for event in &commit.events {
+    for record in &commit.records {
         expected_event_sequence = expected_event_sequence.checked_add(1).ok_or_else(|| {
             RuntimeStoreError::Unavailable("runtime event sequence overflow".to_string())
         })?;
-        if event.thread_id != commit.projection.thread_id
-            || event.sequence != Some(EventSequence(expected_event_sequence))
+        if record.carrier().thread_id != commit.projection.thread_id
+            || record.carrier().sequence != Some(EventSequence(expected_event_sequence))
+            || record.carrier().transient.is_some()
         {
             return Err(RuntimeStoreError::Unavailable(
                 "runtime commit contains a non-contiguous or cross-thread event sequence"
@@ -1394,30 +1539,28 @@ async fn write_operation_terminals(
     Ok(())
 }
 
-async fn write_events(
+async fn write_journal_records(
     tx: &mut Transaction<'_, Postgres>,
-    events: &[RuntimeEventEnvelope],
+    records: &[RuntimeJournalRecord],
 ) -> Result<(), RuntimeStoreError> {
-    for event in events {
-        let sequence = event.sequence.ok_or_else(|| {
+    for record in records {
+        let sequence = record.carrier().sequence.ok_or_else(|| {
             RuntimeStoreError::Unavailable(
-                "transient event cannot enter durable journal".to_string(),
+                "transient record cannot enter durable journal".to_string(),
             )
         })?;
-        let value = encode(event, "agent_runtime_event.envelope")?;
-        let kind = value
-            .get("event")
-            .and_then(|event| event.get("kind"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
+        let value = encode(record, "agent_runtime_event.record")?;
+        let kind = match record.fact() {
+            RuntimeJournalFact::Presentation(_) => "presentation",
+            RuntimeJournalFact::Internal(_) => "internal",
+        };
         sqlx::query(
-            "INSERT INTO agent_runtime_event (thread_id,event_sequence,revision,event_kind,envelope) \
+            "INSERT INTO agent_runtime_event (thread_id,event_sequence,revision,fact_kind,record) \
              VALUES ($1,$2,$3,$4,$5)",
         )
-        .bind(event.thread_id.as_str())
+        .bind(record.carrier().thread_id.as_str())
         .bind(u64_to_i64(sequence.0, "event sequence")?)
-        .bind(u64_to_i64(event.revision.0, "event revision")?)
+        .bind(u64_to_i64(record.carrier().revision.0, "event revision")?)
         .bind(kind)
         .bind(value)
         .execute(&mut **tx)
@@ -2084,6 +2227,8 @@ fn quarantine_reason(entry: &QuarantinedDriverEvent) -> &'static str {
     use agentdash_agent_runtime::DriverEventQuarantineReason::*;
     match entry.reason {
         CanonicalThreadNotFound => "canonical_thread_not_found",
+        EmptyFactBatch => "empty_fact_batch",
+        TransientInternalFact => "transient_internal_fact",
         StaleBinding { .. } => "stale_binding",
         DriverOperationAcceptance => "driver_operation_acceptance",
         DriverRuntimeOwnedContextEvent => "driver_runtime_owned_context_event",
@@ -2164,25 +2309,60 @@ enum TestCommitFailurePoint {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, str::FromStr, sync::Arc};
+    use std::{collections::BTreeSet, str::FromStr, sync::Arc, time::Duration};
 
     use agentdash_agent_runtime::{
-        BoundRuntimeHookEntry, BoundRuntimeHookPlan, CompactionPreparation, HookAdmission,
-        HookCompletion, HookCorrelation, HookEffect, HookEffectDescriptor, HookExecutionSite,
-        HookGateDecision, HookRunStatus, ManagedAgentRuntime, RuntimeHookInvocation,
-        RuntimeHookPlanBinding, RuntimeRepository, RuntimeStoreError, RuntimeUnitOfWork,
+        BoundRuntimeHookEntry, BoundRuntimeHookPlan, CompactionPreparation,
+        DriverEventQuarantineReason, HookAdmission, HookCompletion, HookCorrelation, HookEffect,
+        HookEffectDescriptor, HookExecutionSite, HookGateDecision, HookRunStatus,
+        ManagedAgentRuntime, QuarantinedDriverEvent, RuntimeHookInvocation, RuntimeHookPlanBinding,
+        RuntimeRepository, RuntimeStoreError, RuntimeTransientEvents, RuntimeUnitOfWork,
         RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkPayload, RuntimeWorkQueue,
         RuntimeWorkerId,
     };
     use agentdash_agent_runtime_contract::*;
 
-    use super::{PostgresRuntimeRepository, TestCommitFailurePoint};
+    use super::{PostgresRuntimeRepository, TestCommitFailurePoint, quarantine_reason};
 
     fn id<T: FromStr>(value: &str) -> T
     where
         T::Err: std::fmt::Debug,
     {
         value.parse().expect("valid runtime id")
+    }
+
+    #[test]
+    fn fact_batch_quarantine_reasons_roundtrip_with_stable_storage_kinds() {
+        for (reason, expected_kind) in [
+            (
+                DriverEventQuarantineReason::EmptyFactBatch,
+                "empty_fact_batch",
+            ),
+            (
+                DriverEventQuarantineReason::TransientInternalFact,
+                "transient_internal_fact",
+            ),
+        ] {
+            let entry = QuarantinedDriverEvent {
+                event: DriverEventEnvelope {
+                    binding_id: id("binding-quarantine"),
+                    generation: RuntimeDriverGeneration(3),
+                    source_thread_id: id("source-quarantine"),
+                    source_turn_id: None,
+                    source_item_id: None,
+                    source_request_id: Some("request-quarantine".to_string()),
+                    source_entry_index: None,
+                    facts: Vec::new(),
+                },
+                reason,
+            };
+            let encoded = serde_json::to_value(&entry).expect("encode quarantine record");
+            let decoded: QuarantinedDriverEvent =
+                serde_json::from_value(encoded.clone()).expect("decode quarantine record");
+
+            assert_eq!(serde_json::to_value(&decoded).unwrap(), encoded);
+            assert_eq!(quarantine_reason(&decoded), expected_kind);
+        }
     }
 
     fn profile() -> RuntimeProfile {
@@ -2321,6 +2501,7 @@ mod tests {
 
     fn start(fixture: &Fixture) -> RuntimeCommandEnvelope {
         RuntimeCommandEnvelope {
+            presentation: Vec::new(),
             meta: OperationMeta {
                 operation_id: id(&format!("operation-{}", fixture.suffix)),
                 idempotency_key: id(&format!("key-{}", fixture.suffix)),
@@ -2331,22 +2512,347 @@ mod tests {
             },
             command: RuntimeCommand::ThreadStart {
                 thread_id: fixture.thread_id.clone(),
+                presentation_thread_id: id(&format!("presentation-{}", fixture.suffix)),
                 binding_id: id(&format!("binding-{}", fixture.suffix)),
                 driver_generation: RuntimeDriverGeneration(7),
                 source_thread_id: id(&format!("source-{}", fixture.suffix)),
                 profile_digest: id(&format!("profile-{}", fixture.suffix)),
                 bound_profile: Box::new(profile()),
                 input: Vec::new(),
-                surface_digest: id(&format!("surface-{}", fixture.suffix)),
+                surface: Box::new(RuntimeSurfaceDescriptor {
+                    source_frame_id: format!("frame-{}", fixture.suffix),
+                    surface_revision: SurfaceRevision(1),
+                    surface_digest: id(&format!("surface-{}", fixture.suffix)),
+                    vfs_digest: format!("vfs-{}", fixture.suffix),
+                    context_recipe_revision: ContextRecipeRevision(1),
+                    context_digest: id(&format!("context-{}", fixture.suffix)),
+                    settings_revision: ThreadSettingsRevision(0),
+                    tool_set_revision: ToolSetRevision(0),
+                    tool_set_digest: format!("tools-{}", fixture.suffix),
+                    hook_plan: BoundRuntimeHookPlan {
+                        revision: HookPlanRevision(1),
+                        digest: id(&format!("hook-plan-{}", fixture.suffix)),
+                        entries: Vec::new(),
+                    },
+                }),
                 settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(0),
-                hook_plan: BoundRuntimeHookPlan {
-                    revision: HookPlanRevision(1),
-                    digest: id(&format!("hook-plan-{}", fixture.suffix)),
-                    entries: Vec::new(),
-                },
             },
         }
+    }
+
+    fn abstract_presentation_record(
+        fixture: &Fixture,
+        sequence: u64,
+        revision: RuntimeRevision,
+        label: &str,
+    ) -> RuntimeJournalRecord {
+        let event = serde_json::from_value(serde_json::json!({
+            "type": "item_completed",
+            "payload": {
+                "item": {
+                    "type": "dynamicToolCall",
+                    "id": format!("abstract-{label}"),
+                    "namespace": null,
+                    "tool": "persistence_fixture",
+                    "arguments": { "label": label, "explicit_null": null, "ordered": [1, 2] },
+                    "status": "completed",
+                    "contentItems": null,
+                    "success": true,
+                    "durationMs": null
+                },
+                "threadId": "source-thread",
+                "turnId": "source-turn",
+                "completedAtMs": 1_712_345_678_901_i64 + sequence as i64
+            }
+        }))
+        .expect("valid abstract presentation fixture");
+        RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: fixture.thread_id.clone(),
+                recorded_at_ms: 9_000 + sequence,
+                sequence: Some(EventSequence(sequence)),
+                transient: None,
+                revision,
+                operation_id: None,
+                append_idempotency_key: None,
+                binding_id: Some(id(&format!("binding-{}", fixture.suffix))),
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("source-thread".to_string()),
+                    source_turn_id: Some("source-turn".to_string()),
+                    source_item_id: Some(format!("abstract-{label}")),
+                    source_request_id: None,
+                    source_entry_index: Some(sequence as u32),
+                },
+            },
+            RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                event,
+            )),
+        )
+        .expect("valid durable presentation record")
+    }
+
+    fn abstract_internal_record(
+        fixture: &Fixture,
+        sequence: u64,
+        revision: RuntimeRevision,
+    ) -> RuntimeJournalRecord {
+        RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: fixture.thread_id.clone(),
+                recorded_at_ms: 9_000 + sequence,
+                sequence: Some(EventSequence(sequence)),
+                transient: None,
+                revision,
+                operation_id: None,
+                append_idempotency_key: None,
+                binding_id: Some(id(&format!("binding-{}", fixture.suffix))),
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("source-thread".to_string()),
+                    source_turn_id: Some("source-turn".to_string()),
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: None,
+                },
+            },
+            RuntimeJournalFact::Internal(RuntimeEvent::DriverContextCompactedOpaque),
+        )
+        .expect("valid durable internal record")
+    }
+
+    #[tokio::test]
+    async fn postgres_repository_preserves_ordered_journal_records_without_rewriting_payload() {
+        let _serial = serial_test_guard().await;
+        let fixture = fixture("presentation journal roundtrip").await;
+        fixture
+            .runtime
+            .execute(start(&fixture))
+            .await
+            .expect("start runtime thread");
+        let base = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load thread")
+            .expect("thread");
+        let first_sequence = base.next_event_sequence.0 + 1;
+        let records = vec![
+            abstract_presentation_record(&fixture, first_sequence, base.revision, "A"),
+            abstract_internal_record(&fixture, first_sequence + 1, base.revision),
+            abstract_presentation_record(&fixture, first_sequence + 2, base.revision, "B"),
+        ];
+        let protected_before = records
+            .iter()
+            .filter_map(|record| {
+                record
+                    .as_presentation()
+                    .map(|presentation| serde_json::to_value(&presentation.event))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .expect("serialize protected bodies");
+        let mut projection = base.clone();
+        projection.next_event_sequence = EventSequence(first_sequence + 2);
+        let mut presentation_live = fixture
+            .store
+            .subscribe_presentation(&fixture.thread_id)
+            .await;
+        fixture
+            .store
+            .commit(agentdash_agent_runtime::RuntimeCommit {
+                expected_projection_revision: Some(base.revision),
+                projection,
+                operation: None,
+                operation_terminals: Vec::new(),
+                records: records.clone(),
+                outbox: Vec::new(),
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await
+            .expect("commit presentation records");
+
+        for expected in records
+            .iter()
+            .filter(|record| record.as_presentation().is_some())
+        {
+            let received = tokio::time::timeout(Duration::from_secs(1), presentation_live.recv())
+                .await
+                .expect("durable presentation live delivery timed out")
+                .expect("durable presentation live sender closed");
+            assert_eq!(&received, expected);
+        }
+
+        let replay = fixture
+            .store
+            .journal_records_after(&fixture.thread_id, Some(base.next_event_sequence))
+            .await
+            .expect("replay presentation records");
+        assert_eq!(replay.records, records);
+        let protected_after = replay
+            .records
+            .iter()
+            .filter_map(|record| {
+                record
+                    .as_presentation()
+                    .map(|presentation| serde_json::to_value(&presentation.event))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .expect("serialize replayed bodies");
+        assert_eq!(protected_after, protected_before);
+        assert_eq!(
+            protected_after[0].pointer("/payload/item/arguments/explicit_null"),
+            Some(&serde_json::Value::Null)
+        );
+        let kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT fact_kind FROM agent_runtime_event WHERE thread_id=$1 \
+             AND event_sequence>$2 ORDER BY event_sequence",
+        )
+        .bind(fixture.thread_id.as_str())
+        .bind(i64::try_from(base.next_event_sequence.0).expect("fixture cursor fits i64"))
+        .fetch_all(fixture.store.pool())
+        .await
+        .expect("read stored fact kinds");
+        assert_eq!(kinds, vec!["presentation", "internal", "presentation"]);
+        let stored_fact_kinds: Vec<String> = sqlx::query_scalar(
+            "SELECT record->'fact'->>'kind' FROM agent_runtime_event WHERE thread_id=$1 \
+             AND event_sequence>$2 ORDER BY event_sequence",
+        )
+        .bind(fixture.thread_id.as_str())
+        .bind(i64::try_from(base.next_event_sequence.0).expect("fixture cursor fits i64"))
+        .fetch_all(fixture.store.pool())
+        .await
+        .expect("read stored record fact kinds");
+        assert_eq!(stored_fact_kinds, kinds);
+
+        let ephemeral = records[0]
+            .as_presentation()
+            .expect("presentation fixture")
+            .clone();
+        fixture
+            .store
+            .publish_transient_presentation(
+                fixture.thread_id.clone(),
+                id(&format!("binding-{}", fixture.suffix)),
+                RuntimeDriverGeneration(1),
+                None,
+                base.revision,
+                RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("source-thread".to_string()),
+                    source_turn_id: None,
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: Some(1),
+                },
+                ImmutablePresentationEvent::new(
+                    PresentationDurability::Ephemeral,
+                    ephemeral.event.clone(),
+                ),
+            )
+            .await;
+        tokio::time::timeout(Duration::from_secs(1), presentation_live.recv())
+            .await
+            .expect("ephemeral presentation live delivery timed out")
+            .expect("ephemeral presentation live sender closed");
+        assert_eq!(
+            fixture
+                .store
+                .read_presentation(&fixture.thread_id, None, None)
+                .await
+                .len(),
+            1
+        );
+        fixture.store.clear(&fixture.thread_id).await;
+        assert!(
+            fixture
+                .store
+                .read_presentation(&fixture.thread_id, None, None)
+                .await
+                .is_empty()
+        );
+        fixture
+            .store
+            .publish_transient_presentation(
+                fixture.thread_id.clone(),
+                id(&format!("binding-{}", fixture.suffix)),
+                RuntimeDriverGeneration(1),
+                None,
+                base.revision,
+                RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("source-thread".to_string()),
+                    source_turn_id: None,
+                    source_item_id: None,
+                    source_request_id: None,
+                    source_entry_index: Some(2),
+                },
+                ImmutablePresentationEvent::new(PresentationDurability::Ephemeral, ephemeral.event),
+            )
+            .await;
+        tokio::time::timeout(Duration::from_secs(1), presentation_live.recv())
+            .await
+            .expect("existing presentation receiver timed out after replay clear")
+            .expect("presentation sender was replaced by replay clear");
+
+        let mismatch = sqlx::query(
+            "UPDATE agent_runtime_event SET fact_kind='internal' WHERE thread_id=$1 \
+             AND event_sequence=$2",
+        )
+        .bind(fixture.thread_id.as_str())
+        .bind(i64::try_from(first_sequence).expect("fixture sequence fits i64"))
+        .execute(fixture.store.pool())
+        .await
+        .expect_err("database must reject fact_kind/record.fact mismatch");
+        assert_eq!(
+            mismatch
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("23514")
+        );
+    }
+
+    #[tokio::test]
+    async fn migration_exposes_only_runtime_journal_record_columns() {
+        let _serial = serial_test_guard().await;
+        let database = runtime_test_database().await;
+        let columns: Vec<String> = sqlx::query_scalar(
+            "SELECT column_name FROM information_schema.columns \
+             WHERE table_schema='public' AND table_name='agent_runtime_event' \
+             ORDER BY column_name",
+        )
+        .fetch_all(&database.pool)
+        .await
+        .expect("read runtime journal columns");
+        assert!(columns.iter().any(|column| column == "record"));
+        assert!(columns.iter().any(|column| column == "fact_kind"));
+        assert!(!columns.iter().any(|column| column == "envelope"));
+        assert!(!columns.iter().any(|column| column == "event_kind"));
+        let applied: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=70 AND success)",
+        )
+        .fetch_one(&database.pool)
+        .await
+        .expect("0070 migration history");
+        assert!(applied);
     }
 
     #[tokio::test]
@@ -2373,8 +2879,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn conversation_contract_reset_clears_runtime_graph_without_rewriting_migration_history()
-    {
+    async fn journal_record_upgrade_clears_runtime_graph_without_rewriting_migration_history() {
         let _serial = serial_test_guard().await;
         let fixture = fixture("conversation contract reset").await;
         fixture
@@ -2414,12 +2919,22 @@ mod tests {
             .bind(&binding_id).execute(&mut *seed).await.expect("seed binding lineage");
         seed.commit().await.expect("commit valid reset graph");
 
+        sqlx::raw_sql(
+            "ALTER TABLE agent_runtime_event \
+             DROP CONSTRAINT agent_runtime_event_fact_kind_check; \
+             ALTER TABLE agent_runtime_event RENAME COLUMN fact_kind TO event_kind; \
+             ALTER TABLE agent_runtime_event RENAME COLUMN record TO envelope;",
+        )
+        .execute(pool)
+        .await
+        .expect("restore pre-0070 journal schema");
+
         sqlx::raw_sql(include_str!(
-            "../../../migrations/0069_reset_runtime_conversation_contract.sql"
+            "../../../migrations/0070_runtime_journal_records.sql"
         ))
         .execute(pool)
         .await
-        .expect("reapply conversation reset migration body");
+        .expect("apply journal record upgrade migration body");
 
         for table in [
             "agent_runtime_thread",
@@ -2441,11 +2956,11 @@ mod tests {
             .expect("migration history after reset");
         assert_eq!(history_after, history_before);
         let applied: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=69 AND success)",
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=70 AND success)",
         )
         .fetch_one(pool)
         .await
-        .expect("0069 migration history");
+        .expect("0070 migration history");
         assert!(applied);
         for table in [
             "projects",
@@ -2530,7 +3045,7 @@ mod tests {
             projection,
             operation: None,
             operation_terminals: Vec::new(),
-            events: Vec::new(),
+            records: Vec::new(),
             outbox: Vec::new(),
             context_activation_outbox: Vec::new(),
             context_preparation_work_items: Vec::new(),
@@ -2586,7 +3101,7 @@ mod tests {
                 projection: invalid,
                 operation: None,
                 operation_terminals: Vec::new(),
-                events: Vec::new(),
+                records: Vec::new(),
                 outbox: Vec::new(),
                 context_activation_outbox: Vec::new(),
                 context_preparation_work_items: Vec::new(),
@@ -2654,6 +3169,7 @@ mod tests {
             thread_id: fixture.thread_id.clone(),
             operation_sequence: projection.next_operation_sequence,
             accepted_revision: projection.revision,
+            presentation: Vec::new(),
             command: RuntimeCommand::ThreadResume {
                 thread_id: fixture.thread_id.clone(),
             },
@@ -2666,7 +3182,8 @@ mod tests {
                 projection,
                 operation: Some(operation),
                 operation_terminals: Vec::new(),
-                events,
+                records: agentdash_agent_runtime::internal_journal_records(events)
+                    .expect("valid durable internal journal records"),
                 outbox: Vec::new(),
                 context_activation_outbox: Vec::new(),
                 context_preparation_work_items: Vec::new(),
@@ -2702,7 +3219,7 @@ mod tests {
         assert_eq!(
             fixture
                 .store
-                .events_after(&fixture.thread_id, None)
+                .internal_events_after(&fixture.thread_id, None)
                 .await
                 .expect("events")
                 .latest_available,
@@ -2780,6 +3297,7 @@ mod tests {
         fixture
             .runtime
             .execute(RuntimeCommandEnvelope {
+                presentation: Vec::new(),
                 meta: OperationMeta {
                     operation_id: operation_id.clone(),
                     idempotency_key: id(&format!("compact-key-{}", fixture.suffix)),
@@ -2950,10 +3468,10 @@ mod tests {
             },
         };
         let mut start_command = start(&fixture);
-        let RuntimeCommand::ThreadStart { hook_plan, .. } = &mut start_command.command else {
+        let RuntimeCommand::ThreadStart { surface, .. } = &mut start_command.command else {
             unreachable!("start fixture always emits ThreadStart")
         };
-        *hook_plan = plan.plan.clone();
+        surface.hook_plan = plan.plan.clone();
         fixture
             .runtime
             .execute(start_command)

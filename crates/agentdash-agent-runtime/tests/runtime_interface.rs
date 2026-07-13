@@ -1,16 +1,263 @@
-use std::{collections::BTreeSet, str::FromStr, sync::Arc};
+use std::{collections::BTreeSet, str::FromStr, sync::Arc, time::Duration};
 
 use agentdash_agent_runtime::{
-    CommitFailurePoint, DriverEventAdmission, ManagedAgentRuntime, RuntimeRepository,
-    RuntimeStoreFixture, RuntimeTransientEvents,
+    CommitFailurePoint, DriverEventAdmission, ManagedAgentRuntime, RuntimeCommit,
+    RuntimePresentationAppendError, RuntimePresentationAppendRequest, RuntimeRepository,
+    RuntimeStoreError, RuntimeStoreFixture, RuntimeTerminalApplicationEffectClaimRequest,
+    RuntimeTerminalApplicationEffectOutbox, RuntimeTransientEvents, RuntimeUnitOfWork,
+    RuntimeWorkerId,
 };
 use agentdash_agent_runtime_contract::*;
+
+mod support;
+use support::TestTerminalPresentationProjector;
 
 fn id<T: FromStr>(value: &str) -> T
 where
     T::Err: std::fmt::Debug,
 {
     value.parse().expect("valid id")
+}
+
+fn abstract_presentation_record(
+    thread_id: &RuntimeThreadId,
+    sequence: u64,
+    revision: RuntimeRevision,
+    label: &str,
+) -> RuntimeJournalRecord {
+    let event = serde_json::from_value(serde_json::json!({
+        "type": "item_completed",
+        "payload": {
+            "item": {
+                "type": "dynamicToolCall",
+                "id": format!("abstract-{label}"),
+                "namespace": null,
+                "tool": "persistence_fixture",
+                "arguments": { "label": label, "explicit_null": null, "ordered": [1, 2] },
+                "status": "completed",
+                "contentItems": null,
+                "success": true,
+                "durationMs": null
+            },
+            "threadId": "source-thread",
+            "turnId": "source-turn",
+            "completedAtMs": 1_712_345_678_901_i64 + sequence as i64
+        }
+    }))
+    .expect("valid abstract presentation fixture");
+    RuntimeJournalRecord::new(
+        RuntimeCarrierMetadata {
+            thread_id: thread_id.clone(),
+            recorded_at_ms: 9_000 + sequence,
+            sequence: Some(EventSequence(sequence)),
+            transient: None,
+            revision,
+            operation_id: None,
+            append_idempotency_key: None,
+            binding_id: Some(id("binding-1")),
+            coordinate: RuntimePresentationCoordinate {
+                runtime_turn_id: None,
+                runtime_item_id: None,
+                interaction_id: None,
+                source_thread_id: Some("source-thread".to_string()),
+                source_turn_id: Some("source-turn".to_string()),
+                source_item_id: Some(format!("abstract-{label}")),
+                source_request_id: None,
+                source_entry_index: Some(sequence as u32),
+            },
+        },
+        RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+            PresentationDurability::Durable,
+            event,
+        )),
+    )
+    .expect("valid durable presentation record")
+}
+
+#[tokio::test]
+async fn memory_repository_preserves_ordered_presentation_records_without_rewriting_payload() {
+    let (store, runtime) = fixture();
+    runtime
+        .execute(start())
+        .await
+        .expect("start runtime thread");
+    let thread_id: RuntimeThreadId = id("thread-source-1");
+    let base = store
+        .load_thread(&thread_id)
+        .await
+        .expect("load thread")
+        .expect("thread");
+    let first_sequence = base.next_event_sequence.0 + 1;
+    let records = vec![
+        abstract_presentation_record(&thread_id, first_sequence, base.revision, "A"),
+        abstract_presentation_record(&thread_id, first_sequence + 1, base.revision, "B"),
+    ];
+    let protected_before = records
+        .iter()
+        .map(|record| serde_json::to_value(&record.as_presentation().expect("presentation").event))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("serialize protected bodies");
+    let mut projection = base.clone();
+    projection.next_event_sequence = EventSequence(first_sequence + 1);
+    let mut live = store.subscribe_presentation(&thread_id).await;
+    store
+        .commit(RuntimeCommit {
+            expected_projection_revision: Some(base.revision),
+            projection,
+            operation: None,
+            operation_terminals: Vec::new(),
+            records: records.clone(),
+            outbox: Vec::new(),
+            terminal_application_effects: Vec::new(),
+            context_activation_outbox: Vec::new(),
+            context_preparation_work_items: Vec::new(),
+            context_checkpoints: Vec::new(),
+            context_candidates: Vec::new(),
+            context_activations: Vec::new(),
+            context_head: None,
+            hook_plan_binding: None,
+            hook_runs: Vec::new(),
+            hook_effects: Vec::new(),
+            quarantine: Vec::new(),
+        })
+        .await
+        .expect("commit ordered presentation records");
+
+    for expected in &records {
+        let received = tokio::time::timeout(Duration::from_secs(1), live.recv())
+            .await
+            .expect("durable presentation live delivery timed out")
+            .expect("durable presentation live sender closed");
+        assert_eq!(&received, expected);
+    }
+
+    let replay = store
+        .journal_records_after(&thread_id, Some(base.next_event_sequence))
+        .await
+        .expect("replay journal records");
+    assert_eq!(replay.records, records);
+    let protected_after = replay
+        .records
+        .iter()
+        .map(|record| serde_json::to_value(&record.as_presentation().expect("presentation").event))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("serialize replayed bodies");
+    assert_eq!(protected_after, protected_before);
+    assert_eq!(
+        protected_after[0].pointer("/payload/item/arguments/explicit_null"),
+        Some(&serde_json::Value::Null)
+    );
+
+    let duplicate = store
+        .commit(RuntimeCommit {
+            expected_projection_revision: Some(base.revision),
+            projection: base,
+            operation: None,
+            operation_terminals: Vec::new(),
+            records: records.clone(),
+            outbox: Vec::new(),
+            terminal_application_effects: Vec::new(),
+            context_activation_outbox: Vec::new(),
+            context_preparation_work_items: Vec::new(),
+            context_checkpoints: Vec::new(),
+            context_candidates: Vec::new(),
+            context_activations: Vec::new(),
+            context_head: None,
+            hook_plan_binding: None,
+            hook_runs: Vec::new(),
+            hook_effects: Vec::new(),
+            quarantine: Vec::new(),
+        })
+        .await;
+    assert!(matches!(duplicate, Err(RuntimeStoreError::Unavailable(_))));
+
+    let current = store
+        .load_thread(&thread_id)
+        .await
+        .expect("load thread after durable commit")
+        .expect("thread");
+    let event = abstract_presentation_record(
+        &thread_id,
+        current.next_event_sequence.0 + 1,
+        current.revision,
+        "transient",
+    )
+    .as_presentation()
+    .expect("presentation")
+    .event
+    .clone();
+    let transient = RuntimeJournalRecord::new(
+        RuntimeCarrierMetadata {
+            thread_id: thread_id.clone(),
+            recorded_at_ms: 10_000,
+            sequence: None,
+            transient: Some(RuntimeTransientCoordinate {
+                binding_id: id("binding-1"),
+                stream_generation: RuntimeDriverGeneration(1),
+                sequence: RuntimeTransientSequence(1),
+                event_id: id("transient-event-1"),
+                turn_id: None,
+            }),
+            revision: current.revision,
+            operation_id: None,
+            append_idempotency_key: None,
+            binding_id: Some(id("binding-1")),
+            coordinate: RuntimePresentationCoordinate {
+                runtime_turn_id: None,
+                runtime_item_id: None,
+                interaction_id: None,
+                source_thread_id: Some("source-thread".to_string()),
+                source_turn_id: Some("source-turn".to_string()),
+                source_item_id: Some("abstract-transient".to_string()),
+                source_request_id: None,
+                source_entry_index: Some(1),
+            },
+        },
+        RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+            PresentationDurability::Ephemeral,
+            event,
+        )),
+    )
+    .expect("valid ephemeral presentation record");
+    let mut invalid_projection = current.clone();
+    invalid_projection.next_event_sequence =
+        EventSequence(current.next_event_sequence.0.saturating_add(1));
+    let transient_commit = store
+        .commit(RuntimeCommit {
+            expected_projection_revision: Some(current.revision),
+            projection: invalid_projection,
+            operation: None,
+            operation_terminals: Vec::new(),
+            records: vec![transient],
+            outbox: Vec::new(),
+            terminal_application_effects: Vec::new(),
+            context_activation_outbox: Vec::new(),
+            context_preparation_work_items: Vec::new(),
+            context_checkpoints: Vec::new(),
+            context_candidates: Vec::new(),
+            context_activations: Vec::new(),
+            context_head: None,
+            hook_plan_binding: None,
+            hook_runs: Vec::new(),
+            hook_effects: Vec::new(),
+            quarantine: Vec::new(),
+        })
+        .await;
+    assert!(matches!(
+        transient_commit,
+        Err(RuntimeStoreError::Unavailable(_))
+    ));
+    assert_eq!(
+        store
+            .journal_records_after(
+                &thread_id,
+                Some(EventSequence(first_sequence.saturating_sub(1))),
+            )
+            .await
+            .expect("read durable journal after transient rejection")
+            .records,
+        records
+    );
 }
 
 fn profile() -> RuntimeProfile {
@@ -43,6 +290,7 @@ fn profile() -> RuntimeProfile {
             LifecycleCapability::TurnSteer,
             LifecycleCapability::TurnInterrupt,
             LifecycleCapability::ToolSetReplace,
+            LifecycleCapability::SurfaceAdopt,
         ]
         .into_iter()
         .collect(),
@@ -64,8 +312,24 @@ fn fixture() -> (
     ManagedAgentRuntime<RuntimeStoreFixture>,
 ) {
     let store = Arc::new(RuntimeStoreFixture::default());
-    let runtime = ManagedAgentRuntime::new(store.clone());
+    let runtime =
+        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector))
+            .with_surface_validator(Arc::new(AllowSurface));
     (store, runtime)
+}
+
+struct AllowSurface;
+
+#[async_trait::async_trait]
+impl agentdash_agent_runtime::RuntimeSurfaceReferenceValidator for AllowSurface {
+    async fn validate_surface_reference(
+        &self,
+        _binding_id: &RuntimeBindingId,
+        _runtime_thread_id: &RuntimeThreadId,
+        _target: &RuntimeSurfaceDescriptor,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 fn command(
@@ -75,6 +339,7 @@ fn command(
     command: RuntimeCommand,
 ) -> RuntimeCommandEnvelope {
     RuntimeCommandEnvelope {
+        presentation: Vec::new(),
         meta: OperationMeta {
             operation_id: id(operation),
             idempotency_key: id(key),
@@ -94,35 +359,66 @@ fn start() -> RuntimeCommandEnvelope {
         None,
         RuntimeCommand::ThreadStart {
             thread_id: id("thread-source-1"),
+            presentation_thread_id: id("presentation-thread-1"),
+            presentation_turn_id: None,
             binding_id: id("binding-1"),
             driver_generation: RuntimeDriverGeneration(7),
             source_thread_id: id("source-1"),
             profile_digest: id("profile-1"),
             bound_profile: Box::new(profile()),
-            input: vec![RuntimeInput::Text {
-                text: "hello".to_string(),
-            }],
-            surface_digest: id("surface-1"),
+            input: Vec::new(),
+            surface: Box::new(RuntimeSurfaceDescriptor {
+                source_frame_id: "frame-1".to_string(),
+                surface_revision: SurfaceRevision(1),
+                surface_digest: id("surface-1"),
+                vfs_digest: "vfs-1".to_string(),
+                context_recipe_revision: ContextRecipeRevision(1),
+                context_digest: id("context-1"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "tools-1".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: id("hook-plan-empty-1"),
+                    entries: Vec::new(),
+                },
+                terminal_hook_effect_binding: None,
+            }),
             settings_revision: ThreadSettingsRevision(0),
-            tool_set_revision: ToolSetRevision(0),
-            hook_plan: BoundRuntimeHookPlan {
-                revision: HookPlanRevision(1),
-                digest: id("hook-plan-empty-1"),
-                entries: Vec::new(),
-            },
         },
     )
 }
 
 fn driver(event: RuntimeEvent) -> DriverEventEnvelope {
+    driver_facts(vec![RuntimeJournalFact::Internal(event)])
+}
+
+fn driver_facts(facts: Vec<RuntimeJournalFact>) -> DriverEventEnvelope {
     DriverEventEnvelope {
         binding_id: id("binding-1"),
         generation: RuntimeDriverGeneration(7),
         source_thread_id: id("source-1"),
         source_turn_id: None,
         source_item_id: None,
-        event,
+        source_request_id: None,
+        source_entry_index: None,
+        facts,
     }
+}
+
+fn session_meta_presentation(
+    label: &str,
+    durability: PresentationDurability,
+) -> ImmutablePresentationEvent {
+    ImmutablePresentationEvent::new(
+        durability,
+        agentdash_agent_protocol::BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                key: "ordering_fixture".into(),
+                value: serde_json::json!({"label": label}),
+            },
+        ),
+    )
 }
 
 async fn thread_snapshot(
@@ -142,6 +438,836 @@ async fn thread_snapshot(
             panic!("expected thread snapshot")
         }
     }
+}
+
+fn adopted_surface() -> RuntimeSurfaceDescriptor {
+    RuntimeSurfaceDescriptor {
+        source_frame_id: "frame-2".to_string(),
+        surface_revision: SurfaceRevision(2),
+        surface_digest: id("surface-2"),
+        vfs_digest: "vfs-2".to_string(),
+        context_recipe_revision: ContextRecipeRevision(2),
+        context_digest: id("context-2"),
+        settings_revision: ThreadSettingsRevision(1),
+        tool_set_revision: ToolSetRevision(1),
+        tool_set_digest: "tools-2".to_string(),
+        hook_plan: BoundRuntimeHookPlan {
+            revision: HookPlanRevision(2),
+            digest: id("hook-plan-empty-2"),
+            entries: Vec::new(),
+        },
+        terminal_hook_effect_binding: Some(terminal_effect_binding()),
+    }
+}
+
+fn terminal_effect_binding() -> RuntimeTerminalHookEffectBinding {
+    RuntimeTerminalHookEffectBinding {
+        handler: RuntimeTerminalHookEffectHandlerRef {
+            handler_type: id("agent_run_terminal_control"),
+            handler_id: id("agent-run-terminal-control-v1"),
+            revision: RuntimeTerminalHookEffectHandlerRevision(7),
+        },
+        supported_effect_kinds: BTreeSet::from([id("delivery_convergence"), id("hook_post_turn")]),
+    }
+}
+
+#[tokio::test]
+async fn surface_adopt_is_cas_guarded_idle_only_and_enters_driver_outbox() {
+    let (store, runtime) = fixture();
+    runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread");
+    let initial = thread_snapshot(&runtime, id("thread-source-1")).await;
+
+    let stale = runtime
+        .execute(command(
+            "surface-stale-operation",
+            "surface-stale-key",
+            Some(initial.revision.0),
+            RuntimeCommand::SurfaceAdopt {
+                thread_id: initial.thread_id.clone(),
+                expected_surface_revision: SurfaceRevision(0),
+                expected_surface_digest: initial.surface.surface_digest.clone(),
+                target: Box::new(adopted_surface()),
+            },
+        ))
+        .await;
+    assert!(matches!(
+        stale,
+        Err(RuntimeExecuteError::InvalidCommand { .. })
+    ));
+
+    runtime
+        .execute(command(
+            "surface-success-operation",
+            "surface-success-key",
+            Some(initial.revision.0),
+            RuntimeCommand::SurfaceAdopt {
+                thread_id: initial.thread_id.clone(),
+                expected_surface_revision: initial.surface.surface_revision,
+                expected_surface_digest: initial.surface.surface_digest.clone(),
+                target: Box::new(adopted_surface()),
+            },
+        ))
+        .await
+        .expect("adopt idle Runtime surface");
+    let adopted = thread_snapshot(&runtime, initial.thread_id.clone()).await;
+    assert_eq!(adopted.surface, adopted_surface());
+    assert!(matches!(
+        &store.outbox().await.last().expect("surface outbox").command,
+        RuntimeCommand::SurfaceAdopt { target, .. } if target.as_ref() == &adopted_surface()
+    ));
+
+    runtime
+        .execute(command(
+            "surface-turn-operation",
+            "surface-turn-key",
+            Some(adopted.revision.0),
+            RuntimeCommand::TurnStart {
+                thread_id: adopted.thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-486"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start active turn");
+    let active = thread_snapshot(&runtime, adopted.thread_id.clone()).await;
+    assert_eq!(
+        active.active_presentation_turn_id,
+        Some(id("presentation-turn-486"))
+    );
+    let active_rejection = runtime
+        .execute(command(
+            "surface-active-operation",
+            "surface-active-key",
+            Some(active.revision.0),
+            RuntimeCommand::SurfaceAdopt {
+                thread_id: active.thread_id,
+                expected_surface_revision: active.surface.surface_revision,
+                expected_surface_digest: active.surface.surface_digest,
+                target: Box::new(RuntimeSurfaceDescriptor {
+                    surface_revision: SurfaceRevision(3),
+                    ..adopted_surface()
+                }),
+            },
+        ))
+        .await;
+    assert!(matches!(
+        active_rejection,
+        Err(RuntimeExecuteError::Unsupported { .. })
+            | Err(RuntimeExecuteError::InvalidCommand { .. })
+    ));
+}
+
+#[tokio::test]
+async fn thread_start_presentation_identity_matches_input_presence() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let runtime = ManagedAgentRuntime::new(store, Arc::new(TestTerminalPresentationProjector));
+
+    let mut phantom = start();
+    let RuntimeCommand::ThreadStart {
+        presentation_turn_id,
+        ..
+    } = &mut phantom.command
+    else {
+        unreachable!()
+    };
+    *presentation_turn_id = Some(id("presentation-turn-phantom"));
+    assert!(matches!(
+        runtime.execute(phantom).await,
+        Err(RuntimeExecuteError::InvalidCommand { .. })
+    ));
+
+    let mut missing = start();
+    let RuntimeCommand::ThreadStart { input, .. } = &mut missing.command else {
+        unreachable!()
+    };
+    *input = vec![RuntimeInput::Text {
+        text: "hello".to_string(),
+    }];
+    assert!(matches!(
+        runtime.execute(missing).await,
+        Err(RuntimeExecuteError::InvalidCommand { .. })
+    ));
+}
+
+#[tokio::test]
+async fn application_transient_append_publishes_complete_ephemeral_body_without_journaling() {
+    let (store, runtime) = fixture();
+    runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread");
+    runtime
+        .execute(command(
+            "op-application-transient",
+            "key-application-transient",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: id("thread-source-1"),
+                presentation_turn_id: id("presentation-turn-application-transient"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start Runtime turn");
+    let event = ImmutablePresentationEvent::new(
+        PresentationDurability::Ephemeral,
+        agentdash_agent_protocol::BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                key: "hook_trace_ephemeral_fixture".into(),
+                value: serde_json::json!({"explicit_null": null, "order": [2, 1]}),
+            },
+        ),
+    );
+    let mut live = store.subscribe_presentation(&id("thread-source-1")).await;
+
+    runtime
+        .append_transient_presentation(RuntimeTransientPresentationAppendRequest {
+            runtime_thread_id: id("thread-source-1"),
+            producer: "application.hook_trace".into(),
+            events: vec![RuntimePresentationInput {
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: Some(id("turn-op-application-transient")),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("presentation-thread-1".into()),
+                    source_turn_id: None,
+                    source_item_id: None,
+                    source_request_id: Some("hook-run-1".into()),
+                    source_entry_index: None,
+                },
+                event: event.clone(),
+            }],
+        })
+        .await
+        .expect("append transient presentation");
+
+    let live_record = tokio::time::timeout(std::time::Duration::from_secs(1), live.recv())
+        .await
+        .expect("transient live presentation timeout")
+        .expect("transient live presentation");
+    assert_eq!(live_record.as_presentation(), Some(&event));
+
+    let transient = store
+        .read_presentation(
+            &id("thread-source-1"),
+            Some(RuntimeDriverGeneration(7)),
+            None,
+        )
+        .await;
+    assert_eq!(transient.len(), 1);
+    assert_eq!(transient[0].as_presentation(), Some(&event));
+    assert!(transient[0].carrier().sequence.is_none());
+    assert!(transient[0].carrier().transient.is_some());
+    assert!(
+        store
+            .journal_records_after(&id("thread-source-1"), None)
+            .await
+            .expect("durable journal")
+            .records
+            .iter()
+            .all(|record| record.as_presentation() != Some(&event))
+    );
+}
+
+#[tokio::test]
+async fn driver_mixed_presentation_batch_preserves_source_order_live_and_durable_get() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread")
+        .thread_id
+        .expect("thread id");
+    runtime
+        .execute(command(
+            "op-mixed-order",
+            "key-mixed-order",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-mixed-order"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start Runtime turn");
+    let runtime_turn_id: RuntimeTurnId = id("turn-op-mixed-order");
+    let mut live = store.subscribe_presentation(&thread_id).await;
+
+    runtime
+        .ingest_driver_event(driver_facts(vec![
+            RuntimeJournalFact::Internal(RuntimeEvent::TurnStarted {
+                turn_id: runtime_turn_id,
+                presentation_turn_id: id("presentation-turn-mixed-order"),
+            }),
+            RuntimeJournalFact::Presentation(session_meta_presentation(
+                "durable-a",
+                PresentationDurability::Durable,
+            )),
+            RuntimeJournalFact::Presentation(session_meta_presentation(
+                "ephemeral-b",
+                PresentationDurability::Ephemeral,
+            )),
+            RuntimeJournalFact::Presentation(session_meta_presentation(
+                "durable-c",
+                PresentationDurability::Durable,
+            )),
+        ]))
+        .await
+        .expect("mixed driver batch");
+
+    let mut live_labels = Vec::new();
+    for _ in 0..3 {
+        let record = tokio::time::timeout(Duration::from_secs(1), live.recv())
+            .await
+            .expect("mixed live delivery timeout")
+            .expect("mixed live record");
+        let RuntimeJournalFact::Presentation(event) = record.fact() else {
+            panic!("presentation subscription must contain presentation facts");
+        };
+        let agentdash_agent_protocol::BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { value, .. },
+        ) = &event.event
+        else {
+            panic!("ordering fixture event");
+        };
+        live_labels.push((
+            value["label"].as_str().expect("label").to_string(),
+            event.durability,
+        ));
+    }
+    assert_eq!(
+        live_labels,
+        vec![
+            ("durable-a".into(), PresentationDurability::Durable),
+            ("ephemeral-b".into(), PresentationDurability::Ephemeral),
+            ("durable-c".into(), PresentationDurability::Durable),
+        ]
+    );
+
+    let durable_labels = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("durable journal")
+        .records
+        .iter()
+        .filter_map(|record| {
+            let RuntimeJournalFact::Presentation(event) = record.fact() else {
+                return None;
+            };
+            let agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
+            ) = &event.event
+            else {
+                return None;
+            };
+            (key == "ordering_fixture").then(|| value["label"].as_str().unwrap().to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(durable_labels, vec!["durable-a", "durable-c"]);
+}
+
+#[tokio::test]
+async fn driver_mixed_batch_commit_failure_leaks_no_transient_or_live_presentation() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread")
+        .thread_id
+        .expect("thread id");
+    runtime
+        .execute(command(
+            "op-mixed-failure",
+            "key-mixed-failure",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-mixed-failure"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start Runtime turn");
+    let mut live = store.subscribe_presentation(&thread_id).await;
+    store.fail_next_commit_at(CommitFailurePoint::AfterEvents);
+
+    assert!(matches!(
+        runtime
+            .ingest_driver_event(driver_facts(vec![
+                RuntimeJournalFact::Presentation(session_meta_presentation(
+                    "durable-before-failure",
+                    PresentationDurability::Durable,
+                )),
+                RuntimeJournalFact::Presentation(session_meta_presentation(
+                    "ephemeral-after-failure",
+                    PresentationDurability::Ephemeral,
+                )),
+            ]))
+            .await,
+        Err(RuntimeExecuteError::Persistence { .. })
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), live.recv())
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .read_presentation(&thread_id, Some(RuntimeDriverGeneration(7)), None)
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn application_transient_is_rejected_after_terminal_without_reviving_replay() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread")
+        .thread_id
+        .expect("thread id");
+    runtime
+        .execute(command(
+            "op-late-transient",
+            "key-late-transient",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-late-transient"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start Runtime turn");
+    let runtime_turn_id: RuntimeTurnId = id("turn-op-late-transient");
+    runtime
+        .ingest_driver_event(driver(RuntimeEvent::TurnTerminal {
+            turn_id: runtime_turn_id.clone(),
+            terminal: RuntimeTurnTerminal::Completed,
+            message: None,
+            diagnostic: None,
+        }))
+        .await
+        .expect("terminal");
+
+    let late = runtime
+        .append_transient_presentation(RuntimeTransientPresentationAppendRequest {
+            runtime_thread_id: thread_id.clone(),
+            producer: "application.hook_trace".into(),
+            events: vec![RuntimePresentationInput {
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: Some(runtime_turn_id),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some("presentation-thread-1".into()),
+                    source_turn_id: Some("presentation-turn-late-transient".into()),
+                    source_item_id: None,
+                    source_request_id: Some("late-hook".into()),
+                    source_entry_index: None,
+                },
+                event: session_meta_presentation("late-hook", PresentationDurability::Ephemeral),
+            }],
+        })
+        .await;
+    assert!(matches!(
+        late,
+        Err(RuntimePresentationAppendError::Invalid(_))
+    ));
+    assert!(
+        store
+            .read_presentation(&thread_id, Some(RuntimeDriverGeneration(7)), None)
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn concurrent_terminal_and_application_transient_never_publish_transient_after_terminal() {
+    let (store, runtime) = fixture();
+    let runtime = Arc::new(runtime);
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread")
+        .thread_id
+        .expect("thread id");
+    runtime
+        .execute(command(
+            "op-transient-terminal-race",
+            "key-transient-terminal-race",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-transient-terminal-race"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start Runtime turn");
+    let runtime_turn_id: RuntimeTurnId = id("turn-op-transient-terminal-race");
+    let mut live = store.subscribe_presentation(&thread_id).await;
+
+    let terminal_runtime = runtime.clone();
+    let terminal_turn_id = runtime_turn_id.clone();
+    let terminal = tokio::spawn(async move {
+        terminal_runtime
+            .ingest_driver_event(driver_facts(vec![
+                RuntimeJournalFact::Presentation(session_meta_presentation(
+                    "terminal-marker",
+                    PresentationDurability::Durable,
+                )),
+                RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                    turn_id: terminal_turn_id,
+                    terminal: RuntimeTurnTerminal::Completed,
+                    message: None,
+                    diagnostic: None,
+                }),
+            ]))
+            .await
+    });
+    let transient_runtime = runtime.clone();
+    let transient_thread_id = thread_id.clone();
+    let transient = tokio::spawn(async move {
+        transient_runtime
+            .append_transient_presentation(RuntimeTransientPresentationAppendRequest {
+                runtime_thread_id: transient_thread_id,
+                producer: "application.hook_trace".into(),
+                events: vec![RuntimePresentationInput {
+                    coordinate: RuntimePresentationCoordinate {
+                        runtime_turn_id: Some(runtime_turn_id),
+                        runtime_item_id: None,
+                        interaction_id: None,
+                        source_thread_id: Some("presentation-thread-1".into()),
+                        source_turn_id: Some("presentation-turn-transient-terminal-race".into()),
+                        source_item_id: None,
+                        source_request_id: Some("race-hook".into()),
+                        source_entry_index: None,
+                    },
+                    event: session_meta_presentation(
+                        "race-transient",
+                        PresentationDurability::Ephemeral,
+                    ),
+                }],
+            })
+            .await
+    });
+    terminal
+        .await
+        .expect("terminal task")
+        .expect("terminal ingestion");
+    let transient_result = transient.await.expect("transient task");
+
+    let mut labels = Vec::new();
+    while let Ok(Ok(record)) = tokio::time::timeout(Duration::from_millis(50), live.recv()).await {
+        let RuntimeJournalFact::Presentation(event) = record.fact() else {
+            continue;
+        };
+        let agentdash_agent_protocol::BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
+        ) = &event.event
+        else {
+            continue;
+        };
+        if key == "ordering_fixture" {
+            labels.push(value["label"].as_str().expect("label").to_string());
+        }
+    }
+    let terminal_index = labels
+        .iter()
+        .position(|label| label == "terminal-marker")
+        .expect("terminal marker live publication");
+    if transient_result.is_ok() {
+        let transient_index = labels
+            .iter()
+            .position(|label| label == "race-transient")
+            .expect("accepted transient must publish");
+        assert!(transient_index < terminal_index, "live order: {labels:?}");
+    } else {
+        assert!(!labels.iter().any(|label| label == "race-transient"));
+    }
+    assert!(
+        store
+            .read_presentation(&thread_id, Some(RuntimeDriverGeneration(7)), None)
+            .await
+            .is_empty(),
+        "terminal clear must remove any transient accepted before the terminal"
+    );
+}
+
+#[tokio::test]
+async fn terminal_application_effect_is_atomic_and_retries_through_typed_lease() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread")
+        .thread_id
+        .expect("thread id");
+    runtime
+        .execute(command(
+            "op-terminal-effect",
+            "key-terminal-effect",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-terminal-effect"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start Runtime turn");
+    runtime
+        .ingest_driver_event(driver(RuntimeEvent::TurnTerminal {
+            turn_id: id("turn-op-terminal-effect"),
+            terminal: RuntimeTurnTerminal::Completed,
+            message: Some("done".into()),
+            diagnostic: None,
+        }))
+        .await
+        .expect("terminal");
+
+    let effects = store.terminal_application_effects().await;
+    assert_eq!(effects.len(), 1);
+    let effect = &effects[0];
+    assert_eq!(effect.runtime_thread_id, thread_id);
+    assert_eq!(effect.runtime_turn_id, id("turn-op-terminal-effect"));
+    assert_eq!(
+        effect.presentation_turn_id,
+        id("presentation-turn-terminal-effect")
+    );
+    assert_eq!(effect.binding_id, id("binding-1"));
+    assert_eq!(effect.driver_generation, RuntimeDriverGeneration(7));
+    assert_eq!(effect.surface_revision, SurfaceRevision(1));
+    assert_eq!(effect.surface_digest, id("surface-1"));
+    let terminal_record = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("journal")
+        .records
+        .into_iter()
+        .find(|record| record.carrier().sequence == Some(effect.terminal_event_sequence))
+        .expect("terminal presentation record");
+    assert!(matches!(
+        terminal_record.fact(),
+        RuntimeJournalFact::Presentation(event)
+            if matches!(
+                &event.event,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+                ) if key == "turn_terminal"
+            )
+    ));
+
+    let request = RuntimeTerminalApplicationEffectClaimRequest {
+        owner: RuntimeWorkerId("terminal-worker".into()),
+        lease_duration_ms: 30_000,
+        limit: 1,
+    };
+    let first = store
+        .claim_terminal_application_effects(request.clone())
+        .await
+        .expect("first claim")
+        .pop()
+        .expect("terminal work");
+    assert_eq!(first.attempt, 1);
+    store
+        .release_terminal_application_effect(&first, "retry".into())
+        .await
+        .expect("release");
+    let second = store
+        .claim_terminal_application_effects(request)
+        .await
+        .expect("second claim")
+        .pop()
+        .expect("retried terminal work");
+    assert_eq!(second.attempt, 2);
+    assert!(matches!(
+        store.ack_terminal_application_effect(&first).await,
+        Err(RuntimeStoreError::WorkClaimConflict)
+    ));
+    store
+        .ack_terminal_application_effect(&second)
+        .await
+        .expect("ack terminal work");
+    assert!(
+        store
+            .claim_terminal_application_effects(RuntimeTerminalApplicationEffectClaimRequest {
+                owner: RuntimeWorkerId("terminal-worker".into()),
+                lease_duration_ms: 30_000,
+                limit: 1,
+            })
+            .await
+            .expect("claim after ack")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn terminal_application_effect_freezes_the_exact_adopted_surface_binding() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("start Runtime thread")
+        .thread_id
+        .expect("thread id");
+    let initial = thread_snapshot(&runtime, thread_id.clone()).await;
+    runtime
+        .execute(command(
+            "op-adopt-terminal-binding",
+            "key-adopt-terminal-binding",
+            Some(initial.revision.0),
+            RuntimeCommand::SurfaceAdopt {
+                thread_id: thread_id.clone(),
+                expected_surface_revision: initial.surface.surface_revision,
+                expected_surface_digest: initial.surface.surface_digest,
+                target: Box::new(adopted_surface()),
+            },
+        ))
+        .await
+        .expect("adopt surface with terminal binding");
+    let adopted = thread_snapshot(&runtime, thread_id.clone()).await;
+    runtime
+        .execute(command(
+            "op-terminal-adopted-binding",
+            "key-terminal-adopted-binding",
+            Some(adopted.revision.0),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-adopted-binding"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("start Runtime turn");
+    runtime
+        .ingest_driver_event(driver(RuntimeEvent::TurnTerminal {
+            turn_id: id("turn-op-terminal-adopted-binding"),
+            terminal: RuntimeTurnTerminal::Completed,
+            message: None,
+            diagnostic: None,
+        }))
+        .await
+        .expect("terminal");
+
+    let effects = store.terminal_application_effects().await;
+    let effect = effects.last().expect("terminal application effect");
+    assert_eq!(effect.surface_revision, adopted_surface().surface_revision);
+    assert_eq!(effect.surface_digest, adopted_surface().surface_digest);
+    assert_eq!(
+        effect.terminal_hook_effect_binding,
+        Some(terminal_effect_binding())
+    );
+}
+
+struct RejectTerminalPresentationProjector;
+
+impl RuntimeApplicationPresentationProjector for RejectTerminalPresentationProjector {
+    fn project_terminal(
+        &self,
+        _context: RuntimeTerminalPresentationContext,
+    ) -> Result<Vec<RuntimePresentationInput>, RuntimeApplicationPresentationProjectionError> {
+        Err(RuntimeApplicationPresentationProjectionError::Invalid(
+            "terminal projection rejected by test projector".into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn terminal_commit_and_projection_failures_create_no_effect_work() {
+    async fn active_turn(
+        runtime: &ManagedAgentRuntime<RuntimeStoreFixture>,
+        operation: &str,
+    ) -> RuntimeThreadId {
+        let thread_id = runtime
+            .execute(start())
+            .await
+            .expect("start Runtime thread")
+            .thread_id
+            .expect("thread id");
+        runtime
+            .execute(command(
+                operation,
+                &format!("key-{operation}"),
+                Some(3),
+                RuntimeCommand::TurnStart {
+                    thread_id: thread_id.clone(),
+                    presentation_turn_id: id(&format!("presentation-{operation}")),
+                    input: Vec::new(),
+                },
+            ))
+            .await
+            .expect("start Runtime turn");
+        thread_id
+    }
+
+    let (store, runtime) = fixture();
+    let thread_id = active_turn(&runtime, "op-terminal-effect-failure").await;
+    store.fail_next_commit_at(CommitFailurePoint::AfterOutbox);
+    assert!(matches!(
+        runtime
+            .ingest_driver_event(driver(RuntimeEvent::TurnTerminal {
+                turn_id: id("turn-op-terminal-effect-failure"),
+                terminal: RuntimeTurnTerminal::Completed,
+                message: None,
+                diagnostic: None,
+            }))
+            .await,
+        Err(RuntimeExecuteError::Persistence { .. })
+    ));
+    assert!(store.terminal_application_effects().await.is_empty());
+    assert!(
+        store
+            .journal_records_after(&thread_id, None)
+            .await
+            .expect("journal")
+            .records
+            .iter()
+            .all(|record| !is_turn_terminal_record(record))
+    );
+
+    let missing_store = Arc::new(RuntimeStoreFixture::default());
+    let missing_runtime = ManagedAgentRuntime::new(
+        missing_store.clone(),
+        Arc::new(RejectTerminalPresentationProjector),
+    );
+    active_turn(&missing_runtime, "op-terminal-effect-missing").await;
+    assert!(matches!(
+        missing_runtime
+            .ingest_driver_event(driver(RuntimeEvent::TurnTerminal {
+                turn_id: id("turn-op-terminal-effect-missing"),
+                terminal: RuntimeTurnTerminal::Completed,
+                message: None,
+                diagnostic: None,
+            }))
+            .await,
+        Err(RuntimeExecuteError::InvalidCommand { .. })
+    ));
+    assert!(
+        missing_store
+            .terminal_application_effects()
+            .await
+            .is_empty()
+    );
+}
+
+fn is_turn_terminal_record(record: &RuntimeJournalRecord) -> bool {
+    matches!(
+        record.fact(),
+        RuntimeJournalFact::Presentation(event)
+            if matches!(
+                &event.event,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+                ) if key == "turn_terminal"
+            )
+    )
 }
 
 #[tokio::test]
@@ -170,9 +1296,23 @@ async fn acceptance_projection_journal_and_outbox_commit_atomically() {
 
     let receipt = runtime.execute(start()).await.expect("accepted");
     assert_eq!(receipt.operation_sequence.0, 1);
-    assert_eq!(store.outbox().await.len(), 1);
+    let outbox = store.outbox().await;
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(
+        outbox[0].presentation_thread_id,
+        id("presentation-thread-1")
+    );
+    let projection = store
+        .load_thread(&id("thread-source-1"))
+        .await
+        .expect("load projection")
+        .expect("projection");
+    assert_eq!(
+        projection.presentation_thread_id,
+        id("presentation-thread-1")
+    );
     let events = store
-        .events_after(&id("thread-source-1"), None)
+        .internal_events_after(&id("thread-source-1"), None)
         .await
         .expect("events")
         .events;
@@ -190,6 +1330,39 @@ async fn acceptance_projection_journal_and_outbox_commit_atomically() {
 }
 
 #[tokio::test]
+async fn thread_start_with_initial_input_owns_the_canonical_turn() {
+    let (_store, runtime) = fixture();
+    let mut start = start();
+    let RuntimeCommand::ThreadStart {
+        input,
+        presentation_turn_id,
+        ..
+    } = &mut start.command
+    else {
+        unreachable!("fixture is ThreadStart");
+    };
+    *presentation_turn_id = Some(id("presentation-turn-thread-start-input"));
+    input.push(RuntimeInput::Text {
+        text: "hello".to_string(),
+    });
+
+    let thread_id = runtime
+        .execute(start)
+        .await
+        .expect("start with input")
+        .thread_id
+        .expect("thread id");
+    let snapshot = thread_snapshot(&runtime, thread_id).await;
+    assert_eq!(snapshot.revision, RuntimeRevision(4));
+    assert_eq!(snapshot.latest_event_sequence, EventSequence(4));
+    assert_eq!(snapshot.active_turn_id, Some(id("turn-op-1")));
+    assert_eq!(
+        snapshot.active_presentation_turn_id,
+        Some(id("presentation-turn-thread-start-input"))
+    );
+}
+
+#[tokio::test]
 async fn snapshot_cursor_is_the_latest_included_durable_event() {
     let (store, runtime) = fixture();
     let thread_id = runtime
@@ -202,7 +1375,7 @@ async fn snapshot_cursor_is_the_latest_included_durable_event() {
     assert_eq!(snapshot.latest_event_sequence, EventSequence(3));
     assert!(
         store
-            .events_after(&thread_id, Some(snapshot.latest_event_sequence))
+            .internal_events_after(&thread_id, Some(snapshot.latest_event_sequence))
             .await
             .expect("events after snapshot")
             .events
@@ -219,7 +1392,7 @@ async fn snapshot_cursor_is_the_latest_included_durable_event() {
         DriverEventAdmission::Durable { .. }
     ));
     let after = store
-        .events_after(&thread_id, Some(snapshot.latest_event_sequence))
+        .internal_events_after(&thread_id, Some(snapshot.latest_event_sequence))
         .await
         .expect("new events")
         .events;
@@ -287,7 +1460,7 @@ async fn every_injected_write_stage_rolls_back_the_complete_acceptance_write_set
         );
         assert!(
             store
-                .events_after(&id("thread-source-1"), None)
+                .internal_events_after(&id("thread-source-1"), None)
                 .await
                 .expect("events")
                 .events
@@ -310,6 +1483,35 @@ async fn idempotency_expected_revision_and_operation_sequence_are_enforced() {
     let (store, runtime) = fixture();
     let first = runtime.execute(start()).await.expect("start");
     assert!(runtime.execute(start()).await.expect("duplicate").duplicate);
+    let mut altered_presentation = start();
+    altered_presentation.presentation = vec![RuntimePresentationInput {
+        coordinate: RuntimePresentationCoordinate {
+            runtime_turn_id: None,
+            runtime_item_id: None,
+            interaction_id: None,
+            source_thread_id: Some("source-1".to_string()),
+            source_turn_id: None,
+            source_item_id: None,
+            source_request_id: Some("command-request".to_string()),
+            source_entry_index: Some(0),
+        },
+        event: abstract_presentation_record(
+            &id("thread-source-1"),
+            1,
+            RuntimeRevision(1),
+            "idempotency-conflict",
+        )
+        .as_presentation()
+        .expect("presentation")
+        .clone(),
+    }];
+    assert!(matches!(
+        runtime.execute(altered_presentation).await,
+        Err(RuntimeExecuteError::OperationConflict {
+            conflict: OperationConflictKind::OperationIdReused,
+            ..
+        })
+    ));
     assert_eq!(store.outbox().await.len(), 1);
     let thread_id = first.thread_id.expect("thread");
 
@@ -320,6 +1522,7 @@ async fn idempotency_expected_revision_and_operation_sequence_are_enforced() {
             Some(expected),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-757"),
                 input: Vec::new(),
             },
         )
@@ -355,6 +1558,7 @@ async fn driver_turn_started_ack_reuses_the_runtime_owned_turn_identity() {
             Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-792"),
                 input: Vec::new(),
             },
         ))
@@ -366,6 +1570,7 @@ async fn driver_turn_started_ack_reuses_the_runtime_owned_turn_identity() {
         runtime
             .ingest_driver_event(driver(RuntimeEvent::TurnStarted {
                 turn_id: turn_id.clone(),
+                presentation_turn_id: id("presentation-turn-792"),
             }))
             .await
             .expect("driver acknowledgement"),
@@ -375,6 +1580,260 @@ async fn driver_turn_started_ack_reuses_the_runtime_owned_turn_identity() {
     assert_eq!(snapshot.revision, RuntimeRevision(5));
     assert_eq!(snapshot.active_turn_id, Some(turn_id));
     assert_eq!(snapshot.status, RuntimeThreadStatus::Active);
+}
+
+fn turn_started_presentation(thread_id: &str, turn_id: &str) -> RuntimeJournalFact {
+    let event = serde_json::from_value(serde_json::json!({
+        "type": "turn_started",
+        "payload": {
+            "threadId": thread_id,
+            "turn": {
+                "id": turn_id,
+                "items": [],
+                "itemsView": "notLoaded",
+                "status": "inProgress",
+                "error": null,
+                "startedAt": 1,
+                "completedAt": null,
+                "durationMs": null
+            }
+        }
+    }))
+    .expect("typed turn started presentation");
+    RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+        PresentationDurability::Durable,
+        event,
+    ))
+}
+
+fn presentation_append_request(
+    thread_id: RuntimeThreadId,
+    key: &str,
+    source_turn_id: &str,
+) -> RuntimePresentationAppendRequest {
+    let RuntimeJournalFact::Presentation(event) =
+        turn_started_presentation("presentation-thread-1", source_turn_id)
+    else {
+        unreachable!("presentation fixture")
+    };
+    RuntimePresentationAppendRequest {
+        runtime_thread_id: thread_id,
+        producer: "workspace_module".to_string(),
+        idempotency_key: id(key),
+        events: vec![RuntimePresentationInput {
+            coordinate: RuntimePresentationCoordinate {
+                runtime_turn_id: None,
+                runtime_item_id: None,
+                interaction_id: None,
+                source_thread_id: None,
+                source_turn_id: Some(source_turn_id.to_string()),
+                source_item_id: None,
+                source_request_id: None,
+                source_entry_index: None,
+            },
+            event,
+        }],
+    }
+}
+
+#[tokio::test]
+async fn canonical_presentation_append_is_ordered_idempotent_and_thread_checked() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    let gateway: &dyn AgentRuntimeGateway = &runtime;
+    let mut request = presentation_append_request(thread_id.clone(), "append-key", "source-turn");
+    request.events[0].coordinate.source_request_id = Some("vendor-request-42".to_string());
+    request.events[0].coordinate.source_entry_index = Some(0);
+    let mut second = request.events[0].clone();
+    second.coordinate.source_entry_index = None;
+    request.events.push(second);
+    let first = gateway
+        .append_presentation(request.clone())
+        .await
+        .expect("append presentation");
+    assert!(!first.duplicate);
+    let replay = gateway
+        .append_presentation(request.clone())
+        .await
+        .expect("replay presentation");
+    assert!(replay.duplicate);
+    assert_eq!(replay.first_sequence, first.first_sequence);
+    assert_eq!(replay.last_sequence, first.last_sequence);
+
+    let appended = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("appended journal")
+        .records
+        .into_iter()
+        .filter(|record| record.carrier().append_idempotency_key.is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(appended.len(), 2);
+    assert_eq!(
+        appended[0]
+            .carrier()
+            .coordinate
+            .source_request_id
+            .as_deref(),
+        Some("vendor-request-42")
+    );
+    assert_eq!(appended[0].carrier().coordinate.source_entry_index, Some(0));
+    assert_eq!(appended[1].carrier().coordinate.source_entry_index, None);
+
+    let mut conflict = request;
+    conflict.events.swap(0, 1);
+    assert_eq!(
+        gateway.append_presentation(conflict).await,
+        Err(RuntimePresentationAppendError::IdempotencyConflict)
+    );
+
+    let mut wrong_thread =
+        presentation_append_request(thread_id.clone(), "wrong-thread-key", "source-turn-2");
+    let RuntimeJournalFact::Presentation(event) =
+        turn_started_presentation("another-presentation-thread", "source-turn-2")
+    else {
+        unreachable!("presentation fixture")
+    };
+    wrong_thread.events = vec![RuntimePresentationInput {
+        coordinate: wrong_thread.events[0].coordinate.clone(),
+        event,
+    }];
+    assert!(matches!(
+        gateway.append_presentation(wrong_thread).await,
+        Err(RuntimePresentationAppendError::Invalid(_))
+    ));
+
+    let presentation_count = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("journal")
+        .records
+        .into_iter()
+        .filter(|record| record.as_presentation().is_some())
+        .count();
+    assert_eq!(presentation_count, 2);
+}
+
+#[tokio::test]
+async fn driver_turn_started_ack_suppresses_only_its_correlated_presentation() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    runtime
+        .execute(command(
+            "op-2",
+            "key-2",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-966"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("turn");
+    let turn_id: RuntimeTurnId = id("turn-op-2");
+    assert_eq!(
+        thread_snapshot(&runtime, thread_id.clone())
+            .await
+            .active_turn_id,
+        Some(turn_id.clone())
+    );
+    let mut source = driver_facts(vec![
+        RuntimeJournalFact::Internal(RuntimeEvent::TurnStarted {
+            turn_id: turn_id.clone(),
+            presentation_turn_id: id("presentation-turn-966"),
+        }),
+        turn_started_presentation("source-1", "source-turn-1"),
+        turn_started_presentation("source-1", "unrelated-source-turn"),
+    ]);
+    source.source_turn_id = Some(id("source-turn-1"));
+
+    assert!(matches!(
+        runtime
+            .ingest_driver_event(source)
+            .await
+            .expect("driver acknowledgement"),
+        DriverEventAdmission::Durable { .. }
+    ));
+    let records = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("presentation journal")
+        .records;
+    let presentation = records
+        .iter()
+        .filter(|record| record.as_presentation().is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(presentation.len(), 1);
+    let event = &presentation[0]
+        .as_presentation()
+        .expect("presentation")
+        .event;
+    assert!(matches!(
+        event,
+        agentdash_agent_protocol::BackboneEvent::TurnStarted(notification)
+            if notification.turn.id == "unrelated-source-turn"
+    ));
+
+    let snapshot = thread_snapshot(&runtime, thread_id).await;
+    assert_eq!(snapshot.active_turn_id, Some(turn_id));
+}
+
+#[tokio::test]
+async fn presentation_turn_started_without_internal_ack_is_preserved() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("id");
+    let mut source = driver_facts(vec![turn_started_presentation(
+        "source-1",
+        "source-turn-without-ack",
+    )]);
+    source.source_turn_id = Some(id("source-turn-without-ack"));
+    source.source_entry_index = Some(17);
+
+    assert!(matches!(
+        runtime
+            .ingest_driver_event(source)
+            .await
+            .expect("standalone presentation"),
+        DriverEventAdmission::Durable { .. }
+    ));
+    let records = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .expect("presentation journal")
+        .records;
+    let presentation = records
+        .iter()
+        .filter(|record| record.as_presentation().is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(presentation.len(), 1);
+    assert_eq!(
+        presentation[0].carrier().coordinate.source_entry_index,
+        Some(17)
+    );
+    assert!(matches!(
+        &presentation[0]
+            .as_presentation()
+            .expect("presentation")
+            .event,
+        agentdash_agent_protocol::BackboneEvent::TurnStarted(notification)
+            if notification.turn.id == "source-turn-without-ack"
+    ));
 }
 
 #[tokio::test]
@@ -402,6 +1861,7 @@ async fn operation_identity_binds_actor_and_thread_scoped_key_to_the_typed_comma
             Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-1088"),
                 input: Vec::new(),
             },
         ))
@@ -443,6 +1903,7 @@ async fn concurrent_mutations_allocate_sequences_only_for_the_cas_winner() {
         Some(3),
         RuntimeCommand::TurnStart {
             thread_id: thread_id.clone(),
+            presentation_turn_id: id("presentation-turn-1129"),
             input: Vec::new(),
         },
     );
@@ -468,7 +1929,7 @@ async fn concurrent_mutations_allocate_sequences_only_for_the_cas_winner() {
         .expect("projection");
     assert_eq!(projection.next_operation_sequence, OperationSequence(2));
     let events = store
-        .events_after(&thread_id, None)
+        .internal_events_after(&thread_id, None)
         .await
         .expect("events")
         .events;
@@ -501,6 +1962,7 @@ async fn event_cursor_distinguishes_future_cursor_from_retention_gap() {
             Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-1187"),
                 input: Vec::new(),
             },
         ))
@@ -556,6 +2018,7 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
             Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-1242"),
                 input: Vec::new(),
             },
         ))
@@ -567,6 +2030,7 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
             turn_id: turn_id.clone(),
             terminal: RuntimeTurnTerminal::Lost,
             message: Some("driver disappeared".to_string()),
+            diagnostic: None,
         }))
         .await
         .expect("lost");
@@ -587,6 +2051,7 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
                 turn_id,
                 terminal: RuntimeTurnTerminal::Completed,
                 message: None,
+                diagnostic: None,
             }))
             .await
             .expect("critical protocol fact"),
@@ -611,6 +2076,271 @@ async fn exactly_one_terminal_and_lost_are_authoritative() {
 }
 
 #[tokio::test]
+async fn application_terminal_projection_is_committed_after_all_connector_facts_for_any_batch_order()
+ {
+    async fn capture(terminal_first: bool) -> Vec<RuntimeJournalRecord> {
+        let store = Arc::new(RuntimeStoreFixture::default());
+        let runtime =
+            ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
+        let thread_id = runtime
+            .execute(start())
+            .await
+            .expect("thread")
+            .thread_id
+            .expect("thread id");
+        runtime
+            .execute(command(
+                "op-terminal-order",
+                "key-terminal-order",
+                Some(3),
+                RuntimeCommand::TurnStart {
+                    thread_id: thread_id.clone(),
+                    presentation_turn_id: id("presentation-turn-terminal-order"),
+                    input: Vec::new(),
+                },
+            ))
+            .await
+            .expect("turn");
+        let terminal = RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+            turn_id: id("turn-op-terminal-order"),
+            terminal: RuntimeTurnTerminal::Completed,
+            message: None,
+            diagnostic: None,
+        });
+        let connector = RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+            PresentationDurability::Durable,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                    key: "connector_terminal_marker".into(),
+                    value: serde_json::json!({"status": "completed"}),
+                },
+            ),
+        ));
+        let facts = if terminal_first {
+            vec![terminal, connector]
+        } else {
+            vec![connector, terminal]
+        };
+        runtime
+            .ingest_driver_event(driver_facts(facts))
+            .await
+            .expect("terminal batch admission");
+        store
+            .journal_records_after(&thread_id, None)
+            .await
+            .expect("journal")
+            .records
+    }
+
+    for terminal_first in [false, true] {
+        let records = capture(terminal_first).await;
+        let presentation_keys = records
+            .iter()
+            .filter_map(|record| {
+                let RuntimeJournalFact::Presentation(event) = record.fact() else {
+                    return None;
+                };
+                let agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. },
+                ) = &event.event
+                else {
+                    return None;
+                };
+                Some(key.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &presentation_keys[presentation_keys.len() - 2..],
+            ["connector_terminal_marker", "turn_terminal"]
+        );
+        let terminal_recorded_at = records
+            .iter()
+            .find_map(|record| {
+                matches!(
+                    record.fact(),
+                    RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal { .. })
+                )
+                .then_some(record.carrier().recorded_at_ms)
+            })
+            .expect("terminal carrier time");
+        let projected_completed_at = records
+            .iter()
+            .find_map(|record| {
+                let RuntimeJournalFact::Presentation(event) = record.fact() else {
+                    return None;
+                };
+                let agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
+                ) = &event.event
+                else {
+                    return None;
+                };
+                (key == "turn_terminal")
+                    .then(|| value["completed_at_ms"].as_u64())
+                    .flatten()
+            })
+            .expect("projected completed time");
+        assert_eq!(terminal_recorded_at, projected_completed_at);
+    }
+}
+
+#[tokio::test]
+async fn terminal_projection_rejects_multiple_terminals_and_missing_turn_mapping() {
+    let (store, runtime) = fixture();
+    let thread_id = runtime
+        .execute(start())
+        .await
+        .expect("thread")
+        .thread_id
+        .expect("thread id");
+    runtime
+        .execute(command(
+            "op-terminal-reject",
+            "key-terminal-reject",
+            Some(3),
+            RuntimeCommand::TurnStart {
+                thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-terminal-reject"),
+                input: Vec::new(),
+            },
+        ))
+        .await
+        .expect("turn");
+    let terminal = || {
+        RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+            turn_id: id("turn-op-terminal-reject"),
+            terminal: RuntimeTurnTerminal::Completed,
+            message: None,
+            diagnostic: None,
+        })
+    };
+    assert!(matches!(
+        runtime
+            .ingest_driver_event(driver_facts(vec![terminal(), terminal()]))
+            .await,
+        Err(RuntimeExecuteError::InvalidCommand { .. })
+    ));
+    assert!(matches!(
+        runtime
+            .ingest_driver_event(driver(RuntimeEvent::TurnTerminal {
+                turn_id: id("unknown-terminal-turn"),
+                terminal: RuntimeTurnTerminal::Failed,
+                message: Some("missing mapping".into()),
+                diagnostic: None,
+            }))
+            .await,
+        Err(RuntimeExecuteError::InvalidCommand { .. })
+    ));
+    let snapshot = thread_snapshot(&runtime, thread_id).await;
+    assert!(snapshot.active_turn_id.is_some());
+    assert!(store.quarantined().await.is_empty());
+}
+
+#[tokio::test]
+async fn explicit_terminal_diagnostic_wins_over_same_batch_and_historical_diagnostics() {
+    fn diagnostic(label: &str) -> agentdash_agent_protocol::RuntimeTerminalDiagnostic {
+        agentdash_agent_protocol::RuntimeTerminalDiagnostic {
+            kind: "provider".into(),
+            code: Some(label.into()),
+            http_status: None,
+            provider: Some("fixture".into()),
+            model: None,
+            message: label.into(),
+            retryable: true,
+        }
+    }
+
+    async fn capture(
+        explicit: Option<agentdash_agent_protocol::RuntimeTerminalDiagnostic>,
+    ) -> serde_json::Value {
+        let store = Arc::new(RuntimeStoreFixture::default());
+        let runtime =
+            ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
+        let thread_id = runtime
+            .execute(start())
+            .await
+            .expect("thread")
+            .thread_id
+            .expect("thread id");
+        runtime
+            .execute(command(
+                "op-terminal-diagnostic",
+                "key-terminal-diagnostic",
+                Some(3),
+                RuntimeCommand::TurnStart {
+                    thread_id: thread_id.clone(),
+                    presentation_turn_id: id("presentation-turn-terminal-diagnostic"),
+                    input: Vec::new(),
+                },
+            ))
+            .await
+            .expect("turn");
+        let runtime_turn_id: RuntimeTurnId = id("turn-op-terminal-diagnostic");
+        runtime
+            .ingest_driver_event(driver_facts(vec![
+                RuntimeJournalFact::Internal(RuntimeEvent::TurnStarted {
+                    turn_id: runtime_turn_id.clone(),
+                    presentation_turn_id: id("presentation-turn-terminal-diagnostic"),
+                }),
+                RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::RuntimeTerminalDiagnostic(
+                            diagnostic("historical"),
+                        ),
+                    ),
+                )),
+            ]))
+            .await
+            .expect("historical diagnostic");
+        runtime
+            .ingest_driver_event(driver_facts(vec![
+                RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                    turn_id: runtime_turn_id,
+                    terminal: RuntimeTurnTerminal::Failed,
+                    message: Some("failed".into()),
+                    diagnostic: explicit,
+                }),
+                RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::RuntimeTerminalDiagnostic(
+                            diagnostic("same-batch"),
+                        ),
+                    ),
+                )),
+            ]))
+            .await
+            .expect("terminal diagnostic");
+        store
+            .journal_records_after(&thread_id, None)
+            .await
+            .expect("journal")
+            .records
+            .iter()
+            .find_map(|record| {
+                let RuntimeJournalFact::Presentation(event) = record.fact() else {
+                    return None;
+                };
+                let agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value },
+                ) = &event.event
+                else {
+                    return None;
+                };
+                (key == "turn_terminal").then(|| value["diagnostic"].clone())
+            })
+            .expect("projected diagnostic")
+    }
+
+    assert_eq!(capture(None).await["code"], "same-batch");
+    assert_eq!(
+        capture(Some(diagnostic("explicit-terminal"))).await["code"],
+        "explicit-terminal"
+    );
+}
+
+#[tokio::test]
 async fn stale_generation_is_quarantined_without_advancing_cursor() {
     let (store, runtime) = fixture();
     let thread_id = runtime
@@ -620,7 +2350,7 @@ async fn stale_generation_is_quarantined_without_advancing_cursor() {
         .thread_id
         .expect("id");
     let before = store
-        .events_after(&thread_id, None)
+        .internal_events_after(&thread_id, None)
         .await
         .expect("events")
         .events
@@ -635,7 +2365,7 @@ async fn stale_generation_is_quarantined_without_advancing_cursor() {
     );
     assert_eq!(
         store
-            .events_after(&thread_id, None)
+            .internal_events_after(&thread_id, None)
             .await
             .expect("events")
             .events
@@ -835,7 +2565,7 @@ async fn driver_cannot_forge_runtime_owned_hook_transitions() {
 }
 
 #[tokio::test]
-async fn transient_delta_has_no_durable_cursor() {
+async fn ephemeral_presentation_has_live_cursor_without_durable_journal_entry() {
     let (store, runtime) = fixture();
     let thread_id = runtime
         .execute(start())
@@ -843,124 +2573,124 @@ async fn transient_delta_has_no_durable_cursor() {
         .expect("thread")
         .thread_id
         .expect("id");
-    runtime
-        .execute(command(
-            "op-2",
-            "key-2",
-            Some(3),
-            RuntimeCommand::TurnStart {
-                thread_id: thread_id.clone(),
-                input: Vec::new(),
-            },
-        ))
+    let durable_before = store
+        .journal_records_after(&thread_id, None)
         .await
-        .expect("turn");
-    let turn_id: RuntimeTurnId = id("turn-op-2");
-    let item_id: RuntimeItemId = id("item-1");
-    runtime
-        .ingest_driver_event(driver(RuntimeEvent::ItemStarted {
-            turn_id: turn_id.clone(),
-            item_id: item_id.clone(),
-            initial_content: RuntimeItemContent::agent_message(item_id.as_str(), String::new()),
+        .expect("journal before")
+        .records
+        .len();
+    let protected: agentdash_agent_protocol::BackboneEvent =
+        serde_json::from_value(serde_json::json!({
+            "type": "agent_message_delta",
+            "payload": {
+                "threadId": "presentation-thread-1",
+                "turnId": "presentation-turn-1",
+                "itemId": "presentation-item-1",
+                "delta": "token"
+            }
         }))
-        .await
-        .expect("item");
+        .expect("typed presentation delta");
+    let mut live = store.subscribe_presentation(&thread_id).await;
+
     assert_eq!(
         runtime
-            .ingest_driver_event(driver(RuntimeEvent::ConversationDelta {
-                turn_id,
-                item_id,
-                delta: RuntimeConversationDelta::AgentMessage {
-                    delta: "token".to_string()
-                },
-            }))
+            .ingest_driver_event(driver_facts(vec![RuntimeJournalFact::Presentation(
+                ImmutablePresentationEvent::new(
+                    PresentationDurability::Ephemeral,
+                    protected.clone(),
+                ),
+            )]))
             .await
             .expect("delta"),
         DriverEventAdmission::Transient
     );
-    let durable = store
-        .events_after(&thread_id, Some(EventSequence(5)))
-        .await
-        .expect("tail")
-        .events;
-    assert_eq!(durable.len(), 1);
-    let mut stream = runtime
-        .events(RuntimeEventSubscription {
-            thread_id: thread_id.clone(),
-            after: Some(EventSequence(5)),
-            include_transient: true,
-            transient_after: None,
-            stream_generation: None,
-        })
-        .await
-        .expect("stream");
-    assert!(
-        stream
-            .next()
+    assert_eq!(
+        store
+            .journal_records_after(&thread_id, None)
             .await
-            .expect("durable")
-            .expect("ok")
-            .sequence
-            .is_some()
+            .expect("journal after")
+            .records
+            .len(),
+        durable_before
     );
-    let transient = stream.next().await.expect("transient").expect("ok");
-    assert!(transient.sequence.is_none());
-    let coordinate = transient.transient.expect("stable transient coordinate");
+    let transient = store
+        .read_presentation(&thread_id, None, None)
+        .await
+        .into_iter()
+        .next()
+        .expect("ephemeral presentation replay");
+    assert_eq!(
+        transient.as_presentation().expect("presentation").event,
+        protected
+    );
+    let coordinate = transient
+        .carrier()
+        .transient
+        .as_ref()
+        .expect("stable transient coordinate");
     assert_eq!(coordinate.sequence.0, 1);
     assert_eq!(coordinate.stream_generation, RuntimeDriverGeneration(7));
-    let mut resumed = runtime
-        .events(RuntimeEventSubscription {
-            thread_id: thread_id.clone(),
-            after: Some(EventSequence(6)),
-            include_transient: true,
-            transient_after: Some(coordinate.sequence),
-            stream_generation: Some(coordinate.stream_generation),
-        })
+    let first_live = tokio::time::timeout(Duration::from_secs(1), live.recv())
         .await
-        .expect("resume stream");
+        .expect("ephemeral presentation live delivery timed out")
+        .expect("ephemeral presentation live sender closed");
+    assert_eq!(
+        first_live.as_presentation().expect("presentation").event,
+        protected
+    );
+
+    store.clear(&thread_id).await;
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(20), resumed.next())
+        store
+            .read_presentation(&thread_id, None, None)
             .await
-            .is_err(),
-        "live reconnect must wait instead of duplicating replay"
+            .is_empty()
     );
     runtime
-        .ingest_driver_event(driver(RuntimeEvent::ConversationDelta {
-            turn_id: id("turn-op-2"),
-            item_id: id("item-1"),
-            delta: RuntimeConversationDelta::AgentMessage {
-                delta: "-live".to_string(),
-            },
-        }))
+        .ingest_driver_event(driver_facts(vec![RuntimeJournalFact::Presentation(
+            ImmutablePresentationEvent::new(PresentationDurability::Ephemeral, protected.clone()),
+        )]))
         .await
-        .expect("second live delta");
-    let live = tokio::time::timeout(std::time::Duration::from_secs(1), resumed.next())
+        .expect("delta after replay clear");
+    let second_live = tokio::time::timeout(Duration::from_secs(1), live.recv())
         .await
-        .expect("live broadcast timeout")
-        .expect("live event")
-        .expect("live event ok");
-    assert_eq!(live.transient.expect("live coordinate").sequence.0, 2);
+        .expect("existing presentation receiver timed out after replay clear")
+        .expect("presentation sender was replaced by replay clear");
+    assert_eq!(
+        second_live.as_presentation().expect("presentation").event,
+        protected
+    );
+}
+
+#[tokio::test]
+async fn driver_transient_internal_summary_is_quarantined_instead_of_replayed() {
+    let (store, runtime) = fixture();
+    runtime.execute(start()).await.expect("thread");
 
     runtime
-        .ingest_driver_event(driver(RuntimeEvent::ItemTerminal {
-            turn_id: id("turn-op-2"),
-            item_id: id("item-1"),
-            terminal: RuntimeItemTerminal::Completed {
-                final_content: RuntimeItemContent::agent_message("item-1", "token"),
+        .ingest_driver_event(driver(RuntimeEvent::ConversationDelta {
+            turn_id: id("forged-turn"),
+            item_id: id("forged-item"),
+            delta: RuntimeConversationDelta::AgentMessage {
+                delta: "summary".to_string(),
             },
         }))
         .await
-        .expect("terminal");
-    let terminal = tokio::time::timeout(std::time::Duration::from_secs(1), resumed.next())
-        .await
-        .expect("durable terminal timeout")
-        .expect("durable terminal")
-        .expect("durable terminal ok");
-    assert!(matches!(terminal.event, RuntimeEvent::ItemTerminal { .. }));
-    let replay = store
-        .read(&thread_id, Some(RuntimeDriverGeneration(7)), None)
-        .await;
-    assert!(replay.is_empty(), "durable final item clears live replay");
+        .expect("protocol violation persisted");
+
+    assert!(matches!(
+        store.quarantined().await.as_slice(),
+        [agentdash_agent_runtime::QuarantinedDriverEvent {
+            reason: agentdash_agent_runtime::DriverEventQuarantineReason::TransientInternalFact,
+            ..
+        }]
+    ));
+    assert!(
+        store
+            .read_presentation(&id("thread-source-1"), None, None)
+            .await
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -1037,6 +2767,7 @@ async fn item_and_interaction_transitions_share_the_thread_projection() {
             Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-1723"),
                 input: Vec::new(),
             },
         ))
@@ -1150,6 +2881,7 @@ async fn binding_loss_atomically_converges_every_active_entity_to_lost() {
             Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-1836"),
                 input: Vec::new(),
             },
         ))
@@ -1234,6 +2966,7 @@ async fn malformed_lifecycle_is_typed_quarantined_and_persists_critical_loss() {
             Some(3),
             RuntimeCommand::TurnStart {
                 thread_id: thread_id.clone(),
+                presentation_turn_id: id("presentation-turn-1920"),
                 input: Vec::new(),
             },
         ))
@@ -1255,6 +2988,7 @@ async fn malformed_lifecycle_is_typed_quarantined_and_persists_critical_loss() {
                 turn_id,
                 terminal: RuntimeTurnTerminal::Completed,
                 message: None,
+                diagnostic: None,
             }))
             .await
             .expect("critical fact"),
@@ -1270,7 +3004,7 @@ async fn malformed_lifecycle_is_typed_quarantined_and_persists_critical_loss() {
         }]
     ));
     let events = store
-        .events_after(&thread_id, None)
+        .internal_events_after(&thread_id, None)
         .await
         .expect("events")
         .events;

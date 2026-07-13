@@ -157,10 +157,10 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] producer payload经过serialize/deserialize/reducer/snapshot roundtrip deep equal。
-- [ ] Runtime内部坐标变化不改变protected body。
-- [ ] source IDs、event timestamps、explicit null保持不变。
-- [ ] contract tests证明internal record不会进入session presentation stream。
+- [x] producer payload经过serialize/deserialize/reducer/snapshot roundtrip deep equal。
+- [x] Runtime内部坐标变化不改变protected body。
+- [x] source IDs、event timestamps、explicit null保持不变。
+- [x] contract tests证明internal record不会进入session presentation stream。
 
 ### Commit
 

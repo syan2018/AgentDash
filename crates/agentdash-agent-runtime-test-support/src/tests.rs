@@ -435,12 +435,14 @@ async fn unsupported_command_has_no_side_effect() {
     let driver = UnsupportedRecordingDriver::new(descriptor);
     let command = DriverCommandEnvelope {
         request_id: id("request-1"),
+        presentation_thread_id: id("presentation-thread-1"),
         binding_id: id("binding-1"),
         generation: RuntimeDriverGeneration(1),
         source_thread_id: id("source-thread-1"),
         runtime_turn_id: Some(id("turn-1")),
         command: RuntimeCommand::TurnStart {
             thread_id: id("thread-1"),
+            presentation_turn_id: id("presentation-turn-1"),
             input: vec![RuntimeInput::Text {
                 text: "hello".to_string(),
             }],

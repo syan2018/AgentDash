@@ -10,9 +10,9 @@ use chrono::{DateTime, Utc};
 use tokio::sync::RwLock;
 
 use crate::{
-    AgentRuntimeHostRepository, AgentServiceInstance, AppliedSurface, DriverLease, HostStoreError,
-    RuntimeBinding, RuntimeBindingState, RuntimeDriverCoordinate, RuntimeOffer,
-    RuntimeSourceCoordinate,
+    AgentRuntimeHostRepository, AgentServiceInstance, AppliedSurface, BoundAgentSurfaceReference,
+    DriverLease, HostStoreError, RuntimeBinding, RuntimeBindingState, RuntimeDriverCoordinate,
+    RuntimeOffer, RuntimeSourceCoordinate,
 };
 
 #[derive(Default)]
@@ -390,6 +390,36 @@ impl AgentRuntimeHostRepository for EphemeralAgentRuntimeHostRepository {
                 reason: "surface apply receipt targets a stale or inactive binding".to_string(),
             });
         }
+        binding.applied_surface = Some(applied);
+        Ok(binding.clone())
+    }
+
+    async fn adopt_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+        expected_generation: RuntimeDriverGeneration,
+        expected_bound: &BoundAgentSurfaceReference,
+        target_bound: BoundAgentSurfaceReference,
+        applied: AppliedSurface,
+    ) -> Result<RuntimeBinding, HostStoreError> {
+        let mut state = self.state.write().await;
+        let binding =
+            state
+                .bindings
+                .get_mut(binding_id)
+                .ok_or_else(|| HostStoreError::NotFound {
+                    entity: "agent_runtime_binding",
+                    id: binding_id.to_string(),
+                })?;
+        if binding.driver_generation != expected_generation
+            || binding.state != RuntimeBindingState::Active
+            || &binding.bound_surface != expected_bound
+        {
+            return Err(HostStoreError::Invariant {
+                reason: "surface adoption targets a stale or inactive binding".to_string(),
+            });
+        }
+        binding.bound_surface = target_bound;
         binding.applied_surface = Some(applied);
         Ok(binding.clone())
     }

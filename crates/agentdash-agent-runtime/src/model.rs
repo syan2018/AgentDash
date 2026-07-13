@@ -2,11 +2,13 @@ use std::collections::BTreeMap;
 
 use agentdash_agent_runtime_contract::{
     BindingEpoch, ContextRevision, EventSequence, IdempotencyKey, OperationReceipt,
-    OperationSequence, ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand,
-    RuntimeDriverGeneration, RuntimeEvent, RuntimeEventEnvelope, RuntimeInteractionId,
-    RuntimeItemId, RuntimeOperationId, RuntimeOperationTerminal, RuntimeProfile, RuntimeRevision,
-    RuntimeSnapshot, RuntimeThreadId, RuntimeThreadStatus, RuntimeTurnId, ThreadSettingsRevision,
-    ToolSetRevision,
+    OperationSequence, PresentationTurnId, ProfileDigest, RuntimeActor, RuntimeBindingId,
+    RuntimeCarrierMetadata, RuntimeCommand, RuntimeDriverGeneration, RuntimeEvent,
+    RuntimeEventEnvelope, RuntimeInteractionId, RuntimeItemId, RuntimeJournalFact,
+    RuntimeJournalRecord, RuntimeOperationId, RuntimeOperationTerminal,
+    RuntimePresentationCoordinate, RuntimeProfile, RuntimeRevision, RuntimeSnapshot,
+    RuntimeThreadId, RuntimeThreadStatus, RuntimeTranscriptItem, RuntimeTurnId,
+    ThreadSettingsRevision, ToolSetRevision,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -19,6 +21,7 @@ pub enum EntityPhase<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeTurnState {
+    pub presentation_turn_id: PresentationTurnId,
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeTurnTerminal>,
 }
 
@@ -35,7 +38,7 @@ pub struct RuntimeInteractionState {
     pub phase: EntityPhase<agentdash_agent_runtime_contract::RuntimeInteractionTerminal>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeOperationRecord {
     pub operation_id: RuntimeOperationId,
     pub idempotency_key: IdempotencyKey,
@@ -43,6 +46,7 @@ pub struct RuntimeOperationRecord {
     pub thread_id: RuntimeThreadId,
     pub operation_sequence: OperationSequence,
     pub accepted_revision: RuntimeRevision,
+    pub presentation: Vec<agentdash_agent_runtime_contract::RuntimePresentationInput>,
     pub command: RuntimeCommand,
     pub terminal: Option<RuntimeOperationTerminal>,
 }
@@ -62,6 +66,7 @@ impl RuntimeOperationRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeThreadState {
     pub thread_id: RuntimeThreadId,
+    pub presentation_thread_id: agentdash_agent_runtime_contract::PresentationThreadId,
     pub revision: RuntimeRevision,
     pub next_event_sequence: EventSequence,
     pub next_operation_sequence: OperationSequence,
@@ -83,11 +88,16 @@ pub struct RuntimeThreadState {
     pub turns: BTreeMap<RuntimeTurnId, RuntimeTurnState>,
     pub items: BTreeMap<RuntimeItemId, RuntimeItemState>,
     pub item_order: Vec<RuntimeItemId>,
+    /// Complete terminal presentation events, indexed only from producer-owned
+    /// payloads. Runtime item summaries are never used to populate this list.
+    pub presentation_transcript: Vec<RuntimeTranscriptItem>,
     pub interactions: BTreeMap<RuntimeInteractionId, RuntimeInteractionState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, Deserialize)]
 pub enum TransitionError {
+    #[error("invalid runtime journal fact: {message}")]
+    InvalidJournalFact { message: String },
     #[error("operation {operation_id} was already accepted")]
     OperationAlreadyAccepted { operation_id: RuntimeOperationId },
     #[error("operation {operation_id} was not accepted")]
@@ -118,6 +128,8 @@ pub enum TransitionError {
     DuplicateItemTerminal { item_id: RuntimeItemId },
     #[error("item {item_id} received a delta after terminal")]
     ItemDeltaAfterTerminal { item_id: RuntimeItemId },
+    #[error("presentation item {source_item_id} already reached terminal")]
+    DuplicatePresentationTerminal { source_item_id: String },
     #[error("interaction {interaction_id} was already requested")]
     InteractionAlreadyRequested {
         interaction_id: RuntimeInteractionId,
@@ -174,6 +186,35 @@ impl TransitionError {
 }
 
 impl RuntimeThreadState {
+    pub fn apply_journal_record(
+        &mut self,
+        record: &RuntimeJournalRecord,
+    ) -> Result<(), TransitionError> {
+        self.apply_journal_fact(record.fact())
+    }
+
+    fn apply_journal_fact(&mut self, fact: &RuntimeJournalFact) -> Result<(), TransitionError> {
+        match fact {
+            RuntimeJournalFact::Internal(event) => self.apply_authoritative(event),
+            RuntimeJournalFact::Presentation(event) => {
+                let Some(item) = presentation_terminal_item(event) else {
+                    return Ok(());
+                };
+                if self
+                    .presentation_transcript
+                    .iter()
+                    .any(|existing| existing.source_item_id == item.source_item_id)
+                {
+                    return Err(TransitionError::DuplicatePresentationTerminal {
+                        source_item_id: item.source_item_id,
+                    });
+                }
+                self.presentation_transcript.push(item);
+                Ok(())
+            }
+        }
+    }
+
     pub fn apply_authoritative(&mut self, event: &RuntimeEvent) -> Result<(), TransitionError> {
         match event {
             RuntimeEvent::OperationAccepted { operation_id } => {
@@ -204,7 +245,10 @@ impl RuntimeThreadState {
                 }
             },
             RuntimeEvent::ThreadStatusChanged { status } => self.status = *status,
-            RuntimeEvent::TurnStarted { turn_id } => {
+            RuntimeEvent::TurnStarted {
+                turn_id,
+                presentation_turn_id,
+            } => {
                 if self.active_turn_id.is_some() || self.turns.contains_key(turn_id) {
                     return Err(TransitionError::TurnCannotStart {
                         turn_id: turn_id.clone(),
@@ -214,6 +258,7 @@ impl RuntimeThreadState {
                 self.turns.insert(
                     turn_id.clone(),
                     RuntimeTurnState {
+                        presentation_turn_id: presentation_turn_id.clone(),
                         phase: EntityPhase::Active,
                     },
                 );
@@ -510,6 +555,7 @@ impl RuntimeThreadState {
                 turn_id: turn_id.clone(),
                 terminal: agentdash_agent_runtime_contract::RuntimeTurnTerminal::Lost,
                 message: message.clone(),
+                diagnostic: None,
             });
         }
         for (operation_id, operation) in &self.operations {
@@ -547,6 +593,36 @@ impl RuntimeThreadState {
         Ok(envelopes)
     }
 
+    pub fn append_durable_fact(
+        &mut self,
+        fact: RuntimeJournalFact,
+        recorded_at_ms: u64,
+        binding_id: Option<RuntimeBindingId>,
+        append_idempotency_key: Option<IdempotencyKey>,
+        coordinate: RuntimePresentationCoordinate,
+    ) -> Result<RuntimeJournalRecord, TransitionError> {
+        self.apply_journal_fact(&fact)?;
+        self.revision.0 += 1;
+        self.next_event_sequence.0 += 1;
+        RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: self.thread_id.clone(),
+                recorded_at_ms,
+                sequence: Some(self.next_event_sequence),
+                transient: None,
+                revision: self.revision,
+                operation_id: None,
+                append_idempotency_key,
+                binding_id,
+                coordinate,
+            },
+            fact,
+        )
+        .map_err(|error| TransitionError::InvalidJournalFact {
+            message: error.to_string(),
+        })
+    }
+
     pub fn snapshot(&self) -> RuntimeSnapshot {
         let pending_interactions: Vec<_> = self
             .interactions
@@ -580,6 +656,11 @@ impl RuntimeThreadState {
             captured_at_ms: current_time_ms(),
             status: self.status,
             active_turn_id: self.active_turn_id.clone(),
+            active_presentation_turn_id: self.active_turn_id.as_ref().and_then(|turn_id| {
+                self.turns
+                    .get(turn_id)
+                    .map(|turn| turn.presentation_turn_id.clone())
+            }),
             binding_id: self.binding_id.clone(),
             binding_epoch: self.binding_epoch,
             profile_digest: self.profile_digest.clone(),
@@ -590,36 +671,81 @@ impl RuntimeThreadState {
             tool_set_revision: self.tool_set_revision,
             pending_interactions,
             command_availability,
-            transcript: self
-                .item_order
-                .iter()
-                .filter_map(|item_id| {
-                    let state = self.items.get(item_id)?;
-                    match &state.phase {
-                        EntityPhase::Terminal(
-                            agentdash_agent_runtime_contract::RuntimeItemTerminal::Completed {
-                                final_content,
-                            },
-                        ) => Some(agentdash_agent_runtime_contract::RuntimeTranscriptItem {
-                            turn_id: state.turn_id.clone(),
-                            item_id: item_id.clone(),
-                            final_content: final_content.clone(),
-                        }),
-                        EntityPhase::Active
-                        | EntityPhase::Terminal(
-                            agentdash_agent_runtime_contract::RuntimeItemTerminal::Failed {
-                                ..
-                            }
-                            | agentdash_agent_runtime_contract::RuntimeItemTerminal::Cancelled {
-                                ..
-                            }
-                            | agentdash_agent_runtime_contract::RuntimeItemTerminal::Lost { .. },
-                        ) => None,
-                    }
-                })
-                .collect(),
+            transcript: self.presentation_transcript.clone(),
             transcript_fidelity: agentdash_agent_runtime_contract::ContextFidelity::EventProjected,
         }
+    }
+}
+
+fn presentation_terminal_item(
+    event: &agentdash_agent_runtime_contract::ImmutablePresentationEvent,
+) -> Option<RuntimeTranscriptItem> {
+    let agentdash_agent_protocol::BackboneEvent::ItemCompleted(completed) = &event.event else {
+        return None;
+    };
+    Some(RuntimeTranscriptItem {
+        source_thread_id: completed.thread_id.clone(),
+        source_turn_id: completed.turn_id.clone(),
+        source_item_id: completed.item.id().to_string(),
+        terminal_event: event.clone(),
+    })
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+    use agentdash_agent_runtime_contract::{ImmutablePresentationEvent, PresentationDurability};
+
+    #[test]
+    fn transcript_index_retains_the_complete_terminal_event() {
+        let event: agentdash_agent_protocol::BackboneEvent =
+            serde_json::from_value(serde_json::json!({
+                "type": "item_completed",
+                "payload": {
+                    "item": {
+                        "type": "dynamicToolCall",
+                        "id": "source-item-1",
+                        "namespace": null,
+                        "tool": "fixture",
+                        "arguments": { "nullable": null },
+                        "status": "completed",
+                        "contentItems": null,
+                        "success": true,
+                        "durationMs": null
+                    },
+                    "threadId": "source-thread-1",
+                    "turnId": "source-turn-1",
+                    "completedAtMs": 123_i64
+                }
+            }))
+            .expect("terminal presentation event");
+        let event = ImmutablePresentationEvent::new(PresentationDurability::Durable, event);
+
+        let indexed = presentation_terminal_item(&event).expect("terminal transcript item");
+        assert_eq!(indexed.source_thread_id, "source-thread-1");
+        assert_eq!(indexed.source_turn_id, "source-turn-1");
+        assert_eq!(indexed.source_item_id, "source-item-1");
+        assert_eq!(
+            serde_json::to_value(indexed.terminal_event).expect("serialize indexed terminal"),
+            serde_json::to_value(event).expect("serialize source terminal")
+        );
+    }
+
+    #[test]
+    fn non_terminal_presentation_does_not_enter_the_snapshot_transcript() {
+        let event: agentdash_agent_protocol::BackboneEvent =
+            serde_json::from_value(serde_json::json!({
+                "type": "agent_message_delta",
+                "payload": {
+                    "delta": "token",
+                    "itemId": "source-item-1",
+                    "threadId": "source-thread-1",
+                    "turnId": "source-turn-1"
+                }
+            }))
+            .expect("delta presentation event");
+        let event = ImmutablePresentationEvent::new(PresentationDurability::Ephemeral, event);
+        assert!(presentation_terminal_item(&event).is_none());
     }
 }
 

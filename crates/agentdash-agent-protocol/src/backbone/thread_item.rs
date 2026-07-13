@@ -127,8 +127,8 @@ pub fn dynamic_tool_call(
         tool: tool.into(),
         arguments,
         status,
-        content_items,
-        success,
+        content_items: content_items.map(Some),
+        success: success.map(Some),
         duration_ms: None,
     }
 }
@@ -212,8 +212,11 @@ mod tests {
                 ..
             } => {
                 assert_eq!(command, "echo hi");
-                assert_eq!(exit_code, Some(0));
-                assert_eq!(aggregated_output.as_deref(), Some("hi\n"));
+                assert_eq!(exit_code, Some(Some(0)));
+                assert_eq!(
+                    aggregated_output.as_ref().and_then(Option::as_deref),
+                    Some("hi\n")
+                );
             }
             other => panic!("expected CommandExecution, got {other:?}"),
         }

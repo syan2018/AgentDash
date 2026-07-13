@@ -13,6 +13,9 @@ use agentdash_agent_runtime_contract::*;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+mod support;
+use support::TestTerminalPresentationProjector;
+
 fn id<T: FromStr>(value: &str) -> T
 where
     T::Err: std::fmt::Debug,
@@ -48,6 +51,8 @@ fn catalog() -> ToolCatalogRevision {
             protocol_projection: ToolProtocolProjection::Dynamic {
                 namespace: Some("test".to_string()),
             },
+            presentation_emitter: ToolPresentationEmitter::ToolBroker,
+            parity_fixture_id: "main_tool_code_scan_lifecycle".into(),
         }],
         mcp_servers: vec![McpContribution {
             meta: ContributionMeta {
@@ -183,6 +188,7 @@ impl ToolBrokerRuntimeJournal for RecordingJournal {
     async fn record_tool_update(
         &self,
         _invocation: &ToolBrokerInvocation,
+        _tool: &ToolContribution,
         content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
     ) -> Result<(), ToolBrokerError> {
         assert!(!content_items.is_empty());
@@ -755,11 +761,233 @@ fn runtime_profile() -> RuntimeProfile {
 }
 
 #[tokio::test]
-async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_result() {
+async fn managed_runtime_journal_preserves_true_mcp_owner_lifecycle() {
     let store = Arc::new(RuntimeStoreFixture::default());
-    let runtime = ManagedAgentRuntime::new(store.clone());
+    let runtime =
+        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
     runtime
         .execute(RuntimeCommandEnvelope {
+            presentation: Vec::new(),
+            meta: OperationMeta {
+                operation_id: id("mcp-broker-thread-start"),
+                idempotency_key: id("mcp-broker-thread-start-key"),
+                expected_thread_revision: None,
+                actor: RuntimeActor::System {
+                    component: "mcp-tool-broker-test".to_string(),
+                },
+            },
+            command: RuntimeCommand::ThreadStart {
+                thread_id: id("thread-mcp-broker"),
+                presentation_thread_id: id("presentation-thread-mcp-broker"),
+                presentation_turn_id: None,
+                binding_id: id("binding-mcp-broker"),
+                driver_generation: RuntimeDriverGeneration(3),
+                source_thread_id: id("source-thread-mcp-broker"),
+                profile_digest: id("profile-mcp-broker"),
+                bound_profile: Box::new(runtime_profile()),
+                input: Vec::new(),
+                surface: Box::new(RuntimeSurfaceDescriptor {
+                    source_frame_id: "frame-mcp-broker".to_string(),
+                    surface_revision: SurfaceRevision(1),
+                    surface_digest: id("surface-mcp-broker"),
+                    vfs_digest: "vfs-mcp-broker".to_string(),
+                    context_recipe_revision: ContextRecipeRevision(1),
+                    context_digest: id("context-mcp-broker"),
+                    settings_revision: ThreadSettingsRevision(0),
+                    tool_set_revision: ToolSetRevision(4),
+                    tool_set_digest: "tools-mcp-broker".to_string(),
+                    hook_plan: BoundRuntimeHookPlan {
+                        revision: HookPlanRevision(1),
+                        digest: id("hook-plan-mcp-broker"),
+                        entries: Vec::new(),
+                    },
+                    terminal_hook_effect_binding: None,
+                }),
+                settings_revision: ThreadSettingsRevision(0),
+            },
+        })
+        .await
+        .expect("start MCP broker thread");
+    runtime
+        .execute(RuntimeCommandEnvelope {
+            presentation: Vec::new(),
+            meta: OperationMeta {
+                operation_id: id("mcp-broker-turn-start"),
+                idempotency_key: id("mcp-broker-turn-start-key"),
+                expected_thread_revision: Some(RuntimeRevision(3)),
+                actor: RuntimeActor::System {
+                    component: "mcp-tool-broker-test".to_string(),
+                },
+            },
+            command: RuntimeCommand::TurnStart {
+                thread_id: id("thread-mcp-broker"),
+                presentation_turn_id: id("presentation-turn-mcp-broker"),
+                input: Vec::new(),
+            },
+        })
+        .await
+        .expect("start MCP broker turn");
+
+    let tool = ToolContribution {
+        meta: tool_meta(),
+        runtime_name: "mcp_code_analyzer_scan_repo".to_string(),
+        description: "Scan through a true MCP presentation owner".to_string(),
+        parameters_schema: serde_json::json!({"type":"object"}),
+        capability_key: "mcp:code-analyzer".to_string(),
+        tool_path: "mcp:code-analyzer::scan_repo".to_string(),
+        allowed_channels: [ToolChannel::McpFacade].into(),
+        configuration_boundary: ConfigurationBoundary::Binding,
+        protocol_projection: ToolProtocolProjection::Mcp {
+            server_key: "code-analyzer".to_string(),
+        },
+        presentation_emitter: ToolPresentationEmitter::ToolBroker,
+        parity_fixture_id: "main_tool_mcp_true_owner_lifecycle".to_string(),
+    };
+    let invocation = ToolBrokerInvocation {
+        coordinates: ToolCallCoordinates {
+            thread_id: id("thread-mcp-broker"),
+            turn_id: id("turn-mcp-broker-turn-start"),
+            item_id: id("item-mcp-broker"),
+            binding_id: id("binding-mcp-broker"),
+            binding_generation: RuntimeDriverGeneration(3),
+            tool_set_revision: ToolSetRevision(4),
+        },
+        tool_name: tool.runtime_name.clone(),
+        arguments: serde_json::json!({"query":"rust","nullable":null}),
+        timeout_ms: 1_000,
+    };
+    let journal = ManagedRuntimeToolJournal::new(store.clone());
+    journal
+        .accept_tool_call(&invocation, &tool)
+        .await
+        .expect("MCP owner start");
+    journal
+        .record_tool_update(
+            &invocation,
+            &tool,
+            vec![
+                agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                    text: "first".to_string(),
+                },
+                agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                    text: " second".to_string(),
+                },
+            ],
+        )
+        .await
+        .expect("MCP progress segments");
+    assert!(
+        journal
+            .record_tool_update(
+                &invocation,
+                &tool,
+                vec![
+                    agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                        text: "must-not-publish".to_string(),
+                    },
+                    agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputImage {
+                        image_url: "data:image/png;base64,AA==".to_string(),
+                    },
+                ],
+            )
+            .await
+            .is_err(),
+        "MCP scalar progress must reject image content"
+    );
+    assert_eq!(
+        store
+            .read_presentation(
+                &id("thread-mcp-broker"),
+                Some(RuntimeDriverGeneration(3)),
+                None,
+            )
+            .await
+            .len(),
+        2,
+        "mixed invalid MCP update must publish zero partial segments"
+    );
+    journal
+        .record_tool_terminal(&ToolBrokerCall {
+            invocation: invocation.clone(),
+            invocation_digest: "sha256:mcp-runtime-journal".to_string(),
+            capability_key: tool.capability_key.clone(),
+            tool_path: tool.tool_path.clone(),
+            tool: tool.clone(),
+            channel: ToolChannel::McpFacade,
+            status: ToolBrokerCallStatus::Completed,
+            effective_arguments: Some(invocation.arguments.clone()),
+            pending_interaction_id: None,
+            result: Some(ToolBrokerResult {
+                output: serde_json::json!({"content":[]}),
+                is_error: false,
+            }),
+            terminal_message: None,
+        })
+        .await
+        .expect("MCP owner terminal");
+
+    let durable = store
+        .journal_records_after(&id("thread-mcp-broker"), None)
+        .await
+        .expect("MCP durable journal")
+        .records
+        .into_iter()
+        .filter_map(|record| record.fact().as_presentation().cloned())
+        .collect::<Vec<_>>();
+    assert_eq!(durable.len(), 2);
+    assert!(matches!(
+        durable[0].event,
+        agentdash_agent_protocol::BackboneEvent::ItemStarted(_)
+    ));
+    assert!(matches!(
+        durable[1].event,
+        agentdash_agent_protocol::BackboneEvent::ItemCompleted(_)
+    ));
+    for event in &durable {
+        assert!(!matches!(
+            event.event,
+            agentdash_agent_protocol::BackboneEvent::ItemUpdated(_)
+        ));
+        let value = serde_json::to_value(&event.event).expect("MCP protected body");
+        assert_eq!(
+            value["payload"]["item"]["arguments"]["nullable"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["payload"]["item"]["type"], "mcpToolCall");
+    }
+
+    let transient = store
+        .read_presentation(
+            &id("thread-mcp-broker"),
+            Some(RuntimeDriverGeneration(3)),
+            None,
+        )
+        .await;
+    assert_eq!(transient.len(), 2);
+    assert_eq!(
+        transient
+            .iter()
+            .map(
+                |record| match &record.as_presentation().expect("MCP progress").event {
+                    agentdash_agent_protocol::BackboneEvent::McpToolCallProgress(notification) => {
+                        notification.message.as_str()
+                    }
+                    other => panic!("unexpected MCP progress event: {other:?}"),
+                }
+            )
+            .collect::<Vec<_>>(),
+        vec!["first", " second"]
+    );
+}
+
+#[tokio::test]
+async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_result() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let runtime =
+        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
+    runtime
+        .execute(RuntimeCommandEnvelope {
+            presentation: Vec::new(),
             meta: OperationMeta {
                 operation_id: id("broker-thread-start"),
                 idempotency_key: id("broker-thread-start-key"),
@@ -770,26 +998,39 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             },
             command: RuntimeCommand::ThreadStart {
                 thread_id: id("thread-broker"),
+                presentation_thread_id: id("presentation-thread-broker"),
+                presentation_turn_id: None,
                 binding_id: id("binding-broker"),
                 driver_generation: RuntimeDriverGeneration(3),
                 source_thread_id: id("source-thread-broker"),
                 profile_digest: id("profile-broker"),
                 bound_profile: Box::new(runtime_profile()),
                 input: Vec::new(),
-                surface_digest: id("surface-broker"),
+                surface: Box::new(RuntimeSurfaceDescriptor {
+                    source_frame_id: "frame-broker".to_string(),
+                    surface_revision: SurfaceRevision(1),
+                    surface_digest: id("surface-broker"),
+                    vfs_digest: "vfs-broker".to_string(),
+                    context_recipe_revision: ContextRecipeRevision(1),
+                    context_digest: id("context-broker"),
+                    settings_revision: ThreadSettingsRevision(0),
+                    tool_set_revision: ToolSetRevision(4),
+                    tool_set_digest: "tools-broker".to_string(),
+                    hook_plan: BoundRuntimeHookPlan {
+                        revision: HookPlanRevision(1),
+                        digest: id("hook-plan-broker"),
+                        entries: Vec::new(),
+                    },
+                    terminal_hook_effect_binding: None,
+                }),
                 settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision: ToolSetRevision(4),
-                hook_plan: BoundRuntimeHookPlan {
-                    revision: HookPlanRevision(1),
-                    digest: id("hook-plan-broker"),
-                    entries: Vec::new(),
-                },
             },
         })
         .await
         .expect("start thread");
     runtime
         .execute(RuntimeCommandEnvelope {
+            presentation: Vec::new(),
             meta: OperationMeta {
                 operation_id: id("broker-turn-start"),
                 idempotency_key: id("broker-turn-start-key"),
@@ -800,6 +1041,7 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             },
             command: RuntimeCommand::TurnStart {
                 thread_id: id("thread-broker"),
+                presentation_turn_id: id("presentation-turn-broker"),
                 input: Vec::new(),
             },
         })
@@ -849,6 +1091,7 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
         journal
             .record_tool_update(
                 &invocation,
+                &catalog().tools[0],
                 vec![
                     agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
                         text: format!("progress-{index}"),
@@ -859,13 +1102,14 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             .expect("tool progress");
     }
     let replay = store
-        .read(&id("thread-broker"), Some(RuntimeDriverGeneration(3)), None)
+        .read_presentation(&id("thread-broker"), Some(RuntimeDriverGeneration(3)), None)
         .await;
     assert_eq!(replay.len(), 3);
     assert_eq!(
         replay
             .iter()
-            .map(|event| event
+            .map(|record| record
+                .carrier()
                 .transient
                 .as_ref()
                 .expect("transient coordinate")
@@ -876,8 +1120,9 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
     );
     let event_ids = replay
         .iter()
-        .map(|event| {
-            event
+        .map(|record| {
+            record
+                .carrier()
                 .transient
                 .as_ref()
                 .expect("transient coordinate")
@@ -888,7 +1133,7 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
     assert_eq!(event_ids.len(), 3);
     assert_eq!(
         store
-            .read(
+            .read_presentation(
                 &id("thread-broker"),
                 Some(RuntimeDriverGeneration(3)),
                 Some(RuntimeTransientSequence(1)),
@@ -923,7 +1168,7 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
         .expect("terminal replay converges");
 
     let events = store
-        .events_after(&id("thread-broker"), None)
+        .internal_events_after(&id("thread-broker"), None)
         .await
         .expect("events")
         .events;
@@ -933,5 +1178,109 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
             .filter(|event| matches!(event.event, RuntimeEvent::ItemTerminal { .. }))
             .count(),
         1
+    );
+    let presentation = store
+        .journal_records_after(&id("thread-broker"), None)
+        .await
+        .expect("presentation journal")
+        .records
+        .into_iter()
+        .filter_map(|record| match record.fact() {
+            RuntimeJournalFact::Presentation(event) => Some(event.event.clone()),
+            RuntimeJournalFact::Internal(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(presentation.len(), 2);
+    assert!(matches!(
+        presentation[0],
+        agentdash_agent_protocol::BackboneEvent::ItemStarted(_)
+    ));
+    assert!(matches!(
+        presentation[1],
+        agentdash_agent_protocol::BackboneEvent::ItemCompleted(_)
+    ));
+
+    let vendor_item_id: RuntimeItemId = id("item-vendor-stream");
+    let vendor_invocation = ToolBrokerInvocation {
+        coordinates: ToolCallCoordinates {
+            thread_id: id("thread-broker"),
+            turn_id,
+            item_id: vendor_item_id.clone(),
+            binding_id: id("binding-broker"),
+            binding_generation: RuntimeDriverGeneration(3),
+            tool_set_revision: ToolSetRevision(4),
+        },
+        tool_name: "code_scan".to_string(),
+        arguments: serde_json::json!({"path":"vendor"}),
+        timeout_ms: 1_000,
+    };
+    let mut vendor_tool = catalog().tools[0].clone();
+    vendor_tool.presentation_emitter = ToolPresentationEmitter::VendorStream;
+    journal
+        .accept_tool_call(&vendor_invocation, &vendor_tool)
+        .await
+        .expect("vendor stream tool still creates the canonical internal item");
+    journal
+        .record_tool_update(
+            &vendor_invocation,
+            &vendor_tool,
+            vec![
+                agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                    text: "vendor progress".to_string(),
+                },
+            ],
+        )
+        .await
+        .expect("vendor stream owns its progress presentation");
+    journal
+        .record_tool_terminal(&ToolBrokerCall {
+            invocation: vendor_invocation,
+            invocation_digest: "sha256:vendor-runtime-journal".to_string(),
+            capability_key: vendor_tool.capability_key.clone(),
+            tool_path: vendor_tool.tool_path.clone(),
+            tool: vendor_tool,
+            channel: ToolChannel::DirectCallback,
+            status: ToolBrokerCallStatus::Completed,
+            effective_arguments: Some(serde_json::json!({"path":"vendor"})),
+            pending_interaction_id: None,
+            result: Some(ToolBrokerResult {
+                output: serde_json::json!({"matches":1}),
+                is_error: false,
+            }),
+            terminal_message: None,
+        })
+        .await
+        .expect("vendor stream tool still terminalizes the canonical internal item");
+
+    let snapshot = store
+        .load_thread(&id("thread-broker"))
+        .await
+        .expect("load vendor stream runtime")
+        .expect("vendor stream runtime thread");
+    assert!(
+        snapshot
+            .items
+            .get(&vendor_item_id)
+            .is_some_and(|item| matches!(item.phase, EntityPhase::Terminal(_)))
+    );
+    assert_eq!(
+        store
+            .journal_records_after(&id("thread-broker"), None)
+            .await
+            .expect("presentation journal after vendor stream tool")
+            .records
+            .into_iter()
+            .filter(|record| matches!(record.fact(), RuntimeJournalFact::Presentation(_)))
+            .count(),
+        2,
+        "vendor-owned start and terminal must not be duplicated by ToolBroker",
+    );
+    assert_eq!(
+        store
+            .read_presentation(&id("thread-broker"), Some(RuntimeDriverGeneration(3)), None)
+            .await
+            .len(),
+        3,
+        "vendor-owned progress must not be duplicated by ToolBroker",
     );
 }

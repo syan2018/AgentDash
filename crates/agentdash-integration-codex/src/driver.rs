@@ -12,12 +12,14 @@ use agentdash_agent_runtime_contract::{
     AgentRuntimeDriver, ConfigurationBoundary, ContextFidelity, ContextProfile, DeliveryMechanism,
     DriverBindIntent, DriverBindRequest, DriverBinding, DriverBindingId, DriverCommandEnvelope,
     DriverDescribeRequest, DriverDispatchReceipt, DriverError, DriverEventEnvelope,
-    DriverEventSink, DriverInspection, DriverInspectionQuery, DriverProjectedItem, DriverThreadId,
-    HookAction, HookFailurePolicy, HookPoint, HookPointCapability, HookProfile, InputModality,
-    InputProfile, InstructionChannel, InstructionProfile, InteractionProfile, LifecycleCapability,
-    ProfileDigest, ReferenceRuntimeClass, RuntimeCommand, RuntimeDescriptor, RuntimeEvent,
-    RuntimeInteractionKind, RuntimeProfile, RuntimeTurnId, RuntimeTurnTerminal, SemanticStrength,
-    TelemetryCapability, ToolChannel, ToolProfile, WorkspaceCapability, WorkspaceProfile,
+    DriverEventSink, DriverInspection, DriverInspectionQuery, DriverProjectedItem,
+    DriverSurfaceApplyReceipt, DriverThreadId, HookAction, HookFailurePolicy, HookPoint,
+    HookPointCapability, HookProfile, ImmutablePresentationEvent, InputModality, InputProfile,
+    InstructionChannel, InstructionProfile, InteractionProfile, LifecycleCapability,
+    PresentationDurability, ProfileDigest, ReferenceRuntimeClass, RuntimeCommand,
+    RuntimeDescriptor, RuntimeEvent, RuntimeInteractionKind, RuntimeJournalFact, RuntimeProfile,
+    RuntimeTurnId, RuntimeTurnTerminal, SemanticStrength, TelemetryCapability, ToolChannel,
+    ToolProfile, WorkspaceCapability, WorkspaceProfile,
 };
 use agentdash_integration_api::{
     ActivatedAgentServiceInstance, AgentRuntimeDriverFactory, AgentRuntimeFactoryKey,
@@ -41,7 +43,10 @@ use crate::{
     },
     contribution::{CODEX_APP_SERVER_PACKAGE, CODEX_PROTOCOL_REVISION},
     hook_bridge::{HookBridgeLease, start_hook_bridge},
-    mapping::{MappedEvent, SourceCoordinateMap, item_content, map_input},
+    mapping::{
+        MappedEvent, SourceCoordinateMap, dynamic_tool_interaction_request, item_content,
+        main_automatic_server_response, map_input,
+    },
     rpc::{RpcInbound, RpcNotification, RpcRequest, error_response, response},
 };
 
@@ -168,6 +173,7 @@ struct CodexSession {
     _hook_bridge: Option<HookBridgeLease>,
     pump: Option<JoinHandle<()>>,
     receipts: BTreeMap<agentdash_agent_runtime_contract::DriverRequestId, DriverDispatchReceipt>,
+    pending_bind_presentations: Vec<ImmutablePresentationEvent>,
 }
 
 #[derive(Default)]
@@ -193,6 +199,8 @@ struct PendingServerRequest {
     params: Value,
     turn_id: RuntimeTurnId,
     source_turn_id: agentdash_agent_runtime_contract::DriverTurnId,
+    source_item_id: Option<agentdash_agent_runtime_contract::DriverItemId>,
+    source_request_id: String,
 }
 
 impl Drop for CodexSession {
@@ -273,6 +281,8 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                     self.host.hooks.clone(),
                     request.binding_id.clone(),
                     self.instance.generation,
+                    surface.hooks.revision,
+                    surface.hooks.digest.clone(),
                     surface.hooks.bindings.clone(),
                     surface.runtime_thread_id.clone(),
                     surface.authorization_identity.clone(),
@@ -365,6 +375,7 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                 critical: true,
             })?;
         let source_thread_id = session.source_thread_id.clone();
+        session.pending_bind_presentations = bind_presentations(source_thread_id.as_str(), &result);
         session.state.lock().await.context_delivered =
             !matches!(request.intent, DriverBindIntent::Start);
         if let Some(bridge) = session._hook_bridge.as_ref() {
@@ -433,7 +444,27 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
             return Ok(duplicate);
         }
         session.state.lock().await.sink = Some(sink.clone());
+        if !session.pending_bind_presentations.is_empty() {
+            sink.emit(DriverEventEnvelope {
+                binding_id: envelope.binding_id.clone(),
+                generation: envelope.generation,
+                source_thread_id: envelope.source_thread_id.clone(),
+                source_turn_id: None,
+                source_item_id: None,
+                source_request_id: None,
+                source_entry_index: None,
+                facts: session
+                    .pending_bind_presentations
+                    .iter()
+                    .cloned()
+                    .map(RuntimeJournalFact::Presentation)
+                    .collect(),
+            })
+            .await?;
+            session.pending_bind_presentations.clear();
+        }
 
+        let mut applied_surface = None;
         match &envelope.command {
             RuntimeCommand::ThreadStart { input, .. } | RuntimeCommand::TurnStart { input, .. } => {
                 self.start_turn(&mut session, &envelope, input).await?;
@@ -509,7 +540,7 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                         reason: "interaction is no longer pending".to_string(),
                     })?;
                 let payload = interaction_result(&pending, interaction_response)?;
-                write_value(&session.stdin, &response(pending.rpc_id, payload)).await?;
+                write_value(&session.stdin, &response(pending.rpc_id.clone(), payload)).await?;
                 session.state.lock().await.pending_interactions.remove(key);
             }
             RuntimeCommand::ContextCompact { .. } => {
@@ -524,12 +555,153 @@ impl AgentRuntimeDriver for CodexRuntimeDriver {
                             .to_string(),
                 });
             }
+            RuntimeCommand::SurfaceAdopt { target, .. } => {
+                if !session.state.lock().await.active_turns.is_empty() {
+                    return Err(DriverError::Rejected {
+                        reason: "Codex Runtime surface adoption requires no active turn"
+                            .to_string(),
+                    });
+                }
+                let surface = self
+                    .host
+                    .surfaces
+                    .materialize(DriverSurfaceRequest {
+                        binding_id: envelope.binding_id.clone(),
+                        surface_revision: target.surface_revision,
+                        surface_digest: target.surface_digest.clone(),
+                    })
+                    .await
+                    .map_err(|error| DriverError::Rejected {
+                        reason: error.to_string(),
+                    })?;
+                validate_surface_descriptor(target, &surface)?;
+                if surface
+                    .workspace
+                    .roots
+                    .iter()
+                    .any(|root| !PathBuf::from(root).is_absolute())
+                {
+                    return Err(DriverError::Rejected {
+                        reason: "materialized workspace roots must be absolute for Codex"
+                            .to_string(),
+                    });
+                }
+                let source_thread_id = session.source_thread_id.clone();
+                let hook_bridge = if surface.hooks.bindings.is_empty() {
+                    None
+                } else {
+                    Some(
+                        start_hook_bridge(
+                            self.host.hooks.clone(),
+                            envelope.binding_id.clone(),
+                            envelope.generation,
+                            surface.hooks.revision,
+                            surface.hooks.digest.clone(),
+                            surface.hooks.bindings.clone(),
+                            surface.runtime_thread_id.clone(),
+                            surface.authorization_identity.clone(),
+                        )
+                        .await
+                        .map_err(|error| DriverError::Unavailable {
+                            reason: error.to_string(),
+                            retryable: true,
+                        })?,
+                    )
+                };
+                let hook_artifact = if hook_bridge.is_some() {
+                    Some(
+                        materialize_hook_artifact(
+                            &self.config.artifact_root,
+                            &HookArtifactPlan {
+                                plan_revision: surface.hooks.revision.0,
+                                plan_digest: surface.hooks.digest.as_str().to_string(),
+                                required_timeout_ms: 30_000,
+                            },
+                        )
+                        .map_err(|error| DriverError::Rejected {
+                            reason: error.to_string(),
+                        })?,
+                    )
+                } else {
+                    None
+                };
+                if let (Some(expected), Some(applied)) = (
+                    surface.hooks.artifact_digest.as_deref(),
+                    hook_artifact.as_ref(),
+                ) && expected != applied.digest
+                {
+                    return Err(DriverError::Rejected {
+                        reason:
+                            "materialized hook artifact does not match the adopted artifact digest"
+                                .to_string(),
+                    });
+                }
+                let mut replacement = self
+                    .spawn_and_initialize(envelope.binding_id.clone(), surface.clone(), hook_bridge)
+                    .await?;
+                let mut params = self.thread_start_params(&surface, hook_artifact.as_ref());
+                params
+                    .as_object_mut()
+                    .expect("thread params are an object")
+                    .insert("threadId".to_string(), json!(source_thread_id.as_str()));
+                let result = self
+                    .rpc_request(&mut replacement, "thread/resume", params)
+                    .await?;
+                let resumed_thread_id = result
+                    .pointer("/thread/id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| DriverError::ProtocolViolation {
+                        reason: "thread/resume response misses thread.id".to_string(),
+                        critical: true,
+                    })?;
+                if resumed_thread_id != source_thread_id.as_str() {
+                    return Err(DriverError::ProtocolViolation {
+                        reason: "surface adoption resumed a different Codex thread".to_string(),
+                        critical: true,
+                    });
+                }
+                replacement.source_thread_id = source_thread_id.clone();
+                if let Some(bridge) = replacement._hook_bridge.as_ref() {
+                    bridge.bind_source_thread(source_thread_id).await;
+                }
+                let (sink, receipts) = {
+                    let state = session.state.lock().await;
+                    (state.sink.clone(), session.receipts.clone())
+                };
+                {
+                    let mut state = replacement.state.lock().await;
+                    state.sink = sink;
+                    state.context_delivered = false;
+                }
+                replacement.receipts = receipts;
+                replacement.pending_bind_presentations.clear();
+                self.start_pump(&mut replacement)?;
+                *session = replacement;
+                applied_surface = Some(DriverSurfaceApplyReceipt {
+                    descriptor: target.as_ref().clone(),
+                    applied_hooks: surface
+                        .hooks
+                        .bindings
+                        .iter()
+                        .map(
+                            |binding| agentdash_agent_runtime_contract::DriverHookApplyStatus {
+                                point: binding.point,
+                                acknowledged: true,
+                                artifact_digest: hook_artifact
+                                    .as_ref()
+                                    .map(|artifact| artifact.digest.clone()),
+                            },
+                        )
+                        .collect(),
+                });
+            }
         }
 
         let receipt = DriverDispatchReceipt {
             request_id: envelope.request_id,
             duplicate: false,
             applied_tool_set: None,
+            applied_surface,
         };
         session
             .receipts
@@ -612,7 +784,10 @@ fn projected_items(result: &Value) -> Result<Vec<DriverProjectedItem>, DriverErr
         .pointer("/thread/turns")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default();
+        .ok_or_else(|| DriverError::ProtocolViolation {
+            reason: "thread/read result misses typed thread.turns array".to_string(),
+            critical: true,
+        })?;
     let mut projected = Vec::new();
     for turn in turns {
         let source_turn = turn.get("id").and_then(Value::as_str).ok_or_else(|| {
@@ -621,12 +796,13 @@ fn projected_items(result: &Value) -> Result<Vec<DriverProjectedItem>, DriverErr
                 critical: true,
             }
         })?;
-        for item in turn
-            .get("items")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
+        let items = turn.get("items").and_then(Value::as_array).ok_or_else(|| {
+            DriverError::ProtocolViolation {
+                reason: format!("thread/read turn {source_turn} misses typed items array"),
+                critical: true,
+            }
+        })?;
+        for item in items {
             let source_item = item.get("id").and_then(Value::as_str).ok_or_else(|| {
                 DriverError::ProtocolViolation {
                     reason: "thread/read item misses id".to_string(),
@@ -652,6 +828,30 @@ fn projected_items(result: &Value) -> Result<Vec<DriverProjectedItem>, DriverErr
         }
     }
     Ok(projected)
+}
+
+fn validate_surface_descriptor(
+    target: &agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor,
+    surface: &MaterializedDriverSurface,
+) -> Result<(), DriverError> {
+    let matches = surface.revision == target.surface_revision
+        && surface.digest == target.surface_digest
+        && surface.workspace.digest == target.vfs_digest
+        && surface.context.recipe.revision == target.context_recipe_revision
+        && surface.context.digest == target.context_digest
+        && surface.context.recipe.provenance.settings_revision == target.settings_revision
+        && surface.tools.revision == target.tool_set_revision
+        && surface.tools.digest == target.tool_set_digest
+        && surface.hooks.revision == target.hook_plan.revision
+        && surface.hooks.digest == target.hook_plan.digest;
+    if matches {
+        Ok(())
+    } else {
+        Err(DriverError::ProtocolViolation {
+            reason: "surface broker materialization does not match the requested Runtime surface descriptor".to_string(),
+            critical: true,
+        })
+    }
 }
 
 fn effective_workspace_roots(
@@ -709,6 +909,7 @@ impl CodexRuntimeDriver {
             _hook_bridge: hook_bridge,
             pump: None,
             receipts: BTreeMap::new(),
+            pending_bind_presentations: Vec::new(),
         };
         self.rpc_request(&mut session, "initialize", json!({
             "clientInfo": { "name": "agentdash", "title": "AgentDash", "version": env!("CARGO_PKG_VERSION") },
@@ -1048,7 +1249,7 @@ async fn run_pump(
                     reconcile_native_hook(&mut state, &notification);
                     let mapped = state.coordinates.map_notification(notification);
                     if let Ok(Some(MappedEvent {
-                        event: RuntimeEvent::TurnTerminal { turn_id, .. },
+                        runtime_event: Some(RuntimeEvent::TurnTerminal { turn_id, .. }),
                         ..
                     })) = &mapped
                     {
@@ -1056,20 +1257,68 @@ async fn run_pump(
                     }
                     (mapped, state.sink.clone())
                 };
-                if let (Ok(Some(mapped)), Some(sink)) = (mapped, sink) {
-                    let _ = sink
-                        .emit(DriverEventEnvelope {
-                            binding_id: context.binding_id.clone(),
-                            generation: context.generation,
-                            source_thread_id: context.source_thread_id.clone(),
-                            source_turn_id: mapped.source_turn_id,
-                            source_item_id: mapped.source_item_id,
-                            event: mapped.event,
-                        })
-                        .await;
+                match (mapped, sink) {
+                    (Ok(Some(mapped)), Some(sink)) => {
+                        let source_request_id = mapped.source_request_id();
+                        let mut facts = mapped
+                            .runtime_event
+                            .filter(|event| !event.is_transient())
+                            .map(RuntimeJournalFact::Internal)
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        facts.push(RuntimeJournalFact::Presentation(mapped.presentation));
+                        let _ = sink
+                            .emit(DriverEventEnvelope {
+                                binding_id: context.binding_id.clone(),
+                                generation: context.generation,
+                                source_thread_id: context.source_thread_id.clone(),
+                                source_turn_id: mapped.source_turn_id,
+                                source_item_id: mapped.source_item_id,
+                                source_request_id,
+                                source_entry_index: None,
+                                facts,
+                            })
+                            .await;
+                    }
+                    (Err(error), Some(sink)) => {
+                        let _ = sink
+                            .emit(DriverEventEnvelope {
+                                binding_id: context.binding_id.clone(),
+                                generation: context.generation,
+                                source_thread_id: context.source_thread_id.clone(),
+                                source_turn_id: None,
+                                source_item_id: None,
+                                source_request_id: None,
+                                source_entry_index: None,
+                                facts: vec![RuntimeJournalFact::Internal(
+                                    RuntimeEvent::ProtocolViolation {
+                                        code: agentdash_agent_runtime_contract::RuntimeProtocolViolationCode::InvalidLifecycleTransition,
+                                        message: error.to_string(),
+                                        critical: false,
+                                    },
+                                )],
+                            })
+                            .await;
+                    }
+                    (Ok(Some(_) | None) | Err(_), None) | (Ok(None), Some(_)) => {}
                 }
             }
             RpcInbound::Request(request) => {
+                match main_automatic_server_response(&request) {
+                    Ok(Some(result)) => {
+                        let _ = write_value(&context.stdin, &response(request.id, result)).await;
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        let _ = write_value(
+                            &context.stdin,
+                            &error_response(request.id, -32601, error.to_string()),
+                        )
+                        .await;
+                        continue;
+                    }
+                }
                 if request.method == "item/tool/call" {
                     handle_pump_dynamic_tool(&context, request).await;
                     continue;
@@ -1092,6 +1341,8 @@ async fn run_pump(
                                     params: request.params,
                                     turn_id: mapped.turn_id.clone(),
                                     source_turn_id: mapped.source_turn_id.clone(),
+                                    source_item_id: mapped.source_item_id.clone(),
+                                    source_request_id: mapped.source_request_id.clone(),
                                 },
                             );
                             state.sink.clone()
@@ -1104,7 +1355,15 @@ async fn run_pump(
                                     source_thread_id: context.source_thread_id.clone(),
                                     source_turn_id: Some(mapped.source_turn_id),
                                     source_item_id: mapped.source_item_id,
-                                    event: mapped.event,
+                                    source_request_id: Some(mapped.source_request_id),
+                                    source_entry_index: None,
+                                    facts: std::iter::once(RuntimeJournalFact::Internal(
+                                        mapped.event,
+                                    ))
+                                    .chain(
+                                        mapped.presentation.map(RuntimeJournalFact::Presentation),
+                                    )
+                                    .collect(),
                                 })
                                 .await;
                         }
@@ -1228,11 +1487,22 @@ async fn handle_pump_dynamic_tool(
     };
     match context.host.tools.invoke(invocation).await {
         Ok(DriverToolOutcome::Completed { output, is_error }) => {
+            let content_items = match dynamic_tool_content(&output) {
+                Ok(content_items) => content_items,
+                Err(error) => {
+                    let _ = write_value(
+                        &context.stdin,
+                        &error_response(request.id, -32603, error.to_string()),
+                    )
+                    .await;
+                    return;
+                }
+            };
             let _ = write_value(
                 &context.stdin,
                 &response(
                     request.id,
-                    json!({ "contentItems": dynamic_tool_content(&output), "success": !is_error }),
+                    json!({ "contentItems": content_items, "success": !is_error }),
                 ),
             )
             .await;
@@ -1244,12 +1514,24 @@ async fn handle_pump_dynamic_tool(
             interaction_id,
             reason: _,
         }) => {
+            let interaction_request = match dynamic_tool_interaction_request(request.params.clone())
+            {
+                Ok(request) => request,
+                Err(error) => {
+                    let _ = write_value(
+                        &context.stdin,
+                        &error_response(request.id, -32602, error.to_string()),
+                    )
+                    .await;
+                    return;
+                }
+            };
             let sink = {
                 let mut state = context.state.lock().await;
                 state.pending_interactions.insert(
                     interaction_id.as_str().to_string(),
                     PendingServerRequest {
-                        rpc_id: request.id,
+                        rpc_id: request.id.clone(),
                         method: request.method,
                         params: request.params.clone(),
                         turn_id: coordinates.0.clone(),
@@ -1257,6 +1539,11 @@ async fn handle_pump_dynamic_tool(
                             source_turn,
                         )
                         .expect("validated source turn"),
+                        source_item_id: agentdash_agent_runtime_contract::DriverItemId::new(
+                            source_item,
+                        )
+                        .ok(),
+                        source_request_id: crate::mapping::rpc_coordinate(&request.id),
                     },
                 );
                 state.sink.clone()
@@ -1275,14 +1562,16 @@ async fn handle_pump_dynamic_tool(
                             source_item,
                         )
                         .ok(),
-                        event: RuntimeEvent::InteractionRequested {
-                            turn_id: coordinates.0.clone(),
-                            item_id: Some(coordinates.1),
-                            interaction_id: interaction_id.clone(),
-                            request: agentdash_agent_runtime_contract::RuntimeInteractionRequest::temporary_dynamic_interaction(
-                                context.runtime_thread_id.as_str(), coordinates.0.as_str(), interaction_id.as_str(),
-                            ),
-                        },
+                        source_request_id: Some(crate::mapping::rpc_coordinate(&request.id)),
+                        source_entry_index: None,
+                        facts: vec![RuntimeJournalFact::Internal(
+                            RuntimeEvent::InteractionRequested {
+                                turn_id: coordinates.0.clone(),
+                                item_id: Some(coordinates.1),
+                                interaction_id: interaction_id.clone(),
+                                request: interaction_request,
+                            },
+                        )],
                     })
                     .await;
             }
@@ -1327,13 +1616,16 @@ async fn settle_pump_lost(
                     source_thread_id: source_thread_id.clone(),
                     source_turn_id: Some(source_turn_id),
                     source_item_id: None,
-                    event: RuntimeEvent::TurnTerminal {
+                    source_request_id: None,
+                    source_entry_index: None,
+                    facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
                         turn_id,
                         terminal: RuntimeTurnTerminal::Lost,
                         message: Some(
                             "Codex app-server transport closed before terminal".to_string(),
                         ),
-                    },
+                        diagnostic: None,
+                    })],
                 })
                 .await;
         }
@@ -1349,13 +1641,17 @@ async fn settle_pump_lost(
                     generation,
                     source_thread_id: source_thread_id.clone(),
                     source_turn_id: Some(pending.source_turn_id),
-                    source_item_id: None,
-                    event: RuntimeEvent::InteractionTerminal {
-                        turn_id: pending.turn_id,
-                        interaction_id,
-                        terminal:
-                            agentdash_agent_runtime_contract::RuntimeInteractionTerminal::Lost,
-                    },
+                    source_item_id: pending.source_item_id,
+                    source_request_id: Some(pending.source_request_id),
+                    source_entry_index: None,
+                    facts: vec![RuntimeJournalFact::Internal(
+                        RuntimeEvent::InteractionTerminal {
+                            turn_id: pending.turn_id,
+                            interaction_id,
+                            terminal:
+                                agentdash_agent_runtime_contract::RuntimeInteractionTerminal::Lost,
+                        },
+                    )],
                 })
                 .await;
         }
@@ -1380,6 +1676,39 @@ async fn write_value(stdin: &Arc<Mutex<ChildStdin>>, value: &Value) -> Result<()
         reason: error.to_string(),
         retryable: true,
     })
+}
+
+fn bind_presentations(thread_id: &str, result: &Value) -> Vec<ImmutablePresentationEvent> {
+    let mut presentations = vec![ImmutablePresentationEvent::new(
+        PresentationDurability::Durable,
+        agentdash_agent_protocol::BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::ExecutorSessionBound {
+                executor_session_id: thread_id.to_string(),
+            },
+        ),
+    )];
+    let title = result
+        .pointer("/thread/name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty());
+    let preview = result.pointer("/thread/preview").and_then(Value::as_str);
+    if let Some(title) =
+        title.filter(|title| preview.is_none_or(|preview| preview.trim() != *title))
+    {
+        presentations.push(ImmutablePresentationEvent::new(
+            PresentationDurability::Durable,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::SourceSessionTitleUpdated {
+                    executor_session_id: Some(thread_id.to_string()),
+                    title: title.to_string(),
+                    preview: preview.map(str::to_string),
+                    source: "codex".to_string(),
+                },
+            ),
+        ));
+    }
+    presentations
 }
 
 fn source_turn_for(
@@ -1418,24 +1747,45 @@ fn interaction_result(
             Ok(json!({ "permissions": {}, "scope": "turn" }))
         }
         ("item/tool/requestUserInput", InteractionResponse::UserInput { input }) => {
-            let answers = pending
+            let questions = pending
                 .params
                 .get("questions")
                 .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .zip(input.iter())
-                .filter_map(|(question, answer)| {
-                    let id = question.get("id")?.as_str()?;
-                    let answer = match answer {
-                        agentdash_agent_runtime_contract::RuntimeInput::Text { text } => {
-                            text.clone()
-                        }
-                        other => serde_json::to_string(other).ok()?,
-                    };
-                    Some((id.to_string(), json!({ "answers": [answer] })))
-                })
-                .collect::<serde_json::Map<_, _>>();
+                .ok_or_else(|| DriverError::Rejected {
+                    reason: "Codex user-input request is missing typed questions".into(),
+                })?;
+            if questions.len() != input.len() {
+                return Err(DriverError::Rejected {
+                    reason: format!(
+                        "Codex user-input response count {} does not match question count {}",
+                        input.len(),
+                        questions.len()
+                    ),
+                });
+            }
+            let mut answers = serde_json::Map::new();
+            for (index, (question, answer)) in questions.iter().zip(input).enumerate() {
+                let id = question
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| DriverError::Rejected {
+                        reason: format!(
+                            "Codex user-input question at index {index} is missing a typed id"
+                        ),
+                    })?;
+                if answers.contains_key(id) {
+                    return Err(DriverError::Rejected {
+                        reason: format!("Codex user-input question id `{id}` is duplicated"),
+                    });
+                }
+                let agentdash_agent_runtime_contract::RuntimeInput::Text { text } = answer else {
+                    return Err(DriverError::Rejected {
+                        reason: format!("Codex user-input answer for question `{id}` must be text"),
+                    });
+                };
+                answers.insert(id.to_string(), json!({ "answers": [text] }));
+            }
             Ok(json!({ "answers": answers }))
         }
         ("item/tool/call", InteractionResponse::DynamicToolResult { output }) => {
@@ -1452,19 +1802,49 @@ fn interaction_result(
 
 fn dynamic_tool_content(output: &Value) -> Result<Vec<Value>, DriverError> {
     if let Some(items) = output.get("contentItems").and_then(Value::as_array) {
-        return Ok(items.clone());
+        let typed = serde_json::from_value::<
+            Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
+        >(Value::Array(items.clone()))
+        .map_err(|error| DriverError::Rejected {
+            reason: format!("dynamic tool result contains invalid typed contentItems: {error}"),
+        })?;
+        return typed
+            .into_iter()
+            .map(|item| {
+                serde_json::to_value(item).map_err(|error| DriverError::Rejected {
+                    reason: format!("dynamic tool result content serialization failed: {error}"),
+                })
+            })
+            .collect();
     }
     if let Some(items) = output.as_array() {
-        return items.iter().map(|item| {
-            match item.get("type").and_then(Value::as_str) {
-                Some("image") | Some("input_image") => Ok(json!({
-                    "type": "inputImage",
-                    "imageUrl": item.get("url").or_else(|| item.get("imageUrl")).cloned().unwrap_or(Value::Null)
-                })),
-                Some("text") | Some("input_text") => Ok(json!({ "type": "inputText", "text": item.get("text").and_then(Value::as_str).unwrap_or_default() })),
-                _ => return Err(DriverError::Rejected { reason:"dynamic tool result content item must be typed text/image".to_string() }),
-            }
-        }).collect::<Result<Vec<_>,_>>();
+        return items
+            .iter()
+            .map(|item| match item.get("type").and_then(Value::as_str) {
+                Some("image") | Some("input_image") => {
+                    let image_url = item
+                        .get("url")
+                        .or_else(|| item.get("imageUrl"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| DriverError::Rejected {
+                            reason: "dynamic tool image result requires a string url/imageUrl"
+                                .to_string(),
+                        })?;
+                    Ok(json!({ "type": "inputImage", "imageUrl": image_url }))
+                }
+                Some("text") | Some("input_text") => {
+                    let text = item.get("text").and_then(Value::as_str).ok_or_else(|| {
+                        DriverError::Rejected {
+                            reason: "dynamic tool text result requires a string text".to_string(),
+                        }
+                    })?;
+                    Ok(json!({ "type": "inputText", "text": text }))
+                }
+                _ => Err(DriverError::Rejected {
+                    reason: "dynamic tool result content item must be typed text/image".to_string(),
+                }),
+            })
+            .collect::<Result<Vec<_>, _>>();
     }
     Err(DriverError::Rejected {
         reason: "dynamic tool result requires typed contentItems".to_string(),
@@ -1527,6 +1907,7 @@ pub(crate) fn codex_runtime_profile() -> RuntimeProfile {
             LifecycleCapability::TurnStart,
             LifecycleCapability::TurnSteer,
             LifecycleCapability::TurnInterrupt,
+            LifecycleCapability::SurfaceAdopt,
         ]),
         hooks: HookProfile {
             configuration_boundary: ConfigurationBoundary::ThreadStart,
@@ -1654,6 +2035,8 @@ mod tests {
             turn_id: RuntimeTurnId::new("turn").unwrap(),
             source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new("source-turn")
                 .unwrap(),
+            source_item_id: None,
+            source_request_id: "1".to_string(),
         };
         assert!(
             interaction_result(
@@ -1675,6 +2058,89 @@ mod tests {
     }
 
     #[test]
+    fn user_input_response_requires_exact_typed_text_answers() {
+        let pending = PendingServerRequest {
+            rpc_id: json!(2),
+            method: "item/tool/requestUserInput".to_string(),
+            params: json!({"questions": [{"id": "name"}]}),
+            turn_id: RuntimeTurnId::new("turn").unwrap(),
+            source_turn_id: agentdash_agent_runtime_contract::DriverTurnId::new("source-turn")
+                .unwrap(),
+            source_item_id: None,
+            source_request_id: "2".to_string(),
+        };
+        let response = interaction_result(
+            &pending,
+            &agentdash_agent_runtime_contract::InteractionResponse::UserInput {
+                input: vec![agentdash_agent_runtime_contract::RuntimeInput::Text {
+                    text: "AgentDash".into(),
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(response["answers"]["name"]["answers"], json!(["AgentDash"]));
+
+        assert!(
+            interaction_result(
+                &pending,
+                &agentdash_agent_runtime_contract::InteractionResponse::UserInput { input: vec![] }
+            )
+            .is_err()
+        );
+        assert!(
+            interaction_result(
+                &pending,
+                &agentdash_agent_runtime_contract::InteractionResponse::UserInput {
+                    input: vec![agentdash_agent_runtime_contract::RuntimeInput::Image {
+                        mime_type: "image/png".into(),
+                        data_url: "data:image/png;base64,AA==".into(),
+                    }]
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn bind_response_restores_main_binding_and_source_title_order() {
+        let presentations = bind_presentations(
+            "source-thread",
+            &json!({"thread":{"name":" Codex Title ","preview":"preview"}}),
+        );
+        assert_eq!(presentations.len(), 2);
+        let bodies = presentations
+            .into_iter()
+            .map(|presentation| serde_json::to_value(presentation.event).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(bodies[0]["payload"]["kind"], "executor_session_bound");
+        assert_eq!(
+            bodies[0]["payload"]["data"]["executor_session_id"],
+            "source-thread"
+        );
+        assert_eq!(
+            bodies[1],
+            json!({
+                "type":"platform",
+                "payload":{
+                    "kind":"source_session_title_updated",
+                    "data":{
+                        "executor_session_id":"source-thread",
+                        "title":"Codex Title",
+                        "preview":"preview",
+                        "source":"codex"
+                    }
+                }
+            })
+        );
+
+        let duplicate = bind_presentations(
+            "source-thread",
+            &json!({"thread":{"name":"same","preview":" same "}}),
+        );
+        assert_eq!(duplicate.len(), 1, "preview-equivalent title is suppressed");
+    }
+
+    #[test]
     fn dynamic_tool_result_preserves_image_content() {
         let content = dynamic_tool_content(&json!([
             { "type": "image", "url": "data:image/png;base64,AA==" },
@@ -1684,6 +2150,20 @@ mod tests {
         assert_eq!(content[0]["type"], "inputImage");
         assert_eq!(content[0]["imageUrl"], "data:image/png;base64,AA==");
         assert_eq!(content[1]["text"], "done");
+    }
+
+    #[test]
+    fn dynamic_tool_result_rejects_malformed_typed_content() {
+        for malformed in [
+            json!({"contentItems":[{"type":"inputText"}]}),
+            json!([{"type":"text"}]),
+            json!([{"type":"image"}]),
+            json!({"contentItems":[{"type":"unknown","value":1}]}),
+        ] {
+            let error = dynamic_tool_content(&malformed)
+                .expect_err("malformed dynamic content must fail explicitly");
+            assert!(error.to_string().contains("dynamic tool"), "{error}");
+        }
     }
 
     #[tokio::test]
@@ -1707,6 +2187,8 @@ mod tests {
                     params: json!({}),
                     turn_id: runtime_turn.clone(),
                     source_turn_id: source_turn.clone(),
+                    source_item_id: None,
+                    source_request_id: "1".to_string(),
                 },
             );
         }
@@ -1719,19 +2201,21 @@ mod tests {
         .await;
         let events = sink.0.lock().await;
         assert!(matches!(
-            events[0].event,
-            RuntimeEvent::TurnTerminal {
+            events[0].facts.as_slice(),
+            [RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
                 terminal: RuntimeTurnTerminal::Lost,
                 ..
-            }
+            })]
         ));
         assert_eq!(events[0].source_turn_id.as_ref(), Some(&source_turn));
         assert!(matches!(
-            events[1].event,
-            RuntimeEvent::InteractionTerminal {
-                terminal: agentdash_agent_runtime_contract::RuntimeInteractionTerminal::Lost,
-                ..
-            }
+            events[1].facts.as_slice(),
+            [RuntimeJournalFact::Internal(
+                RuntimeEvent::InteractionTerminal {
+                    terminal: agentdash_agent_runtime_contract::RuntimeInteractionTerminal::Lost,
+                    ..
+                }
+            )]
         ));
         assert!(state.lock().await.active_turns.is_empty());
         assert!(state.lock().await.pending_interactions.is_empty());
@@ -1745,6 +2229,21 @@ mod tests {
         assert_eq!(items[0].source_turn_id.as_str(), "source-turn");
         assert_eq!(items[0].source_item_id.as_str(), "source-item");
         assert_eq!(items[0].content.agent_message_text(), Some("final"));
+    }
+
+    #[test]
+    fn thread_projection_rejects_missing_typed_turn_and_item_arrays() {
+        for malformed in [
+            json!({ "thread": {} }),
+            json!({ "thread": { "turns": null } }),
+            json!({ "thread": { "turns": [{ "id": "source-turn" }] } }),
+            json!({ "thread": { "turns": [{ "id": "source-turn", "items": null }] } }),
+        ] {
+            assert!(matches!(
+                projected_items(&malformed),
+                Err(DriverError::ProtocolViolation { critical: true, .. })
+            ));
+        }
     }
 
     #[test]

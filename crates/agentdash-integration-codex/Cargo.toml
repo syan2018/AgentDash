@@ -19,4 +19,5 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 [dev-dependencies]
+agentdash-agent-runtime-test-support = { workspace = true }
 tempfile = { workspace = true }

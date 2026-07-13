@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_agent_runtime_contract::{
-    DriverItemId, DriverThreadId, DriverTurnId, HookPoint, RuntimeBindingId,
-    RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
+    DriverItemId, DriverThreadId, DriverTurnId, HookPlanDigest, HookPlanRevision, HookPoint,
+    RuntimeBindingId, RuntimeDriverGeneration, RuntimeItemId, RuntimeThreadId, RuntimeTurnId,
 };
 use agentdash_integration_api::{
     AgentRuntimeHookCallback, AuthIdentity, DriverHookBinding, DriverHookDecision,
@@ -45,6 +45,8 @@ pub(crate) async fn start_hook_bridge(
     callback: Arc<dyn AgentRuntimeHookCallback>,
     binding_id: RuntimeBindingId,
     generation: RuntimeDriverGeneration,
+    hook_plan_revision: HookPlanRevision,
+    hook_plan_digest: HookPlanDigest,
     bindings: Vec<DriverHookBinding>,
     runtime_thread_id: RuntimeThreadId,
     authorization_identity: Option<AuthIdentity>,
@@ -62,6 +64,8 @@ pub(crate) async fn start_hook_bridge(
         callback,
         binding_id,
         generation,
+        hook_plan_revision,
+        hook_plan_digest,
         bindings,
         runtime_thread_id,
         authorization_identity,
@@ -88,6 +92,8 @@ struct HookEvaluationContext {
     callback: Arc<dyn AgentRuntimeHookCallback>,
     binding_id: RuntimeBindingId,
     generation: RuntimeDriverGeneration,
+    hook_plan_revision: HookPlanRevision,
+    hook_plan_digest: HookPlanDigest,
     bindings: Vec<DriverHookBinding>,
     runtime_thread_id: RuntimeThreadId,
     authorization_identity: Option<AuthIdentity>,
@@ -223,6 +229,8 @@ async fn evaluate_uncached(
                     .and_then(|value| RuntimeItemId::new(value.to_string()).ok()),
                 binding_id: context.binding_id.clone(),
                 generation: context.generation,
+                hook_plan_revision: context.hook_plan_revision,
+                hook_plan_digest: context.hook_plan_digest.clone(),
                 source_thread_id: source_thread_id.clone(),
                 source_turn_id: source_turn_id.clone(),
                 source_item_id: source_item_id.clone(),
@@ -391,6 +399,8 @@ mod tests {
             callback.clone(),
             RuntimeBindingId::new("binding-1").unwrap(),
             RuntimeDriverGeneration(3),
+            HookPlanRevision(1),
+            HookPlanDigest::new("sha256:hook-plan-1").unwrap(),
             vec![DriverHookBinding {
                 definition_id: HookDefinitionId::new("hook-1").unwrap(),
                 point: HookPoint::BeforeTool,

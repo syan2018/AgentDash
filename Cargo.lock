@@ -701,6 +701,7 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-test-support",
  "agentdash-integration-api",
  "agentdash-process",
  "async-trait",

@@ -213,10 +213,10 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] main Codex fixture逐事件deep equal。
-- [ ] 同一item body/delta/terminal ID一致。
-- [ ] usage/error/status/title/diff/plan/compaction无压缩或丢失。
-- [ ] unsupported method显式失败/diagnostic，无文本化fallback。
+- [x] main Codex fixture逐事件deep equal。
+- [x] 同一item body/delta/terminal ID一致。
+- [x] usage/error/status/title/diff/plan/compaction无压缩或丢失。
+- [x] unsupported method显式失败/diagnostic，无文本化fallback。
 
 ### Commit
 

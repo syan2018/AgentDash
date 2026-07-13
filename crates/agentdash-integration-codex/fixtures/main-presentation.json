@@ -1,0 +1,295 @@
+{
+  "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+  "protocol_revision": "0.144.1",
+  "oracle_source_path": "crates/agentdash-executor/src/connectors/codex_bridge.rs",
+  "oracle_source_sha256": "454903440e33240cd6462ae663517a9d11a336ec04ca3be08285b8fa1c99f902",
+  "oracle_source_blob": "dabd32d2afa7a9276c762c02ab356c33014d004e",
+  "capture_harness_path": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+  "capture_test_function": "pinned_main_codex_notification_mapper_matches_committed_fixture",
+  "capture_build_path": "crates/agentdash-agent-runtime-test-support/build.rs",
+  "capture_method": "The pinned-main-capture feature extracts and compiles the fixed Main make_envelope, source-title helper, and handle_server_notification functions, executes every classified Main scenario, and compares each emitted protected event body to this committed fixture. Methods absent from Main are Codex 0.144.1 typed protocol-extension conformance and do not independently claim Main production parity.",
+  "main_capture_methods": [
+    "error",
+    "item/agentMessage/delta",
+    "item/commandExecution/outputDelta",
+    "item/completed",
+    "item/fileChange/outputDelta",
+    "item/mcpToolCall/progress",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/textDelta",
+    "item/started",
+    "thread/compacted",
+    "thread/name/updated",
+    "thread/status/changed",
+    "thread/tokenUsage/updated",
+    "turn/completed",
+    "turn/diff/updated",
+    "turn/plan/updated",
+    "turn/started"
+  ],
+  "protocol_extension_methods": [
+    "configWarning",
+    "deprecationNotice",
+    "guardianWarning",
+    "item/autoApprovalReview/completed",
+    "item/autoApprovalReview/started",
+    "item/commandExecution/terminalInteraction",
+    "item/fileChange/patchUpdated",
+    "item/plan/delta",
+    "item/reasoning/summaryPartAdded",
+    "model/rerouted",
+    "model/safetyBuffering/updated",
+    "model/verification",
+    "serverRequest/resolved",
+    "turn/moderationMetadata",
+    "warning"
+  ],
+  "scenarios": [
+    {
+      "method": "item/agentMessage/delta",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "delta": "hello" },
+      "durability": "ephemeral",
+      "event": { "type": "agent_message_delta", "payload": { "delta": "hello", "itemId": "source-item", "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "item/reasoning/summaryTextDelta",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "delta": "summary", "summaryIndex": 0 },
+      "durability": "ephemeral",
+      "event": { "type": "reasoning_summary_delta", "payload": { "delta": "summary", "itemId": "source-item", "summaryIndex": 0, "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "item/reasoning/textDelta",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "delta": "detail", "contentIndex": 0 },
+      "durability": "ephemeral",
+      "event": { "type": "reasoning_text_delta", "payload": { "contentIndex": 0, "delta": "detail", "itemId": "source-item", "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "item/commandExecution/outputDelta",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "delta": "stdout" },
+      "durability": "ephemeral",
+      "event": { "type": "command_output_delta", "payload": { "delta": "stdout", "itemId": "source-item", "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "item/fileChange/outputDelta",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "delta": "patch" },
+      "durability": "ephemeral",
+      "event": { "type": "file_change_delta", "payload": { "delta": "patch", "itemId": "source-item", "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "item/mcpToolCall/progress",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "message": "working" },
+      "durability": "ephemeral",
+      "event": { "type": "mcp_tool_call_progress", "payload": { "itemId": "source-item", "message": "working", "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "item/started",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "startedAtMs": 101, "item": { "type": "agentMessage", "id": "source-message", "text": "hello", "phase": null, "memoryCitation": null } },
+      "durability": "durable",
+      "event": { "type": "item_started", "payload": { "item": { "type": "agentMessage", "id": "source-message", "text": "hello", "phase": null, "memoryCitation": null }, "threadId": "source-thread", "turnId": "source-turn", "startedAtMs": 101 } }
+    },
+    {
+      "method": "item/completed",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "completedAtMs": 202, "item": { "type": "agentMessage", "id": "source-message", "text": "hello", "phase": null, "memoryCitation": null } },
+      "durability": "durable",
+      "event": { "type": "item_completed", "payload": { "item": { "type": "agentMessage", "id": "source-message", "text": "hello", "phase": null, "memoryCitation": null }, "threadId": "source-thread", "turnId": "source-turn", "completedAtMs": 202 } }
+    },
+    {
+      "method": "item/started",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "startedAtMs": 303, "item": { "type": "reasoning", "id": "reasoning-1", "content": ["detail"], "summary": ["summary"] } },
+      "durability": "durable",
+      "event": { "type": "item_started", "payload": { "item": { "type": "reasoning", "content": ["detail"], "id": "reasoning-1", "summary": ["summary"] }, "threadId": "source-thread", "turnId": "source-turn", "startedAtMs": 303 } }
+    },
+    {
+      "method": "item/completed",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "completedAtMs": 404, "item": { "type": "reasoning", "id": "reasoning-1", "content": ["detail"], "summary": ["summary"] } },
+      "durability": "durable",
+      "event": { "type": "item_completed", "payload": { "item": { "type": "reasoning", "content": ["detail"], "id": "reasoning-1", "summary": ["summary"] }, "threadId": "source-thread", "turnId": "source-turn", "completedAtMs": 404 } }
+    },
+    {
+      "method": "turn/started",
+      "params": { "threadId": "source-thread", "turn": { "id": "source-turn", "items": [], "itemsView": "full", "status": "inProgress" } },
+      "durability": "durable",
+      "event": { "type": "turn_started", "payload": { "threadId": "source-thread", "turn": { "id": "source-turn", "items": [], "itemsView": "full", "status": "inProgress" } } }
+    },
+    {
+      "method": "turn/completed",
+      "params": { "threadId": "source-thread", "turn": { "id": "source-turn", "items": [], "itemsView": "full", "status": "completed" } },
+      "durability": "durable",
+      "event": { "type": "turn_completed", "payload": { "threadId": "source-thread", "turn": { "id": "source-turn", "items": [], "itemsView": "full", "status": "completed" } } }
+    },
+    {
+      "method": "turn/diff/updated",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "diff": "@@ -1 +1 @@" },
+      "durability": "durable",
+      "event": { "type": "turn_diff_updated", "payload": { "diff": "@@ -1 +1 @@", "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "turn/plan/updated",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "explanation": "because", "plan": [{ "step": "inspect", "status": "inProgress" }] },
+      "durability": "durable",
+      "event": { "type": "turn_plan_updated", "payload": { "explanation": "because", "plan": [{ "status": "inProgress", "step": "inspect" }], "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "item/plan/delta",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "delta": "inspect" },
+      "durability": "durable",
+      "event": { "type": "plan_delta", "payload": { "delta": "inspect", "itemId": "source-item", "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "thread/status/changed",
+      "params": { "threadId": "source-thread", "status": { "type": "active", "activeFlags": ["waitingOnApproval"] } },
+      "durability": "durable",
+      "event": { "type": "thread_status_changed", "payload": { "status": { "type": "active", "activeFlags": ["waitingOnApproval"] }, "threadId": "source-thread" } }
+    },
+    {
+      "method": "thread/name/updated",
+      "params": { "threadId": "source-thread", "threadName": "Codex Title" },
+      "durability": "durable",
+      "event": { "type": "platform", "payload": { "kind": "source_session_title_updated", "data": { "executor_session_id": "source-thread", "title": "Codex Title", "source": "codex" } } }
+    },
+    {
+      "method": "thread/tokenUsage/updated",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "tokenUsage": { "total": { "totalTokens": 100, "inputTokens": 60, "cachedInputTokens": 10, "outputTokens": 30, "reasoningOutputTokens": 5 }, "last": { "totalTokens": 20, "inputTokens": 12, "cachedInputTokens": 2, "outputTokens": 6, "reasoningOutputTokens": 1 }, "modelContextWindow": null } },
+      "durability": "durable",
+      "event": { "type": "token_usage_updated", "payload": { "threadId": "source-thread", "turnId": "source-turn", "tokenUsage": { "total": { "totalTokens": 100, "inputTokens": 60, "cachedInputTokens": 10, "outputTokens": 30, "reasoningOutputTokens": 5 }, "last": { "totalTokens": 20, "inputTokens": 12, "cachedInputTokens": 2, "outputTokens": 6, "reasoningOutputTokens": 1 }, "modelContextWindow": null, "context": { "providerContextTokens": 20, "pendingEstimateTokens": 0, "currentContextTokens": 20, "cumulativeTotalTokens": 100, "modelContextWindow": null, "effectiveContextWindow": null, "reserveTokens": 0, "source": "provider" } } } }
+    },
+    {
+      "method": "error",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "willRetry": true, "error": { "message": "retry", "additionalDetails": null, "codexErrorInfo": null } },
+      "durability": "durable",
+      "event": { "type": "error", "payload": { "error": { "additionalDetails": null, "codexErrorInfo": null, "message": "retry" }, "threadId": "source-thread", "turnId": "source-turn", "willRetry": true } }
+    },
+    {
+      "method": "thread/compacted",
+      "params": { "threadId": "source-thread", "turnId": "source-turn" },
+      "durability": "durable",
+      "event": { "type": "executor_context_compacted", "payload": { "threadId": "source-thread", "turnId": "source-turn" } }
+    },
+    {
+      "method": "item/autoApprovalReview/started",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "reviewId": "review-1", "startedAtMs": 1001, "action": { "type": "networkAccess", "host": "example.com", "port": 443, "protocol": "https", "target": "https://example.com" }, "review": { "status": "inProgress" } },
+      "durability": "durable",
+      "event": { "type": "auto_approval_review_started", "payload": { "threadId": "source-thread", "turnId": "source-turn", "reviewId": "review-1", "startedAtMs": 1001, "action": { "type": "networkAccess", "host": "example.com", "port": 443, "protocol": "https", "target": "https://example.com" }, "review": { "status": "inProgress" } } }
+    },
+    {
+      "method": "item/autoApprovalReview/completed",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "reviewId": "review-1", "startedAtMs": 1001, "completedAtMs": 1002, "decisionSource": "agent", "targetItemId": null, "action": { "type": "networkAccess", "host": "example.com", "port": 443, "protocol": "https", "target": "https://example.com" }, "review": { "status": "approved", "rationale": null, "riskLevel": null, "userAuthorization": null } },
+      "durability": "durable",
+      "event": { "type": "auto_approval_review_completed", "payload": { "threadId": "source-thread", "turnId": "source-turn", "reviewId": "review-1", "startedAtMs": 1001, "completedAtMs": 1002, "decisionSource": "agent", "targetItemId": null, "action": { "type": "networkAccess", "host": "example.com", "port": 443, "protocol": "https", "target": "https://example.com" }, "review": { "status": "approved", "rationale": null, "riskLevel": null, "userAuthorization": null } } }
+    },
+    {
+      "method": "item/reasoning/summaryPartAdded",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "summaryIndex": 1 },
+      "durability": "durable",
+      "event": { "type": "reasoning_summary_part_added", "payload": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "summaryIndex": 1 } }
+    },
+    {
+      "method": "item/commandExecution/terminalInteraction",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "processId": "process-1", "stdin": "yes\n" },
+      "durability": "durable",
+      "event": { "type": "terminal_interaction", "payload": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "processId": "process-1", "stdin": "yes\n" } }
+    },
+    {
+      "method": "item/fileChange/patchUpdated",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "changes": [{ "path": "src/lib.rs", "kind": { "type": "add" }, "diff": "+hello" }] },
+      "durability": "ephemeral",
+      "event": { "type": "file_change_patch_updated", "payload": { "threadId": "source-thread", "turnId": "source-turn", "itemId": "source-item", "changes": [{ "path": "src/lib.rs", "kind": { "type": "add" }, "diff": "+hello" }] } }
+    },
+    {
+      "method": "serverRequest/resolved",
+      "params": { "threadId": "source-thread", "requestId": "request-1" },
+      "durability": "durable",
+      "event": { "type": "server_request_resolved", "payload": { "threadId": "source-thread", "requestId": "request-1" } }
+    },
+    {
+      "method": "model/rerouted",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "fromModel": "model-a", "toModel": "model-b", "reason": "highRiskCyberActivity" },
+      "durability": "durable",
+      "event": { "type": "model_rerouted", "payload": { "threadId": "source-thread", "turnId": "source-turn", "fromModel": "model-a", "toModel": "model-b", "reason": "highRiskCyberActivity" } }
+    },
+    {
+      "method": "model/verification",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "verifications": ["trustedAccessForCyber"] },
+      "durability": "durable",
+      "event": { "type": "model_verification", "payload": { "threadId": "source-thread", "turnId": "source-turn", "verifications": ["trustedAccessForCyber"] } }
+    },
+    {
+      "method": "turn/moderationMetadata",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "metadata": { "review": "clean" } },
+      "durability": "durable",
+      "event": { "type": "turn_moderation_metadata", "payload": { "threadId": "source-thread", "turnId": "source-turn", "metadata": { "review": "clean" } } }
+    },
+    {
+      "method": "model/safetyBuffering/updated",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "model": "model-a", "fasterModel": null, "reasons": ["review"], "showBufferingUi": true, "useCases": ["cyber"] },
+      "durability": "ephemeral",
+      "event": { "type": "model_safety_buffering_updated", "payload": { "threadId": "source-thread", "turnId": "source-turn", "model": "model-a", "fasterModel": null, "reasons": ["review"], "showBufferingUi": true, "useCases": ["cyber"] } }
+    },
+    {
+      "method": "model/safetyBuffering/updated",
+      "params": { "threadId": "source-thread", "turnId": "source-turn", "model": "model-a", "reasons": [], "showBufferingUi": false, "useCases": [] },
+      "durability": "ephemeral",
+      "event": { "type": "model_safety_buffering_updated", "payload": { "threadId": "source-thread", "turnId": "source-turn", "model": "model-a", "reasons": [], "showBufferingUi": false, "useCases": [] } }
+    },
+    {
+      "method": "warning",
+      "params": { "threadId": "source-thread", "message": "warning message" },
+      "durability": "durable",
+      "event": { "type": "warning", "payload": { "threadId": "source-thread", "message": "warning message" } }
+    },
+    {
+      "method": "warning",
+      "params": { "threadId": null, "message": "global warning with null" },
+      "durability": "durable",
+      "event": { "type": "warning", "payload": { "threadId": null, "message": "global warning with null" } }
+    },
+    {
+      "method": "warning",
+      "params": { "message": "global warning omitted" },
+      "durability": "durable",
+      "event": { "type": "warning", "payload": { "message": "global warning omitted" } }
+    },
+    {
+      "method": "guardianWarning",
+      "params": { "threadId": "source-thread", "message": "guardian warning" },
+      "durability": "durable",
+      "event": { "type": "guardian_warning", "payload": { "threadId": "source-thread", "message": "guardian warning" } }
+    },
+    {
+      "method": "deprecationNotice",
+      "params": { "summary": "deprecated", "details": "use replacement" },
+      "durability": "durable",
+      "event": { "type": "deprecation_notice", "payload": { "summary": "deprecated", "details": "use replacement" } }
+    },
+    {
+      "method": "deprecationNotice",
+      "params": { "summary": "deprecated null", "details": null },
+      "durability": "durable",
+      "event": { "type": "deprecation_notice", "payload": { "summary": "deprecated null", "details": null } }
+    },
+    {
+      "method": "deprecationNotice",
+      "params": { "summary": "deprecated omitted" },
+      "durability": "durable",
+      "event": { "type": "deprecation_notice", "payload": { "summary": "deprecated omitted" } }
+    },
+    {
+      "method": "configWarning",
+      "params": { "summary": "config warning", "details": "invalid value", "path": "config.toml" },
+      "durability": "durable",
+      "event": { "type": "config_warning", "payload": { "summary": "config warning", "details": "invalid value", "path": "config.toml" } }
+    },
+    {
+      "method": "configWarning",
+      "params": { "summary": "config null", "details": null, "path": null, "range": null },
+      "durability": "durable",
+      "event": { "type": "config_warning", "payload": { "summary": "config null", "details": null, "path": null, "range": null } }
+    },
+    {
+      "method": "configWarning",
+      "params": { "summary": "config omitted" },
+      "durability": "durable",
+      "event": { "type": "config_warning", "payload": { "summary": "config omitted" } }
+    }
+  ]
+}

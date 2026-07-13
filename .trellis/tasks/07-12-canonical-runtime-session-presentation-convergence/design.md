@@ -1,266 +1,335 @@
-# Canonical Runtime 会话展示链路设计
+# Main-Parity 会话链路恢复设计
 
 ## 1. 设计结论
 
-采用“schema-generated AgentDash-owned 完整同构会话协议 + 独立 durable Runtime envelope + 原前端组件图直接恢复”的三层结构。
+采用“不可变 owned presentation event + Runtime-only carrier metadata + main 原前端直接消费”的结构。
 
 ```text
-Codex App Server JSON-RPC / Native Agent / Enterprise Agent
-                      ↓ adapter
-AgentDash-owned Conversation Protocol
-  full-fidelity item/event/interaction + typed extensions
-                      ↓
-Managed Runtime Envelope
-  canonical IDs + sequence + revision + operation + terminal + recovery
-                      ↓ API snapshot + NDJSON events
-features/session transport/envelope adapter
-                      ↓
-原 SessionChatStream / useSessionFeed / SessionEntry presentation
+Codex App Server / Native Agent / Remote Runtime / Tool Owner
+                         │
+                         │  producer boundary 构造一次
+                         ▼
+ImmutablePresentationEvent
+  durability
+  event: BackboneEvent
+                         │
+                         │  只包裹，不重建
+                         ▼
+RuntimeJournalRecord
+  runtime thread/revision/operation/binding/cursor metadata
+  + Presentation(event) | Internal(runtime fact)
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+Runtime reducer/snapshot       Journal/API transport
+只派生内部状态                  只筛选/重包 Presentation
+                                     │
+                                     ▼
+frontend envelope adapter
+  移除Runtime transport wrapper
+                                     │
+                                     ▼
+main features/session feed/reducer/renderer
 ```
 
-当前 `RuntimeItemContent` 的八类简化 union 不再承担完整会话 payload。它不能通过继续增加若干可选字段修补，因为其 `tool_call/tool_result + JsonValue` 抽象已经丢失 command、file change、MCP、Companion、reasoning channel、usage、typed error 与过程 delta 的 discriminant。
+`ImmutablePresentationEvent.event` 序列化后必须与 main 的 `notification.event` 深度全等。`SessionEventResponse`、`BackboneEnvelope`、session/journal sequence、outer timestamp、trace/source coordinate 均属于 typed wrapper，不得被放进或改写 protected event body。
 
-## 2. 边界与依赖方向
-
-### 2.1 AgentDash-owned Conversation Protocol
-
-复用并收束 `agentdash-agent-protocol` 为 dependency-light 跨层合同：
-
-- 标准Codex session/item/event类型由固定版本上游exporter输出的JSON Schema机械生成，不人工复制Rust字段；
-- 生成完整 typed `AgentDashThreadItem`标准子集、conversation event、delta、usage、error与interaction request；AgentDash extension保持手写typed union；
-- 标准子集与固定 Codex App Server protocol revision 的 JSON shape 同构；
-- 继续由 Rust 生成 `packages/app-web/src/generated/backbone-protocol.ts` 或等价单一 generated contract；
-- 不依赖 Application、Managed Runtime、driver host、数据库或 React；
-- 移除对 Codex vendor crate、ACP runtime crate与宽泛 `agentdash-agent-types` 的不必要依赖，协议所需值对象归本 crate 或更小 shared contract。
-
-“同构”由生成链与conformance证明，不通过re-export/vendor alias或人工同步实现。标准variant必须能与对应Codex payload做JSON等价roundtrip；AgentDash variant使用明确namespace/discriminant，不伪装成标准variant。
-
-生成链：
+禁止的方向：
 
 ```text
-pinned codex-app-server-protocol 0.144.1 (rust-v0.144.1)
-  -> upstream generate_json/generate_ts
-  -> pinned v2 schema bundle + fixture tree
-  -> AgentDash Rust codegen
-  -> committed generated standard Rust types
-  -> AgentDash extension composition
-  -> project TypeScript contract generation
+RuntimeEvent summary -> API match/serde_json -> guessed BackboneEvent
 ```
 
-生成器必须有write/check两种模式：write更新产物；check在临时目录重新生成并diff。普通Runtime编译不运行上游generator，也不依赖Codex crate；只有protocol-codegen工具作为开发依赖接触vendor crate。
+`runtime_presentation_event()` 类反向投影必须删除。信息一旦在 producer boundary 被压成摘要，后续任何 mapper 都无法恢复 main 的 ID、时间、source、null、事件顺序和完整 payload。
 
-### 2.1.1 工具链选型
+## 2. Oracle 与比较模型
 
-新增workspace内专用`agentdash-agent-protocol-codegen`工具crate（最终名称可按目录规范调整）：
+### 2.1 两个基线、不同职责
 
-- pinned `codex-app-server-protocol 0.144.1`（`rust-v0.144.1`）：调用上游`generate_json_with_experimental`/`generate_ts_with_options`；
-- pinned `typify = 0.7.0`：通过builder interface从JSON Schema生成可提交的Rust source；
-- `serde/serde_json`：canonical schema与strict transcode fixtures；
-- `sha2`：记录schema bundle digest；
-- `tempfile/similar`或项目既有diff helper：实现check mode临时生成与可读diff；
-- `rustfmt`：格式化generated Rust；前端继续使用项目既有formatter/check。
+| 基线 | 职责 |
+| --- | --- |
+| `D:\Projects\AgentDash-main-reference@957fa9d60` | 唯一生产行为、事件分类/顺序、AgentRun service/UI 与副作用 oracle |
+| Codex `rust-v0.144.1` | 标准 Codex payload 的字段、variant、nullable 与 wire shape oracle |
 
-不依赖`cargo install cargo-typify`或其它全局CLI，原因是生成流程必须由workspace lockfile固定且可在CI复现。`typify`仅属于codegen工具依赖，不进入`agentdash-agent-protocol`、Runtime或production binary依赖图。
+main 已有 family 的产品语义不能被 `0.144.1` 升级改写；`0.144.1` 新 family 按官方 wire 原样加入 owned 标准协议，但不能取代 main 的 AgentDash extension 或把 Runtime 内部 taxonomy 暴露给 UI。
 
-### 2.1.2 生成目录与锁定清单
+### 2.2 Golden capture
 
-建议产物：
+为 main 建只读 fixture capture：
 
-```text
-schemas/upstream/codex-app-server-v2.schemas.json
-schemas/upstream/codex-app-server-v2.typescript/...
-crates/agentdash-agent-protocol/protocol-codegen.lock.json
-crates/agentdash-agent-protocol/src/generated/codex_v2.rs
-packages/app-web/src/generated/backbone-protocol.ts
-```
+1. 复用 main producer/mapper tests 和 route/service builders，捕获 `Vec<SessionEventResponse>`。
+2. 固定 clock、UUID/operation ID、run/agent/session/turn/item/request ID、provider/tool outputs。
+3. 每个场景保存 input fixture、main eventstream JSON、预期 UI/side-effect assertion。
+4. current 使用同一 input fixture，经过自己的 Runtime wrapper 后输出 presentation eventstream。
 
-`protocol-codegen.lock.json`至少记录：Codex crate version/tag/commit、experimental=false、upstream schema SHA-256、选取的root type清单、typify version与AgentDash extension schema revision。该文件是升级审查入口，不作为运行时协商协议。
+main fixture是测试资产，不在参考worktree生成或提交；由当前分支的 parity harness读取已提交 golden。
 
-### 2.1.3 生成步骤
+### 2.3 Wrapper normalizer
 
-```text
-1. Codex exporter输出完整非experimental v2 JSON Schema/TS fixtures到临时目录
-2. canonicalize并计算schema digest
-3. 根据显式root allowlist裁剪session/item/event/interaction及其传递依赖
-4. typify生成owned标准Rust types，增加项目要求的serde/TS derives与替换映射
-5. 与手写AgentDash extension组合为最终conversation contract
-6. 使用现有Rust -> TypeScript生成入口输出前端单一contract
-7. rustfmt/前端formatter
-8. write写入目标；check与仓库产物逐文件diff
-```
+normalizer 是显式 typed function，不是递归删除字段的 JSON helper。它只处理：
 
-root allowlist是唯一需要人工维护的“标准协议选择”配置；字段、variant与嵌套结构不得人工复制。若上游新增root family，升级审查显式决定是否纳入；已纳入family的schema变化自动进入diff。
+- current 的 Runtime transport frame与cursor；
+- current endpoint/frame命名到统一 test carrier；
+- `SessionEventResponse`/`BackboneEnvelope`的session、sequence、outer timestamp、source/trace等wrapper metadata；
+- connected/heartbeat control frame的单独比较通道。
 
-### 2.1.4 命令与CI
+normalizer输出有序的`{ durability, presentation_event }`序列。它不得修改、补齐、重排或过滤`presentation_event`；该protected body逐项`serde_json::Value` deep equality，数组顺序和explicit null均参与比较。wrapper的可观察行为由独立history/stream/side-effect断言覆盖。
 
-计划提供：
+任何新增 allowlist 字段必须修改 PRD/design 并由用户审阅，不能由实现 agent 临时扩大。
+
+## 3. Owned presentation contract
+
+### 3.1 标准与扩展
+
+`agentdash-agent-protocol` 继续承担 dependency-light owned contract：
+
+- Codex标准 payload从`0.144.1`官方 exporter/schema机械生成；
+- AgentDash extension维持显式 typed union；
+- `BackboneEvent`/`BackboneEnvelope`是 AgentDash 会话 presentation contract，不等同于 Codex JSON-RPC transport；
+- Runtime/Application/frontend不得直接依赖 vendor DTO。
+
+生成工具必须提供：
 
 ```powershell
 cargo run -p agentdash-agent-protocol-codegen -- write
 cargo run -p agentdash-agent-protocol-codegen -- check
 ```
 
-根`package.json`/quality gate可增加稳定入口，但仍委托给同一Rust工具。CI运行`check`并在schema hash、文件集合或内容不一致时失败；失败输出必须列出upstream schema diff、generated Rust diff和generated TypeScript diff中的对应阶段。
+lock manifest记录Codex tag/version/commit、schema digest、root allowlist、generator版本、extension revision。fresh checkout只能依赖workspace Rust/Node工具链。
 
-### 2.1.5 Codex升级流程
+### 3.2 Null 与时间
 
-1. 更新workspace全部Codex Rust/npm/protocol revision pin；本任务首个基线为`rust-v0.144.1`。
-2. 运行codegen `write`，审查schema/lock/root dependency diff。
-3. 修复method admission、extension discriminant冲突与strict transcode tests。
-4. 运行codegen `check`、protocol conformance、Runtime与frontend parity gates。
-5. 在同一提交更新Cargo.lock、schema snapshot、generated Rust/TS与lock manifest。
+- schema为nullable的字段必须能显式序列化`null`；optional-only字段按官方 fixture决定 omitted/null。
+- AgentDash extension的nullable规则以 main JSON fixture为准。
+- 时间来自 producer source event或统一注入的 producer clock，并在commit时固化。
+- journal GET/replay/stream不得调用`Utc::now()`重造 presentation timestamp。
+- 秒/毫秒单位由具体协议字段决定，禁止按字段名猜测或复用不同单位。
 
-如果`typify`对实际Codex schema无法生成可编译、可roundtrip的类型，W1停在feasibility gate并回到设计阶段评估其它机械生成方式；不得手写镜像，也不得把schema任意压缩成通用JSON结构。
+### 3.3 Identity
 
-### 2.2 Codex Integration Adapter
+presentation payload 保留 main/source identity：thread、turn、item、request、tool call、entry index。
 
-`agentdash-integration-codex` 是 Codex vendor 终止点：
+Runtime canonical identity只存在于carrier metadata：
 
-- 直接依赖 pinned `codex-app-server-protocol`；
-- JSON-RPC method、source IDs、request IDs 与 native process lifecycle 只存在于 adapter；
-- 使用vendor typed deserialization，禁止当前`Value`字段猜测与`_ => AgentMessage(item.to_string())`；
-- 标准payload通过vendor serialize -> generated owned deserialize的严格serde transcode无损转换；schema不匹配立即typed failure，不降级为文本；
-- JSON-RPC method与event family admission仍使用穷举typed dispatch，避免新方法静默忽略；
-- reverse projection/conformance helper 为未来 Codex-compatible server façade留空间，本任务不发布 endpoint。
+```text
+RuntimePresentationCoordinate {
+  runtime_thread_id,
+  runtime_turn_id?,
+  runtime_item_id?,
+  source_thread_id?,
+  source_turn_id?,
+  source_item_id?,
+  interaction_id?,
+}
+```
 
-Native 与企业 adapter直接产生 owned conversation events，不构造 Codex vendor DTO。
+coordinate map用于Runtime reducer、routing和response correlation，不得重写payload内ID。Codex source request ID与Runtime interaction ID必须同时保存；前端批准动作使用main卡片所持source/request identity，经API边界解析到Runtime interaction。
 
-### 2.3 Managed Runtime Contract
+## 4. Runtime journal 与 snapshot
 
-`agentdash-agent-runtime-contract` 继续保持 dependency-light，并依赖 owned conversation protocol，而非 Codex vendor crate。
+### 4.1 单一 journal record
 
-Runtime envelope拥有：
+建议合同：
 
-- canonical Thread/Turn/Item/Interaction IDs；
-- durable sequence、revision与cursor；
-- operation acceptance/terminal；
-- binding、context、hook、recovery事实；
-- 完整 typed conversation event/payload。
+```text
+RuntimeJournalRecord {
+  carrier: RuntimeCarrierMetadata,
+  fact: RuntimeJournalFact,
+}
 
-Runtime lifecycle与conversation payload分层但不形成双事实：item/turn lifecycle在同一 journal event中携带完整 payload；read-side只从journal/snapshot派生。Snapshot transcript保存完整 final `AgentDashThreadItem`，不保存压缩后的 `RuntimeItemContent`。
+RuntimeJournalFact =
+  | Presentation(ImmutablePresentationEvent)
+  | Internal(RuntimeInternalEvent)
+```
 
-过程事件必须有 typed variant：agent message delta、reasoning text/summary delta、item started/updated/completed、command output、file change、MCP progress、plan、usage、error与interaction。若某 adapter无法提供字段，通过 profile/fidelity声明能力强度，不伪造空字段或文本 fallback。
+这不是双事实：
 
-### 2.3.1 Durable 与 Live Transient
+- presentation事实只在`Presentation`记录中存在一次；
+- operation/binding/context recovery等内部事实只在`Internal`记录中存在一次；
+- reducer可以关联两者，但不从一方重新制造另一方；
+- API只输出`Presentation`，内部inspect/audit endpoint读取`Internal`。
 
-Runtime stream必须显式区分：
+对于同一业务动作需要多个presentation事件时，producer按main顺序提交多个完整records，例如 user submit必须先提交`UserInputSubmitted`，再提交`TurnStarted`。事务保证顺序和幂等。
 
-- durable event：有`EventSequence`，进入journal，可按cursor恢复；
-- live transient event：不冒充durable事实，但有`stream_generation + transient_sequence/event_id`，在同一active turn live buffer内可去重和有界replay；
-- final item/turn terminal：durable且authoritative，覆盖过程delta投影。
+### 4.2 Snapshot
 
-当前`sequence=null`的generic `ItemDelta`不足以支持旧UI。W2必须定义generated `RuntimeStreamEnvelope`等价物，使浏览器能同时维护durable cursor与live transient cursor；target、binding generation或active turn变化时隔离旧transient state。有限durable batch不能通过自动重连模拟live stream。
+Runtime snapshot拥有command availability、active turn、binding、context、interaction与最终transcript索引。最终transcript引用/复制presentation terminal payload中的完整item，不能保存另一套压缩`RuntimeItemContent`后再重建UI。
 
-## 2.4 Connector 与 Tool Projection
+transient delta使用carrier中的`stream_generation + transient_sequence + event_id`做去重和有界replay；其presentation payload仍是完整main-compatible delta事件。durable terminal覆盖live聚合状态，但不删除历史事实。
 
-协议完整不等于producer已经正确。所有driver和tool owner必须进入同一projection conformance。
+### 4.3 Persistence migration
 
-### 2.4.1 Driver 边界
+项目未上线，不提供错误payload schema的兼容reader。修改journal/snapshot JSON shape时：
 
-| Producer | 投影责任 |
+- 新增明确migration，清理或重建已有预研Runtime journal/snapshot/binding projection；
+- 更新schema revision和repository tests；
+- 禁止dual write、旧字段fallback与`#[serde(default)]`掩盖错误历史数据。
+
+## 5. Producer boundaries
+
+### 5.1 Codex integration
+
+Codex adapter流程：
+
+```text
+JSON-RPC method
+  -> vendor typed params/request
+  -> strict transcode to generated owned payload
+  -> main-compatible BackboneEvent wrapper
+  -> immutable presentation commit
+```
+
+要求：
+
+- method admission覆盖main全部方法与`0.144.1`纳入root allowlist的新方法；unsupported必须typed failure/diagnostic，不能静默丢弃；
+- start/delta/terminal保留同一source item ID；
+- request ID原样进入approval payload，Runtime interaction ID放carrier；
+- total/last/context window/error details/thread status/title/diff/plan/compacted完整保留；
+- reverse conformance helper仅用于证明未来可投影为Codex wire，本任务不发布server façade。
+
+### 5.2 Native integration
+
+以main `crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs`逐事件分支为oracle：
+
+- User replay不重复创建用户fact；
+- Assistant MessageStart不创建空item；Text与Reasoning使用独立identity；
+- MessageEnd按main顺序输出message terminal、reasoning terminal、usage；
+- Tool start/update/end、provider全部phase、diagnostic+error、compaction与approval完整输出；
+- 所有ID和时间由确定的mapper state/producer clock产生。
+
+### 5.3 Remote/Relay
+
+wire envelope携带完整presentation payload和Runtime carrier metadata。Relay只验证generation/placement/correlation并转发；不得反序列化成摘要后重建。断线先提交authoritative internal binding fact，再处理pending correlation terminal；presentation事件不被伪造。
+
+### 5.4 Tool owner
+
+每个`ToolContribution`声明：
+
+- main presentation family；
+- started/update/terminal/error/approval builders；
+- source/runtime identity映射；
+- required fields与null策略；
+- golden fixture列表。
+
+Business Surface compile遍历最终catalog；缺少任一声明或fixture即admission失败。共享builder只能消除同family重复构造，不能按tool name猜family。
+
+原行为矩阵：
+
+| Tool family | Presentation oracle |
 | --- | --- |
-| Codex Integration | vendor typed JSON-RPC -> generated owned标准payload strict transcode；source/canonical ID映射；完整delta/interaction/status |
-| Native Agent Integration | Agent Core message/reasoning/tool/provider事件 -> owned conversation event；不构造Codex vendor DTO |
-| Remote Runtime/Relay | typed Runtime Wire envelope原样转发并只替换placement/generation坐标；不得重新解释payload |
-| Future/Enterprise Integration | descriptor声明conversation projection profile并通过共享driver conformance harness |
+| command/shell | main `CommandExecution`/`ShellExec`及output delta、actions、cwd、exit/duration |
+| file/apply patch | main `FileChange`、逐文件typed changes、rename/diff/status |
+| fs read/grep/glob | main AgentDash extension参数、bounded output、success |
+| MCP | main Codex/native对应的MCP或Dynamic表达、progress/result/error |
+| dynamic | 只有显式dynamic工具使用`DynamicToolCall` |
+| Workspace/Canvas | main DynamicToolCall与Platform presentation facts |
+| Companion/Task/Wait | main typed details、source refs、status与Platform facts |
+| terminal/control | main terminal output、PTY与control-plane Platform events |
 
-`AgentRuntimeDriverContribution/Descriptor`必须能证明projection profile：支持的item/event/interaction family、delta fidelity、usage/error fidelity与extension revision。未通过required family conformance的offer不能承载要求这些presentation语义的AgentFrame。
+## 6. Journal/API/stream
 
-### 2.4.2 Tool Owner Projection
+AgentRun journal service恢复main语义：
 
-当前`AgentToolResult { content, is_error, details: JsonValue }`和`ToolBrokerResult { output: JsonValue }`可以继续作为执行内部结果，但不能直接成为conversation protocol。每个`ToolContribution`增加显式protocol projector/descriptor，由tool owner负责：
+1. 解析AgentRun与delivery runtime binding；
+2. 合并fork inherited prefix、marker与当前delivery journal；
+3. 将Runtime物理identity/sequence通过typed wrapper adapter映射为main等价的AgentRun target/session语义；
+4. 事件payload、source、trace、timestamp原样；
+5. GET和NDJSON共享同一projection函数；
+6. initial stream顺序为prefix → durable backlog → connected → ephemeral backlog → live；
+7. heartbeat、resume cursor、lagged/closed与headers恢复main行为。
 
-```text
-Tool invocation + typed owner metadata
-  -> item started payload
-Tool update callback
-  -> typed progress/update/delta
-Tool terminal result
-  -> typed completed/failed payload
-```
+Runtime inspect/internal events可保留独立endpoint，但不能替代session journal endpoint。
 
-Projector family至少覆盖：
+## 7. Frontend 与产品外层
 
-- command/shell -> `CommandExecution`或AgentDash `ShellExec`，保留cwd、actions、process、output、exit code、duration与execution mode；
-- file write/edit/apply patch -> `FileChange`，保留typed changes/diff/status；
-- fs read/grep/glob -> AgentDash typed extension，保留路径、pattern、分页/limit、bounded output与success；
-- MCP -> `McpToolCall`，保留server/tool/plugin/resource URI、progress/result/error/duration；
-- explicitly dynamic tool -> `DynamicToolCall`，保留namespace、content items、success/duration；它是声明的family，不是unknown fallback；
-- Workspace Module/Canvas -> typed AgentDash extension，保留operation/presentation/resource identity与diagnostic；
-- Companion/collaboration -> typed dispatch/request/result/status/source refs；
-- Task/Wait/其它产品工具 -> 对应typed extension与原UI需要的view/details。
+### 7.1 features/session
 
-Business Surface compile遍历最终Tool Catalog并验证每个contribution都有projector。缺失projector是typed admission failure；禁止中央`match tool_name`推断kind，也禁止自动选择DynamicToolCall。
+对`D:\Projects\AgentDash-main-reference\packages\app-web\src\features\session`逐文件比较：
 
-### 2.4.3 行为基线与审计
+- feed、stream、reducer、turn segmentation、tool registry、renderer、system dispatcher与测试以main为准；
+- 允许差异仅为transport frame adapter、generated type import与`0.144.1`新增nullable类型要求；
+- envelope adapter输出main `SessionEventEnvelope`，后续session代码不认识`RuntimeEvent`；
+- unknown item不可降级成AgentMessage或generic JSON卡片。
 
-以`af21f9d7c^:crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs`作为Native投影行为oracle，但不原样恢复中央mapper。旧mapper覆盖的item、delta、usage、compaction、approval与error必须进入新projector matrix；实现归各driver/tool owner，共享builder只承载重复协议构造。
+### 7.2 AgentRun outer behavior
 
-## 3. Frontend 恢复策略
+逐文件恢复main：
 
-以 `af21f9d7c^` 为行为和组件基线，直接恢复：
+- `agentRunRuntime`/mailbox/executor service shape；
+- conversation command snapshot authority、ownership、stale guard；
+- submit/cancel/compact、accepted refs、redirect、backend/model selection；
+- fork/fork-submit、round action与lineage；
+- mailbox waiting/action/recall/resume；
+- context projection/compaction；
+- status bar target、`onSystemEvent`和control-plane副作用；
+- AgentRun workspace parent/children/run detail和页面布局行为。
 
-- `useSessionStream`、`streamTransport`、NDJSON validator与platform dispatcher；
-- `sessionStreamReducer`、`useSessionFeed`、turn segmentation、thinking/context/tool aggregation；
-- `SessionChatStream -> SessionEntry -> ToolCallCardShell/toolCardRegistry`；
-- round actions、fork、token usage、Companion、terminal/system event projection与原测试。
+Runtime inspect/capability可以存在于内部调试界面，但不能替换main生产控制面或会话UI。
 
-不整体回滚 `SessionChatView`：保留当前 canonical command availability、interaction response、AgentRun product projection与后续 runtime 修复，只把消息 presentation subtree接回。
-
-允许修改的 frontend seam只有：
-
-1. NDJSON endpoint/cursor与新 Runtime envelope validation；
-2. Runtime envelope中conversation event到原 `SessionEventEnvelope`/feed reducer输入的无损解包；
-3. generated owned type的机械引用变化。
-
-删除 `AgentRuntimeFeed`、`useAgentRuntimeFeed` 及其平行 `role + text + status` view model。不得新建替代 renderer。
-
-## 4. 数据流
+## 8. 单工作区并发实施模型
 
 ```text
-Driver typed event
-  -> exhaustive adapter conversion
-  -> Runtime journal commit
-  -> Runtime snapshot / durable NDJSON event
-  -> frontend envelope validator
-  -> conversation event projector
-  -> existing session reducer/feed
-  -> existing typed renderer
+W0 Main Oracle/Harness ──┬── W1 Protocol 0.144.1
+                         └─────────────┬── G1
+                                       ▼
+                              W2 Immutable Carrier
+                                       ▼
+                              W3 Persistence/Migration
+                                       ▼
+                    ┌──────────┬───────┴────────┬──────────┐
+                    ▼          ▼                ▼          ▼
+                W4 Codex  W5 Native/Remote  W6 Tools  W7 App Producers
+                    └──────────┴───────┬────────┴──────────┘
+                                       ▼ G3
+                              W8 Journal/History/Stream
+                                       ▼
+                           ┌───────────┴───────────┐
+                           ▼                       ▼
+                  W9 features/session      W10 AgentRun Outer
+                           └───────────┬───────────┘
+                                       ▼
+                              W11 Full Parity
 ```
 
-Product/resource events只触发对应projection invalidate或原有明确副作用，不推进Runtime state。Command availability只来自Runtime snapshot；恢复旧UI不恢复旧command authority。
+W0 建立 main golden、严格 comparator 与行为账本，W1 完成 Codex `0.144.1` generated contract；两项 ownership 不重叠，可在同一工作区并行，分别检查并提交后进入 G1。W2 单独冻结 immutable carrier，W3 冻结 repository/UoW 与 migration。
 
-## 5. 协议版本与迁移
+W4–W7 在 W3 提交后按 ownership 并行恢复 Codex、Native/Remote、Tool Catalog 与 application producers；受 agent 槽位限制分批启动，但不人为串行化。G3 等待四项全部独立检查并提交。W8 随后接线 journal/history/stream API；W9 与 W10 在 W8 合同冻结后并行，W11 执行最终 eventstream/browser parity 与 spec 收口。
 
-- 固定受支持 Codex protocol revision并在 owned contract中记录 conformance baseline。
-- Codex依赖升级必须先更新fixture/schema diff，再补穷举conversion；未映射variant编译或测试失败。
-- Runtime event/snapshot schema升级使用新的contract revision；项目不提供旧schema reader、dual write或fallback。
-- 若数据库JSON payload已存在且无法按新shape解释，新增migration清理/重建预研Runtime journal/projection数据；不得保留兼容反序列化分支。
+所有工作都直接发生在当前本地分支，不创建临时 worktree/branch。每个派发 prompt 必须明确说明共享工作区内存在并行改动、该工作项的 ownership paths，以及不得覆盖/格式化/回退其他修改。主会话按 ownership 精确暂存通过检查的工作项并逐项提交；其他 agent 的未暂存修改原样保留。
 
-## 6. 方案比较
+所有 agent 复用同一 Cargo target/cache。Cargo 锁竞争按正常构建行为等待，不创建独立 target，不杀占锁进程，也不阻止前端、文档或不需要该锁的工作继续并行。任何 parity 失败都回到拥有该 presentation fact 的 producer，禁止在 API/frontend 加猜测补丁。
+
+## 9. 验证策略
+
+### 必须通过的主gate
+
+- main/current eventstream deep equality after typed wrapper normalization；
+- GET = initial NDJSON replay = reconnect replay = refresh；
+- all driver/tool inventories complete；
+- main/current service/route ledger一致或仅有审查通过的内部Runtime增量；
+- main/current浏览器行为场景一致。
+
+### 辅助gate
+
+- protocol codegen write/check与vendor-owned roundtrip；
+- Rust unit/integration/PostgreSQL tests；
+- frontend Vitest/typecheck/lint；
+- representative `pnpm dev` browser E2E；
+- dependency direction与dead-code audit。
+
+测试不得用以下方式宣称成功：只断言variant、删除null再比较、忽略事件顺序、只检查文字出现、由profile声明full fidelity、把被过滤事件当正确结果。
+
+## 10. 方案取舍
 
 | 方案 | 结论 | 原因 |
 | --- | --- | --- |
-| Runtime直接使用Codex vendor types | 不采用 | vendor依赖与版本变化进入durability kernel；Native/企业adapter被迫构造vendor领域 |
-| 当前最小`RuntimeItemContent` | 删除 | 信息有损，无法驱动原UI，也无法证明未来Codex兼容 |
-| 人工维护owned同构镜像 | 不采用 | 字段同步成本高，升级时容易漏字段或语义漂移 |
-| schema-generated owned同构协议 + adapter conformance | 采用 | 无手抄、Runtime稳定、前端无损、vendor隔离、未来标准wire可投影 |
-| 同时保留旧Backbone feed与新Runtime feed | 不采用 | 形成双事实与长期分叉 |
+| 从Runtime摘要反推BackboneEvent | 删除 | 信息不可逆丢失，已经造成当前回归 |
+| Runtime直接依赖Codex vendor DTO | 不采用 | vendor进入durability kernel且Native被迫构造vendor领域 |
+| generated owned payload作为不可变journal fact | 采用 | 保真、vendor隔离、可升级、可直接驱动原UI |
+| presentation与internal facts同一journal不同variant | 采用 | 单一持久化事实源且职责清晰 |
+| 双feed/compatibility/fallback | 不采用 | 形成长期分叉，项目未上线无必要 |
+| 新建Runtime session renderer | 不采用 | 改变产品行为并悬空原组件图 |
 
-## 7. 验证策略
+## 11. 未来 Codex App Server 前端空间
 
-- 上游schema/TS fixture与AgentDash生成产物有write/check drift gate。
-- codegen fresh-workspace test证明无需全局CLI即可从lockfile重建同一文件树。
-- Codex vendor ↔ generated owned protocol代表性JSON等价fixtures覆盖所有标准item/event/interaction family。
-- Adapter method admission无wildcard/catch-all；strict transcode失败返回typed unsupported/protocol mismatch。
-- Driver conformance覆盖Codex/Native/Remote相同source事实产生的owned event family与terminal保证。
-- Tool Catalog conformance枚举所有贡献，缺失projector失败；每个projector有call/update/result golden tests。
-- Runtime reducer/snapshot/replay覆盖完整item、typed delta、duplicate cursor、gap、target isolation和terminal。
-- Runtime stream覆盖durable cursor + transient generation/sequence、active-turn有界replay、reconnect去重与final item覆盖。
-- Frontend恢复原测试，并增加使用新Runtime envelope驱动原renderer的contract tests。
-- UI parity覆盖command、diff、MCP、Companion、reasoning、plan、context、usage、error、interaction与round actions。
-- route ledger、generated contract check、Rust/TypeScript检查和代表性AgentRun workspace E2E共同验收。
-
-## 8. 未来 Codex Frontend 空间
-
-未来若发布Codex-compatible server façade，只需在interface层把owned标准子集投影为Codex JSON-RPC，并通过capability negotiation决定是否暴露AgentDash extension。本任务只保证该映射无损且边界存在，不实现或发布endpoint。
+owned标准payload必须能按`0.144.1`无损序列化回Codex标准wire；AgentDash extension通过独立namespace/capability negotiation表达。未来server façade只需要增加interface transport，不需要再次改Runtime journal或session renderer。本任务只守住该空间，不实现endpoint。

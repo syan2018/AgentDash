@@ -1,81 +1,103 @@
-# Connector 与 Tool Protocol Projection 初始审计
+# Connector、Tool 与 Application Producer 恢复清单
 
-## 已确认退化点
+## Oracle
 
-- `agentdash-integration-codex/src/mapping.rs::item_content`只识别user/agent/reasoning/plan/dynamic/MCP少数类型，unknown item走`AgentMessage { text: item.to_string() }`。
-- `agentdash-integration-native-agent/src/tool.rs`把工具统一投影为`RuntimeItemContent::ToolCall`，terminal经generic Tool Broker result收敛。
-- `agentdash-agent-runtime/src/tool_broker.rs`当前conversation journal只保存tool name、arguments和generic JSON output，无法区分command/file/MCP/fs/Companion等presentation family。
-- `agentdash-integration-remote-runtime`是Runtime Wire proxy，应保持typed event原样穿透，只替换本地placement/generation坐标。
-- `AgentToolResult`当前包含`content/is_error/details: JsonValue`；`details.kind`承载多个产品工具的结构信息，但没有owner-declared conversation projector。
+- 唯一生产行为oracle：`D:\Projects\AgentDash-main-reference@957fa9d60ea3d67efa1bb278fe5b376cf0c34598`。
+- 当前实现基线：任务重订前`36c5484e6`。
+- W0必须动态刷新本清单；本文是派发起点，不是完成证明。
 
-## 旧行为基线
+## 当前结构性缺口
 
-使用以下Git对象做行为oracle：
+- Codex mapping把完整notification压成较窄`RuntimeEvent`，canonicalize item/interaction identity，遗漏main中的diff/plan/status/title等family。
+- Native mapping在Assistant MessageStart创建空`ItemStarted`，message/reasoning共享identity，provider/compaction/approval/usage/error顺序与main不同。
+- ToolBroker只提交started/terminal与generic `ToolProgress`，而session stream需要main实际ItemUpdated/typed delta/payload。
+- 新`Vfs/RuntimeAction/WorkspaceModule/Companion/Task/Wait/LifecycleComplete/TerminalControl`presentation discriminant来自Runtime taxonomy，不是main既有UI合同。
+- frontend `features/session/model/runtimeSessionAdapter.ts`直接认识`RuntimeEvent`并反向构造旧session event，违反不可变presentation边界。
+- 原application session producer在production切换中大量消失或迁到internal Runtime facts；hook/title/terminal/rewind/context/control-plane等Platform facts需要按main恢复。
 
-```powershell
-git show af21f9d7c^:crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs
-git show af21f9d7c^:crates/agentdash-executor/src/connectors/codex_bridge.rs
+## Driver inventory
+
+| Driver | Main oracle | 必须恢复 |
+| --- | --- | --- |
+| Codex | main `crates/agentdash-executor/src/connectors/codex_bridge.rs` | 所有supported JSON-RPC notification/request的完整typed payload、source IDs、事件顺序和main interaction行为；`0.144.1`新增root原样 |
+| Native Agent | main `crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs` | message/reasoning独立生命周期、tool lifecycle、provider全phase、usage、diagnostic+error、compaction、approval requested/resolved |
+| Remote Runtime/Relay | main relay/runtime interface与当前wire ownership | 完整presentation payload原样穿透，只重包placement/generation wrapper |
+| Future/Enterprise | contribution descriptor与共享conformance | 未通过全部required fixture不能admit |
+
+profile/fidelity只能声明capability，不能替代行为fixture。每个driver inventory行必须记录：owner、source event、presentation event、ID map、durable/transient、golden fixture、check result。
+
+## Main tool expression原则
+
+工具恢复目标不是为每个业务工具创造新的ThreadItem类型，而是保持main实际表达：
+
+- main已有Codex/native typed variant继续使用该variant；
+- main使用`DynamicToolCall`的产品工具继续使用`DynamicToolCall`；
+- resource/presentation/dispatch/task等额外业务语义继续由main对应Platform fact表达；
+- Runtime内部tool taxonomy只在carrier/capability层存在，不进入protected presentation body。
+
+## Dynamic Tool Catalog inventory
+
+W6从最终Business Surface/Tool Catalog实际枚举contribution，不使用硬编码名单作为完成判定。每行至少记录：
+
+```text
+owner crate
+runtime name / capability key
+main ThreadItem family
+main Platform companion facts
+started builder
+update/progress builder
+completed/failed builder
+approval/request correlation
+source/runtime identity map
+frontend renderer
+golden fixture
 ```
 
-旧Native mapper明确投影：Agent message/reasoning delta与final、item started/updated/completed、command output delta、shell exec、fs read/grep/glob、context compaction、usage、approval与typed error/platform facts。
+初始family：
 
-## 必须完成的动态Inventory
-
-W3执行时不得只使用静态名单。必须从最终Business Surface/Tool Catalog枚举所有`ToolContribution`，为每项记录：owner crate、runtime name、capability key、tool path、allowed channel、projector family、call/update/result fixture、frontend renderer。任何缺失projector的contribution在surface compile阶段失败。
-
-## 初始Family清单
-
-- Codex standard ThreadItem families
-- Native Agent message/reasoning/provider events
-- command/shell
-- file write/edit/apply patch
-- fs read/grep/glob
-- MCP
-- explicit dynamic tool
-- Workspace Module/Canvas/VFS
-- Companion/collaboration
-- Task/Wait/Lifecycle product tools
-- context compaction、usage、error、approval/user input
-- Remote Runtime/Relay typed pass-through
-
-该清单是起点，不替代运行时catalog inventory。
-
-## W3 最终投影矩阵
-
-### Driver inventory
-
-| Driver | Profile / conformance evidence |
+| Family | Main表达恢复要求 |
 | --- | --- |
-| Codex | generated owned ThreadItem strict transcode；message/reasoning/plan/command/file/MCP delta、usage、error、compaction与全部interaction；unknown method/item拒绝 |
-| Native Agent | message/reasoning、provider status、usage、typed error、tool progress/approval/terminal；Agent Core不存在Plan事件，descriptor不声明该family；context compaction由Runtime-owned activation链承担 |
-| Remote Runtime / Relay | RuntimeWire typed envelope原样透传；只转换source/canonical placement坐标；保留transient generation/sequence与terminal exactly-once |
+| command/shell | `CommandExecution`/`ShellExec`、cwd/actions/process/output/exit/duration与command delta |
+| file/apply patch | `FileChange`、逐文件changes/diff/rename/status与file delta |
+| fs read/grep/glob | main AgentDash FS extension参数名、bounded output、success |
+| MCP direct/relay | main对应MCP/Dynamic item、progress/result/error/duration |
+| explicit dynamic | 只有明确声明dynamic的工具使用`DynamicToolCall` |
+| Workspace/Canvas/VFS | main实际Dynamic item加workspace/control-plane Platform facts |
+| Companion/collaboration | main Dynamic item、dispatch/request/result/source refs与Platform facts |
+| Task/Wait/lifecycle | main Dynamic item与task/status/session meta facts |
+| terminal/control | main command/shell item、terminal output、PTY和control-plane facts |
 
-Host admission验证每个driver profile至少声明message、reasoning、command、file change、MCP、context、typed interaction、transient identity、usage/error fidelity和正extension revision。
+任何inventory新增项自动成为W6 required fixture；不存在“其它工具默认generic”分支。
 
-### Production Tool Catalog inventory
+## Application producer inventory
 
-| Owner / tool family | Protocol projector |
-| --- | --- |
-| Application VFS `shell_exec` | `Command / ShellExec` |
-| Application VFS `fs_read` / `fs_grep` / `fs_glob` | 对应AgentDash typed FS item |
-| Application VFS `apply_patch` | Codex `FileChange` |
-| Application VFS `mounts_list` | AgentDash `Vfs` |
-| MCP direct / relay | Codex `McpToolCall` |
-| Workspace Module list/describe/operate/invoke/present/unavailable | AgentDash `WorkspaceModule` |
-| Companion request/respond | AgentDash `Companion` |
-| Task read/write | AgentDash `Task` |
-| Wait activity | AgentDash `Wait` |
-| Lifecycle complete node | AgentDash `LifecycleComplete` |
-| Runtime Gateway action | AgentDash `RuntimeAction` |
-| Explicit dynamic / enterprise fixture | Codex `DynamicToolCall`，仅显式声明时可用 |
+W7搜索main全部生产写入点，包括但不限于：
 
-最终AgentFrame tool assembly从owner的`AgentTool::protocol_projector`读取descriptor；缺失descriptor在Business Surface admission失败。ToolBroker持久化descriptor，call/update/result/error使用同一family，不按tool name推断。ToolContribution/ToolBroker journal是tool started/update/terminal presentation的唯一owner：首次accept使用owner projector提交canonical ItemStarted，重复accept只校验同一canonical identity与payload；Native callback只携带显式分离的canonical/source坐标，不预投影第二份ItemStarted。Owner update经ToolExecutionRequest回到ToolBroker并发布为带canonical turn/item/binding generation的Runtime transient `ToolProgress`。
+```powershell
+rg -n "persist_notification|emit_user_input_submitted|BackboneEvent|PlatformEvent" D:/Projects/AgentDash-main-reference/crates
+```
 
-### Production owner chain evidence
+逐个记录current owner，至少覆盖：
 
-| Owner | Call / update / terminal evidence |
-| --- | --- |
-| `ShellExecTool` | `Command` descriptor按typed operation分支：start依据真实cwd投影Platform/MountExec；read/write/status/resize/terminate投影`TerminalControl`并保留terminal identity、input/size、state/output/result。真实platform `pwd`经Registry与terminal projector验证 |
-| `FsApplyPatchTool` | owner复用真实patch parser/normalized targets，把multi-file patch切为逐entry diff；add/update+move/delete分别保留path/kind/move_path且diff不混入其它文件。真实Registry失败路径和completed owner result验证started/completed/failed |
-| Tool update callback | executor连续3次callback进入Broker/Managed Runtime；store按binding generation + turn在锁内分配sequence `1,2,3`与唯一event id，cursor replay只返回未消费update |
-| Remote Runtime | ordered inbound queue保证前序DriverEvent完成projection后才结算dispatch response；HostPort callback保持并发处理，disconnect先提交authoritative `BindingLost`再关闭pending correlation |
+- user prompt/steer与system/workflow/companion delivery；
+- turn started/terminal/rewind；
+- source title/thread status；
+- hook trace/action；
+- context change/compaction；
+- provider/diagnostic；
+- terminal output/PTY；
+- control-plane projection；
+- mailbox/system message；
+- fork marker/lineage/round coordinates。
+
+不存在current owner或fixture即G3失败；不得用API filter把缺失producer隐藏。
+
+## 完成定义
+
+```text
+driver contribution count = driver conformance count
+tool contribution count = projector count = full fixture count
+main production writer count = current owner count = fixture count
+```
+
+三组等式全部成立且W0 deep comparator通过，才允许标记W4–W7完成。

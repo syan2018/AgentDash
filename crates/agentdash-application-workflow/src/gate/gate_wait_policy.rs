@@ -519,6 +519,7 @@ mod tests {
     fn runtime_binding(run_id: Uuid, agent_id: Uuid) -> AgentRunRuntimeBinding {
         AgentRunRuntimeBinding {
             target: AgentRunRuntimeTarget { run_id, agent_id },
+            presentation_thread_id: runtime_id("parent-presentation-session"),
             thread_id: runtime_id("parent-session"),
             binding_id: runtime_id("parent-binding"),
             binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
@@ -564,14 +565,24 @@ mod tests {
                 },
                 telemetry_config: BTreeSet::new(),
             },
-            surface_digest: runtime_id("parent-surface"),
-            settings_revision: ThreadSettingsRevision(0),
-            tool_set_revision: ToolSetRevision(0),
-            hook_plan: BoundRuntimeHookPlan {
-                revision: HookPlanRevision(1),
-                digest: runtime_id("parent-hook"),
-                entries: Vec::new(),
+            surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
+                source_frame_id: "parent-frame".to_string(),
+                surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(1),
+                surface_digest: runtime_id("parent-surface"),
+                vfs_digest: "parent-vfs".to_string(),
+                context_recipe_revision: agentdash_agent_runtime_contract::ContextRecipeRevision(1),
+                context_digest: runtime_id("parent-context"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "parent-tools".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: runtime_id("parent-hook"),
+                    entries: Vec::new(),
+                },
+                terminal_hook_effect_binding: None,
             },
+            settings_revision: ThreadSettingsRevision(0),
         }
     }
 

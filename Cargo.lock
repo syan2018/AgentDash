@@ -197,10 +197,20 @@ dependencies = [
 name = "agentdash-agent-runtime-test-support"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent",
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
+ "agentdash-diagnostics",
+ "agentdash-relay",
+ "agentdash-spi",
  "async-trait",
+ "base64 0.22.1",
+ "flate2",
+ "oracle-agentdash-agent-types",
+ "oracle-codex-app-server-protocol",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -240,6 +250,7 @@ dependencies = [
  "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-runtime-host",
+ "agentdash-agent-runtime-test-support",
  "agentdash-agent-runtime-wire",
  "agentdash-agent-types",
  "agentdash-application",
@@ -304,7 +315,9 @@ version = "0.1.0"
 dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
+ "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
+ "agentdash-agent-runtime-test-support",
  "agentdash-agent-types",
  "agentdash-application-agentrun",
  "agentdash-application-hooks",
@@ -340,6 +353,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "shell-words",
+ "sqlx",
  "tar",
  "tempfile",
  "tera",
@@ -548,6 +562,7 @@ dependencies = [
 name = "agentdash-application-workflow"
 version = "0.1.0"
 dependencies = [
+ "agentdash-agent-protocol",
  "agentdash-agent-runtime-contract",
  "agentdash-application-ports",
  "agentdash-diagnostics",
@@ -6850,6 +6865,20 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
+name = "oracle-agentdash-agent-types"
+version = "0.0.0"
+dependencies = [
+ "agentdash-agent-protocol",
+]
+
+[[package]]
+name = "oracle-codex-app-server-protocol"
+version = "0.0.0"
+dependencies = [
+ "agentdash-agent-protocol",
+]
 
 [[package]]
 name = "ordered-stream"

@@ -11,15 +11,16 @@ use agentdash_agent::{
     AgentMessage, BridgeRequest, BridgeResponse, ContentPart, LlmBridge, StopReason, StreamChunk,
     TokenUsage, ToolCallInfo,
 };
-use agentdash_agent_runtime::RuntimeWorkKind;
+use agentdash_agent_runtime::{RuntimeRepository, RuntimeWorkKind};
 use agentdash_agent_runtime_contract::*;
 use agentdash_agent_runtime_host::*;
 use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, DynAgentTool, ToolUpdateCallback,
 };
 use agentdash_application_agentrun::agent_run::{
-    AgentRunCommandGuard, AgentRunRuntime, EnqueueRuntimeMailboxMessage, GuardedAgentRunCommand,
-    ManagedAgentRunRuntime, RuntimeAgentRunMailbox, RuntimeMailboxSubmitOutcome,
+    AgentFrameHookRuntime, AgentRunCommandGuard, AgentRunRuntime, EnqueueRuntimeMailboxMessage,
+    GuardedAgentRunCommand, ManagedAgentRunRuntime, RuntimeAgentRunMailbox,
+    RuntimeMailboxSubmitOutcome,
 };
 use agentdash_application_ports::agent_run_runtime::*;
 use agentdash_application_ports::agent_run_surface::{
@@ -35,13 +36,14 @@ use agentdash_infrastructure::{
 use agentdash_integration_api::*;
 use agentdash_integration_native_agent::{
     NativeAgentRuntimeIntegration, NativeBridgeResolveError, NativeBridgeResolver,
-    native_runtime_profile,
+    NativePresentationMetadata, ResolvedNativeBridge, native_runtime_profile,
 };
 use agentdash_integration_remote_runtime::{
     RuntimeWireHostPortRouter, remote_runtime_contribution,
 };
 use agentdash_local::{HostRuntimeDriverEndpointResolver, RuntimeWireCommandHandler};
 use agentdash_relay::{CapabilitiesPayload, RelayMessage, RuntimeRelayTransportDescriptor};
+use agentdash_spi::{AgentFrameHookSnapshot, NoopExecutionHookProvider};
 use agentdash_test_support::workflow::MemoryAgentRunMailboxRepository;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -57,7 +59,8 @@ use super::agent_runtime::{
     PreparedAgentRunRuntime, build_agent_runtime_composition,
 };
 use super::agent_runtime_surface::{
-    CompiledAgentRunToolBinding, CompiledAgentRunToolRegistry, PostgresAgentRunToolBrokerResolver,
+    CompiledAgentRunToolRegistry, PendingCompiledAgentRunToolBinding,
+    PostgresAgentRunToolBrokerResolver,
 };
 use crate::relay::registry::{BackendRegistry, ConnectedBackend};
 use crate::relay::{CloudRemoteRuntimeInventory, CloudRuntimeWirePlacementResolver};
@@ -137,8 +140,14 @@ impl NativeBridgeResolver for EnterpriseBridgeResolver {
         &self,
         _instance: &ActivatedAgentServiceInstance,
         _host: &RuntimeDriverHostPorts,
-    ) -> Result<Arc<dyn LlmBridge>, NativeBridgeResolveError> {
-        Ok(self.0.clone())
+    ) -> Result<ResolvedNativeBridge, NativeBridgeResolveError> {
+        Ok(ResolvedNativeBridge {
+            bridge: self.0.clone(),
+            presentation: NativePresentationMetadata {
+                model_context_window: 200_000,
+                reserve_tokens: 0,
+            },
+        })
     }
 }
 
@@ -179,6 +188,9 @@ impl AgentTool for EnterpriseEchoTool {
             namespace: Some("enterprise_test".to_string()),
         })
     }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_enterprise_remote_e2e_dynamic_lifecycle".to_string())
+    }
 
     async fn execute(
         &self,
@@ -193,6 +205,27 @@ impl AgentTool for EnterpriseEchoTool {
             is_error: false,
             details: Some(json!({"echoed": args})),
         })
+    }
+}
+
+struct RecordingToolCallback {
+    inner: Arc<dyn AgentRuntimeToolCallback>,
+    calls: AtomicUsize,
+    last_error: tokio::sync::Mutex<Option<String>>,
+}
+
+#[async_trait]
+impl AgentRuntimeToolCallback for RecordingToolCallback {
+    async fn invoke(
+        &self,
+        request: DriverToolInvocation,
+    ) -> Result<DriverToolOutcome, DriverToolCallbackError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let outcome = self.inner.invoke(request).await;
+        if let Err(error) = &outcome {
+            *self.last_error.lock().await = Some(error.to_string());
+        }
+        outcome
     }
 }
 
@@ -338,6 +371,7 @@ fn materialized_surface(thread_id: RuntimeThreadId) -> MaterializedDriverSurface
                     agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic {
                         namespace: Some("enterprise_test".to_string()),
                     },
+                parity_fixture_id: "main_tool_enterprise_remote_e2e_dynamic_lifecycle".to_string(),
             }],
         },
         hooks: DriverHookSurface {
@@ -356,6 +390,7 @@ fn materialized_surface(thread_id: RuntimeThreadId) -> MaterializedDriverSurface
             }],
         },
         workspace: DriverWorkspaceSurface {
+            digest: "workspace-enterprise-remote".to_string(),
             capabilities: Vec::new(),
             roots: vec!["workspace://enterprise".to_string()],
         },
@@ -375,54 +410,63 @@ impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
         &self,
         request: &AgentRunRuntimeProvisionRequest,
         thread_id: &RuntimeThreadId,
-        binding_id: &RuntimeBindingId,
+        _binding_id: &RuntimeBindingId,
     ) -> Result<PreparedAgentRunRuntime, AgentRunRuntimeSurfaceSourceError> {
         let surface = materialized_surface(thread_id.clone());
-        self.tool_registry
-            .put(
-                binding_id.clone(),
-                CompiledAgentRunToolBinding {
-                    runtime_session_id: thread_id.to_string(),
-                    run_id: request.target.run_id,
-                    agent_id: request.target.agent_id,
-                    frame_id: Uuid::nil(),
-                    catalog: agentdash_agent_runtime::ToolCatalogRevision {
-                        revision: surface.tools.revision,
-                        digest: surface.tools.digest.clone(),
-                        tools: vec![agentdash_agent_runtime::ToolContribution {
-                            meta: agentdash_agent_runtime::ContributionMeta {
-                                key: "enterprise_echo".to_string(),
-                                source: agentdash_agent_runtime::SurfaceSourceRef {
-                                    layer: "enterprise_e2e".to_string(),
-                                    key: "enterprise_echo".to_string(),
-                                },
-                                priority: 0,
-                                requirement:
-                                    agentdash_agent_runtime::ContributionRequirement::Required,
-                            },
-                            runtime_name: "enterprise_echo".to_string(),
-                            description: "Enterprise reverse RuntimeWire tool".to_string(),
-                            parameters_schema: json!({"type":"object"}),
-                            capability_key: "enterprise".to_string(),
-                            tool_path: "enterprise::echo".to_string(),
-                            allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
-                            configuration_boundary: ConfigurationBoundary::Binding,
-                            protocol_projection:
-                                agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic {
-                                    namespace: Some("enterprise_test".to_string()),
-                                },
-                        }],
-                        mcp_servers: Vec::new(),
+        let publication = Arc::new(PendingCompiledAgentRunToolBinding {
+            registry: self.tool_registry.clone(),
+            runtime_session_id: thread_id.to_string(),
+            run_id: request.target.run_id,
+            agent_id: request.target.agent_id,
+            frame_id: Uuid::nil(),
+            hook_runtime: Arc::new(AgentFrameHookRuntime::new(
+                request.target.run_id,
+                request.target.agent_id,
+                Uuid::nil(),
+                1,
+                thread_id.to_string(),
+                Arc::new(NoopExecutionHookProvider),
+                AgentFrameHookSnapshot::default(),
+            )),
+            catalog: agentdash_agent_runtime::ToolCatalogRevision {
+                revision: surface.tools.revision,
+                digest: surface.tools.digest.clone(),
+                tools: vec![agentdash_agent_runtime::ToolContribution {
+                    meta: agentdash_agent_runtime::ContributionMeta {
+                        key: "enterprise_echo".to_string(),
+                        source: agentdash_agent_runtime::SurfaceSourceRef {
+                            layer: "enterprise_e2e".to_string(),
+                            key: "enterprise_echo".to_string(),
+                        },
+                        priority: 0,
+                        requirement: agentdash_agent_runtime::ContributionRequirement::Required,
                     },
-                    tools: BTreeMap::from([(
-                        "enterprise_echo".to_string(),
-                        Arc::new(EnterpriseEchoTool(self.tool_calls.clone())) as DynAgentTool,
-                    )]),
-                },
-            )
-            .await?;
+                    runtime_name: "enterprise_echo".to_string(),
+                    description: "Enterprise reverse RuntimeWire tool".to_string(),
+                    parameters_schema: json!({"type":"object"}),
+                    capability_key: "enterprise".to_string(),
+                    tool_path: "enterprise::echo".to_string(),
+                    allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                    protocol_projection:
+                        agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic {
+                            namespace: Some("enterprise_test".to_string()),
+                        },
+                    presentation_emitter:
+                        agentdash_agent_runtime_contract::ToolPresentationEmitter::VendorStream,
+                    parity_fixture_id: "main_tool_enterprise_remote_e2e_dynamic_lifecycle"
+                        .to_string(),
+                }],
+                mcp_servers: Vec::new(),
+            },
+            tools: BTreeMap::from([(
+                "enterprise_echo".to_string(),
+                Arc::new(EnterpriseEchoTool(self.tool_calls.clone())) as DynAgentTool,
+            )]),
+        });
         let profile = native_runtime_profile();
         Ok(PreparedAgentRunRuntime {
+            source_frame_id: "enterprise-remote-frame".to_string(),
             service_instance_id: id("enterprise-fallback-unused"),
             definition_id: self.definition.provenance.definition_id.clone(),
             service_config: json!({}),
@@ -443,6 +487,8 @@ impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
                     }],
                 },
             },
+            publication,
+            terminal_hook_effect_binding: None,
             bound_surface: BoundAgentSurfaceReference {
                 revision: surface.revision,
                 digest: surface.digest.clone(),
@@ -683,14 +729,20 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         tool_registry.clone(),
         Arc::new(EnterpriseCapabilityPort),
     ));
-    let tools: Arc<dyn AgentRuntimeToolCallback> = Arc::new(
-        super::agent_runtime::PlatformAgentRuntimeToolCallback::new(tool_broker_resolver),
-    );
+    let tools = Arc::new(RecordingToolCallback {
+        inner: Arc::new(super::agent_runtime::PlatformAgentRuntimeToolCallback::new(
+            tool_broker_resolver,
+        )),
+        calls: AtomicUsize::new(0),
+        last_error: tokio::sync::Mutex::new(None),
+    });
     let hooks = Arc::new(RecordingHookCallback::default());
     let target = AgentRunRuntimeTarget {
         run_id: Uuid::new_v4(),
         agent_id: Uuid::new_v4(),
     };
+    let presentation_thread_id = PresentationThreadId::new("enterprise-presentation-thread")
+        .expect("presentation thread id");
     seed_agent_run_target(&cloud_pool, &target).await;
     let composition = build_agent_runtime_composition(AgentRuntimeCompositionInput {
         pool: cloud_pool,
@@ -711,6 +763,9 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         credential_broker: Arc::new(NoCredentials),
         tool_callback: tools.clone(),
         hook_callback: hooks.clone(),
+        application_presentation_projector: Arc::new(
+            agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
+        ),
         node_id: "enterprise-cloud-host".to_string(),
     })
     .expect("cloud production composition");
@@ -733,10 +788,22 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         Arc::new(MemoryAgentRunMailboxRepository::default()),
         runtime.clone(),
     );
+    let initial_started_at_seconds = Utc::now().timestamp();
     let submitted = tokio::time::timeout(
         std::time::Duration::from_secs(20),
         mailbox.submit(EnqueueRuntimeMailboxMessage {
             target: target.clone(),
+            presentation_thread_id: presentation_thread_id.clone(),
+            presentation: agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
+                content: agentdash_agent_protocol::text_user_input_blocks(
+                    "run through enterprise remote",
+                ),
+                source: agentdash_agent_protocol::UserInputSource::core_composer(),
+                launch_source:
+                    agentdash_application_agentrun::agent_run::LaunchPresentationSource::HttpPrompt,
+                submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                started_at_seconds: initial_started_at_seconds,
+            },
             client_command_id: "enterprise-first-message".to_string(),
             input: vec![RuntimeInput::Text {
                 text: "run through enterprise remote".to_string(),
@@ -745,15 +812,33 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
                 subject: "enterprise-user".to_string(),
             },
             identity: None,
+            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::User,
             source: MailboxSourceIdentity::composer(),
+            delivery_intent: None,
+            executor_config: None,
             backend_selection: None,
         }),
     )
     .await
     .expect("mailbox submit timeout")
     .expect("mailbox submit");
-    let (receipt, mailbox_message_id) = match &submitted {
-        RuntimeMailboxSubmitOutcome::Dispatched { receipt, message } => (receipt, message.id),
+    let (receipt, mailbox_message_id, initial_presentation_input) = match &submitted {
+        RuntimeMailboxSubmitOutcome::Dispatched {
+            receipt, message, ..
+        } => (
+            receipt,
+            message.id,
+            serde_json::from_value::<
+                agentdash_application_agentrun::agent_run::AgentRunPresentationInput,
+            >(
+                message
+                    .launch_planning_input
+                    .as_ref()
+                    .expect("mailbox command payload")["presentation_input"]
+                    .clone(),
+            )
+            .expect("persisted mailbox presentation input"),
+        ),
         RuntimeMailboxSubmitOutcome::Queued { .. } => panic!("idle mailbox must dispatch"),
     };
     assert!(!receipt.duplicate);
@@ -835,6 +920,28 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     };
     let binding = view.binding.expect("remote binding");
     let snapshot = view.snapshot.expect("canonical snapshot");
+    let terminal_presentation = composition
+        .runtime_repository
+        .journal_records_after(&binding.thread_id, None)
+        .await
+        .expect("read production terminal presentation")
+        .records
+        .into_iter()
+        .any(|record| {
+            let Some(event) = record.as_presentation() else {
+                return false;
+            };
+            matches!(
+                &event.event,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+                ) if key == "turn_terminal"
+            )
+        });
+    assert!(
+        terminal_presentation,
+        "production composition must inject the non-empty AgentRun terminal projector"
+    );
     if snapshot.status != RuntimeThreadStatus::Active {
         let mut stream = runtime
             .read_events(
@@ -862,13 +969,15 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         "unexpected terminal snapshot before compaction: {snapshot:#?}"
     );
     assert!(snapshot.active_turn_id.is_none());
-    assert!(
-        snapshot
-            .transcript
-            .iter()
-            .any(|item| item.final_content.agent_message_text()
-                == Some("enterprise remote completed"))
-    );
+    assert!(snapshot.transcript.iter().any(|item| {
+        let agentdash_agent_protocol::BackboneEvent::ItemCompleted(completed) =
+            &item.terminal_event.event
+        else {
+            return false;
+        };
+        RuntimeItemContent::new(completed.item.clone()).agent_message_text()
+            == Some("enterprise remote completed")
+    }));
     let host_binding = composition
         .host
         .binding(&binding.binding_id)
@@ -884,7 +993,13 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         remote_instance.placement,
         AgentRuntimePlacement::Remote { ref host_id, .. } if host_id == BACKEND_ID
     ));
-    assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        tool_calls.load(Ordering::SeqCst),
+        1,
+        "reverse RuntimeWire callbacks={}, last_error={:?}",
+        tools.calls.load(Ordering::SeqCst),
+        tools.last_error.lock().await.as_deref(),
+    );
     assert!(hooks.0.load(Ordering::SeqCst) >= 1);
 
     let context_revision_before = snapshot.context_revision;
@@ -948,6 +1063,8 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         .send_message(
             agentdash_application_agentrun::agent_run::SendAgentRunMessage {
                 target: target.clone(),
+                presentation_thread_id: presentation_thread_id.clone(),
+                presentation_input: initial_presentation_input,
                 client_command_id: format!("mailbox-{mailbox_message_id}"),
                 input: vec![RuntimeInput::Text {
                     text: "run through enterprise remote".to_string(),
@@ -972,10 +1089,23 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     );
 
     bridge.block_next.store(true, Ordering::SeqCst);
+    let disconnect_started_at_seconds = Utc::now().timestamp();
     let active = runtime
         .send_message(
             agentdash_application_agentrun::agent_run::SendAgentRunMessage {
                 target: target.clone(),
+                presentation_thread_id: presentation_thread_id.clone(),
+                presentation_input:
+                    agentdash_application_agentrun::agent_run::AgentRunPresentationInput::UserSubmission {
+                        turn_id: agentdash_agent_runtime_contract::PresentationTurnId::new("enterprise-disconnect-turn").expect("disconnect presentation turn id"),
+                        item_id: agentdash_agent_runtime_contract::PresentationItemId::new("enterprise-disconnect-turn:user-input:0").expect("disconnect presentation item id"),
+                        content: agentdash_agent_protocol::text_user_input_blocks(
+                            "block until RuntimeWire disconnect",
+                        ),
+                        source: agentdash_agent_protocol::UserInputSource::core_composer(),
+                        submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                        started_at_seconds: disconnect_started_at_seconds,
+                    },
                 client_command_id: "enterprise-disconnect-active-turn".to_string(),
                 input: vec![RuntimeInput::Text {
                     text: "block until RuntimeWire disconnect".to_string(),
@@ -1085,6 +1215,18 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         .send_message(
             agentdash_application_agentrun::agent_run::SendAgentRunMessage {
                 target,
+                presentation_thread_id,
+                presentation_input:
+                    agentdash_application_agentrun::agent_run::AgentRunPresentationInput::UserSubmission {
+                        turn_id: agentdash_agent_runtime_contract::PresentationTurnId::new("enterprise-disconnect-turn").expect("disconnect presentation turn id"),
+                        item_id: agentdash_agent_runtime_contract::PresentationItemId::new("enterprise-disconnect-turn:user-input:0").expect("disconnect presentation item id"),
+                        content: agentdash_agent_protocol::text_user_input_blocks(
+                            "block until RuntimeWire disconnect",
+                        ),
+                        source: agentdash_agent_protocol::UserInputSource::core_composer(),
+                        submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                        started_at_seconds: disconnect_started_at_seconds,
+                    },
                 client_command_id: "enterprise-disconnect-active-turn".to_string(),
                 input: vec![RuntimeInput::Text {
                     text: "block until RuntimeWire disconnect".to_string(),

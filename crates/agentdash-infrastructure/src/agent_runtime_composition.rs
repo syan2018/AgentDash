@@ -13,9 +13,12 @@ use agentdash_agent_runtime::{
 use agentdash_agent_runtime_contract::{
     AgentRuntimeGateway, BindingEpoch, BoundRuntimeHookPlan, DriverBindIntent,
     DriverCommandEnvelope, DriverError, DriverEventEnvelope, DriverEventSink, DriverRequestId,
-    IdempotencyKey, OperationMeta, ProfileDigest, RuntimeActor, RuntimeBindingId, RuntimeCommand,
-    RuntimeCommandEnvelope, RuntimeEvent, RuntimeHookPlanBinding, RuntimeJournalFact,
-    RuntimeOperationId, RuntimeRecoveryIntentId, RuntimeServiceInstanceId, RuntimeThreadId,
+    DriverThreadId, HookPlanDigest, HookPlanRevision, IdempotencyKey, OperationMeta, ProfileDigest,
+    RuntimeActor, RuntimeBindingId, RuntimeCommand, RuntimeCommandEnvelope,
+    RuntimeDriverGeneration, RuntimeEvent, RuntimeHookPlanBinding, RuntimeJournalFact,
+    RuntimeOperationId, RuntimeRecoveryIntentId, RuntimeServiceInstanceId,
+    RuntimeTerminalHookEffectBinding, RuntimeThreadId, SurfaceDigest, SurfaceRevision,
+    ToolSetRevision,
 };
 use agentdash_agent_runtime_host::{
     ActivateAgentServiceInstance, AgentRuntimeHostError, AgentRuntimeHostRepository,
@@ -216,7 +219,38 @@ fn map_provider_bridge_error(error: ProviderBridgeResolveError) -> NativeBridgeR
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedNativeAgentRunSurface {
+    pub runtime_thread_id: RuntimeThreadId,
+    pub binding_id: RuntimeBindingId,
+    pub generation: RuntimeDriverGeneration,
+    pub source_thread_id: DriverThreadId,
+    pub surface_revision: SurfaceRevision,
+    pub surface_digest: SurfaceDigest,
+    pub tool_set_revision: ToolSetRevision,
+    pub hook_plan_revision: HookPlanRevision,
+    pub hook_plan_digest: HookPlanDigest,
+    pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
+}
+
+#[async_trait]
+pub trait NativeAgentRunSurfacePublication: Send + Sync {
+    async fn reserve(
+        &self,
+        applied: AppliedNativeAgentRunSurface,
+    ) -> Result<
+        Box<dyn NativeAgentRunSurfacePublicationReservation>,
+        AgentRunRuntimeSurfaceSourceError,
+    >;
+}
+
+#[async_trait]
+pub trait NativeAgentRunSurfacePublicationReservation: Send {
+    async fn commit(self: Box<Self>) -> Result<(), AgentRunRuntimeSurfaceSourceError>;
+    async fn abort(self: Box<Self>);
+}
+
+#[derive(Clone)]
 pub struct NativeAgentRunSurfacePlan {
     pub source_frame_id: String,
     pub executor: String,
@@ -224,6 +258,8 @@ pub struct NativeAgentRunSurfacePlan {
     pub model: Option<String>,
     pub surface: MaterializedDriverSurface,
     pub hook_plan: BoundRuntimeHookPlan,
+    pub publication: Arc<dyn NativeAgentRunSurfacePublication>,
+    pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -248,7 +284,7 @@ pub trait NativeAgentRunSurfaceCompiler: Send + Sync {
     ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PreparedAgentRunRuntime {
     pub source_frame_id: String,
     pub service_instance_id: RuntimeServiceInstanceId,
@@ -257,6 +293,8 @@ pub struct PreparedAgentRunRuntime {
     pub placement: AgentRuntimePlacement,
     pub surface: MaterializedDriverSurface,
     pub hook_plan: RuntimeHookPlanBinding,
+    pub publication: Arc<dyn NativeAgentRunSurfacePublication>,
+    pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
     pub bound_surface: BoundAgentSurfaceReference,
     pub transport_profile: agentdash_agent_runtime_contract::RuntimeProfile,
     pub host_policy_profile: agentdash_agent_runtime_contract::RuntimeProfile,
@@ -381,6 +419,8 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             thread_id: thread_id.clone(),
             plan: plan.hook_plan,
         };
+        let publication = plan.publication;
+        let terminal_hook_effect_binding = plan.terminal_hook_effect_binding;
         let profile = definition.service_profile_upper_bound.clone();
         let definition_profile_digest = profile_digest(&profile).map_err(|error| {
             AgentRunRuntimeSurfaceSourceError::Invalid {
@@ -395,6 +435,8 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             placement: AgentRuntimePlacement::InProcess,
             surface,
             hook_plan,
+            publication,
+            terminal_hook_effect_binding,
             bound_surface,
             transport_profile: profile.clone(),
             host_policy_profile: profile,
@@ -455,6 +497,7 @@ fn runtime_surface_descriptor(
     source_frame_id: String,
     surface: &MaterializedDriverSurface,
     hook_plan: BoundRuntimeHookPlan,
+    terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
 ) -> agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
     agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
         source_frame_id,
@@ -467,6 +510,7 @@ fn runtime_surface_descriptor(
         tool_set_revision: surface.tools.revision,
         tool_set_digest: surface.tools.digest.clone(),
         hook_plan,
+        terminal_hook_effect_binding,
     }
 }
 
@@ -783,19 +827,45 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
         self.surfaces
             .put_surface(&binding_id, &prepared.surface)
             .await?;
-        let offer = match self
-            .select_activated_offer(&prepared, request.backend_selection.as_ref())
-            .await?
-        {
-            Some(offer) => offer,
-            None if prepared.allow_instance_creation && request.backend_selection.is_none() => {
-                self.ensure_offer(&prepared).await?
-            }
-            None => {
-                return Err(binding_unavailable(
-                    "no activated Runtime offer matches the requested execution profile and backend placement".to_string(),
-                    true,
-                ));
+        let fork_source = if let Some(fork) = request.fork.as_ref() {
+            let source = self
+                .bindings
+                .load(&fork.source_target)
+                .await?
+                .ok_or(AgentRunRuntimeBindingError::NotFound)?;
+            let host_binding = self
+                .host_repository
+                .load_binding(&source.binding_id)
+                .await
+                .map_err(host_store_error)?
+                .ok_or(AgentRunRuntimeBindingError::NotFound)?;
+            let offer = self
+                .host_repository
+                .load_offer(&host_binding.offer_id)
+                .await
+                .map_err(host_store_error)?
+                .ok_or(AgentRunRuntimeBindingError::NotFound)?;
+            Some((source, offer))
+        } else {
+            None
+        };
+        let offer = if let Some((_, offer)) = fork_source.as_ref() {
+            offer.clone()
+        } else {
+            match self
+                .select_activated_offer(&prepared, request.backend_selection.as_ref())
+                .await?
+            {
+                Some(offer) => offer,
+                None if prepared.allow_instance_creation && request.backend_selection.is_none() => {
+                    self.ensure_offer(&prepared).await?
+                }
+                None => {
+                    return Err(binding_unavailable(
+                        "no activated Runtime offer matches the requested execution profile and backend placement".to_string(),
+                        true,
+                    ));
+                }
             }
         };
         let hook_plan = prepared.hook_plan.plan.clone();
@@ -803,6 +873,7 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             prepared.source_frame_id.clone(),
             &prepared.surface,
             hook_plan,
+            prepared.terminal_hook_effect_binding.clone(),
         );
         let host_binding = self
             .host
@@ -811,7 +882,13 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
                 thread_id: thread_id.clone(),
                 offer_id: offer.id,
                 bound_surface: prepared.bound_surface,
-                intent: DriverBindIntent::Start,
+                intent: match (fork_source.as_ref(), request.fork.as_ref()) {
+                    (Some((source, _)), Some(fork)) => DriverBindIntent::Fork {
+                        source_thread_id: source.source_thread_id.clone(),
+                        through_source_turn_id: fork.through_source_turn_id.clone(),
+                    },
+                    _ => DriverBindIntent::Start,
+                },
             })
             .await
             .map_err(host_error)?;
@@ -836,6 +913,23 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             surface: surface_descriptor,
             settings_revision,
         };
+        let publication = prepared
+            .publication
+            .reserve(AppliedNativeAgentRunSurface {
+                runtime_thread_id: binding.thread_id.clone(),
+                binding_id: binding.binding_id.clone(),
+                generation: binding.driver_generation,
+                source_thread_id: binding.source_thread_id.clone(),
+                surface_revision: binding.surface.surface_revision,
+                surface_digest: binding.surface.surface_digest.clone(),
+                tool_set_revision: binding.surface.tool_set_revision,
+                hook_plan_revision: binding.surface.hook_plan.revision,
+                hook_plan_digest: binding.surface.hook_plan.digest.clone(),
+                terminal_hook_effect_binding: binding.surface.terminal_hook_effect_binding.clone(),
+            })
+            .await
+            .map_err(surface_source_error)?;
+        publication.commit().await.map_err(surface_source_error)?;
         self.bindings.insert(binding).await
     }
 
@@ -1250,6 +1344,8 @@ pub struct RuntimeOutboxWorker {
     runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
     host: Arc<IntegrationDriverHost>,
     worker_id: RuntimeWorkerId,
+    #[cfg(test)]
+    observed_dispatches: tokio::sync::Mutex<Vec<DriverCommandEnvelope>>,
 }
 
 impl RuntimeOutboxWorker {
@@ -1264,7 +1360,14 @@ impl RuntimeOutboxWorker {
             runtime,
             host,
             worker_id: RuntimeWorkerId(worker_id.into()),
+            #[cfg(test)]
+            observed_dispatches: tokio::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    #[cfg(test)]
+    async fn observed_dispatches(&self) -> Vec<DriverCommandEnvelope> {
+        self.observed_dispatches.lock().await.clone()
     }
 
     pub async fn run_once(&self, limit: u32) -> Result<usize, RuntimeOutboxWorkerError> {
@@ -1404,17 +1507,23 @@ impl RuntimeOutboxWorker {
         let sink: Arc<dyn DriverEventSink> = Arc::new(ManagedRuntimeDriverEventSink {
             runtime: self.runtime.clone(),
         });
+        let driver_envelope = DriverCommandEnvelope {
+            request_id,
+            presentation_thread_id: entry.presentation_thread_id.clone(),
+            binding_id: entry.binding_id.clone(),
+            generation: entry.generation,
+            source_thread_id: thread.source_thread_id.clone(),
+            runtime_turn_id,
+            command: entry.command.clone(),
+        };
+        #[cfg(test)]
+        self.observed_dispatches
+            .lock()
+            .await
+            .push(driver_envelope.clone());
         let dispatch = self.host.dispatch(
             RouteDriverCommand {
-                envelope: DriverCommandEnvelope {
-                    request_id,
-                    presentation_thread_id: entry.presentation_thread_id.clone(),
-                    binding_id: entry.binding_id.clone(),
-                    generation: entry.generation,
-                    source_thread_id: thread.source_thread_id.clone(),
-                    runtime_turn_id,
-                    command: entry.command.clone(),
-                },
+                envelope: driver_envelope,
                 lease_owner: lease.owner.clone(),
                 lease_token: lease.token.clone(),
             },
@@ -1507,6 +1616,8 @@ pub struct NativeAgentRuntimeCompositionInput {
     pub credential_broker: Arc<dyn AgentRuntimeCredentialBroker>,
     pub tool_callback: Arc<dyn AgentRuntimeToolCallback>,
     pub hook_callback: Arc<dyn AgentRuntimeHookCallback>,
+    pub application_presentation_projector:
+        Arc<dyn agentdash_agent_runtime_contract::RuntimeApplicationPresentationProjector>,
     pub remote_definitions: Vec<agentdash_integration_api::AgentServiceDefinition>,
     pub remote_trust_manifests: Vec<agentdash_integration_api::AgentRuntimeTrustManifest>,
     pub remote_placements:
@@ -1522,6 +1633,8 @@ pub struct AgentRuntimeCompositionInput {
     pub credential_broker: Arc<dyn AgentRuntimeCredentialBroker>,
     pub tool_callback: Arc<dyn AgentRuntimeToolCallback>,
     pub hook_callback: Arc<dyn AgentRuntimeHookCallback>,
+    pub application_presentation_projector:
+        Arc<dyn agentdash_agent_runtime_contract::RuntimeApplicationPresentationProjector>,
     pub node_id: String,
 }
 
@@ -1534,6 +1647,7 @@ pub struct AgentRuntimeComposition {
     pub durable_workers: Arc<crate::agent_runtime_workers::RuntimeDurableWorkers>,
     pub work_queue: Arc<dyn RuntimeWorkQueue>,
     pub presentation_events: Arc<dyn RuntimeTransientEvents>,
+    pub runtime_repository: Arc<PostgresRuntimeRepository>,
     pub managed_runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
     pub surfaces: Arc<dyn AgentRunRuntimeSurfaceStore>,
 }
@@ -1575,8 +1689,11 @@ pub fn build_agent_runtime_composition(
     let bindings: Arc<dyn AgentRunRuntimeBindingRepository> = composition_repository.clone();
     let surface_store: Arc<dyn AgentRunRuntimeSurfaceStore> = composition_repository.clone();
     let runtime = Arc::new(
-        ManagedAgentRuntime::new(runtime_repository.clone())
-            .with_surface_validator(composition_repository.clone()),
+        ManagedAgentRuntime::new(
+            runtime_repository.clone(),
+            input.application_presentation_projector,
+        )
+        .with_surface_validator(composition_repository.clone()),
     );
     let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let provisioner: Arc<dyn AgentRunRuntimeProvisioner> =
@@ -1597,7 +1714,7 @@ pub fn build_agent_runtime_composition(
         "agentdash-api-runtime-outbox",
     ));
     let durable_workers = Arc::new(crate::agent_runtime_workers::RuntimeDurableWorkers::new(
-        runtime_repository,
+        runtime_repository.clone(),
         runtime.clone(),
         composition_repository,
         host.clone(),
@@ -1613,6 +1730,7 @@ pub fn build_agent_runtime_composition(
         durable_workers,
         work_queue,
         presentation_events,
+        runtime_repository: runtime_repository.clone(),
         managed_runtime: runtime,
         surfaces: surface_store,
     })
@@ -1752,12 +1870,14 @@ pub fn build_native_agent_runtime_composition(
         credential_broker: input.credential_broker,
         tool_callback: input.tool_callback,
         hook_callback: input.hook_callback,
+        application_presentation_projector: input.application_presentation_projector,
         node_id: input.node_id,
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::pin::Pin;
 
     use super::*;
@@ -1795,6 +1915,74 @@ mod tests {
             };
             text == expected
         })
+    }
+
+    fn fixture_terminal_hook_effect_binding() -> RuntimeTerminalHookEffectBinding {
+        RuntimeTerminalHookEffectBinding {
+            handler: RuntimeTerminalHookEffectHandlerRef {
+                handler_type: RuntimeTerminalHookEffectHandlerType::new("agent_run_post_turn")
+                    .expect("terminal handler type"),
+                handler_id: RuntimeTerminalHookEffectHandlerId::new("handler-fixture")
+                    .expect("terminal handler id"),
+                revision: RuntimeTerminalHookEffectHandlerRevision(7),
+            },
+            supported_effect_kinds: BTreeSet::from([RuntimeHookEffectKind::new(
+                "agent_run_control_effect",
+            )
+            .expect("terminal effect kind")]),
+        }
+    }
+
+    struct TestTerminalPresentationProjector;
+
+    impl RuntimeApplicationPresentationProjector for TestTerminalPresentationProjector {
+        fn project_terminal(
+            &self,
+            context: RuntimeTerminalPresentationContext,
+        ) -> Result<Vec<RuntimePresentationInput>, RuntimeApplicationPresentationProjectionError>
+        {
+            let terminal_type = match context.terminal {
+                RuntimeTurnTerminal::Completed => "turn_completed",
+                RuntimeTurnTerminal::Interrupted => "turn_interrupted",
+                RuntimeTurnTerminal::Lost => "turn_lost",
+                RuntimeTurnTerminal::Refused
+                | RuntimeTurnTerminal::LimitReached
+                | RuntimeTurnTerminal::Failed => "turn_failed",
+            };
+            Ok(vec![RuntimePresentationInput {
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(context.presentation_thread_id.to_string()),
+                    source_turn_id: Some(context.presentation_turn_id.to_string()),
+                    source_item_id: None,
+                    source_request_id: Some(format!(
+                        "test-turn-terminal:{}:{terminal_type}",
+                        context.runtime_turn_id
+                    )),
+                    source_entry_index: None,
+                },
+                event: ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                            key: "turn_terminal".into(),
+                            value: serde_json::json!({
+                                "terminal_type": terminal_type,
+                                "message": context.message,
+                                "diagnostic": context.diagnostic,
+                                "started_at_ms": context.started_at_ms,
+                                "completed_at_ms": context.completed_at_ms,
+                                "duration_ms": context.started_at_ms.map(|started_at_ms| {
+                                    context.completed_at_ms.saturating_sub(started_at_ms)
+                                }),
+                            }),
+                        },
+                    ),
+                ),
+            }])
+        }
     }
 
     #[test]
@@ -1973,6 +2161,32 @@ mod tests {
 
     struct ContinueHooks;
 
+    struct NoopSurfacePublication;
+
+    struct NoopSurfacePublicationReservation;
+
+    #[async_trait]
+    impl NativeAgentRunSurfacePublication for NoopSurfacePublication {
+        async fn reserve(
+            &self,
+            _applied: AppliedNativeAgentRunSurface,
+        ) -> Result<
+            Box<dyn NativeAgentRunSurfacePublicationReservation>,
+            AgentRunRuntimeSurfaceSourceError,
+        > {
+            Ok(Box::new(NoopSurfacePublicationReservation))
+        }
+    }
+
+    #[async_trait]
+    impl NativeAgentRunSurfacePublicationReservation for NoopSurfacePublicationReservation {
+        async fn commit(self: Box<Self>) -> Result<(), AgentRunRuntimeSurfaceSourceError> {
+            Ok(())
+        }
+
+        async fn abort(self: Box<Self>) {}
+    }
+
     #[async_trait]
     impl AgentRuntimeHookCallback for ContinueHooks {
         async fn execute(
@@ -2088,6 +2302,8 @@ mod tests {
                         entries: Vec::new(),
                     },
                 },
+                publication: Arc::new(NoopSurfacePublication),
+                terminal_hook_effect_binding: None,
                 surface,
                 transport_profile: profile.clone(),
                 host_policy_profile: profile,
@@ -2121,8 +2337,29 @@ mod tests {
                 hook_plan: BoundRuntimeHookPlan {
                     revision: HookPlanRevision(1),
                     digest: parsed("sha256:production-native-hooks"),
-                    entries: Vec::new(),
+                    entries: vec![
+                        BoundRuntimeHookEntry {
+                            definition_id: parsed("native-tracer-hook"),
+                            point: HookPoint::BeforeTool,
+                            actions: BTreeSet::from([HookAction::Observe, HookAction::Block]),
+                            delivered_strength: SemanticStrength::ExactSynchronous,
+                            failure_policy: HookFailurePolicy::FailClosed,
+                            required: true,
+                            site: HookExecutionSite::AgentCoreCallback,
+                        },
+                        BoundRuntimeHookEntry {
+                            definition_id: parsed("native-tracer-effect-hook"),
+                            point: HookPoint::AfterTool,
+                            actions: BTreeSet::from([HookAction::Observe, HookAction::EmitEffect]),
+                            delivered_strength: SemanticStrength::ExactSynchronous,
+                            failure_policy: HookFailurePolicy::FailClosed,
+                            required: true,
+                            site: HookExecutionSite::AgentCoreCallback,
+                        },
+                    ],
                 },
+                publication: Arc::new(NoopSurfacePublication),
+                terminal_hook_effect_binding: None,
             })
         }
     }
@@ -2264,8 +2501,10 @@ mod tests {
             .acquire_owned()
             .await
             .expect("native runtime composition test semaphore");
-        let data_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/native-runtime-production-tracer");
+        let data_root = std::env::temp_dir().join("agentdash-tests").join(format!(
+            "native-runtime-production-tracer-{}",
+            std::process::id()
+        ));
         let runtime = crate::postgres_runtime::PostgresRuntime::resolve_embedded_at_data_root(
             "native-runtime-production-tracer",
             8,
@@ -2384,6 +2623,7 @@ mod tests {
                 credential_broker: Arc::new(NoCredentials),
                 tool_callback: Arc::new(NoTools),
                 hook_callback: Arc::new(ContinueHooks),
+                application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
                 remote_definitions: Vec::new(),
                 remote_trust_manifests: Vec::new(),
                 remote_placements: Arc::new(NoRemotePlacements),
@@ -2396,6 +2636,7 @@ mod tests {
             }),
             "the production Host inventory must expose the Native definition added by composition"
         );
+        let terminal_hook_effect_binding = fixture_terminal_hook_effect_binding();
         let request = AgentRunRuntimeProvisionRequest {
             target: AgentRunRuntimeTarget { run_id, agent_id },
             presentation_thread_id: agentdash_agent_runtime_contract::PresentationThreadId::new(
@@ -2415,6 +2656,8 @@ mod tests {
                 extra: serde_json::Value::Null,
             }),
             backend_selection: None,
+            fork: None,
+            terminal_hook_effect_binding: Some(terminal_hook_effect_binding.clone()),
         };
         let first = composition
             .provisioner
@@ -2430,12 +2673,60 @@ mod tests {
         assert_eq!(first, replay);
         assert_eq!(first.bound_profile, native_runtime_profile());
         assert_eq!(
-            composition
-                .bindings
-                .load(&request.target)
-                .await
-                .expect("load product binding"),
-            Some(first.clone())
+            first.surface.terminal_hook_effect_binding,
+            Some(terminal_hook_effect_binding.clone())
+        );
+        let fork_target = AgentRunRuntimeTarget {
+            run_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+        };
+        sqlx::query("INSERT INTO lifecycle_runs (id,project_id,topology,status,created_at,updated_at,last_activity_at) VALUES ($1,$2,'plain','ready',$3,$3,$3)")
+            .bind(fork_target.run_id.to_string())
+            .bind(project_id.to_string())
+            .bind(now)
+            .execute(&pool)
+            .await
+            .expect("seed fork lifecycle run");
+        sqlx::query("INSERT INTO lifecycle_agents (id,run_id,project_id,source,status) VALUES ($1,$2,$3,'primary','active')")
+            .bind(fork_target.agent_id.to_string())
+            .bind(fork_target.run_id.to_string())
+            .bind(project_id.to_string())
+            .execute(&pool)
+            .await
+            .expect("seed fork lifecycle agent");
+        let forked = composition
+            .provisioner
+            .provision(&AgentRunRuntimeProvisionRequest {
+                target: fork_target.clone(),
+                presentation_thread_id:
+                    agentdash_agent_runtime_contract::PresentationThreadId::new(
+                        "presentation-production-native-fork",
+                    )
+                    .expect("fork presentation thread id"),
+                identity: request.identity.clone(),
+                backend_selection: None,
+                fork: Some(
+                    agentdash_application_ports::agent_run_runtime::AgentRunRuntimeForkSource {
+                        source_target: request.target.clone(),
+                        through_source_turn_id: None,
+                    },
+                ),
+                terminal_hook_effect_binding: None,
+            })
+            .await
+            .expect("fork Native binding");
+        assert_eq!(forked.target, fork_target);
+        assert_ne!(forked.source_thread_id, first.source_thread_id);
+        let reloaded = composition
+            .bindings
+            .load(&request.target)
+            .await
+            .expect("load product binding")
+            .expect("persisted product binding");
+        assert_eq!(reloaded, first);
+        assert_eq!(
+            reloaded.surface.terminal_hook_effect_binding,
+            Some(terminal_hook_effect_binding)
         );
         let stored_surface: serde_json::Value = sqlx::query_scalar(
             "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1",
@@ -2489,6 +2780,7 @@ mod tests {
             credential_broker: Arc::new(NoCredentials),
             tool_callback: Arc::new(NoTools),
             hook_callback: Arc::new(ContinueHooks),
+            application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
             node_id: "native-production-tracer".to_string(),
         })
         .expect("production composition");
@@ -2512,17 +2804,20 @@ mod tests {
             .execute(&pool)
             .await
             .expect("seed lifecycle agent");
+        let delivery_presentation_thread_id =
+            agentdash_agent_runtime_contract::PresentationThreadId::new(
+                "presentation-native-tracer",
+            )
+            .expect("presentation thread id");
         let binding = composition
             .provisioner
             .provision(&AgentRunRuntimeProvisionRequest {
                 target,
-                presentation_thread_id:
-                    agentdash_agent_runtime_contract::PresentationThreadId::new(
-                        "presentation-native-tracer",
-                    )
-                    .expect("presentation thread id"),
+                presentation_thread_id: delivery_presentation_thread_id.clone(),
                 identity: None,
                 backend_selection: None,
+                fork: None,
+                terminal_hook_effect_binding: None,
             })
             .await
             .expect("provision Native tracer");
@@ -2544,6 +2839,7 @@ mod tests {
             command: RuntimeCommand::ThreadStart {
                 thread_id: binding.thread_id.clone(),
                 presentation_thread_id: binding.presentation_thread_id.clone(),
+                presentation_turn_id: Some(parsed("presentation-turn-native-tracer")),
                 binding_id: binding.binding_id.clone(),
                 driver_generation: binding.driver_generation,
                 source_thread_id: binding.source_thread_id.clone(),
@@ -2569,6 +2865,28 @@ mod tests {
         assert!(!first.duplicate);
         assert!(replay.duplicate);
         assert_eq!(first.operation_id, replay.operation_id);
+        let accepted_projection = composition
+            .runtime_repository
+            .load_thread(&binding.thread_id)
+            .await
+            .expect("load accepted Runtime projection")
+            .expect("accepted Runtime projection");
+        assert_eq!(
+            accepted_projection.presentation_thread_id,
+            delivery_presentation_thread_id
+        );
+        let persisted_outbox: serde_json::Value =
+            sqlx::query_scalar("SELECT payload FROM agent_runtime_outbox WHERE operation_id=$1")
+                .bind(first.operation_id.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("persisted Runtime outbox");
+        let persisted_outbox: agentdash_agent_runtime::RuntimeOutboxEntry =
+            serde_json::from_value(persisted_outbox).expect("typed Runtime outbox");
+        assert_eq!(
+            persisted_outbox.presentation_thread_id,
+            accepted_projection.presentation_thread_id
+        );
         let mut presentation_live = composition
             .presentation_events
             .subscribe_presentation(&binding.thread_id)
@@ -2621,6 +2939,12 @@ mod tests {
                 .await
                 .expect("dispatch durable outbox"),
             1
+        );
+        let dispatched = composition.outbox_worker.observed_dispatches().await;
+        assert_eq!(dispatched.len(), 1);
+        assert_eq!(
+            dispatched[0].presentation_thread_id,
+            persisted_outbox.presentation_thread_id
         );
         let RuntimeSnapshotResult::Thread { snapshot } = composition
             .gateway
@@ -2984,6 +3308,7 @@ rl.on('line', line => {
             credential_broker: Arc::new(NoCredentials),
             tool_callback: Arc::new(NoTools),
             hook_callback: Arc::new(ContinueHooks),
+            application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
             node_id: "codex-production-tracer".to_string(),
         })
         .expect("Codex production composition");
@@ -3010,6 +3335,8 @@ rl.on('line', line => {
                     .expect("presentation thread id"),
                 identity: None,
                 backend_selection: None,
+                fork: None,
+                terminal_hook_effect_binding: None,
             })
             .await
             .expect("provision Codex binding");
@@ -3031,6 +3358,7 @@ rl.on('line', line => {
             command: RuntimeCommand::ThreadStart {
                 thread_id: binding.thread_id.clone(),
                 presentation_thread_id: binding.presentation_thread_id.clone(),
+                presentation_turn_id: Some(parsed("presentation-turn-codex-tracer")),
                 binding_id: binding.binding_id.clone(),
                 driver_generation: binding.driver_generation,
                 source_thread_id: binding.source_thread_id.clone(),
@@ -3206,9 +3534,8 @@ rl.on('line', line => {
         adopted.revision = SurfaceRevision(adopted.revision.0 + 1);
         adopted.digest = parsed("sha256:codex-tracer-surface-adopted");
         adopted.workspace.digest = "sha256:codex-tracer-workspace-adopted".to_string();
-        adopted.context.recipe.revision = ContextRecipeRevision(
-            adopted.context.recipe.revision.0 + 1,
-        );
+        adopted.context.recipe.revision =
+            ContextRecipeRevision(adopted.context.recipe.revision.0 + 1);
         adopted.context.digest = parsed("sha256:codex-tracer-context-adopted");
         adopted.tools.revision = ToolSetRevision(adopted.tools.revision.0 + 1);
         adopted.tools.digest = "sha256:codex-tracer-tools-adopted".to_string();
@@ -3239,8 +3566,11 @@ rl.on('line', line => {
                 digest: adopted.hooks.digest.clone(),
                 entries: Vec::new(),
             },
+            Some(fixture_terminal_hook_effect_binding()),
         );
-        let RuntimeSnapshotResult::Thread { snapshot: adoption_base } = composition
+        let RuntimeSnapshotResult::Thread {
+            snapshot: adoption_base,
+        } = composition
             .gateway
             .snapshot(RuntimeSnapshotQuery::Thread {
                 thread_id: binding.thread_id.clone(),
@@ -3347,6 +3677,8 @@ rl.on('line', line => {
                 extra: serde_json::Value::Null,
             }),
             backend_selection: None,
+            fork: None,
+            terminal_hook_effect_binding: None,
         };
         let prepared = source
             .prepare(

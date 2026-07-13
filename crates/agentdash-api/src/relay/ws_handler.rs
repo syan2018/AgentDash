@@ -702,7 +702,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 );
             }
         }
-        RelayMessage::EventTerminalOutput { payload, .. } => {
+        RelayMessage::EventTerminalOutput { id, payload } => {
             let payload = payload
                 .clone()
                 .bounded(agentdash_relay::LIVE_OUTPUT_EVENT_MAX_BYTES);
@@ -714,12 +714,12 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 data_len = payload.data.len(),
                 "收到终端输出事件"
             );
-            if state
-                .services
-                .terminal_registry
-                .get_terminal(terminal_id)
-                .is_none()
-            {
+            if let Some((terminal, event)) = prepare_terminal_output_presentation(
+                state.services.terminal_registry.as_ref(),
+                &payload,
+            ) {
+                append_terminal_presentation(state, &terminal, id.to_string(), event).await;
+            } else {
                 diag!(Warn, Subsystem::Relay,
 
                     operation = "relay.ws.handle_message",
@@ -728,16 +728,9 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                     terminal_id = %terminal_id,
                     "终端输出事件到达但 terminal_registry 中未找到"
                 );
-            } else {
-                state.services.terminal_registry.append_terminal_output(
-                    terminal_id,
-                    &payload.data,
-                    payload.truncation.truncated,
-                    payload.truncation.omitted_bytes,
-                );
             }
         }
-        RelayMessage::EventPtyTerminalStateChanged { payload, .. } => {
+        RelayMessage::EventPtyTerminalStateChanged { id, payload } => {
             diag!(Info, Subsystem::Relay,
 
                 backend_id = %backend_id,
@@ -751,11 +744,13 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 agentdash_relay::PtyTerminalProcessState::Lost => "lost",
                 agentdash_relay::PtyTerminalProcessState::Killed => "killed",
             };
-            state.services.terminal_registry.update_state(
-                &payload.terminal_id,
+            if let Some((terminal, event)) = prepare_pty_terminal_state_presentation(
+                state.services.terminal_registry.as_ref(),
+                payload,
                 state_str,
-                payload.exit_code,
-            );
+            ) {
+                append_terminal_presentation(state, &terminal, id.to_string(), event).await;
+            }
         }
         RelayMessage::EventDiscoverOptionsPatch { .. } => {
             diag!(Debug, Subsystem::Relay,
@@ -769,6 +764,142 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
                 "忽略意外消息"
             );
         }
+    }
+}
+
+fn prepare_terminal_output_presentation(
+    registry: &agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry,
+    payload: &agentdash_relay::TerminalOutputPayload,
+) -> Option<(
+    agentdash_application_agentrun::agent_run::terminal_registry::TerminalState,
+    agentdash_agent_protocol::BackboneEvent,
+)> {
+    let terminal = registry.get_terminal(&payload.terminal_id)?;
+    registry.append_terminal_output(
+        &payload.terminal_id,
+        &payload.data,
+        payload.truncation.truncated,
+        payload.truncation.omitted_bytes,
+    );
+    Some((terminal, terminal_output_presentation_event(payload)))
+}
+
+fn prepare_pty_terminal_state_presentation(
+    registry: &agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry,
+    payload: &agentdash_relay::PtyTerminalStateChangedPayload,
+    state: &str,
+) -> Option<(
+    agentdash_application_agentrun::agent_run::terminal_registry::TerminalState,
+    agentdash_agent_protocol::BackboneEvent,
+)> {
+    registry.update_state(&payload.terminal_id, state, payload.exit_code);
+    let terminal = registry.get_terminal(&payload.terminal_id)?;
+    Some((
+        terminal,
+        pty_terminal_state_presentation_event(payload, state),
+    ))
+}
+
+fn terminal_output_presentation_event(
+    payload: &agentdash_relay::TerminalOutputPayload,
+) -> agentdash_agent_protocol::BackboneEvent {
+    let mut data = payload.data.clone();
+    if payload.truncation.truncated {
+        if !data.ends_with('\n') && !data.is_empty() {
+            data.push('\n');
+        }
+        data.push_str(&format!(
+            "[terminal output truncated: omitted_bytes={}]\n",
+            payload.truncation.omitted_bytes
+        ));
+    }
+    agentdash_agent_protocol::BackboneEvent::Platform(
+        agentdash_agent_protocol::PlatformEvent::TerminalOutput {
+            terminal_id: payload.terminal_id.clone(),
+            data,
+        },
+    )
+}
+
+fn pty_terminal_state_presentation_event(
+    payload: &agentdash_relay::PtyTerminalStateChangedPayload,
+    state: &str,
+) -> agentdash_agent_protocol::BackboneEvent {
+    agentdash_agent_protocol::BackboneEvent::Platform(
+        agentdash_agent_protocol::PlatformEvent::PtyTerminalStateChanged {
+            terminal_id: payload.terminal_id.clone(),
+            state: state.to_string(),
+            exit_code: payload.exit_code,
+            message: payload.message.clone(),
+        },
+    )
+}
+
+async fn append_terminal_presentation(
+    state: &AppState,
+    terminal: &agentdash_application_agentrun::agent_run::terminal_registry::TerminalState,
+    source_request_id: String,
+    event: agentdash_agent_protocol::BackboneEvent,
+) {
+    use agentdash_application_agentrun::agent_run::AppendAgentRunPresentation;
+    let (Ok(run_id), Ok(agent_id)) = (
+        uuid::Uuid::parse_str(&terminal.run_id),
+        uuid::Uuid::parse_str(&terminal.agent_id),
+    ) else {
+        return;
+    };
+    let target =
+        agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget { run_id, agent_id };
+    let Ok(view) = state
+        .services
+        .agent_run_runtime
+        .inspect(target.clone())
+        .await
+    else {
+        return;
+    };
+    let (Some(binding), Some(snapshot)) = (view.binding, view.snapshot) else {
+        return;
+    };
+    let idempotency_key = match agentdash_agent_runtime_contract::IdempotencyKey::new(format!(
+        "relay-terminal-presentation:{source_request_id}"
+    )) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    let result = state
+        .services
+        .agent_run_runtime
+        .append_presentation(AppendAgentRunPresentation {
+            target,
+            producer: "relay.terminal.presentation".into(),
+            idempotency_key,
+            events: vec![agentdash_agent_runtime_contract::RuntimePresentationInput {
+                coordinate: agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
+                    runtime_turn_id: snapshot.active_turn_id,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(binding.presentation_thread_id.to_string()),
+                    source_turn_id: snapshot
+                        .active_presentation_turn_id
+                        .map(|turn_id| turn_id.to_string()),
+                    source_item_id: Some(terminal.terminal_id.clone()),
+                    source_request_id: Some(source_request_id),
+                    source_entry_index: None,
+                },
+                event: agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                    agentdash_agent_runtime_contract::PresentationDurability::Durable,
+                    event,
+                ),
+            }],
+        })
+        .await;
+    if let Err(error) = result {
+        diag!(Warn, Subsystem::Relay,
+            terminal_id = %terminal.terminal_id,
+            error = %error,
+            "terminal presentation append failed"
+        );
     }
 }
 
@@ -1220,5 +1351,113 @@ mod tests {
             },
         };
         assert!(!is_pending_response_message(&message));
+    }
+
+    #[test]
+    fn terminal_output_projection_matches_main_truncation_body_exactly() {
+        let event = terminal_output_presentation_event(&agentdash_relay::TerminalOutputPayload {
+            terminal_id: "terminal-1".to_string(),
+            data: "partial".to_string(),
+            truncation: agentdash_relay::ToolShellTruncationInfo {
+                truncated: true,
+                omitted_bytes: 17,
+                omitted_chunks: 1,
+                omitted_tokens_estimate: None,
+            },
+        });
+
+        assert_eq!(
+            serde_json::to_value(event).expect("terminal output event"),
+            serde_json::json!({
+                "type": "platform",
+                "payload": {
+                    "kind": "terminal_output",
+                    "data": {
+                        "terminal_id": "terminal-1",
+                        "data": "partial\n[terminal output truncated: omitted_bytes=17]\n"
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn pty_terminal_projection_preserves_main_optional_message_exactly() {
+        let payload = agentdash_relay::PtyTerminalStateChangedPayload {
+            terminal_id: "terminal-1".to_string(),
+            state: agentdash_relay::PtyTerminalProcessState::Lost,
+            exit_code: None,
+            message: Some("backend disconnected".to_string()),
+        };
+        let event = pty_terminal_state_presentation_event(&payload, "lost");
+
+        assert_eq!(
+            serde_json::to_value(event).expect("PTY event"),
+            serde_json::json!({
+                "type": "platform",
+                "payload": {
+                    "kind": "pty_terminal_state_changed",
+                    "data": {
+                        "terminal_id": "terminal-1",
+                        "state": "lost",
+                        "message": "backend disconnected"
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn terminal_preparation_updates_registry_before_returning_event_for_append() {
+        let registry = agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry::new();
+        registry.register_terminal("run-1", "agent-1", "terminal-1", "backend-1", None);
+        let payload = agentdash_relay::TerminalOutputPayload {
+            terminal_id: "terminal-1".into(),
+            data: "ready\n".into(),
+            truncation: Default::default(),
+        };
+
+        let prepared = prepare_terminal_output_presentation(registry.as_ref(), &payload)
+            .expect("registered terminal has presentation");
+
+        assert!(matches!(
+            prepared.1,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::TerminalOutput { .. }
+            )
+        ));
+        assert_eq!(
+            registry
+                .get_terminal("terminal-1")
+                .and_then(|terminal| terminal.output_projection)
+                .and_then(|projection| projection.pty_preview)
+                .map(|preview| preview.text),
+            Some("ready".into())
+        );
+    }
+
+    #[test]
+    fn pty_preparation_updates_registry_before_returning_event_for_append() {
+        let registry = agentdash_application_agentrun::agent_run::AgentRunTerminalRegistry::new();
+        registry.register_terminal("run-1", "agent-1", "terminal-1", "backend-1", None);
+        let payload = agentdash_relay::PtyTerminalStateChangedPayload {
+            terminal_id: "terminal-1".into(),
+            state: agentdash_relay::PtyTerminalProcessState::Exited,
+            exit_code: Some(7),
+            message: Some("process exited".into()),
+        };
+
+        let prepared =
+            prepare_pty_terminal_state_presentation(registry.as_ref(), &payload, "exited")
+                .expect("registered terminal has presentation");
+
+        assert_eq!(prepared.0.state, "exited");
+        assert_eq!(prepared.0.exit_code, Some(7));
+        assert!(matches!(
+            prepared.1,
+            agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::PtyTerminalStateChanged { .. }
+            )
+        ));
     }
 }

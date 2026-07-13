@@ -435,6 +435,7 @@ mod tests {
                     subject_ref: intent.subject_ref,
                     association_id: Uuid::new_v4(),
                 },
+                delivery_runtime_ref: Uuid::new_v4(),
             })
         }
     }

@@ -2,7 +2,6 @@ pub mod agent_run {
     pub use agentdash_application_agentrun::agent_run::*;
 }
 pub mod agent_run_list;
-pub mod agent_run_product;
 mod agent_run_projection;
 pub mod auth;
 pub mod backend;
@@ -42,6 +41,7 @@ pub mod wait_activity;
 pub mod vfs {
     pub use agentdash_application_vfs::*;
 }
+pub mod vfs_owner_providers;
 pub mod vfs_surface_resolver;
 pub mod workspace;
 

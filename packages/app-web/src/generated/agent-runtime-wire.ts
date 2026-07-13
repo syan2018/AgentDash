@@ -84,7 +84,7 @@ export type DriverToolOutcome = { "kind": "completed", output: JsonValue, is_err
 
 export type DriverToolSurface = { revision: ToolSetRevision, digest: string, tools: Array<DriverToolDefinition>, };
 
-export type DriverWorkspaceSurface = { capabilities: Array<WorkspaceCapability>, roots: Array<string>, };
+export type DriverWorkspaceSurface = { digest: string, capabilities: Array<WorkspaceCapability>, roots: Array<string>, };
 
 export type MaterializedDriverSurface = { runtime_thread_id: RuntimeThreadId, revision: SurfaceRevision, digest: SurfaceDigest, authorization_identity: AuthIdentity | null, context: DriverContextSurface, tools: DriverToolSurface, hooks: DriverHookSurface, workspace: DriverWorkspaceSurface, };
 

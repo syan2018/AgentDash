@@ -222,6 +222,7 @@ mod tests {
     fn binding(run_id: Uuid, agent_id: Uuid) -> AgentRunRuntimeBinding {
         AgentRunRuntimeBinding {
             target: AgentRunRuntimeTarget { run_id, agent_id },
+            presentation_thread_id: runtime_id("presentation-task-scope"),
             thread_id: runtime_id("session-1"),
             binding_id: runtime_id("binding-task-scope"),
             binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
@@ -267,14 +268,24 @@ mod tests {
                 },
                 telemetry_config: BTreeSet::new(),
             },
-            surface_digest: runtime_id("surface-task-scope"),
-            settings_revision: ThreadSettingsRevision(0),
-            tool_set_revision: ToolSetRevision(0),
-            hook_plan: BoundRuntimeHookPlan {
-                revision: HookPlanRevision(1),
-                digest: runtime_id("hook-task-scope"),
-                entries: Vec::new(),
+            surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
+                source_frame_id: "frame-task-scope".to_string(),
+                surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(1),
+                surface_digest: runtime_id("surface-task-scope"),
+                vfs_digest: "vfs-task-scope".to_string(),
+                context_recipe_revision: agentdash_agent_runtime_contract::ContextRecipeRevision(1),
+                context_digest: runtime_id("context-task-scope"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "tools-task-scope".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: runtime_id("hook-task-scope"),
+                    entries: Vec::new(),
+                },
+                terminal_hook_effect_binding: None,
             },
+            settings_revision: ThreadSettingsRevision(0),
         }
     }
 

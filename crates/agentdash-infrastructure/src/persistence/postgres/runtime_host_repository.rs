@@ -4,7 +4,7 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_agent_runtime_host::{
     AgentRuntimeHostRepository, AgentServiceDefinitionId, AgentServiceInstance,
-    AgentServiceOfferId, AppliedSurface, DriverLease, HostStoreError, RuntimeBinding,
+    AgentServiceOfferId, AppliedSurface, BoundAgentSurfaceReference, DriverLease, HostStoreError, RuntimeBinding,
     RuntimeBindingState, RuntimeDriverCoordinate, RuntimeOffer, RuntimeSourceCoordinate,
 };
 use async_trait::async_trait;
@@ -611,6 +611,38 @@ impl AgentRuntimeHostRepository for PostgresAgentRuntimeHostRepository {
                 reason: "surface apply receipt targets a stale or inactive binding".to_string(),
             });
         }
+        binding.applied_surface = Some(applied);
+        sqlx::query(
+            "UPDATE agent_runtime_host_binding SET binding=$2,updated_at=now() WHERE binding_id=$1",
+        )
+        .bind(binding_id.as_str())
+        .bind(encode(&binding, "agent_runtime_host_binding.binding")?)
+        .execute(&mut *transaction)
+        .await
+        .map_err(sql_error)?;
+        transaction.commit().await.map_err(sql_error)?;
+        Ok(binding)
+    }
+
+    async fn adopt_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+        expected_generation: RuntimeDriverGeneration,
+        expected_bound: &BoundAgentSurfaceReference,
+        target_bound: BoundAgentSurfaceReference,
+        applied: AppliedSurface,
+    ) -> Result<RuntimeBinding, HostStoreError> {
+        let mut transaction = self.pool.begin().await.map_err(sql_error)?;
+        let mut binding = locked_binding(&mut transaction, binding_id).await?;
+        if binding.driver_generation != expected_generation
+            || binding.state != RuntimeBindingState::Active
+            || &binding.bound_surface != expected_bound
+        {
+            return Err(HostStoreError::Invariant {
+                reason: "surface adoption targets a stale or inactive binding".to_string(),
+            });
+        }
+        binding.bound_surface = target_bound;
         binding.applied_surface = Some(applied);
         sqlx::query(
             "UPDATE agent_runtime_host_binding SET binding=$2,updated_at=now() WHERE binding_id=$1",

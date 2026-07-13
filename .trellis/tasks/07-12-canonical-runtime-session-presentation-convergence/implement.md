@@ -292,14 +292,22 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 - user submit producer唯一负责按`UserInputSubmitted → TurnStarted`构造并提交完整事件；W3只原子保序，不构造业务事件。
 - user/system/workflow/companion delivery、turn terminal/rewind、title、hook trace、session meta、provider/diagnostic、control-plane、terminal/PTY、context compaction、fork marker等逐项恢复。
 - 每个producer直接构造完整immutable presentation event并提交W2 carrier。
+- AgentRun启动必须从产品delivery session边界提供强类型`PresentationThreadId`；该identity经`ThreadStart → RuntimeThreadState → outbox → DriverCommandEnvelope`原样透传，所有protected payload的`threadId`只取该字段。
 - 内部Runtime fact与presentation fact分开提交，禁止API后补。
+
+### Runtime Surface 收口
+
+- `RuntimeSurfaceDescriptor` 与 `SurfaceAdopt` 统一表达 frame、VFS、context、settings、tool 与 hook 版本引用；Managed Runtime 在同一 mutation/CAS/UoW 边界验证并投递 immutable target。
+- broker 按 binding/revision/digest 保留历史物化版本，Host 仅在 driver 返回精确 `AppliedSurface` 后 CAS 更新 binding；Codex 在 idle 边界对同一 thread 执行完整 resume 后原子替换 session，Native 暂以显式 unsupported capability 保持悬空。
+- `BusinessFrameSurfaceQuery`、`AgentRunRuntimeSurfaceUpdateService` 与 Workspace production bridge 已接入 canonical adopter，避免以 `ToolSetReplace` 代替完整 surface lifecycle。
 
 ### Exit criteria
 
-- [ ] main production writer inventory 100%有current owner与fixture。
-- [ ] input source、entry index、turn/tool coordinate与main一致。
-- [ ] Platform variant事件数量、顺序与payload deep equal。
-- [ ] 不存在依靠API filter隐藏缺失producer的路径。
+- [x] main production writer inventory 100%有current owner与fixture。
+- [x] input source、entry index、turn/tool coordinate与main一致。
+- [x] Platform variant事件数量、顺序与payload deep equal。
+- [x] 每个AgentRun启动fixture证明`PresentationThreadId`来自原产品delivery session，并在持久化projection、outbox重放与driver dispatch后保持不变；`RuntimeThreadId`和source thread identity仅用于routing/carrier。
+- [x] 不存在依靠API filter隐藏缺失producer的路径。
 
 ### Commit
 

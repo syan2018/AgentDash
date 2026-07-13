@@ -29,8 +29,6 @@ use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
 use uuid::Uuid;
 
-use crate::SharedPlatformConfig;
-
 use super::session_association::resolve_activity_runtime_association_from_message_stream_trace;
 use crate::lifecycle::execution_log::{RuntimeNodeArtifactScope, load_scoped_port_output_map};
 use crate::lifecycle::session_terminal_summary;
@@ -107,10 +105,7 @@ pub struct LifecycleOrchestratorDeps {
 }
 
 impl LifecycleOrchestrator {
-    pub fn new_with_platform_config(
-        deps: LifecycleOrchestratorDeps,
-        _platform_config: SharedPlatformConfig,
-    ) -> Self {
+    pub fn new(deps: LifecycleOrchestratorDeps) -> Self {
         Self {
             deps,
             function_runner: None,
@@ -429,6 +424,32 @@ impl LifecycleTerminalConvergencePort for LifecycleOrchestrator {
             }
         }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl agentdash_application_ports::agent_run_control_effect::AgentRunLifecycleTerminalConvergencePort
+    for LifecycleOrchestrator
+{
+    async fn observe_lifecycle_terminal(
+        &self,
+        presentation_thread_id: &agentdash_agent_runtime_contract::PresentationThreadId,
+        terminal: agentdash_agent_runtime_contract::RuntimeTurnTerminal,
+    ) -> Result<(), String> {
+        let terminal_state = match terminal {
+            agentdash_agent_runtime_contract::RuntimeTurnTerminal::Completed => "completed",
+            agentdash_agent_runtime_contract::RuntimeTurnTerminal::Interrupted => "interrupted",
+            agentdash_agent_runtime_contract::RuntimeTurnTerminal::Refused
+            | agentdash_agent_runtime_contract::RuntimeTurnTerminal::LimitReached
+            | agentdash_agent_runtime_contract::RuntimeTurnTerminal::Failed
+            | agentdash_agent_runtime_contract::RuntimeTurnTerminal::Lost => "failed",
+        };
+        LifecycleTerminalConvergencePort::observe_lifecycle_terminal(
+            self,
+            presentation_thread_id.as_str(),
+            terminal_state,
+        )
+        .await
     }
 }
 

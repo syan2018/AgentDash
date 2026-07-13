@@ -39,7 +39,7 @@ pub(crate) struct CompanionChildDispatchOutcome {
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
     pub gate_ref: Option<Uuid>,
-    pub runtime_thread_id: String,
+    pub presentation_thread_id: agentdash_agent_runtime_contract::PresentationThreadId,
     pub launch_source: CompanionLaunchSource,
 }
 
@@ -96,13 +96,15 @@ impl<'a> CompanionChildDispatchService<'a> {
                         "dispatch 失败: {error}"
                     ))
                 })?;
-            let runtime_thread_id = self.provision_runtime_thread(&result.runtime_refs).await?;
+            let presentation_thread_id = self
+                .provision_runtime_thread(&result.runtime_refs, result.delivery_runtime_ref)
+                .await?;
             CompanionChildDispatchOutcome {
                 run_ref: result.runtime_refs.run_ref,
                 agent_ref: result.runtime_refs.agent_ref,
                 frame_ref: result.runtime_refs.frame_ref,
                 gate_ref: Some(result.gate_ref),
-                runtime_thread_id,
+                presentation_thread_id,
                 launch_source: build_launch_source(&request),
             }
         } else {
@@ -134,7 +136,9 @@ impl<'a> CompanionChildDispatchService<'a> {
                 agent_ref: result.runtime_refs.agent_ref,
                 frame_ref: result.runtime_refs.frame_ref,
                 gate_ref: None,
-                runtime_thread_id: self.provision_runtime_thread(&result.runtime_refs).await?,
+                presentation_thread_id: self
+                    .provision_runtime_thread(&result.runtime_refs, result.delivery_runtime_ref)
+                    .await?,
                 launch_source: build_launch_source(&request),
             }
         };
@@ -205,7 +209,10 @@ impl<'a> CompanionChildDispatchService<'a> {
     async fn provision_runtime_thread(
         &self,
         refs: &agentdash_domain::workflow::AgentRuntimeRefs,
-    ) -> Result<String, agentdash_spi::AgentToolError> {
+        delivery_runtime_ref: Uuid,
+    ) -> Result<agentdash_agent_runtime_contract::PresentationThreadId, agentdash_spi::AgentToolError>
+    {
+        use agentdash_agent_runtime_contract::PresentationThreadId;
         use agentdash_application_ports::agent_run_runtime::{
             AgentRunRuntimeProvisionRequest, AgentRunRuntimeTarget,
         };
@@ -216,11 +223,15 @@ impl<'a> CompanionChildDispatchService<'a> {
                     run_id: refs.run_ref,
                     agent_id: refs.agent_ref,
                 },
+                presentation_thread_id: PresentationThreadId::new(delivery_runtime_ref.to_string())
+                    .expect("delivery runtime ref is a non-empty presentation thread id"),
                 identity: None,
                 backend_selection: None,
+                fork: None,
+                terminal_hook_effect_binding: None,
             })
             .await
-            .map(|binding| binding.thread_id.to_string())
+            .map(|binding| binding.presentation_thread_id)
             .map_err(|error| {
                 agentdash_spi::AgentToolError::ExecutionFailed(format!(
                     "AgentRun Runtime provision 失败: {error}"

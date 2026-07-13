@@ -28,6 +28,7 @@ pub(crate) struct DispatchPlan {
 
 pub(crate) struct DispatchFacts {
     pub(crate) runtime_refs: AgentRuntimeRefs,
+    pub(crate) delivery_runtime_ref: Uuid,
     pub(crate) gate_ref: Option<Uuid>,
     pub(crate) subject_execution_ref: Option<SubjectExecutionRef>,
 }
@@ -47,6 +48,7 @@ pub(crate) struct MaterializedAgentRuntime {
     pub(crate) agent: LifecycleAgent,
     pub(crate) frame_id: Uuid,
     pub(crate) runtime_refs: AgentRuntimeRefs,
+    pub(crate) delivery_runtime_ref: Uuid,
 }
 
 impl From<&AgentLaunchIntent> for DispatchPlan {

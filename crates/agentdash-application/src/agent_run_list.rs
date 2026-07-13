@@ -409,6 +409,8 @@ mod tests {
                 target,
                 binding: None,
                 snapshot: None,
+                binding_epoch: None,
+                recovery: agentdash_application_agentrun::agent_run::AgentRunRuntimeRecoverySummary::Active,
             })
         }
 

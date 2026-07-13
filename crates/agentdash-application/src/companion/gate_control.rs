@@ -1680,6 +1680,7 @@ mod tests {
     fn runtime_binding(run_id: Uuid, agent_id: Uuid, thread_id: &str) -> AgentRunRuntimeBinding {
         AgentRunRuntimeBinding {
             target: AgentRunRuntimeTarget { run_id, agent_id },
+            presentation_thread_id: runtime_id(&format!("presentation-{thread_id}")),
             thread_id: runtime_id(thread_id),
             binding_id: runtime_id(&format!("binding-{thread_id}")),
             binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
@@ -1725,14 +1726,24 @@ mod tests {
                 },
                 telemetry_config: BTreeSet::new(),
             },
-            surface_digest: runtime_id("surface-gate-control"),
-            settings_revision: ThreadSettingsRevision(0),
-            tool_set_revision: ToolSetRevision(0),
-            hook_plan: BoundRuntimeHookPlan {
-                revision: HookPlanRevision(1),
-                digest: runtime_id("hook-gate-control"),
-                entries: Vec::new(),
+            surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
+                source_frame_id: "frame-gate-control".to_string(),
+                surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(1),
+                surface_digest: runtime_id("surface-gate-control"),
+                vfs_digest: "vfs-gate-control".to_string(),
+                context_recipe_revision: agentdash_agent_runtime_contract::ContextRecipeRevision(1),
+                context_digest: runtime_id("context-gate-control"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "tools-gate-control".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: runtime_id("hook-gate-control"),
+                    entries: Vec::new(),
+                },
+                terminal_hook_effect_binding: None,
             },
+            settings_revision: ThreadSettingsRevision(0),
         }
     }
 

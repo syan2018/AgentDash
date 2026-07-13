@@ -1415,6 +1415,7 @@ mod tests {
                 request_id,
                 duplicate: false,
                 applied_tool_set: None,
+                applied_surface: None,
             })
         }
 
@@ -1781,6 +1782,7 @@ mod tests {
                                 request_id: id("request-ordered"),
                                 duplicate: false,
                                 applied_tool_set: None,
+                                applied_surface: None,
                             })),
                         ),
                     },
@@ -1921,6 +1923,7 @@ mod tests {
                                 request_id: id("request-epoch-1"),
                                 duplicate: false,
                                 applied_tool_set: None,
+                                applied_surface: None,
                             })),
                         ),
                     },

@@ -157,6 +157,7 @@ pub enum LifecycleCapability {
     TurnSteer,
     TurnInterrupt,
     ToolSetReplace,
+    SurfaceAdopt,
 }
 
 #[derive(

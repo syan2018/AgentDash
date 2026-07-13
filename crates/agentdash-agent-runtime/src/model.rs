@@ -78,6 +78,7 @@ pub struct RuntimeThreadState {
     pub source_thread_id: agentdash_agent_runtime_contract::DriverThreadId,
     pub profile_digest: ProfileDigest,
     pub bound_profile: RuntimeProfile,
+    pub surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor,
     pub active_checkpoint_id: Option<agentdash_agent_runtime_contract::ContextCheckpointId>,
     pub context_revision: ContextRevision,
     pub settings_revision: ThreadSettingsRevision,
@@ -665,6 +666,7 @@ impl RuntimeThreadState {
             binding_epoch: self.binding_epoch,
             profile_digest: self.profile_digest.clone(),
             bound_profile: self.bound_profile.clone(),
+            surface: self.surface.clone(),
             active_checkpoint_id: self.active_checkpoint_id.clone(),
             context_revision: self.context_revision,
             settings_revision: self.settings_revision,
@@ -759,11 +761,11 @@ pub(crate) fn current_time_ms() -> u64 {
 }
 
 trait RuntimeCommandKinds {
-    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 11];
+    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 12];
 }
 
 impl RuntimeCommandKinds for agentdash_agent_runtime_contract::RuntimeCommandKind {
-    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 11] {
+    fn all() -> [agentdash_agent_runtime_contract::RuntimeCommandKind; 12] {
         use agentdash_agent_runtime_contract::RuntimeCommandKind::*;
         [
             ThreadStart,
@@ -777,6 +779,7 @@ impl RuntimeCommandKinds for agentdash_agent_runtime_contract::RuntimeCommandKin
             InteractionRespond,
             ContextCompact,
             ToolSetReplace,
+            SurfaceAdopt,
         ]
     }
 }

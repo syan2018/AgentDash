@@ -8,6 +8,8 @@ use agentdash_application_lifecycle::{
     LifecycleWorkflowAgentNodeMaterializationDeps,
 };
 use agentdash_application_ports::agent_frame_materialization::AgentRunFrameConstructionPort;
+use agentdash_application_ports::agent_run_delete::AgentRunDeleteStore;
+use agentdash_application_ports::agent_run_fork::AgentRunForkGraphStore;
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBindingRepository, AgentRunRuntimeProvisioner,
 };
@@ -45,9 +47,10 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentFrameRepository, AgentLineageRepository, AgentProcedureRepository,
-    AgentRunLineageRepository, GateResultDeliveryMarkerRepository, LifecycleAgentRepository,
-    LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
+    AgentRunCommandReceiptRepository, AgentRunLineageRepository,
+    GateResultDeliveryMarkerRepository, LifecycleAgentRepository, LifecycleGateRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
+    WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 use async_trait::async_trait;
@@ -97,8 +100,13 @@ pub struct RepositorySet {
     pub gate_result_delivery_marker_repo: Arc<dyn GateResultDeliveryMarkerRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
     pub agent_run_lineage_repo: Arc<dyn AgentRunLineageRepository>,
+    pub agent_run_fork_graph_store: Arc<dyn AgentRunForkGraphStore>,
+    pub agent_run_delete_store: Arc<dyn AgentRunDeleteStore>,
+    pub agent_run_command_receipt_repo: Arc<dyn AgentRunCommandReceiptRepository>,
     pub agent_run_runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     pub agent_run_runtime_provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
+    pub workflow_agent_run_delivery:
+        agentdash_application_ports::workflow_agent_run_delivery::SharedWorkflowAgentRunDeliveryHandle,
     pub agent_run_mailbox_repo: Arc<dyn AgentRunMailboxRepository>,
     pub agent_frame_construction: Arc<dyn AgentRunFrameConstructionPort>,
     pub workflow_agent_frame_materialization: Arc<dyn WorkflowAgentNodeFrameMaterializationPort>,
@@ -188,6 +196,7 @@ impl RepositorySet {
                 ),
             ),
             agent_run_runtime_provisioner: self.agent_run_runtime_provisioner.clone(),
+            workflow_agent_run_delivery: Arc::new(self.workflow_agent_run_delivery.clone()),
         }
     }
 

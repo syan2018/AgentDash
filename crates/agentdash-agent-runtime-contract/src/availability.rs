@@ -58,6 +58,7 @@ pub fn command_availability(
         RuntimeCommandKind::TurnSteer => Some(LifecycleCapability::TurnSteer),
         RuntimeCommandKind::TurnInterrupt => Some(LifecycleCapability::TurnInterrupt),
         RuntimeCommandKind::ToolSetReplace => Some(LifecycleCapability::ToolSetReplace),
+        RuntimeCommandKind::SurfaceAdopt => Some(LifecycleCapability::SurfaceAdopt),
         RuntimeCommandKind::ThreadSettingsUpdate
         | RuntimeCommandKind::InteractionRespond
         | RuntimeCommandKind::ContextCompact => None,
@@ -70,7 +71,9 @@ pub fn command_availability(
     }
 
     match command {
-        RuntimeCommandKind::TurnStart if state.has_active_turn => {
+        RuntimeCommandKind::TurnStart | RuntimeCommandKind::SurfaceAdopt
+            if state.has_active_turn =>
+        {
             unmet.push(AvailabilityPredicate::NoActiveTurn);
         }
         RuntimeCommandKind::TurnSteer | RuntimeCommandKind::TurnInterrupt

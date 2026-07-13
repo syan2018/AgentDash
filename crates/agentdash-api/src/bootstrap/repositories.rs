@@ -213,6 +213,8 @@ pub(crate) async fn build_repositories(
         agent_run_lineage_repo: agent_run_lineage_repo.clone(),
         agent_run_runtime_binding_repo: agent_run_runtime_binding_repo.clone(),
         agent_run_runtime_provisioner: Arc::new(runtime_provisioner_handle),
+        workflow_agent_run_delivery:
+            agentdash_application_ports::workflow_agent_run_delivery::SharedWorkflowAgentRunDeliveryHandle::default(),
         agent_run_mailbox_repo: agent_run_mailbox_repo.clone(),
         agent_frame_construction,
         workflow_agent_frame_materialization,

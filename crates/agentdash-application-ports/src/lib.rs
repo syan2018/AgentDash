@@ -1,5 +1,8 @@
 pub mod agent_frame_hook_plan;
 pub mod agent_frame_materialization;
+pub mod agent_run_control_effect;
+pub mod agent_run_delete;
+pub mod agent_run_fork;
 pub mod agent_run_runtime;
 pub mod agent_run_surface;
 pub mod backend_transport;
@@ -20,5 +23,6 @@ pub mod runtime_surface_adoption;
 pub mod vfs_materialization;
 pub mod vfs_surface_runtime;
 pub mod workflow_agent_frame_materialization;
+pub mod workflow_agent_run_delivery;
 pub mod workflow_graph_planning;
 pub mod workspace_title;

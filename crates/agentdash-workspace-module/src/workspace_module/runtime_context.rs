@@ -1,5 +1,8 @@
-use agentdash_agent_protocol::BackboneEnvelope;
-use agentdash_agent_runtime_contract::RuntimeThreadId;
+use agentdash_agent_runtime_contract::{
+    IdempotencyKey, ImmutablePresentationEvent, PresentationDurability,
+    RuntimePresentationAppendRequest, RuntimePresentationCoordinate, RuntimePresentationInput,
+    RuntimeThreadId,
+};
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
 use agentdash_application_runtime_gateway::{RuntimeActor, RuntimeContext};
 use agentdash_application_vfs::tools::SharedRuntimeVfs;
@@ -9,8 +12,8 @@ use uuid::Uuid;
 
 use super::runtime_bridge::{
     ResolvedInvocationBackend, SharedWorkspaceModuleAgentRunBridgeHandle,
-    WorkspaceModuleRuntimeBridgeError, request_existing_canvas_visibility_for_runtime,
-    submit_canvas_runtime_surface_update,
+    SharedWorkspaceModulePresentationAppendHandle, WorkspaceModuleRuntimeBridgeError,
+    request_existing_canvas_visibility_for_runtime, submit_canvas_runtime_surface_update,
 };
 
 #[derive(Clone)]
@@ -21,6 +24,8 @@ pub(crate) struct WorkspaceModuleRuntimeContext {
     vfs: Option<SharedRuntimeVfs>,
     current_user: Option<ProjectAuthorizationContext>,
     agent_run_bridge_handle: Option<SharedWorkspaceModuleAgentRunBridgeHandle>,
+    presentation_append_handle: Option<SharedWorkspaceModulePresentationAppendHandle>,
+    tool_call_id: Option<String>,
     backend: Option<ResolvedInvocationBackend>,
 }
 
@@ -34,6 +39,8 @@ impl WorkspaceModuleRuntimeContext {
             vfs: None,
             current_user: None,
             agent_run_bridge_handle: None,
+            presentation_append_handle: None,
+            tool_call_id: None,
             backend: None,
         }
     }
@@ -61,6 +68,16 @@ impl WorkspaceModuleRuntimeContext {
         agent_run_bridge_handle: Option<SharedWorkspaceModuleAgentRunBridgeHandle>,
     ) -> Self {
         self.agent_run_bridge_handle = agent_run_bridge_handle;
+        self
+    }
+
+    pub(crate) fn with_presentation_append(
+        mut self,
+        handle: SharedWorkspaceModulePresentationAppendHandle,
+        tool_call_id: impl Into<String>,
+    ) -> Self {
+        self.presentation_append_handle = Some(handle);
+        self.tool_call_id = Some(tool_call_id.into());
         self
     }
 
@@ -150,23 +167,57 @@ impl WorkspaceModuleRuntimeContext {
         .await
     }
 
-    pub(crate) async fn inject_agent_run_notification(
+    pub(crate) async fn append_presentation_event(
         &self,
-        notification: BackboneEnvelope,
+        binding: &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBinding,
+        turn_id: &str,
+        event_kind: &str,
+        event: agentdash_agent_protocol::BackboneEvent,
     ) -> Result<(), WorkspaceModuleRuntimeBridgeError> {
-        let handle = self.agent_run_bridge_handle.as_ref().ok_or_else(|| {
+        let handle = self.presentation_append_handle.as_ref().ok_or_else(|| {
             WorkspaceModuleRuntimeBridgeError::ExecutionFailed(
-                "Workspace module AgentRun bridge 尚未完成初始化".to_string(),
+                "Workspace module canonical presentation append port 尚未完成初始化".to_string(),
             )
         })?;
-        let bridge = handle.get().await.ok_or_else(|| {
+        let tool_call_id = self.tool_call_id.as_deref().ok_or_else(|| {
             WorkspaceModuleRuntimeBridgeError::ExecutionFailed(
-                "Workspace module AgentRun bridge 尚未完成初始化".to_string(),
+                "Workspace module presentation producer 缺少 canonical tool call identity"
+                    .to_string(),
             )
         })?;
-        bridge
-            .inject_agent_run_notification(self.runtime_thread_id(), notification)
+        let runtime_turn_id = agentdash_agent_runtime_contract::RuntimeTurnId::new(turn_id)
+            .map_err(|error| {
+                WorkspaceModuleRuntimeBridgeError::ExecutionFailed(error.to_string())
+            })?;
+        let runtime_item_id = agentdash_agent_runtime_contract::RuntimeItemId::new(tool_call_id)
+            .map_err(|error| {
+                WorkspaceModuleRuntimeBridgeError::ExecutionFailed(error.to_string())
+            })?;
+        let idempotency_key = IdempotencyKey::new(format!(
+            "workspace-module-presentation:{runtime_turn_id}:{runtime_item_id}:{event_kind}"
+        ))
+        .map_err(|error| WorkspaceModuleRuntimeBridgeError::ExecutionFailed(error.to_string()))?;
+        handle
+            .append_presentation(RuntimePresentationAppendRequest {
+                runtime_thread_id: binding.thread_id.clone(),
+                producer: "workspace_module.presentation".to_string(),
+                idempotency_key,
+                events: vec![RuntimePresentationInput {
+                    coordinate: RuntimePresentationCoordinate {
+                        runtime_turn_id: Some(runtime_turn_id),
+                        runtime_item_id: Some(runtime_item_id),
+                        interaction_id: None,
+                        source_thread_id: Some(binding.presentation_thread_id.to_string()),
+                        source_turn_id: Some(turn_id.to_string()),
+                        source_item_id: Some(tool_call_id.to_string()),
+                        source_request_id: None,
+                        source_entry_index: None,
+                    },
+                    event: ImmutablePresentationEvent::new(PresentationDurability::Durable, event),
+                }],
+            })
             .await
+            .map(|_| ())
             .map_err(WorkspaceModuleRuntimeBridgeError::ExecutionFailed)
     }
 }

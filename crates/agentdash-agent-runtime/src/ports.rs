@@ -13,6 +13,16 @@ use crate::{
     ContextPreparationWorkItem, RuntimeOperationRecord, RuntimeThreadState,
 };
 
+#[async_trait]
+pub trait RuntimeSurfaceReferenceValidator: Send + Sync {
+    async fn validate_surface_reference(
+        &self,
+        binding_id: &RuntimeBindingId,
+        runtime_thread_id: &RuntimeThreadId,
+        target: &agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor,
+    ) -> Result<(), String>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeOutboxEntry {
     pub operation_id: RuntimeOperationId,

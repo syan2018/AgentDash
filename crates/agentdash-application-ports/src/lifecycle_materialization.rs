@@ -27,6 +27,7 @@ pub struct WorkflowAgentNodeMaterializationRequest {
 #[derive(Debug, Clone)]
 pub struct WorkflowAgentNodeMaterializationResult {
     pub runtime_refs: AgentRuntimeRefs,
+    pub delivery_runtime_ref: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

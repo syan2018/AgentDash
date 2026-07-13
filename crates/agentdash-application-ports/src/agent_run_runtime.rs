@@ -1,7 +1,7 @@
 use agentdash_agent_runtime_contract::{
-    BindingEpoch, BoundRuntimeHookPlan, DriverThreadId, ProfileDigest, ProfileProvenance,
-    RuntimeBindingId, RuntimeDriverGeneration, RuntimeProfile, RuntimeRevision, RuntimeThreadId,
-    SurfaceDigest,
+    BindingEpoch, DriverThreadId, DriverTurnId, PresentationThreadId, ProfileDigest,
+    ProfileProvenance, RuntimeBindingId, RuntimeDriverGeneration, RuntimeProfile, RuntimeRevision,
+    RuntimeSurfaceDescriptor, RuntimeTerminalHookEffectBinding, RuntimeThreadId,
 };
 use agentdash_spi::AuthIdentity;
 use async_trait::async_trait;
@@ -21,13 +21,23 @@ pub struct AgentRunRuntimeTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentRunRuntimeProvisionRequest {
     pub target: AgentRunRuntimeTarget,
+    pub presentation_thread_id: PresentationThreadId,
     pub identity: Option<AuthIdentity>,
     pub backend_selection: Option<BackendSelectionInput>,
+    pub fork: Option<AgentRunRuntimeForkSource>,
+    pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRunRuntimeForkSource {
+    pub source_target: AgentRunRuntimeTarget,
+    pub through_source_turn_id: Option<DriverTurnId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentRunRuntimeBinding {
     pub target: AgentRunRuntimeTarget,
+    pub presentation_thread_id: PresentationThreadId,
     pub thread_id: RuntimeThreadId,
     pub binding_id: RuntimeBindingId,
     pub binding_epoch: BindingEpoch,
@@ -36,10 +46,8 @@ pub struct AgentRunRuntimeBinding {
     pub profile_digest: ProfileDigest,
     pub profile_provenance: ProfileProvenance,
     pub bound_profile: RuntimeProfile,
-    pub surface_digest: SurfaceDigest,
+    pub surface: RuntimeSurfaceDescriptor,
     pub settings_revision: agentdash_agent_runtime_contract::ThreadSettingsRevision,
-    pub tool_set_revision: agentdash_agent_runtime_contract::ToolSetRevision,
-    pub hook_plan: BoundRuntimeHookPlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

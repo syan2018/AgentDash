@@ -159,6 +159,7 @@ impl<'a> LifecycleDispatchService<'a> {
         );
         Ok(AgentLaunchDispatchResult {
             runtime_refs: facts.runtime_refs,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
         })
     }
 
@@ -184,6 +185,7 @@ impl<'a> LifecycleDispatchService<'a> {
         Ok(SubjectExecutionDispatchResult {
             runtime_refs,
             subject_execution_ref,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
         })
     }
 
@@ -209,6 +211,7 @@ impl<'a> LifecycleDispatchService<'a> {
         Ok(InteractionGateOpenedDispatchResult {
             runtime_refs: facts.runtime_refs,
             gate_ref,
+            delivery_runtime_ref: facts.delivery_runtime_ref,
         })
     }
 
@@ -334,6 +337,7 @@ impl<'a> LifecycleDispatchService<'a> {
 
         Ok(DispatchFacts {
             runtime_refs: materialized.runtime_refs,
+            delivery_runtime_ref: materialized.delivery_runtime_ref,
             gate_ref: relation_result.gate_ref,
             subject_execution_ref: subject_result.subject_execution_ref,
         })
@@ -362,6 +366,7 @@ impl<'a> LifecycleDispatchService<'a> {
 
         Ok(DispatchFacts {
             runtime_refs: materialized.runtime_refs,
+            delivery_runtime_ref: materialized.delivery_runtime_ref,
             gate_ref: relation_result.gate_ref,
             subject_execution_ref: subject_result.subject_execution_ref,
         })

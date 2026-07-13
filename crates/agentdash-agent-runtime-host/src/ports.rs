@@ -124,6 +124,15 @@ pub trait AgentRuntimeHostRepository: Send + Sync {
         applied: AppliedSurface,
     ) -> Result<RuntimeBinding, HostStoreError>;
 
+    async fn adopt_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+        expected_generation: RuntimeDriverGeneration,
+        expected_bound: &crate::BoundAgentSurfaceReference,
+        target_bound: crate::BoundAgentSurfaceReference,
+        applied: AppliedSurface,
+    ) -> Result<RuntimeBinding, HostStoreError>;
+
     async fn fail_binding(
         &self,
         binding_id: &RuntimeBindingId,

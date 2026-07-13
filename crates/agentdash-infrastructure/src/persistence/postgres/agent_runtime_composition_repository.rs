@@ -53,7 +53,7 @@ impl PostgresAgentRuntimeCompositionRepository {
         let result = sqlx::query(
             "INSERT INTO agent_runtime_surface_snapshot \
              (binding_id,surface_revision,surface_digest,tool_set_revision,tool_set_digest,hook_plan_revision,hook_plan_digest,materialized) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (binding_id) DO NOTHING",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (binding_id,surface_revision,surface_digest) DO NOTHING",
         )
         .bind(binding_id.as_str())
         .bind(i64::try_from(surface.revision.0).map_err(|_| invalid_surface("surface revision"))?)
@@ -68,9 +68,11 @@ impl PostgresAgentRuntimeCompositionRepository {
         .map_err(surface_sql_error)?;
         if result.rows_affected() == 0 {
             let existing: serde_json::Value = sqlx::query_scalar(
-                "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1",
+                "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1 AND surface_revision=$2 AND surface_digest=$3",
             )
             .bind(binding_id.as_str())
+            .bind(i64::try_from(surface.revision.0).map_err(|_| invalid_surface("surface revision"))?)
+            .bind(surface.digest.as_str())
             .fetch_one(&self.pool)
             .await
             .map_err(surface_sql_error)?;
@@ -89,7 +91,7 @@ impl PostgresAgentRuntimeCompositionRepository {
         binding_id: &agentdash_agent_runtime_contract::RuntimeBindingId,
     ) -> Result<Option<MaterializedDriverSurface>, DriverSurfaceError> {
         let row = sqlx::query(
-            "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1",
+            "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1 ORDER BY surface_revision DESC LIMIT 1",
         )
         .bind(binding_id.as_str())
         .fetch_optional(&self.pool)
@@ -112,9 +114,19 @@ impl AgentRuntimeSurfaceBroker for PostgresAgentRuntimeCompositionRepository {
         &self,
         request: DriverSurfaceRequest,
     ) -> Result<MaterializedDriverSurface, DriverSurfaceError> {
-        let surface = self
-            .load_bound_surface(&request.binding_id)
-            .await?
+        let row = sqlx::query(
+            "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1 AND surface_revision=$2 AND surface_digest=$3",
+        )
+        .bind(request.binding_id.as_str())
+        .bind(i64::try_from(request.surface_revision.0).map_err(|_| invalid_surface("surface revision"))?)
+        .bind(request.surface_digest.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(surface_sql_error)?;
+        let surface: MaterializedDriverSurface = row
+            .map(|row| serde_json::from_value(row.get("materialized")))
+            .transpose()
+            .map_err(|error| DriverSurfaceError::InvalidMaterialization { reason: error.to_string() })?
             .ok_or_else(|| DriverSurfaceError::Unavailable {
                 reason: "bound surface does not exist".to_string(),
                 retryable: false,
@@ -132,16 +144,57 @@ impl AgentRuntimeSurfaceBroker for PostgresAgentRuntimeCompositionRepository {
         revision: agentdash_agent_runtime_contract::ToolSetRevision,
         digest: &str,
     ) -> Result<DriverToolSurface, DriverSurfaceError> {
-        let surface = self.load_bound_surface(&binding_id).await?.ok_or_else(|| {
-            DriverSurfaceError::Unavailable {
-                reason: "bound surface does not exist".to_string(),
-                retryable: false,
-            }
-        })?;
-        if surface.tools.revision != revision || surface.tools.digest != digest {
-            return Err(DriverSurfaceError::Stale);
-        }
+        let row = sqlx::query(
+            "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1 AND tool_set_revision=$2 AND tool_set_digest=$3 ORDER BY surface_revision DESC LIMIT 1",
+        )
+        .bind(binding_id.as_str())
+        .bind(i64::try_from(revision.0).map_err(|_| invalid_surface("tool revision"))?)
+        .bind(digest)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(surface_sql_error)?;
+        let surface: MaterializedDriverSurface = row
+            .map(|row| serde_json::from_value(row.get("materialized")))
+            .transpose()
+            .map_err(|error| DriverSurfaceError::InvalidMaterialization { reason: error.to_string() })?
+            .ok_or(DriverSurfaceError::Stale)?;
         Ok(surface.tools)
+    }
+}
+
+#[async_trait]
+impl agentdash_agent_runtime::RuntimeSurfaceReferenceValidator
+    for PostgresAgentRuntimeCompositionRepository
+{
+    async fn validate_surface_reference(
+        &self,
+        binding_id: &agentdash_agent_runtime_contract::RuntimeBindingId,
+        runtime_thread_id: &agentdash_agent_runtime_contract::RuntimeThreadId,
+        target: &agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor,
+    ) -> Result<(), String> {
+        let surface = AgentRuntimeSurfaceBroker::materialize(
+            self,
+            DriverSurfaceRequest {
+                binding_id: binding_id.clone(),
+                surface_revision: target.surface_revision,
+                surface_digest: target.surface_digest.clone(),
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        if &surface.runtime_thread_id != runtime_thread_id
+            || surface.workspace.digest != target.vfs_digest
+            || surface.context.recipe.revision != target.context_recipe_revision
+            || surface.context.recipe.provenance.settings_revision != target.settings_revision
+            || surface.context.digest != target.context_digest
+            || surface.tools.revision != target.tool_set_revision
+            || surface.tools.digest != target.tool_set_digest
+            || surface.hooks.revision != target.hook_plan.revision
+            || surface.hooks.digest != target.hook_plan.digest
+        {
+            return Err("materialized Runtime surface components do not match the adoption descriptor".to_string());
+        }
+        Ok(())
     }
 }
 

@@ -2,9 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, ControlPlaneProjection, ControlPlaneProjectionChangeReason,
+    BackboneEvent, ControlPlaneProjection, ControlPlaneProjectionChangeReason,
     ControlPlaneProjectionChanged, ControlPlaneWorkspaceModulePresentation, PlatformEvent,
-    SourceInfo, TraceInfo,
 };
 use agentdash_agent_runtime_contract::RuntimeThreadId;
 use agentdash_application_ports::agent_frame_materialization::{
@@ -933,8 +932,13 @@ async fn present(
             Ok(presentation) => presentation,
             Err(error) => {
                 let diagnostic = error.diagnostics();
-                inject_present_diagnostic(command.runtime_context, command.turn_id, &diagnostic)
-                    .await;
+                inject_present_diagnostic(
+                    command.runtime_binding_repo.as_ref(),
+                    command.runtime_context,
+                    command.turn_id,
+                    &diagnostic,
+                )
+                .await;
                 return Ok(WorkspaceModuleOperationOutcome::Diagnostic(
                     WorkspaceModuleCommandDiagnostic {
                         code: "view_not_found",
@@ -962,23 +966,27 @@ async fn present(
         ))
     })?;
 
-    let notification = match build_present_projection_notification(
+    let (binding, event) = match build_present_projection_event(
         command.runtime_binding_repo.as_ref(),
         command.runtime_context.runtime_thread_id(),
-        command.turn_id,
         &presentation,
         value.clone(),
     )
     .await
     {
-        Ok(notification) => notification,
+        Ok(value) => value,
         Err(diagnostic) => {
             return Ok(WorkspaceModuleOperationOutcome::Diagnostic(diagnostic));
         }
     };
     command
         .runtime_context
-        .inject_agent_run_notification(notification)
+        .append_presentation_event(
+            &binding,
+            command.turn_id,
+            "workspace_module_presented",
+            event,
+        )
         .await
         .map_err(runtime_bridge_error_to_surface_error)?;
 
@@ -1545,20 +1553,29 @@ async fn get_canvas_interaction_state(
 }
 
 async fn inject_present_diagnostic(
+    runtime_binding_repo: &dyn AgentRunRuntimeBindingRepository,
     runtime_context: &WorkspaceModuleRuntimeContext,
     turn_id: &str,
     value: &serde_json::Value,
 ) {
-    let notification = build_present_notification(
-        runtime_context.runtime_thread_id(),
-        turn_id,
-        "workspace_module_present_failed",
-        value.clone(),
-    );
-    if let Err(error) = runtime_context
-        .inject_agent_run_notification(notification)
-        .await
-    {
+    let event = build_present_event("workspace_module_present_failed", value.clone());
+    let result =
+        match current_binding(runtime_binding_repo, runtime_context.runtime_thread_id()).await {
+            Ok(binding) => {
+                runtime_context
+                    .append_presentation_event(
+                        &binding,
+                        turn_id,
+                        "workspace_module_present_failed",
+                        event,
+                    )
+                    .await
+            }
+            Err(diagnostic) => Err(WorkspaceModuleRuntimeBridgeError::ExecutionFailed(
+                diagnostic.message,
+            )),
+        };
+    if let Err(error) = result {
         let diagnostic_context =
             DiagnosticErrorContext::new("workspace_module.surface", "inject_present_diagnostic");
         diag_error!(Warn, Subsystem::AgentRun,
@@ -1572,72 +1589,42 @@ async fn inject_present_diagnostic(
     }
 }
 
-fn build_present_notification(
-    session_id: &str,
-    turn_id: &str,
-    key: &str,
-    value: serde_json::Value,
-) -> BackboneEnvelope {
-    let source = SourceInfo {
-        connector_id: "agentdash-workspace-module".to_string(),
-        connector_type: "runtime_tool".to_string(),
-        executor_id: None,
-    };
-    BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-            key: key.to_string(),
-            value,
-        }),
-        session_id,
-        source,
-    )
-    .with_trace(TraceInfo {
-        turn_id: Some(turn_id.to_string()),
-        entry_index: None,
+fn build_present_event(key: &str, value: serde_json::Value) -> BackboneEvent {
+    BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+        key: key.to_string(),
+        value,
     })
 }
 
-async fn build_present_projection_notification(
+async fn build_present_projection_event(
     runtime_binding_repo: &dyn AgentRunRuntimeBindingRepository,
     runtime_thread_id: &str,
-    turn_id: &str,
     presentation: &WorkspaceModulePresentation,
     payload: serde_json::Value,
-) -> Result<BackboneEnvelope, WorkspaceModuleCommandDiagnostic> {
+) -> Result<(AgentRunRuntimeBinding, BackboneEvent), WorkspaceModuleCommandDiagnostic> {
     let binding = current_binding(runtime_binding_repo, runtime_thread_id).await?;
-    let source = SourceInfo {
-        connector_id: "agentdash-workspace-module".to_string(),
-        connector_type: "runtime_tool".to_string(),
-        executor_id: None,
-    };
-    Ok(BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(Box::new(
-            ControlPlaneProjectionChanged {
-                projection: ControlPlaneProjection::ResourceSurface,
-                reason: ControlPlaneProjectionChangeReason::WorkspaceModulePresented,
-                run_id: binding.target.run_id.to_string(),
-                agent_id: binding.target.agent_id.to_string(),
-                frame_id: None,
-                gate_id: None,
-                mailbox_message_id: None,
-                workspace_module_presentation: Some(ControlPlaneWorkspaceModulePresentation {
-                    module_id: presentation.module_id.clone(),
-                    view_key: presentation.view_key.clone(),
-                    renderer_kind: presentation.renderer_kind.clone(),
-                    presentation_uri: presentation.presentation_uri.clone(),
-                    title: presentation.title.clone(),
-                    payload: Some(payload),
-                    diagnostics: None,
-                }),
-            },
-        ))),
-        runtime_thread_id,
-        source,
-    )
-    .with_trace(TraceInfo {
-        turn_id: Some(turn_id.to_string()),
-        entry_index: None,
-    }))
+    let event = BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(Box::new(
+        ControlPlaneProjectionChanged {
+            projection: ControlPlaneProjection::ResourceSurface,
+            reason: ControlPlaneProjectionChangeReason::WorkspaceModulePresented,
+            run_id: binding.target.run_id.to_string(),
+            agent_id: binding.target.agent_id.to_string(),
+            frame_id: None,
+            gate_id: None,
+            mailbox_message_id: None,
+            delivery_runtime_session_id: None,
+            workspace_module_presentation: Some(ControlPlaneWorkspaceModulePresentation {
+                module_id: presentation.module_id.clone(),
+                view_key: presentation.view_key.clone(),
+                renderer_kind: presentation.renderer_kind.clone(),
+                presentation_uri: presentation.presentation_uri.clone(),
+                title: presentation.title.clone(),
+                payload: Some(payload),
+                diagnostics: None,
+            }),
+        },
+    )));
+    Ok((binding, event))
 }
 
 #[cfg(test)]
@@ -1674,7 +1661,10 @@ mod tests {
 
     use super::*;
     use crate::canvas::build_canvas;
-    use crate::workspace_module::runtime_bridge::WorkspaceModuleAgentRunBridge;
+    use crate::workspace_module::runtime_bridge::{
+        SharedWorkspaceModulePresentationAppendHandle, WorkspaceModuleAgentRunBridge,
+        WorkspaceModulePresentationAppendPort,
+    };
 
     #[derive(Default)]
     struct EmptyInstallationRepo;
@@ -1811,9 +1801,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct CapturingAgentRunBridge {
-        notifications: Mutex<Vec<BackboneEnvelope>>,
-    }
+    struct CapturingAgentRunBridge {}
 
     #[async_trait]
     impl WorkspaceModuleAgentRunBridge for CapturingAgentRunBridge {
@@ -1837,17 +1825,25 @@ mod tests {
                 RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs),
             ))
         }
+    }
 
-        async fn inject_agent_run_notification(
+    #[derive(Default)]
+    struct CapturingPresentationAppend {
+        requests: Mutex<Vec<RuntimePresentationAppendRequest>>,
+    }
+
+    #[async_trait]
+    impl WorkspaceModulePresentationAppendPort for CapturingPresentationAppend {
+        async fn append_presentation(
             &self,
-            _runtime_thread_id: &str,
-            notification: BackboneEnvelope,
-        ) -> Result<(), String> {
-            self.notifications
-                .lock()
-                .expect("notification lock")
-                .push(notification);
-            Ok(())
+            request: RuntimePresentationAppendRequest,
+        ) -> Result<RuntimePresentationAppendReceipt, String> {
+            self.requests.lock().expect("append lock").push(request);
+            Ok(RuntimePresentationAppendReceipt {
+                first_sequence: EventSequence(1),
+                last_sequence: EventSequence(1),
+                duplicate: false,
+            })
         }
     }
 
@@ -1947,6 +1943,7 @@ mod tests {
     fn runtime_binding(thread_id: &str, run_id: Uuid, agent_id: Uuid) -> AgentRunRuntimeBinding {
         AgentRunRuntimeBinding {
             target: AgentRunRuntimeTarget { run_id, agent_id },
+            presentation_thread_id: runtime_id(format!("presentation-{thread_id}").as_str()),
             thread_id: runtime_id(thread_id),
             binding_id: runtime_id("binding-workspace-module"),
             binding_epoch: agentdash_agent_runtime_contract::BindingEpoch(1),
@@ -1992,14 +1989,23 @@ mod tests {
                 },
                 telemetry_config: BTreeSet::new(),
             },
-            surface_digest: runtime_id("surface-workspace-module"),
-            settings_revision: ThreadSettingsRevision(0),
-            tool_set_revision: ToolSetRevision(0),
-            hook_plan: BoundRuntimeHookPlan {
-                revision: HookPlanRevision(1),
-                digest: runtime_id("hook-workspace-module"),
-                entries: Vec::new(),
+            surface: agentdash_agent_runtime_contract::RuntimeSurfaceDescriptor {
+                source_frame_id: "frame-workspace-module".to_string(),
+                surface_revision: agentdash_agent_runtime_contract::SurfaceRevision(1),
+                surface_digest: runtime_id("surface-workspace-module"),
+                vfs_digest: "vfs-workspace-module".to_string(),
+                context_recipe_revision: agentdash_agent_runtime_contract::ContextRecipeRevision(1),
+                context_digest: runtime_id("context-workspace-module"),
+                settings_revision: ThreadSettingsRevision(0),
+                tool_set_revision: ToolSetRevision(0),
+                tool_set_digest: "tools-workspace-module".to_string(),
+                hook_plan: BoundRuntimeHookPlan {
+                    revision: HookPlanRevision(1),
+                    digest: runtime_id("hook-workspace-module"),
+                    entries: Vec::new(),
+                },
             },
+            settings_revision: ThreadSettingsRevision(0),
         }
     }
 
@@ -2212,7 +2218,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn present_canvas_returns_presentation_outcome_and_injects_notification() {
+    async fn present_canvas_appends_typed_canonical_presentation() {
         let project_id = Uuid::new_v4();
         let installation_repo: Arc<dyn ProjectExtensionInstallationRepository> =
             Arc::new(EmptyInstallationRepo);
@@ -2245,10 +2251,16 @@ mod tests {
         let bridge = Arc::new(CapturingAgentRunBridge::default());
         let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
         bridge_handle.set(bridge.clone()).await;
+        let presentation_append = Arc::new(CapturingPresentationAppend::default());
+        let presentation_append_handle = SharedWorkspaceModulePresentationAppendHandle::default();
+        presentation_append_handle
+            .set(presentation_append.clone())
+            .await;
         let runtime_context = WorkspaceModuleRuntimeContext::new(project_id, "session-a")
             .with_vfs(shared_vfs.clone())
             .with_current_user(visibility_source.current_user().cloned())
-            .with_agent_run_bridge(Some(bridge_handle.clone()));
+            .with_agent_run_bridge(Some(bridge_handle.clone()))
+            .with_presentation_append(presentation_append_handle, "tool-call-present");
 
         let outcome = WorkspaceModuleAgentSurface::execute(
             WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
@@ -2274,19 +2286,21 @@ mod tests {
         assert_eq!(presentation.module_id, "canvas:cvs-dashboard-a");
         assert_eq!(presentation.view_key, "preview");
         assert_eq!(presentation.presentation_uri, "canvas://cvs-dashboard-a");
+        let requests = presentation_append.requests.lock().expect("append lock");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].runtime_thread_id.as_str(), "session-a");
         assert_eq!(
-            bridge
-                .notifications
-                .lock()
-                .expect("notification lock")
-                .len(),
-            1,
-            "successful presentation is injected by the surface"
+            requests[0].coordinate.source_thread_id.as_deref(),
+            Some("presentation-session-a")
         );
+        assert!(matches!(
+            requests[0].events[0].event,
+            BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(_))
+        ));
     }
 
     #[tokio::test]
-    async fn present_missing_view_is_surface_diagnostic_and_injects_failed_notification() {
+    async fn present_missing_view_appends_typed_diagnostic_presentation() {
         let project_id = Uuid::new_v4();
         let installation_repo: Arc<dyn ProjectExtensionInstallationRepository> =
             Arc::new(EmptyInstallationRepo);
@@ -2319,10 +2333,16 @@ mod tests {
         let bridge = Arc::new(CapturingAgentRunBridge::default());
         let bridge_handle = SharedWorkspaceModuleAgentRunBridgeHandle::default();
         bridge_handle.set(bridge.clone()).await;
+        let presentation_append = Arc::new(CapturingPresentationAppend::default());
+        let presentation_append_handle = SharedWorkspaceModulePresentationAppendHandle::default();
+        presentation_append_handle
+            .set(presentation_append.clone())
+            .await;
         let runtime_context = WorkspaceModuleRuntimeContext::new(project_id, "session-a")
             .with_vfs(shared_vfs.clone())
             .with_current_user(visibility_source.current_user().cloned())
-            .with_agent_run_bridge(Some(bridge_handle.clone()));
+            .with_agent_run_bridge(Some(bridge_handle.clone()))
+            .with_presentation_append(presentation_append_handle, "tool-call-present-failed");
 
         let outcome = WorkspaceModuleAgentSurface::execute(
             WorkspaceModuleAgentSurfaceCommand::Present(WorkspaceModulePresentCommand {
@@ -2346,14 +2366,12 @@ mod tests {
             panic!("expected diagnostic outcome");
         };
         assert_eq!(diagnostic.code, "view_not_found");
-        assert_eq!(
-            bridge
-                .notifications
-                .lock()
-                .expect("notification lock")
-                .len(),
-            1,
-            "failed presentation diagnostics are injected by the surface"
-        );
+        let requests = presentation_append.requests.lock().expect("append lock");
+        assert_eq!(requests.len(), 1);
+        assert!(matches!(
+            &requests[0].events[0].event,
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, .. })
+                if key == "workspace_module_present_failed"
+        ));
     }
 }

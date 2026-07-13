@@ -210,6 +210,20 @@ pub fn lifecycle_directory_hint() -> serde_json::Value {
     })
 }
 
+pub fn lifecycle_root_entries(include_skills: bool) -> Vec<RuntimeFileEntry> {
+    let mut entries = vec![
+        RuntimeFileEntry::file("state").as_virtual(),
+        RuntimeFileEntry::dir("session").as_virtual(),
+        RuntimeFileEntry::dir("agent-runs").as_virtual(),
+        RuntimeFileEntry::dir("artifacts"),
+        RuntimeFileEntry::dir("records"),
+    ];
+    if include_skills {
+        entries.push(RuntimeFileEntry::dir("skills").as_virtual());
+    }
+    entries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,3 +254,4 @@ mod tests {
         assert_eq!(paths.len(), LIFECYCLE_PATH_CATALOG.len());
     }
 }
+use agentdash_spi::platform::mount::RuntimeFileEntry;

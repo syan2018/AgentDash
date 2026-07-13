@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisioner;
 use agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationPort;
+use agentdash_application_ports::workflow_agent_run_delivery::WorkflowAgentRunDeliveryPort;
 use agentdash_domain::workflow::{
     AgentProcedureRepository, ArtifactAliasPolicy, ExecutorRunRef, LifecycleGateRepository,
     LifecycleRun, LifecycleRunRepository, PlanNode, PlanNodeKind, RuntimeNodeError,
@@ -78,6 +79,7 @@ struct OrchestrationExecutorRepositories {
     lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
     agent_run_runtime_provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
+    workflow_agent_run_delivery: Arc<dyn WorkflowAgentRunDeliveryPort>,
 }
 
 impl From<WorkflowRepositorySet> for OrchestrationExecutorRepositories {
@@ -88,6 +90,7 @@ impl From<WorkflowRepositorySet> for OrchestrationExecutorRepositories {
             lifecycle_gate_repo: repos.lifecycle_gate_repo,
             workflow_agent_node_materialization: repos.workflow_agent_node_materialization,
             agent_run_runtime_provisioner: repos.agent_run_runtime_provisioner,
+            workflow_agent_run_delivery: repos.workflow_agent_run_delivery,
         }
     }
 }
@@ -102,6 +105,7 @@ impl OrchestrationExecutorLauncher {
             repos.agent_procedure_repo.clone(),
             repos.workflow_agent_node_materialization.clone(),
             repos.agent_run_runtime_provisioner.clone(),
+            repos.workflow_agent_run_delivery.clone(),
         );
         let human_gate_launcher = HumanGateLauncher::new(repos.lifecycle_gate_repo.clone());
         Self {

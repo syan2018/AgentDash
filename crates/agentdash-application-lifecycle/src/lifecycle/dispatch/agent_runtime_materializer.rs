@@ -49,13 +49,17 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         orchestration_binding: Option<OrchestrationBindingRefs>,
     ) -> Result<MaterializedAgentRuntime, WorkflowApplicationError> {
         let agent = self.resolve_or_create_agent(run, plan).await?;
-        let frame_id = self.construct_launch_anchor_frame(&agent, plan).await?;
+        let delivery_runtime_ref = Uuid::new_v4();
+        let frame_id = self
+            .construct_launch_anchor_frame(&agent, plan, delivery_runtime_ref)
+            .await?;
 
         let runtime_refs = AgentRuntimeRefs::new(run.id, agent.id, frame_id, orchestration_binding);
         Ok(MaterializedAgentRuntime {
             agent,
             frame_id,
             runtime_refs,
+            delivery_runtime_ref,
         })
     }
 
@@ -74,10 +78,12 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         .with_bootstrap_status(agentdash_domain::workflow::bootstrap_status::NOT_APPLICABLE);
         self.agent_repo.create(&agent).await?;
 
+        let delivery_runtime_ref = Uuid::new_v4();
         let frame_id = self
             .materialize_workflow_agent_node_frame(
                 &run,
                 &agent,
+                delivery_runtime_ref,
                 request.frame_created_by_id,
                 request.orchestration_binding.clone(),
                 context.lifecycle_key,
@@ -93,6 +99,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                 frame_id,
                 Some(request.orchestration_binding),
             ),
+            delivery_runtime_ref,
         })
     }
 
@@ -171,6 +178,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         &self,
         agent: &LifecycleAgent,
         plan: &DispatchPlan,
+        delivery_runtime_ref: Uuid,
     ) -> Result<Uuid, WorkflowApplicationError> {
         let frame_construction = self.frame_construction.ok_or_else(|| {
             WorkflowApplicationError::Internal(
@@ -183,8 +191,8 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                     run_id: agent.run_id,
                     agent_id: agent.id,
                     subject_ref: plan.subject_ref.clone(),
-                    runtime_session_id: None,
-                    created_by_id: None,
+                    runtime_session_id: Some(delivery_runtime_ref.to_string()),
+                    created_by_id: Some(delivery_runtime_ref.to_string()),
                     execution_profile: plan.execution_profile_override.clone(),
                 },
             )
@@ -202,6 +210,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
         &self,
         run: &LifecycleRun,
         agent: &LifecycleAgent,
+        delivery_runtime_ref: Uuid,
         created_by_id: Option<String>,
         orchestration_binding: OrchestrationBindingRefs,
         lifecycle_key: String,
@@ -220,7 +229,7 @@ impl<'a> AgentRuntimeMaterializer<'a> {
                     run_id: run.id,
                     project_id: run.project_id,
                     agent_id: agent.id,
-                    runtime_session_id: None,
+                    runtime_session_id: Some(delivery_runtime_ref.to_string()),
                     created_by_id,
                     orchestration_id: orchestration_binding.orchestration_ref,
                     node_path: orchestration_binding.node_path,

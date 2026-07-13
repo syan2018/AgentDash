@@ -10,7 +10,7 @@ use crate::{
     ContextCandidateId, ContextCheckpointId, DriverBindingId, DriverItemId, DriverRequestId,
     DriverThreadId, DriverTurnId, HookPlanDigest, HookPlanRevision, HookPoint, ProfileDigest,
     RuntimeBindingId, RuntimeCommand, RuntimeJournalFact, RuntimeProfile, RuntimeServiceInstanceId,
-    RuntimeTurnId, SurfaceDigest, SurfaceRevision, ToolSetRevision,
+    RuntimeSurfaceDescriptor, RuntimeTurnId, SurfaceDigest, SurfaceRevision, ToolSetRevision,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -93,6 +93,14 @@ pub struct DriverDispatchReceipt {
     pub request_id: DriverRequestId,
     pub duplicate: bool,
     pub applied_tool_set: Option<DriverToolSetApplyReceipt>,
+    pub applied_surface: Option<DriverSurfaceApplyReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct DriverSurfaceApplyReceipt {
+    pub descriptor: RuntimeSurfaceDescriptor,
+    pub applied_hooks: Vec<DriverHookApplyStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

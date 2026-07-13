@@ -456,6 +456,11 @@ pub fn render_domain_file(
     upstream: &BTreeMap<String, String>,
 ) -> GeneratedTsFile {
     declarations.remove(JSON_VALUE_TYPE_NAME);
+    for declaration in declarations.values_mut() {
+        while declaration.contains(" | null | null") {
+            *declaration = declaration.replace(" | null | null", " | null");
+        }
+    }
 
     let mut stripped = Vec::new();
     for (type_name, source) in upstream {

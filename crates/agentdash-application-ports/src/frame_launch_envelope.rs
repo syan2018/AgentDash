@@ -15,6 +15,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 use uuid::Uuid;
 
+pub use agentdash_agent_runtime_contract::RuntimeTerminalHookEffectBinding as TerminalHookEffectBinding;
+
 #[derive(Debug, Clone)]
 pub struct FrameRuntimeSurface {
     pub agent_id: Uuid,
@@ -77,12 +79,6 @@ pub struct LaunchResolutionTrace {
     pub mcp_source: Option<String>,
     pub capability_source: Option<String>,
     pub pending_overlay_applied: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalHookEffectBinding {
-    pub handler: Value,
-    pub supported_effect_kinds: Vec<String>,
 }
 
 /// Frame refs — 持久化 frame surface 与 pending frame revision。

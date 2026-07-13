@@ -327,11 +327,40 @@ impl RoutineExecutor {
         target: &super::reuse_resolver::RoutineDispatchReuseTarget,
     ) -> Result<(), ApplicationError> {
         let client_command_id = format!("routine_execution:{}", execution.id);
+        let runtime_target =
+            agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget {
+                run_id: target.run_id,
+                agent_id: target.agent_id,
+            };
+        let binding = self
+            .repos
+            .agent_run_runtime_binding_repo
+            .load(&runtime_target)
+            .await
+            .map_err(|error| ApplicationError::Internal(error.to_string()))?
+            .ok_or_else(|| {
+                ApplicationError::Internal(
+                    "routine reuse target has no Runtime binding".to_string(),
+                )
+            })?;
         let result = self
             .product_delivery
             .deliver(DeliverAgentRunProductInput {
                 run_id: target.run_id,
                 agent_id: target.agent_id,
+                presentation_thread_id: binding.presentation_thread_id,
+                origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::System,
+                presentation: agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
+                    content: agentdash_agent_protocol::text_user_input_blocks(prompt),
+                    source: agentdash_agent_protocol::UserInputSource::new(
+                        "routine",
+                        "trigger",
+                        "system",
+                    ),
+                    launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::RoutineExecutor,
+                    submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                    started_at_seconds: chrono::Utc::now().timestamp(),
+                },
                 input: vec![RuntimeInput::Text {
                     text: prompt.to_string(),
                 }],

@@ -251,12 +251,14 @@ pub type RuntimeControlRefs = AgentRuntimeRefs;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentLaunchDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
+    pub delivery_runtime_ref: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubjectExecutionDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
     pub subject_execution_ref: SubjectExecutionRef,
+    pub delivery_runtime_ref: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,6 +271,7 @@ pub struct LifecycleRunStartDispatchResult {
 pub struct InteractionGateOpenedDispatchResult {
     pub runtime_refs: AgentRuntimeRefs,
     pub gate_ref: Uuid,
+    pub delivery_runtime_ref: Uuid,
 }
 
 /// Dispatch 调度结果按 intent family 分类，避免全 optional DTO 掩盖必需锚点。
@@ -317,6 +320,7 @@ mod tests {
     #[test]
     fn subject_execution_result_serializes_orchestration_binding() {
         let orchestration_ref = Uuid::new_v4();
+        let delivery_runtime_ref = Uuid::new_v4();
         let result = ExecutionDispatchResult::SubjectExecution(SubjectExecutionDispatchResult {
             runtime_refs: AgentRuntimeRefs::new(
                 Uuid::new_v4(),
@@ -332,11 +336,13 @@ mod tests {
                 subject_ref: SubjectRef::new("task", Uuid::new_v4()),
                 association_id: Uuid::new_v4(),
             },
+            delivery_runtime_ref,
         });
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(json.contains(&orchestration_ref.to_string()));
         assert!(json.contains("orchestration_ref"));
         assert!(json.contains("node_path"));
         assert!(json.contains("subject_execution"));
+        assert!(json.contains(&delivery_runtime_ref.to_string()));
     }
 }

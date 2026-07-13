@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisioner;
 use agentdash_application_ports::lifecycle_materialization::WorkflowAgentNodeMaterializationPort;
+use agentdash_application_ports::workflow_agent_run_delivery::WorkflowAgentRunDeliveryPort;
 use agentdash_domain::workflow::{
     AgentProcedureRepository, LifecycleGateRepository, LifecycleRunRepository,
 };
@@ -13,4 +14,5 @@ pub struct WorkflowRepositorySet {
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub workflow_agent_node_materialization: Arc<dyn WorkflowAgentNodeMaterializationPort>,
     pub agent_run_runtime_provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
+    pub workflow_agent_run_delivery: Arc<dyn WorkflowAgentRunDeliveryPort>,
 }

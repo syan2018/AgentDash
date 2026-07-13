@@ -717,12 +717,8 @@ impl AgentRuntimeDriver for NativeAgentDriver {
         }
         let mut applied_tool_set = None;
         match envelope.command.clone() {
-            RuntimeCommand::ThreadStart {
-                input,
-                surface_digest,
-                ..
-            } => {
-                if binding.surface.read().await.digest != surface_digest {
+            RuntimeCommand::ThreadStart { input, surface, .. } => {
+                if binding.surface.read().await.digest != surface.surface_digest {
                     return Err(DriverError::Rejected {
                         reason: "thread start surface digest is stale".to_string(),
                     });
@@ -897,6 +893,11 @@ impl AgentRuntimeDriver for NativeAgentDriver {
                     digest: tool_set_digest,
                 });
             }
+            RuntimeCommand::SurfaceAdopt { .. } => {
+                return Err(DriverError::Unsupported {
+                    reason: "Native full Runtime surface adoption is not connected".to_string(),
+                });
+            }
             RuntimeCommand::ContextCompact {
                 compaction_id,
                 expected_context_revision,
@@ -1005,6 +1006,7 @@ impl AgentRuntimeDriver for NativeAgentDriver {
             request_id: envelope.request_id,
             duplicate: false,
             applied_tool_set,
+            applied_surface: None,
         };
         self.dispatch_receipts
             .lock()

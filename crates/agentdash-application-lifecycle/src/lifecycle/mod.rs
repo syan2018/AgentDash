@@ -16,6 +16,7 @@ pub mod surface;
 pub mod tools;
 pub(crate) mod vfs_catalog;
 pub(crate) mod vfs_mount;
+pub mod vfs_provider;
 
 pub(crate) use activity_activation::ActivityActivation;
 pub use agentdash_application_workflow::WorkflowApplicationError;
@@ -62,3 +63,4 @@ pub use surface::surface_projector::{
 pub(crate) use vfs_mount::{
     build_agent_run_session_lifecycle_mount, build_lifecycle_mount_with_node_scope,
 };
+pub use vfs_provider::LifecycleMountProvider;

@@ -269,14 +269,6 @@ where
         invocation: &ToolBrokerInvocation,
         tool: &ToolContribution,
     ) -> Result<(), ToolBrokerError> {
-        if tool.presentation_emitter
-            != agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker
-        {
-            return Err(ToolBrokerError::Execution(format!(
-                "tool `{}` is not owned by the ToolBroker presentation emitter",
-                tool.runtime_name
-            )));
-        }
         let initial_content = tool
             .project_started(
                 invocation.coordinates.item_id.as_str(),
@@ -304,29 +296,33 @@ where
                 }])
                 .map_err(transition_tool_error)?;
             let mut records = crate::internal_journal_records(events).map_err(store_tool_error)?;
-            records.push(
-                thread
-                    .append_durable_fact(
-                        agentdash_agent_runtime_contract::RuntimeJournalFact::Presentation(
-                            agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
-                                agentdash_agent_runtime_contract::PresentationDurability::Durable,
-                                agentdash_agent_protocol::BackboneEvent::ItemStarted(
-                                    agentdash_agent_protocol::ItemStartedNotification {
-                                        item: initial_content.item().clone(),
-                                        thread_id: thread.presentation_thread_id.to_string(),
-                                        turn_id: invocation.coordinates.turn_id.to_string(),
-                                        started_at_ms: timestamp_i64(recorded_at_ms),
-                                    },
+            if tool.presentation_emitter
+                == agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker
+            {
+                records.push(
+                    thread
+                        .append_durable_fact(
+                            agentdash_agent_runtime_contract::RuntimeJournalFact::Presentation(
+                                agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                                    agentdash_agent_runtime_contract::PresentationDurability::Durable,
+                                    agentdash_agent_protocol::BackboneEvent::ItemStarted(
+                                        agentdash_agent_protocol::ItemStartedNotification {
+                                            item: initial_content.item().clone(),
+                                            thread_id: thread.presentation_thread_id.to_string(),
+                                            turn_id: invocation.coordinates.turn_id.to_string(),
+                                            started_at_ms: timestamp_i64(recorded_at_ms),
+                                        },
+                                    ),
                                 ),
                             ),
-                        ),
-                        recorded_at_ms,
-                        Some(invocation.coordinates.binding_id.clone()),
-                        None,
-                        tool_presentation_coordinate(invocation),
-                    )
-                    .map_err(transition_tool_error)?,
-            );
+                            recorded_at_ms,
+                            Some(invocation.coordinates.binding_id.clone()),
+                            None,
+                            tool_presentation_coordinate(invocation),
+                        )
+                        .map_err(transition_tool_error)?,
+                );
+            }
             match self
                 .commit_projection_records_store_result(thread, expected, records)
                 .await
@@ -369,29 +365,33 @@ where
             | RuntimeItemTerminal::Cancelled { .. }
             | RuntimeItemTerminal::Lost { .. } => broker_terminal_content(call)?,
         };
-        records.push(
-            thread
-                .append_durable_fact(
-                    agentdash_agent_runtime_contract::RuntimeJournalFact::Presentation(
-                        agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
-                            agentdash_agent_runtime_contract::PresentationDurability::Durable,
-                            agentdash_agent_protocol::BackboneEvent::ItemCompleted(
-                                agentdash_agent_protocol::ItemCompletedNotification {
-                                    item: final_content.item().clone(),
-                                    thread_id: thread.presentation_thread_id.to_string(),
-                                    turn_id: call.invocation.coordinates.turn_id.to_string(),
-                                    completed_at_ms: timestamp_i64(recorded_at_ms),
-                                },
+        if call.tool.presentation_emitter
+            == agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker
+        {
+            records.push(
+                thread
+                    .append_durable_fact(
+                        agentdash_agent_runtime_contract::RuntimeJournalFact::Presentation(
+                            agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                                agentdash_agent_runtime_contract::PresentationDurability::Durable,
+                                agentdash_agent_protocol::BackboneEvent::ItemCompleted(
+                                    agentdash_agent_protocol::ItemCompletedNotification {
+                                        item: final_content.item().clone(),
+                                        thread_id: thread.presentation_thread_id.to_string(),
+                                        turn_id: call.invocation.coordinates.turn_id.to_string(),
+                                        completed_at_ms: timestamp_i64(recorded_at_ms),
+                                    },
+                                ),
                             ),
                         ),
-                    ),
-                    recorded_at_ms,
-                    Some(call.invocation.coordinates.binding_id.clone()),
-                    None,
-                    tool_presentation_coordinate(&call.invocation),
-                )
-                .map_err(transition_tool_error)?,
-        );
+                        recorded_at_ms,
+                        Some(call.invocation.coordinates.binding_id.clone()),
+                        None,
+                        tool_presentation_coordinate(&call.invocation),
+                    )
+                    .map_err(transition_tool_error)?,
+            );
+        }
         self.commit_projection_records(thread, expected, records)
             .await
     }
@@ -428,6 +428,11 @@ where
         tool: &ToolContribution,
         content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
     ) -> Result<(), ToolBrokerError> {
+        if tool.presentation_emitter
+            == agentdash_agent_runtime_contract::ToolPresentationEmitter::VendorStream
+        {
+            return Ok(());
+        }
         let thread = self.load_matching_thread(invocation).await?;
         let event = if matches!(
             tool.protocol_projection,

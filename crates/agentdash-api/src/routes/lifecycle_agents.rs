@@ -5,8 +5,8 @@ use std::sync::Arc;
 use crate::routes::runtime_traces;
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_runtime_contract::{
-    EventSequence, InteractionResponse, OperationReceipt, RuntimeActor, RuntimeContextView,
-    RuntimeEventEnvelope, RuntimeInput, RuntimeInteractionId, RuntimeSnapshot,
+    EventSequence, InteractionResponse, OperationReceipt, PresentationThreadId, RuntimeActor,
+    RuntimeContextView, RuntimeEventEnvelope, RuntimeInput, RuntimeInteractionId, RuntimeSnapshot,
 };
 use agentdash_application::agent_run_list::{
     AgentRunListChildModel, AgentRunListEntryModel, AgentRunListRuntimeSummaryModel,
@@ -18,7 +18,7 @@ use agentdash_application::agent_run_product::{
 };
 use agentdash_application_agentrun::agent_run::terminal_registry::TerminalState;
 use agentdash_application_agentrun::agent_run::{
-    AgentRunCommandGuard, AgentRunRuntimeError, AgentRunRuntimeView,
+    AgentRunCommandGuard, AgentRunPresentationInput, AgentRunRuntimeError, AgentRunRuntimeView,
     ConversationModelConfigSourceModel, ConversationModelConfigStatusModel,
     EnqueueRuntimeMailboxMessage, GuardedAgentRunCommand, ReadAgentRunEvents,
     ResolveAgentRunInteraction, RuntimeAgentRunMailbox, RuntimeMailboxError,
@@ -65,11 +65,11 @@ use crate::{
 struct AgentRunContext {
     run: LifecycleRun,
     agent: LifecycleAgent,
-    runtime_thread_id: Option<String>,
+    presentation_thread_id: Option<PresentationThreadId>,
 }
 
 struct AgentRunDeliveryRuntimeContext {
-    runtime_session_id: String,
+    presentation_thread_id: PresentationThreadId,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -266,7 +266,7 @@ async fn get_agent_run_workspace(
         .get(AgentRunProductQueryInput {
             run: &context.run,
             agent: &context.agent,
-            has_runtime_binding: context.runtime_thread_id.is_some(),
+            has_runtime_binding: context.presentation_thread_id.is_some(),
             runtime_projection: &runtime_projection,
         })
         .await?;
@@ -456,6 +456,12 @@ pub async fn submit_agent_run_composer_input(
         ));
     }
     let target = agent_run_runtime_target(&context);
+    let presentation_input = AgentRunPresentationInput {
+        content: req.input.clone(),
+        source: agentdash_agent_protocol::UserInputSource::core_composer(),
+        submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+        started_at_seconds: chrono::Utc::now().timestamp(),
+    };
     let runtime_input = runtime_input_from_codex(req.input)?;
     let view = state
         .services
@@ -489,6 +495,16 @@ pub async fn submit_agent_run_composer_input(
         let outcome = runtime_agent_run_mailbox(state.as_ref())
             .submit(EnqueueRuntimeMailboxMessage {
                 target: target.clone(),
+                presentation_thread_id: context
+                    .presentation_thread_id
+                    .clone()
+                    .ok_or_else(|| {
+                        ApiError::Conflict(format!(
+                            "AgentRun {} / {} 缺少 delivery runtime",
+                            context.run.id, context.agent.id
+                        ))
+                    })?,
+                presentation_input,
                 client_command_id: req.client_command_id.clone(),
                 input: runtime_input,
                 actor: runtime_actor(&current_user),
@@ -1150,12 +1166,16 @@ fn runtime_mailbox_error(error: RuntimeMailboxError) -> ApiError {
 fn delivery_runtime_session_from_agent_run_context(
     context: &AgentRunContext,
 ) -> Result<String, ApiError> {
-    context.runtime_thread_id.clone().ok_or_else(|| {
+    context
+        .presentation_thread_id
+        .as_ref()
+        .map(ToString::to_string)
+        .ok_or_else(|| {
         ApiError::Conflict(format!(
             "AgentRun {} / {} 缺少 delivery runtime",
             context.run.id, context.agent.id
         ))
-    })
+        })
 }
 
 async fn resolve_agent_run_context(
@@ -1191,9 +1211,9 @@ async fn resolve_agent_run_context(
     Ok(AgentRunContext {
         run,
         agent,
-        runtime_thread_id: delivery_runtime
+        presentation_thread_id: delivery_runtime
             .as_ref()
-            .map(|delivery| delivery.runtime_session_id.clone()),
+            .map(|delivery| delivery.presentation_thread_id.clone()),
     })
 }
 
@@ -1209,7 +1229,7 @@ async fn delivery_runtime_session_for_agent_run(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
     Ok(binding.map(|binding| AgentRunDeliveryRuntimeContext {
-        runtime_session_id: binding.thread_id.to_string(),
+        presentation_thread_id: binding.presentation_thread_id,
     }))
 }
 

@@ -264,6 +264,13 @@ pub async fn create_project_agent_run(
             .await
             .map_err(ApiError::from)?;
     }
+    let presentation_input =
+        agentdash_application_agentrun::agent_run::AgentRunPresentationInput {
+            content: req.input.clone(),
+            source: agentdash_agent_protocol::UserInputSource::core_composer(),
+            submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+            started_at_seconds: chrono::Utc::now().timestamp(),
+        };
     let input = super::lifecycle_agents::runtime_input_from_codex(req.input)?;
     let delivery = state
         .services
@@ -271,6 +278,11 @@ pub async fn create_project_agent_run(
         .deliver(DeliverAgentRunProductInput {
             run_id: runtime_refs.run_ref,
             agent_id: runtime_refs.agent_ref,
+            presentation_thread_id: agentdash_agent_runtime_contract::PresentationThreadId::new(
+                dispatch.delivery_runtime_ref.to_string(),
+            )
+            .map_err(|error| ApiError::Internal(error.to_string()))?,
+            presentation_input,
             input,
             actor: RuntimeActor::User {
                 subject: current_user.user_id.clone(),

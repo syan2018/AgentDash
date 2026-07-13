@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
 use agentdash_application_ports::agent_run_surface::AgentRunEffectiveCapabilityView;
 use agentdash_application_runtime_gateway::{
@@ -47,17 +46,40 @@ pub trait WorkspaceModuleAgentRunBridge: Send + Sync {
         current_user: Option<&ProjectAuthorizationContext>,
         request: RuntimeSurfaceUpdateRequest,
     ) -> Result<RuntimeVfsState, String>;
-
-    async fn inject_agent_run_notification(
-        &self,
-        runtime_thread_id: &str,
-        notification: BackboneEnvelope,
-    ) -> Result<(), String>;
 }
 
 #[derive(Clone, Default)]
 pub struct SharedWorkspaceModuleAgentRunBridgeHandle {
     inner: Arc<RwLock<Option<Arc<dyn WorkspaceModuleAgentRunBridge>>>>,
+}
+
+#[async_trait]
+pub trait WorkspaceModulePresentationAppendPort: Send + Sync {
+    async fn append_presentation(
+        &self,
+        request: agentdash_agent_runtime_contract::RuntimePresentationAppendRequest,
+    ) -> Result<agentdash_agent_runtime_contract::RuntimePresentationAppendReceipt, String>;
+}
+
+#[derive(Clone, Default)]
+pub struct SharedWorkspaceModulePresentationAppendHandle {
+    inner: Arc<RwLock<Option<Arc<dyn WorkspaceModulePresentationAppendPort>>>>,
+}
+
+impl SharedWorkspaceModulePresentationAppendHandle {
+    pub async fn set(&self, port: Arc<dyn WorkspaceModulePresentationAppendPort>) {
+        *self.inner.write().await = Some(port);
+    }
+
+    pub async fn append_presentation(
+        &self,
+        request: agentdash_agent_runtime_contract::RuntimePresentationAppendRequest,
+    ) -> Result<agentdash_agent_runtime_contract::RuntimePresentationAppendReceipt, String> {
+        let port = self.inner.read().await.clone().ok_or_else(|| {
+            "Workspace module canonical presentation append port 尚未完成初始化".to_string()
+        })?;
+        port.append_presentation(request).await
+    }
 }
 
 impl SharedWorkspaceModuleAgentRunBridgeHandle {
@@ -413,14 +435,6 @@ mod tests {
             _request: RuntimeSurfaceUpdateRequest,
         ) -> Result<RuntimeVfsState, String> {
             Ok(self.state.clone())
-        }
-
-        async fn inject_agent_run_notification(
-            &self,
-            _runtime_thread_id: &str,
-            _notification: BackboneEnvelope,
-        ) -> Result<(), String> {
-            Ok(())
         }
     }
 

@@ -291,6 +291,7 @@ impl RuntimeDurableWorkers {
                         .map_err(|error| {
                             RuntimeDurableWorkerError::InvalidClaim(error.to_string())
                         })?,
+                        presentation_thread_id: thread.presentation_thread_id.clone(),
                         binding_id: entry.binding_id.clone(),
                         generation: entry.generation,
                         source_thread_id: thread.source_thread_id,

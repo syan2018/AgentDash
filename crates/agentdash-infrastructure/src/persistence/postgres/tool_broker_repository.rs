@@ -197,12 +197,14 @@ mod tests {
 
     use super::PostgresToolBrokerRepository;
     use agentdash_agent_runtime::{
-        ToolBrokerCall, ToolBrokerCallStatus, ToolBrokerInvocation, ToolBrokerRepository,
-        ToolBrokerResult, ToolBrokerTransition, ToolCallAdmission, ToolCallCoordinates,
+        ContributionMeta, ContributionRequirement, SurfaceSourceRef, ToolBrokerCall,
+        ToolBrokerCallStatus, ToolBrokerInvocation, ToolBrokerRepository, ToolBrokerResult,
+        ToolBrokerTransition, ToolCallAdmission, ToolCallCoordinates, ToolContribution,
     };
     use agentdash_agent_runtime_contract::{
-        RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId, RuntimeItemId,
-        RuntimeThreadId, RuntimeTurnId, ToolChannel, ToolSetRevision,
+        ConfigurationBoundary, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
+        RuntimeItemId, RuntimeThreadId, RuntimeTurnId, ToolChannel, ToolProtocolProjection,
+        ToolSetRevision,
     };
 
     fn id<T: FromStr>(value: &str) -> T
@@ -304,6 +306,29 @@ mod tests {
             invocation_digest: "sha256:invocation".to_string(),
             capability_key: "file_read".to_string(),
             tool_path: "file_read::workspace_read".to_string(),
+            tool: ToolContribution {
+                meta: ContributionMeta {
+                    key: "tool:file_read:workspace_read".to_string(),
+                    source: SurfaceSourceRef {
+                        layer: "agent_frame".to_string(),
+                        key: "test:tool-broker-repository".to_string(),
+                    },
+                    priority: 0,
+                    requirement: ContributionRequirement::Required,
+                },
+                runtime_name: "workspace_read".to_string(),
+                description: "Read a workspace file".to_string(),
+                parameters_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } },
+                    "required": ["path"]
+                }),
+                capability_key: "file_read".to_string(),
+                tool_path: "file_read::workspace_read".to_string(),
+                allowed_channels: [ToolChannel::DirectCallback].into(),
+                configuration_boundary: ConfigurationBoundary::Binding,
+                protocol_projection: ToolProtocolProjection::FsRead,
+            },
             channel: ToolChannel::DirectCallback,
             status: ToolBrokerCallStatus::Accepted,
             effective_arguments: None,

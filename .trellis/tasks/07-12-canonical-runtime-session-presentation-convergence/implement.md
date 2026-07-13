@@ -97,10 +97,10 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] 每个`BackboneEvent`和`PlatformEvent`variant都有owner或明确non-production证明。
-- [ ] 每个生产driver/tool/application producer都映射到fixture。
-- [ ] comparator所有负例按预期失败，不存在payload字段ignore list。
-- [ ] main fixture provenance可重复验证且未修改reference worktree。
+- [x] 每个`BackboneEvent`和`PlatformEvent`variant都有owner或明确non-production证明。
+- [x] 每个生产driver/tool/application producer都映射到fixture。
+- [x] comparator所有负例按预期失败，不存在payload字段ignore list。
+- [x] main fixture provenance可重复验证且未修改reference worktree。
 
 ### Commit
 
@@ -127,11 +127,11 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] `pnpm contracts:check`通过且fresh generation文件树一致。
-- [ ] workspace无旧Codex version pin。
-- [ ] vendor↔owned JSON deep equality覆盖所有纳入root。
-- [ ] dependency graph中Runtime/Application/frontend无vendor crate。
-- [ ] main已有fixture在owned`0.144.1`合同下保持protected body一致。
+- [x] `pnpm contracts:check`通过且fresh generation文件树一致。
+- [x] workspace无旧Codex version pin。
+- [x] vendor↔owned JSON deep equality覆盖所有纳入root。
+- [x] dependency graph中Runtime/Application/frontend无vendor crate。
+- [x] main已有fixture在owned`0.144.1`合同下保持protected body一致。
 
 ### Commit
 

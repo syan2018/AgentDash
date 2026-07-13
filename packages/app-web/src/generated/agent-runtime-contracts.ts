@@ -102,7 +102,7 @@ export type ToolRequestUserInputOption = { description: string, label: string, }
  * ```
  * </details>
  */
-export type ToolRequestUserInputParams = { autoResolutionMs?: number | null, itemId: string, questions: Array<ToolRequestUserInputQuestion>, threadId: string, turnId: string, };
+export type ToolRequestUserInputParams = { autoResolutionMs: number | null, itemId: string, questions: Array<ToolRequestUserInputQuestion>, threadId: string, turnId: string, };
 
 /**
  *EXPERIMENTAL. Represents one request_user_input question and its required options.
@@ -154,7 +154,7 @@ export type ToolRequestUserInputParams = { autoResolutionMs?: number | null, ite
  * ```
  * </details>
  */
-export type ToolRequestUserInputQuestion = { header: string, id: string, isOther: boolean, isSecret: boolean, options?: Array<ToolRequestUserInputOption> | null, question: string, };
+export type ToolRequestUserInputQuestion = { header: string, id: string, isOther: boolean, isSecret: boolean, options: Array<ToolRequestUserInputOption> | null, question: string, };
 
 /**
  *Typed form schema for MCP `elicitation/create` requests.
@@ -746,7 +746,7 @@ export type DynamicToolCallOutputContentItem = { "type": "inputText", text: stri
  * ```
  * </details>
  */
-export type DynamicToolCallParams = { arguments: JsonValue, callId: string, namespace?: string | null, threadId: string, tool: string, turnId: string, };
+export type DynamicToolCallParams = { arguments: JsonValue, callId: string, namespace: string | null, threadId: string, tool: string, turnId: string, };
 
 /**
  *`DynamicToolCallStatus`
@@ -830,11 +830,11 @@ export type FileChangeRequestApprovalParams = {
 /**
  *[UNSTABLE] When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today).
  */
-grantRoot?: string | null, itemId: string,
+grantRoot: string | null, itemId: string,
 /**
  *Optional explanatory reason (e.g. request for extra write access).
  */
-reason?: string | null,
+reason: string | null,
 /**
  *Unix timestamp (in milliseconds) when this approval request started.
  */
@@ -2276,7 +2276,7 @@ export type NetworkPolicyRuleAction = "allow" | "deny";
  * ```
  * </details>
  */
-export type PermissionsRequestApprovalParams = { cwd: AbsolutePathBuf, environmentId?: string | null, itemId: string, permissions: RequestPermissionProfile, reason?: string | null,
+export type PermissionsRequestApprovalParams = { cwd: AbsolutePathBuf, environmentId: string | null, itemId: string, permissions: RequestPermissionProfile, reason: string | null,
 /**
  *Unix timestamp (in milliseconds) when this approval request started.
  */
@@ -2317,7 +2317,7 @@ startedAtMs: number, threadId: string, turnId: string, };
  * ```
  * </details>
  */
-export type RequestPermissionProfile = { fileSystem?: AdditionalFileSystemPermissions | null, network?: AdditionalNetworkPermissions | null, };
+export type RequestPermissionProfile = { fileSystem: AdditionalFileSystemPermissions | null, network: AdditionalNetworkPermissions | null, };
 
 export type ActiveContextHeadView = { checkpoint_id: ContextCheckpointId, revision: ContextRevision, digest: ContextDigest, provenance: ContextProvenance, fidelity: ContextFidelity, };
 

@@ -5169,7 +5169,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "itemId": {
           "type": "string"
@@ -5179,7 +5180,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "startedAtMs": {
           "description": "Unix timestamp (in milliseconds) when this approval request started.",
@@ -5211,7 +5213,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "itemId": {
           "type": "string"
@@ -5223,7 +5226,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "startedAtMs": {
           "description": "Unix timestamp (in milliseconds) when this approval request started.",
@@ -5262,7 +5266,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "network": {
           "anyOf": [
@@ -5272,7 +5277,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         }
       },
       "additionalProperties": false
@@ -5521,7 +5527,8 @@
             "null"
           ],
           "format": "uint64",
-          "minimum": 0
+          "minimum": 0,
+          "default": null
         },
         "itemId": {
           "type": "string"
@@ -5571,7 +5578,8 @@
           ],
           "items": {
             "$ref": "#/$defs/ToolRequestUserInputOption"
-          }
+          },
+          "default": null
         },
         "question": {
           "type": "string"
@@ -6287,7 +6295,8 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "threadId": {
           "type": "string"

@@ -2856,10 +2856,10 @@ pub mod thread_item {
         #[doc = "ReasoningThreadItem"]
         #[serde(rename = "reasoning")]
         Reasoning {
-            #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+            #[serde(default)]
             content: ::std::vec::Vec<::std::string::String>,
             id: ::std::string::String,
-            #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+            #[serde(default)]
             summary: ::std::vec::Vec<::std::string::String>,
         },
         #[doc = "CommandExecutionThreadItem"]
@@ -3191,7 +3191,7 @@ pub mod thread_item {
         Text {
             text: ::std::string::String,
             #[doc = "UI-defined spans within `text` used to render or persist special elements."]
-            #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+            #[serde(default)]
             text_elements: ::std::vec::Vec<TextElement>,
         },
         #[doc = "ImageUserInput"]
@@ -4245,11 +4245,7 @@ pub mod server_notification {
         )]
         pub logo_url_dark: ::std::option::Option<::std::string::String>,
         pub name: ::std::string::String,
-        #[serde(
-            rename = "pluginDisplayNames",
-            default,
-            skip_serializing_if = "::std::vec::Vec::is_empty"
-        )]
+        #[serde(rename = "pluginDisplayNames", default)]
         pub plugin_display_names: ::std::vec::Vec<::std::string::String>,
     }
     #[doc = "EXPERIMENTAL - notification emitted when the app list changes."]
@@ -13188,11 +13184,7 @@ pub mod server_notification {
             exclude_tmpdir_env_var: bool,
             #[serde(rename = "networkAccess", default)]
             network_access: bool,
-            #[serde(
-                rename = "writableRoots",
-                default,
-                skip_serializing_if = "::std::vec::Vec::is_empty"
-            )]
+            #[serde(rename = "writableRoots", default)]
             writable_roots: ::std::vec::Vec<AbsolutePathBuf>,
         },
     }
@@ -17413,11 +17405,7 @@ pub mod server_notification {
         #[doc = "UserMessageThreadItem"]
         #[serde(rename = "userMessage")]
         UserMessage {
-            #[serde(
-                rename = "clientId",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "clientId", default)]
             client_id: ::std::option::Option<::std::string::String>,
             content: ::std::vec::Vec<UserInput>,
             id: ::std::string::String,
@@ -17432,13 +17420,9 @@ pub mod server_notification {
         #[serde(rename = "agentMessage")]
         AgentMessage {
             id: ::std::string::String,
-            #[serde(
-                rename = "memoryCitation",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "memoryCitation", default)]
             memory_citation: ::std::option::Option<MemoryCitation>,
-            #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+            #[serde(default)]
             phase: ::std::option::Option<MessagePhase>,
             text: ::std::string::String,
         },
@@ -17451,21 +17435,17 @@ pub mod server_notification {
         #[doc = "ReasoningThreadItem"]
         #[serde(rename = "reasoning")]
         Reasoning {
-            #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+            #[serde(default)]
             content: ::std::vec::Vec<::std::string::String>,
             id: ::std::string::String,
-            #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+            #[serde(default)]
             summary: ::std::vec::Vec<::std::string::String>,
         },
         #[doc = "CommandExecutionThreadItem"]
         #[serde(rename = "commandExecution")]
         CommandExecution {
             #[doc = "The command's output, aggregated from stdout and stderr."]
-            #[serde(
-                rename = "aggregatedOutput",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "aggregatedOutput", default)]
             aggregated_output: ::std::option::Option<::std::string::String>,
             #[doc = "The command to be executed."]
             command: ::std::string::String,
@@ -17475,27 +17455,15 @@ pub mod server_notification {
             #[doc = "The command's working directory."]
             cwd: LegacyAppPathString,
             #[doc = "The duration of the command execution in milliseconds."]
-            #[serde(
-                rename = "durationMs",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "durationMs", default)]
             #[ts(type = "number | null")]
             duration_ms: ::std::option::Option<i64>,
             #[doc = "The command's exit code."]
-            #[serde(
-                rename = "exitCode",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "exitCode", default)]
             exit_code: ::std::option::Option<i32>,
             id: ::std::string::String,
             #[doc = "Identifier for the underlying PTY process (when available)."]
-            #[serde(
-                rename = "processId",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "processId", default)]
             process_id: ::std::option::Option<::std::string::String>,
             #[serde(default = "defaults::thread_item_command_execution_source")]
             source: CommandExecutionSource,
@@ -17511,38 +17479,22 @@ pub mod server_notification {
         #[doc = "McpToolCallThreadItem"]
         #[serde(rename = "mcpToolCall")]
         McpToolCall {
-            #[serde(
-                rename = "appContext",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "appContext", default)]
             app_context: ::std::option::Option<McpToolCallAppContext>,
             arguments: ::serde_json::Value,
             #[doc = "The duration of the MCP tool call in milliseconds."]
-            #[serde(
-                rename = "durationMs",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "durationMs", default)]
             #[ts(type = "number | null")]
             duration_ms: ::std::option::Option<i64>,
-            #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+            #[serde(default)]
             error: ::std::option::Option<McpToolCallError>,
             id: ::std::string::String,
             #[doc = "Deprecated: use `appContext.resourceUri` instead."]
-            #[serde(
-                rename = "mcpAppResourceUri",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "mcpAppResourceUri", default)]
             mcp_app_resource_uri: ::std::option::Option<::std::string::String>,
-            #[serde(
-                rename = "pluginId",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "pluginId", default)]
             plugin_id: ::std::option::Option<::std::string::String>,
-            #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+            #[serde(default)]
             result: ::std::option::Option<McpToolCallResult>,
             server: ::std::string::String,
             status: McpToolCallStatus,
@@ -17552,25 +17504,17 @@ pub mod server_notification {
         #[serde(rename = "dynamicToolCall")]
         DynamicToolCall {
             arguments: ::serde_json::Value,
-            #[serde(
-                rename = "contentItems",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "contentItems", default)]
             content_items: ::std::option::Option<::std::vec::Vec<DynamicToolCallOutputContentItem>>,
             #[doc = "The duration of the dynamic tool call in milliseconds."]
-            #[serde(
-                rename = "durationMs",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "durationMs", default)]
             #[ts(type = "number | null")]
             duration_ms: ::std::option::Option<i64>,
             id: ::std::string::String,
-            #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+            #[serde(default)]
             namespace: ::std::option::Option<::std::string::String>,
             status: DynamicToolCallStatus,
-            #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+            #[serde(default)]
             success: ::std::option::Option<bool>,
             tool: ::std::string::String,
         },
@@ -17583,17 +17527,13 @@ pub mod server_notification {
             #[doc = "Unique identifier for this collab tool call."]
             id: ::std::string::String,
             #[doc = "Model requested for the spawned agent, when applicable."]
-            #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+            #[serde(default)]
             model: ::std::option::Option<::std::string::String>,
             #[doc = "Prompt text sent as part of the collab tool call, when available."]
-            #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+            #[serde(default)]
             prompt: ::std::option::Option<::std::string::String>,
             #[doc = "Reasoning effort requested for the spawned agent, when applicable."]
-            #[serde(
-                rename = "reasoningEffort",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "reasoningEffort", default)]
             reasoning_effort: ::std::option::Option<ReasoningEffort>,
             #[doc = "Thread ID of the receiving agent, when applicable. In case of spawn operation, this corresponds to the newly spawned agent."]
             #[serde(rename = "receiverThreadIds")]
@@ -17619,7 +17559,7 @@ pub mod server_notification {
         #[doc = "WebSearchThreadItem"]
         #[serde(rename = "webSearch")]
         WebSearch {
-            #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+            #[serde(default)]
             action: ::std::option::Option<WebSearchAction>,
             id: ::std::string::String,
             query: ::std::string::String,
@@ -17643,17 +17583,9 @@ pub mod server_notification {
         ImageGeneration {
             id: ::std::string::String,
             result: ::std::string::String,
-            #[serde(
-                rename = "revisedPrompt",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "revisedPrompt", default)]
             revised_prompt: ::std::option::Option<::std::string::String>,
-            #[serde(
-                rename = "savedPath",
-                default,
-                skip_serializing_if = "::std::option::Option::is_none"
-            )]
+            #[serde(rename = "savedPath", default)]
             saved_path: ::std::option::Option<AbsolutePathBuf>,
             status: ::std::string::String,
         },
@@ -19632,7 +19564,7 @@ pub mod server_notification {
         Text {
             text: ::std::string::String,
             #[doc = "UI-defined spans within `text` used to render or persist special elements."]
-            #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+            #[serde(default)]
             text_elements: ::std::vec::Vec<TextElement>,
         },
         #[doc = "ImageUserInput"]
@@ -21600,16 +21532,12 @@ pub mod file_change_request_approval_params {
     )]
     pub struct FileChangeRequestApprovalParams {
         #[doc = "[UNSTABLE] When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today)."]
-        #[serde(
-            rename = "grantRoot",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
+        #[serde(rename = "grantRoot", default)]
         pub grant_root: ::std::option::Option<::std::string::String>,
         #[serde(rename = "itemId")]
         pub item_id: ::std::string::String,
         #[doc = "Optional explanatory reason (e.g. request for extra write access)."]
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        #[serde(default)]
         pub reason: ::std::option::Option<::std::string::String>,
         #[doc = "Unix timestamp (in milliseconds) when this approval request started."]
         #[serde(rename = "startedAtMs")]
@@ -22333,16 +22261,12 @@ pub mod permissions_request_approval_params {
     )]
     pub struct PermissionsRequestApprovalParams {
         pub cwd: AbsolutePathBuf,
-        #[serde(
-            rename = "environmentId",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
+        #[serde(rename = "environmentId", default)]
         pub environment_id: ::std::option::Option<::std::string::String>,
         #[serde(rename = "itemId")]
         pub item_id: ::std::string::String,
         pub permissions: RequestPermissionProfile,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        #[serde(default)]
         pub reason: ::std::option::Option<::std::string::String>,
         #[doc = "Unix timestamp (in milliseconds) when this approval request started."]
         #[serde(rename = "startedAtMs")]
@@ -22397,13 +22321,9 @@ pub mod permissions_request_approval_params {
     )]
     #[serde(deny_unknown_fields)]
     pub struct RequestPermissionProfile {
-        #[serde(
-            rename = "fileSystem",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
+        #[serde(rename = "fileSystem", default)]
         pub file_system: ::std::option::Option<AdditionalFileSystemPermissions>,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        #[serde(default)]
         pub network: ::std::option::Option<AdditionalNetworkPermissions>,
     }
     impl ::std::default::Default for RequestPermissionProfile {
@@ -22537,11 +22457,7 @@ pub mod tool_request_user_input_params {
         PartialEq,
     )]
     pub struct ToolRequestUserInputParams {
-        #[serde(
-            rename = "autoResolutionMs",
-            default,
-            skip_serializing_if = "::std::option::Option::is_none"
-        )]
+        #[serde(rename = "autoResolutionMs", default)]
         #[ts(type = "number | null")]
         pub auto_resolution_ms: ::std::option::Option<u64>,
         #[serde(rename = "itemId")]
@@ -22616,7 +22532,7 @@ pub mod tool_request_user_input_params {
         pub is_other: bool,
         #[serde(rename = "isSecret", default)]
         pub is_secret: bool,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        #[serde(default)]
         pub options: ::std::option::Option<::std::vec::Vec<ToolRequestUserInputOption>>,
         pub question: ::std::string::String,
     }
@@ -22704,7 +22620,7 @@ pub mod dynamic_tool_call_params {
         pub arguments: ::serde_json::Value,
         #[serde(rename = "callId")]
         pub call_id: ::std::string::String,
-        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        #[serde(default)]
         pub namespace: ::std::option::Option<::std::string::String>,
         #[serde(rename = "threadId")]
         pub thread_id: ::std::string::String,

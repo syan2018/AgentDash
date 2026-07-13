@@ -125,7 +125,7 @@ write?: Array<LegacyAppPathString> | null, };
  */
 export type AdditionalNetworkPermissions = { enabled?: boolean | null, };
 
-export type AgentDashNativeThreadItem = { "type": "vfs", id: string, operation: string, resourceUri: string | null, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "runtimeAction", id: string, actionKey: string, targetRef: string | null, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "workspaceModule", id: string, operation: string, resourceUri: string | null, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "companion", id: string, operation: string, agentId: string | null, taskId: string | null, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "task", id: string, operation: string, taskId: string | null, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "wait", id: string, durationMs: bigint | null, pollIntervalMs: bigint | null, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "lifecycleComplete", id: string, nodeId: string | null, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "shellExec", id: string, command: string, cwd: string | null, executionMode: ShellExecExecutionMode, arguments: JsonValue, status: DynamicToolCallStatus, aggregatedOutput: string | null, exitCode: number | null, success: boolean | null, } | { "type": "terminalControl", id: string, operation: string, terminalId: string, arguments: JsonValue, input: string | null, cols: number | null, rows: number | null, state: string | null, aggregatedOutput: string | null, exitCode: number | null, status: DynamicToolCallStatus, success: boolean | null, } | { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
+export type AgentDashNativeThreadItem = { "type": "shellExec", id: string, command: string, cwd: string | null, executionMode: ShellExecExecutionMode, arguments: JsonValue, status: DynamicToolCallStatus, aggregatedOutput: string | null, exitCode: number | null, success: boolean | null, } | { "type": "terminalControl", id: string, operation: string, terminalId: string, arguments: JsonValue, input: string | null, cols: number | null, rows: number | null, state: string | null, aggregatedOutput: string | null, exitCode: number | null, status: DynamicToolCallStatus, success: boolean | null, } | { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
 
 export type AgentDashThreadItem = ThreadItem | AgentDashNativeThreadItem;
 
@@ -173,6 +173,24 @@ export type AgentMessageDeltaNotification = { delta: string, itemId: string, thr
 export type ApprovalRequest = { "kind": "command_execution", "data": { request_id: RequestId, params: CommandExecutionRequestApprovalParams, } } | { "kind": "file_change", "data": { request_id: RequestId, params: FileChangeRequestApprovalParams, } } | { "kind": "tool_user_input", "data": { request_id: RequestId, params: ToolRequestUserInputParams, } } | { "kind": "permissions_approval", "data": { request_id: RequestId, params: PermissionsRequestApprovalParams, } };
 
 /**
+ *[UNSTABLE] Source that produced a terminal approval auto-review decision.
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "description": "[UNSTABLE] Source that produced a terminal approval auto-review decision.",
+ *  "type": "string",
+ *  "enum": [
+ *    "agent"
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type AutoReviewDecisionSource = "agent";
+
+/**
  * 平台 envelope — 包裹每条 BackboneEvent，取代原 AgentDashMetaV1 的 source/trace 注入角色。
  */
 export type BackboneEnvelope = { event: BackboneEvent, sessionId: string, source: SourceInfo, trace: TraceInfo, observedAt: string, };
@@ -185,7 +203,7 @@ export type BackboneEnvelope = { event: BackboneEvent, sessionId: string, source
  * 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
  * `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
  */
-export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_updated", "payload": ItemUpdatedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "user_input_submitted", "payload": UserInputSubmittedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
+export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_updated", "payload": ItemUpdatedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "auto_approval_review_started", "payload": ItemGuardianApprovalReviewStartedNotification } | { "type": "auto_approval_review_completed", "payload": ItemGuardianApprovalReviewCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "terminal_interaction", "payload": TerminalInteractionNotification } | { "type": "file_change_patch_updated", "payload": FileChangePatchUpdatedNotification } | { "type": "server_request_resolved", "payload": ServerRequestResolvedNotification } | { "type": "turn_started", "payload": TurnStartedNotification } | { "type": "turn_completed", "payload": TurnCompletedNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "user_input_submitted", "payload": UserInputSubmittedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "reasoning_summary_part_added", "payload": ReasoningSummaryPartAddedNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "thread_status_changed", "payload": ThreadStatusChangedNotification } | { "type": "executor_context_compacted", "payload": ContextCompactedNotification } | { "type": "model_rerouted", "payload": ModelReroutedNotification } | { "type": "model_verification", "payload": ModelVerificationNotification } | { "type": "turn_moderation_metadata", "payload": TurnModerationMetadataNotification } | { "type": "model_safety_buffering_updated", "payload": ModelSafetyBufferingUpdatedNotification } | { "type": "warning", "payload": WarningNotification } | { "type": "guardian_warning", "payload": GuardianWarningNotification } | { "type": "deprecation_notice", "payload": DeprecationNoticeNotification } | { "type": "config_warning", "payload": ConfigWarningNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
 
 /**
  *`ByteRange`
@@ -884,15 +902,165 @@ export type CommandExecutionSource = "agent" | "userShell" | "unifiedExecStartup
  */
 export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "declined";
 
+/**
+ *`ConfigWarningNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ConfigWarningNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "summary"
+ *  ],
+ *  "properties": {
+ *    "details": {
+ *      "description": "Optional extra guidance or error details.",
+ *      "oneOf": [
+ *        {
+ *          "description": "Optional extra guidance or error details.",
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "path": {
+ *      "description": "Optional path to the config file that triggered the warning.",
+ *      "oneOf": [
+ *        {
+ *          "description": "Optional path to the config file that triggered the warning.",
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "range": {
+ *      "description": "Optional range for the error location inside the config file.",
+ *      "anyOf": [
+ *        {
+ *          "$ref": "#/definitions/TextRange"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "summary": {
+ *      "description": "Concise summary of the warning.",
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ConfigWarningNotification = {
+/**
+ *Optional extra guidance or error details.
+ */
+details?: string | null,
+/**
+ *Optional path to the config file that triggered the warning.
+ */
+path?: string | null,
+/**
+ *Optional range for the error location inside the config file.
+ */
+range?: TextRange | null,
+/**
+ *Concise summary of the warning.
+ */
+summary: string, };
+
+/**
+ *Deprecated: Use `ContextCompaction` item type instead.
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ContextCompactedNotification",
+ *  "description": "Deprecated: Use `ContextCompaction` item type instead.",
+ *  "type": "object",
+ *  "required": [
+ *    "threadId",
+ *    "turnId"
+ *  ],
+ *  "properties": {
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ContextCompactedNotification = { threadId: string, turnId: string, };
+
 export type ContextUsageSource = "provider" | "providerPlusEstimate" | "localEstimate";
 
 export type ControlPlaneProjection = "workspace" | "agent_run_list" | "mailbox" | "waiting" | "delivery" | "hook_runtime" | "resource_surface" | "title";
 
 export type ControlPlaneProjectionChangeReason = "agent_run_lineage_changed" | "agent_run_shell_changed" | "agent_run_activity_changed" | "mailbox_state_changed" | "wait_resolved" | "delivery_terminal" | "companion_result" | "hook_effect_applied" | "hook_auto_resume_queued" | "workspace_module_presented" | "capability_state_changed" | "context_frame_changed" | "title_changed";
 
-export type ControlPlaneProjectionChanged = { projection: ControlPlaneProjection, reason: ControlPlaneProjectionChangeReason, run_id: string, agent_id: string, frame_id: string | null, gate_id: string | null, mailbox_message_id: string | null, workspace_module_presentation: ControlPlaneWorkspaceModulePresentation | null, };
+export type ControlPlaneProjectionChanged = { projection: ControlPlaneProjection, reason: ControlPlaneProjectionChangeReason, run_id: string, agent_id: string, frame_id: string | null, gate_id: string | null, mailbox_message_id: string | null, delivery_runtime_session_id: string | null, workspace_module_presentation: ControlPlaneWorkspaceModulePresentation | null, };
 
 export type ControlPlaneWorkspaceModulePresentation = { module_id: string, view_key: string, renderer_kind: string, presentation_uri: string, title: string, payload: JsonValue | null, diagnostics: JsonValue | null, };
+
+/**
+ *`DeprecationNoticeNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "DeprecationNoticeNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "summary"
+ *  ],
+ *  "properties": {
+ *    "details": {
+ *      "description": "Optional extra guidance, such as migration steps or rationale.",
+ *      "oneOf": [
+ *        {
+ *          "description": "Optional extra guidance, such as migration steps or rationale.",
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "summary": {
+ *      "description": "Concise summary of what is deprecated.",
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type DeprecationNoticeNotification = {
+/**
+ *Optional extra guidance, such as migration steps or rationale.
+ */
+details?: string | null,
+/**
+ *Concise summary of what is deprecated.
+ */
+summary: string, };
 
 /**
  *`DynamicToolCallOutputContentItem`
@@ -1044,6 +1212,45 @@ The server no longer emits this notification.
 export type FileChangeOutputDeltaNotification = { delta: string, itemId: string, threadId: string, turnId: string, };
 
 /**
+ *`FileChangePatchUpdatedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "FileChangePatchUpdatedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "changes",
+ *    "itemId",
+ *    "threadId",
+ *    "turnId"
+ *  ],
+ *  "properties": {
+ *    "changes": {
+ *      "type": "array",
+ *      "items": {
+ *        "$ref": "#/definitions/FileUpdateChange"
+ *      }
+ *    },
+ *    "itemId": {
+ *      "type": "string"
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type FileChangePatchUpdatedNotification = { changes: Array<FileUpdateChange>, itemId: string, threadId: string, turnId: string, };
+
+/**
  *`FileChangeRequestApprovalParams`
  *
  * <details><summary>JSON schema</summary>
@@ -1106,11 +1313,11 @@ export type FileChangeRequestApprovalParams = {
 /**
  *[UNSTABLE] When set, the agent is asking the user to allow writes under this root for the remainder of the session (unclear if this is honored today).
  */
-grantRoot?: string | null, itemId: string,
+grantRoot: string | null, itemId: string,
 /**
  *Optional explanatory reason (e.g. request for extra write access).
  */
-reason?: string | null,
+reason: string | null,
 /**
  *Unix timestamp (in milliseconds) when this approval request started.
  */
@@ -1395,6 +1602,402 @@ export type FileSystemSpecialPath = { "kind": "root" } | { "kind": "minimal" } |
 export type FileUpdateChange = { diff: string, kind: PatchChangeKind, path: string, };
 
 /**
+ *[UNSTABLE] Temporary approval auto-review payload used by `item/autoApprovalReview/*` notifications. This shape is expected to change soon.
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "description": "[UNSTABLE] Temporary approval auto-review payload used by `item/autoApprovalReview/*` notifications. This shape is expected to change soon.",
+ *  "type": "object",
+ *  "required": [
+ *    "status"
+ *  ],
+ *  "properties": {
+ *    "rationale": {
+ *      "oneOf": [
+ *        {
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "riskLevel": {
+ *      "anyOf": [
+ *        {
+ *          "$ref": "#/definitions/GuardianRiskLevel"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "status": {
+ *      "$ref": "#/definitions/GuardianApprovalReviewStatus"
+ *    },
+ *    "userAuthorization": {
+ *      "anyOf": [
+ *        {
+ *          "$ref": "#/definitions/GuardianUserAuthorization"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    }
+ *  }
+ *}
+ * ```
+ * </details>
+ */
+export type GuardianApprovalReview = { rationale?: string | null, riskLevel?: GuardianRiskLevel | null, status: GuardianApprovalReviewStatus, userAuthorization?: GuardianUserAuthorization | null, };
+
+/**
+ *`GuardianApprovalReviewAction`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "oneOf": [
+ *    {
+ *      "title": "CommandGuardianApprovalReviewAction",
+ *      "type": "object",
+ *      "required": [
+ *        "command",
+ *        "cwd",
+ *        "source",
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "command": {
+ *          "type": "string"
+ *        },
+ *        "cwd": {
+ *          "$ref": "#/definitions/AbsolutePathBuf"
+ *        },
+ *        "source": {
+ *          "$ref": "#/definitions/GuardianCommandSource"
+ *        },
+ *        "type": {
+ *          "title": "CommandGuardianApprovalReviewActionType",
+ *          "type": "string",
+ *          "enum": [
+ *            "command"
+ *          ]
+ *        }
+ *      }
+ *    },
+ *    {
+ *      "title": "ExecveGuardianApprovalReviewAction",
+ *      "type": "object",
+ *      "required": [
+ *        "argv",
+ *        "cwd",
+ *        "program",
+ *        "source",
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "argv": {
+ *          "type": "array",
+ *          "items": {
+ *            "type": "string"
+ *          }
+ *        },
+ *        "cwd": {
+ *          "$ref": "#/definitions/AbsolutePathBuf"
+ *        },
+ *        "program": {
+ *          "type": "string"
+ *        },
+ *        "source": {
+ *          "$ref": "#/definitions/GuardianCommandSource"
+ *        },
+ *        "type": {
+ *          "title": "ExecveGuardianApprovalReviewActionType",
+ *          "type": "string",
+ *          "enum": [
+ *            "execve"
+ *          ]
+ *        }
+ *      }
+ *    },
+ *    {
+ *      "title": "ApplyPatchGuardianApprovalReviewAction",
+ *      "type": "object",
+ *      "required": [
+ *        "cwd",
+ *        "files",
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "cwd": {
+ *          "$ref": "#/definitions/AbsolutePathBuf"
+ *        },
+ *        "files": {
+ *          "type": "array",
+ *          "items": {
+ *            "$ref": "#/definitions/AbsolutePathBuf"
+ *          }
+ *        },
+ *        "type": {
+ *          "title": "ApplyPatchGuardianApprovalReviewActionType",
+ *          "type": "string",
+ *          "enum": [
+ *            "applyPatch"
+ *          ]
+ *        }
+ *      }
+ *    },
+ *    {
+ *      "title": "NetworkAccessGuardianApprovalReviewAction",
+ *      "type": "object",
+ *      "required": [
+ *        "host",
+ *        "port",
+ *        "protocol",
+ *        "target",
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "host": {
+ *          "type": "string"
+ *        },
+ *        "port": {
+ *          "type": "integer",
+ *          "format": "uint16",
+ *          "minimum": 0.0
+ *        },
+ *        "protocol": {
+ *          "$ref": "#/definitions/NetworkApprovalProtocol"
+ *        },
+ *        "target": {
+ *          "type": "string"
+ *        },
+ *        "type": {
+ *          "title": "NetworkAccessGuardianApprovalReviewActionType",
+ *          "type": "string",
+ *          "enum": [
+ *            "networkAccess"
+ *          ]
+ *        }
+ *      }
+ *    },
+ *    {
+ *      "title": "McpToolCallGuardianApprovalReviewAction",
+ *      "type": "object",
+ *      "required": [
+ *        "server",
+ *        "toolName",
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "connectorId": {
+ *          "oneOf": [
+ *            {
+ *              "type": "string"
+ *            },
+ *            {
+ *              "type": "null"
+ *            }
+ *          ]
+ *        },
+ *        "connectorName": {
+ *          "oneOf": [
+ *            {
+ *              "type": "string"
+ *            },
+ *            {
+ *              "type": "null"
+ *            }
+ *          ]
+ *        },
+ *        "server": {
+ *          "type": "string"
+ *        },
+ *        "toolName": {
+ *          "type": "string"
+ *        },
+ *        "toolTitle": {
+ *          "oneOf": [
+ *            {
+ *              "type": "string"
+ *            },
+ *            {
+ *              "type": "null"
+ *            }
+ *          ]
+ *        },
+ *        "type": {
+ *          "title": "McpToolCallGuardianApprovalReviewActionType",
+ *          "type": "string",
+ *          "enum": [
+ *            "mcpToolCall"
+ *          ]
+ *        }
+ *      }
+ *    },
+ *    {
+ *      "title": "RequestPermissionsGuardianApprovalReviewAction",
+ *      "type": "object",
+ *      "required": [
+ *        "permissions",
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "permissions": {
+ *          "$ref": "#/definitions/RequestPermissionProfile"
+ *        },
+ *        "reason": {
+ *          "oneOf": [
+ *            {
+ *              "type": "string"
+ *            },
+ *            {
+ *              "type": "null"
+ *            }
+ *          ]
+ *        },
+ *        "type": {
+ *          "title": "RequestPermissionsGuardianApprovalReviewActionType",
+ *          "type": "string",
+ *          "enum": [
+ *            "requestPermissions"
+ *          ]
+ *        }
+ *      }
+ *    }
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type GuardianApprovalReviewAction = { "type": "command", command: string, cwd: AbsolutePathBuf, source: GuardianCommandSource, } | { "type": "execve", argv: Array<string>, cwd: AbsolutePathBuf, program: string, source: GuardianCommandSource, } | { "type": "applyPatch", cwd: AbsolutePathBuf, files: Array<AbsolutePathBuf>, } | { "type": "networkAccess", host: string, port: number, protocol: NetworkApprovalProtocol, target: string, } | { "type": "mcpToolCall", connectorId?: string | null, connectorName?: string | null, server: string, toolName: string, toolTitle?: string | null, } | { "type": "requestPermissions", permissions: ServerNotificationRequestPermissionProfile, reason?: string | null, };
+
+/**
+ *[UNSTABLE] Lifecycle state for an approval auto-review.
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "description": "[UNSTABLE] Lifecycle state for an approval auto-review.",
+ *  "type": "string",
+ *  "enum": [
+ *    "inProgress",
+ *    "approved",
+ *    "denied",
+ *    "timedOut",
+ *    "aborted"
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type GuardianApprovalReviewStatus = "inProgress" | "approved" | "denied" | "timedOut" | "aborted";
+
+/**
+ *`GuardianCommandSource`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "type": "string",
+ *  "enum": [
+ *    "shell",
+ *    "unifiedExec"
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type GuardianCommandSource = "shell" | "unifiedExec";
+
+/**
+ *[UNSTABLE] Risk level assigned by approval auto-review.
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "description": "[UNSTABLE] Risk level assigned by approval auto-review.",
+ *  "type": "string",
+ *  "enum": [
+ *    "low",
+ *    "medium",
+ *    "high",
+ *    "critical"
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type GuardianRiskLevel = "low" | "medium" | "high" | "critical";
+
+/**
+ *[UNSTABLE] Authorization level assigned by approval auto-review.
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "description": "[UNSTABLE] Authorization level assigned by approval auto-review.",
+ *  "type": "string",
+ *  "enum": [
+ *    "unknown",
+ *    "low",
+ *    "medium",
+ *    "high"
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type GuardianUserAuthorization = "unknown" | "low" | "medium" | "high";
+
+/**
+ *`GuardianWarningNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "GuardianWarningNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "message",
+ *    "threadId"
+ *  ],
+ *  "properties": {
+ *    "message": {
+ *      "description": "Concise guardian warning message for the user.",
+ *      "type": "string"
+ *    },
+ *    "threadId": {
+ *      "description": "Thread target for the guardian warning.",
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type GuardianWarningNotification = {
+/**
+ *Concise guardian warning message for the user.
+ */
+message: string,
+/**
+ *Thread target for the guardian warning.
+ */
+threadId: string, };
+
+/**
  *`HookPromptFragment`
  *
  * <details><summary>JSON schema</summary>
@@ -1461,6 +2064,168 @@ export type HookTraceTrigger = "session_start" | "user_prompt_submit" | "before_
 export type ImageDetail = "auto" | "low" | "high" | "original";
 
 export type ItemCompletedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, completedAtMs: number, };
+
+/**
+ *[UNSTABLE] Temporary notification payload for approval auto-review. This shape is expected to change soon.
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ItemGuardianApprovalReviewCompletedNotification",
+ *  "description": "[UNSTABLE] Temporary notification payload for approval auto-review. This shape is expected to change soon.",
+ *  "type": "object",
+ *  "required": [
+ *    "action",
+ *    "completedAtMs",
+ *    "decisionSource",
+ *    "review",
+ *    "reviewId",
+ *    "startedAtMs",
+ *    "threadId",
+ *    "turnId"
+ *  ],
+ *  "properties": {
+ *    "action": {
+ *      "$ref": "#/definitions/GuardianApprovalReviewAction"
+ *    },
+ *    "completedAtMs": {
+ *      "description": "Unix timestamp (in milliseconds) when this review completed.",
+ *      "type": "integer",
+ *      "format": "int64"
+ *    },
+ *    "decisionSource": {
+ *      "$ref": "#/definitions/AutoReviewDecisionSource"
+ *    },
+ *    "review": {
+ *      "$ref": "#/definitions/GuardianApprovalReview"
+ *    },
+ *    "reviewId": {
+ *      "description": "Stable identifier for this review.",
+ *      "type": "string"
+ *    },
+ *    "startedAtMs": {
+ *      "description": "Unix timestamp (in milliseconds) when this review started.",
+ *      "type": "integer",
+ *      "format": "int64"
+ *    },
+ *    "targetItemId": {
+ *      "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
+ *      "oneOf": [
+ *        {
+ *          "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ItemGuardianApprovalReviewCompletedNotification = { action: GuardianApprovalReviewAction,
+/**
+ *Unix timestamp (in milliseconds) when this review completed.
+ */
+completedAtMs: number, decisionSource: AutoReviewDecisionSource, review: GuardianApprovalReview,
+/**
+ *Stable identifier for this review.
+ */
+reviewId: string,
+/**
+ *Unix timestamp (in milliseconds) when this review started.
+ */
+startedAtMs: number,
+/**Identifier for the reviewed item or tool call when one exists.
+
+In most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item
+
+A network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.*/
+targetItemId?: string | null, threadId: string, turnId: string, };
+
+/**
+ *[UNSTABLE] Temporary notification payload for approval auto-review. This shape is expected to change soon.
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ItemGuardianApprovalReviewStartedNotification",
+ *  "description": "[UNSTABLE] Temporary notification payload for approval auto-review. This shape is expected to change soon.",
+ *  "type": "object",
+ *  "required": [
+ *    "action",
+ *    "review",
+ *    "reviewId",
+ *    "startedAtMs",
+ *    "threadId",
+ *    "turnId"
+ *  ],
+ *  "properties": {
+ *    "action": {
+ *      "$ref": "#/definitions/GuardianApprovalReviewAction"
+ *    },
+ *    "review": {
+ *      "$ref": "#/definitions/GuardianApprovalReview"
+ *    },
+ *    "reviewId": {
+ *      "description": "Stable identifier for this review.",
+ *      "type": "string"
+ *    },
+ *    "startedAtMs": {
+ *      "description": "Unix timestamp (in milliseconds) when this review started.",
+ *      "type": "integer",
+ *      "format": "int64"
+ *    },
+ *    "targetItemId": {
+ *      "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
+ *      "oneOf": [
+ *        {
+ *          "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ItemGuardianApprovalReviewStartedNotification = { action: GuardianApprovalReviewAction, review: GuardianApprovalReview,
+/**
+ *Stable identifier for this review.
+ */
+reviewId: string,
+/**
+ *Unix timestamp (in milliseconds) when this review started.
+ */
+startedAtMs: number,
+/**Identifier for the reviewed item or tool call when one exists.
+
+In most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item
+
+A network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.*/
+targetItemId?: string | null, threadId: string, turnId: string, };
 
 export type ItemStartedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, startedAtMs: number, };
 
@@ -1757,6 +2522,175 @@ Providers do not emit this consistently, so callers must treat `None` as "phase 
 export type MessagePhase = "commentary" | "final_answer";
 
 /**
+ *`ModelRerouteReason`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "type": "string",
+ *  "enum": [
+ *    "highRiskCyberActivity"
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type ModelRerouteReason = "highRiskCyberActivity";
+
+/**
+ *`ModelReroutedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ModelReroutedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "fromModel",
+ *    "reason",
+ *    "threadId",
+ *    "toModel",
+ *    "turnId"
+ *  ],
+ *  "properties": {
+ *    "fromModel": {
+ *      "type": "string"
+ *    },
+ *    "reason": {
+ *      "$ref": "#/definitions/ModelRerouteReason"
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "toModel": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ModelReroutedNotification = { fromModel: string, reason: ModelRerouteReason, threadId: string, toModel: string, turnId: string, };
+
+/**
+ *`ModelSafetyBufferingUpdatedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ModelSafetyBufferingUpdatedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "model",
+ *    "reasons",
+ *    "showBufferingUi",
+ *    "threadId",
+ *    "turnId",
+ *    "useCases"
+ *  ],
+ *  "properties": {
+ *    "fasterModel": {
+ *      "oneOf": [
+ *        {
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "model": {
+ *      "type": "string"
+ *    },
+ *    "reasons": {
+ *      "type": "array",
+ *      "items": {
+ *        "type": "string"
+ *      }
+ *    },
+ *    "showBufferingUi": {
+ *      "type": "boolean"
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    },
+ *    "useCases": {
+ *      "type": "array",
+ *      "items": {
+ *        "type": "string"
+ *      }
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ModelSafetyBufferingUpdatedNotification = { fasterModel?: string | null, model: string, reasons: Array<string>, showBufferingUi: boolean, threadId: string, turnId: string, useCases: Array<string>, };
+
+/**
+ *`ModelVerification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "type": "string",
+ *  "enum": [
+ *    "trustedAccessForCyber"
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type ModelVerification = "trustedAccessForCyber";
+
+/**
+ *`ModelVerificationNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ModelVerificationNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "threadId",
+ *    "turnId",
+ *    "verifications"
+ *  ],
+ *  "properties": {
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    },
+ *    "verifications": {
+ *      "type": "array",
+ *      "items": {
+ *        "$ref": "#/definitions/ModelVerification"
+ *      }
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ModelVerificationNotification = { threadId: string, turnId: string, verifications: Array<ModelVerification>, };
+
+/**
  *`NetworkApprovalContext`
  *
  * <details><summary>JSON schema</summary>
@@ -2024,7 +2958,7 @@ export type PatchChangeKind = { "type": "add" } | { "type": "delete" } | { "type
  * ```
  * </details>
  */
-export type PermissionsRequestApprovalParams = { cwd: AbsolutePathBuf, environmentId?: string | null, itemId: string, permissions: RequestPermissionProfile, reason?: string | null,
+export type PermissionsRequestApprovalParams = { cwd: AbsolutePathBuf, environmentId: string | null, itemId: string, permissions: RequestPermissionProfile, reason: string | null,
 /**
  *Unix timestamp (in milliseconds) when this approval request started.
  */
@@ -2070,7 +3004,11 @@ export type PlanDeltaNotification = { delta: string, itemId: string, threadId: s
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
+export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "provider_attempt_status", "data": ProviderAttemptStatus } | { "kind": "runtime_terminal_diagnostic", "data": RuntimeTerminalDiagnostic } | { "kind": "session_rewound", "data": SessionRewound } | { "kind": "control_plane_projection_changed", "data": ControlPlaneProjectionChanged } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "pty_terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
+
+export type ProviderAttemptPhase = "connecting" | "connected_waiting_first_delta" | "streaming" | "retry_scheduled" | "retrying" | "failed" | "succeeded";
+
+export type ProviderAttemptStatus = { turn_id: string, phase: ProviderAttemptPhase, attempt: number, max_attempts: number, will_retry: boolean, delay_ms: bigint | null, reason_code: string | null, message: string | null, provider: string | null, model: string | null, };
 
 /**
  *A non-empty reasoning effort value advertised by the model.
@@ -2087,6 +3025,43 @@ export type PlatformEvent = { "kind": "executor_session_bound", "data": { execut
  * </details>
  */
 export type ReasoningEffort = string;
+
+/**
+ *`ReasoningSummaryPartAddedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ReasoningSummaryPartAddedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "itemId",
+ *    "summaryIndex",
+ *    "threadId",
+ *    "turnId"
+ *  ],
+ *  "properties": {
+ *    "itemId": {
+ *      "type": "string"
+ *    },
+ *    "summaryIndex": {
+ *      "type": "integer",
+ *      "format": "int64"
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ReasoningSummaryPartAddedNotification = { itemId: string, summaryIndex: number, threadId: string, turnId: string, };
 
 /**
  *`ReasoningSummaryTextDeltaNotification`
@@ -2227,7 +3202,78 @@ export type RequestId = string | number;
  * ```
  * </details>
  */
-export type RequestPermissionProfile = { fileSystem?: AdditionalFileSystemPermissions | null, network?: AdditionalNetworkPermissions | null, };
+export type RequestPermissionProfile = { fileSystem: AdditionalFileSystemPermissions | null, network: AdditionalNetworkPermissions | null, };
+
+export type RuntimeTerminalDiagnostic = { kind: string, code: string | null, http_status: number | null, provider: string | null, model: string | null, message: string, retryable: boolean, };
+
+/**
+ *`RequestPermissionProfile`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "type": "object",
+ *  "properties": {
+ *    "fileSystem": {
+ *      "anyOf": [
+ *        {
+ *          "$ref": "#/definitions/AdditionalFileSystemPermissions"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    },
+ *    "network": {
+ *      "anyOf": [
+ *        {
+ *          "$ref": "#/definitions/AdditionalNetworkPermissions"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    }
+ *  },
+ *  "additionalProperties": false
+ *}
+ * ```
+ * </details>
+ */
+export type ServerNotificationRequestPermissionProfile = { fileSystem?: AdditionalFileSystemPermissions | null, network?: AdditionalNetworkPermissions | null, };
+
+/**
+ *`ServerRequestResolvedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ServerRequestResolvedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "requestId",
+ *    "threadId"
+ *  ],
+ *  "properties": {
+ *    "requestId": {
+ *      "$ref": "#/definitions/RequestId"
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ServerRequestResolvedNotification = { requestId: RequestId, threadId: string, };
+
+export type SessionRewindReason = "provider_retry" | "provider_failure" | "runtime_failure";
+
+export type SessionRewound = { discarded_turn_id: string, discarded_entry_index: number | null, stable_event_seq: bigint, stable_turn_id: string | null, reason: SessionRewindReason, replacement_turn_id: string | null, message: string | null, };
 
 export type ShellExecExecutionMode = "platform" | "mountExec";
 
@@ -2254,6 +3300,46 @@ export type SourceInfo = { connectorId: string, connectorType: string, executorI
  * </details>
  */
 export type SubAgentActivityKind = "started" | "interacted" | "interrupted";
+
+/**
+ *`TerminalInteractionNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "TerminalInteractionNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "itemId",
+ *    "processId",
+ *    "stdin",
+ *    "threadId",
+ *    "turnId"
+ *  ],
+ *  "properties": {
+ *    "itemId": {
+ *      "type": "string"
+ *    },
+ *    "processId": {
+ *      "type": "string"
+ *    },
+ *    "stdin": {
+ *      "type": "string"
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type TerminalInteractionNotification = { itemId: string, processId: string, stdin: string, threadId: string, turnId: string, };
 
 /**
  *`TextElement`
@@ -2301,6 +3387,90 @@ byteRange: ByteRange,
  *Optional human-readable placeholder for the element, displayed in the UI.
  */
 placeholder?: string | null, };
+
+/**
+ *`TextPosition`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "type": "object",
+ *  "required": [
+ *    "column",
+ *    "line"
+ *  ],
+ *  "properties": {
+ *    "column": {
+ *      "description": "1-based column number (in Unicode scalar values).",
+ *      "type": "integer",
+ *      "format": "uint",
+ *      "minimum": 0.0
+ *    },
+ *    "line": {
+ *      "description": "1-based line number.",
+ *      "type": "integer",
+ *      "format": "uint",
+ *      "minimum": 0.0
+ *    }
+ *  }
+ *}
+ * ```
+ * </details>
+ */
+export type TextPosition = {
+/**
+ *1-based column number (in Unicode scalar values).
+ */
+column: number,
+/**
+ *1-based line number.
+ */
+line: number, };
+
+/**
+ *`TextRange`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "type": "object",
+ *  "required": [
+ *    "end",
+ *    "start"
+ *  ],
+ *  "properties": {
+ *    "end": {
+ *      "$ref": "#/definitions/TextPosition"
+ *    },
+ *    "start": {
+ *      "$ref": "#/definitions/TextPosition"
+ *    }
+ *  }
+ *}
+ * ```
+ * </details>
+ */
+export type TextRange = { end: TextPosition, start: TextPosition, };
+
+/**
+ *`ThreadActiveFlag`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "type": "string",
+ *  "enum": [
+ *    "waitingOnApproval",
+ *    "waitingOnUserInput"
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type ThreadActiveFlag = "waitingOnApproval" | "waitingOnUserInput";
 
 /**
  *`ThreadItem`
@@ -3121,7 +4291,7 @@ placeholder?: string | null, };
  * ```
  * </details>
  */
-export type ThreadItem = { "type": "userMessage", clientId?: string | null, content: Array<UserInput>, id: string, } | { "type": "hookPrompt", fragments: Array<HookPromptFragment>, id: string, } | { "type": "agentMessage", id: string, memoryCitation?: MemoryCitation | null, phase?: MessagePhase | null, text: string, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", content?: Array<string>, id: string, summary?: Array<string>, } | { "type": "commandExecution",
+export type ThreadItem = { "type": "userMessage", clientId?: string | null, content: Array<UserInput>, id: string, } | { "type": "hookPrompt", fragments: Array<HookPromptFragment>, id: string, } | { "type": "agentMessage", id: string, memoryCitation?: MemoryCitation | null, phase?: MessagePhase | null, text: string, } | { "type": "plan", id: string, text: string, } | { "type": "reasoning", content: Array<string>, id: string, summary: Array<string>, } | { "type": "commandExecution",
 /**
  *The command's output, aggregated from stdout and stderr.
  */
@@ -3198,6 +4368,120 @@ status: CollabAgentToolCallStatus,
  *Name of the collab tool that was invoked.
  */
 tool: CollabAgentTool, } | { "type": "subAgentActivity", agentPath: string, agentThreadId: string, id: string, kind: SubAgentActivityKind, } | { "type": "webSearch", action?: WebSearchAction | null, id: string, query: string, } | { "type": "imageView", id: string, path: LegacyAppPathString, } | { "type": "sleep", durationMs: number, id: string, } | { "type": "imageGeneration", id: string, result: string, revisedPrompt?: string | null, savedPath?: AbsolutePathBuf | null, status: string, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
+
+/**
+ *`ThreadStatus`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "oneOf": [
+ *    {
+ *      "title": "NotLoadedThreadStatus",
+ *      "type": "object",
+ *      "required": [
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "type": {
+ *          "title": "NotLoadedThreadStatusType",
+ *          "type": "string",
+ *          "enum": [
+ *            "notLoaded"
+ *          ]
+ *        }
+ *      }
+ *    },
+ *    {
+ *      "title": "IdleThreadStatus",
+ *      "type": "object",
+ *      "required": [
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "type": {
+ *          "title": "IdleThreadStatusType",
+ *          "type": "string",
+ *          "enum": [
+ *            "idle"
+ *          ]
+ *        }
+ *      }
+ *    },
+ *    {
+ *      "title": "SystemErrorThreadStatus",
+ *      "type": "object",
+ *      "required": [
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "type": {
+ *          "title": "SystemErrorThreadStatusType",
+ *          "type": "string",
+ *          "enum": [
+ *            "systemError"
+ *          ]
+ *        }
+ *      }
+ *    },
+ *    {
+ *      "title": "ActiveThreadStatus",
+ *      "type": "object",
+ *      "required": [
+ *        "activeFlags",
+ *        "type"
+ *      ],
+ *      "properties": {
+ *        "activeFlags": {
+ *          "type": "array",
+ *          "items": {
+ *            "$ref": "#/definitions/ThreadActiveFlag"
+ *          }
+ *        },
+ *        "type": {
+ *          "title": "ActiveThreadStatusType",
+ *          "type": "string",
+ *          "enum": [
+ *            "active"
+ *          ]
+ *        }
+ *      }
+ *    }
+ *  ]
+ *}
+ * ```
+ * </details>
+ */
+export type ThreadStatus = { "type": "notLoaded" } | { "type": "idle" } | { "type": "systemError" } | { "type": "active", "activeFlags": Array<ThreadActiveFlag> };
+
+/**
+ *`ThreadStatusChangedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "ThreadStatusChangedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "status",
+ *    "threadId"
+ *  ],
+ *  "properties": {
+ *    "status": {
+ *      "$ref": "#/definitions/ThreadStatus"
+ *    },
+ *    "threadId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type ThreadStatusChangedNotification = { status: ThreadStatus, threadId: string, };
 
 export type ThreadTokenUsage = { total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number | null, context: NormalizedContextUsage, };
 
@@ -3283,7 +4567,7 @@ export type ToolRequestUserInputOption = { description: string, label: string, }
  * ```
  * </details>
  */
-export type ToolRequestUserInputParams = { autoResolutionMs?: number | null, itemId: string, questions: Array<ToolRequestUserInputQuestion>, threadId: string, turnId: string, };
+export type ToolRequestUserInputParams = { autoResolutionMs: number | null, itemId: string, questions: Array<ToolRequestUserInputQuestion>, threadId: string, turnId: string, };
 
 /**
  *EXPERIMENTAL. Represents one request_user_input question and its required options.
@@ -3335,7 +4619,7 @@ export type ToolRequestUserInputParams = { autoResolutionMs?: number | null, ite
  * ```
  * </details>
  */
-export type ToolRequestUserInputQuestion = { header: string, id: string, isOther: boolean, isSecret: boolean, options?: Array<ToolRequestUserInputOption> | null, question: string, };
+export type ToolRequestUserInputQuestion = { header: string, id: string, isOther: boolean, isSecret: boolean, options: Array<ToolRequestUserInputOption> | null, question: string, };
 
 /**
  * 追踪信息（与 turn / entry 关联）。
@@ -3465,6 +4749,34 @@ itemsView: TurnItemsView,
 startedAt?: number | null, status: TurnStatus, };
 
 /**
+ *`TurnCompletedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "TurnCompletedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "threadId",
+ *    "turn"
+ *  ],
+ *  "properties": {
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turn": {
+ *      "$ref": "#/definitions/Turn"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type TurnCompletedNotification = { threadId: string, turn: Turn, };
+
+/**
  *Notification that the turn-level unified diff has changed. Contains the latest aggregated diff across all file changes in the turn.
  *
  * <details><summary>JSON schema</summary>
@@ -3578,6 +4890,36 @@ export type TurnError = { additionalDetails?: string | null, codexErrorInfo?: Co
 export type TurnItemsView = "notLoaded" | "summary" | "full";
 
 /**
+ *`TurnModerationMetadataNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "TurnModerationMetadataNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "metadata",
+ *    "threadId",
+ *    "turnId"
+ *  ],
+ *  "properties": {
+ *    "metadata": true,
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turnId": {
+ *      "type": "string"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type TurnModerationMetadataNotification = { metadata: JsonValue, threadId: string, turnId: string, };
+
+/**
  *`TurnPlanStep`
  *
  * <details><summary>JSON schema</summary>
@@ -3666,6 +5008,34 @@ export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
  * </details>
  */
 export type TurnPlanUpdatedNotification = { explanation?: string | null, plan: Array<TurnPlanStep>, threadId: string, turnId: string, };
+
+/**
+ *`TurnStartedNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "TurnStartedNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "threadId",
+ *    "turn"
+ *  ],
+ *  "properties": {
+ *    "threadId": {
+ *      "type": "string"
+ *    },
+ *    "turn": {
+ *      "$ref": "#/definitions/Turn"
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type TurnStartedNotification = { threadId: string, turn: Turn, };
 
 /**
  *`TurnStatus`
@@ -3842,13 +5212,58 @@ export type UserInput = { "type": "text", text: string,
 /**
  *UI-defined spans within `text` used to render or persist special elements.
  */
-text_elements?: Array<TextElement>, } | { "type": "image", detail?: ImageDetail | null, url: string, } | { "type": "localImage", detail?: ImageDetail | null, path: string, } | { "type": "skill", name: string, path: string, } | { "type": "mention", name: string, path: string, };
+text_elements: Array<TextElement>, } | { "type": "image", detail?: ImageDetail | null, url: string, } | { "type": "localImage", detail?: ImageDetail | null, path: string, } | { "type": "skill", name: string, path: string, } | { "type": "mention", name: string, path: string, };
 
 export type UserInputSource = { namespace: string, kind: string, sourceRef?: string | null, correlationRef?: string | null, actor: string, route?: string | null, displayLabelKey: string, metadata?: JsonValue | null, };
 
 export type UserInputSubmissionKind = "prompt" | "steer";
 
 export type UserInputSubmittedNotification = { threadId: string, turnId: string, itemId: string, submissionKind: UserInputSubmissionKind, source: UserInputSource, content: Array<UserInput>, };
+
+/**
+ *`WarningNotification`
+ *
+ * <details><summary>JSON schema</summary>
+ *
+ * ```json
+ *{
+ *  "title": "WarningNotification",
+ *  "type": "object",
+ *  "required": [
+ *    "message"
+ *  ],
+ *  "properties": {
+ *    "message": {
+ *      "description": "Concise warning message for the user.",
+ *      "type": "string"
+ *    },
+ *    "threadId": {
+ *      "description": "Optional thread target when the warning applies to a specific thread.",
+ *      "oneOf": [
+ *        {
+ *          "description": "Optional thread target when the warning applies to a specific thread.",
+ *          "type": "string"
+ *        },
+ *        {
+ *          "type": "null"
+ *        }
+ *      ]
+ *    }
+ *  },
+ *  "$schema": "http://json-schema.org/draft-07/schema#"
+ *}
+ * ```
+ * </details>
+ */
+export type WarningNotification = {
+/**
+ *Concise warning message for the user.
+ */
+message: string,
+/**
+ *Optional thread target when the warning applies to a specific thread.
+ */
+threadId?: string | null, };
 
 /**
  *`WebSearchAction`

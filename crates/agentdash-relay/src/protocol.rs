@@ -766,8 +766,6 @@ mod tests {
     use super::CommandPromptPayload;
     use super::*;
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
-    use std::path::PathBuf;
-
     #[test]
     fn command_prompt_payload_requires_mount_root_ref() {
         let payload: CommandPromptPayload = serde_json::from_value(serde_json::json!({
@@ -867,11 +865,11 @@ mod tests {
             },
             codex::UserInput::LocalImage {
                 detail: None,
-                path: PathBuf::from("assets/local.png"),
+                path: "assets/local.png".to_string(),
             },
             codex::UserInput::Skill {
                 name: "reviewer".to_string(),
-                path: PathBuf::from("skills/reviewer/SKILL.md"),
+                path: "skills/reviewer/SKILL.md".to_string(),
             },
             codex::UserInput::Mention {
                 name: "main.rs".to_string(),

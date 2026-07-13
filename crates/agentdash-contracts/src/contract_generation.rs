@@ -78,8 +78,11 @@ enum FieldValidationRule {
     Object,
     FiniteNumber,
     NonEmptyString,
+    OptionalString,
+    OptionalFiniteNumber,
     NullableString,
     JsonObject,
+    BackboneEnvelope,
     ControlPlaneProjectionChanged,
 }
 
@@ -110,10 +113,12 @@ struct NdjsonEnvelopeValidatorSpec {
 pub fn render_ndjson_stream_validators() -> GeneratedTsFile {
     let mut lines = header_lines();
     lines.push(String::new());
+    lines.push("import type { BackboneEnvelope } from \"./backbone-protocol\";".to_string());
     lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
     lines.push(
         "import type { ProjectEventStreamEnvelope } from \"./project-contracts\";".to_string(),
     );
+    lines.push("import type { SessionNdjsonEnvelope } from \"./session-contracts\";".to_string());
     lines.push(String::new());
 
     push_ts_block(
@@ -158,6 +163,10 @@ function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
 }
 
+function isOptionalFiniteNumber(value: unknown): value is number | undefined {
+  return value === undefined || isFiniteNumber(value);
+}
+
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
@@ -173,6 +182,15 @@ function isJsonValue(value: unknown): value is JsonValue {
 
 function isJsonObject(value: unknown): value is Record<string, JsonValue> {
   return isRecord(value) && Object.values(value).every(isJsonValue);
+}
+
+function isBackboneEnvelope(value: unknown): value is BackboneEnvelope {
+  return isRecord(value) &&
+    isRecord(value.event) &&
+    typeof value.sessionId === "string" &&
+    isRecord(value.source) &&
+    isRecord(value.trace) &&
+    typeof value.observedAt === "string";
 }
 
 function isControlPlaneProjectionChanged(value: unknown): boolean {
@@ -206,7 +224,7 @@ function isControlPlaneProjectionChanged(value: unknown): boolean {
 }
 
 fn ndjson_validator_specs() -> Vec<NdjsonEnvelopeValidatorSpec> {
-    vec![NdjsonEnvelopeValidatorSpec {
+    let mut specs = vec![NdjsonEnvelopeValidatorSpec {
         envelope_type: "ProjectEventStreamEnvelope",
         parse_function: "parseGeneratedProjectEventStreamEnvelope",
         validate_function: "isGeneratedProjectEventStreamEnvelope",
@@ -317,7 +335,108 @@ fn ndjson_validator_specs() -> Vec<NdjsonEnvelopeValidatorSpec> {
                 ],
             },
         ],
-    }]
+    }];
+    specs.push(NdjsonEnvelopeValidatorSpec {
+        envelope_type: "SessionNdjsonEnvelope",
+        parse_function: "parseGeneratedSessionNdjsonEnvelope",
+        validate_function: "isGeneratedSessionNdjsonEnvelope",
+        branches: vec![
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "connected",
+                type_alias: "GeneratedSessionNdjsonConnectedEnvelope",
+                guard_function: "isGeneratedSessionNdjsonConnectedEnvelope",
+                failure_function: "readGeneratedSessionNdjsonConnectedFailure",
+                fields: vec![
+                    field(
+                        &["last_event_id"],
+                        FieldValidationRule::FiniteNumber,
+                        "finite number",
+                    ),
+                    field(
+                        &["ephemeral_epoch"],
+                        FieldValidationRule::FiniteNumber,
+                        "finite number",
+                    ),
+                ],
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "event",
+                type_alias: "GeneratedSessionNdjsonEventEnvelope",
+                guard_function: "isGeneratedSessionNdjsonEventEnvelope",
+                failure_function: "readGeneratedSessionNdjsonEventFailure",
+                fields: session_event_fields(),
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "ephemeral_event",
+                type_alias: "GeneratedSessionNdjsonEphemeralEventEnvelope",
+                guard_function: "isGeneratedSessionNdjsonEphemeralEventEnvelope",
+                failure_function: "readGeneratedSessionNdjsonEphemeralEventFailure",
+                fields: session_event_fields(),
+            },
+            NdjsonEnvelopeBranchSpec {
+                type_literal: "heartbeat",
+                type_alias: "GeneratedSessionNdjsonHeartbeatEnvelope",
+                guard_function: "isGeneratedSessionNdjsonHeartbeatEnvelope",
+                failure_function: "readGeneratedSessionNdjsonHeartbeatFailure",
+                fields: vec![field(
+                    &["timestamp"],
+                    FieldValidationRule::FiniteNumber,
+                    "finite number",
+                )],
+            },
+        ],
+    });
+    specs
+}
+
+fn session_event_fields() -> Vec<FieldValidationSpec> {
+    vec![
+        field(
+            &["session_id"],
+            FieldValidationRule::NonEmptyString,
+            "non-empty string",
+        ),
+        field(
+            &["event_seq"],
+            FieldValidationRule::FiniteNumber,
+            "finite number",
+        ),
+        field(
+            &["occurred_at_ms"],
+            FieldValidationRule::FiniteNumber,
+            "finite number",
+        ),
+        field(
+            &["committed_at_ms"],
+            FieldValidationRule::FiniteNumber,
+            "finite number",
+        ),
+        field(
+            &["session_update_type"],
+            FieldValidationRule::NonEmptyString,
+            "non-empty string",
+        ),
+        field(
+            &["turn_id"],
+            FieldValidationRule::OptionalString,
+            "string or undefined",
+        ),
+        field(
+            &["entry_index"],
+            FieldValidationRule::OptionalFiniteNumber,
+            "finite number or undefined",
+        ),
+        field(
+            &["tool_call_id"],
+            FieldValidationRule::OptionalString,
+            "string or undefined",
+        ),
+        field(
+            &["notification"],
+            FieldValidationRule::BackboneEnvelope,
+            "BackboneEnvelope",
+        ),
+    ]
 }
 
 fn field(
@@ -424,8 +543,11 @@ fn field_condition(field: &FieldValidationSpec) -> String {
         FieldValidationRule::Object => format!("isRecord({value})"),
         FieldValidationRule::FiniteNumber => format!("isFiniteNumber({value})"),
         FieldValidationRule::NonEmptyString => format!("isNonEmptyString({value})"),
+        FieldValidationRule::OptionalString => format!("isOptionalString({value})"),
+        FieldValidationRule::OptionalFiniteNumber => format!("isOptionalFiniteNumber({value})"),
         FieldValidationRule::NullableString => format!("isNullableString({value})"),
         FieldValidationRule::JsonObject => format!("isJsonObject({value})"),
+        FieldValidationRule::BackboneEnvelope => format!("isBackboneEnvelope({value})"),
         FieldValidationRule::ControlPlaneProjectionChanged => {
             format!("isControlPlaneProjectionChanged({value})")
         }
@@ -664,6 +786,11 @@ mod tests {
         let rendered = render_ndjson_stream_validators();
 
         assert_eq!(rendered.filename, NDJSON_STREAM_VALIDATORS_FILENAME);
+        assert!(
+            rendered
+                .contents
+                .contains("export function parseGeneratedSessionNdjsonEnvelope(payload: unknown)")
+        );
         assert!(rendered.contents.contains(
             "export function parseGeneratedProjectEventStreamEnvelope(payload: unknown)"
         ));
@@ -672,12 +799,54 @@ mod tests {
                 .contents
                 .contains("isJsonObject(value.data.payload)")
         );
+        assert!(
+            rendered
+                .contents
+                .contains("isBackboneEnvelope(value.notification)")
+        );
         assert!(rendered.contents.contains(
             "export type GeneratedProjectEventStreamStateChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: \"StateChanged\" }>;"
         ));
         assert!(rendered.contents.contains(
             "export type GeneratedProjectEventStreamControlPlaneProjectionChangedEnvelope = Extract<ProjectEventStreamEnvelope, { type: \"ControlPlaneProjectionChanged\" }>;"
         ));
+    }
+
+    #[test]
+    fn session_ndjson_validator_matches_generated_envelope_shape() {
+        let rendered = render_ndjson_stream_validators();
+
+        for branch in ["connected", "event", "ephemeral_event", "heartbeat"] {
+            assert!(
+                rendered
+                    .contents
+                    .contains(&format!("case \"{branch}\": {{")),
+                "missing Session NDJSON branch {branch}"
+            );
+        }
+        assert!(rendered.contents.contains(
+            "export type GeneratedSessionNdjsonEventEnvelope = Extract<SessionNdjsonEnvelope, { type: \"event\" }>;"
+        ));
+        assert!(
+            rendered
+                .contents
+                .contains("isOptionalString(value.turn_id)")
+        );
+        assert!(
+            rendered
+                .contents
+                .contains("isOptionalFiniteNumber(value.entry_index)")
+        );
+        assert!(
+            rendered
+                .contents
+                .contains("isOptionalString(value.tool_call_id)")
+        );
+        assert!(
+            rendered
+                .contents
+                .contains("isBackboneEnvelope(value.notification)")
+        );
     }
 
     #[test]

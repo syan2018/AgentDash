@@ -158,7 +158,9 @@ use agentdash_contracts::routine::{
     RoutineOrchestrationBindingRefsDto, RoutineResponse, RoutineTriggerConfigRequest,
     RoutineTriggerConfigResponse, UpdateRoutineRequest,
 };
-use agentdash_contracts::session::SessionMessageRefDto;
+use agentdash_contracts::session::{
+    SessionEventResponse, SessionEventsPageResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
+};
 use agentdash_contracts::settings::{
     SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
     UpdateSettingsResponse,
@@ -595,6 +597,9 @@ fn main() {
         &mut upstream,
         check,
         |dir| {
+            export_all::<SessionEventResponse>(dir);
+            export_all::<SessionEventsPageResponse>(dir);
+            export_all::<SessionNdjsonEnvelope>(dir);
             export_all::<SessionMessageRefDto>(dir);
         },
     );

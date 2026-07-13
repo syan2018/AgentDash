@@ -332,11 +332,11 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] `runtime_presentation_event`及等价mapper删除。
-- [ ] GET=initial NDJSON=reconnect=refresh的presentation sequence/body一致。
-- [ ] fork inherited/marker/entry/round coordinates通过。
-- [ ] stream order、heartbeat、resume与error handling通过main行为测试。
-- [ ] API读取同一durable record不改变event timestamp/ID/null。
+- [x] `runtime_presentation_event`及等价mapper删除。
+- [x] GET=initial NDJSON=reconnect=refresh的presentation sequence/body一致。
+- [x] fork inherited/marker/entry/round coordinates通过。
+- [x] stream order、heartbeat、resume与error handling通过main行为测试。
+- [x] API读取同一durable record不改变event timestamp/ID/null。
 
 ### Commit
 

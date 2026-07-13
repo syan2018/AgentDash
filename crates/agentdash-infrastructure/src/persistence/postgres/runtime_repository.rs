@@ -6,10 +6,12 @@ use agentdash_agent_runtime::{
     ContextPreparationWorkItem, ContextStoreInvariant, EntityPhase, HookEffect, HookRun,
     HookRunStatus, QuarantinedDriverEvent, RuntimeCommit, RuntimeHookPlanBinding,
     RuntimeInteractionState, RuntimeItemState, RuntimeJournalBatch, RuntimeOperationRecord,
-    RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError, RuntimeThreadState,
-    RuntimeTransientEvents, RuntimeTurnState, RuntimeUnitOfWork, RuntimeWorkClaim,
-    RuntimeWorkClaimRequest, RuntimeWorkClaimToken, RuntimeWorkIdentity, RuntimeWorkKind,
-    RuntimeWorkPayload, RuntimeWorkQueue, RuntimeWorkerId,
+    RuntimeOutboxEntry, RuntimeRepository, RuntimeStoreError,
+    RuntimeTerminalApplicationEffectClaim, RuntimeTerminalApplicationEffectClaimRequest,
+    RuntimeTerminalApplicationEffectOutbox, RuntimeTerminalApplicationEffectOutboxEntry,
+    RuntimeThreadState, RuntimeTransientEvents, RuntimeTurnState, RuntimeUnitOfWork,
+    RuntimeWorkClaim, RuntimeWorkClaimRequest, RuntimeWorkClaimToken, RuntimeWorkIdentity,
+    RuntimeWorkKind, RuntimeWorkPayload, RuntimeWorkQueue, RuntimeWorkerId,
 };
 use agentdash_agent_runtime_contract::{
     ContextActivationId, ContextCheckpointId, ContextCompactionId, ContextFidelity, EventSequence,
@@ -225,6 +227,17 @@ impl RuntimeTransientEvents for PostgresRuntimeRepository {
         }
         drop(transient);
 
+        let mut live = self.presentation_live.lock().await;
+        let sender = live
+            .entry(thread_id)
+            .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0);
+        let _ = sender.send(record);
+    }
+
+    async fn publish_durable_presentation(&self, record: RuntimeJournalRecord) {
+        debug_assert!(record.carrier().sequence.is_some());
+        debug_assert!(record.as_presentation().is_some());
+        let thread_id = record.carrier().thread_id.clone();
         let mut live = self.presentation_live.lock().await;
         let sender = live
             .entry(thread_id)
@@ -747,7 +760,12 @@ async fn load_documents<T: DeserializeOwned>(
 
 #[async_trait]
 impl RuntimeUnitOfWork for PostgresRuntimeRepository {
-    async fn commit(&self, commit: RuntimeCommit) -> Result<(), RuntimeStoreError> {
+    async fn commit_with_live_presentation_publication(
+        &self,
+        commit: RuntimeCommit,
+        publish_live_presentations: bool,
+    ) -> Result<(), RuntimeStoreError> {
+        validate_terminal_application_effects(&commit)?;
         let live_events = commit
             .records
             .iter()
@@ -820,6 +838,8 @@ impl RuntimeUnitOfWork for PostgresRuntimeRepository {
             return Err(error);
         }
         write_outbox(&mut tx, &commit.outbox).await?;
+        write_terminal_application_effect_outbox(&mut tx, &commit.terminal_application_effects)
+            .await?;
         write_activation_outbox(&mut tx, &commit.context_activation_outbox).await?;
         write_quarantine(&mut tx, &commit.quarantine).await?;
         validate_head_projection(&mut tx, &commit.projection).await?;
@@ -832,13 +852,10 @@ impl RuntimeUnitOfWork for PostgresRuntimeRepository {
         for event in live_events {
             self.publish_durable(event).await;
         }
-        for record in live_presentations {
-            let thread_id = record.carrier().thread_id.clone();
-            let mut live = self.presentation_live.lock().await;
-            let sender = live
-                .entry(thread_id)
-                .or_insert_with(|| tokio::sync::broadcast::channel(ACTIVE_LIVE_CHANNEL_CAPACITY).0);
-            let _ = sender.send(record);
+        if publish_live_presentations {
+            for record in live_presentations {
+                self.publish_durable_presentation(record).await;
+            }
         }
         Ok(())
     }
@@ -909,6 +926,121 @@ fn validate_commit_sequences(
             "runtime projection operation cursor does not match the committed operation"
                 .to_string(),
         ));
+    }
+    Ok(())
+}
+
+#[async_trait]
+impl RuntimeTerminalApplicationEffectOutbox for PostgresRuntimeRepository {
+    async fn claim_terminal_application_effects(
+        &self,
+        request: RuntimeTerminalApplicationEffectClaimRequest,
+    ) -> Result<Vec<RuntimeTerminalApplicationEffectClaim>, RuntimeStoreError> {
+        if request.owner.as_str().trim().is_empty()
+            || request.lease_duration_ms == 0
+            || request.limit == 0
+        {
+            return Err(RuntimeStoreError::InvalidWorkClaim(
+                "terminal application effect claim requires owner, positive lease, and positive limit"
+                    .to_string(),
+            ));
+        }
+        let now: i64 =
+            sqlx::query_scalar("SELECT (extract(epoch FROM clock_timestamp()) * 1000)::bigint")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sql_error)?;
+        let duration = i64::try_from(request.lease_duration_ms).map_err(|_| {
+            RuntimeStoreError::InvalidWorkClaim("lease duration exceeds bigint".to_string())
+        })?;
+        let expires = now.checked_add(duration).ok_or_else(|| {
+            RuntimeStoreError::InvalidWorkClaim("lease expiration overflow".to_string())
+        })?;
+        let token = RuntimeWorkClaimToken(uuid::Uuid::new_v4().to_string());
+        let rows = sqlx::query(
+            "WITH candidates AS ( \
+             SELECT effect_id FROM agent_runtime_terminal_application_effect_outbox \
+             WHERE completed_at IS NULL AND (claim_expires_at_ms IS NULL OR claim_expires_at_ms <= $1) \
+             ORDER BY created_at,effect_id FOR UPDATE SKIP LOCKED LIMIT $2 \
+             ) UPDATE agent_runtime_terminal_application_effect_outbox q SET \
+             claim_token=$3,claim_owner=$4,claim_expires_at_ms=$5,attempt_count=q.attempt_count+1, \
+             last_error=NULL,updated_at=now() FROM candidates c WHERE q.effect_id=c.effect_id \
+             RETURNING q.record,q.attempt_count",
+        )
+        .bind(now)
+        .bind(i64::from(request.limit))
+        .bind(token.as_str())
+        .bind(request.owner.as_str())
+        .bind(expires)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sql_error)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(RuntimeTerminalApplicationEffectClaim {
+                    entry: decode(
+                        row.get(0),
+                        "agent_runtime_terminal_application_effect_outbox.record",
+                    )?,
+                    token: token.clone(),
+                    owner: request.owner.clone(),
+                    lease_expires_at_ms: expires,
+                    attempt: u32::try_from(row.get::<i32, _>(1)).map_err(|_| {
+                        RuntimeStoreError::Unavailable(
+                            "terminal application effect attempt is invalid".to_string(),
+                        )
+                    })?,
+                })
+            })
+            .collect()
+    }
+
+    async fn ack_terminal_application_effect(
+        &self,
+        claim: &RuntimeTerminalApplicationEffectClaim,
+    ) -> Result<(), RuntimeStoreError> {
+        update_terminal_application_effect_claim(&self.pool, claim, None, true).await
+    }
+
+    async fn release_terminal_application_effect(
+        &self,
+        claim: &RuntimeTerminalApplicationEffectClaim,
+        error: String,
+    ) -> Result<(), RuntimeStoreError> {
+        update_terminal_application_effect_claim(&self.pool, claim, Some(error), false).await
+    }
+}
+
+async fn update_terminal_application_effect_claim(
+    pool: &PgPool,
+    claim: &RuntimeTerminalApplicationEffectClaim,
+    error: Option<String>,
+    ack: bool,
+) -> Result<(), RuntimeStoreError> {
+    let result = if ack {
+        sqlx::query(
+            "UPDATE agent_runtime_terminal_application_effect_outbox SET completed_at=now(),claim_token=NULL,claim_owner=NULL,claim_expires_at_ms=NULL,last_error=NULL,updated_at=now() WHERE effect_id=$1 AND claim_owner=$2 AND claim_token=$3 AND completed_at IS NULL",
+        )
+        .bind(claim.entry.effect_id.as_str())
+        .bind(claim.owner.as_str())
+        .bind(claim.token.as_str())
+        .execute(pool)
+        .await
+        .map_err(sql_error)?
+    } else {
+        sqlx::query(
+            "UPDATE agent_runtime_terminal_application_effect_outbox SET claim_token=NULL,claim_owner=NULL,claim_expires_at_ms=NULL,last_error=$4,updated_at=now() WHERE effect_id=$1 AND claim_owner=$2 AND claim_token=$3 AND completed_at IS NULL",
+        )
+        .bind(claim.entry.effect_id.as_str())
+        .bind(claim.owner.as_str())
+        .bind(claim.token.as_str())
+        .bind(error)
+        .execute(pool)
+        .await
+        .map_err(sql_error)?
+    };
+    if result.rows_affected() != 1 {
+        return Err(RuntimeStoreError::WorkClaimConflict);
     }
     Ok(())
 }
@@ -1979,6 +2111,74 @@ async fn write_outbox(
     Ok(())
 }
 
+async fn write_terminal_application_effect_outbox(
+    tx: &mut Transaction<'_, Postgres>,
+    entries: &[RuntimeTerminalApplicationEffectOutboxEntry],
+) -> Result<(), RuntimeStoreError> {
+    for entry in entries {
+        let record = encode(
+            entry,
+            "agent_runtime_terminal_application_effect_outbox.record",
+        )?;
+        let result = sqlx::query(
+            "INSERT INTO agent_runtime_terminal_application_effect_outbox \
+             (effect_id,runtime_thread_id,terminal_event_sequence,record) \
+             VALUES ($1,$2,$3,$4) ON CONFLICT (effect_id) DO NOTHING",
+        )
+        .bind(entry.effect_id.as_str())
+        .bind(entry.runtime_thread_id.as_str())
+        .bind(u64_to_i64(
+            entry.terminal_event_sequence.0,
+            "terminal event sequence",
+        )?)
+        .bind(record.clone())
+        .execute(&mut **tx)
+        .await
+        .map_err(sql_error)?;
+        if result.rows_affected() == 0 {
+            let current: Value = sqlx::query_scalar(
+                "SELECT record FROM agent_runtime_terminal_application_effect_outbox WHERE effect_id=$1",
+            )
+            .bind(entry.effect_id.as_str())
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(sql_error)?;
+            if current != record {
+                return Err(RuntimeStoreError::Unavailable(
+                    "terminal application effect identity was reused".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_terminal_application_effects(commit: &RuntimeCommit) -> Result<(), RuntimeStoreError> {
+    for entry in &commit.terminal_application_effects {
+        let valid = entry.runtime_thread_id == commit.projection.thread_id
+            && commit.records.iter().any(|record| {
+                record.carrier().sequence == Some(entry.terminal_event_sequence)
+                    && matches!(
+                        record.fact(),
+                        RuntimeJournalFact::Presentation(event)
+                            if matches!(
+                                &event.event,
+                                agentdash_agent_protocol::BackboneEvent::Platform(
+                                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+                                ) if key == "turn_terminal"
+                            )
+                    )
+            });
+        if !valid {
+            return Err(RuntimeStoreError::Unavailable(
+                "terminal application effect must reference its committed turn_terminal presentation"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn write_hook_state(
     tx: &mut Transaction<'_, Postgres>,
     commit: &RuntimeCommit,
@@ -2316,19 +2516,78 @@ mod tests {
         DriverEventQuarantineReason, HookAdmission, HookCompletion, HookCorrelation, HookEffect,
         HookEffectDescriptor, HookExecutionSite, HookGateDecision, HookRunStatus,
         ManagedAgentRuntime, QuarantinedDriverEvent, RuntimeHookInvocation, RuntimeHookPlanBinding,
-        RuntimeRepository, RuntimeStoreError, RuntimeTransientEvents, RuntimeUnitOfWork,
+        RuntimeRepository, RuntimeStoreError, RuntimeTerminalApplicationEffectClaimRequest,
+        RuntimeTerminalApplicationEffectId, RuntimeTerminalApplicationEffectOutbox,
+        RuntimeTerminalApplicationEffectOutboxEntry, RuntimeTransientEvents, RuntimeUnitOfWork,
         RuntimeWorkClaimRequest, RuntimeWorkKind, RuntimeWorkPayload, RuntimeWorkQueue,
         RuntimeWorkerId,
     };
     use agentdash_agent_runtime_contract::*;
+    use agentdash_application_ports::agent_run_control_effect::{
+        AgentRunControlEffectKind, AgentRunControlEffectStatus, AgentRunControlEffectStore,
+        NewAgentRunControlEffectRecord,
+    };
 
     use super::{PostgresRuntimeRepository, TestCommitFailurePoint, quarantine_reason};
+    use crate::PostgresAgentRunControlEffectStore;
 
     fn id<T: FromStr>(value: &str) -> T
     where
         T::Err: std::fmt::Debug,
     {
         value.parse().expect("valid runtime id")
+    }
+
+    struct TestTerminalPresentationProjector;
+
+    impl RuntimeApplicationPresentationProjector for TestTerminalPresentationProjector {
+        fn project_terminal(
+            &self,
+            context: RuntimeTerminalPresentationContext,
+        ) -> Result<Vec<RuntimePresentationInput>, RuntimeApplicationPresentationProjectionError>
+        {
+            let terminal_type = match context.terminal {
+                RuntimeTurnTerminal::Completed => "turn_completed",
+                RuntimeTurnTerminal::Interrupted => "turn_interrupted",
+                RuntimeTurnTerminal::Lost => "turn_lost",
+                RuntimeTurnTerminal::Refused
+                | RuntimeTurnTerminal::LimitReached
+                | RuntimeTurnTerminal::Failed => "turn_failed",
+            };
+            Ok(vec![RuntimePresentationInput {
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: Some(context.runtime_turn_id.clone()),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(context.presentation_thread_id.to_string()),
+                    source_turn_id: Some(context.presentation_turn_id.to_string()),
+                    source_item_id: None,
+                    source_request_id: Some(format!(
+                        "test-turn-terminal:{}:{terminal_type}",
+                        context.runtime_turn_id
+                    )),
+                    source_entry_index: None,
+                },
+                event: ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                            key: "turn_terminal".into(),
+                            value: serde_json::json!({
+                                "terminal_type": terminal_type,
+                                "message": context.message,
+                                "diagnostic": context.diagnostic,
+                                "started_at_ms": context.started_at_ms,
+                                "completed_at_ms": context.completed_at_ms,
+                                "duration_ms": context.started_at_ms.map(|started_at_ms| {
+                                    context.completed_at_ms.saturating_sub(started_at_ms)
+                                }),
+                            }),
+                        },
+                    ),
+                ),
+            }])
+        }
     }
 
     #[test]
@@ -2489,7 +2748,8 @@ mod tests {
             .bind(&binding_id).bind(&source_id).bind(&thread_id)
             .execute(&pool).await.expect("seed host-owned source coordinate");
         let store = Arc::new(PostgresRuntimeRepository::new(pool));
-        let runtime = ManagedAgentRuntime::new(store.clone());
+        let runtime =
+            ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
         Fixture {
             store,
             runtime,
@@ -2513,6 +2773,7 @@ mod tests {
             command: RuntimeCommand::ThreadStart {
                 thread_id: fixture.thread_id.clone(),
                 presentation_thread_id: id(&format!("presentation-{}", fixture.suffix)),
+                presentation_turn_id: None,
                 binding_id: id(&format!("binding-{}", fixture.suffix)),
                 driver_generation: RuntimeDriverGeneration(7),
                 source_thread_id: id(&format!("source-{}", fixture.suffix)),
@@ -2534,6 +2795,7 @@ mod tests {
                         digest: id(&format!("hook-plan-{}", fixture.suffix)),
                         entries: Vec::new(),
                     },
+                    terminal_hook_effect_binding: None,
                 }),
                 settings_revision: ThreadSettingsRevision(0),
             },
@@ -2671,6 +2933,7 @@ mod tests {
                 operation_terminals: Vec::new(),
                 records: records.clone(),
                 outbox: Vec::new(),
+                terminal_application_effects: Vec::new(),
                 context_activation_outbox: Vec::new(),
                 context_preparation_work_items: Vec::new(),
                 context_checkpoints: Vec::new(),
@@ -2831,6 +3094,328 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_application_effect_outbox_is_atomic_and_lease_fenced_in_postgres() {
+        let _serial = serial_test_guard().await;
+        let fixture = fixture("terminal application effect outbox").await;
+        fixture
+            .runtime
+            .execute(start(&fixture))
+            .await
+            .expect("start runtime thread");
+        let base = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load thread")
+            .expect("thread");
+        let terminal_sequence = EventSequence(base.next_event_sequence.0 + 1);
+        let runtime_turn_id: RuntimeTurnId = id(&format!("runtime-turn-{}", fixture.suffix));
+        let presentation_turn_id: PresentationTurnId =
+            id(&format!("presentation-turn-{}", fixture.suffix));
+        let terminal_record = RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: fixture.thread_id.clone(),
+                recorded_at_ms: 12_345,
+                sequence: Some(terminal_sequence),
+                transient: None,
+                revision: base.revision,
+                operation_id: None,
+                append_idempotency_key: None,
+                binding_id: Some(id(&format!("binding-{}", fixture.suffix))),
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: Some(runtime_turn_id.clone()),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(base.presentation_thread_id.to_string()),
+                    source_turn_id: Some(presentation_turn_id.to_string()),
+                    source_item_id: None,
+                    source_request_id: Some("terminal-fixture".to_string()),
+                    source_entry_index: None,
+                },
+            },
+            RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                        key: "turn_terminal".to_string(),
+                        value: serde_json::json!({
+                            "terminal_type": "turn_completed",
+                            "message": null,
+                            "diagnostic": null,
+                            "started_at_ms": 12_000,
+                            "completed_at_ms": 12_345,
+                            "duration_ms": 345,
+                        }),
+                    },
+                ),
+            )),
+        )
+        .expect("terminal presentation record");
+        let effect = RuntimeTerminalApplicationEffectOutboxEntry {
+            effect_id: RuntimeTerminalApplicationEffectId::new(format!(
+                "terminal-effect-{}",
+                fixture.suffix
+            ))
+            .expect("effect id"),
+            runtime_thread_id: fixture.thread_id.clone(),
+            presentation_thread_id: base.presentation_thread_id.clone(),
+            runtime_turn_id: runtime_turn_id.clone(),
+            presentation_turn_id: presentation_turn_id.clone(),
+            terminal_event_sequence: terminal_sequence,
+            terminal: RuntimeTurnTerminal::Completed,
+            message: None,
+            diagnostic: None,
+            started_at_ms: Some(12_000),
+            completed_at_ms: 12_345,
+            binding_id: id(&format!("binding-{}", fixture.suffix)),
+            driver_generation: RuntimeDriverGeneration(7),
+            surface_revision: base.surface.surface_revision,
+            surface_digest: base.surface.surface_digest.clone(),
+            source_thread_id: format!("source-{}", fixture.suffix),
+            source_turn_id: Some("source-turn".to_string()),
+            terminal_hook_effect_binding: base.surface.terminal_hook_effect_binding.clone(),
+        };
+        let mut projection = base.clone();
+        projection.next_event_sequence = terminal_sequence;
+        fixture
+            .store
+            .commit(agentdash_agent_runtime::RuntimeCommit {
+                expected_projection_revision: Some(base.revision),
+                projection,
+                operation: None,
+                operation_terminals: Vec::new(),
+                records: vec![terminal_record],
+                outbox: Vec::new(),
+                terminal_application_effects: vec![effect.clone()],
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await
+            .expect("commit terminal presentation and effect atomically");
+
+        let request = RuntimeTerminalApplicationEffectClaimRequest {
+            owner: RuntimeWorkerId("postgres-terminal-worker".to_string()),
+            lease_duration_ms: 30_000,
+            limit: 1,
+        };
+        let first = fixture
+            .store
+            .claim_terminal_application_effects(request.clone())
+            .await
+            .expect("claim terminal effect")
+            .pop()
+            .expect("terminal effect claim");
+        assert_eq!(first.entry, effect);
+        assert_eq!(first.attempt, 1);
+        fixture
+            .store
+            .release_terminal_application_effect(&first, "retry".to_string())
+            .await
+            .expect("release terminal effect");
+        let second = fixture
+            .store
+            .claim_terminal_application_effects(request.clone())
+            .await
+            .expect("reclaim terminal effect")
+            .pop()
+            .expect("retried terminal effect claim");
+        assert_eq!(second.entry, effect);
+        assert_eq!(second.attempt, 2);
+        assert!(matches!(
+            fixture.store.ack_terminal_application_effect(&first).await,
+            Err(RuntimeStoreError::WorkClaimConflict)
+        ));
+        fixture
+            .store
+            .ack_terminal_application_effect(&second)
+            .await
+            .expect("ack current terminal effect claim");
+        assert!(
+            fixture
+                .store
+                .claim_terminal_application_effects(request)
+                .await
+                .expect("claim after completion")
+                .is_empty()
+        );
+
+        let current = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load current thread")
+            .expect("current thread");
+        let conflict_sequence = EventSequence(current.next_event_sequence.0 + 1);
+        let conflict_record = RuntimeJournalRecord::new(
+            RuntimeCarrierMetadata {
+                thread_id: fixture.thread_id.clone(),
+                recorded_at_ms: 12_500,
+                sequence: Some(conflict_sequence),
+                transient: None,
+                revision: current.revision,
+                operation_id: None,
+                append_idempotency_key: None,
+                binding_id: Some(id(&format!("binding-{}", fixture.suffix))),
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: Some(runtime_turn_id),
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(current.presentation_thread_id.to_string()),
+                    source_turn_id: Some(presentation_turn_id.to_string()),
+                    source_item_id: None,
+                    source_request_id: Some("terminal-conflict".to_string()),
+                    source_entry_index: None,
+                },
+            },
+            RuntimeJournalFact::Presentation(ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                        key: "turn_terminal".to_string(),
+                        value: serde_json::json!({"terminal_type": "turn_failed"}),
+                    },
+                ),
+            )),
+        )
+        .expect("conflicting terminal presentation record");
+        let mut conflicting_effect = effect.clone();
+        conflicting_effect.terminal_event_sequence = conflict_sequence;
+        conflicting_effect.terminal = RuntimeTurnTerminal::Failed;
+        let mut conflicting_projection = current.clone();
+        conflicting_projection.next_event_sequence = conflict_sequence;
+        let conflict = fixture
+            .store
+            .commit(agentdash_agent_runtime::RuntimeCommit {
+                expected_projection_revision: Some(current.revision),
+                projection: conflicting_projection,
+                operation: None,
+                operation_terminals: Vec::new(),
+                records: vec![conflict_record],
+                outbox: Vec::new(),
+                terminal_application_effects: vec![conflicting_effect],
+                context_activation_outbox: Vec::new(),
+                context_preparation_work_items: Vec::new(),
+                context_checkpoints: Vec::new(),
+                context_candidates: Vec::new(),
+                context_activations: Vec::new(),
+                context_head: None,
+                hook_plan_binding: None,
+                hook_runs: Vec::new(),
+                hook_effects: Vec::new(),
+                quarantine: Vec::new(),
+            })
+            .await;
+        assert!(matches!(conflict, Err(RuntimeStoreError::Unavailable(_))));
+        let after_conflict = fixture
+            .store
+            .load_thread(&fixture.thread_id)
+            .await
+            .expect("load after conflict")
+            .expect("thread after conflict");
+        assert_eq!(after_conflict.next_event_sequence, terminal_sequence);
+        let conflicting_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM agent_runtime_event WHERE thread_id=$1 AND event_sequence=$2",
+        )
+        .bind(fixture.thread_id.as_str())
+        .bind(i64::try_from(conflict_sequence.0).expect("conflict sequence fits bigint"))
+        .fetch_one(fixture.store.pool())
+        .await
+        .expect("count rolled back conflicting event");
+        assert_eq!(conflicting_rows, 0);
+    }
+
+    #[tokio::test]
+    async fn agent_run_control_effect_store_preserves_exact_evidence_and_retry_fencing() {
+        let _serial = serial_test_guard().await;
+        let database = runtime_test_database().await;
+        let store = PostgresAgentRunControlEffectStore::new(database.pool.clone());
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let effect = NewAgentRunControlEffectRecord {
+            dedup_key: format!("runtime_terminal:{suffix}:delivery"),
+            presentation_thread_id: format!("presentation-{suffix}")
+                .parse()
+                .expect("presentation thread"),
+            presentation_turn_id: format!("turn-{suffix}").parse().expect("presentation turn"),
+            terminal_event_sequence: EventSequence(9),
+            effect_kind: AgentRunControlEffectKind::DeliveryConvergence,
+            payload: serde_json::json!({
+                "terminal": "completed",
+                "diagnostic": null,
+            }),
+        };
+
+        let inserted = store
+            .insert_or_get(effect.clone())
+            .await
+            .expect("insert control effect");
+        assert_eq!(inserted.status, AgentRunControlEffectStatus::Pending);
+        let replay = store
+            .insert_or_get(effect.clone())
+            .await
+            .expect("exact control effect replay");
+        assert_eq!(replay.id, inserted.id);
+        let mut conflicting = effect.clone();
+        conflicting.payload = serde_json::json!({"terminal": "failed"});
+        let error = store
+            .insert_or_get(conflicting)
+            .await
+            .expect_err("immutable evidence conflict");
+        assert!(error.contains("reused with different immutable evidence"));
+
+        let first = store
+            .claim(&effect.dedup_key, "delivery-worker", 30_000)
+            .await
+            .expect("claim control effect")
+            .expect("control effect claim");
+        assert_eq!(first.status, AgentRunControlEffectStatus::Running);
+        let first_token = first.claim_token.expect("first claim token");
+        assert!(
+            store
+                .claim(&effect.dedup_key, "other-worker", 30_000)
+                .await
+                .expect("competing claim")
+                .is_none()
+        );
+        store
+            .mark_failed(first.id, first_token, "retry".to_string())
+            .await
+            .expect("release failed control effect");
+        let second = store
+            .claim(&effect.dedup_key, "delivery-worker", 30_000)
+            .await
+            .expect("reclaim control effect")
+            .expect("retried control effect claim");
+        let second_token = second.claim_token.expect("second claim token");
+        assert_ne!(second_token, first_token);
+        assert!(
+            store
+                .mark_succeeded(second.id, first_token)
+                .await
+                .expect_err("stale control effect token")
+                .contains("is not owned by claim")
+        );
+        store
+            .mark_succeeded(second.id, second_token)
+            .await
+            .expect("complete current control effect claim");
+        assert!(
+            store
+                .claim(&effect.dedup_key, "delivery-worker", 30_000)
+                .await
+                .expect("claim completed control effect")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn migration_exposes_only_runtime_journal_record_columns() {
         let _serial = serial_test_guard().await;
         let database = runtime_test_database().await;
@@ -2853,6 +3438,14 @@ mod tests {
         .await
         .expect("0070 migration history");
         assert!(applied);
+        let terminal_effect_schema: bool = sqlx::query_scalar(
+            "SELECT to_regclass('public.agent_runtime_terminal_application_effect_outbox') IS NOT NULL \
+             AND EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=73 AND success)",
+        )
+        .fetch_one(&database.pool)
+        .await
+        .expect("0073 terminal application effect schema");
+        assert!(terminal_effect_schema);
     }
 
     #[tokio::test]
@@ -2879,7 +3472,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn journal_record_upgrade_clears_runtime_graph_without_rewriting_migration_history() {
+    async fn presentation_contract_upgrade_clears_runtime_graph_without_rewriting_migration_history()
+     {
         let _serial = serial_test_guard().await;
         let fixture = fixture("conversation contract reset").await;
         fixture
@@ -2892,6 +3486,37 @@ mod tests {
             .fetch_one(pool)
             .await
             .expect("migration history before reset");
+
+        let terminal_event_sequence: Option<i64> = sqlx::query_scalar(
+            "SELECT max(event_sequence) FROM agent_runtime_event WHERE thread_id=$1",
+        )
+        .bind(fixture.thread_id.as_str())
+        .fetch_one(pool)
+        .await
+        .expect("runtime event for reset outbox fixture");
+        let terminal_event_sequence =
+            terminal_event_sequence.expect("started Runtime must have a journal event");
+        sqlx::query(
+            "INSERT INTO agent_runtime_terminal_application_effect_outbox \
+             (effect_id,runtime_thread_id,terminal_event_sequence,record) \
+             VALUES ('reset-terminal-effect',$1,$2,'{}'::jsonb)",
+        )
+        .bind(fixture.thread_id.as_str())
+        .bind(terminal_event_sequence)
+        .execute(pool)
+        .await
+        .expect("seed terminal application effect outbox");
+        sqlx::query(
+            "INSERT INTO agent_run_control_effects \
+             (id,dedup_key,delivery_runtime_session_id,turn_id,terminal_event_seq,effect_kind,\
+              payload_json,status,attempt_count,created_at_ms,updated_at_ms) \
+             VALUES ('00000000-0000-0000-0000-000000000070','reset-control-effect',\
+                     'reset-presentation-thread','reset-presentation-turn',1,\
+                     'agent_run_delivery_convergence','{}'::jsonb,'succeeded',0,0,0)",
+        )
+        .execute(pool)
+        .await
+        .expect("seed AgentRun control effect ledger");
 
         let binding_id = format!("binding-{}", fixture.suffix);
         let mut seed = pool.begin().await.expect("seed transaction");
@@ -2935,14 +3560,22 @@ mod tests {
         .execute(pool)
         .await
         .expect("apply journal record upgrade migration body");
+        sqlx::raw_sql(include_str!(
+            "../../../migrations/0074_reset_runtime_presentation_contract.sql"
+        ))
+        .execute(pool)
+        .await
+        .expect("apply immutable presentation contract reset migration body");
 
         for table in [
             "agent_runtime_thread",
             "agent_runtime_binding",
             "agent_runtime_source_coordinate",
             "agent_runtime_event",
+            "agent_runtime_terminal_application_effect_outbox",
             "agent_run_runtime_thread_anchor",
             "agent_run_runtime_binding_lineage",
+            "agent_run_control_effects",
         ] {
             let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
                 .fetch_one(pool)
@@ -2956,11 +3589,12 @@ mod tests {
             .expect("migration history after reset");
         assert_eq!(history_after, history_before);
         let applied: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=70 AND success)",
+            "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=70 AND success) \
+             AND EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=74 AND success)",
         )
         .fetch_one(pool)
         .await
-        .expect("0070 migration history");
+        .expect("0070/0074 migration history");
         assert!(applied);
         for table in [
             "projects",
@@ -3047,6 +3681,7 @@ mod tests {
             operation_terminals: Vec::new(),
             records: Vec::new(),
             outbox: Vec::new(),
+            terminal_application_effects: Vec::new(),
             context_activation_outbox: Vec::new(),
             context_preparation_work_items: Vec::new(),
             context_checkpoints: Vec::new(),
@@ -3103,6 +3738,7 @@ mod tests {
                 operation_terminals: Vec::new(),
                 records: Vec::new(),
                 outbox: Vec::new(),
+                terminal_application_effects: Vec::new(),
                 context_activation_outbox: Vec::new(),
                 context_preparation_work_items: Vec::new(),
                 context_checkpoints: Vec::new(),
@@ -3185,6 +3821,7 @@ mod tests {
                 records: agentdash_agent_runtime::internal_journal_records(events)
                     .expect("valid durable internal journal records"),
                 outbox: Vec::new(),
+                terminal_application_effects: Vec::new(),
                 context_activation_outbox: Vec::new(),
                 context_preparation_work_items: Vec::new(),
                 context_checkpoints: Vec::new(),

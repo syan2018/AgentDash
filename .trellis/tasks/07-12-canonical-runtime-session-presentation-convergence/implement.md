@@ -185,10 +185,10 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] clean database migrate通过。
-- [ ] 现有开发schema升级/清理路径通过。
-- [ ] memory/PostgreSQL commit→read→replay protected body deep equal。
-- [ ] duplicate/gap/recovery/terminal测试不漏发、不重写payload。
+- [x] clean database migrate通过。
+- [x] 现有开发schema升级/清理路径通过。
+- [x] memory/PostgreSQL commit→read→replay protected body deep equal。
+- [x] duplicate/gap/recovery/terminal测试不漏发、不重写payload。
 
 ### Commit
 

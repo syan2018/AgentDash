@@ -1,4 +1,7 @@
 mod agent_repository;
+mod agent_run_command_receipt_repository;
+mod agent_run_control_effect_store;
+mod agent_run_delete_store;
 mod agent_run_lineage_repository;
 mod agent_run_mailbox_repository;
 mod agent_runtime_composition_repository;
@@ -150,6 +153,10 @@ fn database_constraint_message(
 }
 
 pub use agent_repository::PostgresProjectAgentRepository;
+pub use agent_run_command_receipt_repository::PostgresAgentRunCommandReceiptRepository;
+pub use agent_run_control_effect_store::PostgresAgentRunControlEffectStore;
+pub use agent_run_delete_store::PostgresAgentRunDeleteStore;
+pub use agent_run_fork_graph_store::PostgresAgentRunForkGraphStore;
 pub use agent_run_lineage_repository::PostgresAgentRunLineageRepository;
 pub use agent_run_mailbox_repository::PostgresAgentRunMailboxRepository;
 pub use agent_runtime_composition_repository::PostgresAgentRuntimeCompositionRepository;
@@ -188,3 +195,4 @@ pub use tool_broker_repository::PostgresToolBrokerRepository;
 pub use user_directory_repository::PostgresUserDirectoryRepository;
 pub use workflow_repository::PostgresWorkflowRepository;
 pub use workspace_repository::PostgresWorkspaceRepository;
+mod agent_run_fork_graph_store;

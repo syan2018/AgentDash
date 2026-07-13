@@ -42,6 +42,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "agent_runtime_source_coordinate",
     "agent_runtime_operation",
     "agent_runtime_event",
+    "agent_runtime_terminal_application_effect_outbox",
     "agent_runtime_turn",
     "agent_runtime_item",
     "agent_runtime_interaction",

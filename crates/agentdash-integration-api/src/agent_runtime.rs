@@ -235,6 +235,7 @@ pub struct DriverToolDefinition {
     pub parameters_schema: Value,
     pub channels: Vec<ToolChannel>,
     pub protocol_projection: agentdash_agent_runtime_contract::ToolProtocolProjection,
+    pub parity_fixture_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -270,6 +271,7 @@ pub struct DriverHookSurface {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct DriverWorkspaceSurface {
+    pub digest: String,
     pub capabilities: Vec<WorkspaceCapability>,
     pub roots: Vec<String>,
 }
@@ -426,6 +428,8 @@ pub struct DriverHookInvocation {
     pub item_id: Option<RuntimeItemId>,
     pub binding_id: RuntimeBindingId,
     pub generation: RuntimeDriverGeneration,
+    pub hook_plan_revision: HookPlanRevision,
+    pub hook_plan_digest: HookPlanDigest,
     pub source_thread_id: DriverThreadId,
     pub source_turn_id: Option<DriverTurnId>,
     pub source_item_id: Option<DriverItemId>,
@@ -526,13 +530,6 @@ pub enum DriverConversationItemFamily {
     FileChange,
     Mcp,
     Dynamic,
-    Vfs,
-    RuntimeAction,
-    WorkspaceModule,
-    Companion,
-    Task,
-    Wait,
-    LifecycleComplete,
     Context,
 }
 
@@ -547,13 +544,6 @@ impl DriverConversationProjectionProfile {
                 DriverConversationItemFamily::FileChange,
                 DriverConversationItemFamily::Mcp,
                 DriverConversationItemFamily::Dynamic,
-                DriverConversationItemFamily::Vfs,
-                DriverConversationItemFamily::RuntimeAction,
-                DriverConversationItemFamily::WorkspaceModule,
-                DriverConversationItemFamily::Companion,
-                DriverConversationItemFamily::Task,
-                DriverConversationItemFamily::Wait,
-                DriverConversationItemFamily::LifecycleComplete,
                 DriverConversationItemFamily::Context,
             ]
             .into(),

@@ -101,3 +101,57 @@ main production writer count = current owner count = fixture count
 ```
 
 三组等式全部成立且W0 deep comparator通过，才允许标记W4–W7完成。
+
+## W5 Native / Remote 实施账本
+
+Native vendor stream声明`vendor_stream`是`ToolCallStart/Delta/End`、
+`ToolExecutionStart/Update/End`与approval生命周期的唯一presentation emitter。ToolBroker可以
+保留Runtime内部事实，但不能为同一Native生命周期再次产生presentation fact。
+
+W5 mapper逐分支来自
+`main@957fa9d60:crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs`，保留Main可见的
+文本/推理delta和独立terminal item、全部provider phase、diagnostic后接typed error、message与
+reasoning terminal后的usage、context compaction生命周期、tool start/update/output/terminal及
+approval requested/resolved。
+
+当前有意不产生presentation的`AgentEvent`分支是穷尽分类，不是fallback：
+
+- `AgentStart`、`TurnStart`、`TurnEnd`与`AgentEnd`：canonical turn presentation生命周期由
+  application producer拥有，Native driver只记录Runtime内部确认。
+- `MessageStart`：只建立correlation，因为Main不会为普通assistant message创建空item。
+- assistant `TextStart/TextEnd`与`ThinkingStart/ThinkingEnd`：只表达stream framing；可观察内容由
+  delta与terminal事件承载。
+- assistant `ToolCallEnd`：只更新mapper correlation state；实际terminal由`ToolExecutionEnd`产生。
+- user message replay：只建立correlation；user fact由application submit producer拥有。
+
+当前穷尽的Native `AgentEvent`枚举没有需要猜测presentation映射的新增variant。未来新增variant会
+形成编译期mapping决策，在产品语义明确前保持pending，不能进入generic text/tool fallback。
+
+Remote Runtime/Relay不拥有presentation语义：它按序serialize、relay、deserialize完整
+`RuntimeJournalFact`，只修改allowlist中的placement/generation/correlation wrapper。conformance
+fixture包含explicit null与异构数组顺序，避免body漂移被语义比较掩盖。
+
+W5已将Main oracle commit `957fa9d60`固定为两组可执行golden：Native 7个场景由mapper实际产出
+后通过W0 ordered comparator比较完整event body与durability；Remote/Relay 3个场景依次经过Runtime
+Wire与Relay typed frame roundtrip后使用同一comparator比较。比较没有字段ignore list，timestamp由测试
+时钟固定为oracle capture时间，生产仍使用真实时钟。
+
+## W6 Final Tool Catalog 实施账本
+
+生产bootstrap重新通过同一个`SessionRuntimeToolComposer`向Business Surface动态装配六个owner
+provider：VFS、lifecycle、companion、task、wait与workspace module。composer的final-catalog
+constructor固定六个provider槽位；每次`build_tools()`都遍历实际返回工具，缺owner projector或
+main parity fixture立即拒绝，随后Business Surface再次对实际catalog执行schema、唯一runtime
+name/tool path、非空且唯一fixture admission。MCP contribution仍由同一turn assembly追加并经过相同
+Business Surface admission，不用静态工具名列表推断family。
+
+当前生产owner实现动态审计为23个projector与23个fixture声明。Main展示family仅保留command、
+file change、fs read/grep/glob、MCP和explicit dynamic；VFS mount、runtime action、workspace、
+companion、task、wait与lifecycle owner均恢复为`DynamicToolCall(namespace: null)`，其额外产品语义由
+对应Platform producer拥有。`Vfs/RuntimeAction/WorkspaceModule/Companion/Task/Wait/
+LifecycleComplete`不再是Tool protocol presentation discriminant。
+
+最终catalog contribution显式携带唯一`vendor_stream`或`tool_broker` emitter。Native/Codex driver
+callback路径使用`vendor_stream`，避免ToolBroker对同一vendor生命周期重复发presentation；
+`tool_broker`路径保留独立声明，后续journal/stream接线必须直接提交完整typed presentation fact，
+不能从Runtime summary反向重建。

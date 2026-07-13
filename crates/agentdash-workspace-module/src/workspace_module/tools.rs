@@ -33,7 +33,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::workspace_module::runtime_bridge::{
-    SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
+    SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModulePresentationAppendHandle,
+    SharedWorkspaceModuleRuntimeGatewayHandle,
 };
 use crate::workspace_module::{
     ResolvedInvocationBackend, WorkspaceModuleAgentSurface, WorkspaceModuleAgentSurfaceCommand,
@@ -161,9 +162,11 @@ impl AgentTool for WorkspaceModuleListTool {
         })
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
-            operation: "list".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_workspace_module_list_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
@@ -306,9 +309,11 @@ impl AgentTool for WorkspaceModuleDescribeTool {
         schema_value::<WorkspaceModuleDescribeParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
-            operation: "describe".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_workspace_module_describe_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
@@ -439,9 +444,11 @@ impl AgentTool for WorkspaceModuleOperateTool {
         schema_value::<WorkspaceModuleOperateParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
-            operation: "operate".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_workspace_module_operate_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
@@ -842,9 +849,11 @@ impl AgentTool for WorkspaceModuleInvokeTool {
         schema_value::<WorkspaceModuleInvokeParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
-            operation: "invoke".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_workspace_module_invoke_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
@@ -926,6 +935,7 @@ pub struct WorkspaceModulePresentTool {
     turn_id: String,
     visibility_source: WorkspaceModuleVisibilitySource,
     operation_runtime_source: WorkspaceModuleOperationRuntimeSource,
+    presentation_append_handle: Option<SharedWorkspaceModulePresentationAppendHandle>,
 }
 
 impl WorkspaceModulePresentTool {
@@ -953,7 +963,16 @@ impl WorkspaceModulePresentTool {
             turn_id,
             visibility_source,
             operation_runtime_source: WorkspaceModuleOperationRuntimeSource::default(),
+            presentation_append_handle: None,
         }
+    }
+
+    pub fn with_presentation_append_handle(
+        mut self,
+        handle: SharedWorkspaceModulePresentationAppendHandle,
+    ) -> Self {
+        self.presentation_append_handle = Some(handle);
+        self
     }
 
     pub fn with_current_user(mut self, current_user: Option<ProjectAuthorizationContext>) -> Self {
@@ -994,14 +1013,16 @@ impl AgentTool for WorkspaceModulePresentTool {
         schema_value::<WorkspaceModulePresentParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
-            operation: "present".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_workspace_module_present_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
         &self,
-        _: &str,
+        tool_call_id: &str,
         args: serde_json::Value,
         _: CancellationToken,
         _: Option<ToolUpdateCallback>,
@@ -1017,10 +1038,18 @@ impl AgentTool for WorkspaceModulePresentTool {
                 "module_id 与 view_key 不能为空".to_string(),
             ));
         }
+        let presentation_append_handle =
+            self.presentation_append_handle.clone().ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "Workspace module canonical presentation append port 尚未完成初始化"
+                        .to_string(),
+                )
+            })?;
         let runtime_context =
             WorkspaceModuleRuntimeContext::new(self.project_id, self.runtime_thread_id.clone())
                 .with_vfs(self.vfs.clone())
                 .with_agent_run_bridge(Some(self.agent_run_bridge_handle.clone()))
+                .with_presentation_append(presentation_append_handle, tool_call_id)
                 .with_current_user(self.visibility_source.current_user().cloned());
 
         project_operation_outcome(
@@ -1059,7 +1088,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use agentdash_agent_protocol::BackboneEnvelope;
     use agentdash_agent_runtime_contract::RuntimeThreadId;
     use agentdash_application_ports::agent_frame_materialization::RuntimeSurfaceUpdateRequest;
     use agentdash_application_ports::agent_run_runtime::{
@@ -1238,14 +1266,6 @@ mod tests {
                 vfs.clone(),
                 RuntimeVfsAccessPolicy::whole_mounts_from_vfs(&vfs),
             ))
-        }
-
-        async fn inject_agent_run_notification(
-            &self,
-            _runtime_thread_id: &str,
-            _notification: BackboneEnvelope,
-        ) -> Result<(), String> {
-            Ok(())
         }
     }
 

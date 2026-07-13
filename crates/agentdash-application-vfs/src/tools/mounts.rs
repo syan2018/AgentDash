@@ -45,9 +45,10 @@ impl AgentTool for MountsListTool {
         serde_json::json!({ "type": "object", "properties": {}, "required": [], "additionalProperties": false })
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(agentdash_agent_types::ToolProtocolProjector::Vfs {
-            operation: "list_mounts".to_string(),
-        })
+        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_vfs_mounts_dynamic_lifecycle".to_string())
     }
     async fn execute(
         &self,

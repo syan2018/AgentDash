@@ -114,6 +114,9 @@ impl AgentTool for FsApplyPatchTool {
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FileChange)
     }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_fs_apply_patch_lifecycle".to_string())
+    }
 
     async fn execute(
         &self,

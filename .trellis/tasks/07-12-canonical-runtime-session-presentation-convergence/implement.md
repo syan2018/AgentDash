@@ -269,10 +269,10 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 
 ### Exit criteria
 
-- [ ] catalog contribution数=有projector数=有完整fixture数。
-- [ ] 缺projector/fixture时surface admission失败。
-- [ ] 每个tool的call/update/result/error/approval与main deep equal。
-- [ ] 无按tool name猜测、implicit Dynamic或generic JSON fallback。
+- [x] catalog contribution数=有projector数=有完整fixture数。
+- [x] 缺projector/fixture时surface admission失败。
+- [x] 每个tool的call/update/result/error/approval与main deep equal。
+- [x] 无按tool name猜测、implicit Dynamic或generic JSON fallback。
 
 ### Commit
 

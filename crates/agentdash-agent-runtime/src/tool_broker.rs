@@ -434,6 +434,48 @@ where
             return Ok(());
         }
         let thread = self.load_matching_thread(invocation).await?;
+        if matches!(
+            tool.protocol_projection,
+            agentdash_agent_runtime_contract::ToolProtocolProjection::Mcp { .. }
+        ) {
+            let messages = content_items
+                .into_iter()
+                .map(|content_item| match content_item {
+                    agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                        text,
+                    } => Ok(text),
+                    agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputImage {
+                        ..
+                    } => Err(ToolBrokerError::Execution(
+                        "MCP progress notification cannot represent image content".to_string(),
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            for message in messages {
+                self.store
+                    .publish_transient_presentation(
+                        thread.thread_id.clone(),
+                        invocation.coordinates.binding_id.clone(),
+                        invocation.coordinates.binding_generation,
+                        Some(invocation.coordinates.turn_id.clone()),
+                        thread.revision,
+                        tool_presentation_coordinate(invocation),
+                        agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                            agentdash_agent_runtime_contract::PresentationDurability::Ephemeral,
+                            agentdash_agent_protocol::BackboneEvent::McpToolCallProgress(
+                                agentdash_agent_protocol::codex_app_server_protocol::McpToolCallProgressNotification {
+                                    thread_id: thread.presentation_thread_id.to_string(),
+                                    turn_id: invocation.coordinates.turn_id.to_string(),
+                                    item_id: invocation.coordinates.item_id.to_string(),
+                                    message,
+                                },
+                            ),
+                        ),
+                    )
+                    .await;
+            }
+            return Ok(());
+        }
         let event = if matches!(
             tool.protocol_projection,
             agentdash_agent_runtime_contract::ToolProtocolProjection::Command
@@ -569,6 +611,7 @@ where
                 operation_terminals: Vec::new(),
                 records,
                 outbox: Vec::new(),
+                terminal_application_effects: Vec::new(),
                 context_activation_outbox: Vec::new(),
                 context_preparation_work_items: Vec::new(),
                 context_checkpoints: Vec::new(),

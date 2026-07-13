@@ -352,6 +352,9 @@ impl AgentTool for ShellExecTool {
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::Command)
     }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_shell_exec_lifecycle".to_string())
+    }
     async fn execute(
         &self,
         _tool_call_id: &str,

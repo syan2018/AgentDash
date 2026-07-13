@@ -81,11 +81,13 @@ impl AgentTool for RuntimeActionToolAdapter {
         self.spec.parameters_schema.clone()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(
-            agentdash_agent_types::ToolProtocolProjector::RuntimeAction {
-                action_key: self.spec.action_key.to_string(),
-            },
-        )
+        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some(format!(
+            "main_tool_runtime_action_{}_dynamic_lifecycle",
+            self.spec.action_key
+        ))
     }
 
     async fn execute(

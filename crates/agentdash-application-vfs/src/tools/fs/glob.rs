@@ -77,6 +77,9 @@ impl AgentTool for FsGlobTool {
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FsGlob)
     }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_fs_glob_lifecycle".to_string())
+    }
     async fn execute(
         &self,
         _: &str,

@@ -175,9 +175,11 @@ impl AgentTool for McpToolAdapter {
         self.surface.parameters_schema.clone()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Mcp {
-            server_key: self.surface.server_name.clone(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some(format!("main_tool_mcp_direct_{}_lifecycle", self.name()))
     }
 
     async fn execute(
@@ -495,6 +497,39 @@ mod tests {
 
         assert_eq!(raw_tool_names, vec!["allowed_tool"]);
         assert_eq!(callable_names, vec!["mcp_code_analyzer_allowed_tool"]);
+    }
+
+    #[test]
+    fn direct_mcp_owner_contract_matches_main_lifecycle_fixture_identity() {
+        let adapter = McpToolAdapter::from_tool(
+            McpHttpServerSpec {
+                name: "code-analyzer".to_string(),
+                url: "http://127.0.0.1:8999/mcp".to_string(),
+                headers: vec![],
+            },
+            Arc::new(DirectMcpClientPool::default()),
+            listed_tool("scan_repo"),
+        );
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentdash-agent-runtime/fixtures/main-mcp-tool-lifecycle.json"
+        ))
+        .expect("valid Main MCP fixture");
+        let direct = fixture["scenarios"]
+            .as_array()
+            .expect("MCP scenarios")
+            .iter()
+            .find(|scenario| scenario["id"] == "direct")
+            .expect("direct MCP scenario");
+
+        assert_eq!(adapter.name(), direct["runtime_name"]);
+        assert_eq!(
+            adapter.protocol_fixture_id().as_deref(),
+            direct["fixture_id"].as_str()
+        );
+        assert!(matches!(
+            adapter.protocol_projector(),
+            Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+        ));
     }
 
     #[tokio::test]

@@ -70,6 +70,7 @@ use agentdash_agent_runtime_contract::{RuntimeActor, RuntimeInput};
 use agentdash_application_agentrun::agent_run::{
     AgentRunProductDeliveryPort, DeliverAgentRunProductInput,
 };
+use agentdash_application_ports::agent_run_runtime::AgentRunRuntimeTarget;
 use agentdash_application_workflow::WorkflowScriptPreflightOutput;
 use agentdash_application_workflow::gate::{LifecycleGateResolver, OpenCompanionGateCommand};
 
@@ -941,10 +942,37 @@ async fn deliver_companion_mailbox_message(
     let _materialized =
         companion_channel_service(repos).materialize_delivery_to_mailbox(&channel_intent)?;
     let client_command_id = input.client_command_id.clone();
+    let target = AgentRunRuntimeTarget {
+        run_id: input.run_id,
+        agent_id: input.agent_id,
+    };
+    let binding = repos
+        .agent_run_runtime_binding_repo
+        .load(&target)
+        .await
+        .map_err(|error| crate::ApplicationError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            crate::ApplicationError::Internal(
+                "companion delivery target has no Runtime binding".to_string(),
+            )
+        })?;
     let delivery = product_delivery
         .deliver(DeliverAgentRunProductInput {
             run_id: input.run_id,
             agent_id: input.agent_id,
+            presentation_thread_id: binding.presentation_thread_id,
+            origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::Companion,
+            presentation: agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
+                content: agentdash_agent_protocol::text_user_input_blocks(input.input_text.clone()),
+                source: agentdash_agent_protocol::UserInputSource::new(
+                    "companion",
+                    input.payload_kind,
+                    "agent",
+                ),
+                launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::CompanionParentResume,
+                submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                started_at_seconds: chrono::Utc::now().timestamp(),
+            },
             input: vec![RuntimeInput::Text {
                 text: input.input_text,
             }],
@@ -1169,9 +1197,11 @@ impl AgentTool for CompanionRequestTool {
         schema_value::<CompanionRequestParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Companion {
-            operation: "request".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_companion_request_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
@@ -1484,6 +1514,22 @@ impl CompanionRequestTool {
             .deliver(DeliverAgentRunProductInput {
                 run_id: dispatch_result.run_ref,
                 agent_id: dispatch_result.agent_ref,
+                presentation_thread_id: dispatch_result.presentation_thread_id.clone(),
+                origin: agentdash_domain::agent_run_mailbox::MailboxMessageOrigin::Companion,
+                presentation: agentdash_application_agentrun::agent_run::AgentRunPresentationDraft {
+                    content: agentdash_agent_protocol::text_user_input_blocks(
+                        dispatch_result.launch_source.dispatch_prompt.clone(),
+                    ),
+                    source: agentdash_agent_protocol::UserInputSource::new(
+                        "companion",
+                        "dispatch",
+                        "agent",
+                    )
+                    .with_route("sub"),
+                    launch_source: agentdash_application_agentrun::agent_run::LaunchPresentationSource::CompanionDispatch,
+                    submission_kind: agentdash_agent_protocol::UserInputSubmissionKind::Prompt,
+                    started_at_seconds: chrono::Utc::now().timestamp(),
+                },
                 input: vec![RuntimeInput::Text {
                     text: dispatch_result.launch_source.dispatch_prompt.clone(),
                 }],
@@ -1548,7 +1594,7 @@ impl CompanionRequestTool {
                 "agent_ref": dispatch_result.agent_ref.to_string(),
                 "frame_ref": dispatch_result.frame_ref.to_string(),
                 "gate_ref": dispatch_result.gate_ref.map(|id| id.to_string()),
-                "runtime_thread_id": dispatch_result.runtime_thread_id.clone(),
+                "runtime_thread_id": dispatch_result.presentation_thread_id.to_string(),
                 "runtime_operation_id": runtime_operation_id,
                 "mailbox_message_id": mailbox_message_id.clone(),
                 "mailbox_outcome": mailbox_outcome,
@@ -2112,9 +2158,11 @@ impl AgentTool for CompanionRespondTool {
         schema_value::<CompanionRespondParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Companion {
-            operation: "respond".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_companion_respond_dynamic_lifecycle".to_string())
     }
 
     async fn execute(

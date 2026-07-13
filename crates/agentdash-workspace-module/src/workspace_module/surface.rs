@@ -1609,10 +1609,10 @@ async fn build_present_projection_event(
             reason: ControlPlaneProjectionChangeReason::WorkspaceModulePresented,
             run_id: binding.target.run_id.to_string(),
             agent_id: binding.target.agent_id.to_string(),
-            frame_id: None,
+            frame_id: Some(binding.surface.source_frame_id.clone()),
             gate_id: None,
             mailbox_message_id: None,
-            delivery_runtime_session_id: None,
+            delivery_runtime_session_id: Some(binding.presentation_thread_id.to_string()),
             workspace_module_presentation: Some(ControlPlaneWorkspaceModulePresentation {
                 module_id: presentation.module_id.clone(),
                 view_key: presentation.view_key.clone(),
@@ -2004,6 +2004,7 @@ mod tests {
                     digest: runtime_id("hook-workspace-module"),
                     entries: Vec::new(),
                 },
+                terminal_hook_effect_binding: None,
             },
             settings_revision: ThreadSettingsRevision(0),
         }
@@ -2218,6 +2219,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn current_workspace_module_control_projection_matches_pinned_main_body_exactly() {
+        let mut binding = runtime_binding(
+            "session-control-0001",
+            Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+            Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
+        );
+        binding.surface.source_frame_id = "frame-control-0001".to_string();
+        let repo = StaticAgentRunRuntimeBindingRepo { binding };
+        let presentation = WorkspaceModulePresentation {
+            module_id: "module-dashboard".to_string(),
+            view_key: "dashboard".to_string(),
+            renderer_kind: "canvas".to_string(),
+            presentation_uri: "agentdash://workspace-module/module-dashboard/dashboard".to_string(),
+            title: "Dashboard".to_string(),
+            payload: None,
+            diagnostics: None,
+        };
+        let payload = serde_json::json!({
+            "blocks": [{"kind": "text", "text": "ready"}],
+            "revision": 7
+        });
+        let (_, event) =
+            build_present_projection_event(&repo, "session-control-0001", &presentation, payload)
+                .await
+                .expect("current workspace module projection");
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json"
+        ))
+        .expect("pinned Main platform fixture");
+        assert_eq!(
+            serde_json::to_value(event).expect("serialize current control projection"),
+            fixture["cases"]["workspace_module_presented"],
+        );
+    }
+
+    #[tokio::test]
     async fn present_canvas_appends_typed_canonical_presentation() {
         let project_id = Uuid::new_v4();
         let installation_repo: Arc<dyn ProjectExtensionInstallationRepository> =
@@ -2290,13 +2327,37 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].runtime_thread_id.as_str(), "session-a");
         assert_eq!(
-            requests[0].coordinate.source_thread_id.as_deref(),
+            requests[0].events[0].coordinate.source_thread_id.as_deref(),
             Some("presentation-session-a")
         );
-        assert!(matches!(
-            requests[0].events[0].event,
-            BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(_))
-        ));
+        let BackboneEvent::Platform(PlatformEvent::ControlPlaneProjectionChanged(changed)) =
+            &requests[0].events[0].event.event
+        else {
+            panic!("present must append the Main control-plane projection event")
+        };
+        assert_eq!(changed.projection, ControlPlaneProjection::ResourceSurface);
+        assert_eq!(
+            changed.reason,
+            ControlPlaneProjectionChangeReason::WorkspaceModulePresented
+        );
+        assert_eq!(changed.frame_id.as_deref(), Some("frame-workspace-module"));
+        assert!(changed.gate_id.is_none());
+        assert!(changed.mailbox_message_id.is_none());
+        assert_eq!(
+            changed.delivery_runtime_session_id.as_deref(),
+            Some("presentation-session-a")
+        );
+        let control = changed
+            .workspace_module_presentation
+            .as_ref()
+            .expect("workspace module presentation");
+        assert_eq!(control.module_id, "canvas:cvs-dashboard-a");
+        assert_eq!(control.view_key, "preview");
+        assert_eq!(control.renderer_kind, "canvas");
+        assert_eq!(control.presentation_uri, "canvas://cvs-dashboard-a");
+        assert_eq!(control.title, "Dashboard A");
+        assert!(control.payload.is_some());
+        assert!(control.diagnostics.is_none());
     }
 
     #[tokio::test]
@@ -2369,7 +2430,7 @@ mod tests {
         let requests = presentation_append.requests.lock().expect("append lock");
         assert_eq!(requests.len(), 1);
         assert!(matches!(
-            &requests[0].events[0].event,
+            &requests[0].events[0].event.event,
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, .. })
                 if key == "workspace_module_present_failed"
         ));

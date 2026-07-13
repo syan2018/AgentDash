@@ -426,9 +426,11 @@ impl AgentTool for TaskReadTool {
         schema_value::<TaskReadParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Task {
-            operation: "read".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_task_read_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
@@ -466,9 +468,11 @@ impl AgentTool for TaskWriteTool {
         schema_value::<TaskWriteParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Task {
-            operation: "write".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_task_write_dynamic_lifecycle".to_string())
     }
 
     async fn execute(

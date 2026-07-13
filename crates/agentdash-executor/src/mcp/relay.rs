@@ -66,9 +66,11 @@ impl AgentTool for RelayMcpToolAdapter {
         self.surface.parameters_schema.clone()
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::Mcp {
-            server_key: self.surface.server_name.clone(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some(format!("main_tool_mcp_relay_{}_lifecycle", self.name()))
     }
 
     async fn execute(
@@ -340,6 +342,42 @@ mod tests {
 
         assert_eq!(raw_tool_names, vec!["allowed_tool"]);
         assert_eq!(callable_names, vec!["mcp_code_analyzer_allowed_tool"]);
+    }
+
+    #[test]
+    fn relay_mcp_owner_contract_matches_main_lifecycle_fixture_identity() {
+        let info = RelayMcpToolInfo {
+            server_name: "agentdash-workflow-tools-123".to_string(),
+            server: relay_server("agentdash-workflow-tools-123"),
+            tool_name: "upsert_workflow_tool".to_string(),
+            description: String::new(),
+            parameters_schema: serde_json::json!({"type":"object"}),
+        };
+        let adapter = RelayMcpToolAdapter::from_info(
+            &info,
+            Arc::new(FakeRelayProvider { tools: vec![] }),
+            None,
+        );
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentdash-agent-runtime/fixtures/main-mcp-tool-lifecycle.json"
+        ))
+        .expect("valid Main MCP fixture");
+        let relay = fixture["scenarios"]
+            .as_array()
+            .expect("MCP scenarios")
+            .iter()
+            .find(|scenario| scenario["id"] == "relay")
+            .expect("relay MCP scenario");
+
+        assert_eq!(adapter.name(), relay["runtime_name"]);
+        assert_eq!(
+            adapter.protocol_fixture_id().as_deref(),
+            relay["fixture_id"].as_str()
+        );
+        assert!(matches!(
+            adapter.protocol_projector(),
+            Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+        ));
     }
 
     #[tokio::test]

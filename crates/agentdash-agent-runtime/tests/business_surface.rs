@@ -1,7 +1,15 @@
 use std::{collections::BTreeSet, str::FromStr};
 
+use agentdash_agent_protocol::{
+    BackboneEvent, ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
+};
 use agentdash_agent_runtime::*;
 use agentdash_agent_runtime_contract::*;
+use agentdash_agent_runtime_test_support::session_parity::{
+    NormalizedPresentationEvent, PresentationDurability as StrictDurability,
+    compare_ordered_presentation_events,
+};
+use serde::Deserialize;
 
 fn id<T: FromStr>(value: &str) -> T
 where
@@ -42,41 +50,6 @@ fn tool_projection_matrix_uses_declared_typed_families() {
             },
             "dynamicToolCall",
         ),
-        (
-            ToolProtocolProjection::Vfs {
-                operation: "list_mounts".into(),
-            },
-            "vfs",
-        ),
-        (
-            ToolProtocolProjection::RuntimeAction {
-                action_key: "canvas.open".into(),
-            },
-            "runtimeAction",
-        ),
-        (
-            ToolProtocolProjection::WorkspaceModule {
-                operation: "present".into(),
-            },
-            "workspaceModule",
-        ),
-        (
-            ToolProtocolProjection::Companion {
-                operation: "request".into(),
-            },
-            "companion",
-        ),
-        (
-            ToolProtocolProjection::Task {
-                operation: "read".into(),
-            },
-            "task",
-        ),
-        (ToolProtocolProjection::Wait, "wait"),
-        (
-            ToolProtocolProjection::LifecycleComplete,
-            "lifecycleComplete",
-        ),
     ];
     for (projection, expected_type) in cases {
         let tool = ToolContribution {
@@ -89,6 +62,8 @@ fn tool_projection_matrix_uses_declared_typed_families() {
             allowed_channels: [ToolChannel::DirectCallback].into(),
             configuration_boundary: ConfigurationBoundary::Binding,
             protocol_projection: projection,
+            presentation_emitter: ToolPresentationEmitter::ToolBroker,
+            parity_fixture_id: "main_tool_matrix_lifecycle".into(),
         };
         let args = serde_json::json!({"command":"pwd","path":".","pattern":"x","changes":[],"duration_ms":10,"node_id":"node"});
         let started = tool
@@ -133,6 +108,153 @@ fn tool_projection_matrix_uses_declared_typed_families() {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct McpParityFixture {
+    oracle_commit: String,
+    scenarios: Vec<McpParityScenario>,
+}
+
+#[derive(Debug, Deserialize)]
+struct McpParityScenario {
+    id: String,
+    runtime_name: String,
+    server_key: String,
+    fixture_id: String,
+    arguments: serde_json::Value,
+    progress_message: String,
+    completed_output: serde_json::Value,
+    failed_output: serde_json::Value,
+    protected_events: Vec<serde_json::Value>,
+}
+
+#[test]
+fn direct_and_relay_mcp_lifecycles_match_main_protected_bodies_strictly() {
+    let fixture: McpParityFixture =
+        serde_json::from_str(include_str!("../fixtures/main-mcp-tool-lifecycle.json"))
+            .expect("valid MCP Main fixture");
+    assert_eq!(
+        fixture.oracle_commit,
+        "957fa9d60ea3d67efa1bb278fe5b376cf0c34598"
+    );
+
+    for scenario in fixture.scenarios {
+        let tool = ToolContribution {
+            meta: meta(
+                &format!("tool:mcp:{}", scenario.id),
+                ContributionRequirement::Required,
+            ),
+            runtime_name: scenario.runtime_name,
+            description: format!("{} MCP fixture", scenario.id),
+            parameters_schema: serde_json::json!({"type":"object"}),
+            capability_key: format!("mcp:{}", scenario.server_key),
+            tool_path: format!("mcp::{}", scenario.id),
+            allowed_channels: [ToolChannel::DirectCallback].into(),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: ToolProtocolProjection::Dynamic { namespace: None },
+            presentation_emitter: ToolPresentationEmitter::ToolBroker,
+            parity_fixture_id: scenario.fixture_id,
+        };
+        let item_id = scenario.protected_events[0]["payload"]["item"]["id"]
+            .as_str()
+            .expect("pinned Main started item id");
+        let failed_item_id = scenario.protected_events[3]["payload"]["item"]["id"]
+            .as_str()
+            .expect("pinned Main failed item id");
+        let started = tool
+            .project_started(&item_id, scenario.arguments.clone())
+            .expect("MCP started");
+        let completed = tool
+            .project_completed(
+                &item_id,
+                scenario.arguments.clone(),
+                &scenario.completed_output,
+                false,
+            )
+            .expect("MCP completed");
+        let failed = tool
+            .project_completed(
+                failed_item_id,
+                scenario.arguments.clone(),
+                &scenario.failed_output,
+                true,
+            )
+            .expect("MCP failed");
+        let updated = tool
+            .project_updated(
+                &item_id,
+                scenario.arguments,
+                vec![
+                    agentdash_agent_protocol::DynamicToolCallOutputContentItem::InputText {
+                        text: scenario.progress_message,
+                    },
+                ],
+            )
+            .expect("Native MCP tool update uses Main DynamicToolCall projection");
+
+        let current = vec![
+            NormalizedPresentationEvent {
+                durability: StrictDurability::Durable,
+                event: serde_json::to_value(BackboneEvent::ItemStarted(ItemStartedNotification {
+                    item: started.item().clone(),
+                    thread_id: "session-fixture".into(),
+                    turn_id: "turn-fixture".into(),
+                    started_at_ms: 1_720_000_000_000,
+                }))
+                .unwrap(),
+            },
+            NormalizedPresentationEvent {
+                durability: StrictDurability::Ephemeral,
+                event: serde_json::to_value(BackboneEvent::ItemUpdated(ItemUpdatedNotification {
+                    item: updated.item().clone(),
+                    thread_id: "session-fixture".into(),
+                    turn_id: "turn-fixture".into(),
+                    updated_at_ms: 1_720_000_000_001,
+                }))
+                .unwrap(),
+            },
+            NormalizedPresentationEvent {
+                durability: StrictDurability::Durable,
+                event: serde_json::to_value(BackboneEvent::ItemCompleted(
+                    ItemCompletedNotification {
+                        item: completed.item().clone(),
+                        thread_id: "session-fixture".into(),
+                        turn_id: "turn-fixture".into(),
+                        completed_at_ms: 1_720_000_000_002,
+                    },
+                ))
+                .unwrap(),
+            },
+            NormalizedPresentationEvent {
+                durability: StrictDurability::Durable,
+                event: serde_json::to_value(BackboneEvent::ItemCompleted(
+                    ItemCompletedNotification {
+                        item: failed.item().clone(),
+                        thread_id: "session-fixture".into(),
+                        turn_id: "turn-fixture".into(),
+                        completed_at_ms: 1_720_000_000_003,
+                    },
+                ))
+                .unwrap(),
+            },
+        ];
+        let main = scenario
+            .protected_events
+            .into_iter()
+            .enumerate()
+            .map(|(index, event)| NormalizedPresentationEvent {
+                durability: if index == 1 {
+                    StrictDurability::Ephemeral
+                } else {
+                    StrictDurability::Durable
+                },
+                event,
+            })
+            .collect::<Vec<_>>();
+        compare_ordered_presentation_events(&main, &current)
+            .unwrap_or_else(|error| panic!("{} MCP Main mismatch: {error:?}", scenario.id));
+    }
+}
+
 #[test]
 fn file_change_projection_preserves_owner_patch_and_terminal_changes() {
     let tool = ToolContribution {
@@ -145,6 +267,8 @@ fn file_change_projection_preserves_owner_patch_and_terminal_changes() {
         allowed_channels: [ToolChannel::DirectCallback].into(),
         configuration_boundary: ConfigurationBoundary::Binding,
         protocol_projection: ToolProtocolProjection::FileChange,
+        presentation_emitter: ToolPresentationEmitter::ToolBroker,
+        parity_fixture_id: "main_tool_apply_patch_lifecycle".into(),
     };
     let patch =
         "*** Begin Patch\n*** Update File: main://src/lib.rs\n@@\n-old\n+new\n*** End Patch";
@@ -181,6 +305,8 @@ fn shell_projection_uses_arguments_for_execution_mode_and_terminal_control_ident
         allowed_channels: [ToolChannel::DirectCallback].into(),
         configuration_boundary: ConfigurationBoundary::Binding,
         protocol_projection: ToolProtocolProjection::Command,
+        presentation_emitter: ToolPresentationEmitter::ToolBroker,
+        parity_fixture_id: "main_tool_shell_split_lifecycle".into(),
     };
     let platform = serde_json::to_value(
         tool.project_started("platform", serde_json::json!({"command":"pwd"}))
@@ -234,6 +360,8 @@ fn command_projection_reads_owner_terminal_contract() {
         allowed_channels: [ToolChannel::DirectCallback].into(),
         configuration_boundary: ConfigurationBoundary::Binding,
         protocol_projection: ToolProtocolProjection::Command,
+        presentation_emitter: ToolPresentationEmitter::ToolBroker,
+        parity_fixture_id: "main_tool_shell_lifecycle".into(),
     };
     let completed = serde_json::to_value(tool.project_completed(
         "shell-1",
@@ -332,6 +460,8 @@ fn compiler_expands_pack_and_preserves_tool_provenance() {
         protocol_projection: ToolProtocolProjection::Dynamic {
             namespace: Some("test".to_string()),
         },
+        presentation_emitter: ToolPresentationEmitter::ToolBroker,
+        parity_fixture_id: "main_tool_workspace_read_lifecycle".into(),
     };
     let input = AgentSurfaceCompileInput {
         revision: SurfaceRevision(7),
@@ -429,6 +559,8 @@ fn distinct_contribution_keys_cannot_alias_one_tool_runtime_identity() {
             protocol_projection: ToolProtocolProjection::Dynamic {
                 namespace: Some("test".to_string()),
             },
+            presentation_emitter: ToolPresentationEmitter::ToolBroker,
+            parity_fixture_id: format!("main_tool_{key}_lifecycle"),
         })
     };
 
@@ -457,6 +589,68 @@ fn distinct_contribution_keys_cannot_alias_one_tool_runtime_identity() {
             runtime_name: "workspace_read".to_string()
         }
     );
+}
+
+#[test]
+fn compiler_rejects_missing_or_shared_main_parity_fixture() {
+    let tool = |key: &str, runtime_name: &str, fixture_id: &str| {
+        CapabilityContribution::Tool(ToolContribution {
+            meta: meta(key, ContributionRequirement::Required),
+            runtime_name: runtime_name.to_string(),
+            description: "fixture admission".to_string(),
+            parameters_schema: serde_json::json!({"type":"object"}),
+            capability_key: runtime_name.to_string(),
+            tool_path: format!("fixture::{runtime_name}"),
+            allowed_channels: [ToolChannel::DirectCallback].into(),
+            configuration_boundary: ConfigurationBoundary::Binding,
+            protocol_projection: ToolProtocolProjection::Dynamic { namespace: None },
+            presentation_emitter: ToolPresentationEmitter::ToolBroker,
+            parity_fixture_id: fixture_id.to_string(),
+        })
+    };
+
+    let missing = AgentSurfaceCompiler
+        .compile(AgentSurfaceCompileInput {
+            revision: SurfaceRevision(1),
+            context_recipe: context_recipe(),
+            tool_set_revision: ToolSetRevision(1),
+            hook_plan_revision: HookPlanRevision(1),
+            workspace: WorkspaceRequirement {
+                capabilities: BTreeSet::new(),
+                minimum_mechanism: DeliveryMechanism::Native,
+                requirement: ContributionRequirement::Optional,
+            },
+            contributions: vec![tool("tool:missing", "missing", "")],
+            capability_packs: Vec::new(),
+        })
+        .expect_err("blank fixture must fail admission");
+    assert!(matches!(
+        missing,
+        SurfaceCompileError::InvalidToolProjector { .. }
+    ));
+
+    let shared = AgentSurfaceCompiler
+        .compile(AgentSurfaceCompileInput {
+            revision: SurfaceRevision(1),
+            context_recipe: context_recipe(),
+            tool_set_revision: ToolSetRevision(1),
+            hook_plan_revision: HookPlanRevision(1),
+            workspace: WorkspaceRequirement {
+                capabilities: BTreeSet::new(),
+                minimum_mechanism: DeliveryMechanism::Native,
+                requirement: ContributionRequirement::Optional,
+            },
+            contributions: vec![
+                tool("tool:first", "first", "main_tool_shared_lifecycle"),
+                tool("tool:second", "second", "main_tool_shared_lifecycle"),
+            ],
+            capability_packs: Vec::new(),
+        })
+        .expect_err("one fixture cannot self-prove multiple contributions");
+    assert!(matches!(
+        shared,
+        SurfaceCompileError::ConflictingToolParityFixture { .. }
+    ));
 }
 
 #[test]
@@ -606,6 +800,8 @@ fn required_tool_needs_a_callable_bound_channel() {
         protocol_projection: ToolProtocolProjection::Dynamic {
             namespace: Some("test".to_string()),
         },
+        presentation_emitter: ToolPresentationEmitter::ToolBroker,
+        parity_fixture_id: "main_tool_optional_lifecycle".into(),
     })]);
 
     let error = surface
@@ -636,6 +832,8 @@ fn required_hot_replace_tool_rejects_a_binding_only_runtime() {
         protocol_projection: ToolProtocolProjection::Dynamic {
             namespace: Some("test".to_string()),
         },
+        presentation_emitter: ToolPresentationEmitter::ToolBroker,
+        parity_fixture_id: "main_tool_required_lifecycle".into(),
     })]);
 
     let error = surface

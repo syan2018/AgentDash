@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::SharedPlatformConfig;
 use crate::lifecycle::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator, LifecycleOrchestratorDeps,
@@ -31,7 +30,6 @@ impl SharedSessionToolServicesHandle {
 pub struct CompleteLifecycleNodeTool {
     orchestrator_deps: LifecycleOrchestratorDeps,
     session_services_handle: SharedSessionToolServicesHandle,
-    platform_config: SharedPlatformConfig,
     function_runner: Option<Arc<dyn FunctionRunner>>,
     current_turn_id: String,
     hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
@@ -64,13 +62,11 @@ impl CompleteLifecycleNodeTool {
         orchestrator_deps: LifecycleOrchestratorDeps,
         session_services_handle: SharedSessionToolServicesHandle,
         function_runner: Option<Arc<dyn FunctionRunner>>,
-        platform_config: SharedPlatformConfig,
         context: &ExecutionContext,
     ) -> Self {
         Self {
             orchestrator_deps,
             session_services_handle,
-            platform_config,
             function_runner,
             current_turn_id: context.session.turn_id.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
@@ -94,7 +90,10 @@ impl AgentTool for CompleteLifecycleNodeTool {
         schema_value::<CompleteLifecycleNodeParams>()
     }
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
-        Some(agentdash_agent_types::ToolProtocolProjector::LifecycleComplete)
+        Some(agentdash_agent_types::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_complete_lifecycle_node_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
@@ -118,10 +117,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
                 "session services 尚未就绪，无法推进 lifecycle node".to_string(),
             )
         })?;
-        let mut orchestrator = LifecycleOrchestrator::new_with_platform_config(
-            self.orchestrator_deps.clone(),
-            self.platform_config.clone(),
-        );
+        let mut orchestrator = LifecycleOrchestrator::new(self.orchestrator_deps.clone());
         if let Some(function_runner) = &self.function_runner {
             orchestrator = orchestrator.with_function_runner(function_runner.clone());
         }

@@ -23,7 +23,8 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::workspace_module::runtime_bridge::{
-    SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModuleRuntimeGatewayHandle,
+    SharedWorkspaceModuleAgentRunBridgeHandle, SharedWorkspaceModulePresentationAppendHandle,
+    SharedWorkspaceModuleRuntimeGatewayHandle,
 };
 use crate::workspace_module::{
     WorkspaceModuleDescribeTool, WorkspaceModuleInvokeTool, WorkspaceModuleListTool,
@@ -41,6 +42,7 @@ pub struct WorkspaceModuleRuntimeToolProvider {
     runtime_binding_repo: Arc<dyn AgentRunRuntimeBindingRepository>,
     agent_run_bridge_handle: SharedWorkspaceModuleAgentRunBridgeHandle,
     runtime_gateway_handle: SharedWorkspaceModuleRuntimeGatewayHandle,
+    presentation_append_handle: Option<SharedWorkspaceModulePresentationAppendHandle>,
     extension_channel_transport: Option<Arc<dyn ExtensionRuntimeChannelTransport>>,
     extension_backend_service_transport: Option<Arc<dyn ExtensionBackendServiceTransport>>,
 }
@@ -63,9 +65,18 @@ impl WorkspaceModuleRuntimeToolProvider {
             runtime_binding_repo,
             agent_run_bridge_handle,
             runtime_gateway_handle,
+            presentation_append_handle: None,
             extension_channel_transport: None,
             extension_backend_service_transport: None,
         }
+    }
+
+    pub fn with_presentation_append_handle(
+        mut self,
+        handle: SharedWorkspaceModulePresentationAppendHandle,
+    ) -> Self {
+        self.presentation_append_handle = Some(handle);
+        self
     }
 
     pub fn with_extension_channel_transport(
@@ -145,9 +156,11 @@ impl AgentTool for WorkspaceModuleInvokeUnavailableTool {
         })
     }
     fn protocol_projector(&self) -> Option<agentdash_spi::ToolProtocolProjector> {
-        Some(agentdash_spi::ToolProtocolProjector::WorkspaceModule {
-            operation: "invoke_unavailable".to_string(),
-        })
+        Some(agentdash_spi::ToolProtocolProjector::Dynamic { namespace: None })
+    }
+
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_workspace_module_unavailable_dynamic_lifecycle".to_string())
     }
 
     async fn execute(
@@ -188,7 +201,6 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
         {
             return Ok(Vec::new());
         }
-
         let Some(project_id) = project_id_from_context(context) else {
             diag!(
                 Warn,
@@ -304,24 +316,27 @@ impl RuntimeToolProvider for WorkspaceModuleRuntimeToolProvider {
             "workspace_module_present",
             Some(ToolCluster::WorkspaceModule),
         ) {
+            let mut tool = WorkspaceModulePresentTool::new(
+                self.installation_repo.clone(),
+                self.canvas_repo.clone(),
+                self.runtime_binding_repo.clone(),
+                project_id,
+                shared_vfs,
+                self.agent_run_bridge_handle.clone(),
+                runtime_thread_id,
+                context.session.turn_id.clone(),
+            );
+            if let Some(handle) = self.presentation_append_handle.clone() {
+                tool = tool.with_presentation_append_handle(handle);
+            }
             tools.push(Arc::new(
-                WorkspaceModulePresentTool::new(
-                    self.installation_repo.clone(),
-                    self.canvas_repo.clone(),
-                    self.runtime_binding_repo.clone(),
-                    project_id,
-                    shared_vfs,
-                    self.agent_run_bridge_handle.clone(),
-                    runtime_thread_id,
-                    context.session.turn_id.clone(),
-                )
-                .with_current_user(current_user.clone())
-                .with_runtime_dependencies(
-                    self.runtime_gateway_handle.clone(),
-                    channel_transport_available,
-                    backend_readiness.clone(),
-                    backend_service_readiness.clone(),
-                ),
+                tool.with_current_user(current_user.clone())
+                    .with_runtime_dependencies(
+                        self.runtime_gateway_handle.clone(),
+                        channel_transport_available,
+                        backend_readiness.clone(),
+                        backend_service_readiness.clone(),
+                    ),
             ));
         }
 

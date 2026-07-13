@@ -45,13 +45,6 @@ pub enum ToolProtocolProjector {
     FsGlob,
     Mcp { server_key: String },
     Dynamic { namespace: Option<String> },
-    Vfs { operation: String },
-    RuntimeAction { action_key: String },
-    WorkspaceModule { operation: String },
-    Companion { operation: String },
-    Task { operation: String },
-    Wait,
-    LifecycleComplete,
 }
 
 // ─── AgentToolError ─────────────────────────────────────────
@@ -80,6 +73,12 @@ pub trait AgentTool: Send + Sync {
 
     /// Returning `None` is an explicit admission failure at Business Surface compilation.
     fn protocol_projector(&self) -> Option<ToolProtocolProjector> {
+        None
+    }
+
+    /// Main-oracle fixture proving the complete presentation lifecycle for this contribution.
+    /// Returning `None` is an admission failure together with a missing projector.
+    fn protocol_fixture_id(&self) -> Option<String> {
         None
     }
 

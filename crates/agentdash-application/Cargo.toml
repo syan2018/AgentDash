@@ -57,3 +57,6 @@ json-patch = { workspace = true }
 agentdash-agent = { workspace = true }
 agentdash-infrastructure = { workspace = true }
 agentdash-test-support = { workspace = true }
+agentdash-agent-runtime = { workspace = true }
+agentdash-agent-runtime-test-support = { workspace = true }
+sqlx = { workspace = true }

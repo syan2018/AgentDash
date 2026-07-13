@@ -126,6 +126,9 @@ impl AgentTool for FsReadTool {
     fn protocol_projector(&self) -> Option<agentdash_agent_types::ToolProtocolProjector> {
         Some(agentdash_agent_types::ToolProtocolProjector::FsRead)
     }
+    fn protocol_fixture_id(&self) -> Option<String> {
+        Some("main_tool_fs_read_lifecycle".to_string())
+    }
     async fn execute(
         &self,
         _: &str,

@@ -118,3 +118,7 @@ cargo test -p agentdash-agent-runtime-test-support
 ```
 
 负例覆盖event缺失、增加、重排、ID变化、timestamp变化、number/string变化、null/omitted、数组重排与durability变化。seed golden固定UserInputSubmitted在TurnStarted之前，并由同一typed Main NDJSON normalizer读取。
+
+### W4 Codex conformance 进度
+
+`crates/agentdash-integration-codex/fixtures/main-presentation.json`固定Main oracle commit与Codex `0.144.1` revision；connector测试使用W0 ordered comparator深比较完整protected body与durability。当前Codex notification矩阵、同源item lifecycle/delta identity、server request identity、method-specific automatic response、unsupported diagnostic及nullable/omitted三态均已通过。共享scenario仍保留`planned`，等待W5/W6/W7共同owner与W8端到端stream完成后再晋级。

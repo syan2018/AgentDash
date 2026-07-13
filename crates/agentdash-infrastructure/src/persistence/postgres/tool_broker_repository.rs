@@ -203,8 +203,8 @@ mod tests {
     };
     use agentdash_agent_runtime_contract::{
         ConfigurationBoundary, RuntimeBindingId, RuntimeDriverGeneration, RuntimeInteractionId,
-        RuntimeItemId, RuntimeThreadId, RuntimeTurnId, ToolChannel, ToolProtocolProjection,
-        ToolSetRevision,
+        RuntimeItemId, RuntimeThreadId, RuntimeTurnId, ToolChannel, ToolPresentationEmitter,
+        ToolProtocolProjection, ToolSetRevision,
     };
 
     fn id<T: FromStr>(value: &str) -> T
@@ -328,6 +328,8 @@ mod tests {
                 allowed_channels: [ToolChannel::DirectCallback].into(),
                 configuration_boundary: ConfigurationBoundary::Binding,
                 protocol_projection: ToolProtocolProjection::FsRead,
+                presentation_emitter: ToolPresentationEmitter::ToolBroker,
+                parity_fixture_id: "main_tool_workspace_read_lifecycle".into(),
             },
             channel: ToolChannel::DirectCallback,
             status: ToolBrokerCallStatus::Accepted,

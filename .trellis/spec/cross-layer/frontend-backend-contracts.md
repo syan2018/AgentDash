@@ -91,7 +91,8 @@ AgentRunCommandReceipt {
 - Composer submit 返回 queued mailbox identity 或 canonical `OperationReceipt`；重复 `client_command_id` 返回同一 operation，不创建第二次 Driver side effect。
 - UI 命令可用性只读取 Runtime snapshot 的 `command_availability`。Lifecycle status、executor kind、Backbone、transcript 或 HTTP success 不能推导 submit/steer/interrupt/compact/resolve 权限。
 - `AgentRunRuntimeBinding` 是 `run_id + agent_id` 到 Runtime thread/Host binding 的唯一产品执行坐标。浏览器不接触 Driver source IDs、Host lease 或 placement credential。
-- Runtime feed由snapshot transcript建立baseline，再通过持久NDJSON连接消费durable与live transient事件。订阅携带durable cursor及`transient_generation + transient_sequence`；浏览器按target隔离cursor，terminal清理transient cursor，retention gap/Lagged使用typed Runtime error重连。
+- Session feed由journal GET建立presentation baseline，再通过持久NDJSON连接消费durable与live transient presentation。订阅携带durable cursor及`transient_generation + transient_sequence`；浏览器按target隔离cursor，terminal清理transient cursor，retention gap/Lagged使用typed stream error重连。
+- Session feed只消费journal中的immutable presentation body，envelope承载durable/transient cursor、target和routing metadata。`features/session` reducer/renderer不感知Managed Runtime internal event，也不从Runtime snapshot摘要重建protocol item。这使Codex App Server标准family和AgentDash typed extension可以共用同一个owned protocol边界，同时保持既有会话UI行为；Runtime inspect/internal stream保留为独立诊断面。
 - Gateway使用subscribe-before-replay封住race：先建立per-thread broadcast receiver，再读取durable与active-turn transient replay，去重后持续等待live broadcast。`include_transient=true`只能与generated双cursor合同共同使用；有限replay batch不得替代该连接。
 - Runtime snapshot携带`latest_event_sequence`与`captured_at_ms`，event envelope携带权威`occurred_at_ms`。前端先hydrate snapshot transcript，再从latest sequence订阅；generated validator拒绝缺失/非法timestamp、revision与durable/transient shape，前端不得使用`Date.now()`补造wire事实。
 - 所有直接使用 `fetch` 的NDJSON客户端必须通过 `buildApiPath(agentRunScopedPath(...))` 构造URL；`resolveApiUrl`只拼origin，不会注入`/api`。
@@ -130,6 +131,7 @@ AgentRunCommandReceipt {
 | NDJSON URL 未经过 `buildApiPath` | frontend contract test失败；不得请求缺少`/api`的同名页面路由 |
 | transient generation变化或sequence重复 | 新generation重置cursor；同generation重复sequence丢弃 |
 | broadcast Lagged | 输出typed retryable error并断流；浏览器携带最后已接受双cursor重连 |
+| presentation envelope合法但protected body无法通过generated validator | 拒绝该frame并显式报protocol error；不降级为文本消息或generic tool card |
 | workspace/list route在cutover中移除但service仍存在 | route ledger/contract test失败；同一变更迁移projection或删除consumer |
 | Runtime thread为`active`但没有`active_turn_id` | 列表显示idle/ready，不伪造running |
 | Runtime thread为`suspended` | 列表显示独立paused/suspended状态；不得折叠为turn interrupted或据此生成命令权限 |

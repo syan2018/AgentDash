@@ -24,6 +24,22 @@ pub trait RuntimeWorkQueue {
         error: String,
     ) -> Result<(), RuntimeStoreError>;
 }
+
+pub trait RuntimeTerminalApplicationEffectOutbox {
+    async fn claim_terminal_application_effects(
+        &self,
+        request: RuntimeTerminalApplicationEffectClaimRequest,
+    ) -> Result<Vec<RuntimeTerminalApplicationEffectClaim>, RuntimeStoreError>;
+    async fn ack_terminal_application_effect(
+        &self,
+        claim: &RuntimeTerminalApplicationEffectClaim,
+    ) -> Result<(), RuntimeStoreError>;
+    async fn release_terminal_application_effect(
+        &self,
+        claim: &RuntimeTerminalApplicationEffectClaim,
+        error: String,
+    ) -> Result<(), RuntimeStoreError>;
+}
 ```
 
 `RuntimeCommit` 是 projection、operation、event journal、entity projection、context saga、outbox 与 quarantine 的完整原子写集。`RuntimeWorkKind` 当前包含 `RuntimeOutbox`、`ContextPreparation`、`ContextActivationDispatch`、`ContextActivationRecovery`。
@@ -39,6 +55,8 @@ pub trait RuntimeWorkQueue {
 - Conversation contract发生不兼容替换时使用显式data migration清理Runtime owner graph，不增加旧JSON reader。`0069_reset_runtime_conversation_contract.sql`解除mailbox operation引用并删除Runtime-derived lineage/recovery/anchor、permission、Thread与binding事实，同时保留Project、Lifecycle、mailbox主体及service/offer catalog，供后续重新provision。
 - claim 使用数据库时钟、`FOR UPDATE SKIP LOCKED`、owner、随机 token、到期时间和 attempt。只有仍持有相同 owner/token 且 lease 未过期的 worker 能 ack/release；到期后新 claim 必须生成新 token 并增加 attempt，旧 worker 不得确认新一轮工作。
 - queue 只负责 work 的租约和交付确认，业务状态仍留在各自 runtime/context 表。Activation dispatch 仅能 claim `prepared` activation。
+- terminal turn 与 `RuntimeTerminalApplicationEffectOutboxEntry` 必须在同一 `RuntimeCommit` 中原子落库。entry保留产品 `PresentationThreadId`/presentation turn、Runtime thread/turn、terminal sequence、source coordinate、binding generation、surface revision/digest和hook effect binding，因为Lifecycle、delivery、wait和hook owner需要在重试时执行同一个终态事实。
+- terminal application effect 按owner保存独立幂等记录；已成功owner不随其它owner失败而重放。相同effect identity重用时只接受完全相同的immutable payload。
 
 ## 4. Validation & Error Matrix
 
@@ -53,6 +71,10 @@ pub trait RuntimeWorkQueue {
 | owner/token 不匹配、lease 已过期或已被接管 | `WorkClaimConflict`，不得 ack/release |
 | worker release 有效 claim | 记录错误并释放租约，业务 work 保持可重试 |
 | worker ack 有效 claim | durable work 被确认，不能再次 claim |
+| terminal commit缺少应有的application effect entry | 拒绝终态commit，不让projection与业务side effect分裂 |
+| terminal effect的binding/generation/turn与terminal事实不一致 | typed invariant error，整个事务回滚 |
+| 同effect identity对应不同payload | typed conflict，不覆盖首次记录 |
+| 部分owner执行失败 | 仅release/重试失败owner，不重放已成功owner |
 
 ## 5. Good / Base / Bad Cases
 
@@ -70,6 +92,7 @@ pub trait RuntimeWorkQueue {
 - 明确验证 Runtime adapter 不写 binding/source；测试 fixture 需要由 Host 角色显式 seed 坐标。
 - migration guard 必须确认 managed runtime migration 不引用旧 session runtime/connector 表。
 - data reset migration必须用外键有效的完整旧数据图验证清理/保留集合与`_sqlx_migrations`历史；禁止通过`session_replication_role`绕过约束造数。
+- terminal application effect tests覆盖与terminal record原子提交、claim/ack/release、lease过期接管、stale token fencing、多owner部分成功重试与immutable payload conflict。
 
 ## 7. Wrong vs Correct
 

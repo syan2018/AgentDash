@@ -78,3 +78,76 @@ let view = agent_run_runtime.inspect(target.clone()).await?;
 view.require_available(RuntimeCommandKind::Interrupt)?;
 agent_run_runtime.interrupt(command.guarded_by(&view)).await?;
 ```
+
+## 8. Immutable Session Presentation Contract
+
+### 8.1 Scope / Trigger
+
+本节适用于 connector、Tool Broker、application producer、Runtime journal、AgentRun history/NDJSON 与 `features/session` 之间的会话展示链路。之所以在 producer 边界固定完整 payload，是因为 source ID、event timestamp、显式 `null`、事件顺序与具体 item family 都是会话可观察行为；这些信息一旦被压缩成 Runtime 摘要，读取侧无法可靠恢复。
+
+### 8.2 Signatures
+
+```rust
+pub struct ImmutablePresentationEvent {
+    pub durability: PresentationDurability,
+    pub event: agentdash_agent_protocol::BackboneEvent,
+}
+
+pub enum RuntimeJournalFact {
+    Presentation(ImmutablePresentationEvent),
+    Internal(RuntimeEvent),
+}
+
+pub struct RuntimeCarrierMetadata {
+    pub thread_id: RuntimeThreadId,
+    pub recorded_at_ms: u64,
+    pub sequence: Option<EventSequence>,
+    pub transient: Option<RuntimeTransientCoordinate>,
+    pub coordinate: RuntimePresentationCoordinate,
+    // operation/binding/revision/idempotency metadata omitted here
+}
+```
+
+### 8.3 Contracts
+
+- `ImmutablePresentationEvent.event` 是受保护正文。Codex 标准 family 使用 `0.144.1` 生成的 AgentDash-owned 同构类型，AgentDash extension 使用同一 typed protocol 中的显式扩展 variant；两者都在 producer boundary 一次构造完成。
+- Runtime carrier 只拥有 canonical routing、source correlation、sequence、revision、binding、operation 与 durability。持久化、replay、fork projection、GET、NDJSON 和 frontend adapter 可以替换外层会话坐标，但必须逐字段保留正文。
+- durable 与 ephemeral presentation 共享同一正文合同；durability 由 producer 显式声明，不从 cursor 或 item kind 推断。`Internal(RuntimeEvent)` 只服务执行状态机，不进入 session presentation stream。
+- source thread/turn/item/request ID 与 Runtime canonical ID 同时存在于不同层。carrier correlation 不替换正文中的 source identity，`PresentationThreadId` 则来自产品 delivery session 并贯穿 binding、outbox 与 driver dispatch。
+- Journal GET、initial stream、live、reconnect、refresh 与 fork inherited projection消费同一 `Presentation` facts。`features/session` 继续使用同一 reducer/renderer；仅 envelope unwrap seam 理解 carrier。
+
+### 8.4 Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| producer payload不能反序列化为owned protocol | typed protocol error；不生成文本、空对象或诊断消息替代正文 |
+| append idempotency identity携带不同events | `IdempotencyConflict`，不覆盖既有记录 |
+| durable sequence重复、跳号或乱序 | 整批拒绝，正文和projection都不产生部分写入 |
+| ephemeral event晚于同item terminal | 丢弃stale transient；不得复活terminal presentation |
+| journal读取到`Internal` fact | 从presentation查询中排除；API不得把它转换成会话事件 |
+| GET/stream/fork需要目标会话坐标 | 只改allowlisted carrier/envelope字段，受保护正文保持deep equality |
+| optional字段为显式`null` | 按owned protocol保留`null`；不得改成omitted、默认字符串或空数组 |
+
+### 8.5 Good / Base / Bad Cases
+
+- Good：Codex/Native/tool/application producer提交完整typed event，Runtime原子保存，Journal重新包装后旧 `features/session` reducer得到与producer相同的event body。
+- Base：同一idempotency key携带完全相同的有序events时返回原receipt；reconnect从durable/transient cursor继续，不复制或改写正文。
+- Bad：producer只保存`role + text + tool_name`摘要，再由API按名称猜回ThreadItem；这会丢失协议variant、ID、timestamp、nullable语义与事件顺序。
+
+### 8.6 Tests Required
+
+- contract tests逐字段覆盖serialize/deserialize/reducer/snapshot roundtrip，并包含source IDs、timestamp、显式`null`与数组顺序。
+- memory/PostgreSQL tests覆盖ordered batch、idempotency conflict、durable/transient race、terminal fencing与commit→read→replay deep equality。
+- pinned Main parity tests对同一输入分别执行Main/current production path，只允许声明过的eventstream envelope差异；正文comparator不配置字段ignore list。
+- Journal parity覆盖GET、initial/live、reconnect/refresh、fork inherited、heartbeat、lagged与closed；frontend parity覆盖原reducer/renderer和无phantom tool card。
+
+### 8.7 Wrong vs Correct
+
+```rust
+// Wrong: read side reconstructs a protocol event from a lossy Runtime summary.
+let event = project_summary_as_thread_item(record.summary)?;
+
+// Correct: producer-owned body is persisted once; read side only wraps it.
+let RuntimeJournalFact::Presentation(presentation) = record.fact() else { return None };
+let envelope = wrap_for_target(record.carrier(), presentation.event.clone());
+```

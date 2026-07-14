@@ -257,6 +257,7 @@ pub struct NativeAgentRunSurfacePlan {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub surface: MaterializedDriverSurface,
+    pub business_surface: agentdash_agent_runtime::CompiledBusinessAgentSurface,
     pub hook_plan: BoundRuntimeHookPlan,
     pub publication: Arc<dyn NativeAgentRunSurfacePublication>,
     pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
@@ -292,6 +293,7 @@ pub struct PreparedAgentRunRuntime {
     pub service_config: serde_json::Value,
     pub placement: AgentRuntimePlacement,
     pub surface: MaterializedDriverSurface,
+    pub business_surface: agentdash_agent_runtime::CompiledBusinessAgentSurface,
     pub hook_plan: RuntimeHookPlanBinding,
     pub publication: Arc<dyn NativeAgentRunSurfacePublication>,
     pub terminal_hook_effect_binding: Option<RuntimeTerminalHookEffectBinding>,
@@ -420,6 +422,7 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             plan: plan.hook_plan,
         };
         let publication = plan.publication;
+        let business_surface = plan.business_surface;
         let terminal_hook_effect_binding = plan.terminal_hook_effect_binding;
         let profile = definition.service_profile_upper_bound.clone();
         let definition_profile_digest = profile_digest(&profile).map_err(|error| {
@@ -434,6 +437,7 @@ impl AgentRunRuntimeSurfaceSource for NativeAgentRunRuntimeSurfaceSource {
             service_config,
             placement: AgentRuntimePlacement::InProcess,
             surface,
+            business_surface,
             hook_plan,
             publication,
             terminal_hook_effect_binding,
@@ -532,11 +536,18 @@ pub trait AgentRunRuntimeSurfaceStore: Send + Sync {
         &self,
         binding_id: &RuntimeBindingId,
         surface: &MaterializedDriverSurface,
+        business_surface: &agentdash_agent_runtime::CompiledBusinessAgentSurface,
     ) -> Result<(), AgentRunRuntimeBindingError>;
     async fn load_surface(
         &self,
         binding_id: &RuntimeBindingId,
     ) -> Result<Option<MaterializedDriverSurface>, AgentRunRuntimeBindingError>;
+    async fn load_business_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+        surface_revision: SurfaceRevision,
+        surface_digest: &SurfaceDigest,
+    ) -> Result<agentdash_agent_runtime::CompiledBusinessAgentSurface, AgentRunRuntimeBindingError>;
 }
 
 #[async_trait]
@@ -545,13 +556,19 @@ impl AgentRunRuntimeSurfaceStore for PostgresAgentRuntimeCompositionRepository {
         &self,
         binding_id: &RuntimeBindingId,
         surface: &MaterializedDriverSurface,
+        business_surface: &agentdash_agent_runtime::CompiledBusinessAgentSurface,
     ) -> Result<(), AgentRunRuntimeBindingError> {
-        PostgresAgentRuntimeCompositionRepository::put_surface(self, binding_id, surface)
-            .await
-            .map_err(|error| AgentRunRuntimeBindingError::Unavailable {
-                reason: error.to_string(),
-                retryable: true,
-            })
+        PostgresAgentRuntimeCompositionRepository::put_surface(
+            self,
+            binding_id,
+            surface,
+            business_surface,
+        )
+        .await
+        .map_err(|error| AgentRunRuntimeBindingError::Unavailable {
+            reason: error.to_string(),
+            retryable: true,
+        })
     }
     async fn load_surface(
         &self,
@@ -562,6 +579,25 @@ impl AgentRunRuntimeSurfaceStore for PostgresAgentRuntimeCompositionRepository {
                 reason: error.to_string(),
                 retryable: true,
             }
+        })
+    }
+    async fn load_business_surface(
+        &self,
+        binding_id: &RuntimeBindingId,
+        surface_revision: SurfaceRevision,
+        surface_digest: &SurfaceDigest,
+    ) -> Result<agentdash_agent_runtime::CompiledBusinessAgentSurface, AgentRunRuntimeBindingError>
+    {
+        PostgresAgentRuntimeCompositionRepository::load_business_surface(
+            self,
+            binding_id,
+            surface_revision,
+            surface_digest,
+        )
+        .await
+        .map_err(|error| AgentRunRuntimeBindingError::Unavailable {
+            reason: error.to_string(),
+            retryable: true,
         })
     }
 }
@@ -825,7 +861,7 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             .await
             .map_err(surface_source_error)?;
         self.surfaces
-            .put_surface(&binding_id, &prepared.surface)
+            .put_surface(&binding_id, &prepared.surface, &prepared.business_surface)
             .await?;
         let fork_source = if let Some(fork) = request.fork.as_ref() {
             let source = self
@@ -965,6 +1001,14 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
                     false,
                 )
             })?;
+        let business_surface = self
+            .surfaces
+            .load_business_surface(
+                &old.binding_id,
+                old.surface.surface_revision,
+                &old.surface.surface_digest,
+            )
+            .await?;
         let mut offers = self
             .host
             .offers()
@@ -1041,7 +1085,9 @@ impl AgentRunRuntimeProvisioner for HostAgentRunRuntimeProvisioner {
             .mark_binding_lost(&old.binding_id, old.driver_generation)
             .await
             .map_err(host_store_error)?;
-        self.surfaces.put_surface(&proposed, &surface).await?;
+        self.surfaces
+            .put_surface(&proposed, &surface, &business_surface)
+            .await?;
         let host_binding = match self
             .host
             .bind(BindRuntimeRequest {
@@ -2292,6 +2338,7 @@ mod tests {
                     reason: error.to_string(),
                 }
             })?;
+            let business_surface = fixture_business_surface(&surface);
             Ok(PreparedAgentRunRuntime {
                 source_frame_id: "fixture-frame".to_string(),
                 service_instance_id: parsed("codex-tracer-service"),
@@ -2314,6 +2361,7 @@ mod tests {
                 publication: Arc::new(NoopSurfacePublication),
                 terminal_hook_effect_binding: None,
                 surface,
+                business_surface,
                 transport_profile: profile.clone(),
                 host_policy_profile: profile,
                 conformance: ConformanceEvidence {
@@ -2337,12 +2385,15 @@ mod tests {
             _thread_id: &RuntimeThreadId,
             _binding_id: &RuntimeBindingId,
         ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
+            let surface = fixture_surface();
+            let business_surface = fixture_business_surface(&surface);
             Ok(NativeAgentRunSurfacePlan {
                 source_frame_id: "fixture-frame".to_string(),
                 executor: "PI_AGENT".to_string(),
                 provider: Some("openai".to_string()),
                 model: Some("gpt-test".to_string()),
-                surface: fixture_surface(),
+                surface,
+                business_surface,
                 hook_plan: BoundRuntimeHookPlan {
                     revision: HookPlanRevision(1),
                     digest: parsed("sha256:production-native-hooks"),
@@ -2495,6 +2546,65 @@ mod tests {
                 roots: vec!["workspace://project".to_string()],
             },
         }
+    }
+
+    fn fixture_business_surface(
+        surface: &MaterializedDriverSurface,
+    ) -> agentdash_agent_runtime::CompiledBusinessAgentSurface {
+        let source = agentdash_agent_runtime::SurfaceSourceRef {
+            layer: "fixture".to_string(),
+            key: "fixture-frame".to_string(),
+        };
+        let hooks = surface
+            .hooks
+            .bindings
+            .iter()
+            .map(|binding| agentdash_agent_runtime::HookDefinition {
+                meta: agentdash_agent_runtime::ContributionMeta {
+                    key: format!("hook:{}", binding.definition_id),
+                    source: source.clone(),
+                    priority: 0,
+                    requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+                },
+                definition_id: binding.definition_id.clone(),
+                point: binding.point,
+                actions: binding.actions.iter().copied().collect(),
+                minimum_strength: binding.strength,
+                failure_policy: binding.failure_policy,
+                matcher: agentdash_agent_runtime::HookMatcher::Any,
+                handler: agentdash_agent_runtime::HookHandler::Builtin {
+                    key: binding.definition_id.as_str().to_string(),
+                },
+            })
+            .collect();
+        agentdash_agent_runtime::AgentSurfaceCompiler
+            .compile_business_facts(agentdash_agent_runtime::BusinessAgentSurfaceFacts {
+                revision: surface.revision,
+                context_recipe: surface.context.recipe.clone(),
+                tool_set_revision: surface.tools.revision,
+                hook_plan_revision: surface.hooks.revision,
+                workspace: agentdash_agent_runtime::WorkspaceRequirement {
+                    capabilities: surface.workspace.capabilities.iter().copied().collect(),
+                    minimum_mechanism: DeliveryMechanism::HostAdaptedExact,
+                    requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+                },
+                source,
+                instructions: surface
+                    .context
+                    .instructions
+                    .iter()
+                    .flat_map(|set| set.entries.clone())
+                    .collect(),
+                tools: Vec::new(),
+                hooks,
+                projection_identity: agentdash_agent_runtime::ContextProjectionIdentity {
+                    operation_id: "fixture-surface-compile".to_string(),
+                    source_frame_id: "fixture-frame".to_string(),
+                    source_frame_revision: surface.revision.0,
+                    recorded_at_ms: 1,
+                },
+            })
+            .expect("compile fixture business surface")
     }
 
     async fn test_database() -> (
@@ -3545,6 +3655,15 @@ rl.on('line', line => {
             .await
             .expect("load original Codex surface")
             .expect("original Codex surface exists");
+        let original_business_surface = composition
+            .surfaces
+            .load_business_surface(
+                &binding.binding_id,
+                original_surface.revision,
+                &original_surface.digest,
+            )
+            .await
+            .expect("load original Codex business surface");
         let mut adopted = original_surface.clone();
         adopted.revision = SurfaceRevision(adopted.revision.0 + 1);
         adopted.digest = parsed("sha256:codex-tracer-surface-adopted");
@@ -3558,7 +3677,7 @@ rl.on('line', line => {
         adopted.hooks.digest = parsed("sha256:codex-tracer-hooks-adopted");
         composition
             .surfaces
-            .put_surface(&binding.binding_id, &adopted)
+            .put_surface(&binding.binding_id, &adopted, &original_business_surface)
             .await
             .expect("persist adopted Codex surface version");
         let broker = PostgresAgentRuntimeCompositionRepository::new(pool.clone());

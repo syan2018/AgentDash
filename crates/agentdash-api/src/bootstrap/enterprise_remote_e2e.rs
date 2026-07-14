@@ -396,6 +396,75 @@ fn materialized_surface(thread_id: RuntimeThreadId) -> MaterializedDriverSurface
     }
 }
 
+fn compiled_business_surface(
+    surface: &MaterializedDriverSurface,
+) -> agentdash_agent_runtime::CompiledBusinessAgentSurface {
+    let source = agentdash_agent_runtime::SurfaceSourceRef {
+        layer: "enterprise_fixture".to_string(),
+        key: "enterprise-remote-frame".to_string(),
+    };
+    let driver_tool = &surface.tools.tools[0];
+    let tool = agentdash_agent_runtime::ToolContribution {
+        meta: agentdash_agent_runtime::ContributionMeta {
+            key: "tool:enterprise_echo".to_string(),
+            source: source.clone(),
+            priority: 0,
+            requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+        },
+        runtime_name: driver_tool.name.clone(),
+        description: driver_tool.description.clone(),
+        parameters_schema: driver_tool.parameters_schema.clone(),
+        capability_key: "enterprise_echo".to_string(),
+        tool_path: "enterprise::echo".to_string(),
+        allowed_channels: driver_tool.channels.iter().copied().collect(),
+        configuration_boundary: ConfigurationBoundary::Binding,
+        protocol_projection: driver_tool.protocol_projection.clone(),
+        presentation_emitter: ToolPresentationEmitter::VendorStream,
+        parity_fixture_id: driver_tool.parity_fixture_id.clone(),
+    };
+    let binding = &surface.hooks.bindings[0];
+    let hook = agentdash_agent_runtime::HookDefinition {
+        meta: agentdash_agent_runtime::ContributionMeta {
+            key: format!("hook:{}", binding.definition_id),
+            source: source.clone(),
+            priority: 0,
+            requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+        },
+        definition_id: binding.definition_id.clone(),
+        point: binding.point,
+        actions: binding.actions.iter().copied().collect(),
+        minimum_strength: binding.strength,
+        failure_policy: binding.failure_policy,
+        matcher: agentdash_agent_runtime::HookMatcher::Any,
+        handler: agentdash_agent_runtime::HookHandler::Builtin {
+            key: binding.definition_id.as_str().to_string(),
+        },
+    };
+    agentdash_agent_runtime::AgentSurfaceCompiler
+        .compile_business_facts(agentdash_agent_runtime::BusinessAgentSurfaceFacts {
+            revision: surface.revision,
+            context_recipe: surface.context.recipe.clone(),
+            tool_set_revision: surface.tools.revision,
+            hook_plan_revision: surface.hooks.revision,
+            workspace: agentdash_agent_runtime::WorkspaceRequirement {
+                capabilities: BTreeSet::new(),
+                minimum_mechanism: DeliveryMechanism::HostAdaptedExact,
+                requirement: agentdash_agent_runtime::ContributionRequirement::Required,
+            },
+            source,
+            instructions: vec!["Enterprise remote Agent".to_string()],
+            tools: vec![tool],
+            hooks: vec![hook],
+            projection_identity: agentdash_agent_runtime::ContextProjectionIdentity {
+                operation_id: "enterprise-fixture-compile".to_string(),
+                source_frame_id: "enterprise-remote-frame".to_string(),
+                source_frame_revision: surface.revision.0,
+                recorded_at_ms: 1,
+            },
+        })
+        .expect("compile enterprise fixture business surface")
+}
+
 struct EnterpriseSurfaceSource {
     definition: AgentServiceDefinition,
     manifest: AgentRuntimeTrustManifest,
@@ -412,6 +481,7 @@ impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
         _binding_id: &RuntimeBindingId,
     ) -> Result<PreparedAgentRunRuntime, AgentRunRuntimeSurfaceSourceError> {
         let surface = materialized_surface(thread_id.clone());
+        let business_surface = compiled_business_surface(&surface);
         let publication = Arc::new(PendingCompiledAgentRunToolBinding {
             registry: self.tool_registry.clone(),
             runtime_session_id: thread_id.to_string(),
@@ -470,6 +540,7 @@ impl AgentRunRuntimeSurfaceSource for EnterpriseSurfaceSource {
             definition_id: self.definition.provenance.definition_id.clone(),
             service_config: json!({}),
             placement: AgentRuntimePlacement::InProcess,
+            business_surface,
             hook_plan: RuntimeHookPlanBinding {
                 thread_id: thread_id.clone(),
                 plan: BoundRuntimeHookPlan {

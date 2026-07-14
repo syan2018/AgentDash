@@ -1,7 +1,9 @@
 use std::{collections::BTreeSet, str::FromStr};
 
 use agentdash_agent_protocol::{
-    BackboneEvent, ItemCompletedNotification, ItemStartedNotification, ItemUpdatedNotification,
+    BackboneEvent, ContextDeliveryChannel, ContextDeliveryStatus, ContextFrameKind,
+    ContextFrameSection, ContextFrameSource, ContextMessageRole, ItemCompletedNotification,
+    ItemStartedNotification, ItemUpdatedNotification, RuntimeToolSchemaEntry,
 };
 use agentdash_agent_runtime::*;
 use agentdash_agent_runtime_contract::*;
@@ -485,6 +487,71 @@ fn compiler_expands_pack_and_preserves_tool_provenance() {
     assert_eq!(surface.tools.tools, vec![tool]);
     assert!(surface.tools.digest.starts_with("sha256:"));
     assert!(surface.digest.as_str().starts_with("sha256:"));
+}
+
+#[test]
+fn compiler_derives_tool_catalog_and_presentation_from_one_input_revision() {
+    let tool = ToolContribution {
+        meta: meta("tool:workspace.read", ContributionRequirement::Required),
+        runtime_name: "workspace_read".to_string(),
+        description: "Read a workspace file".to_string(),
+        parameters_schema: serde_json::json!({"type":"object"}),
+        capability_key: "file_read".to_string(),
+        tool_path: "file_read::workspace_read".to_string(),
+        allowed_channels: [ToolChannel::DirectCallback].into(),
+        configuration_boundary: ConfigurationBoundary::Binding,
+        protocol_projection: ToolProtocolProjection::FsRead,
+        presentation_emitter: ToolPresentationEmitter::ToolBroker,
+        parity_fixture_id: "workspace_read".to_string(),
+    };
+    let input = AgentSurfaceCompileInput {
+        revision: SurfaceRevision(7),
+        context_recipe: context_recipe(),
+        tool_set_revision: ToolSetRevision(7),
+        hook_plan_revision: HookPlanRevision(2),
+        workspace: WorkspaceRequirement {
+            capabilities: [WorkspaceCapability::Read].into(),
+            minimum_mechanism: DeliveryMechanism::HostAdaptedExact,
+            requirement: ContributionRequirement::Required,
+        },
+        contributions: vec![CapabilityContribution::Tool(tool.clone())],
+        capability_packs: Vec::new(),
+    };
+    let artifact = AgentSurfaceCompiler
+        .compile_with_presentation(
+            input,
+            &ContextProjectionIdentity {
+                operation_id: "compile-frame-7".to_string(),
+                source_frame_id: "frame-7".to_string(),
+                source_frame_revision: 7,
+                recorded_at_ms: 7,
+            },
+            [ContextFrameFacts {
+                kind: ContextFrameKind::CapabilityStateDelta,
+                source: ContextFrameSource::RuntimeContextUpdate,
+                phase_node: None,
+                apply_mode: None,
+                delivery_status: ContextDeliveryStatus::Accepted,
+                delivery_channel: ContextDeliveryChannel::ConnectorContext,
+                message_role: ContextMessageRole::Context,
+                rendered_text: "workspace_read".to_string(),
+                sections: vec![ContextFrameSection::ToolSchemaDelta {
+                    added_tools: vec![RuntimeToolSchemaEntry {
+                        name: tool.runtime_name.clone(),
+                        description: tool.description.clone(),
+                        parameters_schema: tool.parameters_schema.clone(),
+                        capability_key: Some(tool.capability_key.clone()),
+                        source: Some(tool.meta.source.key.clone()),
+                        tool_path: Some(tool.tool_path.clone()),
+                        context_usage_kind: Some("system_tools".to_string()),
+                    }],
+                }],
+            }],
+        )
+        .unwrap();
+    assert_eq!(artifact.snapshot.tools.tools, vec![tool]);
+    assert_eq!(artifact.presentation.source_frame_revision, 7);
+    assert_eq!(artifact.presentation.bootstrap_frames[0].created_at_ms, 7);
 }
 
 #[test]

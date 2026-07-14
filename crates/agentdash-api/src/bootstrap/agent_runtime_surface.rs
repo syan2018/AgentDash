@@ -1,13 +1,11 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
+
+#[cfg(test)]
+use std::collections::BTreeSet;
 
 use agentdash_agent_runtime_contract::*;
 use agentdash_application_agentrun::agent_run::{
-    AgentFrameHookRuntime, AgentFrameSurfaceExt, BusinessFrameSurfaceQuery,
-    RuntimeSurfaceQueryPurpose,
+    AgentBusinessSurfaceSource, AgentFrameHookRuntime, AgentFrameSurfaceExt,
 };
 use agentdash_application_ports::agent_frame_hook_plan::AgentFrameHookPlan;
 use agentdash_application_ports::agent_run_surface::{
@@ -16,15 +14,11 @@ use agentdash_application_ports::agent_run_surface::{
 use agentdash_application_ports::runtime_surface_adoption::{
     AgentFrameRuntimeTarget, RuntimeSurfaceAdoptionError, RuntimeSurfaceAdoptionPort,
 };
-use agentdash_domain::common::AgentConfig;
-use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_infrastructure::persistence::postgres::PostgresToolBrokerRepository;
 use agentdash_integration_api::*;
 use agentdash_spi::{
-    AgentFrameHookSnapshotQuery, DynAgentTool, ExecutionContext, ExecutionHookProvider,
-    ExecutionSessionFrame, ExecutionTurnFrame, HookControlTarget, HookRuntimeEvaluationQuery,
-    HookRuntimeRefreshQuery, HookTrigger, RuntimeAdapterProvenance, SharedHookRuntime,
-    build_hook_trace_envelope, connector::RuntimeToolProvider,
+    DynAgentTool, HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTrigger,
+    RuntimeAdapterProvenance, SharedHookRuntime, build_hook_trace_envelope,
     hook_trace_entry_storage_disposition,
 };
 use async_trait::async_trait;
@@ -1103,7 +1097,7 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
         })?;
         if let Err(error) = self
             .surfaces
-            .put_surface(&binding.binding_id, &plan.surface)
+            .put_surface(&binding.binding_id, &plan.surface, &plan.business_surface)
             .await
         {
             reservation.abort().await;
@@ -1183,82 +1177,49 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
     }
 }
 
-pub struct AgentFrameNativeSurfaceCompiler {
-    surface_query: Arc<BusinessFrameSurfaceQuery>,
-    frame_repository: Arc<dyn AgentFrameRepository>,
-    runtime_tools: Arc<dyn RuntimeToolProvider>,
-    hooks: Arc<dyn ExecutionHookProvider>,
+/// Composition adapter: binds Application source facts and callable publication handles to the
+/// Runtime-owned `AgentSurfaceCompiler`. Business projection rules live in Runtime.
+pub struct AgentFrameSurfaceCompositionAdapter {
+    source: Arc<AgentBusinessSurfaceSource>,
     tool_registry: Arc<CompiledAgentRunToolRegistry>,
 }
 
-impl AgentFrameNativeSurfaceCompiler {
+impl AgentFrameSurfaceCompositionAdapter {
     pub fn new(
-        surface_query: Arc<BusinessFrameSurfaceQuery>,
-        frame_repository: Arc<dyn AgentFrameRepository>,
-        runtime_tools: Arc<dyn RuntimeToolProvider>,
-        hooks: Arc<dyn ExecutionHookProvider>,
+        source: Arc<AgentBusinessSurfaceSource>,
         tool_registry: Arc<CompiledAgentRunToolRegistry>,
     ) -> Self {
         Self {
-            surface_query,
-            frame_repository,
-            runtime_tools,
-            hooks,
+            source,
             tool_registry,
         }
     }
 }
 
 #[async_trait]
-impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
+impl NativeAgentRunSurfaceCompiler for AgentFrameSurfaceCompositionAdapter {
     async fn compile(
         &self,
         request: &agentdash_application_ports::agent_run_runtime::AgentRunRuntimeProvisionRequest,
         thread_id: &RuntimeThreadId,
-        _binding_id: &RuntimeBindingId,
+        binding_id: &RuntimeBindingId,
     ) -> Result<NativeAgentRunSurfacePlan, AgentRunRuntimeSurfaceSourceError> {
-        let surface = self
-            .surface_query
-            .surface_for_provision_target(
-                &request.target,
-                thread_id,
-                RuntimeSurfaceQueryPurpose::new("canonical_agent_runtime_surface"),
-            )
+        let loaded = self
+            .source
+            .load(request, thread_id, format!("surface-compile-{binding_id}"))
             .await
-            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
-                reason: error.to_string(),
+            .map_err(|reason| AgentRunRuntimeSurfaceSourceError::Unavailable {
+                reason,
                 retryable: false,
             })?;
-        let frame = self
-            .frame_repository
-            .get_current(request.target.agent_id)
-            .await
-            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
-                reason: error.to_string(),
-                retryable: true,
-            })?
-            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: "AgentRun has no current AgentFrame".to_string(),
-            })?;
-        if frame.id != surface.current_surface_frame_id {
-            return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: "surface query and AgentFrame repository returned different revisions"
-                    .to_string(),
-            });
-        }
-        let execution_profile = frame
-            .surface
-            .as_ref()
-            .and_then(|document| document.execution_profile.clone())
-            .or_else(|| frame.execution_profile_json.clone())
-            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: "AgentFrame has no execution profile".to_string(),
-            })?;
-        let executor: AgentConfig = serde_json::from_value(execution_profile).map_err(|error| {
-            AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: format!("AgentFrame execution profile is invalid: {error}"),
-            }
-        })?;
+        let context_source = loaded.context_source;
+        let surface = context_source.runtime.clone();
+        let frame = loaded.frame;
+        let executor = loaded.executor;
+        let tools = loaded.tools;
+        let hook_snapshot = loaded.hook_snapshot;
+        let hook_provider = loaded.hook_provider;
+        let business_facts = loaded.business_facts;
         let executor_id = executor.executor.trim().to_string();
         if executor_id.is_empty() {
             return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
@@ -1279,42 +1240,6 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                     .to_string(),
             });
         }
-        let working_directory = surface
-            .vfs
-            .default_mount()
-            .map(|mount| PathBuf::from(mount.root_ref.trim()))
-            .filter(|path| !path.as_os_str().is_empty())
-            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: "AgentRun VFS has no usable default mount".to_string(),
-            })?;
-        let execution_context = ExecutionContext {
-            session: ExecutionSessionFrame {
-                turn_id: surface.active_turn_id.clone().unwrap_or_else(|| {
-                    format!("surface-bootstrap-{}", surface.current_surface_frame_id)
-                }),
-                working_directory,
-                environment_variables: Default::default(),
-                executor_config: executor,
-                mcp_servers: surface.mcp_servers.clone(),
-                vfs: Some(surface.vfs.clone()),
-                vfs_access_policy: Some(surface.vfs_access_policy.clone()),
-                backend_execution: None,
-                runtime_backend_anchor: surface.runtime_backend_anchor.clone(),
-                identity: request.identity.clone().or(surface.identity.clone()),
-            },
-            turn: ExecutionTurnFrame {
-                capability_state: surface.capability_state.clone(),
-                ..Default::default()
-            },
-        };
-        let tools = self
-            .runtime_tools
-            .build_tools(&execution_context)
-            .await
-            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
-                reason: error.to_string(),
-                retryable: true,
-            })?;
         let revision = u64::try_from(surface.surface_revision).map_err(|_| {
             AgentRunRuntimeSurfaceSourceError::Invalid {
                 reason: "AgentFrame surface revision must be positive".to_string(),
@@ -1325,10 +1250,13 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                 reason: "AgentFrame surface revision must be positive".to_string(),
             });
         }
-        let tool_set_revision = ToolSetRevision(revision);
         let mut direct_tools = BTreeMap::new();
         let mut driver_tools = Vec::new();
-        let mut catalog_tools = Vec::new();
+        let catalog_tools = business_facts
+            .tools
+            .iter()
+            .map(|tool| (tool.runtime_name.clone(), tool))
+            .collect::<BTreeMap<_, _>>();
         for tool in tools {
             let name = tool.name().trim().to_string();
             if name.is_empty() || direct_tools.insert(name.clone(), tool.clone()).is_some() {
@@ -1336,75 +1264,34 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                     reason: format!("assembled runtime tool name is empty or duplicated: {name}"),
                 });
             }
-            let capability_key = capability_for_tool(&surface.capability_state, &name)?;
-            let parameters_schema = tool.parameters_schema();
-            let protocol = require_tool_protocol_projection(tool.as_ref(), &name)?;
+            let contribution = catalog_tools.get(&name).ok_or_else(|| {
+                AgentRunRuntimeSurfaceSourceError::Invalid {
+                    reason: format!("callable runtime tool `{name}` has no compiled business fact"),
+                }
+            })?;
             driver_tools.push(DriverToolDefinition {
                 name: name.clone(),
-                description: tool.description().to_string(),
-                parameters_schema: parameters_schema.clone(),
+                description: contribution.description.clone(),
+                parameters_schema: contribution.parameters_schema.clone(),
                 channels: vec![ToolChannel::DirectCallback],
-                protocol_projection: protocol.projection.clone(),
-                parity_fixture_id: protocol.fixture_id.clone(),
-            });
-            catalog_tools.push(agentdash_agent_runtime::ToolContribution {
-                meta: agentdash_agent_runtime::ContributionMeta {
-                    key: format!("tool:{capability_key}:{name}"),
-                    source: agentdash_agent_runtime::SurfaceSourceRef {
-                        layer: "agent_frame".to_string(),
-                        key: surface.current_surface_frame_id.to_string(),
-                    },
-                    priority: 0,
-                    requirement: agentdash_agent_runtime::ContributionRequirement::Required,
-                },
-                runtime_name: name.clone(),
-                description: tool.description().to_string(),
-                parameters_schema,
-                capability_key: capability_key.clone(),
-                tool_path: format!("{capability_key}::{name}"),
-                allowed_channels: [ToolChannel::DirectCallback].into(),
-                configuration_boundary: ConfigurationBoundary::Binding,
-                protocol_projection: protocol.projection,
-                presentation_emitter:
-                    agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker,
-                parity_fixture_id: protocol.fixture_id,
+                protocol_projection: contribution.protocol_projection.clone(),
+                parity_fixture_id: contribution.parity_fixture_id.clone(),
             });
         }
         driver_tools.sort_by(|left, right| left.name.cmp(&right.name));
-        catalog_tools.sort_by(|left, right| left.runtime_name.cmp(&right.runtime_name));
-        let catalog_digest = digest_json(&(tool_set_revision, &catalog_tools))?;
-        let catalog = agentdash_agent_runtime::ToolCatalogRevision {
-            revision: tool_set_revision,
-            digest: catalog_digest.clone(),
-            tools: catalog_tools,
-            mcp_servers: Vec::new(),
-        };
-        let hook_snapshot = self
-            .hooks
-            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
-                target: HookControlTarget {
-                    run_id: request.target.run_id,
-                    agent_id: request.target.agent_id,
-                    frame_id: frame.id,
-                },
-                provenance: RuntimeAdapterProvenance::runtime_session(
-                    surface.runtime_session_id.clone(),
-                    surface.active_turn_id.clone(),
-                    "canonical_agent_runtime_surface",
-                ),
-            })
-            .await
-            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Unavailable {
+        let business_surface = agentdash_agent_runtime::AgentSurfaceCompiler
+            .compile_business_facts(business_facts)
+            .map_err(|error| AgentRunRuntimeSurfaceSourceError::Invalid {
                 reason: error.to_string(),
-                retryable: true,
             })?;
+        let catalog = business_surface.snapshot.tools.clone();
         let hook_runtime: SharedHookRuntime = Arc::new(AgentFrameHookRuntime::new(
             request.target.run_id,
             request.target.agent_id,
             frame.id,
             frame.revision,
             surface.runtime_session_id.clone(),
-            self.hooks.clone(),
+            hook_provider,
             hook_snapshot.clone(),
         ));
         let publication: Arc<dyn NativeAgentRunSurfacePublication> =
@@ -1415,24 +1302,20 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                 agent_id: request.target.agent_id,
                 frame_id: frame.id,
                 hook_runtime,
-                catalog,
+                catalog: catalog.clone(),
                 tools: direct_tools,
             });
-        let instructions = hook_snapshot
-            .injections
+        let recipe = business_surface.snapshot.context.recipe.clone();
+        let instructions = business_surface
+            .snapshot
+            .context
+            .instructions
+            .entries
             .iter()
-            .map(|injection| injection.content.clone())
+            .map(|entry| entry.content.clone())
             .collect::<Vec<_>>();
-        let recipe = ContextRecipe {
-            revision: ContextRecipeRevision(revision),
-            provenance: ContextProvenance {
-                settings_revision: ThreadSettingsRevision(0),
-                tool_set_revision,
-            },
-            source_item_ids: Vec::new(),
-        };
         let blocks = initial_driver_context_blocks();
-        let context_digest = ContextDigest::new(digest_json(&(&recipe, &instructions, &blocks))?)
+        let context_digest = ContextDigest::new(business_surface.snapshot.context.digest.clone())
             .map_err(|error| AgentRunRuntimeSurfaceSourceError::Invalid {
             reason: error.to_string(),
         })?;
@@ -1441,27 +1324,22 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             .map_err(|reason| AgentRunRuntimeSurfaceSourceError::Invalid { reason })?;
         let (runtime_hook_plan, hook_bindings, hook_configuration_boundary) =
             materialize_hook_plan(&hook_plan);
-        let hook_digest = hook_plan.digest;
-        let workspace_capabilities = workspace_capabilities(&surface.vfs);
+        let hook_digest = business_surface.snapshot.hook_plan.digest.clone();
+        let workspace_capabilities = business_surface
+            .snapshot
+            .workspace
+            .capabilities
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
         let workspace_roots = surface
             .vfs
             .mounts
             .iter()
             .map(|mount| mount.root_ref.clone())
             .collect::<Vec<_>>();
-        let workspace_digest = digest_json(&(&workspace_capabilities, &workspace_roots))?;
         let surface_revision = SurfaceRevision(revision);
-        let surface_digest = SurfaceDigest::new(digest_json(&(
-            surface_revision,
-            &context_digest,
-            &catalog_digest,
-            &hook_digest,
-            &workspace_capabilities,
-            &workspace_roots,
-        ))?)
-        .map_err(|error| AgentRunRuntimeSurfaceSourceError::Invalid {
-            reason: error.to_string(),
-        })?;
+        let surface_digest = business_surface.snapshot.digest.clone();
         Ok(NativeAgentRunSurfacePlan {
             source_frame_id: frame.id.to_string(),
             executor: executor_id,
@@ -1470,6 +1348,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             hook_plan: runtime_hook_plan,
             publication,
             terminal_hook_effect_binding: request.terminal_hook_effect_binding.clone(),
+            business_surface,
             surface: MaterializedDriverSurface {
                 runtime_thread_id: thread_id.clone(),
                 revision: surface_revision,
@@ -1486,8 +1365,8 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                     fidelity: ContextFidelity::PlatformExact,
                 },
                 tools: DriverToolSurface {
-                    revision: tool_set_revision,
-                    digest: catalog_digest,
+                    revision: catalog.revision,
+                    digest: catalog.digest.clone(),
                     tools: driver_tools,
                 },
                 hooks: DriverHookSurface {
@@ -1498,7 +1377,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
                     bindings: hook_bindings,
                 },
                 workspace: DriverWorkspaceSurface {
-                    digest: workspace_digest,
+                    digest: digest_json(&(&workspace_capabilities, &workspace_roots))?,
                     capabilities: workspace_capabilities,
                     roots: workspace_roots,
                 },
@@ -1569,90 +1448,6 @@ fn materialize_hook_plan(
     (runtime_hook_plan, bindings, boundary)
 }
 
-fn capability_for_tool(
-    state: &agentdash_spi::CapabilityState,
-    tool_name: &str,
-) -> Result<String, AgentRunRuntimeSurfaceSourceError> {
-    use agentdash_spi::platform::tool_capability::{ToolSource, platform_tool_descriptors};
-
-    let descriptors = platform_tool_descriptors()
-        .into_iter()
-        .filter(|descriptor| descriptor.name == tool_name)
-        .collect::<Vec<_>>();
-    let mut candidates = descriptors
-        .iter()
-        .filter(|descriptor| {
-            let cluster = match &descriptor.source {
-                ToolSource::Platform { cluster } => Some(*cluster),
-                ToolSource::PlatformMcp { .. } | ToolSource::Mcp { .. } => None,
-            };
-            state.is_capability_tool_enabled(&descriptor.capability_key, tool_name, cluster)
-        })
-        .map(|descriptor| descriptor.capability_key.clone())
-        .collect::<BTreeSet<_>>();
-
-    candidates.extend(
-        state
-            .tool
-            .tool_policy
-            .iter()
-            .filter(|(key, filter)| {
-                filter.allows(tool_name)
-                    && state
-                        .tool
-                        .capabilities
-                        .contains(&agentdash_spi::ToolCapability::new((*key).clone()))
-            })
-            .map(|(key, _)| key.clone()),
-    );
-
-    if candidates.len() == 1 {
-        return Ok(candidates
-            .into_iter()
-            .next()
-            .expect("one capability candidate"));
-    }
-    if !descriptors.is_empty() && candidates.is_empty() {
-        return Err(AgentRunRuntimeSurfaceSourceError::Invalid {
-            reason: format!(
-                "assembled tool `{tool_name}` is not enabled by current AgentFrame capability"
-            ),
-        });
-    }
-    Err(AgentRunRuntimeSurfaceSourceError::Invalid {
-        reason: format!(
-            "assembled tool `{tool_name}` has no unambiguous AgentFrame capability identity"
-        ),
-    })
-}
-
-fn workspace_capabilities(vfs: &agentdash_spi::Vfs) -> Vec<WorkspaceCapability> {
-    let mut values = BTreeSet::new();
-    for mount in &vfs.mounts {
-        for capability in &mount.capabilities {
-            match capability {
-                agentdash_domain::common::MountCapability::Read
-                | agentdash_domain::common::MountCapability::List => {
-                    values.insert(WorkspaceCapability::Read);
-                }
-                agentdash_domain::common::MountCapability::Search => {
-                    values.insert(WorkspaceCapability::Search);
-                }
-                agentdash_domain::common::MountCapability::Write => {
-                    values.insert(WorkspaceCapability::Write);
-                }
-                agentdash_domain::common::MountCapability::Exec
-                | agentdash_domain::common::MountCapability::Watch => {}
-            }
-        }
-    }
-    if vfs.mounts.len() > 1 {
-        values.insert(WorkspaceCapability::MultipleRoots);
-    }
-    values.insert(WorkspaceCapability::VirtualFileSystem);
-    values.into_iter().collect()
-}
-
 fn digest_json(value: &impl serde::Serialize) -> Result<String, AgentRunRuntimeSurfaceSourceError> {
     let value = serde_json::to_value(value).map_err(|error| {
         AgentRunRuntimeSurfaceSourceError::Invalid {
@@ -1661,61 +1456,6 @@ fn digest_json(value: &impl serde::Serialize) -> Result<String, AgentRunRuntimeS
     })?;
     let bytes = agentdash_agent_runtime_host::canonical_json(&value);
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
-}
-
-#[derive(Debug)]
-struct AdmittedToolProjection {
-    projection: agentdash_agent_runtime_contract::ToolProtocolProjection,
-    fixture_id: String,
-}
-
-fn require_tool_protocol_projection(
-    tool: &dyn agentdash_agent::AgentTool,
-    name: &str,
-) -> Result<AdmittedToolProjection, AgentRunRuntimeSurfaceSourceError> {
-    let projection =
-        tool.protocol_projector()
-            .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
-                reason: format!(
-                    "assembled runtime tool `{name}` has no owner-declared protocol projector"
-                ),
-            })?;
-    let fixture_id = tool
-        .protocol_fixture_id()
-        .filter(|fixture| !fixture.trim().is_empty())
-        .ok_or_else(|| AgentRunRuntimeSurfaceSourceError::Invalid {
-            reason: format!(
-                "assembled runtime tool `{name}` has no owner-declared main parity fixture"
-            ),
-        })?
-        .to_string();
-    let projection = match projection {
-        agentdash_agent::ToolProtocolProjector::Command => {
-            agentdash_agent_runtime_contract::ToolProtocolProjection::Command
-        }
-        agentdash_agent::ToolProtocolProjector::FileChange => {
-            agentdash_agent_runtime_contract::ToolProtocolProjection::FileChange
-        }
-        agentdash_agent::ToolProtocolProjector::FsRead => {
-            agentdash_agent_runtime_contract::ToolProtocolProjection::FsRead
-        }
-        agentdash_agent::ToolProtocolProjector::FsGrep => {
-            agentdash_agent_runtime_contract::ToolProtocolProjection::FsGrep
-        }
-        agentdash_agent::ToolProtocolProjector::FsGlob => {
-            agentdash_agent_runtime_contract::ToolProtocolProjection::FsGlob
-        }
-        agentdash_agent::ToolProtocolProjector::Mcp { server_key } => {
-            agentdash_agent_runtime_contract::ToolProtocolProjection::Mcp { server_key }
-        }
-        agentdash_agent::ToolProtocolProjector::Dynamic { namespace } => {
-            agentdash_agent_runtime_contract::ToolProtocolProjection::Dynamic { namespace }
-        }
-    };
-    Ok(AdmittedToolProjection {
-        projection,
-        fixture_id,
-    })
 }
 
 #[cfg(test)]
@@ -2294,8 +2034,11 @@ mod tests {
 
     #[test]
     fn business_surface_rejects_tool_without_owner_projector() {
-        let error = require_tool_protocol_projection(&MissingProjectorTool, "missing_projector")
-            .expect_err("missing projector must fail admission");
+        let error = agentdash_application_agentrun::agent_run::project_tool_protocol(
+            &MissingProjectorTool,
+            "missing_projector",
+        )
+        .expect_err("missing projector must fail admission");
         assert!(
             error
                 .to_string()
@@ -2305,8 +2048,11 @@ mod tests {
 
     #[test]
     fn business_surface_rejects_tool_without_main_parity_fixture() {
-        let error = require_tool_protocol_projection(&MissingFixtureTool, "missing_fixture")
-            .expect_err("missing fixture must fail admission");
+        let error = agentdash_application_agentrun::agent_run::project_tool_protocol(
+            &MissingFixtureTool,
+            "missing_fixture",
+        )
+        .expect_err("missing fixture must fail admission");
         assert!(
             error
                 .to_string()
@@ -2328,7 +2074,12 @@ mod tests {
                 links: Vec::new(),
             }),
         ));
-        let projection = require_tool_protocol_projection(tool.as_ref(), tool.name()).unwrap();
+        let (projection, fixture_id) =
+            agentdash_application_agentrun::agent_run::project_tool_protocol(
+                tool.as_ref(),
+                tool.name(),
+            )
+            .unwrap();
         let contribution = agentdash_agent_runtime::ToolContribution {
             meta: agentdash_agent_runtime::ContributionMeta {
                 key: "tool:shell-exec".into(),
@@ -2346,10 +2097,10 @@ mod tests {
             tool_path: "vfs::shell_exec".into(),
             allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
             configuration_boundary: ConfigurationBoundary::Binding,
-            protocol_projection: projection.projection,
+            protocol_projection: projection,
             presentation_emitter:
                 agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker,
-            parity_fixture_id: projection.fixture_id,
+            parity_fixture_id: fixture_id,
         };
         let binding_id = RuntimeBindingId::new("binding-shell-owner").unwrap();
         let registry = Arc::new(CompiledAgentRunToolRegistry::default());
@@ -2425,7 +2176,12 @@ mod tests {
             None,
             None,
         ));
-        let projection = require_tool_protocol_projection(tool.as_ref(), tool.name()).unwrap();
+        let (projection, fixture_id) =
+            agentdash_application_agentrun::agent_run::project_tool_protocol(
+                tool.as_ref(),
+                tool.name(),
+            )
+            .unwrap();
         let contribution = agentdash_agent_runtime::ToolContribution {
             meta: agentdash_agent_runtime::ContributionMeta {
                 key: "tool:apply-patch".into(),
@@ -2443,10 +2199,10 @@ mod tests {
             tool_path: "vfs::apply_patch".into(),
             allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
             configuration_boundary: ConfigurationBoundary::Binding,
-            protocol_projection: projection.projection,
+            protocol_projection: projection,
             presentation_emitter:
                 agentdash_agent_runtime_contract::ToolPresentationEmitter::ToolBroker,
-            parity_fixture_id: projection.fixture_id,
+            parity_fixture_id: fixture_id,
         };
         let binding_id = RuntimeBindingId::new("binding-patch-owner").unwrap();
         let registry = Arc::new(CompiledAgentRunToolRegistry::default());
@@ -2557,7 +2313,11 @@ mod tests {
         let state = capability_state_with_platform_tools();
 
         assert_eq!(
-            capability_for_tool(&state, "mounts_list").expect("canonical capability"),
+            agentdash_application_agentrun::agent_run::resolve_tool_capability(
+                &state,
+                "mounts_list",
+            )
+            .expect("canonical capability"),
             CAP_FILE_READ
         );
     }
@@ -2572,7 +2332,11 @@ mod tests {
             .tool_policy
             .insert(CAP_FILE_READ.to_string(), filter);
 
-        let error = capability_for_tool(&state, "mounts_list").expect_err("excluded tool");
+        let error = agentdash_application_agentrun::agent_run::resolve_tool_capability(
+            &state,
+            "mounts_list",
+        )
+        .expect_err("excluded tool");
         assert!(error.to_string().contains("is not enabled"));
     }
 
@@ -2584,8 +2348,11 @@ mod tests {
             .capabilities
             .insert(ToolCapability::new(CAP_FILE_READ));
 
-        let error = capability_for_tool(&state, "unknown_runtime_tool")
-            .expect_err("unknown tool must remain unowned");
+        let error = agentdash_application_agentrun::agent_run::resolve_tool_capability(
+            &state,
+            "unknown_runtime_tool",
+        )
+        .expect_err("unknown tool must remain unowned");
         assert!(error.to_string().contains("no unambiguous"));
     }
 

@@ -44,16 +44,29 @@ impl PostgresAgentRuntimeCompositionRepository {
         &self,
         binding_id: &agentdash_agent_runtime_contract::RuntimeBindingId,
         surface: &MaterializedDriverSurface,
+        business_surface: &agentdash_agent_runtime::CompiledBusinessAgentSurface,
     ) -> Result<(), DriverSurfaceError> {
         let materialized = serde_json::to_value(surface).map_err(|error| {
             DriverSurfaceError::InvalidMaterialization {
                 reason: error.to_string(),
             }
         })?;
+        let business_snapshot =
+            serde_json::to_value(&business_surface.snapshot).map_err(|error| {
+                DriverSurfaceError::InvalidMaterialization {
+                    reason: error.to_string(),
+                }
+            })?;
+        let presentation_plan =
+            serde_json::to_value(&business_surface.presentation).map_err(|error| {
+                DriverSurfaceError::InvalidMaterialization {
+                    reason: error.to_string(),
+                }
+            })?;
         let result = sqlx::query(
             "INSERT INTO agent_runtime_surface_snapshot \
-             (binding_id,surface_revision,surface_digest,tool_set_revision,tool_set_digest,hook_plan_revision,hook_plan_digest,materialized) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (binding_id,surface_revision,surface_digest) DO NOTHING",
+             (binding_id,surface_revision,surface_digest,tool_set_revision,tool_set_digest,hook_plan_revision,hook_plan_digest,materialized,business_snapshot,presentation_plan) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (binding_id,surface_revision,surface_digest) DO NOTHING",
         )
         .bind(binding_id.as_str())
         .bind(i64::try_from(surface.revision.0).map_err(|_| invalid_surface("surface revision"))?)
@@ -63,12 +76,14 @@ impl PostgresAgentRuntimeCompositionRepository {
         .bind(i64::try_from(surface.hooks.revision.0).map_err(|_| invalid_surface("hook revision"))?)
         .bind(surface.hooks.digest.as_str())
         .bind(materialized.clone())
+        .bind(business_snapshot.clone())
+        .bind(presentation_plan.clone())
         .execute(&self.pool)
         .await
         .map_err(surface_sql_error)?;
         if result.rows_affected() == 0 {
             let existing: serde_json::Value = sqlx::query_scalar(
-                "SELECT materialized FROM agent_runtime_surface_snapshot WHERE binding_id=$1 AND surface_revision=$2 AND surface_digest=$3",
+                "SELECT jsonb_build_object('materialized',materialized,'business_snapshot',business_snapshot,'presentation_plan',presentation_plan) FROM agent_runtime_surface_snapshot WHERE binding_id=$1 AND surface_revision=$2 AND surface_digest=$3",
             )
             .bind(binding_id.as_str())
             .bind(i64::try_from(surface.revision.0).map_err(|_| invalid_surface("surface revision"))?)
@@ -76,7 +91,12 @@ impl PostgresAgentRuntimeCompositionRepository {
             .fetch_one(&self.pool)
             .await
             .map_err(surface_sql_error)?;
-            if existing != materialized {
+            let expected = serde_json::json!({
+                "materialized": materialized,
+                "business_snapshot": business_snapshot,
+                "presentation_plan": presentation_plan,
+            });
+            if existing != expected {
                 return Err(DriverSurfaceError::InvalidMaterialization {
                     reason: "binding surface identity was reused with different content"
                         .to_string(),
@@ -105,6 +125,56 @@ impl PostgresAgentRuntimeCompositionRepository {
             })
         })
         .transpose()
+    }
+
+    pub async fn load_business_surface(
+        &self,
+        binding_id: &agentdash_agent_runtime_contract::RuntimeBindingId,
+        surface_revision: agentdash_agent_runtime_contract::SurfaceRevision,
+        surface_digest: &agentdash_agent_runtime_contract::SurfaceDigest,
+    ) -> Result<agentdash_agent_runtime::CompiledBusinessAgentSurface, DriverSurfaceError> {
+        let row = sqlx::query(
+            "SELECT business_snapshot,presentation_plan FROM agent_runtime_surface_snapshot WHERE binding_id=$1 AND surface_revision=$2 AND surface_digest=$3",
+        )
+        .bind(binding_id.as_str())
+        .bind(i64::try_from(surface_revision.0).map_err(|_| invalid_surface("surface revision"))?)
+        .bind(surface_digest.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(surface_sql_error)?;
+        let artifact = row
+            .map(|row| -> Result<_, DriverSurfaceError> {
+                let snapshot = row
+                    .try_get::<Option<serde_json::Value>, _>("business_snapshot")
+                    .map_err(surface_sql_error)?;
+                let presentation = row
+                    .try_get::<Option<serde_json::Value>, _>("presentation_plan")
+                    .map_err(surface_sql_error)?;
+                match (snapshot, presentation) {
+                    (Some(snapshot), Some(presentation)) => {
+                        Ok(agentdash_agent_runtime::CompiledBusinessAgentSurface {
+                            snapshot: serde_json::from_value(snapshot).map_err(|error| {
+                                DriverSurfaceError::InvalidMaterialization {
+                                    reason: error.to_string(),
+                                }
+                            })?,
+                            presentation: serde_json::from_value(presentation).map_err(
+                                |error| DriverSurfaceError::InvalidMaterialization {
+                                    reason: error.to_string(),
+                                },
+                            )?,
+                        })
+                    }
+                    _ => Err(DriverSurfaceError::InvalidMaterialization {
+                        reason: "compiled surface artifact columns are incomplete".to_string(),
+                    }),
+                }
+            })
+            .transpose()?;
+        artifact.ok_or_else(|| DriverSurfaceError::Unavailable {
+            reason: "compiled surface artifact does not exist".to_string(),
+            retryable: false,
+        })
     }
 }
 
@@ -558,6 +628,15 @@ mod recovery_tests {
         assert_eq!(epoch, agentdash_agent_runtime_contract::BindingEpoch(3));
         assert_eq!(binding_id.as_str(), "binding-1-epoch-3");
         assert!(id.contains("-3-offer-new"));
+    }
+
+    #[test]
+    fn compiled_surface_migration_requires_snapshot_and_presentation() {
+        let migration =
+            include_str!("../../../migrations/0075_agent_runtime_compiled_surface_artifact.sql");
+        assert!(migration.contains("business_snapshot jsonb"));
+        assert!(migration.contains("presentation_plan jsonb"));
+        assert_eq!(migration.matches("NOT NULL").count(), 2);
     }
 }
 

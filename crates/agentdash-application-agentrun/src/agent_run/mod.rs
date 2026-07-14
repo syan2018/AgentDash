@@ -1,5 +1,6 @@
 mod business_frame_surface_query;
 mod context_projection;
+mod context_sources;
 mod control_effects;
 mod conversation_snapshot;
 mod delete_command;
@@ -22,6 +23,11 @@ mod runtime_surface_update;
 pub mod workspace;
 
 pub use context_projection::AgentRunContextCompactionArchive;
+pub use context_sources::{
+    AgentBusinessSurfaceSource, AgentContextProjectionIdentity, AgentContextSurfaceSourceError,
+    AgentContextSurfaceSourceFacts, LoadedAgentBusinessSurfaceFacts, project_tool_protocol,
+    resolve_tool_capability,
+};
 pub use control_effects::{AgentRunControlEffectDeps, AgentRunControlEffectService};
 pub use conversation_snapshot::{
     AgentConversationFrameRefModel, AgentConversationIdentityModel,

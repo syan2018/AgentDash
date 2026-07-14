@@ -13,7 +13,31 @@ use thiserror::Error;
 
 use crate::{
     BoundRuntimeHookEntry, BoundRuntimeHookPlan, HookExecutionSite, RuntimeHookPlanBinding,
+    context_projection::{
+        ContextFrameFacts, ContextProjectionIdentity, ContextProjector,
+        RuntimeSurfacePresentationPlan,
+    },
 };
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompiledBusinessAgentSurface {
+    pub snapshot: AgentSurfaceSnapshot,
+    pub presentation: RuntimeSurfacePresentationPlan,
+}
+
+#[derive(Debug, Clone)]
+pub struct BusinessAgentSurfaceFacts {
+    pub revision: SurfaceRevision,
+    pub context_recipe: ContextRecipe,
+    pub tool_set_revision: ToolSetRevision,
+    pub hook_plan_revision: HookPlanRevision,
+    pub workspace: WorkspaceRequirement,
+    pub source: SurfaceSourceRef,
+    pub instructions: Vec<String>,
+    pub tools: Vec<ToolContribution>,
+    pub hooks: Vec<HookDefinition>,
+    pub projection_identity: ContextProjectionIdentity,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -749,6 +773,101 @@ pub enum SurfaceCompileError {
 pub struct AgentSurfaceCompiler;
 
 impl AgentSurfaceCompiler {
+    pub fn compile_business_facts(
+        &self,
+        facts: BusinessAgentSurfaceFacts,
+    ) -> Result<CompiledBusinessAgentSurface, SurfaceCompileError> {
+        let mut contributions = facts
+            .tools
+            .iter()
+            .cloned()
+            .map(CapabilityContribution::Tool)
+            .collect::<Vec<_>>();
+        contributions.extend(
+            facts
+                .instructions
+                .iter()
+                .enumerate()
+                .map(|(index, content)| {
+                    CapabilityContribution::Instruction(InstructionContribution {
+                        meta: ContributionMeta {
+                            key: format!("instruction:surface:{index}"),
+                            source: facts.source.clone(),
+                            priority: 0,
+                            requirement: ContributionRequirement::Required,
+                        },
+                        channel: InstructionChannel::System,
+                        content: content.clone(),
+                    })
+                }),
+        );
+        contributions.extend(
+            facts
+                .hooks
+                .iter()
+                .cloned()
+                .map(CapabilityContribution::Hook),
+        );
+        let added_tools = facts
+            .tools
+            .iter()
+            .map(|tool| agentdash_agent_protocol::RuntimeToolSchemaEntry {
+                name: tool.runtime_name.clone(),
+                description: tool.description.clone(),
+                parameters_schema: tool.parameters_schema.clone(),
+                capability_key: Some(tool.capability_key.clone()),
+                source: Some(tool.meta.source.key.clone()),
+                tool_path: Some(tool.tool_path.clone()),
+                context_usage_kind: Some("system_tools".to_string()),
+            })
+            .collect();
+        self.compile_with_presentation(
+            AgentSurfaceCompileInput {
+                revision: facts.revision,
+                context_recipe: facts.context_recipe,
+                tool_set_revision: facts.tool_set_revision,
+                hook_plan_revision: facts.hook_plan_revision,
+                workspace: facts.workspace,
+                contributions,
+                capability_packs: Vec::new(),
+            },
+            &facts.projection_identity,
+            [ContextFrameFacts {
+                kind: agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta,
+                source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
+                phase_node: None,
+                apply_mode: None,
+                delivery_status: agentdash_agent_protocol::ContextDeliveryStatus::Accepted,
+                delivery_channel:
+                    agentdash_agent_protocol::ContextDeliveryChannel::ConnectorContext,
+                message_role: agentdash_agent_protocol::ContextMessageRole::Context,
+                rendered_text: "Runtime capability and tool surface".to_string(),
+                sections: vec![
+                    agentdash_agent_protocol::ContextFrameSection::ToolSchemaDelta { added_tools },
+                ],
+            }],
+        )
+    }
+
+    pub fn compile_with_presentation(
+        &self,
+        input: AgentSurfaceCompileInput,
+        projection_identity: &ContextProjectionIdentity,
+        presentation_facts: impl IntoIterator<Item = ContextFrameFacts>,
+    ) -> Result<CompiledBusinessAgentSurface, SurfaceCompileError> {
+        let snapshot = self.compile(input)?;
+        let presentation = ContextProjector::project(projection_identity, presentation_facts);
+        if presentation.source_frame_revision != snapshot.revision.0 {
+            return Err(SurfaceCompileError::Digest(
+                "presentation source revision differs from compiled surface".to_string(),
+            ));
+        }
+        Ok(CompiledBusinessAgentSurface {
+            snapshot,
+            presentation,
+        })
+    }
+
     pub fn compile(
         &self,
         input: AgentSurfaceCompileInput,

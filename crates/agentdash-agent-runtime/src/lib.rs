@@ -19,6 +19,7 @@ pub use agentdash_agent_runtime_contract::{
     ToolProtocolProjection,
 };
 pub use context::*;
+pub use context_projection::*;
 pub use gateway::*;
 pub use hook::*;
 pub use memory::*;

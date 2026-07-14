@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use agentdash_agent_protocol::{ContextDeliveryPlan, ContextFrame};
 use agentdash_agent_types::{AgentMessage, AgentRuntimeDelegateSet, MessageRef};
 use agentdash_domain::backend::{
     BackendExecutionSelectionMode, RuntimeBackendAnchor, RuntimeBackendAnchorError,
@@ -15,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::context::capability::SkillEntry;
-use crate::hooks::{ContextDeliveryPlan, ContextFrame, HookRuntimeAccess};
+use crate::hooks::HookRuntimeAccess;
 use crate::platform::memory_discovery::MemoryDiscoveryOutput;
 pub mod capability_delta;
 

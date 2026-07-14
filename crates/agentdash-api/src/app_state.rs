@@ -22,12 +22,13 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::vfs_surface_resolver::{VfsSurfaceResolver, VfsSurfaceResolverDeps};
 use agentdash_application_agentrun::agent_run::{
-    AgentRunControlEffectDeps, AgentRunControlEffectService, AgentRunJournalBindingResolver,
-    AgentRunJournalService, AgentRunJournalSource, AgentRunJournalSourceSubscription,
-    AgentRunProductDeliveryPort, AgentRunRuntime, AgentRunRuntimeSurfaceUpdateDeps,
-    AgentRunRuntimeSurfaceUpdateService, BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps,
-    BusinessResourceSurfaceQuery, BusinessResourceSurfaceQueryDeps, ManagedAgentRunRuntime,
-    RuntimeAgentRunMailbox, RuntimeMailboxTerminalConvergence,
+    AgentBusinessSurfaceSource, AgentRunControlEffectDeps, AgentRunControlEffectService,
+    AgentRunJournalBindingResolver, AgentRunJournalService, AgentRunJournalSource,
+    AgentRunJournalSourceSubscription, AgentRunProductDeliveryPort, AgentRunRuntime,
+    AgentRunRuntimeSurfaceUpdateDeps, AgentRunRuntimeSurfaceUpdateService,
+    BusinessFrameSurfaceQuery, BusinessFrameSurfaceQueryDeps, BusinessResourceSurfaceQuery,
+    BusinessResourceSurfaceQueryDeps, ManagedAgentRunRuntime, RuntimeAgentRunMailbox,
+    RuntimeMailboxTerminalConvergence,
 };
 use agentdash_application_hooks::AppExecutionHookProvider;
 use agentdash_application_lifecycle::AgentRunLifecycleSurfaceProjector;
@@ -618,12 +619,15 @@ impl AppState {
         let tool_registry = Arc::new(
             crate::bootstrap::agent_runtime_surface::CompiledAgentRunToolRegistry::default(),
         );
+        let business_surface_source = Arc::new(AgentBusinessSurfaceSource::new(
+            runtime_surface_query.clone(),
+            repos.agent_frame_repo.clone(),
+            runtime_tool_provider,
+            hook_provider.clone(),
+        ));
         let surface_compiler = Arc::new(
-            crate::bootstrap::agent_runtime_surface::AgentFrameNativeSurfaceCompiler::new(
-                runtime_surface_query.clone(),
-                repos.agent_frame_repo.clone(),
-                runtime_tool_provider,
-                hook_provider.clone(),
+            crate::bootstrap::agent_runtime_surface::AgentFrameSurfaceCompositionAdapter::new(
+                business_surface_source,
                 tool_registry.clone(),
             ),
         );

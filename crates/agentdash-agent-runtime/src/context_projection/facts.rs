@@ -2,12 +2,13 @@ use agentdash_agent_protocol::{
     ContextDeliveryChannel, ContextDeliveryStatus, ContextFrameKind, ContextFrameSection,
     ContextFrameSource, ContextMessageRole,
 };
+use serde::{Deserialize, Serialize};
 
 /// Protocol-neutral facts for one context presentation frame.
 ///
 /// Application source adapters provide these facts; adapters and API transports never construct
 /// the resulting `ContextFrame`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextFrameFacts {
     pub kind: ContextFrameKind,
     pub source: ContextFrameSource,

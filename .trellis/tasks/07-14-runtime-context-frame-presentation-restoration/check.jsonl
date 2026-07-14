@@ -6,3 +6,4 @@
 {"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/workstreams/03-business-agent-surface/prd.md","reason":"复核 Business Agent Surface 遗漏的 context selection/delivery 要求"}
 {"file":".trellis/tasks/07-14-runtime-context-frame-presentation-restoration/prd.md","reason":"逐项验收所有需求与 main-reference 等价标准"}
 {"file":".trellis/tasks/07-14-runtime-context-frame-presentation-restoration/research/main-reference-context-frame-inventory.md","reason":"逐 family 核对参考源、触发路径、payload 与允许的内部优化"}
+{"file":".trellis/tasks/07-14-runtime-context-frame-presentation-restoration/research/production-family-closure-matrix.md","reason":"验收每个 family 的七列 production proof，禁止 fixture/类型测试冒充接通"}

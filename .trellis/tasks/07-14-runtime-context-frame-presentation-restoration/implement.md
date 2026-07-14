@@ -1,148 +1,188 @@
-# Agent Runtime ContextFrame 平台投影恢复实施计划
+# ContextFrame production restoration — corrective execution plan
 
-## 执行原则
+## Outcome
 
-- 单一主任务，不建立 child task。
-- 只保留四个端到端工作项；每项跨越必要层级并交付可查验结果，不按 crate/文件拆碎。
-- 强制对照只读参考仓库 `D:/Projects/AgentDash-main-reference@957fa9d60ea3d67efa1bb278fe5b376cf0c34598`。
-- 先提取 oracle，再实现；保留 payload/顺序行为，优化内部类型、推理和模块边界。
-- 不恢复旧 `application-runtime-session`，不加 compatibility/fallback/dual write。
-- 当前工作区已有未提交 runtime 修复，实施时必须保留并基于其继续，不覆盖并行修改。
-- 每个工作项完成后独立提交；WI-04 完成前不得归档或宣称恢复成功。
+The existing owned protocol, immutable artifact, canonical Runtime presentation lane, Session wrapper normalization, and frontend consumer remain the skeleton. The remaining work is to restore the **complete main production logic**, not to create more protocol scaffolding.
 
-## WI-01：参考基线、owned vocabulary 与 Context Projection feature 骨架
+The task is complete only when every row in `research/production-family-closure-matrix.md` has a real production source, builder, canonical UoW, actual-producer golden, and (where constructible) real-run observation.
 
-### 目标
+## Parallel execution model
 
-把 main-reference 的全部业务规则转为可执行 oracle，并一次确定 feature 的 owned 类型、纯投影接口和模块边界。
+Use one shared branch/workspace with explicit file ownership. Agents announce parallel edits and do not commit. The main agent owns shared exports/contracts, integration resolution, staging, commits, and final validation.
 
-### 工作
+### Main coordinator — shared contract and integration owner
 
-- 按 `research/main-reference-context-frame-inventory.md` 清点所有 frame family、触发点、payload、section/order/dedupe/delivery 规则。
-- 提取 bootstrap、live delta、hook/pending/auto-resume、compaction 的 builder golden 与 stream golden。
-- 建立 wrapper-neutral diff harness；动态 ID/timestamp/coordinate 采用显式 normalization。
-- 将 ContextFrame/delivery 类型迁到 owned platform presentation contract，增加 typed `PlatformEvent::ContextFrameChanged`。
-- 建立 `agentdash-agent-runtime::context_projection` deep module：typed facts、closed enums、纯 projector、显式 identity/clock、规范化 delta 与 presentation plan。
-- 现有 Rust/Application/frontend consumers 切换到 owned type，但不改变展示行为。
+Exclusive responsibilities:
 
-### 完成判据
+- lock the common facts interfaces and module exports before workers touch callsites;
+- own `context_projection/mod.rs`, cross-worker enum/contract changes, API composition wiring, migrations, generated contracts, and task matrices;
+- resolve overlaps; workers must not independently redesign shared facts;
+- run the production-callsite matrix after each wave;
+- stage and commit only after all three branches meet their actual-producer gates.
 
-- 每个 main-reference frame family 都有源文件证据和失败中的当前分支 oracle test。
-- payload serialization 与 main-reference 一致。
-- projector 不依赖数据库、时钟、connector、AgentFrame repository 或全局 notice queue。
-- API/adapter 不拥有 builder。
+The coordinator first corrects the owned vocabulary (`system_delivery`, `system_notice`, `applied_to_compacted_context`, `continuation`) and defines three disjoint handoffs:
 
-### 建议提交
+```text
+BootstrapContextFacts
+NormalizedContextSurfaceState + ContextSurfaceDelta
+TurnRuntimePresentationFacts + CompactionPresentationFacts
+```
 
-`refactor(context): 建立可重放 Context Projection 模块`
+This contract-lock step is deliberately small; it does not create another standalone skeleton work item or commit.
 
-## WI-02：统一 Agent Surface 编译与不可变 artifact
+## Parallel branch A — complete bootstrap facts and ThreadStart stream
 
-### 目标
+### Exclusive file area
 
-让工具、模型上下文和 ContextFrame 真正由同一次 Business Agent Surface 编译产生，并跨 provision/重启保持 exact artifact。
+- Application AgentRun frame/context source snapshot and `context_sources` adapter;
+- new Runtime `context_projection/bootstrap*.rs` builders;
+- bootstrap-specific actual producer tests.
 
-### 工作
+Do not edit live-delta/compaction files owned by B/C or shared `mod.rs` owned by the coordinator.
 
-- 定义 Application `context_sources` adapters，将 AgentFrame、identity、workflow、memory、VFS/MCP、Skill、Hook facts 映射到 runtime-owned facts。
-- 将 API `AgentFrameNativeSurfaceCompiler` 的业务逻辑迁入统一 Business Agent Surface compiler；API 只保留 composition。
-- 一次输出 `AgentSurfaceSnapshot + MaterializedDriverSurface + RuntimeSurfacePresentationPlan + publication`。
-- 工具 schema、ToolSchemaDelta 与 driver tool surface 从相同 normalized tool facts 派生；ContextFrame 不参与执行路由。
-- 搬运并重构 main-reference 的 bootstrap、identity/user/environment/guidelines/memory/assignment/capability/tool/Skill/VFS/MCP projection rules。
-- 按 `(binding, surface revision, surface digest)` 持久化 immutable compiled artifact，并添加目标 schema migration。
-- binding/recovery 引用 exact artifact；不得读取被覆盖的“当前 surface”。
+### Move from main-reference
 
-### 完成判据
+- `session/identity_context_frame.rs`
+- `session/user_context_frame.rs`
+- `session/environment_context_frame.rs`
+- `session/guidelines_context_frame.rs`
+- `session/assignment_context_frame.rs`
+- `session/memory_context_frame.rs`
+- `session/memory_inventory_entries.rs`
+- launch preparation rules for startup predicate, user preferences, system delivery/notices, dedupe, delivery metadata, and accepted event insertion order
+- Application-owned default/base identity prompt resolution formerly under executor/session composition
 
-- 生产 composition 使用统一 compiler。
-- provision 后、首条消息前重启仍能读取 exact bootstrap plan。
-- 工具继续通过 DriverToolSurface 注入并能调用。
-- 相同 facts 只编译一次，driver/context/presentation revision 与 digest 可相互证明。
-- 空库与代表性数据库 migration 通过。
+### Wire into current architecture
 
-### 建议提交
+1. Extend frame construction to persist an immutable normalized `AgentContextSourceSnapshot` with the AgentFrame revision. It contains the full assignment fragments/source coordinates; `FrameContextBundleSummary` remains control metadata and is never treated as content.
+2. Expand `AgentBusinessSurfaceSource` dependencies with the already-available VFS/discovery providers, `SettingsRepository`, base identity source, explicit projection clock/platform facts.
+3. Call existing `derive_launch_context_discovery` exactly once for guidelines, memory, and Skill baseline.
+4. Build complete `BootstrapContextFacts` from request/surface/frame/executor/discovery/Hook facts.
+5. Port main builders and exact empty/null/order/delivery rules.
+6. Make `AgentSurfaceCompiler::compile_business_facts` emit the full bootstrap plan, not a fixed tool-only frame.
+7. Drive the real surface compiler and real `ThreadStart`; compare the durable stream in main insertion order.
 
-`refactor(runtime): 统一 Agent Surface 与展示计划编译`
+### Branch A gate
 
-## WI-03：接通全部 canonical producer 与原子 Runtime journal
+- full fixture yields the expected non-empty identity, user, environment, guidelines, memory, capability, and assignment frames;
+- independent empty fixtures prove each main suppression rule;
+- driver instructions/context and ContextFrame presentation derive from the same facts without turning ContextFrame into model input;
+- actual ThreadStart stream, not a projector-only test, matches main payload and event order.
 
-### 目标
+## Parallel branch B — complete normalized surface state and SurfaceAdopt stream
 
-将所有 ContextFrame family 放回其正确 canonical operation，使 surface/context/hook 状态和 presentation 不再分叉。
+### Exclusive file area
 
-### 工作
+- new Runtime `context_projection/surface_state*.rs`, `dimension/*.rs`, and live projector files;
+- `RuntimeSurfacePresentationPlan::for_adoption` replacement;
+- SurfaceAdopt actual command/journal tests and live fixtures.
 
-- 首次 send_message 从 exact artifact 读取 bootstrap plan，与用户 submission 随 ThreadStart 同交。
-- SurfaceAdopt 使用 previous accepted surface/AgentFrame 做 typed delta，随 operation 原子提交 adoption frames。
-- Hook 模型可见 effect 通过 `context_projection` 生成 frame，与 HookRun/effect UoW 同交。
-- pending action/auto-resume 随 mailbox/next-turn operation 提交。
-- managed compaction activation 生成 compaction summary frame并与 checkpoint/head 同交；native opaque compaction仍只作 telemetry。
-- 统一 idempotency/replay/empty-delta/concurrent-adoption 语义。
-- Runtime thread/context/surface revision 分别遵守 PRD R5。
+Do not edit Application bootstrap sources or turn-runtime/compaction producers.
 
-### 完成判据
+### Move from main-reference
 
-- ThreadStart、SurfaceAdopt、Hook、pending/auto-resume、compaction stream golden 全部与 main-reference payload 序列一致。
-- presentation failure 不会留下已采用 surface/head/HookRun。
-- retry/replay 不重复 ContextFrame。
-- 并发 adoption 不丢 frame、不串 artifact/revision。
-- Native/Codex/Remote 均不生产 ContextFrame。
+- pure builder/diff portions of `session/hub/runtime_context_transition.rs`
+- `session/dimension/capability_key.rs`
+- `tool_path.rs`
+- `mcp_server.rs`
+- `companion_agent.rs`
+- `vfs.rs`
+- `memory.rs`
+- `skill.rs`
+- `tool_schema.rs`
+- main `compute_capability_state_delta` semantics and exact render/section order
 
-### 建议提交
+### Wire into current architecture
 
-`feat(runtime): 恢复 ContextFrame canonical 生产链`
+1. Persist a complete `NormalizedContextSurfaceState` inside the compiled immutable artifact: capability keys/state, tool paths/schemas, MCP identity/readiness, companions, VFS, memory inventory, Skills, and assignment revision/fragments.
+2. Compute one typed previous/target `ContextSurfaceDelta`; do not derive dimensions from Driver DTOs or bootstrap frames.
+3. Replace the tool-only `for_adoption` with the complete main projector.
+4. Emit at most one capability-state frame with non-empty sections in exact order, followed by an independent assignment frame when applicable.
+5. Cover added/removed/changed semantics for every dimension and main's tool-schema selection rules.
+6. Preserve empty-delta, assignment-only, replay, CAS failure, and exact-artifact semantics already present in the Runtime UoW.
 
-## WI-04：前端零行为恢复、全链路差异矩阵与真实验证
+### Branch B gate
 
-### 目标
+- one actual SurfaceAdopt scenario exercises all eight sections plus assignment and matches main;
+- one actual scenario per dimension proves isolated add/remove/change behavior;
+- a state change with unchanged tools still emits the required non-tool frame;
+- empty delta emits nothing; assignment-only emits only assignment; replay does not duplicate; failure does not adopt surface.
 
-证明新模块在新架构下完整替代旧实现，而不靠局部测试或手造事件自证。
+## Parallel branch C — Hook, pending, system delivery/notices, compaction
 
-### 工作
+### Exclusive file area
 
-- 仅在 session protocol normalization boundary 接入 typed wrapper；保持 reducer、feed grouping、ContextFrame UI、文案和工具 burst hard-boundary 不变。
-- 对 main-reference 建立 bootstrap/live/hook/compaction 全 eventstream payload 差异矩阵。
-- 审计 Native/Codex/Remote adapter、API composition、Application source、Runtime journal 的依赖方向。
-- 运行 Rust/TypeScript/schema/conformance/E2E 门禁。
-- 重启 `pnpm dev`，用新 AgentRun 验证初始 frame、工具调用、surface update、Hook/pending、compaction 和 revision。
-- 更新最终 Trellis spec，只记录 Context Projection 的目标职责、事实源和设计依据。
+- protocol ContextFrame production enum/section additions after coordinator contract lock;
+- new Runtime `context_projection/turn_runtime*.rs` and `compaction*.rs` builders;
+- Runtime Hook/context state and Application facade callsites for these producers;
+- their actual-producer tests.
 
-### 完成判据
+Do not edit bootstrap/live surface projectors owned by A/B.
 
-- payload 差异矩阵除显式 wrapper/coordinate 映射外为零。
-- 前端行为相对 main-reference 为零差异。
-- 工具调用和 ContextFrame 同时正常，且数据库 revision 符合契约。
-- 全链路未出现旧 RuntimeSession、adapter builder、dual write 或 fallback。
+### Move from main-reference
 
-### 验证命令候选
+- pending-action builder and Hook message formatting/owner/usage-kind rules;
+- `system_delivery` and `system_notice` builders used by HookAutoResume and queued notices;
+- Hook injection-to-assignment mapping where it belongs to turn-runtime facts;
+- `session/compaction_context_frame.rs` and the eventing extraction of real compaction facts;
+- Hook model-visible context effect rules, represented as typed facts rather than arbitrary presentation JSON.
+
+### Wire into current architecture
+
+1. Replace reserved `auto_resume` production with main-equivalent `system_delivery`; support `system_notice` for generic notices.
+2. Rebuild pending frames from actual Hook source/status/revision/owners/instructions/injections and exact empty rules.
+3. Change Hook context effects from stringly arbitrary JSON to typed presentation facts; keep HookRun/effect/frame in one Runtime commit.
+4. Add `CompactionPresentationFacts` to the candidate/checkpoint path so activation has real summary, token/message counts, strategy, trigger, phase, source boundaries, compacted reference, and timestamp.
+5. Keep peek/ack, replay, and canonical UoW behavior, but compare the actual produced payload against main.
+
+### Branch C gate
+
+- actual turn-start stream proves system delivery/notice and pending payload/order;
+- Hook actual completion proves typed effect, rollback, and replay;
+- managed compaction actual activation proves the full main payload; opaque driver compaction emits no frame;
+- no hard-coded revision, placeholder summary, fabricated token count, or arbitrary ContextFrame JSON remains.
+
+## Integration wave — coordinator only
+
+After A/B/C pass their local gates:
+
+1. integrate shared contracts and remove obsolete tool-only and wrong-family code paths;
+2. rebuild the oracle from main production builders; delete/replace fixtures with incorrect delivery status/channel/role;
+3. generate a machine-readable closure report with the seven mandatory proof columns for every family;
+4. run cross-layer checks and inspect production callsites with `rg`; enum/fixture-only matches never satisfy the report;
+5. use a real dev Agent with a full context fixture and assert the required bootstrap family set, not merely “at least one ContextFrame”;
+6. trigger a live surface transition that changes non-tool dimensions and verify capability frame + assignment ordering;
+7. trigger Hook/pending/system-delivery and managed compaction scenarios, then inspect journal payload/revision/replay;
+8. confirm the Session boundary is the only wrapper change and frontend session source remains behavior-identical to main.
+
+## Commit plan
+
+Parallel work does not imply parallel commits. Commit only integrated, independently reviewable outcomes:
+
+1. `refactor(context): 补齐 ContextFrame 全量业务事实与投影`
+   - full source snapshot, bootstrap builders, normalized surface state/dimensions, typed turn-runtime/compaction facts.
+2. `feat(runtime): 接通全部 ContextFrame production producer`
+   - ThreadStart, SurfaceAdopt, Hook/pending/system-delivery, compaction actual UoWs with exact payloads.
+3. `fix(session): 验证 main 等价 ContextFrame 全链路`
+   - corrected production goldens, closure report, generated contracts/specs, real multi-family AgentRun evidence.
+
+No branch may commit independently. No task archive or completion statement is allowed until the real run observes the complete required family set and the closure matrix has no MISSING/PARTIAL/WRONG row.
+
+## Validation commands
+
+Run targeted suites in parallel where they do not compete for the Cargo target lock, then one final serialized full gate:
 
 ```powershell
 cargo test -p agentdash-agent-runtime
 cargo test -p agentdash-application-agentrun
+cargo test -p agentdash-api journal_projection
 cargo test -p agentdash-infrastructure agent_runtime_composition
-cargo test -p agentdash-api agent_runtime_surface
 cargo test -p agentdash-integration-native-agent
 cargo test -p agentdash-integration-codex
+pnpm contracts:check
 pnpm --dir packages/app-web test
 cargo check --workspace --all-targets
 pnpm dev
 ```
 
-按项目并行 Cargo 约束观察 build directory lock，不终止 rust-analyzer 或其他会话工作。
-
-### 建议提交
-
-`fix(session): 完整恢复 ContextFrame 会话行为`
-
-## Review gates
-
-1. WI-01：逐 family 对照 main-reference inventory/golden，未覆盖不得进入生产实现。
-2. WI-02：审查 Application facts → Runtime compiler → Driver/presentation 双输出的依赖方向和 artifact durability。
-3. WI-03：审查 Runtime UoW、revision、replay 与并发，不接受仅靠 CAS retry 掩盖多写者。
-4. WI-04：审查完整差异矩阵和真实会话，不接受“单测通过”替代用户行为恢复。
-
-## 回滚点
-
-- 每个 WI 独立提交，可按工作项回滚。
-- migration 尚未上线，设计错误时直接修订到目标 schema，不保留旧 schema 读取。
-- typed wrapper 接入失败时修复 normalization，不恢复双格式生产。
+Final manual/API evidence must enumerate actual frame kinds/sections/order from the new journal and compare them to the corrected main production oracle.

@@ -71,6 +71,14 @@
 - 本任务一次恢复 main-reference 的全部 ContextFrame family；不只修 live surface update。
 - 保持单一主任务，不拆 child；实施工作项保持少量、端到端、可整体 review，避免按文件或层级拆成碎片。
 
+### R9. Production closure proof
+
+- “类型存在、fixture 可反序列化、projector 单测通过、前端能渲染”均不代表 frame family 已恢复。
+- 每个 family 必须同时提供 main builder/trigger 证据、current typed source、production loader、Runtime builder、canonical UoW、actual-producer stream golden 与可构造时的真实 AgentRun 观察。
+- delivery-plan 顺序与 durable eventstream 顺序分别验收，不得互相代替。
+- oracle 必须来自 main production builder/commit path；发现 fixture 的 status/channel/role/text/section 与源码不符时，先废弃 fixture，不得修改实现去迎合错误 fixture。
+- 任务完成时 `research/production-family-closure-matrix.md` 中不得存在 MISSING、PARTIAL 或 WRONG。
+
 ## Acceptance Criteria
 
 - [ ] AC1：生产 composition 调用统一 Business Agent Surface compiler，不再由 API 的 Native 专用 compiler 独立拼装业务 surface。
@@ -83,6 +91,10 @@
 - [ ] AC8：Runtime thread/context/surface revision 的推进符合 R5，并有并发与幂等回归测试。
 - [ ] AC9：相关 Rust、TypeScript、schema、golden、跨层 E2E 质量门禁通过。
 - [ ] AC10：任务 research 明确记录参考仓库 commit、源文件映射与每个 golden 的原始行为证据。
+- [ ] AC11：真实 bootstrap compile + ThreadStart 至少产生 identity、user、environment、guidelines、memory、capability 与 assignment 中所有满足 main 非空条件的 frame，payload 和 durable 顺序与 main 等价。
+- [ ] AC12：真实 SurfaceAdopt 覆盖 capability key、tool path、MCP、companion、VFS、memory、Skill、tool schema 八维 delta 及独立 assignment frame，不再只有工具 schema。
+- [ ] AC13：Hook/pending/system-delivery/system-notice/compaction 均由 typed production facts 构造；不存在 arbitrary ContextFrame JSON、错误 auto_resume family 或 placeholder compaction payload。
+- [ ] AC14：最终 closure report 每个 family 的七个 production proof 列均非空，且真实 dev journal 明确枚举观察到的 frame kinds/sections/order。
 
 ## Out of Scope
 

@@ -7,3 +7,4 @@
 {"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/target-crate-shape.md","reason":"遵守目标 crate 依赖方向与旧 runtime-session 迁移地图"}
 {"file":".trellis/tasks/07-14-runtime-context-frame-presentation-restoration/design.md","reason":"执行本任务统一 compiler、artifact、presentation UoW 与 golden 方案"}
 {"file":".trellis/tasks/07-14-runtime-context-frame-presentation-restoration/research/main-reference-context-frame-inventory.md","reason":"强制对照 main-reference 固定 commit 搬运全部 ContextFrame 业务规则"}
+{"file":".trellis/tasks/07-14-runtime-context-frame-presentation-restoration/research/production-family-closure-matrix.md","reason":"逐 family 强制核对 production source、builder、canonical UoW 与 actual stream proof"}

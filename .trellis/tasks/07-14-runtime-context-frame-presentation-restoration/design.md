@@ -376,3 +376,28 @@ current accepted surface + target AgentFrame
 - 局部恢复会重新制造多事实源和下一轮迁移债务。
 
 任务保持单一主任务，不拆 child；执行时用工作项和逐工作项提交控制范围。
+
+## 10. Corrective production design
+
+The existing skeleton is retained, but its tool-only assumptions are removed:
+
+```text
+Frame construction
+  -> immutable AgentContextSourceSnapshot (full assignment/context facts)
+AgentBusinessSurfaceSource
+  -> BootstrapContextFacts
+  -> NormalizedContextSurfaceState
+  -> TurnRuntimePresentationFacts / CompactionPresentationFacts
+Runtime context_projection
+  -> full bootstrap plan
+  -> complete previous/target delta
+  -> typed turn-runtime and compaction frames
+Canonical Runtime commands
+  -> exact presentation UoW
+Session normalization
+  -> wrapper-only mapping
+```
+
+`derive_launch_context_discovery` is the mandatory discovery entry for guidelines, memory, and Skill facts. Full assignment content is persisted with the AgentFrame revision because `FrameContextBundleSummary` cannot reproduce fragments. Previous/target adoption compares persisted normalized business state, not Driver DTOs, tool lists alone, or bootstrap frame JSON.
+
+Parallel implementation follows file ownership rather than architectural layers: bootstrap, surface delta, and turn-runtime/compaction are independent worker branches; the main coordinator owns shared contracts and integration. This keeps all three production paths moving concurrently without letting workers invent incompatible facts types.

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/agent-runtime-surface-tool-broker.md","reason":"统一 Business Agent Surface、工具目录与 context contribution 编译边界"}
+{"file":".trellis/spec/backend/agent-runtime-agentrun-facade.md","reason":"ThreadStart、SurfaceAdopt、Runtime journal 与 AgentRun facade 原子提交边界"}
+{"file":".trellis/spec/backend/agent-runtime-hooks.md","reason":"HookRun、effect 与模型可见 ContextFrame 的 durable ownership"}
+{"file":".trellis/spec/cross-layer/backbone-protocol.md","reason":"ContextFrame typed platform presentation 与 eventstream wrapper"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 AgentFrame 到 Runtime、API、stream 与前端的完整数据流"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/design.md","reason":"恢复 07-10 设计中 Business Surface、Managed Runtime 与 ContextFrame 的原定所有权"}
+{"file":".trellis/tasks/archive/2026-07/07-10-agent-runtime-architecture-convergence/target-crate-shape.md","reason":"遵守目标 crate 依赖方向与旧 runtime-session 迁移地图"}
+{"file":".trellis/tasks/07-14-runtime-context-frame-presentation-restoration/design.md","reason":"执行本任务统一 compiler、artifact、presentation UoW 与 golden 方案"}
+{"file":".trellis/tasks/07-14-runtime-context-frame-presentation-restoration/research/main-reference-context-frame-inventory.md","reason":"强制对照 main-reference 固定 commit 搬运全部 ContextFrame 业务规则"}

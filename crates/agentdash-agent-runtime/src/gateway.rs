@@ -51,6 +51,10 @@ impl<S> ManagedAgentRuntime<S> {
     pub(crate) fn store(&self) -> &S {
         &self.store
     }
+
+    pub(crate) async fn lock_mutation(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.driver_event_ingest.lock().await
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

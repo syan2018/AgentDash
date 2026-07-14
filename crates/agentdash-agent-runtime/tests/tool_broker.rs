@@ -763,8 +763,10 @@ fn runtime_profile() -> RuntimeProfile {
 #[tokio::test]
 async fn managed_runtime_journal_preserves_true_mcp_owner_lifecycle() {
     let store = Arc::new(RuntimeStoreFixture::default());
-    let runtime =
-        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
+    let runtime = Arc::new(ManagedAgentRuntime::new(
+        store.clone(),
+        Arc::new(TestTerminalPresentationProjector),
+    ));
     runtime
         .execute(RuntimeCommandEnvelope {
             presentation: Vec::new(),
@@ -856,7 +858,7 @@ async fn managed_runtime_journal_preserves_true_mcp_owner_lifecycle() {
         arguments: serde_json::json!({"query":"rust","nullable":null}),
         timeout_ms: 1_000,
     };
-    let journal = ManagedRuntimeToolJournal::new(store.clone());
+    let journal = ManagedRuntimeToolJournal::new(runtime.clone());
     journal
         .accept_tool_call(&invocation, &tool)
         .await
@@ -983,8 +985,10 @@ async fn managed_runtime_journal_preserves_true_mcp_owner_lifecycle() {
 #[tokio::test]
 async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_result() {
     let store = Arc::new(RuntimeStoreFixture::default());
-    let runtime =
-        ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
+    let runtime = Arc::new(ManagedAgentRuntime::new(
+        store.clone(),
+        Arc::new(TestTerminalPresentationProjector),
+    ));
     runtime
         .execute(RuntimeCommandEnvelope {
             presentation: Vec::new(),
@@ -1063,7 +1067,7 @@ async fn managed_runtime_journal_converges_one_terminal_for_replayed_broker_resu
         arguments: arguments.clone(),
         timeout_ms: 1_000,
     };
-    let journal = ManagedRuntimeToolJournal::new(store.clone());
+    let journal = ManagedRuntimeToolJournal::new(runtime.clone());
     journal
         .accept_tool_call(&invocation, &catalog().tools[0])
         .await

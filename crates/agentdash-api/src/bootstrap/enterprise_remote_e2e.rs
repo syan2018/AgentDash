@@ -30,8 +30,7 @@ use agentdash_application_ports::agent_run_surface::{
 };
 use agentdash_domain::agent_run_mailbox::MailboxSourceIdentity;
 use agentdash_infrastructure::{
-    PostgresAgentRuntimeHostRepository, PostgresRuntimeRepository,
-    postgres_runtime::PostgresRuntime,
+    PostgresAgentRuntimeHostRepository, postgres_runtime::PostgresRuntime,
 };
 use agentdash_integration_api::*;
 use agentdash_integration_native_agent::{
@@ -55,8 +54,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::agent_runtime::{
-    AgentRunRuntimeSurfaceSource, AgentRunRuntimeSurfaceSourceError, AgentRuntimeCompositionInput,
-    PreparedAgentRunRuntime, build_agent_runtime_composition,
+    AgentRunRuntimeSurfaceSource, AgentRunRuntimeSurfaceSourceError, AgentRuntimeCallbacks,
+    AgentRuntimeCompositionInput, PreparedAgentRunRuntime, build_agent_runtime_composition,
 };
 use super::agent_runtime_surface::{
     CompiledAgentRunToolRegistry, PendingCompiledAgentRunToolBinding,
@@ -210,8 +209,8 @@ impl AgentTool for EnterpriseEchoTool {
 
 struct RecordingToolCallback {
     inner: Arc<dyn AgentRuntimeToolCallback>,
-    calls: AtomicUsize,
-    last_error: tokio::sync::Mutex<Option<String>>,
+    calls: Arc<AtomicUsize>,
+    last_error: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 #[async_trait]
@@ -723,20 +722,14 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
     let proxy_definition = remote_proxy_definition(&source_definition);
     let tool_registry = Arc::new(CompiledAgentRunToolRegistry::default());
     let tool_calls = Arc::new(AtomicUsize::new(0));
-    let tool_broker_resolver = Arc::new(PostgresAgentRunToolBrokerResolver::new(
-        cloud_pool.clone(),
-        Arc::new(PostgresRuntimeRepository::new(cloud_pool.clone())),
-        tool_registry.clone(),
-        Arc::new(EnterpriseCapabilityPort),
-    ));
-    let tools = Arc::new(RecordingToolCallback {
-        inner: Arc::new(super::agent_runtime::PlatformAgentRuntimeToolCallback::new(
-            tool_broker_resolver,
-        )),
-        calls: AtomicUsize::new(0),
-        last_error: tokio::sync::Mutex::new(None),
-    });
+    let callback_calls = Arc::new(AtomicUsize::new(0));
+    let callback_last_error = Arc::new(tokio::sync::Mutex::new(None));
     let hooks = Arc::new(RecordingHookCallback::default());
+    let callback_pool = cloud_pool.clone();
+    let callback_registry = tool_registry.clone();
+    let callback_calls_for_factory = callback_calls.clone();
+    let callback_last_error_for_factory = callback_last_error.clone();
+    let hooks_for_factory = hooks.clone();
     let target = AgentRunRuntimeTarget {
         run_id: Uuid::new_v4(),
         agent_id: Uuid::new_v4(),
@@ -761,8 +754,26 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
             tool_calls: tool_calls.clone(),
         }),
         credential_broker: Arc::new(NoCredentials),
-        tool_callback: tools.clone(),
-        hook_callback: hooks.clone(),
+        callback_factory: Arc::new(move |runtime| {
+            let tool_broker_resolver = Arc::new(PostgresAgentRunToolBrokerResolver::new(
+                callback_pool.clone(),
+                runtime,
+                callback_registry.clone(),
+                Arc::new(EnterpriseCapabilityPort),
+            ));
+            AgentRuntimeCallbacks {
+                tools: Arc::new(RecordingToolCallback {
+                    inner: Arc::new(
+                        super::agent_runtime::PlatformAgentRuntimeToolCallback::new(
+                            tool_broker_resolver,
+                        ),
+                    ),
+                    calls: callback_calls_for_factory.clone(),
+                    last_error: callback_last_error_for_factory.clone(),
+                }),
+                hooks: hooks_for_factory.clone(),
+            }
+        }),
         application_presentation_projector: Arc::new(
             agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
         ),
@@ -997,8 +1008,8 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         tool_calls.load(Ordering::SeqCst),
         1,
         "reverse RuntimeWire callbacks={}, last_error={:?}",
-        tools.calls.load(Ordering::SeqCst),
-        tools.last_error.lock().await.as_deref(),
+        callback_calls.load(Ordering::SeqCst),
+        callback_last_error.lock().await.as_deref(),
     );
     assert!(hooks.0.load(Ordering::SeqCst) >= 1);
 

@@ -627,39 +627,33 @@ impl AppState {
                 tool_registry.clone(),
             ),
         );
-        let canonical_runtime_repository = Arc::new(
-            agentdash_infrastructure::PostgresRuntimeRepository::new(runtime_pool.clone()),
-        );
-        let canonical_runtime = Arc::new(agentdash_agent_runtime::ManagedAgentRuntime::new(
-            canonical_runtime_repository.clone(),
-            Arc::new(
-                agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
-            ),
-        ));
-        workspace_module_presentation_append
-            .set(Arc::new(CanonicalWorkspaceModulePresentationAppender {
-                runtime: canonical_runtime.clone(),
-            }))
-            .await;
-        let tool_broker_resolver = Arc::new(
-            crate::bootstrap::agent_runtime_surface::PostgresAgentRunToolBrokerResolver::new(
-                runtime_pool.clone(),
-                canonical_runtime_repository,
-                tool_registry.clone(),
-                agent_run_effective_capability,
-            ),
-        );
-        let tool_callback: Arc<dyn agentdash_integration_api::AgentRuntimeToolCallback> = Arc::new(
-            crate::bootstrap::agent_runtime::PlatformAgentRuntimeToolCallback::new(
-                tool_broker_resolver,
-            ),
-        );
-        let hook_callback: Arc<dyn agentdash_integration_api::AgentRuntimeHookCallback> = Arc::new(
-            crate::bootstrap::agent_runtime_surface::CanonicalAgentRuntimeHookCallback::new(
-                canonical_runtime,
-                tool_registry.clone(),
-            ),
-        );
+        let callback_runtime_pool = runtime_pool.clone();
+        let callback_tool_registry = tool_registry.clone();
+        let callback_effective_capability = agent_run_effective_capability.clone();
+        let callback_factory: crate::bootstrap::agent_runtime::AgentRuntimeCallbackFactory =
+            Arc::new(move |runtime| {
+                let tool_broker_resolver = Arc::new(
+                    crate::bootstrap::agent_runtime_surface::PostgresAgentRunToolBrokerResolver::new(
+                        callback_runtime_pool.clone(),
+                        runtime.clone(),
+                        callback_tool_registry.clone(),
+                        callback_effective_capability.clone(),
+                    ),
+                );
+                crate::bootstrap::agent_runtime::AgentRuntimeCallbacks {
+                    tools: Arc::new(
+                        crate::bootstrap::agent_runtime::PlatformAgentRuntimeToolCallback::new(
+                            tool_broker_resolver,
+                        ),
+                    ),
+                    hooks: Arc::new(
+                        crate::bootstrap::agent_runtime_surface::CanonicalAgentRuntimeHookCallback::new(
+                            runtime,
+                            callback_tool_registry.clone(),
+                        ),
+                    ),
+                }
+            });
         let runtime_composition =
             crate::bootstrap::agent_runtime::build_native_agent_runtime_composition(
                 crate::bootstrap::agent_runtime::NativeAgentRuntimeCompositionInput {
@@ -669,8 +663,7 @@ impl AppState {
                     secret_codec: llm_provider_secret.clone(),
                     surface_compiler: surface_compiler.clone(),
                     credential_broker: Arc::new(RejectUndeclaredRuntimeCredentials),
-                    tool_callback,
-                    hook_callback,
+                    callback_factory,
                     application_presentation_projector: Arc::new(
                         agentdash_application_agentrun::agent_run::AgentRunRuntimeApplicationPresentationProjector,
                     ),

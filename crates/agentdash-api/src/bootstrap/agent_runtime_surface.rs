@@ -747,14 +747,18 @@ pub struct PostgresAgentRunToolBrokerResolver {
 impl PostgresAgentRunToolBrokerResolver {
     pub fn new(
         pool: sqlx::PgPool,
-        runtime_repository: Arc<agentdash_infrastructure::PostgresRuntimeRepository>,
+        runtime: Arc<
+            agentdash_agent_runtime::ManagedAgentRuntime<
+                agentdash_infrastructure::PostgresRuntimeRepository,
+            >,
+        >,
         registry: Arc<CompiledAgentRunToolRegistry>,
         capabilities: Arc<dyn AgentRunEffectiveCapabilityPort>,
     ) -> Self {
         Self {
             repository: Arc::new(PostgresToolBrokerRepository::new(pool)),
             journal: Arc::new(agentdash_agent_runtime::ManagedRuntimeToolJournal::new(
-                runtime_repository,
+                runtime,
             )),
             policy: Arc::new(RegistryToolBrokerPolicy::new(
                 registry.clone(),
@@ -1419,12 +1423,6 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             .iter()
             .map(|injection| injection.content.clone())
             .collect::<Vec<_>>();
-        let context_value = frame
-            .surface
-            .as_ref()
-            .and_then(|document| document.context_slice.clone())
-            .or_else(|| frame.context_slice_json.clone())
-            .unwrap_or(serde_json::Value::Null);
         let recipe = ContextRecipe {
             revision: ContextRecipeRevision(revision),
             provenance: ContextProvenance {
@@ -1433,12 +1431,7 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             },
             source_item_ids: Vec::new(),
         };
-        let blocks = vec![ContextBlock::Input {
-            input: vec![RuntimeInput::Structured {
-                schema: "agentdash.agent_frame.context_slice.v1".to_string(),
-                value: context_value,
-            }],
-        }];
+        let blocks = initial_driver_context_blocks();
         let context_digest = ContextDigest::new(digest_json(&(&recipe, &instructions, &blocks))?)
             .map_err(|error| AgentRunRuntimeSurfaceSourceError::Invalid {
             reason: error.to_string(),
@@ -1512,6 +1505,12 @@ impl NativeAgentRunSurfaceCompiler for AgentFrameNativeSurfaceCompiler {
             },
         })
     }
+}
+
+fn initial_driver_context_blocks() -> Vec<ContextBlock> {
+    // AgentFrame context_slice is control-plane bundle metadata, not model input. Main delivers
+    // launch instructions through the dedicated system channel and starts with no replay blocks.
+    Vec::new()
 }
 
 fn materialize_hook_plan(
@@ -2604,6 +2603,11 @@ mod tests {
             profile.hooks.satisfies(&requirement),
             "native profile must satisfy {requirement:?}"
         );
+    }
+
+    #[test]
+    fn initial_driver_context_does_not_project_frame_summary_as_user_input() {
+        assert!(initial_driver_context_blocks().is_empty());
     }
 
     #[test]

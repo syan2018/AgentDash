@@ -237,6 +237,22 @@ impl DriverEventSink for FailingSink {
     }
 }
 
+#[derive(Default)]
+struct FailAfterFirstEventSink(std::sync::atomic::AtomicUsize);
+
+#[async_trait]
+impl DriverEventSink for FailAfterFirstEventSink {
+    async fn emit(&self, _event: DriverEventEnvelope) -> Result<(), DriverError> {
+        if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+            return Err(DriverError::Lost {
+                reason: "test sink disconnected during the active prompt".to_string(),
+                retryable: true,
+            });
+        }
+        Ok(())
+    }
+}
+
 fn recipe(tool_set_revision: ToolSetRevision) -> ContextRecipe {
     ContextRecipe {
         revision: ContextRecipeRevision(1),
@@ -767,6 +783,53 @@ async fn failed_event_delivery_clears_the_active_turn_fence() {
         .await
         .expect_err("failed turn must not remain active");
     assert!(matches!(error, DriverError::Rejected { .. }));
+}
+
+#[tokio::test]
+async fn failed_event_delivery_aborts_agent_core_before_the_next_turn() {
+    let (driver, binding) = driver_fixture().await;
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-turn-stream-fail"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id.clone(),
+                runtime_turn_id: Some(id("turn-request-turn-stream-fail")),
+                command: thread_start(
+                    "native-turn-request-turn-stream-fail",
+                    vec![RuntimeInput::Text {
+                        text: "first".to_string(),
+                    }],
+                ),
+            },
+            Arc::new(FailAfterFirstEventSink::default()),
+        )
+        .await
+        .expect_err("active prompt event delivery failure must fail dispatch");
+
+    driver
+        .dispatch(
+            DriverCommandEnvelope {
+                request_id: id("request-turn-after-stream-fail"),
+                presentation_thread_id: id("presentation-thread-1"),
+                binding_id: id("binding-1"),
+                generation: RuntimeDriverGeneration(4),
+                source_thread_id: binding.source_thread_id,
+                runtime_turn_id: Some(id("turn-request-turn-after-stream-fail")),
+                command: RuntimeCommand::TurnStart {
+                    thread_id: id("runtime-thread-1"),
+                    presentation_turn_id: id("native-turn-request-turn-after-stream-fail"),
+                    input: vec![RuntimeInput::Text {
+                        text: "second".to_string(),
+                    }],
+                },
+            },
+            Arc::new(Sink::default()),
+        )
+        .await
+        .expect("Agent Core must be idle before the next turn");
 }
 
 #[tokio::test]

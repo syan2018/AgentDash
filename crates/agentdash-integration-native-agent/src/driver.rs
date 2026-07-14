@@ -521,36 +521,53 @@ impl NativeAgentDriver {
                 source_turn_id,
                 thread.presentation_context.clone(),
             );
-            while let Some(event) = events.next().await {
-                let terminal = matches!(event, AgentEvent::AgentEnd { .. });
-                for mapped in mapper.map(event)? {
-                    for fact in &mapped.facts {
-                        if let RuntimeJournalFact::Internal(RuntimeEvent::ItemTerminal {
-                            turn_id,
-                            terminal: RuntimeItemTerminal::Completed { final_content },
-                            ..
-                        }) = fact
-                            && let Some(source_item_id) = &mapped.source_item_id
-                        {
-                            binding
-                                .projected_items
-                                .write()
-                                .await
-                                .push(DriverProjectedItem {
-                                    source_turn_id: mapped.source_turn_id.clone().unwrap_or_else(
-                                        || parsed_id(turn_id.to_string()).expect("mapped turn id"),
-                                    ),
-                                    source_item_id: source_item_id.clone(),
-                                    content: final_content.clone(),
-                                });
+            let stream_result =
+                async {
+                    while let Some(event) = events.next().await {
+                        let terminal = matches!(event, AgentEvent::AgentEnd { .. });
+                        for mapped in mapper.map(event)? {
+                            for fact in &mapped.facts {
+                                if let RuntimeJournalFact::Internal(RuntimeEvent::ItemTerminal {
+                                    turn_id,
+                                    terminal: RuntimeItemTerminal::Completed { final_content },
+                                    ..
+                                }) = fact
+                                    && let Some(source_item_id) = &mapped.source_item_id
+                                {
+                                    binding.projected_items.write().await.push(
+                                        DriverProjectedItem {
+                                            source_turn_id: mapped
+                                                .source_turn_id
+                                                .clone()
+                                                .unwrap_or_else(|| {
+                                                    parsed_id(turn_id.to_string())
+                                                        .expect("mapped turn id")
+                                                }),
+                                            source_item_id: source_item_id.clone(),
+                                            content: final_content.clone(),
+                                        },
+                                    );
+                                }
+                            }
+                            emit_driver_event(
+                                envelope,
+                                &binding.source_thread_id,
+                                mapped,
+                                sink.clone(),
+                            )
+                            .await?;
+                        }
+                        if terminal {
+                            break;
                         }
                     }
-                    emit_driver_event(envelope, &binding.source_thread_id, mapped, sink.clone())
-                        .await?;
+                    Ok::<(), DriverError>(())
                 }
-                if terminal {
-                    break;
-                }
+                .await;
+            if let Err(error) = stream_result {
+                thread.agent.lock().await.abort();
+                let _ = handle.await;
+                return Err(error);
             }
             let terminal_emitted = mapper.turn_terminal;
             match handle.await {
@@ -1269,6 +1286,19 @@ struct NativeEventMapper {
     presentation_context: StreamMapperRuntimeContext,
 }
 
+fn assistant_has_canonical_content(message: &agentdash_agent::AgentMessage) -> bool {
+    matches!(message, agentdash_agent::AgentMessage::Assistant { content, .. } if content.iter().any(|part| match part {
+        agentdash_agent::ContentPart::Text { text }
+        | agentdash_agent::ContentPart::Reasoning { text, .. } => !text.is_empty(),
+        agentdash_agent::ContentPart::Image { .. } => false,
+    }))
+}
+
+fn is_tool_only_assistant_message(message: &agentdash_agent::AgentMessage) -> bool {
+    matches!(message, agentdash_agent::AgentMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty())
+        && !assistant_has_canonical_content(message)
+}
+
 impl NativeEventMapper {
     fn new(
         session_id: String,
@@ -1363,8 +1393,10 @@ impl NativeEventMapper {
             }
             AgentEvent::AgentStart | AgentEvent::TurnStart => {}
             AgentEvent::MessageStart { message } => {
-                if matches!(&message, agentdash_agent::AgentMessage::Assistant { content, tool_calls, .. } if content.is_empty() && !tool_calls.is_empty()) {
-                    self.current_item=None;
+                if matches!(&message, agentdash_agent::AgentMessage::Assistant { .. })
+                    && !assistant_has_canonical_content(&message)
+                {
+                    self.current_item = None;
                     return Ok(mapped);
                 }
                 let item = self.next_item()?;
@@ -1383,11 +1415,32 @@ impl NativeEventMapper {
             }
             AgentEvent::MessageUpdate { .. } => {}
             AgentEvent::MessageEnd { message } => {
-                if let Some(item) = self.current_item.take() {
-                    if let agentdash_agent::AgentMessage::Assistant { usage:Some(usage), .. }=&message
-                        && usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output)>0 {
-                        mapped.push(self.event(RuntimeEvent::TokenUsageUpdated { turn_id:self.runtime_turn_id.clone(), usage:agentdash_agent_runtime_contract::RuntimeTokenUsage { input_tokens:usage.input, cached_input_tokens:usage.cache_read_input.saturating_add(usage.cache_creation_input), output_tokens:usage.output, reasoning_output_tokens:0, total_tokens:usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output) } }));
-                    }
+                if let agentdash_agent::AgentMessage::Assistant { usage:Some(usage), .. }=&message
+                    && usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output)>0 {
+                    mapped.push(self.event(RuntimeEvent::TokenUsageUpdated { turn_id:self.runtime_turn_id.clone(), usage:agentdash_agent_runtime_contract::RuntimeTokenUsage { input_tokens:usage.input, cached_input_tokens:usage.cache_read_input.saturating_add(usage.cache_creation_input), output_tokens:usage.output, reasoning_output_tokens:0, total_tokens:usage.input.saturating_add(usage.cache_read_input).saturating_add(usage.cache_creation_input).saturating_add(usage.output) } }));
+                }
+                let tool_only = is_tool_only_assistant_message(&message);
+                if tool_only {
+                    self.current_item = None;
+                } else {
+                    let item = match self.current_item.take() {
+                        Some(item) => item,
+                        None => {
+                            let item = self.next_item()?;
+                            mapped.push(self.item_event(
+                                &item,
+                                RuntimeEvent::ItemStarted {
+                                    turn_id: self.runtime_turn_id.clone(),
+                                    item_id: item.0.clone(),
+                                    initial_content: RuntimeItemContent::agent_message(
+                                        item.0.as_str(),
+                                        String::new(),
+                                    ),
+                                },
+                            ));
+                            item
+                        }
+                    };
                     mapped.push(self.item_event(
                         &item,
                         RuntimeEvent::ItemTerminal {
@@ -1977,6 +2030,45 @@ mod tests {
                 .iter()
                 .all(|event| event.durability == PresentationDurability::Durable)
         );
+    }
+
+    #[test]
+    fn native_tool_only_message_has_no_phantom_canonical_message_item() {
+        let mut mapper = NativeEventMapper::new(
+            "native-thread".to_string(),
+            parsed_id("runtime-turn").unwrap(),
+            parsed_id("source-turn").unwrap(),
+            presentation_context(NativeSessionItemIdentity::new()),
+        );
+        let started = mapper
+            .map(AgentEvent::MessageStart {
+                message: agentdash_agent::AgentMessage::assistant(""),
+            })
+            .expect("tool-only message start");
+        assert!(internal_events(&started).is_empty());
+
+        let completed = mapper
+            .map(AgentEvent::MessageEnd {
+                message: agentdash_agent::AgentMessage::Assistant {
+                    content: Vec::new(),
+                    tool_calls: vec![agentdash_agent::ToolCallInfo {
+                        id: "tool-1".to_string(),
+                        call_id: None,
+                        name: "read".to_string(),
+                        arguments: serde_json::json!({"path":"main://README.md"}),
+                    }],
+                    stop_reason: Some(agentdash_agent::StopReason::ToolUse),
+                    error_message: None,
+                    usage: Some(agentdash_agent::TokenUsage::default()),
+                    timestamp: Some(1),
+                },
+            })
+            .expect("tool-only message terminal");
+        assert!(internal_events(&completed).is_empty());
+        assert!(presentation_events(&completed).iter().any(|event| matches!(
+            event.event,
+            agentdash_agent_protocol::BackboneEvent::ItemStarted(_)
+        )));
     }
 
     #[test]

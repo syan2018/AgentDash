@@ -461,8 +461,10 @@ mod tests {
     #[tokio::test]
     async fn native_tool_uses_broker_owner_projection_for_patch_shell_and_replay() {
         let store = Arc::new(RuntimeStoreFixture::default());
-        let runtime =
-            ManagedAgentRuntime::new(store.clone(), Arc::new(TestTerminalPresentationProjector));
+        let runtime = Arc::new(ManagedAgentRuntime::new(
+            store.clone(),
+            Arc::new(TestTerminalPresentationProjector),
+        ));
         runtime
             .execute(RuntimeCommandEnvelope {
                 presentation: Vec::new(),
@@ -540,7 +542,7 @@ mod tests {
             RuntimeDriverGeneration(7),
             PlatformToolBrokerDeps {
                 repository: Arc::new(ToolBrokerRepositoryFixture::default()),
-                journal: Arc::new(ManagedRuntimeToolJournal::new(store.clone())),
+                journal: Arc::new(ManagedRuntimeToolJournal::new(runtime.clone())),
                 policy: Arc::new(Allow),
                 credentials: Arc::new(NoCredentials),
                 executor: Arc::new(Complete),

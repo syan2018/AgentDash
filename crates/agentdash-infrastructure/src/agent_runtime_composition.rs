@@ -1614,8 +1614,7 @@ pub struct NativeAgentRuntimeCompositionInput {
     pub secret_codec: Arc<dyn LlmSecretCodec>,
     pub surface_compiler: Arc<dyn NativeAgentRunSurfaceCompiler>,
     pub credential_broker: Arc<dyn AgentRuntimeCredentialBroker>,
-    pub tool_callback: Arc<dyn AgentRuntimeToolCallback>,
-    pub hook_callback: Arc<dyn AgentRuntimeHookCallback>,
+    pub callback_factory: AgentRuntimeCallbackFactory,
     pub application_presentation_projector:
         Arc<dyn agentdash_agent_runtime_contract::RuntimeApplicationPresentationProjector>,
     pub remote_definitions: Vec<agentdash_integration_api::AgentServiceDefinition>,
@@ -1631,12 +1630,22 @@ pub struct AgentRuntimeCompositionInput {
     pub trusted_manifests: Vec<TrustedDriverManifest>,
     pub surface_source: Arc<dyn AgentRunRuntimeSurfaceSource>,
     pub credential_broker: Arc<dyn AgentRuntimeCredentialBroker>,
-    pub tool_callback: Arc<dyn AgentRuntimeToolCallback>,
-    pub hook_callback: Arc<dyn AgentRuntimeHookCallback>,
+    pub callback_factory: AgentRuntimeCallbackFactory,
     pub application_presentation_projector:
         Arc<dyn agentdash_agent_runtime_contract::RuntimeApplicationPresentationProjector>,
     pub node_id: String,
 }
+
+pub struct AgentRuntimeCallbacks {
+    pub tools: Arc<dyn AgentRuntimeToolCallback>,
+    pub hooks: Arc<dyn AgentRuntimeHookCallback>,
+}
+
+pub type AgentRuntimeCallbackFactory = Arc<
+    dyn Fn(Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>) -> AgentRuntimeCallbacks
+        + Send
+        + Sync,
+>;
 
 pub struct AgentRuntimeComposition {
     pub gateway: Arc<dyn AgentRuntimeGateway>,
@@ -1666,6 +1675,14 @@ pub fn build_agent_runtime_composition(
         runtime_repository.clone(),
         composition_repository.clone(),
     ));
+    let runtime = Arc::new(
+        ManagedAgentRuntime::new(
+            runtime_repository.clone(),
+            input.application_presentation_projector,
+        )
+        .with_surface_validator(composition_repository.clone()),
+    );
+    let callbacks = (input.callback_factory)(runtime.clone());
     let verifier = Arc::new(TrustedDriverConformanceVerifier::new(
         TrustedDriverManifestRegistry::collect(input.trusted_manifests)
             .map_err(|error| AgentRuntimeCompositionError::Invalid(error.to_string()))?,
@@ -1680,21 +1697,14 @@ pub fn build_agent_runtime_composition(
             credentials: input.credential_broker,
             surfaces: composition_repository.clone(),
             context: context_broker,
-            tools: input.tool_callback,
-            hooks: input.hook_callback,
+            tools: callbacks.tools,
+            hooks: callbacks.hooks,
         },
         verifier,
         input.node_id,
     ));
     let bindings: Arc<dyn AgentRunRuntimeBindingRepository> = composition_repository.clone();
     let surface_store: Arc<dyn AgentRunRuntimeSurfaceStore> = composition_repository.clone();
-    let runtime = Arc::new(
-        ManagedAgentRuntime::new(
-            runtime_repository.clone(),
-            input.application_presentation_projector,
-        )
-        .with_surface_validator(composition_repository.clone()),
-    );
     let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let provisioner: Arc<dyn AgentRunRuntimeProvisioner> =
         Arc::new(HostAgentRunRuntimeProvisioner::new(
@@ -1868,8 +1878,7 @@ pub fn build_native_agent_runtime_composition(
         trusted_manifests,
         surface_source,
         credential_broker: input.credential_broker,
-        tool_callback: input.tool_callback,
-        hook_callback: input.hook_callback,
+        callback_factory: input.callback_factory,
         application_presentation_projector: input.application_presentation_projector,
         node_id: input.node_id,
     })
@@ -2621,8 +2630,10 @@ mod tests {
                 secret_codec: Arc::new(PlaintextCodec),
                 surface_compiler: Arc::new(FixtureSurfaceCompiler),
                 credential_broker: Arc::new(NoCredentials),
-                tool_callback: Arc::new(NoTools),
-                hook_callback: Arc::new(ContinueHooks),
+                callback_factory: Arc::new(|_| AgentRuntimeCallbacks {
+                    tools: Arc::new(NoTools),
+                    hooks: Arc::new(ContinueHooks),
+                }),
                 application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
                 remote_definitions: Vec::new(),
                 remote_trust_manifests: Vec::new(),
@@ -2778,8 +2789,10 @@ mod tests {
                 .expect("Native surface source"),
             ),
             credential_broker: Arc::new(NoCredentials),
-            tool_callback: Arc::new(NoTools),
-            hook_callback: Arc::new(ContinueHooks),
+            callback_factory: Arc::new(|_| AgentRuntimeCallbacks {
+                tools: Arc::new(NoTools),
+                hooks: Arc::new(ContinueHooks),
+            }),
             application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
             node_id: "native-production-tracer".to_string(),
         })
@@ -3306,8 +3319,10 @@ rl.on('line', line => {
                 root: root.clone(),
             }),
             credential_broker: Arc::new(NoCredentials),
-            tool_callback: Arc::new(NoTools),
-            hook_callback: Arc::new(ContinueHooks),
+            callback_factory: Arc::new(|_| AgentRuntimeCallbacks {
+                tools: Arc::new(NoTools),
+                hooks: Arc::new(ContinueHooks),
+            }),
             application_presentation_projector: Arc::new(TestTerminalPresentationProjector),
             node_id: "codex-production-tracer".to_string(),
         })

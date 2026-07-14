@@ -250,12 +250,12 @@ pub trait ToolBrokerRuntimeJournal: Send + Sync {
 /// This adapter validates that authoritative fact, then owns terminal and approval interaction
 /// convergence through the same Runtime projection/event UoW.
 pub struct ManagedRuntimeToolJournal<S> {
-    store: Arc<S>,
+    runtime: Arc<crate::ManagedAgentRuntime<S>>,
 }
 
 impl<S> ManagedRuntimeToolJournal<S> {
-    pub fn new(store: Arc<S>) -> Self {
-        Self { store }
+    pub fn new(runtime: Arc<crate::ManagedAgentRuntime<S>>) -> Self {
+        Self { runtime }
     }
 }
 
@@ -269,6 +269,7 @@ where
         invocation: &ToolBrokerInvocation,
         tool: &ToolContribution,
     ) -> Result<(), ToolBrokerError> {
+        let _mutation = self.runtime.lock_mutation().await;
         let initial_content = tool
             .project_started(
                 invocation.coordinates.item_id.as_str(),
@@ -335,6 +336,7 @@ where
     }
 
     async fn record_tool_terminal(&self, call: &ToolBrokerCall) -> Result<(), ToolBrokerError> {
+        let _mutation = self.runtime.lock_mutation().await;
         let mut thread = self.load_matching_thread(&call.invocation).await?;
         let terminal = broker_terminal(call)?;
         let item = thread
@@ -402,6 +404,7 @@ where
         interaction_id: &RuntimeInteractionId,
         reason: &str,
     ) -> Result<(), ToolBrokerError> {
+        let _mutation = self.runtime.lock_mutation().await;
         let mut thread = self.load_matching_thread(invocation).await?;
         if thread.interactions.contains_key(interaction_id) {
             return Ok(());
@@ -428,6 +431,7 @@ where
         tool: &ToolContribution,
         content_items: Vec<agentdash_agent_protocol::DynamicToolCallOutputContentItem>,
     ) -> Result<(), ToolBrokerError> {
+        let _mutation = self.runtime.lock_mutation().await;
         if tool.presentation_emitter
             == agentdash_agent_runtime_contract::ToolPresentationEmitter::VendorStream
         {
@@ -452,7 +456,7 @@ where
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             for message in messages {
-                self.store
+                self.runtime.store()
                     .publish_transient_presentation(
                         thread.thread_id.clone(),
                         invocation.coordinates.binding_id.clone(),
@@ -516,7 +520,8 @@ where
                 },
             )
         };
-        self.store
+        self.runtime
+            .store()
             .publish_transient_presentation(
                 thread.thread_id,
                 invocation.coordinates.binding_id.clone(),
@@ -543,7 +548,8 @@ where
         invocation: &ToolBrokerInvocation,
     ) -> Result<crate::RuntimeThreadState, ToolBrokerError> {
         let thread = self
-            .store
+            .runtime
+            .store()
             .load_thread(&invocation.coordinates.thread_id)
             .await
             .map_err(store_tool_error)?
@@ -603,7 +609,8 @@ where
         expected_projection_revision: agentdash_agent_runtime_contract::RuntimeRevision,
         records: Vec<agentdash_agent_runtime_contract::RuntimeJournalRecord>,
     ) -> Result<(), RuntimeStoreError> {
-        self.store
+        self.runtime
+            .store()
             .commit(RuntimeCommit {
                 expected_projection_revision: Some(expected_projection_revision),
                 projection,

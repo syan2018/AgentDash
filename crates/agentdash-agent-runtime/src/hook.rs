@@ -132,6 +132,8 @@ pub enum HookRuntimeError {
     EffectCoordinates,
     #[error("hook effect descriptor or idempotency key is invalid")]
     InvalidEffectDescriptor,
+    #[error("hook context presentation effect is invalid: {0}")]
+    InvalidPresentationEffect(String),
     #[error("hook completion decision is incompatible with its actions or failure policy")]
     CompletionPolicy,
     #[error("hook correlation does not belong to the invocation thread")]
@@ -678,6 +680,58 @@ where
             },
         ])?;
         let requested_effects = effects.clone();
+        let presentation_effects = effects
+            .iter()
+            .filter(|effect| effect.descriptor.effect_type == "context_frame")
+            .map(|effect| {
+                serde_json::from_value::<agentdash_agent_protocol::ContextFrame>(
+                    effect.payload.clone(),
+                )
+                .map(|frame| (effect, frame))
+                .map_err(|error| HookRuntimeError::InvalidPresentationEffect(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut records = crate::internal_journal_records(events)?;
+        for (index, (effect, frame)) in presentation_effects.into_iter().enumerate() {
+            records.push(
+                thread.append_durable_fact(
+                    agentdash_agent_runtime_contract::RuntimeJournalFact::Presentation(
+                        agentdash_agent_runtime_contract::ImmutablePresentationEvent::new(
+                            agentdash_agent_runtime_contract::PresentationDurability::Durable,
+                            agentdash_agent_protocol::BackboneEvent::Platform(
+                                agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(
+                                    Box::new(agentdash_agent_protocol::ContextFrameChanged {
+                                        frame,
+                                    }),
+                                ),
+                            ),
+                        ),
+                    ),
+                    crate::model::current_time_ms(),
+                    Some(thread.binding_id.clone()),
+                    Some(
+                        agentdash_agent_runtime_contract::IdempotencyKey::new(
+                            effect.idempotency_key.clone(),
+                        )
+                        .map_err(|error| {
+                            HookRuntimeError::InvalidPresentationEffect(error.to_string())
+                        })?,
+                    ),
+                    agentdash_agent_runtime_contract::RuntimePresentationCoordinate {
+                        runtime_turn_id: run.correlation.turn_id.clone(),
+                        runtime_item_id: run.correlation.item_id.clone(),
+                        interaction_id: run.correlation.interaction_id.clone(),
+                        source_thread_id: Some(thread.presentation_thread_id.to_string()),
+                        source_turn_id: None,
+                        source_item_id: Some(effect.effect_id.to_string()),
+                        source_request_id: Some(run.hook_run_id.to_string()),
+                        source_entry_index: Some(
+                            u32::try_from(index).expect("hook effect batch is bounded"),
+                        ),
+                    },
+                )?,
+            );
+        }
         let result = self
             .store()
             .commit(crate::RuntimeCommit {
@@ -685,7 +739,7 @@ where
                 projection: thread,
                 operation: None,
                 operation_terminals: Vec::new(),
-                records: crate::internal_journal_records(events)?,
+                records,
                 outbox: Vec::new(),
                 terminal_application_effects: Vec::new(),
                 context_activation_outbox: Vec::new(),

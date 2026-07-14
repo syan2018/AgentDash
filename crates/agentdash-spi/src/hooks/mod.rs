@@ -312,6 +312,8 @@ pub trait HookRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn collect_pending_actions_for_injection(&self) -> Vec<HookPendingAction>;
     fn enqueue_turn_start_notice(&self, notice: HookTurnStartNotice);
     fn collect_turn_start_notices_for_injection(&self) -> Vec<HookTurnStartNotice>;
+    fn peek_turn_start_notices(&self) -> Vec<HookTurnStartNotice>;
+    fn acknowledge_turn_start_notices(&self, notice_ids: &[String]);
     fn unresolved_pending_actions(&self) -> Vec<HookPendingAction>;
     fn unresolved_blocking_actions(&self) -> Vec<HookPendingAction>;
     fn resolve_pending_action(

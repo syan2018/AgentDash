@@ -986,6 +986,50 @@ impl CompiledAgentRunToolRegistry {
     }
 }
 
+#[async_trait]
+impl agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextSource
+    for CompiledAgentRunToolRegistry
+{
+    async fn take_turn_start_context(
+        &self,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<
+        agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts,
+        agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError,
+    > {
+        let binding = self.get(binding_id).await.ok_or_else(|| {
+            agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError::Unavailable {
+                reason: "compiled hook runtime is not published for binding".to_string(),
+                retryable: true,
+            }
+        })?;
+        Ok(
+            agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
+                pending_actions: binding.hook_runtime.collect_pending_actions_for_injection(),
+                notices: binding.hook_runtime.peek_turn_start_notices(),
+            },
+        )
+    }
+
+    async fn acknowledge_turn_start_context(
+        &self,
+        binding_id: &RuntimeBindingId,
+        notice_ids: &[String],
+    ) -> Result<(), agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError>
+    {
+        let binding = self.get(binding_id).await.ok_or_else(|| {
+            agentdash_application_ports::agent_run_runtime::AgentRunRuntimeBindingError::Unavailable {
+                reason: "compiled hook runtime is not published for binding".to_string(),
+                retryable: true,
+            }
+        })?;
+        binding
+            .hook_runtime
+            .acknowledge_turn_start_notices(notice_ids);
+        Ok(())
+    }
+}
+
 pub struct CanonicalRuntimeSurfaceAdopter {
     compiler: Arc<dyn NativeAgentRunSurfaceCompiler>,
     surfaces:
@@ -1132,10 +1176,58 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
             "surface-adopt-{}-{}-{}",
             binding.thread_id, descriptor.surface_revision.0, descriptor.surface_digest
         );
+        if snapshot.surface.surface_revision == descriptor.surface_revision
+            && snapshot.surface.surface_digest == descriptor.surface_digest
+        {
+            reservation
+                .commit()
+                .await
+                .map_err(|error| RuntimeSurfaceAdoptionError::Failed {
+                    message: error.to_string(),
+                })?;
+            return self
+                .tools
+                .get_revision(&binding.binding_id, descriptor.tool_set_revision)
+                .await
+                .map(|binding| binding.tools.into_values().collect())
+                .ok_or_else(|| RuntimeSurfaceAdoptionError::Failed {
+                    message: "idempotent surface adoption has no compiled tool binding".to_string(),
+                });
+        }
+        let previous_business_surface = match self
+            .surfaces
+            .load_business_surface(
+                &binding.binding_id,
+                snapshot.surface.surface_revision,
+                &snapshot.surface.surface_digest,
+            )
+            .await
+        {
+            Ok(surface) => surface,
+            Err(error) => {
+                reservation.abort().await;
+                return Err(RuntimeSurfaceAdoptionError::Failed {
+                    message: error.to_string(),
+                });
+            }
+        };
+        let adoption_plan = agentdash_agent_runtime::RuntimeSurfacePresentationPlan::for_adoption(
+            &previous_business_surface.snapshot,
+            &plan.business_surface,
+        )
+        .map_err(|error| RuntimeSurfaceAdoptionError::Failed {
+            message: error.to_string(),
+        })?;
+        let presentation = context_frame_presentation(
+            &binding.presentation_thread_id,
+            snapshot.active_presentation_turn_id.as_ref(),
+            &identity,
+            adoption_plan.adoption_frames,
+        );
         if let Err(error) = self
             .runtime
             .execute(RuntimeCommandEnvelope {
-                presentation: Vec::new(),
+                presentation,
                 meta: OperationMeta {
                     operation_id: RuntimeOperationId::new(identity.clone())
                         .expect("surface identity is non-empty"),
@@ -1175,6 +1267,40 @@ impl RuntimeSurfaceAdoptionPort for CanonicalRuntimeSurfaceAdopter {
                     .to_string(),
             })
     }
+}
+
+fn context_frame_presentation(
+    thread_id: &PresentationThreadId,
+    turn_id: Option<&PresentationTurnId>,
+    operation_id: &str,
+    frames: Vec<agentdash_agent_protocol::ContextFrame>,
+) -> Vec<RuntimePresentationInput> {
+    frames
+        .into_iter()
+        .enumerate()
+        .map(|(index, frame)| RuntimePresentationInput {
+            coordinate: RuntimePresentationCoordinate {
+                runtime_turn_id: None,
+                runtime_item_id: None,
+                interaction_id: None,
+                source_thread_id: Some(thread_id.to_string()),
+                source_turn_id: turn_id.map(ToString::to_string),
+                source_item_id: None,
+                source_request_id: Some(operation_id.to_string()),
+                source_entry_index: Some(
+                    u32::try_from(index).expect("surface presentation plan is bounded"),
+                ),
+            },
+            event: ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(Box::new(
+                        agentdash_agent_protocol::ContextFrameChanged { frame },
+                    )),
+                ),
+            ),
+        })
+        .collect()
 }
 
 /// Composition adapter: binds Application source facts and callable publication handles to the

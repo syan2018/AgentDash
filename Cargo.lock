@@ -452,6 +452,7 @@ name = "agentdash-application-ports"
 version = "0.1.0"
 dependencies = [
  "agentdash-agent-protocol",
+ "agentdash-agent-runtime",
  "agentdash-agent-runtime-contract",
  "agentdash-agent-types",
  "agentdash-domain",

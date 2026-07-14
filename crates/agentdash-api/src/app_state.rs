@@ -717,6 +717,8 @@ impl AppState {
             runtime_composition.gateway.clone(),
             runtime_composition.bindings.clone(),
             runtime_composition.provisioner.clone(),
+            runtime_composition.presentation_plans.clone(),
+            tool_registry.clone(),
         ));
         let agent_run_journal = Arc::new(AgentRunJournalService::new(
             repos.agent_run_lineage_repo.clone(),

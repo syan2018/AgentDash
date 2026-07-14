@@ -273,6 +273,7 @@ impl AgentBusinessSurfaceSource {
                 requirement: ContributionRequirement::Required,
             },
             source,
+            transition_phase_node: context_source.runtime.provenance.node_path.clone(),
             instructions: hook_snapshot
                 .injections
                 .iter()

@@ -522,6 +522,29 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
         notices
     }
 
+    fn peek_turn_start_notices(&self) -> Vec<HookTurnStartNotice> {
+        self.turn_start_notices
+            .read()
+            .expect("hook turn-start notices read lock poisoned")
+            .clone()
+    }
+
+    fn acknowledge_turn_start_notices(&self, notice_ids: &[String]) {
+        if notice_ids.is_empty() {
+            return;
+        }
+        let ids = notice_ids.iter().collect::<std::collections::BTreeSet<_>>();
+        let mut guard = self
+            .turn_start_notices
+            .write()
+            .expect("hook turn-start notices write lock poisoned");
+        let before = guard.len();
+        guard.retain(|notice| !ids.contains(&notice.id));
+        if guard.len() != before {
+            self.revision.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
     fn unresolved_pending_actions(&self) -> Vec<HookPendingAction> {
         self.pending_actions
             .read()

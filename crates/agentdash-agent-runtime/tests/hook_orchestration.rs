@@ -243,6 +243,91 @@ async fn actionful_hook_is_recoverable_and_terminal_effect_is_atomic() {
 }
 
 #[tokio::test]
+async fn context_frame_hook_effect_commits_with_terminal_and_replay_does_not_duplicate() {
+    let (store, runtime) = fixture();
+    let thread_id = start(&runtime).await;
+    runtime
+        .bind_hook_plan(plan(thread_id.clone(), [HookAction::EmitEffect].into()))
+        .await
+        .unwrap();
+    let HookAdmission::Durable(run) = runtime
+        .accept_hook(invocation(thread_id.clone(), "hook-run-context"))
+        .await
+        .unwrap()
+    else {
+        panic!("effect hook must be durable")
+    };
+    let run = runtime.start_hook(&run.hook_run_id).await.unwrap();
+    let frame = ContextProjector::project_auto_resume(
+        &ContextProjectionIdentity {
+            operation_id: "hook-run-context".to_string(),
+            source_frame_id: "frame-hook".to_string(),
+            source_frame_revision: 1,
+            recorded_at_ms: 10,
+        },
+        "hook",
+        "continue",
+    );
+    let payload = serde_json::to_value(frame).unwrap();
+    let effect = HookEffect {
+        effect_id: id("hook-effect-context"),
+        hook_run_id: run.hook_run_id.clone(),
+        thread_id: thread_id.clone(),
+        idempotency_key: "context-frame:hook-run-context".to_string(),
+        descriptor: HookEffectDescriptor {
+            effect_type: "context_frame".to_string(),
+            schema_version: 1,
+            target_authority: "agent_runtime_context_projection".to_string(),
+            retry_limit: 0,
+            payload_digest: hook_effect_payload_digest(&payload),
+        },
+        payload,
+    };
+    let completion = HookCompletion {
+        status: HookRunStatus::Completed,
+        decision: HookGateDecision::Continue,
+        message: None,
+    };
+    runtime
+        .complete_hook(&run.hook_run_id, completion.clone(), vec![effect.clone()])
+        .await
+        .unwrap();
+    runtime
+        .complete_hook(&run.hook_run_id, completion, vec![effect])
+        .await
+        .unwrap();
+    let mut frames = store
+        .journal_records_after(&thread_id, None)
+        .await
+        .unwrap()
+        .records
+        .into_iter()
+        .filter_map(
+            |record| match record.as_presentation().map(|event| &event.event) {
+                Some(agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(changed),
+                )) => Some(changed.frame.clone()),
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(frames.len(), 1);
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json"
+    ))
+    .unwrap();
+    let expected = oracle["frames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frame| frame["kind"] == "auto_resume")
+        .unwrap();
+    frames[0].id = expected["id"].as_str().unwrap().to_string();
+    frames[0].created_at_ms = expected["created_at_ms"].as_i64().unwrap();
+    assert_eq!(serde_json::to_value(&frames[0]).unwrap(), *expected);
+}
+
+#[tokio::test]
 async fn silent_observer_does_not_advance_the_durable_cursor() {
     let (_store, runtime) = fixture();
     let thread_id = start(&runtime).await;

@@ -424,12 +424,16 @@ async fn thread_read_and_context_read_have_distinct_fidelity_and_views() {
         })
         .await
         .expect("context view");
-    assert!(matches!(
-        thread,
-        RuntimeSnapshotResult::Thread {
-            snapshot,
-        } if snapshot.transcript_fidelity == ContextFidelity::EventProjected
-    ));
+    let RuntimeSnapshotResult::Thread { snapshot } = thread else {
+        panic!("expected thread view")
+    };
+    assert_eq!(
+        snapshot.transcript_fidelity,
+        ContextFidelity::EventProjected
+    );
+    assert_eq!(snapshot.context_revision, ContextRevision(1));
+    assert_eq!(snapshot.surface.surface_revision, SurfaceRevision(1));
+    assert!(snapshot.revision.0 > snapshot.context_revision.0);
     let RuntimeSnapshotResult::Context { context } = context else {
         panic!("expected context view");
     };
@@ -440,6 +444,30 @@ async fn thread_read_and_context_read_have_distinct_fidelity_and_views() {
         prepare.materialized.recipe.provenance
     );
     assert_eq!(store.context_activation_outbox().await.len(), 1);
+    let mut context_frames = store
+        .journal_records_after(&snapshot.thread_id, None)
+        .await
+        .unwrap()
+        .records
+        .into_iter()
+        .filter_map(
+            |record| match record.as_presentation().map(|event| &event.event) {
+                Some(agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(changed),
+                )) => Some(serde_json::to_value(&changed.frame).unwrap()),
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(context_frames.len(), 1);
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/wi03_compaction_stream_main_957fa9d.json"
+    ))
+    .unwrap();
+    context_frames[0]["id"] = oracle["frame"]["id"].clone();
+    context_frames[0]["created_at_ms"] = serde_json::json!(0);
+    context_frames[0]["sections"][0]["timestamp_ms"] = serde_json::json!(0);
+    assert_eq!(context_frames[0], oracle["frame"]);
     assert_eq!(
         store
             .pending_context_activations()

@@ -452,6 +452,7 @@ fn compiled_business_surface(
                 requirement: agentdash_agent_runtime::ContributionRequirement::Required,
             },
             source,
+            transition_phase_node: Some("fixture".to_string()),
             instructions: vec!["Enterprise remote Agent".to_string()],
             tools: vec![tool],
             hooks: vec![hook],
@@ -865,6 +866,10 @@ async fn enterprise_remote_mailbox_reaches_local_host_and_canonical_snapshot() {
         composition.gateway.clone(),
         composition.bindings.clone(),
         composition.provisioner.clone(),
+        composition.presentation_plans.clone(),
+        Arc::new(
+            agentdash_application_ports::agent_run_runtime::EmptyAgentRunTurnStartContextSource,
+        ),
     ));
     let mailbox = RuntimeAgentRunMailbox::new(
         Arc::new(MemoryAgentRunMailboxRepository::default()),

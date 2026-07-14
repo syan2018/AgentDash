@@ -1,0 +1,22 @@
+{
+  "provenance": {
+    "repository": "D:/Projects/AgentDash-main-reference",
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "builder": "crates/agentdash-application-runtime-session/src/session/hub/runtime_context_transition.rs",
+    "dimension": "crates/agentdash-application-runtime-session/src/session/dimension/tool_schema.rs"
+  },
+  "frame": {
+    "id": "runtime-context-apply-11",
+    "kind": "capability_state_delta",
+    "source": "runtime_context_update",
+    "phase_node": "apply",
+    "apply_mode": "live",
+    "delivery_status": "queued_for_transform_context",
+    "delivery_channel": "turn_start",
+    "message_role": "user",
+    "delivery_metadata": {"delivery_phase":"discovered_inventory","delivery_order":50,"cache_policy":"discovery_digest","model_channel":"user","agent_consumption":{"target":"","mode":"consume","reason":"default_capability_state_delta_delivery"},"frontend_label":"Capability State Delta","connector_profile":{"profile_id":""}},
+    "rendered_text": "## Tool Schema Delta — Step Transition: apply\n\n以下只列出本次 capability state delta 真正新增给 Agent 的工具 schema；provider 的完整工具集合以实际 tool list 为准。\n\n### Added / Restored Tool Schemas\n\n### `read`\n\ncapability: `file_read`；source: `workspace`；path: `file_read::read`\n\nRead a workspace file exactly\n\n参数说明：\n\n- `path` (required, string): file path",
+    "sections": [{"kind":"tool_schema_delta","added_tools":[{"name":"read","description":"Read a workspace file exactly","parameters_schema":{"properties":{"path":{"description":"file path","type":"string"}},"required":["path"],"type":"object"},"capability_key":"file_read","context_usage_kind":"system_tools","source":"workspace","tool_path":"file_read::read"}]}],
+    "created_at_ms": 11
+  }
+}

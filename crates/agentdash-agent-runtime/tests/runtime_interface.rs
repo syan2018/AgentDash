@@ -1,11 +1,14 @@
 use std::{collections::BTreeSet, str::FromStr, sync::Arc, time::Duration};
 
+use agentdash_agent_protocol::{BackboneEvent, ContextFrameChanged, PlatformEvent};
 use agentdash_agent_runtime::{
-    CommitFailurePoint, DriverEventAdmission, ManagedAgentRuntime, RuntimeCommit,
-    RuntimePresentationAppendError, RuntimePresentationAppendRequest, RuntimeRepository,
-    RuntimeStoreError, RuntimeStoreFixture, RuntimeTerminalApplicationEffectClaimRequest,
-    RuntimeTerminalApplicationEffectOutbox, RuntimeTransientEvents, RuntimeUnitOfWork,
-    RuntimeWorkerId,
+    AgentSurfaceCompiler, BusinessAgentSurfaceFacts, CommitFailurePoint, ContextProjectionIdentity,
+    ContributionMeta, ContributionRequirement, DriverEventAdmission, ManagedAgentRuntime,
+    RuntimeCommit, RuntimePresentationAppendError, RuntimePresentationAppendRequest,
+    RuntimeRepository, RuntimeStoreError, RuntimeStoreFixture, RuntimeSurfacePresentationPlan,
+    RuntimeTerminalApplicationEffectClaimRequest, RuntimeTerminalApplicationEffectOutbox,
+    RuntimeTransientEvents, RuntimeUnitOfWork, RuntimeWorkerId, SurfaceSourceRef, ToolContribution,
+    WorkspaceRequirement,
 };
 use agentdash_agent_runtime_contract::*;
 
@@ -460,6 +463,74 @@ fn adopted_surface() -> RuntimeSurfaceDescriptor {
     }
 }
 
+fn surface_adoption_frames() -> Vec<agentdash_agent_protocol::ContextFrame> {
+    let compile = |revision: u64, description: &str| {
+        AgentSurfaceCompiler
+            .compile_business_facts(BusinessAgentSurfaceFacts {
+                revision: SurfaceRevision(revision),
+                context_recipe: ContextRecipe {
+                    revision: ContextRecipeRevision(revision),
+                    provenance: ContextProvenance {
+                        settings_revision: ThreadSettingsRevision(1),
+                        tool_set_revision: ToolSetRevision(revision),
+                    },
+                    source_item_ids: Vec::new(),
+                },
+                tool_set_revision: ToolSetRevision(revision),
+                hook_plan_revision: HookPlanRevision(1),
+                workspace: WorkspaceRequirement {
+                    capabilities: BTreeSet::new(),
+                    minimum_mechanism: DeliveryMechanism::HostAdaptedExact,
+                    requirement: ContributionRequirement::Required,
+                },
+                source: SurfaceSourceRef {
+                    layer: "workflow".into(),
+                    key: "apply".into(),
+                },
+                transition_phase_node: Some("apply".into()),
+                instructions: Vec::new(),
+                tools: vec![ToolContribution {
+                    meta: ContributionMeta {
+                        key: "tool:read".into(),
+                        source: SurfaceSourceRef {
+                            layer: "platform".into(),
+                            key: "workspace".into(),
+                        },
+                        priority: 1,
+                        requirement: ContributionRequirement::Required,
+                    },
+                    runtime_name: "read".into(),
+                    description: description.into(),
+                    parameters_schema: serde_json::json!({
+                        "type": "object",
+                        "properties": { "path": { "type": "string", "description": "file path" } },
+                        "required": ["path"]
+                    }),
+                    capability_key: "file_read".into(),
+                    tool_path: "file_read::read".into(),
+                    allowed_channels: BTreeSet::from([ToolChannel::DirectCallback]),
+                    configuration_boundary: ConfigurationBoundary::Binding,
+                    protocol_projection: ToolProtocolProjection::FsRead,
+                    presentation_emitter: ToolPresentationEmitter::ToolBroker,
+                    parity_fixture_id: "main_tool_read".into(),
+                }],
+                hooks: Vec::new(),
+                projection_identity: ContextProjectionIdentity {
+                    operation_id: format!("surface-{revision}"),
+                    source_frame_id: "apply".into(),
+                    source_frame_revision: revision,
+                    recorded_at_ms: 11,
+                },
+            })
+            .unwrap()
+    };
+    let previous = compile(1, "Read a workspace file");
+    let target = compile(2, "Read a workspace file exactly");
+    RuntimeSurfacePresentationPlan::for_adoption(&previous.snapshot, &target)
+        .unwrap()
+        .adoption_frames
+}
+
 fn terminal_effect_binding() -> RuntimeTerminalHookEffectBinding {
     RuntimeTerminalHookEffectBinding {
         handler: RuntimeTerminalHookEffectHandlerRef {
@@ -498,26 +569,94 @@ async fn surface_adopt_is_cas_guarded_idle_only_and_enters_driver_outbox() {
         Err(RuntimeExecuteError::InvalidCommand { .. })
     ));
 
-    runtime
-        .execute(command(
-            "surface-success-operation",
-            "surface-success-key",
-            Some(initial.revision.0),
-            RuntimeCommand::SurfaceAdopt {
-                thread_id: initial.thread_id.clone(),
-                expected_surface_revision: initial.surface.surface_revision,
-                expected_surface_digest: initial.surface.surface_digest.clone(),
-                target: Box::new(adopted_surface()),
+    let mut adoption = command(
+        "surface-success-operation",
+        "surface-success-key",
+        Some(initial.revision.0),
+        RuntimeCommand::SurfaceAdopt {
+            thread_id: initial.thread_id.clone(),
+            expected_surface_revision: initial.surface.surface_revision,
+            expected_surface_digest: initial.surface.surface_digest.clone(),
+            target: Box::new(adopted_surface()),
+        },
+    );
+    adoption.presentation = surface_adoption_frames()
+        .into_iter()
+        .enumerate()
+        .map(|(index, frame)| RuntimePresentationInput {
+            coordinate: RuntimePresentationCoordinate {
+                runtime_turn_id: None,
+                runtime_item_id: None,
+                interaction_id: None,
+                source_thread_id: Some("presentation-thread-1".into()),
+                source_turn_id: None,
+                source_item_id: None,
+                source_request_id: Some("surface-success-operation".into()),
+                source_entry_index: Some(index as u32),
             },
-        ))
+            event: ImmutablePresentationEvent::new(
+                PresentationDurability::Durable,
+                BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
+                    ContextFrameChanged { frame },
+                ))),
+            ),
+        })
+        .collect();
+    let receipt = runtime
+        .execute(adoption.clone())
         .await
         .expect("adopt idle Runtime surface");
+    let replay = runtime.execute(adoption).await.expect("replay adoption");
+    assert!(!receipt.duplicate);
+    assert!(replay.duplicate);
     let adopted = thread_snapshot(&runtime, initial.thread_id.clone()).await;
     assert_eq!(adopted.surface, adopted_surface());
     assert!(matches!(
         &store.outbox().await.last().expect("surface outbox").command,
         RuntimeCommand::SurfaceAdopt { target, .. } if target.as_ref() == &adopted_surface()
     ));
+    let adoption_records = store
+        .journal_records_after(&initial.thread_id, None)
+        .await
+        .unwrap()
+        .records
+        .into_iter()
+        .collect::<Vec<_>>();
+    let hook_plan_position = adoption_records
+        .iter()
+        .position(|record| {
+            matches!(
+                record.fact(),
+                RuntimeJournalFact::Internal(RuntimeEvent::HookPlanBound { .. })
+            )
+        })
+        .expect("surface adoption must bind its hook plan");
+    let presentation_position = adoption_records
+        .iter()
+        .position(|record| record.as_presentation().is_some())
+        .expect("surface adoption must append its ContextFrame");
+    assert!(hook_plan_position < presentation_position);
+    let frames = adoption_records
+        .into_iter()
+        .filter_map(
+            |record| match record.as_presentation().map(|event| &event.event) {
+                Some(BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed))) => {
+                    Some(changed.frame.clone())
+                }
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(
+        frames.len(),
+        1,
+        "adoption replay must not duplicate ContextFrame"
+    );
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/wi03_surface_adopt_stream_main_957fa9d.json"
+    ))
+    .unwrap();
+    assert_eq!(serde_json::to_value(&frames[0]).unwrap(), expected["frame"]);
 
     runtime
         .execute(command(

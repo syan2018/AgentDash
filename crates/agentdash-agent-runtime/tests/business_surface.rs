@@ -526,6 +526,7 @@ fn compiler_derives_tool_catalog_and_presentation_from_one_input_revision() {
                 source_frame_revision: 7,
                 recorded_at_ms: 7,
             },
+            Some("apply".to_string()),
             [ContextFrameFacts {
                 kind: ContextFrameKind::CapabilityStateDelta,
                 source: ContextFrameSource::RuntimeContextUpdate,
@@ -552,6 +553,23 @@ fn compiler_derives_tool_catalog_and_presentation_from_one_input_revision() {
     assert_eq!(artifact.snapshot.tools.tools, vec![tool]);
     assert_eq!(artifact.presentation.source_frame_revision, 7);
     assert_eq!(artifact.presentation.bootstrap_frames[0].created_at_ms, 7);
+    let empty =
+        RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &artifact).unwrap();
+    assert!(empty.adoption_frames.is_empty());
+    let mut target = artifact.clone();
+    target.snapshot.revision = SurfaceRevision(8);
+    target.snapshot.tools.tools[0].description = "Read a workspace file exactly".to_string();
+    let adoption =
+        RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target).unwrap();
+    assert_eq!(adoption.adoption_frames.len(), 1);
+    let ContextFrameSection::ToolSchemaDelta { added_tools } =
+        &adoption.adoption_frames[0].sections[0]
+    else {
+        panic!("adoption must contain typed tool schema delta")
+    };
+    assert_eq!(added_tools[0].description, "Read a workspace file exactly");
+    target.presentation.transition_phase_node = None;
+    assert!(RuntimeSurfacePresentationPlan::for_adoption(&artifact.snapshot, &target).is_err());
 }
 
 #[test]

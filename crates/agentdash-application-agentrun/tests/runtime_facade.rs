@@ -67,11 +67,25 @@ struct CompositionFixture {
     binding: Mutex<Option<AgentRunRuntimeBinding>>,
     provisions: Mutex<usize>,
     backend_selection: Mutex<Option<agentdash_application_ports::launch::BackendSelectionInput>>,
+    bootstrap_frames: Mutex<Vec<agentdash_agent_protocol::ContextFrame>>,
+    turn_start_facts:
+        Mutex<agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts>,
 }
 
 impl CompositionFixture {
     async fn provision_count(&self) -> usize {
         *self.provisions.lock().await
+    }
+
+    async fn set_bootstrap_frames(&self, frames: Vec<agentdash_agent_protocol::ContextFrame>) {
+        *self.bootstrap_frames.lock().await = frames;
+    }
+
+    async fn set_turn_start_facts(
+        &self,
+        facts: agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts,
+    ) {
+        *self.turn_start_facts.lock().await = facts;
     }
 }
 
@@ -191,6 +205,56 @@ impl AgentRunRuntimeProvisioner for CompositionFixture {
     }
 }
 
+#[async_trait]
+impl agentdash_application_ports::agent_run_runtime::AgentRunRuntimePresentationPlanStore
+    for CompositionFixture
+{
+    async fn load_exact_presentation_plan(
+        &self,
+        _binding_id: &RuntimeBindingId,
+        surface_revision: SurfaceRevision,
+        _surface_digest: &SurfaceDigest,
+    ) -> Result<agentdash_agent_runtime::RuntimeSurfacePresentationPlan, AgentRunRuntimeBindingError>
+    {
+        Ok(agentdash_agent_runtime::RuntimeSurfacePresentationPlan {
+            digest: format!("fixture-plan-{}", surface_revision.0),
+            source_frame_id: "frame-facade".to_string(),
+            source_frame_revision: surface_revision.0,
+            transition_phase_node: Some("fixture".to_string()),
+            bootstrap_frames: self.bootstrap_frames.lock().await.clone(),
+            adoption_frames: Vec::new(),
+        })
+    }
+}
+
+#[async_trait]
+impl agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextSource
+    for CompositionFixture
+{
+    async fn take_turn_start_context(
+        &self,
+        _binding_id: &RuntimeBindingId,
+    ) -> Result<
+        agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts,
+        AgentRunRuntimeBindingError,
+    > {
+        Ok(self.turn_start_facts.lock().await.clone())
+    }
+
+    async fn acknowledge_turn_start_context(
+        &self,
+        _binding_id: &RuntimeBindingId,
+        notice_ids: &[String],
+    ) -> Result<(), AgentRunRuntimeBindingError> {
+        self.turn_start_facts
+            .lock()
+            .await
+            .notices
+            .retain(|notice| !notice_ids.contains(&notice.id));
+        Ok(())
+    }
+}
+
 fn target() -> AgentRunRuntimeTarget {
     AgentRunRuntimeTarget {
         run_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").expect("run id"),
@@ -231,7 +295,30 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
     ));
     let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let composition = Arc::new(CompositionFixture::default());
-    let facade = ManagedAgentRunRuntime::new(gateway, composition.clone(), composition.clone());
+    let main_oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json"
+    ))
+    .unwrap();
+    let bootstrap_frame: agentdash_agent_protocol::ContextFrame = serde_json::from_value(
+        main_oracle["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|frame| frame["kind"] == "capability_state_delta")
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
+    composition
+        .set_bootstrap_frames(vec![bootstrap_frame])
+        .await;
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+    );
 
     let accepted = facade.send_message(send("hello")).await.expect("send");
     assert!(!accepted.duplicate);
@@ -243,7 +330,7 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
         .into_iter()
         .filter(|record| record.as_presentation().is_some())
         .collect::<Vec<_>>();
-    assert_eq!(presentation.len(), 2);
+    assert_eq!(presentation.len(), 3);
     assert_eq!(
         presentation[0].carrier().coordinate.source_entry_index,
         Some(0)
@@ -251,6 +338,10 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
     assert_eq!(
         presentation[1].carrier().coordinate.source_entry_index,
         None
+    );
+    assert_eq!(
+        presentation[2].carrier().coordinate.source_entry_index,
+        Some(1)
     );
     assert_eq!(
         presentation[0]
@@ -297,6 +388,34 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
         agentdash_agent_protocol::BackboneEvent::UserInputSubmitted(_)
     ));
     assert!(matches!(
+        &presentation[2]
+            .as_presentation()
+            .expect("context frame presentation")
+            .event,
+        agentdash_agent_protocol::BackboneEvent::Platform(
+            agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(_)
+        )
+    ));
+    assert_eq!(
+        serde_json::to_value(
+            &presentation[2]
+                .as_presentation()
+                .expect("context frame presentation")
+                .event,
+        )
+        .unwrap()
+        .pointer("/payload/data/frame")
+        .cloned()
+        .unwrap(),
+        main_oracle["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|frame| frame["kind"] == "capability_state_delta")
+            .unwrap()
+            .clone(),
+    );
+    assert!(matches!(
         &presentation[1]
             .as_presentation()
             .expect("turn started presentation")
@@ -319,6 +438,7 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
     );
     let protected_bodies = presentation
         .iter()
+        .take(2)
         .map(|record| {
             serde_json::to_value(&record.as_presentation().expect("presentation body").event)
                 .expect("serialize protected body")
@@ -422,6 +542,114 @@ async fn first_send_provisions_once_and_retry_replays_the_original_thread_start(
 }
 
 #[tokio::test]
+async fn turn_start_pending_and_auto_resume_match_main_stream_payload_and_order() {
+    let store = Arc::new(RuntimeStoreFixture::default());
+    let runtime = Arc::new(ManagedAgentRuntime::new(
+        store.clone(),
+        Arc::new(AgentRunRuntimeApplicationPresentationProjector),
+    ));
+    let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
+    let composition = Arc::new(CompositionFixture::default());
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+    );
+    facade.send_message(send("first")).await.unwrap();
+    let snapshot = facade.inspect(target()).await.unwrap().snapshot.unwrap();
+    runtime
+        .ingest_driver_event(DriverEventEnvelope {
+            binding_id: id("binding-facade"),
+            generation: RuntimeDriverGeneration(3),
+            source_thread_id: id("source-thread-facade"),
+            source_turn_id: None,
+            source_item_id: None,
+            source_request_id: None,
+            source_entry_index: None,
+            facts: vec![RuntimeJournalFact::Internal(RuntimeEvent::TurnTerminal {
+                turn_id: snapshot.active_turn_id.unwrap(),
+                terminal: RuntimeTurnTerminal::Completed,
+                message: None,
+                diagnostic: None,
+            })],
+        })
+        .await
+        .unwrap();
+    composition
+        .set_turn_start_facts(
+            agentdash_application_ports::agent_run_runtime::AgentRunTurnStartContextFacts {
+                pending_actions: vec![agentdash_spi::HookPendingAction {
+                    id: "a1".to_string(),
+                    created_at_ms: 9,
+                    title: "Review".to_string(),
+                    summary: "result".to_string(),
+                    action_type: "blocking_review".to_string(),
+                    turn_id: None,
+                    source: agentdash_spi::RuntimeEventSource::CompanionResult,
+                    status: agentdash_spi::HookPendingActionStatus::Pending,
+                    last_injected_at_ms: None,
+                    resolved_at_ms: None,
+                    resolution_kind: None,
+                    resolution_note: None,
+                    resolution_turn_id: None,
+                    injections: Vec::new(),
+                }],
+                notices: Vec::new(),
+            },
+        )
+        .await;
+    let mut second = send("continue");
+    second.client_command_id = "client-command-2".to_string();
+    second.presentation_input = AgentRunPresentationInput::SystemDelivery {
+        turn_id: id("turn-facade-0002"),
+        launch_source: LaunchPresentationSource::HookAutoResume,
+        message: "continue".to_string(),
+        started_at_seconds: 1,
+    };
+    facade.send_message(second).await.unwrap();
+    let mut frames = store
+        .journal_records_after(&id("thread-facade"), None)
+        .await
+        .unwrap()
+        .records
+        .into_iter()
+        .filter_map(
+            |record| match record.as_presentation().map(|event| &event.event) {
+                Some(agentdash_agent_protocol::BackboneEvent::Platform(
+                    agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(changed),
+                )) => Some(changed.frame.clone()),
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(frames.len(), 2);
+    let family_oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json"
+    ))
+    .unwrap();
+    let pending_oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../agentdash-agent-runtime/tests/fixtures/wi03_pending_action_stream_main_957fa9d.json"
+    ))
+    .unwrap();
+    let expected_frames = [
+        family_oracle["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|frame| frame["kind"] == "auto_resume")
+            .unwrap(),
+        &pending_oracle["frame"],
+    ];
+    for (actual, expected) in frames.iter_mut().zip(expected_frames) {
+        actual.id = expected["id"].as_str().unwrap().to_string();
+        actual.created_at_ms = expected["created_at_ms"].as_i64().unwrap();
+        assert_eq!(serde_json::to_value(actual).unwrap(), *expected);
+    }
+}
+
+#[tokio::test]
 async fn runtime_facade_prompt_matches_main_user_submit_golden_exactly() {
     let golden: serde_json::Value = serde_json::from_str(include_str!(
         "../../agentdash-agent-runtime-test-support/fixtures/session-parity/main/user-submit.json"
@@ -438,7 +666,13 @@ async fn runtime_facade_prompt_matches_main_user_submit_golden_exactly() {
         Arc::new(AgentRunRuntimeApplicationPresentationProjector),
     ));
     let composition = Arc::new(CompositionFixture::default());
-    let facade = ManagedAgentRunRuntime::new(gateway, composition.clone(), composition);
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    );
     let mut command = send("hello");
     command.presentation_thread_id = id("session-main-0001");
     command.presentation_input = AgentRunPresentationInput::UserSubmission {
@@ -499,7 +733,13 @@ async fn runtime_facade_steer_matches_main_input_steer_golden_exactly() {
     ));
     let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let composition = Arc::new(CompositionFixture::default());
-    let facade = ManagedAgentRunRuntime::new(gateway, composition.clone(), composition);
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    );
     let mut initial = send("hello");
     initial.presentation_thread_id = id("session-main-0001");
     initial.presentation_input = AgentRunPresentationInput::UserSubmission {
@@ -643,7 +883,13 @@ async fn runtime_facade_modalities_match_main_input_modalities_golden_exactly() 
         Arc::new(AgentRunRuntimeApplicationPresentationProjector),
     ));
     let composition = Arc::new(CompositionFixture::default());
-    let facade = ManagedAgentRunRuntime::new(gateway, composition.clone(), composition);
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    );
     let mut command = send("modalities");
     command.presentation_thread_id = id("session-modalities-0001");
     command.presentation_input = AgentRunPresentationInput::UserSubmission {
@@ -711,7 +957,13 @@ async fn runtime_facade_delivery_sources_match_main_delivery_golden_exactly() {
             Arc::new(AgentRunRuntimeApplicationPresentationProjector),
         ));
         let composition = Arc::new(CompositionFixture::default());
-        let facade = ManagedAgentRunRuntime::new(gateway, composition.clone(), composition);
+        let facade = ManagedAgentRunRuntime::new(
+            gateway,
+            composition.clone(),
+            composition.clone(),
+            composition.clone(),
+            composition,
+        );
         let mut command = send("delivery");
         command.presentation_thread_id = id(presentation_thread_id);
         command.presentation_input = presentation_input;
@@ -821,7 +1073,13 @@ async fn runtime_facade_append_presentation_uses_bound_runtime_thread_and_replay
         Arc::new(AgentRunRuntimeApplicationPresentationProjector),
     ));
     let composition = Arc::new(CompositionFixture::default());
-    let facade = ManagedAgentRunRuntime::new(gateway, composition.clone(), composition);
+    let facade = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition,
+    );
     facade
         .send_message(send("append-port-bootstrap"))
         .await
@@ -874,7 +1132,13 @@ async fn first_send_forwards_explicit_backend_selection_to_runtime_provisioning(
         Arc::new(AgentRunRuntimeApplicationPresentationProjector),
     ));
     let composition = Arc::new(CompositionFixture::default());
-    let runtime = ManagedAgentRunRuntime::new(gateway, composition.clone(), composition.clone());
+    let runtime = ManagedAgentRunRuntime::new(
+        gateway,
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+        composition.clone(),
+    );
     let mut command = send("backend selected");
     command.backend_selection = Some(BackendSelectionInput {
         mode: BackendSelectionInputMode::Explicit,

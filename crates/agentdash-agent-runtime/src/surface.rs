@@ -33,6 +33,7 @@ pub struct BusinessAgentSurfaceFacts {
     pub hook_plan_revision: HookPlanRevision,
     pub workspace: WorkspaceRequirement,
     pub source: SurfaceSourceRef,
+    pub transition_phase_node: Option<String>,
     pub instructions: Vec<String>,
     pub tools: Vec<ToolContribution>,
     pub hooks: Vec<HookDefinition>,
@@ -832,6 +833,7 @@ impl AgentSurfaceCompiler {
                 capability_packs: Vec::new(),
             },
             &facts.projection_identity,
+            facts.transition_phase_node,
             [ContextFrameFacts {
                 kind: agentdash_agent_protocol::ContextFrameKind::CapabilityStateDelta,
                 source: agentdash_agent_protocol::ContextFrameSource::RuntimeContextUpdate,
@@ -853,10 +855,12 @@ impl AgentSurfaceCompiler {
         &self,
         input: AgentSurfaceCompileInput,
         projection_identity: &ContextProjectionIdentity,
+        transition_phase_node: Option<String>,
         presentation_facts: impl IntoIterator<Item = ContextFrameFacts>,
     ) -> Result<CompiledBusinessAgentSurface, SurfaceCompileError> {
         let snapshot = self.compile(input)?;
-        let presentation = ContextProjector::project(projection_identity, presentation_facts);
+        let mut presentation = ContextProjector::project(projection_identity, presentation_facts);
+        presentation.transition_phase_node = transition_phase_node;
         if presentation.source_frame_revision != snapshot.revision.0 {
             return Err(SurfaceCompileError::Digest(
                 "presentation source revision differs from compiled surface".to_string(),

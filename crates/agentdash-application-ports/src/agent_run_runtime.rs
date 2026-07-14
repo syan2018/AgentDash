@@ -88,6 +88,55 @@ pub enum AgentRunRuntimeBindingError {
 }
 
 #[async_trait]
+pub trait AgentRunRuntimePresentationPlanStore: Send + Sync {
+    async fn load_exact_presentation_plan(
+        &self,
+        binding_id: &RuntimeBindingId,
+        surface_revision: agentdash_agent_runtime_contract::SurfaceRevision,
+        surface_digest: &agentdash_agent_runtime_contract::SurfaceDigest,
+    ) -> Result<agentdash_agent_runtime::RuntimeSurfacePresentationPlan, AgentRunRuntimeBindingError>;
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentRunTurnStartContextFacts {
+    pub pending_actions: Vec<agentdash_spi::HookPendingAction>,
+    pub notices: Vec<agentdash_spi::HookTurnStartNotice>,
+}
+
+#[async_trait]
+pub trait AgentRunTurnStartContextSource: Send + Sync {
+    async fn take_turn_start_context(
+        &self,
+        binding_id: &RuntimeBindingId,
+    ) -> Result<AgentRunTurnStartContextFacts, AgentRunRuntimeBindingError>;
+    async fn acknowledge_turn_start_context(
+        &self,
+        binding_id: &RuntimeBindingId,
+        notice_ids: &[String],
+    ) -> Result<(), AgentRunRuntimeBindingError>;
+}
+
+#[derive(Default)]
+pub struct EmptyAgentRunTurnStartContextSource;
+
+#[async_trait]
+impl AgentRunTurnStartContextSource for EmptyAgentRunTurnStartContextSource {
+    async fn take_turn_start_context(
+        &self,
+        _binding_id: &RuntimeBindingId,
+    ) -> Result<AgentRunTurnStartContextFacts, AgentRunRuntimeBindingError> {
+        Ok(AgentRunTurnStartContextFacts::default())
+    }
+    async fn acknowledge_turn_start_context(
+        &self,
+        _binding_id: &RuntimeBindingId,
+        _notice_ids: &[String],
+    ) -> Result<(), AgentRunRuntimeBindingError> {
+        Ok(())
+    }
+}
+
+#[async_trait]
 pub trait AgentRunRuntimeBindingRepository: Send + Sync {
     async fn load(
         &self,

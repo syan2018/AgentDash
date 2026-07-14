@@ -12,8 +12,9 @@ use agentdash_agent_runtime_contract::{
 };
 use agentdash_application_ports::agent_run_runtime::{
     AgentRunRuntimeBinding, AgentRunRuntimeBindingError, AgentRunRuntimeBindingRepository,
-    AgentRunRuntimeForkSource, AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner,
-    AgentRunRuntimeRecoveryState, AgentRunRuntimeTarget,
+    AgentRunRuntimeForkSource, AgentRunRuntimePresentationPlanStore,
+    AgentRunRuntimeProvisionRequest, AgentRunRuntimeProvisioner, AgentRunRuntimeRecoveryState,
+    AgentRunRuntimeTarget, AgentRunTurnStartContextSource,
 };
 use agentdash_application_ports::launch::BackendSelectionInput;
 use agentdash_spi::AuthIdentity;
@@ -337,6 +338,8 @@ pub struct ManagedAgentRunRuntime {
     gateway: Arc<dyn AgentRuntimeGateway>,
     bindings: Arc<dyn AgentRunRuntimeBindingRepository>,
     provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
+    presentation_plans: Arc<dyn AgentRunRuntimePresentationPlanStore>,
+    turn_start_context: Arc<dyn AgentRunTurnStartContextSource>,
 }
 
 impl ManagedAgentRunRuntime {
@@ -344,12 +347,152 @@ impl ManagedAgentRunRuntime {
         gateway: Arc<dyn AgentRuntimeGateway>,
         bindings: Arc<dyn AgentRunRuntimeBindingRepository>,
         provisioner: Arc<dyn AgentRunRuntimeProvisioner>,
+        presentation_plans: Arc<dyn AgentRunRuntimePresentationPlanStore>,
+        turn_start_context: Arc<dyn AgentRunTurnStartContextSource>,
     ) -> Self {
         Self {
             gateway,
             bindings,
             provisioner,
+            presentation_plans,
+            turn_start_context,
         }
+    }
+
+    async fn pending_turn_start_presentation(
+        &self,
+        binding: &AgentRunRuntimeBinding,
+        client_command_id: &str,
+        turn_id: &agentdash_agent_runtime_contract::PresentationTurnId,
+    ) -> Result<(Vec<RuntimePresentationInput>, Vec<String>), AgentRunRuntimeError> {
+        let facts = self
+            .turn_start_context
+            .take_turn_start_context(&binding.binding_id)
+            .await?;
+        let notice_ids = facts
+            .notices
+            .iter()
+            .map(|notice| notice.id.clone())
+            .collect::<Vec<_>>();
+        let mut frames = facts
+            .notices
+            .into_iter()
+            .filter_map(|notice| notice.context_frame)
+            .collect::<Vec<_>>();
+        frames.extend(
+            facts
+                .pending_actions
+                .into_iter()
+                .filter(|action| !action.summary.trim().is_empty() || !action.injections.is_empty())
+                .enumerate()
+                .map(|(index, action)| {
+                    agentdash_agent_runtime::ContextProjector::project_pending_action(
+                        &agentdash_agent_runtime::ContextProjectionIdentity {
+                            operation_id: format!(
+                                "{}:pending:{index}",
+                                Self::operation_identity(&binding.target, client_command_id)
+                                    .expect("validated operation")
+                            ),
+                            source_frame_id: action.id.clone(),
+                            source_frame_revision: 1,
+                            recorded_at_ms: action.created_at_ms,
+                        },
+                        &action.title,
+                        &action.summary,
+                        &action.id,
+                        &action.action_type,
+                        1,
+                        action.turn_id,
+                        action
+                            .injections
+                            .into_iter()
+                            .map(|injection| {
+                                let context_usage_kind = agentdash_spi::ASSIGNMENT_CONTEXT_SLOTS
+                                    .contains(&injection.slot.as_str())
+                                    .then(|| {
+                                        agentdash_spi::context_usage_kind::SYSTEM_DEVELOPER
+                                            .to_string()
+                                    });
+                                agentdash_agent_protocol::RuntimeHookInjectionEntry {
+                                    slot: injection.slot,
+                                    source: injection.source,
+                                    content: injection.content,
+                                    context_usage_kind,
+                                }
+                            })
+                            .collect(),
+                    )
+                }),
+        );
+        let presentation = frames
+            .into_iter()
+            .enumerate()
+            .map(|(index, frame)| RuntimePresentationInput {
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(binding.presentation_thread_id.to_string()),
+                    source_turn_id: Some(turn_id.to_string()),
+                    source_item_id: None,
+                    source_request_id: Some(client_command_id.to_string()),
+                    source_entry_index: Some(
+                        u32::try_from(index + 2).expect("turn-start context is bounded"),
+                    ),
+                },
+                event: ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(Box::new(
+                            agentdash_agent_protocol::ContextFrameChanged { frame },
+                        )),
+                    ),
+                ),
+            })
+            .collect();
+        Ok((presentation, notice_ids))
+    }
+
+    async fn bootstrap_presentation(
+        &self,
+        binding: &AgentRunRuntimeBinding,
+        client_command_id: &str,
+        turn_id: &agentdash_agent_runtime_contract::PresentationTurnId,
+    ) -> Result<Vec<RuntimePresentationInput>, AgentRunRuntimeError> {
+        use agentdash_agent_protocol::{BackboneEvent, ContextFrameChanged, PlatformEvent};
+        let plan = self
+            .presentation_plans
+            .load_exact_presentation_plan(
+                &binding.binding_id,
+                binding.surface.surface_revision,
+                &binding.surface.surface_digest,
+            )
+            .await?;
+        Ok(plan
+            .bootstrap_frames
+            .into_iter()
+            .enumerate()
+            .map(|(index, frame)| RuntimePresentationInput {
+                coordinate: RuntimePresentationCoordinate {
+                    runtime_turn_id: None,
+                    runtime_item_id: None,
+                    interaction_id: None,
+                    source_thread_id: Some(binding.presentation_thread_id.to_string()),
+                    source_turn_id: Some(turn_id.to_string()),
+                    source_item_id: None,
+                    source_request_id: Some(client_command_id.to_string()),
+                    source_entry_index: Some(
+                        u32::try_from(index + 1).expect("presentation plan is bounded"),
+                    ),
+                },
+                event: ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
+                        ContextFrameChanged { frame },
+                    ))),
+                ),
+            })
+            .collect())
     }
 
     async fn fork_runtime_inner(
@@ -410,7 +553,7 @@ impl ManagedAgentRunRuntime {
         {
             Ok(RuntimeSnapshotResult::Operation { operation }) => {
                 if &operation.actor != actor
-                    || operation.presentation != presentation
+                    || !operation.presentation.starts_with(presentation)
                     || !matches_command(&operation.command)
                 {
                     return Err(AgentRunRuntimeError::ClientCommandConflict);
@@ -525,6 +668,14 @@ impl ManagedAgentRunRuntime {
         let turn_id = input.turn_id().to_string();
         let started_at_seconds = input.started_at_seconds();
         let thread_id = presentation_thread_id.to_string();
+        let auto_resume_prompt = match &input {
+            AgentRunPresentationInput::SystemDelivery {
+                launch_source: LaunchPresentationSource::HookAutoResume,
+                message,
+                ..
+            } => Some(message.clone()),
+            _ => None,
+        };
         let (first_event, source_item_id) = match input {
             AgentRunPresentationInput::UserSubmission {
                 item_id,
@@ -582,7 +733,7 @@ impl ManagedAgentRunRuntime {
             source_request_id: Some(client_command_id.to_string()),
             source_entry_index,
         };
-        Ok(vec![
+        let mut presentation = vec![
             RuntimePresentationInput {
                 coordinate: coordinate(source_item_id, Some(0)),
                 event: ImmutablePresentationEvent::new(
@@ -597,7 +748,29 @@ impl ManagedAgentRunRuntime {
                     BackboneEvent::TurnStarted(turn_started),
                 ),
             },
-        ])
+        ];
+        if let Some(prompt) = auto_resume_prompt {
+            let frame = agentdash_agent_runtime::ContextProjector::project_auto_resume(
+                &agentdash_agent_runtime::ContextProjectionIdentity {
+                    operation_id: Self::operation_identity(target, client_command_id)?,
+                    source_frame_id: turn_id.clone(),
+                    source_frame_revision: 1,
+                    recorded_at_ms: started_at_seconds.saturating_mul(1_000),
+                },
+                "hook",
+                &prompt,
+            );
+            presentation.push(RuntimePresentationInput {
+                coordinate: coordinate(None, Some(1)),
+                event: ImmutablePresentationEvent::new(
+                    PresentationDurability::Durable,
+                    BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(Box::new(
+                        agentdash_agent_protocol::ContextFrameChanged { frame },
+                    ))),
+                ),
+            });
+        }
+        Ok(presentation)
     }
 
     fn user_steer_presentation(
@@ -847,7 +1020,7 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
         if binding.presentation_thread_id != command.presentation_thread_id {
             return Err(AgentRunRuntimeError::StaleThread);
         }
-        let presentation = Self::submission_presentation(
+        let mut presentation = Self::submission_presentation(
             &command.target,
             &command.client_command_id,
             &binding.presentation_thread_id,
@@ -884,6 +1057,28 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
             snapshot = self.snapshot_for(&binding).await?;
         }
         let expected = snapshot.as_ref().map(|snapshot| snapshot.revision);
+        let mut acknowledged_notice_ids = Vec::new();
+        if snapshot.is_none() {
+            presentation.extend(
+                self.bootstrap_presentation(
+                    &binding,
+                    &command.client_command_id,
+                    command.presentation_input.turn_id(),
+                )
+                .await?,
+            );
+        } else {
+            let (turn_start_presentation, notice_ids) = self
+                .pending_turn_start_presentation(
+                    &binding,
+                    &command.client_command_id,
+                    command.presentation_input.turn_id(),
+                )
+                .await?;
+            presentation.extend(turn_start_presentation);
+            acknowledged_notice_ids = notice_ids;
+        }
+        let acknowledged_binding_id = binding.binding_id.clone();
         let runtime_command = match snapshot {
             None => RuntimeCommand::ThreadStart {
                 thread_id: binding.thread_id.clone(),
@@ -912,7 +1107,11 @@ impl AgentRunRuntime for ManagedAgentRunRuntime {
             runtime_command,
         )?;
         envelope.presentation = presentation;
-        Ok(self.gateway.execute(envelope).await?)
+        let receipt = self.gateway.execute(envelope).await?;
+        self.turn_start_context
+            .acknowledge_turn_start_context(&acknowledged_binding_id, &acknowledged_notice_ids)
+            .await?;
+        Ok(receipt)
     }
 
     async fn compact_context(

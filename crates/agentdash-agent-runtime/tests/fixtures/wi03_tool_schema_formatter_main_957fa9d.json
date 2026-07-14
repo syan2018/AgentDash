@@ -1,0 +1,44 @@
+{
+  "provenance": {
+    "repository": "D:/Projects/AgentDash-main-reference",
+    "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+    "source": "crates/agentdash-application-runtime-session/src/session/dimension/tool_schema.rs",
+    "functions": ["format_parameter_summary", "collect_schema_fields", "schema_description", "schema_type_summary", "enum_values_summary"]
+  },
+  "cases": [
+    {
+      "name": "nested_object_array_required_stable_order",
+      "schema": {
+        "type": "object",
+        "required": ["config"],
+        "properties": {
+          "items": {"type":"array","items":{"type":"object","required":["id"],"properties":{"note":{"type":"string"},"id":{"type":"integer"}}}},
+          "config": {"type":"object","required":["enabled"],"properties":{"mode":{"type":"string"},"enabled":{"type":"boolean","description":"first line\nignored line"}}}
+        }
+      },
+      "expected": [
+        "- `config` (required, object)",
+        "- `config.enabled` (required, boolean): first line",
+        "- `config.mode` (optional, string)",
+        "- `items` (optional, array<object>)",
+        "- `items[].id` (required, integer)",
+        "- `items[].note` (optional, string)"
+      ]
+    },
+    {
+      "name": "any_of_enum_and_type_union",
+      "schema": {"type":"object","properties":{"choice":{"anyOf":[{"type":"string"},{"enum":["a","b",3]}]},"nullable":{"type":["string","null"]},"tags":{"type":"array","items":{"enum":["x","y"]}}}},
+      "expected": [
+        "- `choice` (optional, enum(a | b | 3) | string)",
+        "- `nullable` (optional, string | null)",
+        "- `tags` (optional, array<enum(x | y)>)"
+      ]
+    },
+    {
+      "name": "non_object_and_empty_object",
+      "schema": {"type":"array","items":{"type":"string"}},
+      "expected": ["- 参数整体类型：array<string>"]
+    }
+  ],
+  "truncation_expected": "- 其余嵌套字段已省略；完整机器 schema 已通过 provider tools 字段提供。"
+}

@@ -602,6 +602,34 @@ impl AgentRunRuntimeSurfaceStore for PostgresAgentRuntimeCompositionRepository {
     }
 }
 
+#[async_trait]
+impl agentdash_application_ports::agent_run_runtime::AgentRunRuntimePresentationPlanStore
+    for PostgresAgentRuntimeCompositionRepository
+{
+    async fn load_exact_presentation_plan(
+        &self,
+        binding_id: &RuntimeBindingId,
+        surface_revision: SurfaceRevision,
+        surface_digest: &SurfaceDigest,
+    ) -> Result<agentdash_agent_runtime::RuntimeSurfacePresentationPlan, AgentRunRuntimeBindingError>
+    {
+        Ok(
+            PostgresAgentRuntimeCompositionRepository::load_business_surface(
+                self,
+                binding_id,
+                surface_revision,
+                surface_digest,
+            )
+            .await
+            .map_err(|error| AgentRunRuntimeBindingError::Unavailable {
+                reason: error.to_string(),
+                retryable: true,
+            })?
+            .presentation,
+        )
+    }
+}
+
 pub struct HostAgentRunRuntimeProvisioner {
     host: Arc<IntegrationDriverHost>,
     host_repository: Arc<dyn AgentRuntimeHostRepository>,
@@ -1705,6 +1733,9 @@ pub struct AgentRuntimeComposition {
     pub runtime_repository: Arc<PostgresRuntimeRepository>,
     pub managed_runtime: Arc<ManagedAgentRuntime<PostgresRuntimeRepository>>,
     pub surfaces: Arc<dyn AgentRunRuntimeSurfaceStore>,
+    pub presentation_plans: Arc<
+        dyn agentdash_application_ports::agent_run_runtime::AgentRunRuntimePresentationPlanStore,
+    >,
 }
 
 pub type NativeAgentRuntimeComposition = AgentRuntimeComposition;
@@ -1751,6 +1782,9 @@ pub fn build_agent_runtime_composition(
     ));
     let bindings: Arc<dyn AgentRunRuntimeBindingRepository> = composition_repository.clone();
     let surface_store: Arc<dyn AgentRunRuntimeSurfaceStore> = composition_repository.clone();
+    let presentation_plans: Arc<
+        dyn agentdash_application_ports::agent_run_runtime::AgentRunRuntimePresentationPlanStore,
+    > = composition_repository.clone();
     let gateway: Arc<dyn AgentRuntimeGateway> = runtime.clone();
     let provisioner: Arc<dyn AgentRunRuntimeProvisioner> =
         Arc::new(HostAgentRunRuntimeProvisioner::new(
@@ -1789,6 +1823,7 @@ pub fn build_agent_runtime_composition(
         runtime_repository: runtime_repository.clone(),
         managed_runtime: runtime,
         surfaces: surface_store,
+        presentation_plans,
     })
 }
 
@@ -2589,6 +2624,7 @@ mod tests {
                     requirement: agentdash_agent_runtime::ContributionRequirement::Required,
                 },
                 source,
+                transition_phase_node: Some("fixture".to_string()),
                 instructions: surface
                     .context
                     .instructions

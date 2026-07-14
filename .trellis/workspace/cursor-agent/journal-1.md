@@ -1291,3 +1291,48 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: 恢复会话协议与产品行为
+
+**Date**: 2026-07-14
+**Task**: 恢复会话协议与产品行为
+**Branch**: `codex/agent-runtime-architecture-convergence`
+
+### Summary
+
+以 Main 957fa9d 为严格行为判定器，恢复 Codex/Native/Remote/Tool/AgentRun/session stream 与原前端会话表现；Codex 对齐 0.144.1，完成数据库展示契约迁移、全链路等价门和边界规范固化。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5ae96bc53` | (see git log) |
+| `990c539a9` | (see git log) |
+| `b616815e0` | (see git log) |
+| `a0f011868` | (see git log) |
+| `63cd2e53c` | (see git log) |
+| `2de644a25` | (see git log) |
+| `92e0236c0` | (see git log) |
+| `6238a31ff` | (see git log) |
+| `e1b17e3b5` | (see git log) |
+| `6d742ffcc` | (see git log) |
+| `91ab428a8` | (see git log) |
+| `55b7a19ae` | (see git log) |
+| `2b55695b1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

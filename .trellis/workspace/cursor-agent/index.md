@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 27
-- **Last Active**: 2026-07-12
+- **Total Sessions**: 28
+- **Last Active**: 2026-07-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1293 | Active |
+| `journal-1.md` | ~1338 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 28 | 2026-07-14 | 恢复会话协议与产品行为 | `5ae96bc53`, `990c539a9`, `b616815e0`, `a0f011868`, `63cd2e53c`, `2de644a25`, `92e0236c0`, `6238a31ff`, `e1b17e3b5`, `6d742ffcc`, `91ab428a8`, `55b7a19ae`, `2b55695b1` | `codex/agent-runtime-architecture-convergence` |
 | 27 | 2026-07-12 | Local Runtime无数据库与按需恢复收束 | `e91238c98` | `codex/agent-runtime-architecture-convergence` |
 | 26 | 2026-07-12 | ARD-009 Desktop Runtime领取与Backend在线收束 | `42c7c33b2` | `codex/agent-runtime-architecture-convergence` |
 | 25 | 2026-07-12 | AgentRun Runtime主链路统一收束 | `bc127a7fb` | `codex/agent-runtime-architecture-convergence` |

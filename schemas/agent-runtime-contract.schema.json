@@ -6850,6 +6850,23 @@
       "description": "平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。",
       "oneOf": [
         {
+          "description": "Materialized platform context presentation changed.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "context_frame_changed"
+            },
+            "data": {
+              "$ref": "#/$defs/ContextFrameChanged"
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
           "description": "Connector 绑定了底层执行器 session（用于 follow-up / resume）。",
           "type": "object",
           "properties": {
@@ -7098,6 +7115,1292 @@
             "data"
           ]
         }
+      ]
+    },
+    "ContextFrameChanged": {
+      "type": "object",
+      "properties": {
+        "frame": {
+          "$ref": "#/$defs/ContextFrame"
+        }
+      },
+      "required": [
+        "frame"
+      ]
+    },
+    "ContextFrame": {
+      "description": "AgentDash-owned context presentation payload.\n\nThis is a presentation/audit projection of the materialized agent surface. It is not the\nmodel context itself and must never be used as the execution adapter's input contract.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ContextFrameKind"
+        },
+        "source": {
+          "$ref": "#/$defs/ContextFrameSource"
+        },
+        "phase_node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "apply_mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delivery_status": {
+          "$ref": "#/$defs/ContextDeliveryStatus"
+        },
+        "delivery_channel": {
+          "$ref": "#/$defs/ContextDeliveryChannel"
+        },
+        "message_role": {
+          "$ref": "#/$defs/ContextMessageRole"
+        },
+        "delivery_metadata": {
+          "$ref": "#/$defs/ContextDeliveryMetadata",
+          "default": {
+            "delivery_phase": "turn_runtime",
+            "delivery_order": 0,
+            "cache_policy": "uncached",
+            "model_channel": "context",
+            "agent_consumption": {
+              "target": "",
+              "mode": "consume",
+              "reason": ""
+            },
+            "frontend_label": "",
+            "connector_profile": {
+              "profile_id": ""
+            }
+          }
+        },
+        "rendered_text": {
+          "type": "string"
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContextFrameSection"
+          },
+          "default": []
+        },
+        "created_at_ms": {
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "source",
+        "delivery_status",
+        "delivery_channel",
+        "message_role",
+        "rendered_text",
+        "created_at_ms"
+      ]
+    },
+    "ContextFrameKind": {
+      "type": "string",
+      "enum": [
+        "identity",
+        "user_context",
+        "environment",
+        "system_guidelines",
+        "compaction_summary",
+        "assignment_context",
+        "capability_state_delta",
+        "memory_context",
+        "pending_action",
+        "auto_resume"
+      ]
+    },
+    "ContextFrameSource": {
+      "type": "string",
+      "enum": [
+        "runtime_context_update",
+        "companion_result"
+      ]
+    },
+    "ContextDeliveryStatus": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "prepared_for_connector",
+        "queued_for_transform_context",
+        "applied_before_prompt"
+      ]
+    },
+    "ContextDeliveryChannel": {
+      "type": "string",
+      "enum": [
+        "turn_start",
+        "connector_context",
+        "transform_context"
+      ]
+    },
+    "ContextMessageRole": {
+      "type": "string",
+      "enum": [
+        "system",
+        "developer",
+        "context",
+        "user"
+      ]
+    },
+    "ContextDeliveryMetadata": {
+      "type": "object",
+      "properties": {
+        "delivery_phase": {
+          "$ref": "#/$defs/ContextDeliveryPhase"
+        },
+        "delivery_order": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "cache_policy": {
+          "$ref": "#/$defs/ContextCachePolicy"
+        },
+        "cache_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cache_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_channel": {
+          "$ref": "#/$defs/ContextModelChannel"
+        },
+        "agent_consumption": {
+          "$ref": "#/$defs/ContextAgentConsumption"
+        },
+        "frontend_label": {
+          "type": "string"
+        },
+        "connector_profile": {
+          "$ref": "#/$defs/ContextConnectorProfile",
+          "default": {
+            "profile_id": ""
+          }
+        }
+      },
+      "required": [
+        "delivery_phase",
+        "delivery_order",
+        "cache_policy",
+        "model_channel",
+        "agent_consumption",
+        "frontend_label"
+      ]
+    },
+    "ContextDeliveryPhase": {
+      "type": "string",
+      "enum": [
+        "stable_system",
+        "session_policy",
+        "run_state",
+        "assignment",
+        "discovered_inventory",
+        "turn_runtime"
+      ]
+    },
+    "ContextCachePolicy": {
+      "type": "string",
+      "enum": [
+        "static",
+        "session_digest",
+        "runtime_state_digest",
+        "assignment_revision",
+        "discovery_digest",
+        "turn_ephemeral",
+        "uncached"
+      ]
+    },
+    "ContextModelChannel": {
+      "type": "string",
+      "enum": [
+        "system",
+        "developer",
+        "context",
+        "user",
+        "audit_only",
+        "ignored"
+      ]
+    },
+    "ContextAgentConsumption": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string",
+          "default": ""
+        },
+        "mode": {
+          "$ref": "#/$defs/ContextAgentConsumptionMode"
+        },
+        "reason": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "required": [
+        "mode"
+      ]
+    },
+    "ContextAgentConsumptionMode": {
+      "type": "string",
+      "enum": [
+        "consume",
+        "audit_only",
+        "ignore",
+        "connector_native",
+        "system_append"
+      ]
+    },
+    "ContextConnectorProfile": {
+      "type": "object",
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "default": ""
+        },
+        "declared_consumption_modes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContextAgentConsumptionMode"
+          }
+        }
+      }
+    },
+    "ContextFrameSection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "fragments": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeContextFragmentEntry"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "identity"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "fragments": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeContextFragmentEntry"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "assignment_context"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "added_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "removed_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "effective_capabilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "capability_key_delta"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "blocked_tool_paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "unblocked_tool_paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "whitelisted_tool_paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "removed_whitelist_paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "tool_path_delta"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "added_mcp_servers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "removed_mcp_servers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "changed_mcp_servers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "mcp_server_delta"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "vfs_mounts_added": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "vfs_mounts_removed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "default_mount_before": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default_mount_after": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "vfs_delta"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "added_tools": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeToolSchemaEntry"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "tool_schema_delta"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "added_skills": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeSkillEntry"
+              },
+              "default": []
+            },
+            "removed_skills": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeSkillEntry"
+              },
+              "default": []
+            },
+            "changed_skills": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeSkillEntry"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "skill_delta"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "mode": {
+              "$ref": "#/$defs/RuntimeMemoryInventoryMode"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeMemorySourceEntry"
+              },
+              "default": []
+            },
+            "diagnostics": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeMemoryDiagnosticEntry"
+              },
+              "default": []
+            },
+            "added_sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeMemorySourceEntry"
+              },
+              "default": []
+            },
+            "removed_sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeMemorySourceEntry"
+              },
+              "default": []
+            },
+            "changed_sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeMemorySourceEntry"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "memory_inventory"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary",
+            "mode"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "added_agents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeCompanionAgentEntry"
+              },
+              "default": []
+            },
+            "removed_agent_keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "changed_agents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeCompanionAgentEntry"
+              },
+              "default": []
+            },
+            "effective_agents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeCompanionAgentEntry"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "companion_agent_roster_delta"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "body": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "system_notice"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "action_id": {
+              "type": "string"
+            },
+            "action_type": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "turn_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "instructions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "injections": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RuntimeHookInjectionEntry"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "pending_action"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary",
+            "action_id",
+            "action_type",
+            "status",
+            "revision"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "auto_resume"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary",
+            "reason",
+            "prompt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "tokens_before": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "messages_compacted": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "compaction_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "projection_version": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "strategy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "trigger": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "phase": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_start_event_seq": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "source_end_event_seq": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "first_kept_event_seq": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "compacted_until_ref": true,
+            "timestamp_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "compaction_summary"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary",
+            "tokens_before",
+            "messages_compacted"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "date": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "platform": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "executor": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "working_directory": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "environment"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_preferences"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "entries": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ProjectGuidelineEntry"
+              },
+              "default": []
+            },
+            "kind": {
+              "type": "string",
+              "const": "project_guidelines"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "user_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "display_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "email": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "extra": true,
+            "kind": {
+              "type": "string",
+              "const": "user_context"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "summary"
+          ]
+        }
+      ]
+    },
+    "RuntimeContextFragmentEntry": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "context_usage_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "slot",
+        "label",
+        "source",
+        "content"
+      ]
+    },
+    "RuntimeToolSchemaEntry": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "parameters_schema": true,
+        "capability_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_usage_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "parameters_schema"
+      ]
+    },
+    "RuntimeSkillEntry": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "capability_key": {
+          "type": "string",
+          "default": ""
+        },
+        "provider_key": {
+          "type": "string",
+          "default": ""
+        },
+        "local_name": {
+          "type": "string",
+          "default": ""
+        },
+        "display_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "file_path": {
+          "type": "string"
+        },
+        "base_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exposure": {
+          "$ref": "#/$defs/SkillContextExposure",
+          "default": "default_exposed"
+        },
+        "disable_model_invocation": {
+          "type": "boolean",
+          "default": false
+        },
+        "context_usage_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "file_path"
+      ]
+    },
+    "SkillContextExposure": {
+      "type": "string",
+      "enum": [
+        "default_exposed",
+        "explicit_only"
+      ]
+    },
+    "RuntimeMemoryInventoryMode": {
+      "type": "string",
+      "enum": [
+        "snapshot",
+        "delta"
+      ]
+    },
+    "RuntimeMemorySourceEntry": {
+      "type": "object",
+      "properties": {
+        "provider_key": {
+          "type": "string"
+        },
+        "source_key": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "source_uri": {
+          "type": "string"
+        },
+        "index_uri": {
+          "type": "string"
+        },
+        "mount_id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "index_status": {
+          "type": "string"
+        },
+        "trust_level": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_usage_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider_key",
+        "source_key",
+        "display_name",
+        "source_uri",
+        "index_uri",
+        "mount_id",
+        "scope",
+        "index_status",
+        "trust_level",
+        "revision"
+      ]
+    },
+    "RuntimeMemoryDiagnosticEntry": {
+      "type": "object",
+      "properties": {
+        "provider_key": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "source_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_usage_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider_key",
+        "code",
+        "message"
+      ]
+    },
+    "RuntimeCompanionAgentEntry": {
+      "type": "object",
+      "properties": {
+        "agent_key": {
+          "type": "string"
+        },
+        "executor": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "context_usage_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agent_key",
+        "executor",
+        "display_name"
+      ]
+    },
+    "RuntimeHookInjectionEntry": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "context_usage_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "slot",
+        "source",
+        "content"
+      ]
+    },
+    "ProjectGuidelineEntry": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "content"
       ]
     },
     "HookTracePayload": {

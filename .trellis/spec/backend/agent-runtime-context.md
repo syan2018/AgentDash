@@ -129,3 +129,15 @@ accept + Pending work (transaction)
 ```
 
 每个跨系统side effect前后都有durable事实和可扫描恢复入口。
+
+## Context presentation projection
+
+Materialized context、tool/workspace surface 与 ContextFrame presentation 必须由同一次 Business Agent Surface 编译产生。ContextFrame 是面向会话流的审计/展示事实，不是 Driver 模型输入，也不能反向成为 tool availability 或 context head 的事实源。
+
+- compiled surface artifact 按 exact binding / surface revision / digest 保存 presentation plan，使 ThreadStart、recovery 与 replay 使用同一版本事实。
+- bootstrap frame 随首个 ThreadStart 提交；typed surface delta 随 SurfaceAdopt 提交；managed compaction summary 随 checkpoint/head activation 提交。
+- workflow transition phase 是 source facts 的显式 provenance。live projection 不得用 AgentFrame ID、surface digest 或 presentation coordinate 猜测 phase。
+- ContextFrame 与所属 canonical mutation共享 Runtime UoW、revision 与 idempotency；presentation failure 必须阻止对应 surface/head/Hook mutation 接受。
+- Native、Codex、Remote adapter 只消费 materialized driver surface，不构造 ContextFrame，也不读取 AgentFrame repository。
+
+这些约束让执行面与展示面保持同源，同时保留 adapter 对 vendor protocol 的纯翻译职责。

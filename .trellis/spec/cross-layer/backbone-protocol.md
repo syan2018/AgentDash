@@ -32,6 +32,7 @@ RuntimeWire 通过 `RuntimeWireEnvelope` 透明承载 Driver command/event/respo
 - Relay 对 RuntimeWire 保持 typed envelope、stream sequence、ack/replay 与 generation fencing；产品 Backbone relay 与 RuntimeWire 是两条不同协议 lane。
 - Vendor adapter 把 Codex/Native/enterprise 事件映射为 AgentDash-owned Runtime event。Vendor DTO 与 Backbone 都不能泄漏进 canonical Runtime contract。
 - Durable cursor 只属于 canonical Runtime journal；Backbone product stream 使用自己的产品事件顺序，不复用 Runtime cursor。
+- Runtime journal 内部使用 owned `PlatformEvent::ContextFrameChanged` 保存完整 ContextFrame。Session journal contract 在单一 protocol normalization boundary 将它投影为 `SessionMetaUpdate { key: "context_frame" }`，原因是现有 session reducer、feed grouping 与 UI 以该 wrapper 表达稳定展示协议；映射只替换 wrapper，frame payload、空值、section 顺序与相邻 frame 边界保持不变。
 
 ## 4. Validation & Error Matrix
 

@@ -2374,7 +2374,8 @@ fn journal_event_to_contract(
         .map_err(|_| ApiError::Internal("journal timestamp exceeds i64".to_string()))?;
     let observed_at = DateTime::<Utc>::from_timestamp_millis(occurred_at_ms)
         .ok_or_else(|| ApiError::Internal("journal timestamp is invalid".to_string()))?;
-    let event_value = serde_json::to_value(&presentation.event)
+    let session_event = normalize_session_presentation_event(&presentation.event)?;
+    let event_value = serde_json::to_value(&session_event)
         .map_err(|error| ApiError::Internal(format!("serialize journal event failed: {error}")))?;
     let session_update_type = event_value
         .get("type")
@@ -2393,7 +2394,7 @@ fn journal_event_to_contract(
         entry_index: carrier.coordinate.source_entry_index,
         tool_call_id: presentation_tool_call_id(&presentation.event, presentation.durability),
         notification: agentdash_agent_protocol::BackboneEnvelope {
-            event: presentation.event.clone(),
+            event: session_event,
             session_id: journal_session_id.to_string(),
             source: agentdash_agent_protocol::SourceInfo {
                 connector_id: carrier
@@ -2411,6 +2412,25 @@ fn journal_event_to_contract(
             observed_at,
         },
     })
+}
+
+fn normalize_session_presentation_event(
+    event: &agentdash_agent_protocol::BackboneEvent,
+) -> Result<agentdash_agent_protocol::BackboneEvent, ApiError> {
+    use agentdash_agent_protocol::{BackboneEvent, PlatformEvent};
+
+    let BackboneEvent::Platform(PlatformEvent::ContextFrameChanged(changed)) = event else {
+        return Ok(event.clone());
+    };
+    let value = serde_json::to_value(&changed.frame).map_err(|error| {
+        ApiError::Internal(format!(
+            "serialize ContextFrame session projection failed: {error}"
+        ))
+    })?;
+    Ok(BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+        key: "context_frame".to_string(),
+        value,
+    }))
 }
 
 fn presentation_tool_call_id(
@@ -3077,6 +3097,34 @@ mod journal_projection_tests {
         normalize_current_presentation_event, normalize_main_ndjson_frame,
         normalize_main_session_event,
     };
+
+    #[test]
+    fn typed_context_frame_wrapper_normalizes_to_the_main_session_boundary_exactly() {
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json"
+        ))
+        .unwrap();
+        for frame in oracle["frames"].as_array().unwrap() {
+            let typed = agentdash_agent_protocol::BackboneEvent::Platform(
+                agentdash_agent_protocol::PlatformEvent::ContextFrameChanged(Box::new(
+                    agentdash_agent_protocol::ContextFrameChanged {
+                        frame: serde_json::from_value(frame.clone()).unwrap(),
+                    },
+                )),
+            );
+            let normalized = normalize_session_presentation_event(&typed).unwrap();
+            assert_eq!(
+                serde_json::to_value(normalized).unwrap(),
+                serde_json::json!({
+                    "type": "platform",
+                    "payload": {
+                        "kind": "session_meta_update",
+                        "data": { "key": "context_frame", "value": frame }
+                    }
+                })
+            );
+        }
+    }
 
     #[test]
     fn context_compaction_initial_outcomes_cover_main_behavior() {

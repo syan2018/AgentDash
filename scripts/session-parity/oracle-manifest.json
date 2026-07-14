@@ -29,7 +29,7 @@
     },
     {
       "path": "scripts/session-parity/Test-SessionParityOracle.ps1",
-      "sha256": "6ef91b24f2030fa7233473ad95022332126b789395de8e8703d45ef32a18e426"
+      "sha256": "9dc6e018334c1ddb2780bf5385747d90d451e137aecb88b6f0b8875505354cc7"
     },
     {
       "path": "scripts/session-parity/Test-PinnedMainJournalReplay.ps1",

@@ -20,6 +20,32 @@ function Invoke-Git {
     return ($output | Out-String).Trim()
 }
 
+function Get-NormalizedFileSha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $normalized = New-Object 'System.Collections.Generic.List[byte]' $bytes.Length
+    for ($index = 0; $index -lt $bytes.Length; $index++) {
+        if ($bytes[$index] -eq 13 -and $index + 1 -lt $bytes.Length -and $bytes[$index + 1] -eq 10) {
+            $normalized.Add(10)
+            $index++
+            continue
+        }
+        $normalized.Add($bytes[$index])
+    }
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return (($sha256.ComputeHash($normalized.ToArray()) | ForEach-Object { $_.ToString('x2') }) -join '')
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 $manifest = Get-Content -Raw -LiteralPath $ManifestPath | ConvertFrom-Json
 $referencePath = [System.IO.Path]::GetFullPath([string]$manifest.reference_path)
 if (-not (Test-Path -LiteralPath $referencePath -PathType Container)) {
@@ -42,7 +68,7 @@ foreach ($source in $manifest.source_files) {
     if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
         throw "Current canonical source is missing: $($source.path)"
     }
-    $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourcePath).Hash.ToLowerInvariant()
+    $actualHash = Get-NormalizedFileSha256 -Path $sourcePath
     if ($actualHash -ne [string]$source.sha256) {
         throw "Current canonical source drifted: $($source.path) expected $($source.sha256), actual $actualHash"
     }
@@ -73,7 +99,7 @@ foreach ($harness in $manifest.harness_files) {
     if (-not (Test-Path -LiteralPath $harnessPath -PathType Leaf)) {
         throw "Session parity harness file is missing: $($harness.path)"
     }
-    $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $harnessPath).Hash.ToLowerInvariant()
+    $actualHash = Get-NormalizedFileSha256 -Path $harnessPath
     if ($actualHash -ne [string]$harness.sha256) {
         throw "Session parity harness drifted: $($harness.path) expected $($harness.sha256), actual $actualHash"
     }

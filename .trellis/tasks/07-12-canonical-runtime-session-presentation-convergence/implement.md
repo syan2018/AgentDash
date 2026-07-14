@@ -391,6 +391,8 @@ Cargo、rustc和rust-analyzer共享默认build directory。锁被占用时等待
 - [x] fork/mailbox/context/approval/redirect/status/system side-effect E2E通过。
 - [x] 不在前端伪造command set、mailbox waiting/action或stale guard。
 
+Workspace 与 runtime/control route 已恢复为 application `AgentRunWorkspaceQueryService` 的薄 HTTP adapter，旧 session core/control 依赖由 canonical `AgentRunRuntime` typed boundary 替换。AgentRun outer 不再保留 ProductView/query 第二投影；command precondition 读取同一 workspace snapshot。Main/current frontend production harness 固定 adopted surface source frame、workflow node coordinate、terminal turn identity 与全部 side effect，完整 `pnpm dev` 同时验证 clean migration、API、本机 Runtime、Local backend 与前端启动链。
+
 ### Commit
 
 `fix(agentrun): 恢复 AgentRun 外层交互行为`
@@ -422,11 +424,11 @@ pnpm --filter app-web test
 
 ### Exit criteria
 
-- [ ] wrapper normalization后全部eventstream protected body deep equal。
-- [ ] route/history/stream/frontend/AgentRun observable behavior与main一致。
-- [ ] 无dual-read、fallback、第二renderer、反向presentation mapper或generic fallback。
-- [ ] 所有quality gates通过，数据库migration已验证。
-- [ ] 每个工作项都有独立implement/check记录与单独提交。
+- [x] wrapper normalization后全部eventstream protected body deep equal。
+- [x] route/history/stream/frontend/AgentRun observable behavior与main一致。
+- [x] 无dual-read、fallback、第二renderer、反向presentation mapper或generic fallback。
+- [x] 所有quality gates通过，数据库migration已验证。
+- [x] 每个工作项都有独立implement/check记录与单独提交。
 
 ### Commits
 

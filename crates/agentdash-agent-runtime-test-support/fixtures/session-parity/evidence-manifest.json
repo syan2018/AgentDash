@@ -1,0 +1,675 @@
+{
+  "oracle_commit": "957fa9d60ea3d67efa1bb278fe5b376cf0c34598",
+  "mode": "final_complete",
+  "verified_scenario_count": 27,
+  "planned_scenario_count": 0,
+  "contract": "A scenario is golden_verified only when a named current-production test exercises a pinned, machine-verifiable Main production capture with exact protected-body or exact transport/control assertions. AgentDash-only capabilities use extension_verified only with machine-verifiable pinned Main absence, current typed production execution, and proof that every pinned Main route/eventstream registration remains unchanged. Self-roundtrip, fixture-equals-itself, current-shape transcription, and source-only projection remain partial or planned.",
+  "completion_groups": [
+    {
+      "scenario": "plan_and_diff",
+      "evidence_ids": ["codex_pinned_main_notification_capture", "codex_41_method_strict_golden"],
+      "coverage_contract": "The pinned Main capture executes the fixed production notification mapper and the current Codex test executes the owned projection; both compare against the same committed protected bodies."
+    },
+    {
+      "scenario": "assistant_message_delta_terminal",
+      "evidence_ids": ["native_pinned_main_capture", "native_7_scenario_strict_golden"],
+      "coverage_contract": "The pinned Main stream mapper and the current Native mapper execute the same assistant scenario inputs against the same protected bodies."
+    },
+    {
+      "scenario": "reasoning_text_summary_terminal",
+      "evidence_ids": ["native_pinned_main_capture", "native_7_scenario_strict_golden"],
+      "coverage_contract": "The pinned Main stream mapper and the current Native mapper execute the same reasoning scenario inputs against the same protected bodies."
+    },
+    {
+      "scenario": "usage_context",
+      "evidence_ids": ["native_pinned_main_capture", "native_7_scenario_strict_golden"],
+      "coverage_contract": "The pinned Main stream mapper and the current Native mapper execute the same usage/context scenario inputs against the same protected bodies."
+    },
+    {
+      "scenario": "provider_phases_error",
+      "evidence_ids": ["native_pinned_main_capture", "native_7_scenario_strict_golden"],
+      "coverage_contract": "The pinned Main stream mapper and the current Native mapper execute every provider phase and terminal error input against the same protected bodies."
+    },
+    {
+      "scenario": "thread_status_title_compaction",
+      "evidence_ids": ["codex_pinned_main_notification_capture", "codex_41_method_strict_golden", "native_pinned_main_capture", "native_7_scenario_strict_golden"],
+      "coverage_contract": "Codex pinned/current proves status, title, and successful compaction while Native pinned/current proves the compaction failure terminal sequence."
+    },
+    {
+      "scenario": "frontend_submit_no_phantom_refresh",
+      "evidence_ids": ["frontend_submit_pinned_main_production", "frontend_submit_refresh_exact_main_behavior"],
+      "coverage_contract": "The fixed Main validator, reducer, and renderer execute the exact committed submit frames, while the current frontend executes the same frames through durable replay and rendering."
+    },
+    {
+      "scenario": "agentrun_fork_mailbox_context_lineage_status",
+      "evidence_ids": ["agentrun_outer_pinned_main_production", "agentrun_outer_current_production"],
+      "coverage_contract": "Pinned Main and current production frontend paths execute the same backend-owned command, mailbox, context, system-effect, fork, lineage, redirect, and status coordinates."
+    },
+    {
+      "scenario": "input_prompt_text",
+      "evidence_ids": ["input_prompt_pinned_main_production", "user_submit_fixture_and_contract"],
+      "coverage_contract": "Pinned Main and current Runtime facade execute the same prompt input and TurnStarted protected bodies."
+    },
+    {
+      "scenario": "input_steer",
+      "evidence_ids": ["input_steer_pinned_main_production", "input_steer_current_production"],
+      "coverage_contract": "Pinned Main mailbox steering writer and the current Runtime facade execute the same steer body and coordinates."
+    },
+    {
+      "scenario": "input_image_local_image_skill_mention",
+      "evidence_ids": ["input_modalities_pinned_main_production", "input_modalities_current_production"],
+      "coverage_contract": "Pinned Main and current Runtime facade execute the same typed Text, Image, LocalImage, Skill, and Mention input blocks followed by TurnStarted."
+    },
+    {
+      "scenario": "delivery_system_workflow_companion",
+      "evidence_ids": ["delivery_sources_pinned_main_production", "delivery_sources_partial_main_behavior"],
+      "coverage_contract": "Pinned Main launch delivery writer and current Runtime facade execute the same system, workflow, and companion delivery bodies."
+    },
+    {
+      "scenario": "turn_started_completed_failed_interrupted_rewind",
+      "evidence_ids": ["input_prompt_pinned_main_production", "user_submit_fixture_and_contract", "terminal_pinned_main_builder_capture", "terminal_current_application_projector_strict"],
+      "coverage_contract": "Prompt capture proves TurnStarted while pinned Main and current terminal projectors prove completed, failed, interrupted, lost, and rewind ordering and bodies."
+    },
+    {
+      "scenario": "tool_mcp_dynamic",
+      "evidence_ids": ["mcp_pinned_main_native_mapper_capture", "mcp_direct_relay_dynamic_strict_golden"],
+      "coverage_contract": "The pinned Main Native production mapper and current direct/relay MCP projections execute the same arguments, progress, completed, and failed inputs against identical DynamicToolCall protected bodies."
+    },
+    {
+      "scenario": "hook_terminal_pty_control_plane",
+      "evidence_ids": ["terminal_pty_pinned_main_projection_capture", "control_pinned_main_workspace_projection_capture", "hook_trace_pinned_main_projection_capture", "hook_trace_current_production_projection", "control_current_workspace_projection_chain", "terminal_pty_current_production_projection", "pty_current_production_projection"],
+      "coverage_contract": "Pinned Main and current production execute identical hook decisions, terminal truncation, PTY loss, and workspace control-plane projection inputs against the same complete protected bodies."
+    },
+    {
+      "scenario": "lifecycle_vfs_messages_tool_results_summaries",
+      "evidence_ids": ["lifecycle_vfs_pinned_main_production", "lifecycle_vfs_current_production"],
+      "coverage_contract": "Pinned Main and current lifecycle VFS providers execute identical message, tool-result, and compaction-summary inputs against the same complete observable metadata/body, including body_status, truncation, and explicit null values."
+    },
+    {
+      "scenario": "journal_get_initial_live_reconnect_refresh",
+      "evidence_ids": ["journal_replay_pinned_main_production", "journal_replay_exact_golden"],
+      "coverage_contract": "The executable pinned Main journal source and current production service consume the same committed frames and prove exact GET, paging, initial stream, live sequence mapping, reconnect, refresh, and complete notification bodies."
+    },
+    {
+      "scenario": "journal_fork_heartbeat_lagged_closed",
+      "evidence_ids": ["journal_control_pinned_main_production", "journal_control_exact_golden"],
+      "coverage_contract": "Pinned Main application journal tests and executable production-source capture prove fork ordering plus connected, heartbeat, lagged, and closed inputs; the current production application and API route helpers execute the same fixture inputs, including retention-gap failure semantics."
+    },
+    {
+      "scenario": "interactions_main_comparable_connectors",
+      "evidence_ids": ["codex_pinned_main_notification_capture", "codex_41_method_strict_golden", "native_pinned_main_capture", "native_7_scenario_strict_golden", "remote_3_scenario_strict_golden"],
+      "coverage_contract": "Codex and Native execute their fixed Main approval/terminal-interaction families against current connector projections, while Remote preserves the Native Main protected bodies across wire and relay. AgentDash-owned response extensions are tracked separately."
+    },
+    {
+      "scenario": "frontend_tool_progress_renderer",
+      "evidence_ids": ["frontend_tool_card_pinned_main_production", "frontend_tool_interaction_exact_main_behavior"],
+      "coverage_contract": "Pinned Main and current production reducers/renderers execute the same started, updated, and completed frames and fold them into one terminal tool card. The AgentDash-owned interaction response route is tracked separately."
+    }
+  ],
+  "extension_groups": [
+    {
+      "scenario": "interactions_agentdash_extension_boundary",
+      "main_absence_evidence_id": "interaction_response_pinned_main_absence",
+      "current_typed_execution_evidence_id": "interaction_response_current_runtime_execution",
+      "protected_surface_evidence_id": "interaction_response_protected_main_routes"
+    },
+    {
+      "scenario": "frontend_interaction_response_extension",
+      "main_absence_evidence_id": "interaction_response_pinned_main_absence",
+      "current_typed_execution_evidence_id": "frontend_interaction_response_current_typed_execution",
+      "protected_surface_evidence_id": "interaction_response_protected_main_routes"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "interaction_response_pinned_main_absence",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/interaction-extension-boundary.json",
+      "fixture_sha256": "3263f921977edcc5e20d3c3a03e26cbcb46a2e2108aae67a73a296e25dfdccf0",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/session_parity.rs",
+      "test_function": "pinned_main_has_no_agentdash_interaction_response_route",
+      "strength": "pinned_main_absence",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "pinned_main_has_no_agentdash_interaction_response_route"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["interactions_agentdash_extension_boundary", "frontend_interaction_response_extension"]
+    },
+    {
+      "id": "interaction_response_protected_main_routes",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/interaction-extension-boundary.json",
+      "fixture_sha256": "3263f921977edcc5e20d3c3a03e26cbcb46a2e2108aae67a73a296e25dfdccf0",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/session_parity.rs",
+      "test_function": "current_preserves_every_pinned_main_agent_run_route_registration",
+      "strength": "protected_main_surface_unchanged",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "current_preserves_every_pinned_main_agent_run_route_registration"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["interactions_agentdash_extension_boundary", "frontend_interaction_response_extension"]
+    },
+    {
+      "id": "interaction_response_current_runtime_execution",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/interaction-extension-boundary.json",
+      "fixture_sha256": "3263f921977edcc5e20d3c3a03e26cbcb46a2e2108aae67a73a296e25dfdccf0",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime/tests/runtime_interface.rs",
+      "test_function": "item_and_interaction_transitions_share_the_thread_projection",
+      "strength": "current_typed_execution",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime", "--test", "runtime_interface", "item_and_interaction_transitions_share_the_thread_projection"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["interactions_agentdash_extension_boundary"]
+    },
+    {
+      "id": "frontend_interaction_response_current_typed_execution",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/browser/tool-interaction.json",
+      "fixture_sha256": "870b9ae6e2ec91248156972d08a0ff56816845406fdec3dfcca7b23a609cdaea",
+      "main_capture": "fixture_provenance",
+      "test_kind": "vitest",
+      "test_source": "packages/app-web/src/pages/sessionParityEvidence.test.tsx",
+      "test_name": "updates one tool card in place and submits interaction through the real service",
+      "strength": "current_typed_execution",
+      "command": ["pnpm", "--filter", "app-web", "test", "--", "sessionParityEvidence.test.tsx"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["frontend_interaction_response_extension"]
+    },
+    {
+      "id": "codex_pinned_main_notification_capture",
+      "fixture": "crates/agentdash-integration-codex/fixtures/main-presentation.json",
+      "fixture_sha256": "0f574c4dffe42accfcf060d25d583ad50681d9f36ee5767eb13163ae5d8212d4",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_codex_notification_mapper_matches_committed_fixture",
+      "strength": "executable_pinned_main_production_capture",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_codex_notification_mapper_matches_committed_fixture"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["plan_and_diff", "assistant_message_delta_terminal", "reasoning_text_summary_terminal", "tool_command_shell", "tool_file_apply_patch", "tool_mcp_dynamic", "usage_context", "thread_status_title_compaction", "interactions_main_comparable_connectors", "interactions_agentdash_extension_boundary"]
+    },
+    {
+      "id": "codex_41_method_strict_golden",
+      "fixture": "crates/agentdash-integration-codex/fixtures/main-presentation.json",
+      "fixture_sha256": "0f574c4dffe42accfcf060d25d583ad50681d9f36ee5767eb13163ae5d8212d4",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-integration-codex/src/mapping.rs",
+      "test_function": "codex_main_presentation_fixture_is_deep_equal_without_payload_normalization",
+      "strength": "strict_main_current_deep_equality",
+      "cargo_args": ["test", "-p", "agentdash-integration-codex", "--lib"],
+      "covered_test_functions": ["codex_main_presentation_fixture_is_deep_equal_without_payload_normalization", "nullable_mcp_turn_is_recognized_as_a_thread_scoped_unsupported_capability", "thread_projection_rejects_missing_typed_turn_and_item_arrays", "dynamic_tool_result_rejects_malformed_typed_content", "user_input_response_requires_exact_typed_text_answers"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["plan_and_diff", "assistant_message_delta_terminal", "reasoning_text_summary_terminal", "tool_command_shell", "tool_file_apply_patch", "tool_mcp_dynamic", "usage_context", "thread_status_title_compaction", "interactions_main_comparable_connectors", "interactions_agentdash_extension_boundary"]
+    },
+    {
+      "id": "native_pinned_main_capture",
+      "fixture": "crates/agentdash-integration-native-agent/fixtures/main-oracle-presentation.json",
+      "fixture_sha256": "5f5c5af77d0f4cf2ecb38157e99a3ce0e26132dabc35661e67ddfa0230ade6e8",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_native_mapper_matches_all_committed_scenarios",
+      "strength": "executable_pinned_main_production_capture",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_native_mapper_matches_all_committed_scenarios"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["assistant_message_delta_terminal", "reasoning_text_summary_terminal", "item_started_updated_completed", "usage_context", "provider_phases_error", "thread_status_title_compaction", "interactions_main_comparable_connectors"]
+    },
+    {
+      "id": "native_7_scenario_strict_golden",
+      "fixture": "crates/agentdash-integration-native-agent/fixtures/main-oracle-presentation.json",
+      "fixture_sha256": "5f5c5af77d0f4cf2ecb38157e99a3ce0e26132dabc35661e67ddfa0230ade6e8",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-integration-native-agent/src/driver.rs",
+      "test_function": "native_w5_scenarios_match_main_oracle_golden_strictly",
+      "strength": "strict_main_current_deep_equality",
+      "cargo_args": ["test", "-p", "agentdash-integration-native-agent", "--lib"],
+      "covered_test_functions": ["native_w5_scenarios_match_main_oracle_golden_strictly", "malformed_native_callback_content_is_an_explicit_failure"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["assistant_message_delta_terminal", "reasoning_text_summary_terminal", "item_started_updated_completed", "usage_context", "provider_phases_error", "thread_status_title_compaction", "interactions_main_comparable_connectors"]
+    },
+    {
+      "id": "remote_3_scenario_strict_golden",
+      "fixture": "crates/agentdash-integration-remote-runtime/fixtures/main-oracle-presentation.json",
+      "fixture_sha256": "1212e8bd4c0ce6073fb4a02de5a658589842c70c2e43e85a7b68ec59f67f17fc",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-integration-remote-runtime/src/lib.rs",
+      "test_function": "remote_wire_and_relay_match_all_three_main_oracle_goldens_strictly",
+      "strength": "strict_main_current_deep_equality",
+      "cargo_args": ["test", "-p", "agentdash-integration-remote-runtime", "remote_wire_and_relay_match_all_three_main_oracle_goldens_strictly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["item_started_updated_completed", "interactions_main_comparable_connectors", "journal_get_initial_live_reconnect_refresh"]
+    },
+    {
+      "id": "final_tool_catalog_strict_golden",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/tool-contributions.json",
+      "fixture_sha256": "b861da61c1cb737f8fef74623918b618139ff61663d098cd658bcd2e06c09ff2",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application/tests/runtime_tool_catalog.rs",
+      "test_function": "final_catalog_uses_six_production_providers_and_executes_representative_tools",
+      "strength": "strict_main_current_deep_equality",
+      "cargo_args": ["test", "-p", "agentdash-application", "--test", "runtime_tool_catalog", "final_catalog_uses_six_production_providers_and_executes_representative_tools"],
+      "complete_scenarios": ["item_started_updated_completed", "tool_command_shell", "tool_file_apply_patch", "tool_fs_read_grep_glob", "tool_workspace_companion_task_wait"],
+      "partial_scenarios": ["tool_mcp_dynamic"]
+    },
+    {
+      "id": "mcp_pinned_main_native_mapper_capture",
+      "fixture": "crates/agentdash-agent-runtime/fixtures/main-mcp-tool-lifecycle.json",
+      "fixture_sha256": "fa34d42918a95acde8cd0182bb85f66303c540faffb222bd02ba6b10313c3d20",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_mcp_dynamic_mapper_matches_committed_fixture",
+      "strength": "executable_pinned_main_production_capture",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_mcp_dynamic_mapper_matches_committed_fixture"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["tool_mcp_dynamic"]
+    },
+    {
+      "id": "mcp_direct_relay_dynamic_strict_golden",
+      "fixture": "crates/agentdash-agent-runtime/fixtures/main-mcp-tool-lifecycle.json",
+      "fixture_sha256": "fa34d42918a95acde8cd0182bb85f66303c540faffb222bd02ba6b10313c3d20",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime/tests/business_surface.rs",
+      "test_function": "direct_and_relay_mcp_lifecycles_match_main_protected_bodies_strictly",
+      "strength": "strict_main_current_deep_equality",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime", "--test", "business_surface", "direct_and_relay_mcp_lifecycles_match_main_protected_bodies_strictly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["tool_mcp_dynamic"]
+    },
+    {
+      "id": "mcp_true_owner_broker_contract",
+      "fixture": "crates/agentdash-integration-codex/fixtures/main-presentation.json",
+      "fixture_sha256": "0f574c4dffe42accfcf060d25d583ad50681d9f36ee5767eb13163ae5d8212d4",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime/tests/tool_broker.rs",
+      "test_function": "managed_runtime_journal_preserves_true_mcp_owner_lifecycle",
+      "strength": "exact_current_mcp_lifecycle_contract",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime", "--test", "tool_broker", "managed_runtime_journal_preserves_true_mcp_owner_lifecycle"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["tool_mcp_dynamic"]
+    },
+    {
+      "id": "mcp_direct_owner_fixture_identity",
+      "fixture": "crates/agentdash-agent-runtime/fixtures/main-mcp-tool-lifecycle.json",
+      "fixture_sha256": "fa34d42918a95acde8cd0182bb85f66303c540faffb222bd02ba6b10313c3d20",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-executor/src/mcp/direct.rs",
+      "test_function": "direct_mcp_owner_contract_matches_main_lifecycle_fixture_identity",
+      "strength": "owner_contract_to_main_fixture_identity",
+      "cargo_args": ["test", "-p", "agentdash-executor", "direct_mcp_owner_contract_matches_main_lifecycle_fixture_identity"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["tool_mcp_dynamic"]
+    },
+    {
+      "id": "mcp_relay_owner_fixture_identity",
+      "fixture": "crates/agentdash-agent-runtime/fixtures/main-mcp-tool-lifecycle.json",
+      "fixture_sha256": "fa34d42918a95acde8cd0182bb85f66303c540faffb222bd02ba6b10313c3d20",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-executor/src/mcp/relay.rs",
+      "test_function": "relay_mcp_owner_contract_matches_main_lifecycle_fixture_identity",
+      "strength": "owner_contract_to_main_fixture_identity",
+      "cargo_args": ["test", "-p", "agentdash-executor", "relay_mcp_owner_contract_matches_main_lifecycle_fixture_identity"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["tool_mcp_dynamic"]
+    },
+    {
+      "id": "user_submit_fixture_and_contract",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/user-submit.json",
+      "fixture_sha256": "2189abb461ee5f9b5a16f29b088572efaf6aacf33bde789b1c7fe8f07a91bc9c",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application-agentrun/tests/runtime_facade.rs",
+      "test_function": "runtime_facade_prompt_matches_main_user_submit_golden_exactly",
+      "strength": "strict_current_production_to_pinned_main_bodies",
+      "cargo_args": ["test", "-p", "agentdash-application-agentrun", "--test", "runtime_facade", "runtime_facade_prompt_matches_main_user_submit_golden_exactly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["input_prompt_text", "turn_started_completed_failed_interrupted_rewind"]
+    },
+    {
+      "id": "presentation_thread_id_production_composition_chain",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/user-submit.json",
+      "fixture_sha256": "2189abb461ee5f9b5a16f29b088572efaf6aacf33bde789b1c7fe8f07a91bc9c",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-infrastructure/src/agent_runtime_composition.rs",
+      "test_function": "production_native_tracer_dispatches_durable_thread_start_and_replays_client_command",
+      "strength": "current_production_cross_layer_identity_chain",
+      "cargo_args": ["test", "-p", "agentdash-infrastructure", "production_native_tracer_dispatches_durable_thread_start_and_replays_client_command"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["input_prompt_text", "delivery_system_workflow_companion"]
+    },
+    {
+      "id": "input_prompt_pinned_main_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/user-submit.json",
+      "fixture_sha256": "2189abb461ee5f9b5a16f29b088572efaf6aacf33bde789b1c7fe8f07a91bc9c",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_input_prompt_and_turn_started_match_committed_fixture",
+      "strength": "executable_pinned_main_production_capture",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_input_prompt_and_turn_started_match_committed_fixture"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["input_prompt_text", "turn_started_completed_failed_interrupted_rewind"]
+    },
+    {
+      "id": "input_steer_pinned_main_production",
+      "fixture": "crates/agentdash-application-agentrun/tests/fixtures/session-parity/main-957fa9d/input-steer.json",
+      "fixture_sha256": "49b2511e9381d933499096e7486db2b6b308f1ada3dd610818e37d7dbbe29fbd",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_input_steer_matches_committed_fixture",
+      "strength": "executable_pinned_main_production_capture",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_input_steer_matches_committed_fixture"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["input_steer"]
+    },
+    {
+      "id": "input_steer_current_production",
+      "fixture": "crates/agentdash-application-agentrun/tests/fixtures/session-parity/main-957fa9d/input-steer.json",
+      "fixture_sha256": "49b2511e9381d933499096e7486db2b6b308f1ada3dd610818e37d7dbbe29fbd",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application-agentrun/tests/runtime_facade.rs",
+      "test_function": "runtime_facade_steer_matches_main_input_steer_golden_exactly",
+      "strength": "strict_current_production_to_pinned_main_bodies",
+      "cargo_args": ["test", "-p", "agentdash-application-agentrun", "--test", "runtime_facade", "runtime_facade_steer_matches_main_input_steer_golden_exactly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["input_steer"]
+    },
+    {
+      "id": "input_modalities_pinned_main_production",
+      "fixture": "crates/agentdash-application-agentrun/tests/fixtures/session-parity/main-957fa9d/input-modalities.json",
+      "fixture_sha256": "a6948ffc709476989396df6f84ec5206e2824f3c42d3e4435133a509545301fb",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_input_modalities_and_turn_started_match_committed_fixture",
+      "strength": "executable_pinned_main_production_capture",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_input_modalities_and_turn_started_match_committed_fixture"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["input_image_local_image_skill_mention", "turn_started_completed_failed_interrupted_rewind"]
+    },
+    {
+      "id": "input_modalities_current_production",
+      "fixture": "crates/agentdash-application-agentrun/tests/fixtures/session-parity/main-957fa9d/input-modalities.json",
+      "fixture_sha256": "a6948ffc709476989396df6f84ec5206e2824f3c42d3e4435133a509545301fb",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application-agentrun/tests/runtime_facade.rs",
+      "test_function": "runtime_facade_modalities_match_main_input_modalities_golden_exactly",
+      "strength": "strict_current_production_to_pinned_main_bodies",
+      "cargo_args": ["test", "-p", "agentdash-application-agentrun", "--test", "runtime_facade", "runtime_facade_modalities_match_main_input_modalities_golden_exactly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["input_image_local_image_skill_mention"]
+    },
+    {
+      "id": "delivery_sources_partial_main_behavior",
+      "fixture": "crates/agentdash-application-agentrun/tests/fixtures/session-parity/main-957fa9d/delivery-sources.json",
+      "fixture_sha256": "a034e3329c12bb2b5e931cb3f998aa91bb5be166cec972a637f030bbba62c40f",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application-agentrun/tests/runtime_facade.rs",
+      "test_function": "runtime_facade_delivery_sources_match_main_delivery_golden_exactly",
+      "strength": "exact_main_protected_body_equality",
+      "cargo_args": ["test", "-p", "agentdash-application-agentrun", "--test", "runtime_facade", "runtime_facade_delivery_sources_match_main_delivery_golden_exactly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["delivery_system_workflow_companion"]
+    },
+    {
+      "id": "delivery_sources_pinned_main_production",
+      "fixture": "crates/agentdash-application-agentrun/tests/fixtures/session-parity/main-957fa9d/delivery-sources.json",
+      "fixture_sha256": "a034e3329c12bb2b5e931cb3f998aa91bb5be166cec972a637f030bbba62c40f",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_system_workflow_companion_delivery_matches_committed_fixture",
+      "strength": "executable_pinned_main_production_capture",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_system_workflow_companion_delivery_matches_committed_fixture"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["delivery_system_workflow_companion"]
+    },
+    {
+      "id": "terminal_pinned_main_builder_capture",
+      "fixture": "crates/agentdash-application-agentrun/tests/fixtures/session-parity/main-957fa9d/turn-terminal.json",
+      "fixture_sha256": "71d651e40690cc87f9607ae311d1798efb106a0e3813cec4ae6b67791e7cf5e9",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_terminal_builder_matches_committed_meta_cases",
+      "strength": "executable_pinned_main_production_capture_partial",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_terminal_"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["turn_started_completed_failed_interrupted_rewind"]
+    },
+    {
+      "id": "terminal_current_application_projector_strict",
+      "fixture": "crates/agentdash-application-agentrun/tests/fixtures/session-parity/main-957fa9d/turn-terminal.json",
+      "fixture_sha256": "71d651e40690cc87f9607ae311d1798efb106a0e3813cec4ae6b67791e7cf5e9",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application-agentrun/tests/runtime_application_presentation.rs",
+      "test_function": "completed_terminal_matches_main_meta_body_exactly",
+      "strength": "exact_current_application_projection_partial",
+      "cargo_args": ["test", "-p", "agentdash-application-agentrun", "--test", "runtime_application_presentation"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["turn_started_completed_failed_interrupted_rewind"]
+    },
+    {
+      "id": "terminal_pty_pinned_main_projection_capture",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
+      "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_terminal_pty_projections_match_committed_fixture",
+      "strength": "executable_pinned_main_production_projection_partial",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_terminal_pty_"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["hook_terminal_pty_control_plane"]
+    },
+    {
+      "id": "control_pinned_main_workspace_projection_capture",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
+      "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_workspace_module_control_projection_matches_committed_fixture",
+      "strength": "executable_pinned_main_production_projection_partial",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_workspace_module_control_projection"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["hook_terminal_pty_control_plane"]
+    },
+    {
+      "id": "hook_trace_pinned_main_projection_capture",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
+      "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-agent-runtime-test-support/src/lib.rs",
+      "test_function": "pinned_main_hook_trace_projection_matches_committed_fixture",
+      "strength": "executable_pinned_main_production_projection_partial",
+      "cargo_args": ["test", "-p", "agentdash-agent-runtime-test-support", "--features", "pinned-main-capture", "pinned_main_hook_trace_projection"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["hook_terminal_pty_control_plane"]
+    },
+    {
+      "id": "hook_trace_current_production_projection",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
+      "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-spi/src/hooks/trace.rs",
+      "test_function": "current_hook_projection_matches_all_pinned_main_protected_bodies",
+      "strength": "strict_current_production_to_pinned_main_bodies",
+      "cargo_args": ["test", "-p", "agentdash-spi", "current_hook_projection_matches_all_pinned_main_protected_bodies"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["hook_terminal_pty_control_plane"]
+    },
+    {
+      "id": "control_current_workspace_projection_chain",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
+      "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-workspace-module/src/workspace_module/surface.rs",
+      "test_function": "current_workspace_module_control_projection_matches_pinned_main_body_exactly",
+      "strength": "strict_current_production_to_pinned_main_body",
+      "cargo_args": ["test", "-p", "agentdash-workspace-module", "current_workspace_module_control_projection_matches_pinned_main_body_exactly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["hook_terminal_pty_control_plane"]
+    },
+    {
+      "id": "terminal_pty_current_production_projection",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
+      "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-api/src/relay/ws_handler.rs",
+      "test_function": "terminal_output_projection_matches_main_truncation_body_exactly",
+      "strength": "exact_current_terminal_pty_projection_partial",
+      "cargo_args": ["test", "-p", "agentdash-api", "terminal_output_projection_matches_main_truncation_body_exactly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["hook_terminal_pty_control_plane"]
+    },
+    {
+      "id": "pty_current_production_projection",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/platform-events.json",
+      "fixture_sha256": "fd8d3b23546270b6d2793519b1b28d13dcb75aeb4866e9d52dbbebe83f77c08d",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-api/src/relay/ws_handler.rs",
+      "test_function": "pty_terminal_projection_preserves_main_optional_message_exactly",
+      "strength": "exact_current_terminal_pty_projection_partial",
+      "cargo_args": ["test", "-p", "agentdash-api", "pty_terminal_projection_preserves_main_optional_message_exactly"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["hook_terminal_pty_control_plane"]
+    },
+    {
+      "id": "lifecycle_vfs_pinned_main_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/lifecycle-vfs-observables.json",
+      "fixture_sha256": "7a2404f923944a422a3c8bccf59524eee7fba4c2c7e6a4ddfeb781827c20d332",
+      "main_capture": "fixture_provenance",
+      "test_source": "scripts/session-parity/pinned-lifecycle-vfs-capture/src/main.rs",
+      "test_function": "main",
+      "strength": "executable_pinned_main_production_capture",
+      "command": ["powershell", "-ExecutionPolicy", "Bypass", "-File", "scripts/session-parity/Test-PinnedMainLifecycleVfs.ps1"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["lifecycle_vfs_messages_tool_results_summaries"]
+    },
+    {
+      "id": "lifecycle_vfs_current_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/lifecycle-vfs-observables.json",
+      "fixture_sha256": "7a2404f923944a422a3c8bccf59524eee7fba4c2c7e6a4ddfeb781827c20d332",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application-lifecycle/src/lifecycle/vfs_provider.rs",
+      "test_function": "current_lifecycle_vfs_matches_pinned_main_observable_capture",
+      "strength": "strict_current_production_to_pinned_main_observables",
+      "cargo_args": ["test", "-p", "agentdash-application-lifecycle", "current_lifecycle_vfs_matches_pinned_main_observable_capture", "--lib"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["lifecycle_vfs_messages_tool_results_summaries"]
+    },
+    {
+      "id": "journal_replay_pinned_main_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/journal-replay.json",
+      "fixture_sha256": "e9a474048a062aaeefc28afdbf8c7413ad03fe42a09f48c0beb9eb3dc740f225",
+      "main_capture": "fixture_provenance",
+      "test_source": "scripts/session-parity/pinned-journal-capture/src/main.rs",
+      "test_function": "main",
+      "strength": "executable_pinned_main_production_capture",
+      "command": ["powershell", "-ExecutionPolicy", "Bypass", "-File", "scripts/session-parity/Test-PinnedMainJournalReplay.ps1"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["journal_get_initial_live_reconnect_refresh"]
+    },
+    {
+      "id": "journal_replay_exact_golden",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/journal-replay.json",
+      "fixture_sha256": "e9a474048a062aaeefc28afdbf8c7413ad03fe42a09f48c0beb9eb3dc740f225",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application-agentrun/src/agent_run/journal.rs",
+      "test_function": "get_paging_initial_live_reconnect_and_refresh_match_main_fixture",
+      "strength": "exact_main_transport_fixture",
+      "cargo_args": ["test", "-p", "agentdash-application-agentrun", "get_paging_initial_live_reconnect_and_refresh_match_main_fixture"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["journal_get_initial_live_reconnect_refresh"]
+    },
+    {
+      "id": "journal_control_pinned_main_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/journal-control.json",
+      "fixture_sha256": "3b52af4059c6fa385e5fbc4a95f5552a0c54f8c1312bb95b1522c0a2e98137d4",
+      "main_capture": "fixture_provenance",
+      "test_source": "scripts/session-parity/pinned-journal-capture/src/main.rs",
+      "test_function": "main",
+      "strength": "executable_pinned_main_production_capture",
+      "command": ["powershell", "-ExecutionPolicy", "Bypass", "-File", "scripts/session-parity/Test-PinnedMainJournal.ps1"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["journal_fork_heartbeat_lagged_closed"]
+    },
+    {
+      "id": "journal_control_exact_golden",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/main/journal-control.json",
+      "fixture_sha256": "3b52af4059c6fa385e5fbc4a95f5552a0c54f8c1312bb95b1522c0a2e98137d4",
+      "main_capture": "fixture_provenance",
+      "test_source": "crates/agentdash-application-agentrun/src/agent_run/journal.rs",
+      "test_function": "fork_get_and_reconnect_share_one_ordered_projection",
+      "strength": "strict_current_production_to_pinned_main_controls",
+      "command": ["powershell", "-ExecutionPolicy", "Bypass", "-File", "scripts/session-parity/Test-CurrentJournalControls.ps1"],
+      "covered_test_functions": ["fork_get_and_reconnect_share_one_ordered_projection", "multi_level_fork_applies_each_parent_local_cutoff_before_concatenation", "future_resume_cursor_is_accepted_and_ephemeral_sequence_uses_transient_coordinate", "future_connected_cursor_does_not_renumber_next_durable_live_event", "routes::lifecycle_agents::journal_projection_tests::journal_controls_and_retention_gap_match_fixed_main_control_golden"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["journal_fork_heartbeat_lagged_closed"]
+    },
+    {
+      "id": "frontend_submit_refresh_exact_main_behavior",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/browser/submit-refresh.json",
+      "fixture_sha256": "cc63dbfcc879528a40eb19cf38c102fa4d1e92806f7a8b45bb80eec97f737f35",
+      "main_capture": "fixture_provenance",
+      "test_kind": "vitest",
+      "test_source": "packages/app-web/src/pages/sessionParityEvidence.test.tsx",
+      "test_name": "keeps submitted user input stable across durable replay without a phantom tool card",
+      "strength": "exact_main_frontend_behavior",
+      "command": ["pnpm", "--filter", "app-web", "test", "--", "sessionParityEvidence.test.tsx"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["frontend_submit_no_phantom_refresh"]
+    },
+    {
+      "id": "frontend_tool_interaction_exact_main_behavior",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/browser/tool-interaction.json",
+      "fixture_sha256": "870b9ae6e2ec91248156972d08a0ff56816845406fdec3dfcca7b23a609cdaea",
+      "main_capture": "fixture_provenance",
+      "test_kind": "vitest",
+      "test_source": "packages/app-web/src/pages/sessionParityEvidence.test.tsx",
+      "test_name": "updates one tool card in place and submits interaction through the real service",
+      "strength": "exact_main_frontend_behavior",
+      "command": ["pnpm", "--filter", "app-web", "test", "--", "sessionParityEvidence.test.tsx"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["frontend_tool_progress_renderer", "frontend_interaction_response_extension"]
+    },
+    {
+      "id": "frontend_submit_pinned_main_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/browser/submit-refresh.json",
+      "fixture_sha256": "cc63dbfcc879528a40eb19cf38c102fa4d1e92806f7a8b45bb80eec97f737f35",
+      "main_capture": "fixture_provenance",
+      "test_kind": "vitest",
+      "test_source": "scripts/session-parity/mainFrontendEvidence.test.tsx",
+      "test_name": "replays submitted user input without creating a tool entry",
+      "strength": "executable_pinned_main_frontend_production",
+      "command": ["pnpm", "--filter", "app-web", "exec", "vitest", "run", "--config", "../../scripts/session-parity/vitest-main.config.ts", "../../scripts/session-parity/mainFrontendEvidence.test.tsx"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["frontend_submit_no_phantom_refresh"]
+    },
+    {
+      "id": "frontend_tool_card_pinned_main_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/browser/tool-interaction.json",
+      "fixture_sha256": "870b9ae6e2ec91248156972d08a0ff56816845406fdec3dfcca7b23a609cdaea",
+      "main_capture": "fixture_provenance",
+      "test_kind": "vitest",
+      "test_source": "scripts/session-parity/mainFrontendEvidence.test.tsx",
+      "test_name": "folds started updated completed into one terminal tool card",
+      "strength": "executable_pinned_main_frontend_production_partial",
+      "command": ["pnpm", "--filter", "app-web", "exec", "vitest", "run", "--config", "../../scripts/session-parity/vitest-main.config.ts", "../../scripts/session-parity/mainFrontendEvidence.test.tsx"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["frontend_tool_progress_renderer"]
+    },
+    {
+      "id": "agentrun_outer_pinned_main_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/browser/agentrun-outer.json",
+      "fixture_sha256": "68b4d53bdf4087d2c79b751c9ea0fd58ef7f8a30149f0f4131f3e753e67718ac",
+      "main_capture": "fixture_provenance",
+      "test_kind": "vitest",
+      "test_source": "scripts/session-parity/mainFrontendEvidence.test.tsx",
+      "test_name": "preserves AgentRun fork mailbox context lineage status and system effects",
+      "strength": "executable_pinned_main_frontend_production",
+      "command": ["pnpm", "--filter", "app-web", "exec", "vitest", "run", "--config", "../../scripts/session-parity/vitest-main.config.ts", "../../scripts/session-parity/mainFrontendEvidence.test.tsx"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["agentrun_fork_mailbox_context_lineage_status"]
+    },
+    {
+      "id": "agentrun_outer_current_production",
+      "fixture": "crates/agentdash-agent-runtime-test-support/fixtures/session-parity/browser/agentrun-outer.json",
+      "fixture_sha256": "68b4d53bdf4087d2c79b751c9ea0fd58ef7f8a30149f0f4131f3e753e67718ac",
+      "main_capture": "fixture_provenance",
+      "test_kind": "vitest",
+      "test_source": "packages/app-web/src/pages/sessionParityEvidence.test.tsx",
+      "test_name": "preserves Main AgentRun fork mailbox context lineage status and system effects",
+      "strength": "strict_current_production_to_pinned_main_behavior",
+      "command": ["pnpm", "--filter", "app-web", "test", "--", "sessionParityEvidence.test.tsx"],
+      "complete_scenarios": [],
+      "partial_scenarios": ["agentrun_fork_mailbox_context_lineage_status"]
+    }
+  ]
+}

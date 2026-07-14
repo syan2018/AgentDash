@@ -2,10 +2,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use super::context_frame::ContextFrameChanged;
+
 /// 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum PlatformEvent {
+    /// Materialized platform context presentation changed.
+    ContextFrameChanged(Box<ContextFrameChanged>),
     /// Connector 绑定了底层执行器 session（用于 follow-up / resume）。
     ExecutorSessionBound { executor_session_id: String },
 

@@ -4,6 +4,7 @@
 //! implementations sit below these ports; application use cases consume the contract gateway.
 
 mod context;
+pub mod context_projection;
 mod gateway;
 mod hook;
 mod memory;

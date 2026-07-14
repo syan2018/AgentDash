@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use agentdash_agent_protocol::{
-    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, PlatformEvent,
-    codex_app_server_protocol as codex, user_input_blocks_to_content_parts,
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, ContextFrame,
+    ContextFrameSection, PlatformEvent, codex_app_server_protocol as codex,
+    user_input_blocks_to_content_parts,
 };
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, StopReason, ToolCallInfo, estimate_content_tokens,
@@ -16,10 +17,7 @@ use agentdash_contracts::session::{
     SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
     SessionToolContextContributionResponse,
 };
-use agentdash_spi::{
-    context_usage_kind,
-    hooks::{ContextFrame, ContextFrameSection},
-};
+use agentdash_spi::context_usage_kind;
 use serde::Deserialize;
 
 use super::{AgentRunJournalEvent, AgentRunJournalQuery, AgentRunJournalService};
@@ -858,7 +856,7 @@ fn context_usage_items_from_section(
             changed_sources,
             ..
         } => {
-            use agentdash_spi::hooks::RuntimeMemoryInventoryMode;
+            use agentdash_agent_protocol::RuntimeMemoryInventoryMode;
             let entries: Vec<_> = match mode {
                 RuntimeMemoryInventoryMode::Snapshot => sources.iter().collect(),
                 RuntimeMemoryInventoryMode::Delta => added_sources

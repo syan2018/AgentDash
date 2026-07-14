@@ -3,7 +3,7 @@
   "name": "runtime-context-frame-presentation-restoration",
   "title": "恢复 Agent Runtime ContextFrame 平台投影链路",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "cross-layer",
   "package": null,

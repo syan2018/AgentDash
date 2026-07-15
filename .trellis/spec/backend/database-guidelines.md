@@ -390,6 +390,7 @@ pub struct AgentFrame {
 impl AgentFrame {
     pub fn surface_document(&self) -> AgentFrameSurfaceDocument;
     pub fn apply_surface_projection(&mut self);
+    pub fn attach_immutable_hook_plan(&mut self, hook_plan: Value);
 }
 ```
 
@@ -402,6 +403,7 @@ impl AgentFrame {
 - 最终`hook_plan`列可由后续rename migration建立；已在任一Dashboard或本机Runtime数据库应用的migration内容保持immutable，使所有持久实例通过checksum后顺序收敛到同一schema。
 - rename migration只接受单一旧列或单一最终列，并验证最终类型为`jsonb`；双列并存、来源列缺失或类型错误都表示schema事实不一致，应显式失败。
 - 新 AgentFrame 写入先填 `surface`，再 `apply_surface_projection()`。
+- construction 结束后补挂 HookPlan 时必须调用 `attach_immutable_hook_plan()`：该入口先更新 canonical `surface.hook_plan`，再刷新 split projection；直接写 `frame.hook_plan` 会在下一次 `apply_surface_projection()` 时被 canonical surface 覆盖。
 - Backfill migration 从 split columns 物化 `surface`。
 - 无 live repository query 的索引用新 migration 删除。
 
@@ -414,18 +416,21 @@ impl AgentFrame {
 | `surface` JSON invalid | mapped `DomainError` 带 `agent_frames.surface` context |
 | split projection serialization fails | insert 前返回 mapped `DomainError` |
 | 新Frame writer没有提供HookPlan | writer/adoption测试失败；该Frame不得进入Runtime materialization |
+| construction 只更新 split `hook_plan` | canonical surface 仍为空，后续 projection 会清除该值；domain/construction port 测试失败 |
 | `hook_plan` digest与requirements不匹配 | typed validation error；Host side effect前停止 |
 | index 无 live query path | 新 migration 删除，并记录理由 |
 
 ### 5. Cases
 
 - Canonical: build `FrameSurfaceDraft` -> write `AgentFrame.surface` -> project split columns。
+- Late attachment: `frame.attach_immutable_hook_plan(plan)` -> update canonical surface -> refresh split columns。
 - Backfill: split columns -> complete `AgentFrameSurfaceDocument`。
 - Boundary mismatch: 只写 `vfs_surface_json`，让 frame surface facts 分裂。
 
 ### 6. Tests Required
 
 - Domain: `surface_document()` 与 `apply_surface_projection()`。
+- Domain: `attach_immutable_hook_plan()` 后 canonical `surface.hook_plan` 与 split `hook_plan` 完全相等。
 - Mapper: surface-overrides-split、split-to-surface materialization。
 - Migration guard for `agent_frames` schema change。
 - Repository roundtrip preserves canonical surface and projected fields。
@@ -436,6 +441,7 @@ impl AgentFrame {
 ```rust
 frame.surface = Some(surface_document);
 frame.apply_surface_projection();
+frame.attach_immutable_hook_plan(validated_hook_plan);
 repo.insert_frame(&frame).await?;
 ```
 

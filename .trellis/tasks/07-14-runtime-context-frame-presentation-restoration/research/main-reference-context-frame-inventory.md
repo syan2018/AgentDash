@@ -90,12 +90,12 @@ rendered text 与序列顺序不可 normalization。
 
 - `agentdash-agent-protocol::tests::context_frame_changed_preserves_the_main_reference_payload_shape`
   固定验证 owned payload 与 typed wrapper，覆盖旧 JSON 的 null/省略和 metadata 形状。
-- `agentdash-agent-protocol/tests/fixtures/context_frames_main_957fa9d.json` 与
-  `all_main_reference_context_frame_families_round_trip_with_stable_order` 覆盖全部 family、
-  section family、delivery metadata 和 10/12/15/20/30/40/50/60/70/80 顺序。
+- `agentdash-agent-protocol/tests/fixtures/context_frames_canonical_roundtrip.json` 与
+  `owned_context_frame_vocabulary_round_trips_without_claiming_producer_semantics` 只验证 owned
+  payload vocabulary 的 serde 形状；它不提供 main producer、触发顺序或 delivery 语义证据。
 - `wrapper_neutral_normalization_only_removes_coordinates_identity_and_time` 证明 normalization
   只允许 wrapper coordinate、frame ID 和时间变化，rendered text 等 payload 变化必须失败。
 - `agentdash-agent-runtime::context_projection::projector::tests::projection_is_replayable_and_keeps_main_payload_shape`
   固定验证显式 operation identity/time、稳定 ID、digest 和 identity family payload。
-- WI-02 将 source facts 接入 projector 时必须复用上述 fixture；不允许从当前前端 consumer
-  反推或另建不同 payload。
+- 各 family 的 producer oracle 必须由 main-reference production builder 规则与当前
+  actual-producer command/UoW 测试逐字段建立，不允许从协议 fixture 或前端 consumer 反推。

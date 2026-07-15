@@ -22,13 +22,13 @@ Platform.SessionMetaUpdate { key: "context_frame", value: frame }
 
 | 场景 | canonical producer / UoW | main oracle | 允许差异 | payload / section / order 结果 |
 | --- | --- | --- | --- | --- |
-| bootstrap identity / user / environment / guidelines | exact compiled artifact + `ThreadStart` | `context_frames_main_957fa9d.json` 与 application facade journal test | Session wrapper、Runtime coordinate、动态 ID/time | 零内容差异；随 user submission 与 turn start 同交 |
-| bootstrap assignment / capability / tool / Skill / Memory / VFS / MCP / companion | Business Agent Surface compiled presentation + `ThreadStart` | `context_frames_main_957fa9d.json` | 同上 | 零内容差异；frame 与 section 保持 oracle 顺序 |
+| bootstrap identity / user / environment / guidelines | exact compiled artifact + `ThreadStart` | main-reference production builders 与 application facade actual-producer journal test | Session wrapper、Runtime coordinate、动态 ID/time | 零内容差异；随 user submission 与 turn start 同交 |
+| bootstrap assignment / capability / tool / Skill / Memory / VFS / MCP / companion | Business Agent Surface compiled presentation + `ThreadStart` | main-reference production builders + eight-dimension builder exact assertions | 同上 | 零内容差异；frame 与 section 保持 oracle 顺序 |
 | live surface transition | typed previous/target surface delta + `SurfaceAdopt` | `wi03_surface_adopt_stream_main_957fa9d.json` | wrapper、coordinate | 零内容差异；`HookPlanBound` 后追加 presentation；empty delta 不产出；replay 不重复 |
 | ToolSchema 参数摘要 | adoption ToolSchemaDimensionDelta projector | `wi03_tool_schema_formatter_main_957fa9d.json` | 无 | nested object/array、anyOf/enum、required、稳定顺序、描述截断、48-field truncation 全等价 |
-| Hook model-visible effect | `HookRun` terminal/effect UoW | `context_frames_main_957fa9d.json` auto-resume/context frame oracle | wrapper、coordinate、动态 ID/time | 零内容差异；silent observer 不产出；replay 不重复 |
+| Hook model-visible effect | `HookRun` terminal/effect UoW | main-reference Hook/launch production builders + typed Hook actual-producer test | wrapper、coordinate、动态 ID/time | 零内容差异；silent observer 不产出；replay 不重复 |
 | pending action | next `TurnStart` | `wi03_pending_action_stream_main_957fa9d.json` | wrapper、coordinate、动态 ID/time | 零内容差异；正文、instruction、injection usage 与 main 一致 |
-| auto-resume | next `TurnStart` | `context_frames_main_957fa9d.json` | wrapper、coordinate、动态 ID/time | 零内容差异；在当前 canonical batch 中先于 pending action |
+| Hook auto-resume / system delivery | next `TurnStart` | main-reference `build_system_delivery_context_frame` + actual `SystemDelivery` command test | wrapper、coordinate、动态 ID/time | `system_delivery` 内容零差异；不使用保留的 `auto_resume` family |
 | managed compaction | checkpoint/head activation UoW | `wi03_compaction_stream_main_957fa9d.json` | wrapper、coordinate、动态 ID/time | 零内容差异；opaque driver compaction 不产出 |
 
 ## 前端行为矩阵
